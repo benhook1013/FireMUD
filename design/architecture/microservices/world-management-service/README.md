@@ -190,13 +190,18 @@ Game Logic caches snapshots for the duration of a tick but refreshes them after 
 
 Room snapshots deliberately exclude live entities, items, and inventory contents; those are retrieved from the Entity Management Service using room- and instance-scoped queries when composing `LOOK` results.
 
-Consumers treat the pair `(worldSnapshotId, entitySnapshotId)` as the composite cache key for a rendered LOOK view. `worldSnapshotId` comes from `GetRoomSnapshot`; `entitySnapshotId` comes from Entity Management’s `ListRoomEntities`. Game Session is responsible for combining these into a single response and caching/rendering consistently within a tick.
+Game Logic treats `worldSnapshotId` as the canonical cache key for LOOK-relevant world data for a specific `RoomInstanceRef`. When composing a full LOOK view, Game Logic combines:
+
+- `worldSnapshotId` from `GetRoomSnapshot`, and
+- `entitySnapshotId` from Entity Management’s `ListRoomEntities`,
+
+then returns a `lookSnapshotId` (for example `worldSnapshotId + ":" + entitySnapshotId`) alongside the rendered `LookResult` so Game Session can cache the final transcript deterministically.
 
 The `V10__seed_demo_world.sql` migration seeds the demo rooms referenced by this lifecycle (Candle-lit Antechamber and Crafting Hall of Ember) so integration tests and the LOOK transcripts stay stable. Developers can locate and extend that migration when the sample world needs more exits or environmental trivia.
 
 ### Implementation status (LOOK slice)
 
-- **Live:** `GetRoomSnapshot` returns the room metadata, descriptions, and exit labels that Game Logic needs to render the canonical `LOOK` transcript, and the telemetry for this pipeline is documented in `../../project-management/look-instrumentation.md`.
+- **Live:** `GetRoomSnapshot` returns the room metadata, descriptions, and exit labels that Game Logic needs to render the canonical `LOOK` transcript, and the telemetry for this pipeline is documented in `../../../project-management/look-instrumentation.md`.
 - **Stubbed:** The current snapshot data comes from the seeded demo rooms so scripted room events, line-of-sight lighting, and procedural text remain deterministic for regression tests.
 - **Deferred:** Future work will enrich snapshots with ambient metadata (weather, hazard warnings) and push updates through `/ws/game/**` so Gateway/TCP Proxy clients can react to world changes as soon as they happen.
 
@@ -211,7 +216,7 @@ The `V10__seed_demo_world.sql` migration seeds the demo rooms referenced by this
   - `Exits: <comma-separated direction labels and descriptions>`
   - `Entities:` followed by a bulleted list of visible NPCs/players/items.
   - A blank line separates the response from subsequent commands so the transport remains stateless.
-- Game Session aggregates the `LookResult` from Game Logic with cached Redis metadata (session context, last room snapshot) and renders the textual transcript via `LookResultRenderer`, emitting the `gamesession.command.look.*` meters referenced in `../../project-management/look-instrumentation.md` before replying to `/ws/game/**` clients or caching the payload for reconnection.
+- Game Session renders the `LookResult` returned by Game Logic (which already includes both world and entity projections) into the textual transcript via `LookResultRenderer`, emitting the `gamesession.command.look.*` meters referenced in `../../../project-management/look-instrumentation.md` before replying to `/ws/game/**` clients or caching the payload for reconnection.
 - Error responses emit `ERROR <CODE> <message>` in the same stream, covering `ROOM_NOT_FOUND`, `WORLD_UNAVAILABLE`, `ENTITY_UNAVAILABLE`, `LOOK_UNAVAILABLE`, and `NOT_AUTHENTICATED`.
 - Override the World Management endpoint locally via the `FIREMUD_SERVICES_WORLD_MANAGEMENT_SERVICE` environment variable (some developer helpers refer to this value as `WORLD_SERVICE_ENDPOINT`) when running the Gateway or Game Session stack against custom world servers; the same override is wired into the `look` cross-service tests so the sample world and entity fixtures stay consistent.
 
@@ -301,7 +306,8 @@ the [Security Architecture](../../system-architecture-security.md) for details.
 #### gRPC
 
 - `Ping(PingRequest) returns (PingResponse)` – basic connectivity check defined in [`world_management_service.proto`](../../../../protos/world-management/v1/world_management_service.proto).
-- `GetRoom(GetRoomRequest) returns (GetRoomResponse)` – fetches a room's JSON representation scoped by `RoomInstanceRef`.
+- `GetRoom(GetRoomRequest) returns (GetRoomResponse)` – fetches a room's JSON representation. The legacy `room_id` field is deprecated; callers should provide a `RoomInstanceRef`.
+- `GetRoomSnapshot(GetRoomSnapshotRequest) returns (GetRoomSnapshotResponse)` – returns the minimal, LOOK-focused snapshot scoped by `RoomInstanceRef`.
 - `UpdateWorldState(UpdateWorldStateRequest) returns (UpdateWorldStateResponse)` – applies pending world updates and notifies other services.
 
 Call the `Ping` method with:
@@ -325,6 +331,10 @@ World Management also exposes **design-time** APIs used by the Game Design Servi
 - Auth: design-time APIs must validate JWTs and enforce designer/admin authorization for the target `tenantId`.
 - Mutability: design-time writes are allowed only for Draft versions; attempts to write templates for Published/Active/Failed versions must fail fast.
 - Runtime isolation: runtime gameplay flows and world-creation Sagas must never call design APIs.
+
+World Management must also expose a read-only design-time synchronization surface so the Game Design Service can validate convergence before publish:
+
+- `GetDraftDesignDigest(tenantId, versionId)` returns `appliedCommitId` (or last applied revision), a stable `contentDigest`, and a `digestSchemaVersion` as described in `design/architecture/microservices/game-design-service/world-editing-tools.md`.
 
 ### World Events
 
