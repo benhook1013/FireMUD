@@ -102,6 +102,7 @@ For quick reference in day-to-day work, most edits will rely on:
 ## 11. Tooling Available to AI
 
 - The development environment includes the GitHub CLI (`gh`) configured for this repository.
+- Python is available in WSL as `python3` (for example `python3 --version`); `python` may not be installed or may not point to Python 3.
 - AI tools may use `gh` to inspect and manage pull requests (for example, listing PRs, viewing diffs, and editing descriptions) when explicitly asked.
 - Do not create, merge, or close pull requests with `gh` unless a human contributor requests that action for a specific task.
 - When working on a feature branch that has (or will have) an open PR, always keep a brief, accurate PR summary up to date as part of the change:
