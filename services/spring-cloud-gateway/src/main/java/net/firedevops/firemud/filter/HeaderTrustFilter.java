@@ -5,6 +5,7 @@ import java.net.InetSocketAddress;
 import java.security.MessageDigest;
 import java.security.cert.X509Certificate;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Locale;
@@ -44,6 +45,8 @@ public class HeaderTrustFilter implements WebFilter, Ordered {
   private final CidrSet trustedForwardedProxies;
   private final CidrSet insecureTrustedTcpProxyCidrs;
   private final List<String> trustedTcpProxyFingerprints;
+  private final List<String> trustedTcpProxyDnsSans;
+  private final List<String> trustedTcpProxyUriSans;
 
   public HeaderTrustFilter(GatewayHeaderTrustProperties properties) {
     this.properties = Objects.requireNonNull(properties);
@@ -52,6 +55,8 @@ public class HeaderTrustFilter implements WebFilter, Ordered {
     this.insecureTrustedTcpProxyCidrs = new CidrSet(properties.getTcpProxy().getInsecureTrustedCidrs());
     this.trustedTcpProxyFingerprints =
         normalizeFingerprints(properties.getTcpProxy().getTrustedClientCertFingerprintsSha256());
+    this.trustedTcpProxyDnsSans = normalizeStrings(properties.getTcpProxy().getTrustedClientCertDnsSans());
+    this.trustedTcpProxyUriSans = normalizeStrings(properties.getTcpProxy().getTrustedClientCertUriSans());
   }
 
   @Override
@@ -237,7 +242,10 @@ public class HeaderTrustFilter implements WebFilter, Ordered {
   }
 
   private boolean isTrustedTcpProxyViaMtls(SslInfo sslInfo) {
-    if (sslInfo == null || trustedTcpProxyFingerprints.isEmpty()) {
+    if (sslInfo == null
+        || (trustedTcpProxyFingerprints.isEmpty()
+            && trustedTcpProxyDnsSans.isEmpty()
+            && trustedTcpProxyUriSans.isEmpty())) {
       return false;
     }
     X509Certificate[] peerCerts;
@@ -249,14 +257,61 @@ public class HeaderTrustFilter implements WebFilter, Ordered {
     if (peerCerts == null || peerCerts.length == 0 || peerCerts[0] == null) {
       return false;
     }
+    X509Certificate leaf = peerCerts[0];
+    if (!trustedTcpProxyFingerprints.isEmpty() && matchesFingerprint(leaf)) {
+      return true;
+    }
+    if (!trustedTcpProxyDnsSans.isEmpty() || !trustedTcpProxyUriSans.isEmpty()) {
+      return matchesSans(leaf);
+    }
+    return false;
+  }
+
+  private boolean matchesFingerprint(X509Certificate cert) {
     try {
       MessageDigest digest = MessageDigest.getInstance("SHA-256");
-      byte[] hash = digest.digest(peerCerts[0].getEncoded());
-      String fingerprint = HEX.formatHex(hash);
-      String normalized = fingerprint.toLowerCase(Locale.ROOT);
+      byte[] hash = digest.digest(cert.getEncoded());
+      String fingerprint = HEX.formatHex(hash).toLowerCase(Locale.ROOT);
       for (String allowed : trustedTcpProxyFingerprints) {
-        if (normalized.equals(allowed)) {
+        if (fingerprint.equals(allowed)) {
           return true;
+        }
+      }
+      return false;
+    } catch (Exception ignored) {
+      return false;
+    }
+  }
+
+  private boolean matchesSans(X509Certificate cert) {
+    try {
+      Collection<List<?>> sans = cert.getSubjectAlternativeNames();
+      if (sans == null) {
+        return false;
+      }
+      for (List<?> san : sans) {
+        if (san == null || san.size() < 2) {
+          continue;
+        }
+        Object typeObj = san.get(0);
+        Object valueObj = san.get(1);
+        if (!(typeObj instanceof Integer type) || !(valueObj instanceof String value)) {
+          continue;
+        }
+        if (type == 2) { // DNS
+          String normalized = value.toLowerCase(Locale.ROOT);
+          for (String allowed : trustedTcpProxyDnsSans) {
+            if (normalized.equals(allowed)) {
+              return true;
+            }
+          }
+        } else if (type == 6) { // URI
+          String normalized = value.toLowerCase(Locale.ROOT);
+          for (String allowed : trustedTcpProxyUriSans) {
+            if (normalized.equals(allowed)) {
+              return true;
+            }
+          }
         }
       }
       return false;
@@ -275,6 +330,23 @@ public class HeaderTrustFilter implements WebFilter, Ordered {
         continue;
       }
       String normalized = value.trim().toLowerCase(Locale.ROOT).replace(":", "");
+      if (!normalized.isEmpty()) {
+        out.add(normalized);
+      }
+    }
+    return out;
+  }
+
+  private static List<String> normalizeStrings(List<String> raw) {
+    List<String> out = new ArrayList<>();
+    if (raw == null) {
+      return out;
+    }
+    for (String value : raw) {
+      if (value == null) {
+        continue;
+      }
+      String normalized = value.trim().toLowerCase(Locale.ROOT);
       if (!normalized.isEmpty()) {
         out.add(normalized);
       }
