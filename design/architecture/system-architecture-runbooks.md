@@ -16,6 +16,12 @@ Guidance on scaling services and infrastructure (Gateway, Game Session, Redis, P
 
 See: `design/architecture/system-architecture-scaling-runbook.md`.
 
+## Operator Access
+
+Operator workflows for mTLS client certificates and other control-plane credentials.
+
+See: `design/architecture/system-architecture-operator-credentials-runbook.md`.
+
 ## Recovery
 
 This section covers recovery scenarios at a high level; detailed, per-topic runbooks live in their own files.
@@ -44,6 +50,11 @@ This section covers recovery scenarios at a high level; detailed, per-topic runb
 
 - For login success ratio drops, elevated command latency, or chat delivery latency issues, see:
   - `design/architecture/system-architecture-player-experience-incident-runbook.md`
+
+### Observability Stack Incidents
+
+- For incidents where Prometheus, Alertmanager, Elasticsearch/Kibana, Grafana, or Jaeger/collector are degraded or unavailable, see:
+  - `design/architecture/system-architecture-observability-incident-runbook.md`
 
 ### Minimal Coordination & Tick Operator Mental Model
 

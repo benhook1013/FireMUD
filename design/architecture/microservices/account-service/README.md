@@ -32,7 +32,7 @@ Public login APIs exist for administrators and account portals, but gameplay cli
   via cert-manager as described in the [Security Architecture](../../system-architecture-security.md).
 - All service-to-service communication is protected by mutual TLS.
 - Gameplay client authentication is initiated via the `LOGIN` command flow described in
-  [Authentication & Authorization](../../system-architecture-authentication.md); gameplay clients never see JWTs and rely on the Game Session Service for session binding and reconnection using Redis.
+  [Authentication & Authorization](../../system-architecture-authentication.md); gameplay clients never see JWTs. The Game Session Service calls the internal `Authenticate` gRPC method (mTLS-protected) to verify credentials and obtain Service JWTs, while `/auth/login` remains a browser/control-plane endpoint.
 - Admin and creator UI authentication is initiated via the `/auth/login` HTTP endpoint, which issues Browser JWTs used for control-plane APIs as described in the Authentication & Authorization and Frontend architecture designs.
 - Owns brute-force defense and login abuse handling for the platform. The service monitors login attempts per account and per IP, applies throttling and temporary blacklisting policies, and emits structured signals (for example, `AUTH_ACCOUNT_LOCKED`) that the Game Session Service and other consumers honor when binding gameplay sessions. Suspicious activity triggers notification emails and audit events as described in
   [Security Architecture](../../system-architecture-security.md#brute-force-defense-and-abuse-handling).
@@ -110,7 +110,7 @@ resolved during authentication.
 | Method | Path | Description |
 | --- | --- | --- |
 | `GET` | `/ping` | Simple health check |
-| `POST` | `/auth/login` | Authenticate and establish a session; JWT is kept server-side |
+| `POST` | `/auth/login` | Authenticate and establish a control-plane session for first-party UIs by returning a Browser JWT; the token is allowlisted server-side via `session:auth:*` entries for revocation |
 | `POST` | `/auth/request-password-reset` | Request password reset |
 | `POST` | `/auth/complete-password-reset` | Complete password reset |
 | `POST` | `/auth/request-email-verification` | Send verification email |
@@ -220,7 +220,7 @@ This service sends verification and password reset emails using a configured SMT
 
 ### Session Management
 
-Authentication generates a JWT that is stored **server-side** in Redis for internal calls, following the scope model defined in [Authentication & Authorization](../../system-architecture-authentication.md):
+Authentication generates a JWT and records server-side allowlist entries in Redis for immediate revocation, following the scope model defined in [Authentication & Authorization](../../system-architecture-authentication.md):
 
 - Account-scoped entries: `session:auth:account:<accountId>:<tokenHash>` for every issued JWT; this is the baseline “token is currently allowed for this account” allowlist entry.
 - Tenant-scoped entries: `session:auth:tenant:<tenantId>:<tokenHash>` when the token’s effective privileges are limited to a specific tenant and derived from `scopedRoles[tenantId]`.

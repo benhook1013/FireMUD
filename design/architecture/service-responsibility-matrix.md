@@ -9,8 +9,8 @@
 | Room and zone editing | ✔ | | | | | | | | | | |
 | World map region layout | | ✔ | | | | | | | | | |
 | Room topology and static metadata (descriptions, flags, ambient properties) | | ✔ | | | | | | | | | |
-| Room dynamic world state (persistent environment flags, doors, hazards) | | | | | ✔ | | | | | | |
-| Room occupancy (entity locations in rooms) | | | | | ✔ | | | | | | |
+| Room dynamic world state (persistent environment flags, doors, hazards) | | ✔ | | | | | | | | | |
+| Room occupancy (entity locations in rooms) | | ✔ | | | | | | | | | |
 | Pathfinding algorithms and navmesh data | | ✔ | | | | | | | | | |
 | Account authentication, credential verification, and JWT issuance (JWKS) | | | ✔ | | | | | | | | |
 | Account-related email (verification, password reset, security alerts, subscription/billing notifications) | | | ✔ | | | | | | | | |
@@ -25,6 +25,8 @@
 | Command queuing and dispatch | | | | ✔ | | | | | | | |
 | Session state storage (volatile, Redis gameplay bindings) | | | | ✔ | | | | | | | |
 | Coordination Redis ownership (ticks, locks, timers, sessions) | | | | ✔ | | | | | | | |
+| Gameplay shard mapping publication (`<tenantId, regionId> → shard`) | | | | ✔ | | | | | | | |
+| Gameplay WebSocket shard routing (`/ws/game/**`) | | | | | | | | | | | ✔ |
 | Game version activation at runtime | | | | ✔ | | | | | | | |
 | Runtime feature flag overrides | | | | ✔ | | | | | | | |
 | Tick & coordination health metrics (per region) | | | | ✔ | | | | | | | |

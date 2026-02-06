@@ -104,7 +104,7 @@ The following sections are the canonical references for proxy behaviour; other d
 The TCP Proxy Service treats each Telnet TCP connection as independent and keeps
 reconnection logic centralized in the Game Session Service:
 
-- Multiple Telnet connections using the same `{sessionId, tenantId}` are allowed.
+- Multiple Telnet connections using the same `{gameInstanceId, tenantId}` are allowed.
   The proxy simply forwards commands for each connection; Game Session enforces
   the “one session per character” behaviour by applying its takeover rules when
   a second client logs in as the same character, so only one active session per
@@ -190,7 +190,7 @@ behaviour regardless of which classes or frameworks the service uses internally.
 
 - **Telnet Compatibility** — accepts standard MUD clients over TCP.
 - **WebSocket Bridging** — forwards all traffic to the gateway via WebSocket.
-- **Connection Buffering** — temporarily queues input to handle latency.
+- **Bounded buffering** — buffers line assembly and enforces strict in-memory limits; the proxy does not attempt to preserve gameplay across upstream disconnects.
 - **Graceful Disconnects** — informs the Game Session Service when a client drops.
 
 ### Recommended Telnet Client Flows
@@ -203,9 +203,9 @@ These flows describe how Telnet traffic is forwarded into the shared login/sessi
   - Send gameplay commands (`LOOK`, `SAY`, movement, etc.) as normal.
   - The proxy forwards all lines verbatim to Spring Cloud Gateway; the Game Session Service creates or binds the gameplay session exactly as it does for native WebSocket clients.
 - **Advanced client (attach/resume with `SESSION` + `LOGIN`)**
-  - Obtain a `sessionId` and `tenantId` from the Game Session Service (for example via `POST /sessions`) or another first-party API.
+  - Obtain a `gameInstanceId` and `tenantId` from a first-party admission or session-management API (owned by Game Session and/or the control plane). Do not treat the specific endpoint shape as part of the Telnet protocol contract; only the identifiers and their validation rules matter to the edge.
   - Connect to the TCP Proxy Service.
-  - Immediately send a `SESSION <sessionId> <tenantId>` envelope as the first line on the connection. The space-separated form is canonical; the compact `SESSION <sessionId>:<tenantId>` form remains accepted only for backwards compatibility and may be removed after callers are updated.
+  - Immediately send a `SESSION <gameInstanceId> <tenantId>` envelope as the first line on the connection. The space-separated form is canonical; the compact `SESSION <gameInstanceId>:<tenantId>` form remains accepted only for backwards compatibility and may be removed after callers are updated.
   - Send a `LOGIN` command over the same connection.
   - Continue with gameplay commands as normal.
   - Game Session evaluates the combination of `SESSION` and `LOGIN` against Redis-backed session state and the authentication rules described in the [Authentication & Authorization](../../system-architecture-authentication.md) and [Reconnection Strategy](../../system-architecture-reconnection.md) documents to decide whether to resume a prior session or start a fresh one.
@@ -228,9 +228,9 @@ and [Authentication & Authorization](../../system-architecture-authentication.md
     Window B. At any moment only one connection actively controls the
     character; there is no concurrent “split control” even though the proxy
     forwards traffic from both TCP connections.
-- **Two Telnet windows with the same `{sessionId, tenantId}` envelope**
+- **Two Telnet windows with the same `{gameInstanceId, tenantId}` envelope**
   - Both windows connect to the TCP Proxy Service and send
-    `SESSION <sessionId> <tenantId>` followed by `LOGIN`.
+    `SESSION <gameInstanceId> <tenantId>` followed by `LOGIN`.
   - The proxy forwards both flows independently; Game Session binds
     socket-level control to whichever `LOGIN` most recently succeeded for the
     character backing that session. Earlier connections may be disconnected or
@@ -245,7 +245,8 @@ and [Authentication & Authorization](../../system-architecture-authentication.md
 - TCP connections are accepted on a dedicated port and proxied to Spring Cloud Gateway
   using a lightweight WebSocket bridge.
 - Incoming bytes are queued and forwarded to the gateway in order.
-- If the proxy cannot establish or maintain its WebSocket bridge to Spring Cloud Gateway beyond a short reconnect window (`TCP_PROXY_GATEWAY_RECONNECT_WINDOW_MS`, default `5000`), it fail-closes the Telnet socket with a clear user-facing message (for example “Gateway link unavailable; please reconnect”) and a Telnet disconnect reason of `backend_unavailable` as defined in the Telnet disconnect taxonomy in [Protocol Bridging](../../system-architecture-protocol-bridging.md#telnet-disconnect-reasons). During the reconnect window, the proxy uses a bounded in-memory buffer (`TCP_PROXY_GATEWAY_MAX_BUFFERED_LINES`, default `64`) so brief Gateway blips can be seamless without buffering unbounded input at the DMZ edge. If the buffer fills before the Gateway link recovers, the proxy closes the Telnet connection for the same `backend_unavailable` reason and increments `tcpproxy.telnet.discarded` with a dedicated `reason` label so operators can distinguish buffer-fill disconnects from other discard paths.
+- If the proxy cannot establish the WebSocket bridge to Spring Cloud Gateway (for example because the gateway listener is unavailable or the Proxy → Gateway mTLS handshake fails), it fail-closes the Telnet socket with a clear user-facing message (for example “Gateway link unavailable; please reconnect”) and a Telnet disconnect reason of `backend_unavailable` as defined in the Telnet disconnect taxonomy in [Protocol Bridging](../../system-architecture-protocol-bridging.md#telnet-disconnect-reasons).
+- If the WebSocket bridge drops at any point after the Telnet connection is established, the proxy fail-closes the Telnet socket with the same `backend_unavailable` reason. The proxy does not attempt to keep the Telnet socket open across upstream disconnects because doing so would require an explicit, secure “reattach without credentials” contract that is outside the Telnet text protocol and is not part of the target-state design.
 - If the connection is lost, the in-memory queue is cleared and no Telnet
   commands are replayed by the proxy. Reconnection hooks notify downstream
   services so the Game Session Service can resume gameplay from Redis-backed
@@ -279,7 +280,7 @@ When a `NotifyDisconnect` call fails with a **transport-level** error (for examp
 - Within that window, the proxy applies exponential backoff between attempts and gives up permanently once the total elapsed time since Telnet socket close exceeds `TCP_PROXY_NOTIFY_DISCONNECT_MAX_RETRY_MS`.
 - After the window elapses, the proxy relies entirely on Game Session’s own liveness detection and Redis-backed timeouts; no further retries are attempted for that `{proxyConnectionId, disconnectSequence}`.
 
-When the gRPC transport returns `OK` but the `NotifyDisconnectResponse.error` field is populated, the proxy **does not retry**: these are treated as logical, contract-level failures (for example “unknown session”) that Game Session has already decided how to handle. The proxy logs these errors, increments `grpc.app_error{code="..."}` and `tcpproxy.disconnect.notify.failure` with a bounded error-code label, and moves on without further attempts for that event.
+When the gRPC transport returns `OK` but the `NotifyDisconnectResponse.error` field is populated, the proxy **does not retry**: these are treated as logical, contract-level failures (for example “unknown session”) that Game Session has already decided how to handle. The proxy logs these errors, increments `grpc.app_error{code="..."}` and `tcpproxy.disconnect.notify.app_error{code="..."}`, and moves on without further attempts for that event.
 
 This keeps retry behaviour simple while still surfacing most transient gRPC failures without risking long-lived retry storms.
 
@@ -295,7 +296,7 @@ Additional codes may be introduced in the future as new failure modes are surfac
 
 The proxy generates `proxyConnectionId` when the Telnet socket is accepted and uses a **single, stable** identifier for the entire lifetime of that TCP connection. Every WebSocket bridge handshake initiated on behalf of that Telnet connection – including reconnects during a Gateway blip – re-sends the same `proxyConnectionId` as a WebSocket handshake header (`X-Proxy-Connection-Id`). Spring Cloud Gateway strips this header from public ingress and forwards it only when it has authenticated the TCP Proxy identity; Game Session captures this identifier during login/session binding so it can associate disconnect events with the correct authenticated session even when the client did not provide a `SESSION` envelope.
 
-When a valid `SESSION <sessionId> <tenantId>` envelope is captured, the proxy forwards those identifiers as WebSocket handshake headers (`X-Proxy-Session-Id` and `X-Proxy-Tenant-Id`). Spring Cloud Gateway strips these from public ingress and may forward canonical `X-Session-Id` / `X-Tenant-Id` headers only after authenticating the TCP Proxy identity. These values remain advisory context, not trusted facts: Game Session validates them against Redis-backed session ownership and tenant authorization.
+When a valid `SESSION <gameInstanceId> <tenantId>` envelope is captured, the proxy forwards those identifiers as WebSocket handshake headers (`X-Proxy-Game-Instance-Id` and `X-Proxy-Tenant-Id`). Spring Cloud Gateway strips these from public ingress and may forward canonical `X-Game-Instance-Id` / `X-Tenant-Id` headers only after authenticating the TCP Proxy identity. These values remain advisory context, not trusted facts: Game Session validates them against Redis-backed session ownership and tenant authorization.
 
 Game Session must treat `NotifyDisconnect` as strictly advisory and idempotent and must
 always be able to detect disconnects without relying on this stream as a single
@@ -317,10 +318,10 @@ source of truth:
 
 For operators and developers, `NotifyDisconnect` is designed to be easy to correlate end-to-end:
 
-- The TCP Proxy logs Telnet socket lifecycle events with a stable `proxyConnectionId` field, along with connection-level tags such as `tenantId`, `sessionId` (when known), and client IP or `X-Proxy-Client-IP`.
+- The TCP Proxy logs Telnet socket lifecycle events with a stable `proxyConnectionId` field, along with connection-level tags such as `tenantId`, `gameInstanceId` (when known), and client IP or `X-Proxy-Client-IP`.
 - Spring Cloud Gateway propagates `X-Proxy-Connection-Id` only on authenticated TCP Proxy → Gateway hops and strips it from public ingress, then produces a canonical `X-Client-IP` header as described in the Gateway Architecture and Security docs.
-- Game Session logs login, resume, takeover, and disconnect-processing events using the same `proxyConnectionId` and `{sessionId, tenantId}` values captured during session binding so operators can correlate Telnet disconnects, `NotifyDisconnect` calls, and session lifecycle metrics.
-- The `tcpproxy.disconnect.notify.failure` metric and associated logs reference `{proxyConnectionId, disconnectSequence}` so failures and retries can be tied back to specific Telnet connections and Game Session events when debugging reconnection issues.
+- Game Session logs login, resume, takeover, and disconnect-processing events using the same `proxyConnectionId` and `{gameInstanceId, tenantId}` values captured during session binding so operators can correlate Telnet disconnects, `NotifyDisconnect` calls, and session lifecycle metrics.
+- The `tcpproxy.disconnect.notify.transport_failure` and `tcpproxy.disconnect.notify.app_error` meters (and associated logs) reference `{proxyConnectionId, disconnectSequence}` so failures and retries can be tied back to specific Telnet connections and Game Session events when debugging reconnection issues.
 
 Their definitions live in
 [`tcp_proxy_service.proto`](../../../../protos/tcp-proxy/v1/tcp_proxy_service.proto).
@@ -345,20 +346,20 @@ When used, the envelope is a plain-text line that starts with `SESSION`
 (case-insensitive) followed by the **canonical form**:
 
 ```text
-SESSION <sessionId> <tenantId>
+SESSION <gameInstanceId> <tenantId>
 ```
 
-Both `sessionId` and `tenantId` are UUIDs across the system and must be supplied in canonical UUID string form. For backwards compatibility with early tools and tests, the proxy still accepts the historical compact form `SESSION <sessionId>:<tenantId>` on the wire, but all new clients and examples should use the space-separated form above and treat the colon form as deprecated and subject to removal once remaining callers are migrated.
+Both `gameInstanceId` and `tenantId` are UUIDs across the system and must be supplied in canonical UUID string form. For backwards compatibility with early tools and tests, the proxy still accepts the historical compact form `SESSION <gameInstanceId>:<tenantId>` on the wire, but all new clients and examples should use the space-separated form above and treat the colon form as deprecated and subject to removal once remaining callers are migrated.
 
 The `TelnetSessionContext.captureFromEnvelope` helper trims and upper-cases the
 prefix, splits on the first colon or whitespace, and ignores envelopes that are
-missing either identifier. Once captured, `sessionId` and `tenantId` are
-propagated over the WebSocket bridge (`X-Proxy-Session-Id` and `X-Proxy-Tenant-Id` handshake headers, which Spring Cloud Gateway may promote to canonical `X-Session-Id` / `X-Tenant-Id` after authenticating the TCP Proxy identity) and also drive the event and metric generation below.
+missing either identifier. Once captured, `gameInstanceId` and `tenantId` are
+propagated over the WebSocket bridge (`X-Proxy-Game-Instance-Id` and `X-Proxy-Tenant-Id` handshake headers, which Spring Cloud Gateway may promote to canonical `X-Game-Instance-Id` / `X-Tenant-Id` after authenticating the TCP Proxy identity) and also drive the event and metric generation below.
 Malformed or partially specified envelopes are treated as best-effort hints only: they are logged and counted against the malformed envelope budgets described below but do not block the Telnet connection or change reconnection/session semantics, which always fall back to the normal `LOGIN`-driven pipeline shared with WebSocket clients.
 
-#### Where `sessionId` and `tenantId` come from
+#### Where `gameInstanceId` and `tenantId` come from
 
-- Cross-service tests and advanced clients typically obtain a `sessionId` by calling the Game Session REST API (for example `POST /sessions`) and then send `SESSION <sessionId> <tenantId>` when attaching to that session. See:
+- Cross-service tests and advanced clients typically obtain a `gameInstanceId` by calling the Game Session REST API (for example `POST /sessions`, which creates a game instance despite the legacy path name) and then send `SESSION <gameInstanceId> <tenantId>` when attaching to that instance. See:
   - `design/project-management/look-smoke-tests.md` (WebSocket and Telnet flows)
   - `design/project-management/look-cross-service-tests.md`
   - `design/architecture/system-architecture-authentication.md`
@@ -372,16 +373,16 @@ Malformed or partially specified envelopes are treated as best-effort hints only
 - **Telnet and MCP control traffic** – Telnet option negotiation bytes (IAC sequences) are handled by the Telnet pipeline and are not treated as lines for the purposes of the envelope capture window; they neither count as `SESSION` envelopes nor as non-`SESSION` lines. MCP control/negotiation lines (`#$#...`) are likewise treated as out-of-band control traffic when deciding whether the window has closed. Only the first non-`SESSION` gameplay line (for example `LOGIN`, `LOOK`, `SAY`, or other normal commands) closes the envelope window and triggers forwarding upstream.
 - **Consumed vs forwarded** – during the envelope capture window, lines beginning with `SESSION` are treated as envelope attempts and are **consumed by the TCP Proxy Service** (never forwarded to Spring Cloud Gateway / Game Session Service). After the envelope window closes, any lines beginning with `SESSION` are forwarded verbatim as normal gameplay text (and therefore have no special meaning at the proxy layer).
 - **Without any `SESSION` envelope** – all lines, including `LOGIN`, are forwarded verbatim to the gateway; the proxy does not drop or delay gameplay commands.
-- **With a valid `SESSION` envelope** – once the first valid `SESSION` line is parsed, the connection is bound to that `{sessionId, tenantId}` pair for its lifetime and those identifiers are propagated via headers and metrics. The envelope window closes immediately after a valid capture; any subsequent `SESSION` lines are forwarded as normal text and do not rebind the connection.
-- **Malformed `SESSION` lines** – if either `sessionId` or `tenantId` is missing or is not a valid UUID, the line is logged and ignored; no error is sent back to the client. Clients that choose to use `SESSION` may resend a corrected envelope as long as the envelope window is still open, or they may proceed with `LOGIN` only. Each malformed envelope also increments a per-connection counter; once the number of malformed envelopes exceeds `TCP_PROXY_MAX_MALFORMED_ENVELOPES`, the proxy closes the connection as abusive and emits the corresponding metrics.
+- **With a valid `SESSION` envelope** – once the first valid `SESSION` line is parsed, the connection is bound to that `{gameInstanceId, tenantId}` pair for its lifetime and those identifiers are propagated via headers and metrics. The envelope window closes immediately after a valid capture; any subsequent `SESSION` lines are forwarded as normal text and do not rebind the connection.
+- **Malformed `SESSION` lines** – if either `gameInstanceId` or `tenantId` is missing or is not a valid UUID, the line is logged and ignored; no error is sent back to the client. Clients that choose to use `SESSION` may resend a corrected envelope as long as the envelope window is still open, or they may proceed with `LOGIN` only. Each malformed envelope also increments a per-connection counter; once the number of malformed envelopes exceeds `TCP_PROXY_MAX_MALFORMED_ENVELOPES`, the proxy closes the connection as abusive and emits the corresponding metrics.
 - **Diagnostics mode (future enhancement)** – a debug/diagnostics mode may surface
   explicit warnings or errors for malformed or repeated `SESSION` envelopes to
   help advanced Telnet clients detect configuration issues. Until that mode ships,
   the behavior above (one-shot binding, silent ignores up to the configured malformed‑envelope budget) is considered canonical.
 
-#### Security considerations for `{sessionId, tenantId}`
+#### Security considerations for `{gameInstanceId, tenantId}`
 
-The proxy treats `sessionId` and `tenantId` from the `SESSION` envelope as
+The proxy treats `gameInstanceId` and `tenantId` from the `SESSION` envelope as
 client-provided claims, not trusted facts. It forwards them as headers and
 metrics context, but the Game Session Service is responsible for enforcing
 multi-tenant safety:
@@ -389,8 +390,8 @@ multi-tenant safety:
 - `tenantId` is validated against the authenticated account’s allowed tenants
   during `LOGIN` and subsequent session binding.
 - Session ownership is checked so a client cannot bind to or resume another
-  user’s session, even if it guesses a valid `sessionId`.
-- Any mismatch between the envelope’s `{sessionId, tenantId}` and the account’s
+  user’s game instance, even if it guesses a valid `gameInstanceId`.
+- Any mismatch between the envelope’s `{gameInstanceId, tenantId}` and the account’s
   known sessions/tenants is treated as a cross-tenant hijack attempt, rejected,
   and logged with enough context for audit/alerting (without leaking sensitive
   credentials).
@@ -407,7 +408,7 @@ Prometheus label cardinality bounded:
   `TcpProxyEventService` observes an error from `NotifyDisconnect`, with
   `code` drawn from a bounded enum.
 
-Detailed identifiers such as `sessionId` and client IP are captured in
+Detailed identifiers such as `gameInstanceId` and client IP are captured in
 structured logs (for example JSON fields) and in tracing context, not as
 Prometheus label values. Operators correlate individual sessions using logs and
 traces, while metrics remain suitable for aggregation and alerting in both
@@ -563,12 +564,11 @@ TCP Proxy metrics follow the global Micrometer/OpenTelemetry conventions describ
   - `handshake_protocol` – TLS/WebSocket handshake protocol error (for example unsupported versions/ciphers or HTTP upgrade rejection).
   - `unexpected_close` – connection closed during handshake/reconnect.
   - `unknown` – fallback bucket for unexpected failures.
-- `tcpproxy.telnet.discarded` and related `tcpproxy.disconnect.notify.failure` counters for abuse and error visibility.
-  - `tcpproxy.disconnect.notify.failure` increments whenever a `NotifyDisconnect` attempt fails with a non-OK gRPC status. At a minimum:
-    - Transient network or availability errors (for example `UNAVAILABLE`, `DEADLINE_EXCEEDED`) are retried within the configured `TCP_PROXY_NOTIFY_DISCONNECT_MAX_RETRY_MS` window and counted once per failed attempt.
-    - Permanent contract or caller errors (for example `INVALID_ARGUMENT`, `FAILED_PRECONDITION`, `PERMISSION_DENIED`) increment the counter but must **not** be retried beyond an initial attempt; the proxy treats these as misconfiguration or consumer bugs rather than transient conditions.
-    - The generic `UNKNOWN` status is treated conservatively as transient for the purposes of retry, but is logged with enough context to investigate whether it masks a permanent failure.
-  - In addition, a bounded-label `grpc.app_error{code="<code>"}` meter records the final gRPC status observed by the proxy when invoking `NotifyDisconnect`, so operators can distinguish transient transport issues from contract-level failures. Consumers should rely on this small, documented code set rather than interpreting arbitrary gRPC status strings.
+- `tcpproxy.telnet.discarded` and related `tcpproxy.disconnect.notify.*` counters for abuse and error visibility.
+  - **Transport vs application failures are separated** so dashboards stay unambiguous and align with [gRPC API Style & Versioning](../../system-architecture-grpc.md#error-handling):
+    - `tcpproxy.disconnect.notify.transport_failure{status="<grpc_status>"}` increments whenever a `NotifyDisconnect` attempt fails with a non-OK gRPC status (for example `UNAVAILABLE`, `DEADLINE_EXCEEDED`, TLS handshake failures). These are retried within the configured `TCP_PROXY_NOTIFY_DISCONNECT_MAX_RETRY_MS` window and counted once per failed attempt.
+    - `tcpproxy.disconnect.notify.app_error{code="<code>"}` increments when the gRPC transport returns `OK` but the `NotifyDisconnectResponse.error.code` field is not `OK`. These are treated as permanent, contract-level outcomes and are **not retried**.
+    - The shared `grpc.app_error{code="<code>"}` meter is reserved for application-level error codes (not transport statuses). It may be incremented alongside `tcpproxy.disconnect.notify.app_error` when the proxy receives a non-OK `NotifyDisconnectResponse.error.code`.
 
 In Prometheus these Micrometer meters appear with the expected naming
 translation, for example:
@@ -584,7 +584,7 @@ Prometheus-style names; treat this section as the canonical list of meters and
 the Grafana snippets as reference queries over them.
 
 Labels on these metrics are intentionally low-cardinality (for example `type`, and occasionally `tenantId`)
-to keep Prometheus usage aligned with the global guidelines. Detailed context such as client IP, `sessionId`,
+to keep Prometheus usage aligned with the global guidelines. Detailed context such as client IP, `gameInstanceId`,
 and error details is captured in structured logs and tracing spans rather than metric labels.
 
 ### Operational Runbook Hooks
@@ -601,7 +601,7 @@ When wiring alerts and runbooks for the TCP Proxy Service, focus on a small set 
   - Alert on sustained `tcpproxy.gateway.handshake.failures{reason!="timeout"}` and on long tails in `tcpproxy.websocket.reconnect.delay`; together these often indicate certificate, DNS, or listener misconfigurations between the proxy and Spring Cloud Gateway.
   - Cross-check these alerts with Gateway health and TLS/mTLS metrics from the Security and Logging & Monitoring docs so incidents are triaged at the correct layer (proxy vs gateway vs cluster networking).
 - **NotifyDisconnect health**
-  - Monitor `tcpproxy.disconnect.notify.failure` and the associated `grpc.app_error{code="<code>"}` meter for spikes in `UNAVAILABLE` or `DEADLINE_EXCEEDED`, which may indicate Game Session outages or network issues on the internal gRPC path.
+  - Monitor `tcpproxy.disconnect.notify.transport_failure` and the associated `grpc.app_error{code="<code>"}` meter for spikes in `UNAVAILABLE` or `DEADLINE_EXCEEDED`, which may indicate Game Session outages or network issues on the internal gRPC path.
   - Treat sustained increases in permanent error codes (for example `INVALID_ARGUMENT`, `PERMISSION_DENIED`) as configuration or contract issues rather than transient incidents; runbooks should direct operators to inspect Game Session logs and configuration when this happens.
 
 Runbooks should always pair these TCP Proxy metrics with corresponding Spring Cloud Gateway and Game Session dashboards. Edge symptoms such as elevated discard counts or connection churn often originate from higher-layer changes (for example new rate limits or authentication flows), and resolving them in isolation at the proxy can mask the real cause.
@@ -625,7 +625,7 @@ Use the bundled `/dev/echo` WebSocket endpoint under the `dev` profile to valida
 When `TCP_PROXY_DEV_ISOLATED=true`, the proxy runs with an in-process Telnet echo handler:
 
 1. Start the proxy in dev-isolated mode: `./gradlew :tcp-proxy-service:bootRunDevIsolated`. This sets `spring.profiles.active=dev` and `TCP_PROXY_DEV_ISOLATED=true`.
-2. The proxy no longer opens a WebSocket connection to the gateway. It echoes subsequent commands directly back over the Telnet session while still allowing advanced clients to send an optional `SESSION <sessionId> <tenantId>` envelope. In this mode, `SESSION` parsing exercises only the envelope capture and logging behaviour; it does **not** perform real attach-to-session or Redis-backed resume flows.
+2. The proxy no longer opens a WebSocket connection to the gateway. It echoes subsequent commands directly back over the Telnet session while still allowing advanced clients to send an optional `SESSION <gameInstanceId> <tenantId>` envelope. In this mode, `SESSION` parsing exercises only the envelope capture and logging behaviour; it does **not** perform real attach-to-session or Redis-backed resume flows.
 3. Connect from a Telnet/MUD client: `telnet localhost 2323`.
 4. Send a few commands (for example `LOOK`, `SAY hello`). Watch the Telnet output to verify that input is sanitized and echoed without requiring Spring Cloud Gateway, Game Session, or any other services. Do not use real credentials in this echo mode, and do not log raw input unless it is explicitly enabled and credential-redacted.
 

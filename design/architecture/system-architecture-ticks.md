@@ -52,6 +52,9 @@ Two related concepts:
 The tick heartbeat is the **canonical timeline** for each `<tenantId, regionId>`:
 
 - The canonical coordination timeline is the pair `(regionEpoch, tickId)`; within a given `regionEpoch`, `tickId` is monotonic per region.
+- Heartbeats represent **committed tick progression**:
+  - A heartbeat `(regionEpoch, tickId)` is emitted only after the tick is considered committed for that region (as defined by the staging/commit model and the tick effect ledger), not merely after a tick begins or stages work.
+  - Consumers must treat the heartbeat as the authoritative “last committed tick” watermark and must not infer commit from Redis `pending` keys or from observer event streams.
 - Consumers must be able to reconstruct their view of progress and scheduling purely from the heartbeat stream plus durable domain state; no Redis structure is treated as an authoritative log of past ticks.
 - Consumers that persist offsets or schedules must key them by `(tenantId, regionId, regionEpoch, tickId)` and treat any observed jump in `regionEpoch` as a reset boundary: state derived from the old epoch is discarded or reconciled from PostgreSQL before resuming.
 
@@ -64,11 +67,13 @@ In addition to the gRPC heartbeat, the Game Session Service exposes a **tick eve
   - The `activeVersionId` pinned for that tick.
 - Consumers (for example, schedulers or reconnection logic) typically:
   - Acquire a small lease such as `tick-events-lease:{tenantRegionTag}` to avoid duplicate processing.
-  - Persist their last-processed offset in **Coordination Redis** under a region-scoped key such as `tick-events-offset:{tenantRegionTag}` so they can resume from the correct `tickId` after restarts.
+  - Persist their last-processed stream offset (for example a Redis Stream entry ID) in **Coordination Redis** under a region-scoped key such as `tick-events-offset:{tenantRegionTag}` so they can resume from the correct position after restarts.
 - The event stream is a **best-effort coordination structure**, not a durable log of record:
   - It is implemented on Coordination Redis under a region-scoped prefix such as `tick-events:{tenantRegionTag}`.
   - Production-like profiles that persist offsets use **Redis Streams** for this prefix so consumers can resume from an offset; pub/sub is reserved for fire-and-forget observers that never track offsets or history.
   - Events may be dropped, duplicated, or reordered relative to the heartbeat; correctness must not rely on seeing every past event.
+  - Events represent **tick start notifications** (a “tick began” signal), not a commit guarantee:
+    - A tick may begin and later be retried or abandoned due to failures; consumers must use the heartbeat/RegionStatus as the commit watermark.
   - It is classified as **reset-tolerant** in the Redis reset policy matrix: region/tenant/cluster resets may drop both the event stream and any stored offsets without violating correctness.
   - Consumers must treat missing or truncated history as a signal to re-establish their baseline from the canonical gRPC heartbeat and domain state rather than assuming every past event is available.
 
@@ -88,6 +93,11 @@ For any consumer or operator that needs to locate “where a region is” on the
 - **Bootstrap** from a durable view:
   - Game Session exposes a control/status API (for example `GetRegionTickStatus`) backed by a PostgreSQL `RegionStatus` or equivalent table that records the latest committed `(regionEpoch, tickId)` per `<tenantId, regionId>`.
   - New consumers and operational tools obtain their initial view of the timeline from this API or table; they do not infer it from Redis coordination keys.
+- Minimum `RegionStatus` contract (required for consumers and admission control):
+  - Timeline: `regionEpoch`, `lastCommittedTickId`, and an `updatedAt`/`lastCommitTimestamp`.
+  - Health: a bounded `status`/`health` value (for example `RUNNING`, `DEGRADED`, `PAUSED`, `STALLED`).
+  - Backlog indicators (optional but recommended): retry depth and remote follow-up lag/backlog so origin-side admission control can shed load without relying on Redis hints.
+  - Update rule: `lastCommittedTickId` advances only after a tick is committed; it is monotonic within an epoch and resets only when `regionEpoch` is bumped by a scoped reset or explicit timeline-severing maintenance.
 - **Follow** via streaming heartbeats:
   - After bootstrapping, consumers attach to `StreamTickHeartbeats` and treat the combination of the bootstrap status and the live heartbeat as the authoritative progression of the timeline.
   - If the heartbeat stream drops or a reset bumps `regionEpoch`, consumers use the new `(regionEpoch, tickId)` from the stream plus durable state to re-establish their position.
@@ -227,7 +237,7 @@ See `system-architecture-tick-execution-flows.md` for the detailed algorithm, in
 Tick execution uses a **staging/commit pattern**:
 
 - Stage: compute intended effects and write them into Redis (`tick:{tenantRegionTag}:pending`) via Lua under the region lease.
-- Commit: call into domain services, which apply changes using `tickId` and effect guards to ensure idempotency.
+- Commit: call into domain services, which apply changes using the region-scoped tick timeline `(regionEpoch, tickId)` and effect guards to ensure idempotency across replays and resets.
 
 Full commit-pattern details are in `system-architecture-tick-execution-flows.md` and the Redis docs.
 
@@ -259,7 +269,7 @@ Isolation and replay guarantees rely on:
 
 - Per-region leases and locks in Redis.
 - A shared coordination timeline `(region_epoch, tickId)` per `<tenantId, regionId>` as described in the Redis architecture docs.
-- Domain-level idempotency rules keyed by `tickId` and effect identifiers.
+- Domain-level idempotency rules keyed by `(region_epoch, tickId)` and effect identifiers.
 
 Crash recovery replays staged ticks safely by re-invoking domain handlers; replays must not double-apply logical effects. Even when Redis loses or replays up to a few ticks within the tail-loss envelope, the combination of the coordination timeline, the tick effect ledger, and per-service idempotency guards ensures that each `(tenantId, regionId, region_epoch, tickId, effectKey)` converges to a single terminal outcome (`APPLIED` or `ABANDONED`). See `system-architecture-tick-failures-and-operations.md` for the detailed story.
 
@@ -303,18 +313,18 @@ See `system-architecture-tick-failures-and-operations.md` for the full crash-rec
 
 ---
 
-## Domain Idempotency Rules (TickId in PostgreSQL)
+## Domain Idempotency Rules (Region Epoch + TickId in PostgreSQL)
 
-Domain services must ensure that tick-driven effects are **idempotent** with respect to `tickId`:
+Domain services must ensure that tick-driven effects are **idempotent** with respect to the region-scoped tick timeline `(regionEpoch, tickId)`:
 
-- Single-aggregate updates use a `last_tick_id` pattern.
-- Multi-aggregate operations use effect guard tables with stable effect identifiers.
+- Single-aggregate updates use a “last applied tick” pattern that is epoch-aware (for example storing and comparing `(last_region_epoch, last_tick_id)` for the aggregate).
+- Multi-aggregate operations use effect guard tables keyed by the same epoch-scoped identity (for example `(tenantId, regionId, regionEpoch, tickId, effectKey)`).
 
 ### Tick Effect Identity and Idempotency Contract
 
 Effect identity and idempotency rules are defined jointly by:
 
-- The `tickId` carried on tick-driven calls.
+- The `(regionEpoch, tickId)` carried on tick-driven calls.
 - A stable, structured effect identity (including `tenantId`, `regionEpoch`, `tickId`, `effectKey`, aggregate type, and aggregate id) derived deterministically from the command payload and tick context.
 
 Together these form the canonical `EffectId` described in `system-architecture-transactions.md`. Tick coordination keys in Redis, tick effect ledger rows, and domain-level guard tables (for example `tick_effect_guard`) must all use projections of this same `EffectId` rather than introducing ad-hoc idempotency keys.

@@ -72,7 +72,7 @@ engineers should follow this checklist:
 1. **Enumerate non-Retired versions**
    - Query the Game Design Service’s version metadata (or the service-local
      mirror of version state) to list all `version_id` values that are not in
-     the Retired/Archived state for the affected tenants.
+     the Retired state (also referred to as “Archived” in some UIs) for the affected tenants.
    - Confirm which tables and columns participate in those versions’ template
      graphs (for example via ERD diagrams or schema documentation).
 2. **Assess dependencies on the fields being changed**

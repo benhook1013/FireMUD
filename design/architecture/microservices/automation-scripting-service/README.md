@@ -98,7 +98,7 @@ Ownership and durability expectations for Automation & Scripting–related prefi
 | `automation:tick:{tenantScriptTag}:lock` | Coordination | Reset-tolerant; locks are volatile coordination state and can be dropped and reacquired after a coordination reset. |
 | `automation:tick:{tenantScriptTag}:queue` | Coordination | Reset-tolerant; in-flight automation tick queues are rebuilt from PostgreSQL and fresh events. Dropping these keys may cause some automation work to be skipped within the accepted tail-loss envelope. |
 | `automation:tick:{tenantScriptTag}:pending` | Coordination | Reset-tolerant; staged automation effects are coordinated with the main tick system and are replayed or discarded according to the same idempotency rules as tick `pending` entries. |
-| `automation:queue:<tenantId>:*` | Cache/Rate-Limit | Reset-tolerant, best-effort cache/queue of automation work items. Loss is acceptable; authoritative script triggers and audit trails remain in PostgreSQL. This prefix family lives only on Cache/Rate-Limit Redis and is not part of the coordination log. |
+| `automation:queue:<tenantId>:*` | Cache/Rate-Limit | Reset-tolerant, best-effort cache/queue of automation work item *indexes*. Loss is acceptable because admitted work items are persisted durably in PostgreSQL (outbox) and can be re-driven; this prefix is not an authoritative log. |
 | `automation:quota:<tenantId>:<scriptId>` | Cache/Rate-Limit | Reset-tolerant, best-effort quota counters. Dropping these keys temporarily resets budgets but does not affect script correctness or long-term state. |
 
 Any new Automation & Scripting–specific prefixes must be added to this table and to the central Redis key catalogs, with a clear statement of which Redis role they use and whether they are reset-tolerant, reset-sensitive, or reset-forbidden.
@@ -113,6 +113,16 @@ Any new Automation & Scripting–specific prefixes must be added to this table a
 - Quota and queue-related caches are treated as **best-effort TTL-only caches** unless this README states otherwise; any future strongly validated caches must document their version fields and invalidation strategy explicitly, in line with the Redis cache design.
   In particular, `automation:queue:*` must never be the sole source of truth for whether work has been enqueued or processed; exactly-once or at-least-once semantics are provided by durable trigger tables and idempotent domain logic, not by Redis queue contents.
   Cache metrics for `automation:queue:*` / `automation:quota:*` should either follow the `cache.automation_queue_*` patterns in `system-architecture-redis-cache.md` or be clearly mapped to the Automation & Scripting metrics already defined in this README (for example `automation_script_queue_delay_seconds`, `automation_tick_events_enqueued_total`, and `script_quota_*` counters) so queue and quota behavior are observable.
+
+#### Durable Script Work Item Outbox (Required)
+
+To avoid “DSL evaluated successfully but effects were silently dropped”, the Automation & Scripting Service must persist admitted script work items durably before they are considered successful:
+
+- Admitted triggers produce **script work items** which are written to a PostgreSQL-backed outbox table keyed by Trigger Identity (plus sequencing fields as needed).
+- `automation:queue:*` keys are derived coordination indexes that accelerate draining/batching, not the authoritative record of pending work.
+- On restart, failover, or Cache/Rate-Limit Redis resets, the service can rebuild `automation:queue:*` indexes by scanning the outbox for pending items and re-projecting them.
+
+This enables stage-aware outcomes in `script_event_audit`: the system can distinguish “DSL evaluation succeeded” from “handoff/enqueue succeeded”, and can re-drive delivery where appropriate without re-executing the DSL body for the same trigger.
 
 #### Redis Cluster Slotting Rules for Automation
 
@@ -194,24 +204,36 @@ This behavior ensures that a script patch either becomes the new active version 
   is available; the service reloads affected scripts and updates its registry.
 - **Event ingress RPCs** – domain services such as the Game Session Service and Game Logic Service call event-ingress methods (for example, `TriggerScriptEvent` or a batch equivalent defined in `automation_scripting_service.proto`) to deliver script events. These RPCs carry:
   - `tenantId`, `regionId`, and `entityId` for the target context.
+  - `regionEpoch` when the event is tied to the canonical tick timeline (for example tick-aligned timers, catch-up triggers, or events that must fence across coordination resets).
   - `scriptEventId` as a stable, caller-supplied identifier for the trigger.
   - `eventType` and versioning metadata such as `scriptPatchVersion`.
   - An envelope for the event payload, including any domain-specific fields.
-  Event ingress RPCs are **idempotent** with respect to `scriptEventId` and the script that handles the event: repeated calls with the same `<tenantId, regionId, scriptId, scriptEventId>` must not cause the DSL body to run twice. The Automation & Scripting Service implements this in accordance with the `scriptEventId` lifecycle and deduplication rules described in `design/architecture/system-architecture-scripting-dsl-reference-and-lifecycle.md#scripteventid-lifecycle-and-deduplication`.
+  Event ingress RPCs are **idempotent** with respect to Trigger Identity (including `scriptEventId`) and the script that handles the event: repeated calls with the same Trigger Identity must not cause the DSL body to run twice. The Automation & Scripting Service implements this in accordance with the `scriptEventId` lifecycle and deduplication rules described in `design/architecture/system-architecture-scripting-dsl-reference-and-lifecycle.md#scripteventid-lifecycle-and-deduplication`.
 
 ### Idempotency & Retries
 
 The Automation & Scripting Service relies on upstream callers (typically the Game Session Service) to generate **stable `scriptEventId` values** for each trigger. These identifiers serve as the canonical idempotency keys for event ingress:
 
-- Any RPC that accepts `scriptEventId` as part of its request (for example, the conceptual `TriggerScriptEvent` API and timer-driven internal scheduling) is **idempotent with respect to the tuple `<tenantId, regionId, scriptId, scriptEventId>`**:
-  - Re-sending the same request with the same `<tenantId, regionId, scriptId, scriptEventId>` must not cause the DSL body to run twice.
-  - The service records at most one `script_event_audit` row per `<tenantId, regionId, scriptId, scriptEventId>`.
-- Downstream calls made from DSL components (for example, to Game Logic or World Management) must also carry a **stable idempotency token** derived from `<tenantId, regionId, scriptId, scriptEventId[, tickId]>` so infrastructure-level retries do not duplicate side effects. See `design/architecture/system-architecture-transactions.md` for recommended patterns.
+- Any RPC that accepts `scriptEventId` as part of its request (for example, the conceptual `TriggerScriptEvent` API and timer-driven internal scheduling) is **idempotent with respect to Trigger Identity**:
+  - For entity-scoped external events, the idempotency key is at least `<tenantId, regionId, entityId, scriptId, eventType, scriptPatchVersion, scriptEventId>`.
+  - For tick-aligned scheduler events, the idempotency key also includes `regionEpoch` and a due point (for example `dueTickId` / `dueAt`) in the deterministic `scriptEventId` derivation.
+  - Re-sending the same request with the same idempotency key must not cause the DSL body to run twice.
+  - The service records at most one `script_event_audit` row per idempotency key.
+- Downstream calls made from DSL components (for example, to Game Logic or World Management) must also carry a **stable idempotency token** derived from Trigger Identity plus tick context when applicable (for example including `entityId`, `eventType`, `scriptPatchVersion`, `scriptEventId`, and optionally `tickId`/`regionEpoch`) so infrastructure-level retries do not duplicate side effects. See `design/architecture/system-architecture-transactions.md` for recommended patterns.
 
 Transport-level retries:
 
 - Unary event ingress calls are safe to retry at the gRPC transport layer **only if** they reuse the same `scriptEventId`.
 - Timer and scheduler internals may retry infrastructure operations (for example, Redis writes) but never re-execute the DSL body for the same `scriptEventId`; they replay only idempotent downstream operations.
+
+### Reload Backpressure and Retry Contract
+
+During `reloadState=RELOADING`, this service must return an explicit backpressure outcome for event-ingress calls (for example `outcome=skipped_reloading` / `reason=reloading`) so callers can decide whether to retry.
+
+- For low-rate external events, callers may retry with the same `scriptEventId` using a bounded exponential backoff and jitter.
+- For timer-derived scheduler events, best-effort timer semantics apply; triggers not admitted during reload are not backfilled unless explicitly covered by a bounded catch-up rule.
+
+See `design/architecture/system-architecture-scripting-contracts.md#7-reload-backpressure-contract`.
 
 ## Faction & Reputation System
 
@@ -371,7 +393,7 @@ Key Automation & Scripting–specific metrics include:
 - `script_quota_allowed_total`, `script_quota_denied_total`, and `automation_tick_events_enqueued_total` for quota enforcement and tick integration.
 - `automation_script_sandbox_failures_total{reason=...}`, `automation_script_errors_total{tenantId, reason=...}`, and `automation_script_runtime_seconds` for sandbox and runtime health.
 
-See [Logging & Monitoring](../../system-architecture-logging-monitoring.md) for how these metrics are scraped, visualized, and alerted on.
+See [Logging & Monitoring](../../system-architecture-logging-monitoring.md) and `design/architecture/system-architecture-scripting-observability-contract.md` for how these metrics map to audit records, are scraped, and are used for alerting.
 
 - [System Architecture Diagram](../../system-architecture-diagram.md)
 - [System Context Diagram](../../system-context-diagram.md)

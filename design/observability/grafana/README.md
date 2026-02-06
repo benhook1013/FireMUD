@@ -20,3 +20,4 @@ To import a dashboard, use Grafana’s “Import dashboard” feature and either
 - Shared alert snippet templates must follow the alert label contract in `design/architecture/system-architecture-logging-monitoring.md` (especially `severity ∈ {P0,P1,P2}`, plus `owner` and `runbook` labels).
 - Shared PromQL expressions must respect metric units. If a metric name contains `_ms`, comparisons must use millisecond thresholds (for example `> 250`, not `> 0.25`).
 - Player experience SLIs/SLOs are evaluated per `tenantId` (and `regionId` where applicable). Dashboards may include global rollups, but they should preserve per-tenant visibility so operators can see blast radius quickly.
+- Entry-path availability panels should be computed from explicit attempts counters (for example `entrypath_connection_attempts_total{tenantId,path,outcome}`), not from a single failure-mode proxy like “connection limits exceeded”.

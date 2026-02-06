@@ -18,7 +18,7 @@ This document outlines how FireMUD is deployed across different environments, fo
 
 - Use **Docker Compose** when developing locally or running short-lived preview stacks from pull requests.
 - Use **Kubernetes (dev/stage/prod clusters)** for any shared or player-facing environment where autoscaling, high availability, and full observability are required.
-- Prefer **staging** for playtests that should mirror production routing, TLS, and Redis/Postgres topologies before promoting changes.
+- Prefer **staging** for playtests that should mirror production routing, TLS, and Redis/Postgres topologies before promoting changes. Treat PR preview stacks as fast functional review environments, not as a substitute for prod-like validation.
 
 ---
 
@@ -126,7 +126,7 @@ If PROXY protocol is not enabled (or source IP is not preserved), treat per-IP l
 
 ## Monitoring & Logging
 
-FireMUD relies on a consistent observability stack across environments. The full stack is deployed in Kubernetes. The Docker Compose environment omits these components.
+FireMUD relies on a consistent observability stack across environments. The full stack is deployed in Kubernetes. The Docker Compose environment omits these components by default, but operators may run a small local observability stack for debugging when needed (see `system-architecture-logging-monitoring.md` for expectations and signal conventions).
 Example manifests for the collector and dashboards live under [`k8s/monitoring`](../../../k8s/monitoring).
 
 Docker Compose and Kubernetes rely on the following monitoring tools:
@@ -168,7 +168,8 @@ Select the desired profile via the `SPRING_PROFILES_ACTIVE` environment variable
 
 ## Staging Environment for Playtesting
 
-A dedicated staging cluster mirrors production using smaller node sizes. Pull requests spin up a short-lived Docker Compose stack via [preview.yml](../../../.github/workflows/preview.yml) so playtesters can evaluate changes. Test data resets nightly once the staging cluster is available.
+A dedicated staging cluster mirrors production using smaller node sizes. Pull requests spin up a short-lived Docker Compose stack via [preview.yml](../../../.github/workflows/preview.yml) so reviewers can do fast functional checks; staging is the intended environment for prod-like playtests and routing/TLS validation.
+Staging test data may be reset on a schedule once operators explicitly install staging-specific automation; by default staging is not scheduled (see `schedule.md`).
 For details on collecting tester feedback see [Playtesting & Feedback](../../project-management/playtesting-feedback.md).
 
 By default, staging is treated as **disposable**: it is not protected by the production backup schedule and can be rebuilt from manifests and fresh data as needed.

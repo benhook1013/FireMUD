@@ -53,7 +53,7 @@ flowchart TD
     Web -- wss/HTTP --> ExtLB
     ExtLB -- wss/HTTP (public ingress) --> Gateway
     TCPProxy -- wss (mTLS, internal-only listener) --> Gateway
-    Gateway -- wss --> Session
+    Gateway -- ws (in-cluster) --> Session
 
     Admin -- gRPC mgmt (infra) --> Gateway
     Admin -- admin APIs (via Gateway) --> InternalServices

@@ -9,6 +9,7 @@ Staging is treated as **disposable by default**: it does not run the production 
 ## PostgreSQL Logical Backups
 
 - A `firemud-pg-dump` CronJob (defined in `k8s/postgres/pg-dump-cronjob.yaml`) runs **every 15 minutes** and stores compressed SQL dumps.
+- The CronJob authenticates to the Game Session control plane to invoke `PauseTicks` / `ResumeTicks` using a dedicated Kubernetes service account and a narrowly-scoped mTLS client identity. NetworkPolicies and RBAC restrict this Job so only the backup workflow can call tick-pausing APIs.
 - The production Terraform modules automatically deploy this CronJob. See [`k8s/terraform-production`](../../k8s/terraform-production).
 - Retention policy:
   - **24 hours** of 15‑minute dumps
@@ -40,6 +41,13 @@ PostgreSQL dumps must capture a consistent view of gameplay state. Before a `pg_
 2. Polls `GetTickStatus` until the service reports `PAUSED`, which indicates all in‑flight ticks have completed. Command queues continue accepting actions during this pause, but they execute only after ticks resume.
 3. Starts `pg_dump` immediately. Ticks may resume as soon as the dump command starts because PostgreSQL snapshots the data at launch time.
 4. Invokes `ResumeTicks` so queued commands continue processing.
+
+Operational constraints:
+
+- Tick pausing is part of the production backup path, so it must be bounded and observable. Backup tooling should track:
+  - How long it takes for a scope to transition to `PAUSED` (pause latency).
+  - How long the scope remains paused (pause duration), even though the dump itself does not require ticks to stay paused.
+- If a pause does not reach `PAUSED` within a small, documented budget (typically on the order of a small number of tick intervals), the backup Job should fail fast (skip the dump) and alert operators rather than silently holding the game in a paused state or producing an inconsistent backup.
 
 For convenience, `dev-tools/backups/firemud-backup.sh` automates these steps by pausing ticks, waiting until the service is paused, running `pg_dump`, and then calling `ResumeTicks`.
 
@@ -172,6 +180,10 @@ Backup and verification jobs must emit simple, environment-agnostic metrics so o
 
 - `backup_last_success_timestamp_seconds` – Unix timestamp of the last successful PostgreSQL logical backup (`pg_dump`) for the environment.
 - `backup_verify_last_success_timestamp_seconds` – Unix timestamp of the last successful verification run from `verify-backups.sh` (for example, verifying that recent dumps exist in the object store).
+- Coordinated pause/resume safety metrics (to ensure backups do not cause prolonged player-visible degradation):
+  - `backup_tick_pause_duration_seconds{scope}` – duration of the tick pause window for a backup attempt (including wait-for-paused time).
+  - `backup_ticks_paused{scope}` – gauge indicating whether ticks are currently paused for a given scope.
+  - `backup_commands_queued_during_pause_total{scope}` – count of commands queued while ticks were paused (helps detect unbounded backlog growth during long pauses).
 - Optional per-job counters such as:
   - `backup_run_total{result="success"|"failure"}` – counts of backup Job executions.
   - `backup_verify_run_total{result="success"|"failure"}` – counts of verification Job executions.
@@ -184,11 +196,15 @@ Prometheus and Alertmanager should expose and alert on these metrics using rules
 - **Missed verification (P1/P2)**
   - Expression: “no successful verification in the last 24h” (for example, `time() - backup_verify_last_success_timestamp_seconds > 24 * 60 * 60`).
   - Labels similar to the backup alert, with a clear `runbook` annotation.
+- **Backup pause too long (P1)**
+  - Expression: pause duration exceeds an agreed budget (for example `backup_tick_pause_duration_seconds{scope="all"} > 30`).
+  - Labels: `service="postgres-backup"`, `severity="P1"`, `owner="platform"`, `runbook="design/architecture/system-architecture-backup-recovery.md#backup-verification--restoration-testing"`.
 
 Grafana dashboards under `design/observability/grafana` should include a small “Backups” section or dedicated dashboard that visualizes:
 
 - The age of the last successful backup and verification.
 - Recent backup/verify success vs failure counts.
+- Tick pause duration and queue growth signals during backup windows.
 
 These signals allow operators to treat backup and verification health as first-class SLOs alongside tick, Redis, and player experience SLOs.
 
@@ -220,6 +236,11 @@ Post-restore hardening is performed by a dedicated Kubernetes Job (for example `
      - Ensure object storage credentials used for `pg_dump` uploads and Velero point to the intended bucket and are not stale.
      - Ensure asset store credentials (see `design/architecture/system-architecture-asset-store-runbook.md`) are correct for the environment and rotated if compromise is suspected.
      - Ensure any outbound email/notification credentials are correct for the environment (staging should not be able to send production email).
+   - Suggested post-restore credential checklist:
+     - Backups: `PG_DUMP_BUCKET` / `PG_DUMP_ENDPOINT` access keys, Velero credentials and bucket targets.
+     - Asset storage: `ASSET_STORE_*` credentials and endpoint expectations (and any CDN/gateway proxy configuration that affects published asset URLs).
+     - Outbound comms: SMTP and webhook/API tokens, with explicit “staging cannot send production messages” guards.
+     - Operator access: operator-only client certificates and any kube credentials used by operator tooling.
    - If these credentials are rotated out-of-band (for example via the cloud provider console), record the required re-bind/re-issue steps in the relevant runbooks so the restore procedure remains repeatable.
 
 The `post-restore-secret-hardening` Job runs after PostgreSQL and core services have been restored and basic health checks pass, but **before** the restored environment is considered player-facing. It uses least-privilege service accounts:

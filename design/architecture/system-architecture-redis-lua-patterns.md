@@ -29,7 +29,7 @@ Every coordination script belongs to a **script category** that constrains which
 | Entity lock | `tick:{tenantRegionTag}:lock:<entityId>` | Single-key or small multi-key scripts; all lock keys share the same `{tenantRegionTag}` as their corresponding `pending` structures. |
 | Tick staging / pending | `tick:{tenantRegionTag}:pending` and related effect structures | Single-key or shard-local multi-key scripts that operate entirely within one `{tenantRegionTag}` slot. |
 | Timers and retries | `timer:{tenantRegionTag}`, `retry:{tenantRegionTag}` | Shard-local scripts operating on keys that share the same `{tenantRegionTag}`; no cross-slot operations. |
-| Session CAS / bindings | `session:game:<tenantId>:<sessionId>`, `session:auth:<tenantId>:<tokenHash>` | Single-key scripts; session keys are never mixed with tick keys in the same script unless all keys are shard-local to one `{tenantRegionTag}`. |
+| Session CAS / bindings | `session:game:<tenantId>:<sessionId>`, `session:auth:<scope>:<tokenHash>` (for example `session:auth:tenant:<tenantId>:<tokenHash>`) | Single-key scripts; session keys are never mixed with tick keys in the same script unless all keys are shard-local to one `{tenantRegionTag}`. |
 | Maintenance / cleanup | Region-local maintenance keys under `tick:{tenantRegionTag}:*` or `timer:{tenantRegionTag}` | Shard-local scans and deletes constrained to one `{tenantRegionTag}` at a time; no cross-slot operations. |
 | Automation helpers (coordination role only) | `script-scheduler:{tenantRegionTag}:lastTickId` and similar | Shard-local scripts that operate on per-region scheduler metadata; must not touch Cache/Rate-Limit prefixes. |
 
@@ -292,7 +292,7 @@ Script changes must be rolled out in a way that respects both AOF replay semanti
 
 - **Compatibility levels**
   - `compatible` – purely additive changes (for example, new return fields, extra read-only validations) that do not change key shape or semantics. These may be rolled out without coordination resets as long as callers tolerate older results.
-  - `epoch_aligned` – changes that rely on new ledger fields or tick semantics but preserve key shapes; they may require a coordinated `region_epoch` bump for affected regions so that old and new semantics are not mixed.
+  - `epoch_aligned` – changes that rely on new ledger fields or tick semantics but preserve key shapes. If an epoch boundary is required to avoid mixing old and new semantics, it must be treated as a **timeline-severing operation** and executed via the same control-plane handshake as a scoped coordination reset (pause ticks → bump `region_epoch` → reconcile ledger → resume). Do not treat `region_epoch` bumps as a routine rollout mechanism.
   - `requires_region_reset` / `requires_tenant_reset` / `requires_cluster_reset` – changes that alter key shapes or semantics in ways that cannot be safely mixed with old behavior. These must run alongside the corresponding coordination reset flows and are expected to be rare.
 - **Registry as the source of truth**
   - The Lua Script Registry records a `compatibility_level` (or equivalent) and `reset_sensitivity` for each script and version.

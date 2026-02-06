@@ -27,6 +27,8 @@ serving data:
 - `gameInstanceId` – identifies a running game instance managed by the Game
   Session Service.
 
+For canonical naming and scoping rules, see [Identifier Glossary](../../system-architecture-identifier-glossary.md).
+
 World data uses two distinct identifier families. Do not use ambiguous names like `roomId` in APIs or schema documentation without specifying which family is in use.
 
 - **Template identifiers (design-time, version-scoped):**
@@ -60,6 +62,15 @@ World Management is the authoritative owner of character and NPC location for ea
 - Runtime tables such as `character_location` and `npc_location` live in this service’s schema and are written **only** by World Management logic as part of movement, instancing, and world-creation flows invoked by the Game Session Service.
 - Other services, including Entity Management and Game Session, treat these tables as read-only and rely on World Management gRPC APIs or cached projections when they need to resolve where entities are.
 - Any derived caches or denormalized views of location (for example, within Entity Management’s LOOK helpers) must be refreshed from World Management rather than persisting their own “authoritative” location fields.
+
+#### Spatial Effects Contract (World ↔ Entity)
+
+Movement, drops, pickups, and room presence are cross-service by design:
+
+- World Management is authoritative for occupancy/location and for persistent ambient room state (weather, doors, hazards) keyed by runtime `RoomInstanceRef`.
+- Entity Management is authoritative for containment and item instances, including synthetic room-ground containers keyed by the same runtime `RoomInstanceRef`.
+
+All spatial effects must carry the target `RoomInstanceRef` and a canonical tick `EffectId`. Both services must implement durable idempotency guards so partial success can be retried safely until convergence. See [Transaction Strategies](../../system-architecture-transactions.md) and [Identifier Glossary](../../system-architecture-identifier-glossary.md).
 
 ## Architecture / Design Notes
 
@@ -309,11 +320,11 @@ Expected response:
 
 ### World Events
 
-World events are persisted in the `world_event` table and processed periodically by `WorldEventService`. A weather change event updates the `region.weather` column before notifying other services.
+World events are persisted in the `world_event` table and processed periodically by `WorldEventService`. A weather change event updates the runtime weather field (for example `region_instance.weather`) for the affected `(tenantId, gameInstanceId)` before notifying other services.
 
 ### Saga Participation
 
-World creation for a new tenant runs as a Saga using the helper utilities from `firemud-common`. Each step is described in [world-creation-workflow.md](world-creation-workflow.md) and can be rolled back if a later step fails. This ensures worlds are created consistently even when the workflow spans multiple services.
+World creation for a new game instance runs as a Saga using the helper utilities from `firemud-common`. Each step is described in [world-creation-workflow.md](world-creation-workflow.md) and can be rolled back if a later step fails. This ensures instance world state is created consistently even when the workflow spans multiple services.
 
 - [System Architecture Diagram](../../system-architecture-diagram.md)
 - [System Context Diagram](../../system-context-diagram.md)

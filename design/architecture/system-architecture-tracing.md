@@ -77,6 +77,17 @@ All spans should include, where applicable:
 - `tenantId`, `regionId`, `playerId`, and `trace_locale` (for example `prod-us-east-1` or `dev-local`) so traces can be filtered by tenant and environment.
 - Error attributes such as `error.code` and `error.type` drawn from the same bounded catalogs used by `grpc.app_error` and domain error handling.
 
+## Sampling and Sensitive Attributes
+
+- **Sampling**
+  - Production-like environments should assume sampling is enabled and that not every request/tick will produce a trace.
+  - Runbooks must treat traces as a best-effort diagnostic: when sampling is too low to find a representative trace, operators should pivot to metrics (SLO/SLI panels) and logs (Kibana searches filtered by `tenantId`, `regionId`, and `traceId` when available).
+  - If a workflow requires trace availability as part of an operational contract (for example debugging a recurring tick stall), document the minimum sampling expectations for that workflow explicitly in the owning runbook.
+- **Sensitive attributes**
+  - Attributes such as `playerId` are operationally useful but should be treated as sensitive data and kept bounded (IDs only, no message payloads).
+  - Do not attach user-provided text (chat content, command payloads, free-form error messages) as span attributes; keep that data in logs with appropriate redaction and retention controls.
+  - When exporting traces outside of the cluster or into shared tooling, ensure access controls and retention policies match the sensitivity of these identifiers.
+
 ## Operational Playbook: Using Traces During Incidents
 
 During incidents, Jaeger is a first-class tool alongside logs and metrics. The following queries and patterns are used by runbooks:
@@ -87,7 +98,7 @@ During incidents, Jaeger is a first-class tool alongside logs and metrics. The f
   - Drill into child spans (`tick_apply_effect`, domain spans) to identify slow downstream services or guard failures.
 - **Replay storms and idempotency issues**
   - Filter by `operation = "tick_apply_effect"` and `effectKey` or `effect_type` for the hot effect categories.
-  - Verify how often the same effect identity appears in a short time window and correlate with `tick.effect_outcome_total` metrics.
+  - Verify how often the same effect identity appears in a short time window and correlate with `tick_effect_outcome_total` metrics.
 - **Telnet/TCP Proxy incidents**
   - Filter by `service.name = "tcp-proxy-service"` and spans such as `tcpproxy_connection` or `tcpproxy_notify_disconnect`.
   - Correlate high `tcpproxy.telnet.discarded` and `tcpproxy.disconnect.notify.failure` metrics with specific traces to understand whether failures are due to abusive clients, PROXY header issues, or downstream Game Session behavior.

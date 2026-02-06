@@ -212,6 +212,8 @@ Operator control-plane access relies on mTLS client certificates. To keep this a
 - **Rotation**: operator certificates are rotated on a fixed cadence (or immediately after personnel/device changes). Rotation updates the operator Secret and distributes the new credential to approved operator surfaces; the previous credential is revoked or removed from allowed trust paths.
 - **Revocation/incident response**: if an operator credential is suspected compromised, rotate immediately and tighten NetworkPolicy allowlists so that possessing a valid certificate is not sufficient without approved network placement.
 
+See `design/architecture/system-architecture-operator-credentials-runbook.md` for the concrete operator workflow.
+
 ---
 
 ## Summary

@@ -25,6 +25,27 @@ Plugins run with the same core execution model as other scripts but are subject 
 
 The Logging & Admin Service exposes management APIs for listing, enabling, disabling, and inspecting plugins; these APIs enforce the same role model and provide audit trails for all plugin state changes.
 
+## Signing and Key Lifecycle (Required)
+
+Plugin bundle signing must be specified precisely enough that operators can rotate keys and revoke signers without ambiguity.
+
+Minimum requirements:
+
+- **Algorithm**: plugin bundles are signed using **Ed25519**.
+- **Bundle digest**: each uploaded bundle computes a stable `bundleDigest` (for example SHA-256 over the canonical bundle bytes) which is the input to signature verification and is recorded in audit trails.
+- **Key identity**: every signature is tied to a `signerKeyId` (stable identifier for the public key used to verify the signature).
+- **Verification points**:
+  - Game Design verifies the signature at upload time and records `bundleDigest`, `signerKeyId`, and `signatureVerifiedAt`.
+  - Automation & Scripting re-verifies signatures at load/activation time (defense in depth) and rejects activation if verification fails or the signer is not allowed for the environment.
+- **Rotation**:
+  - Operators can introduce new signer keys without downtime by adding a new `signerKeyId` to the allowlist for the environment.
+  - Old keys may remain valid for existing bundles during a transition window, but new uploads should prefer the newest active key.
+- **Revocation**:
+  - Operators can revoke a signer by removing its `signerKeyId` from the allowlist and adding it to a revocation list.
+  - When a signer is revoked, subsequent loads/activations of bundles signed by that key must fail, and already-enabled plugins must transition to a disabled state (for example `DISABLED_DUE_TO_SIGNER_REVOKED`) with triggers rejected and the reason recorded in `script_event_audit`.
+
+Logging & Admin must surface signer identity and verification status (including `bundleDigest` and `signerKeyId`) so operators can explain why a plugin version was accepted or rejected.
+
 ## Outline
 
 1. Plugins are packaged as signed bundles uploaded through the Game Design Service.

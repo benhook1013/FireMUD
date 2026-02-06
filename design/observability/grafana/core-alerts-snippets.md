@@ -90,6 +90,18 @@ Example alerts for missed backups and verification runs:
   annotations:
     summary: Backup verification has not succeeded recently
     description: No successful backup verification run has been recorded in the last 24 hours. Investigate the verify-backups CronJob and storage configuration.
+
+- alert: BackupTickPauseTooLong
+  expr: backup_tick_pause_duration_seconds{scope="all"} > 30
+  for: 5m
+  labels:
+    service: postgres-backup
+    severity: P1
+    owner: platform
+    runbook: design/architecture/system-architecture-backup-recovery.md#backup-verification--restoration-testing
+  annotations:
+    summary: Tick pause window too long during backup
+    description: The backup workflow is pausing ticks for longer than the expected budget. Investigate tick pause/resume controls and backup job behavior.
 ```
 
 Environment-specific rulesets may tune thresholds, severities, and label values, but should preserve the `owner` and `runbook` annotations so alerts always point back to the relevant documentation.
@@ -144,6 +156,22 @@ These example rules enforce the player-centric SLOs defined in the Logging & Mon
   annotations:
     summary: Chat delivery latency above SLO
     description: Chat delivery p99 latency has exceeded 1s over the last 5 minutes for active regions.
+
+- alert: EntryPathAvailabilityLow
+  expr: (
+    sum by (tenantId, path) (increase(entrypath_connection_attempts_total{outcome="success"}[1d]))
+      /
+    sum by (tenantId, path) (increase(entrypath_connection_attempts_total[1d]))
+  ) < 0.999
+  for: 30m
+  labels:
+    service: gateway
+    severity: P0
+    owner: platform
+    runbook: design/architecture/system-architecture-player-experience-incident-runbook.md#telnetwebsocket-path-availability-below-slo
+  annotations:
+    summary: Entry path availability below SLO
+    description: One or more tenants have sustained connection failures on a specific entry path (telnet/websocket). Inspect outcomes in entrypath_connection_attempts_total and follow the player experience runbook.
 ```
 
 ## Observability Smoke Test (Non-Production)

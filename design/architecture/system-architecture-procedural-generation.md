@@ -109,18 +109,25 @@ All generators emit a normalized structure:
 
 | Field | Description |
 | --- | --- |
-| `roomId` | Unique identifier |
+| `roomKey` | Unique identifier within the generator output graph (not a persisted template/instance id) |
 | `coordinates` | Grid location (used for spatial logic and editing) |
-| `exitMap` | Map of direction → `roomId` |
+| `exitMap` | Map of direction → `roomKey` |
 | `tags` | Optional labels like `"start"`, `"town"`, etc. |
 | `biome` | Biome or terrain type (if applicable) |
 | `elevation` | Numeric terrain height (used for visuals or logic) |
-| `regionId` | Optional grouping for partitioned maps |
+| `regionKey` | Optional grouping key for partitioned maps (not a persisted template/instance id) |
 
 `spacingMultiplier` is stored on the containing region (World Management) and can globally scale movement speed across the map. In sparse layouts Game Logic uses room coordinates and this `spacingMultiplier` to derive movement/travel cost, so nearby rooms are quick to traverse while large gaps produce longer travel times.
 
 In **full-grid mode**, every terrain tile becomes a room.
 In **sparse mode**, only selected POIs and waypoints are emitted, and the distance between them determines travel cost.
+
+World Management assigns canonical persisted identifiers when saving generator outputs:
+
+- Design-time/template generation persists `roomTemplateId` values keyed by `(tenantId, versionId)`.
+- Runtime/instance generation persists `roomInstanceId` values keyed by `(tenantId, gameInstanceId)`.
+
+Generator outputs must not embed or assume these persisted identifiers; they are assigned at persistence time by World Management.
 
 ---
 
@@ -130,7 +137,7 @@ The following rules align generators with the core runtime and tooling:
 
 1. **Solo Tick Scheduling** – Runtime generation is queued like any other command but includes `requiresSoloTick: true`. The Game Session Service executes it in an isolated tick with an extended, configurable time budget.
 2. **Heavy Post‑Gen Population** – Population scripts may declare `requiresSoloTick: true`. The Game Session Service schedules these in dedicated ticks to avoid fairness regressions.
-3. **Seed & Metadata Persistence** – All generation requests include a seed. **World Management Service** persists `seed`, `generatorType`, and raw params alongside region/room records. For design-time generation this metadata is stored on template rows keyed by `(tenantId, versionId)`; for runtime/instance generation it is stored on instance rows keyed by `(tenantId, gameInstanceId)`. The **Automation & Scripting Service** includes these values in its result payload but **does not store** them.
+3. **Seed & Metadata Persistence** – All generation requests include a seed. **World Management Service** persists `seed`, `generatorType`, and raw params alongside region/room records. For design-time generation this metadata is stored on template rows keyed by `(tenantId, versionId)`; for runtime/instance generation it is stored on instance rows keyed by `(tenantId, gameInstanceId)`.
 4. **Tenant Scoping** – All generation inputs/outputs are tenant‑scoped. Generators resolve tenant feature flags/config before execution.
 5. **Sparse Traversal Rules** – Exit costs between sparse rooms are derived from their coordinate distance. **Game Logic** uses region `spacingMultiplier` to scale the overall pace if needed.
 6. **Post-generation Population** – After rooms are created and persisted, **World Management** may invoke population scripts in the Automation & Scripting Service based on room tags, biome, and difficulty zone. Automation scripts emit commands; they do not directly mutate world topology.
@@ -157,7 +164,7 @@ When the shape of generator configuration evolves, schema changes must follow th
 
 ### World Management Service
 
-- Owns invocation of generators as pure functions and persists generated rooms/biomes/regions; assigns canonical `roomId`s
+- Owns invocation of generators as pure functions and persists generated rooms/biomes/regions; assigns canonical `roomTemplateId` / `roomInstanceId` values at persistence time
 - Persists generator metadata (`seed`, `generatorType`, and an immutable config
   snapshot with `schemaVersion`) and editor overlays, including a snapshot of
   the effective procedural rule configuration used for each generation run
@@ -167,7 +174,7 @@ When the shape of generator configuration evolves, schema changes must follow th
 
 - Provides optional post-generation population scripts (for example, spawning NPCs or loot) that can be invoked by World Management based on tags, biome, and difficulty
 - Integrates procedural generation results with the broader scripting and automation framework where needed
-- Does not directly persist generator outputs; it returns results to World Management or other domain services, which are solely responsible for writing template or instance rows
+- Does not execute or return world-topology graphs for persistence; it produces commands and bindings that act on already-persisted world instance state
 
 ### Game Session Service
 

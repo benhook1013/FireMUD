@@ -142,7 +142,7 @@ The table below summarizes the major quota and budget types that apply to script
 
 ## Auditability & Metrics
 
-Every scheduler decision emits an audit record stored in a lightweight `script_event_audit` table in PostgreSQL. `scriptEventId` uniquely identifies the trigger instance so retries, replays, and downstream side effects can be correlated across logs, metrics, and traces.
+Every scheduler decision emits an audit record stored in a lightweight `script_event_audit` table in PostgreSQL. `scriptEventId` uniquely identifies the trigger instance so retries, replays, and downstream side effects can be correlated across audit queries, logs, and traces (not as a metric label).
 
 The canonical `script_event_audit` schema includes:
 
@@ -224,7 +224,7 @@ These identifiers appear consistently in:
 A typical troubleshooting flow for a problematic script or plugin is:
 
 1. Start from a player-visible issue or a game tick log that includes `tenantId`, `regionId`, `entityId`, and `tickId`.
-2. Use the tick log’s `scriptEventId` (or a derived `correlationId`) to locate matching entries in `script_event_audit` and automation metrics (for example, `automation_script_triggers_total` and `automation_script_triggers_dropped_total`).
+2. Use the tick log’s `scriptEventId` (or a derived `correlationId`) to locate matching entries in `script_event_audit` and in logs/traces. Do not rely on `scriptEventId` as a metric label; use metrics to understand aggregate rates by `scriptId`/`eventType`/`tenantId` and use audit/log queries for per-event correlation.
 3. From those records, identify the responsible `scriptId`, `scriptPatchVersion`, and, where applicable, `pluginId`/`pluginVersionId`.
 4. Cross-reference the associated publish or plugin enable/disable actions in Game Design and Logging & Admin using the same identifiers.
 
@@ -250,6 +250,7 @@ Dry-run and test executions share the same sandbox engine and guards as live tra
 This section is **illustrative**, not normative. The **authoritative definitions** for metric names, labels, and alerting behavior live in:
 
 - `design/architecture/system-architecture-logging-monitoring.md`
+- `design/architecture/system-architecture-scripting-observability-contract.md`
 - Automation & Scripting Service README: `design/architecture/microservices/automation-scripting-service/README.md`
 
 Implementations should align emitted metrics with those documents; the intent here is only to show how common outcomes map conceptually to “counted”, “skipped”, or “dropped” signals so readers understand the observability story.
@@ -437,6 +438,23 @@ These scripts complement the web-based editor and allow creators and operators t
 ## Rollback & Recovery Cookbook
 
 This section summarizes common rollback and recovery scenarios for scripting and automation. It complements the broader backup and recovery guidance in `design/architecture/system-architecture-backup-recovery.md` and the versioning rules in `design/architecture/system-architecture-versioning-runtime.md`.
+
+### Rollback Protocol (Required)
+
+Rollback must prevent previously queued work from a rolled-back `scriptPatchVersion` from continuing to affect gameplay.
+
+At a minimum, rollback consists of:
+
+1. **Fence new evaluation**
+   - Repin the affected game instance(s) to the target `scriptPatchVersion` using Game Session / Logging & Admin control-plane APIs.
+   - Ensure Automation & Scripting rejects triggers for non-`READY` patches and records explicit outcomes (for example `version_unavailable`) rather than silently falling back.
+2. **Drain/purge queued automation work**
+   - Drain or purge queued script work items and staging entries that carry the rolled-back patch so they cannot enqueue into tick queues after repin.
+   - Any purge must be scoped and auditable (tenant/region/script as appropriate) and must not require ad-hoc `redis-cli` deletes.
+3. **Enforce execution-time version fencing**
+   - Game Session must reject any queued tick commands whose embedded `scriptPatchVersion` does not match the instance’s currently pinned version, and record the rejection so operators can diagnose rollback impact.
+
+These requirements are summarized in `design/architecture/system-architecture-scripting-contracts.md#3-version-fencing-rollback-safety`.
 
 ### Misbehaving Script Patch After Activation
 

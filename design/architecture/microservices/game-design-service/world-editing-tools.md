@@ -46,6 +46,17 @@ revisions until domain services report a matching draft digest for that version.
 - `contentDigest` (a stable hash of the service’s Draft template graph relevant to publishing)
 - `digestSchemaVersion` so hash semantics can evolve without ambiguity
 
+Digest semantics must be explicitly stable and testable:
+
+- `contentDigest` covers all version-scoped **template** and **binding** rows that participate in publish for the service’s domain for that `(tenantId, versionId)`. It must not include runtime/instance rows keyed by `gameInstanceId`, and it must not include audit/history tables.
+- The digest input must be generated from a canonical, deterministic representation (for example, a stable JSON/Protobuf export) with:
+  - Stable ordering (table/type ordering, then primary key ordering),
+  - Stable field selection and encoding, and
+  - Explicit exclusion of non-semantic fields such as `created_at`, `updated_at`, and other write-time metadata that should not block publish.
+- `digestSchemaVersion` increments only when the canonicalization rules or included domain objects change, and publish tooling must refuse to compare digests computed under different schema versions.
+
+The Game Design Service reconciler records the per-service digest it observed for a given `commitId` when that commit was last applied successfully, and later compares current digests against those recorded values. Publish-time validation must require that all participating services report `appliedCommitId == commitId` and `contentDigest` equal to the recorded digest for that commit.
+
 Versions
 must be `IN_SYNC` before they can be published.
 

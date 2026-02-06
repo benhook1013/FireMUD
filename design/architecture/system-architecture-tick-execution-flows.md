@@ -190,6 +190,6 @@ To illustrate how cross-region flows compose from the phases above, consider a *
 
 Throughout this sequence:
 
-- Each leg is idempotent and keyed by `tickId` and effect identity in the domain services.
+- Each leg is idempotent and keyed by `(region_epoch, tickId)` and effect identity in the domain services.
 - Region executors never hold cross-region locks; they coordinate via queued commands, durable follow-up records, and result messages.
 - Retries due to lock contention or transient failures are handled by the standard retry queues and idempotent handlers in each region without breaking the overall experience.

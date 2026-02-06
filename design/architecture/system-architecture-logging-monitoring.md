@@ -15,7 +15,7 @@ This document describes how FireMUD collects logs, metrics, and traces across al
 - gRPC services use the shared `LoggingInterceptor` to include `traceId` and `correlationId` in every log entry. See [Shared Libraries](./system-architecture-shared-libraries.md).
 - Log retention defaults to **14 days** in development and **90 days** in production, after which indices are archived. These values can be tuned via the [Deployment Environments](./infrastructure/deployment-environments.md) settings.
 - Log storage hosts can be customized via the `FLUENT_ELASTICSEARCH_HOST` and `FLUENT_ELASTICSEARCH_PORT` environment variables ([Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md#observability)).
-- The local Docker Compose stack includes Fluent Bit, Prometheus, Grafana, and Jaeger in addition to streaming logs to the console.
+- The local Docker Compose stack streams logs to the console by default and may optionally run a small observability stack (for example Prometheus/Grafana/Jaeger) for local debugging. Docker Compose is not treated as the canonical production observability environment; Kubernetes manifests under `k8s/monitoring` remain the source of truth for prod-like deployments.
 - Operators search logs primarily through Kibana. Sample Grafana and Kibana dashboards live under [`design/observability`](../observability) and are described in [Operator Dashboards](./microservices/logging-admin-service/analytics-dashboards.md). The Logging & Admin Service provides a dedicated UI for moderation and audit trails.
 
 ## Metrics & Tracing
@@ -75,9 +75,14 @@ In addition to infrastructure-level SLOs for Redis, ticks, and backup pipelines,
   - SLO: 99% of core gameplay commands (movement, look, combat) complete in < 250ms over a 5-minute window, per `tenantId`/`regionId`.
   - Instrumentation: emitted by Gateway (and optionally the TCP Proxy for Telnet) with labels `{command, tenantId, regionId}`. Core commands such as movement, LOOK, and combat should use a small, documented set of `command` label values so per-command latency panels remain low-cardinality.
 - **Telnet/WebSocket path availability**
-  - SLI: success rate and error rate for Telnet and WebSocket upgrade/connection flows, derived from metrics such as `tcpproxy.connections.active`, `tcpproxy.connections.limit.exceeded`, and HTTP/gRPC status codes on the WebSocket bridge.
+  - SLI: fraction of successful connection attempts over total attempts for each entry path (Telnet and WebSocket). This SLI must be computed from an explicit attempts counter so it captures all failure modes, not just cap rejections.
   - SLO: ≥ 99.9% of connection attempts succeed over a 1-day window; sustained deviations are treated as P0 incidents for the affected entry path.
-  - Instrumentation: primarily derived from TCP Proxy and Gateway meters (`tcpproxy_connections_total`, `tcpproxy_connections_limit_exceeded`, WebSocket upgrade status counters), with labels `{tenantId}` and, where safe, coarse-grained client metadata.
+  - Instrumentation:
+    - Edge services (TCP Proxy and Gateway) must emit `entrypath_connection_attempts_total{tenantId,path,outcome}` where:
+      - `path` is a bounded enum (for example `telnet` or `websocket`).
+      - `outcome` is a bounded enum (for example `success`, `limit_exceeded`, `auth_failed`, `upstream_unreachable`, `timeout`, `protocol_error`, `unknown`).
+    - The SLI should be computed as `sum(rate(entrypath_connection_attempts_total{outcome="success"}[...])) / sum(rate(entrypath_connection_attempts_total[...]))` per `{tenantId,path}`.
+    - Auxiliary meters such as `tcpproxy_connections_limit_exceeded` remain useful drilldowns but are not sufficient to define availability by themselves.
 - **Chat delivery latency**
   - SLI: time from chat message submission to delivery to all intended recipients, for example `chat_delivery_latency_ms` histogram keyed by `tenantId` and chat channel type.
   - SLO: 99% of chat messages are delivered in < 1s over a 5-minute window for active regions.
@@ -100,6 +105,7 @@ Moderation and admin workflows should remain usable even when parts of the obser
   - Continue to expose core moderation and admin APIs based on authoritative game data wherever possible.
   - Hide or disable only those features that require the missing backend (for example, embedded dashboards or historical trace searches), rather than failing the entire moderation workflow.
 - **Alert routing:** If Alertmanager is unavailable, or email delivery is degraded, Logging & Admin should surface alert status inside its own UI and APIs so operators can still see pending alerts without relying solely on email or chat integrations. When Alertmanager is down, Logging & Admin may fall back to a small set of Prometheus recording rules that approximate critical alert conditions (for example, SLO breaches for tail-loss or player SLIs) and clearly label those views as “best-effort from Prometheus (Alertmanager unavailable)” so operators understand they are not seeing the full alert state.
+  - For broader “observability stack outage” scenarios (Prometheus down, Elasticsearch down, Jaeger down), follow `design/architecture/system-architecture-observability-incident-runbook.md` for fallback workflows and recovery verification.
 
 New moderation features and admin tools must explicitly document:
 

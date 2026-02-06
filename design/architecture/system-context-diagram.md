@@ -18,39 +18,39 @@ This document gives a high-level view of how FireMUD's clients, gateways, intern
                             v                                       v
                 +----------------------+                  +-------------------+
                 | Spring Cloud Gateway | <--------------- | TCP Proxy Service |
-                |         (DMZ)        |    wss (mTLS)              |       (DMZ)       |
+                |         (DMZ)        |    wss (mTLS)    |       (DMZ)       |
                 +----------------------+                  +-------------------+
                             |
                             | WebSocket (gameplay)
                             v
       +-------------------------------------------+          +-------------------------------------------+
-      |             Internal Services             |          |           Email / SMTP Provider           |
-      |                                           |          +-------------------------------------------+
+      |             Internal Services             |--------->|           Email / SMTP Provider           |
+      |                                           |  Email   +-------------------------------------------+
       | - Game Session Service                    |                                ^
       | - Account Service                         |                                |
       | - Entity Management Service               |                                |
       | - Game Logic Service                      |                                |
       | - World Management Service                |                                |
       | - Automation & Scripting Service          |                                |
-      | - Social & Groups Service                 |                                | Alerts → Email /
-      | - Logging & Admin Service                 |                                |          SMTP Provider
+      | - Social & Groups Service                 |                                | Alerts
+      | - Logging & Admin Service                 |                                |
       | - Game Design Service                     |                                |
       +-------------------------------------------+                                |
                             |                                                      |
                             | DB/Cache/Logs                                        |
                             v                                                      |
-      +-------------------------------------------+          +-------------------------------------------+
-      |               Datastore Layer             |--------->|            Observability Stack            |
-      |                                           | Metrics/ |                                           |
-      | - PostgreSQL (shared cluster; per-service | Traces   | - Prometheus (metrics)                    |
-      |   schemas, tenant-scoped tables)          |          |                                           |
-      | - Redis (coordination: sessions, ticks,   |          | - OpenTelemetry Collector (traces)        |
-      |   locks, timers; production: separate     |          | - Jaeger (trace UI)                       |
-      |   cluster)                                |          | - Grafana (metrics dashboards)            |
-      | - Redis (cache/rate limits: caches,      |          | - Kibana (log UI)                         |
+      +-------------------------------------------+          +---------------------------------------------+
+      |               Datastore Layer             |--------->|            Observability Stack              |
+      |                                           | Metrics/ |                                             |
+      | - PostgreSQL (shared cluster; per-service | Traces   | - Prometheus (metrics)                      |
+      |   schemas, tenant-scoped tables)          |          |                                             |
+      | - Redis (coordination: sessions, ticks,   |          | - OpenTelemetry Collector (traces)          |
+      |   locks, timers; production: separate     |          | - Jaeger (trace UI)                         |
+      |   cluster)                                |          | - Grafana (metrics dashboards)              |
+      | - Redis (cache/rate limits: caches,       |          | - Kibana (log UI)                           |
       |   quotas, rate limiting; production:      |          | - Alertmanager (alerts, email notifications)|
-      |   separate cluster)                       |          |                                           |
-      | - Elasticsearch (logs)                    |          +-------------------------------------------+
+      |   separate cluster)                       |          |                                             |
+      | - Elasticsearch (logs)                    |          +---------------------------------------------+
       | - S3-compatible object storage (assets)   |
       +-------------------------------------------+
 

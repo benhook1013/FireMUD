@@ -11,7 +11,7 @@ This document describes the role and configuration of **Spring Cloud Gateway** i
 - For admin APIs the Gateway forwards JWTs to backend services without validating them. Player login and session binding are processed by the **Game Session Service**; see [Authentication & Authorization](./system-architecture-authentication.md#login-and-session-flow) for the detailed flow and the [Tenant Authorization Contract](./system-architecture-authentication.md#tenant-authorization-contract) for how downstream services enforce tenant access.
 - Supports both HTTP and WebSocket protocols
 - Deployed in both development and production environments
-- **Stateless and horizontally scalable** – no cookie-based session affinity is required. For gameplay WebSockets (`/ws/game/**`), the gateway must still perform deterministic per-connection shard routing so each connection reaches the correct Game Session shard that owns the relevant `<tenantId, regionId>` lease.
+- **Stateless and horizontally scalable** – no cookie-based session affinity is required; the gateway does not own gameplay sharding or routing state.
 - Auto‑scaling policies handle high concurrency
   - Telnet clients keep a **persistent TCP connection** to the TCP Proxy Service; Spring Cloud Gateway itself does not hold session state between reconnects
   - Spring Cloud Gateway restarts **disconnect WebSocket clients**; browsers and other WebSocket tools must open a fresh WebSocket connection and issue `LOGIN` again. Once reconnected, the gateway resumes routing and the Game Session Service uses Redis-backed state to decide whether to resume or start fresh as described in [Reconnection Strategy](./system-architecture-reconnection.md#resume-vs-reload-scenarios). The gateway does not maintain hidden, long‑lived WebSocket tunnels across its own restarts or attempt to replay in‑flight messages; edge delivery remains per‑connection FIFO and at‑most‑once as defined in [Protocol Bridging](./system-architecture-protocol-bridging.md#ordering--delivery-invariants).
@@ -45,13 +45,13 @@ For the Telnet-to-WebSocket bridge – including the `GATEWAY_WS_URL` contract, 
 
 Spring Cloud Gateway acts as the canonicalizer for client identity and session/tenant headers. It defines a strict trust boundary between **public ingress**, the **Telnet TCP Proxy**, and **internal services**:
 
-- Headers that may carry client or session identity (`X-Client-IP`, `X-Session-Id`, `X-Tenant-Id`, and all `X-Proxy-*` headers) are **never trusted directly from public clients**. The gateway strips any such headers that arrive from the external load balancer or browser/WebSocket clients before routing to backend services.
+- Headers that may carry client or session identity (`X-Client-IP`, `X-Game-Instance-Id`, `X-Tenant-Id`, and all `X-Proxy-*` headers) are **never trusted directly from public clients**. The gateway strips any such headers that arrive from the external load balancer or browser/WebSocket clients before routing to backend services.
 - For HTTP/WebSocket clients, the gateway derives `X-Client-IP` from a small, environment‑specific set of load-balancer headers (for example, `X-Forwarded-For` and `X-Real-IP`) plus the immediate peer address. The exact header list and precedence rules are defined in the [Security Architecture](./system-architecture-security.md#network-security--boundary-design), but the invariant is that downstream services treat only the gateway-produced `X-Client-IP` as authoritative.
-- For Telnet traffic, the TCP Proxy Service supplies `X-Proxy-Client-IP`, `X-Proxy-Session-Id`, `X-Proxy-Tenant-Id`, and `X-Proxy-Connection-Id` on the mTLS-authenticated WebSocket hop. After verifying the TCP Proxy client certificate on the internal WebSocket mTLS listener, the gateway:
+- For Telnet traffic, the TCP Proxy Service supplies `X-Proxy-Client-IP`, `X-Proxy-Game-Instance-Id`, `X-Proxy-Tenant-Id`, and `X-Proxy-Connection-Id` on the mTLS-authenticated WebSocket hop. After verifying the TCP Proxy client certificate on the internal WebSocket mTLS listener, the gateway:
   - Derives canonical `X-Client-IP` from `X-Proxy-Client-IP` (and any PROXY-provided metadata) and overwrites any existing `X-Client-IP`.
-  - Promotes `X-Proxy-Session-Id` and `X-Proxy-Tenant-Id` to canonical `X-Session-Id` and `X-Tenant-Id` where appropriate for gameplay routes.
+  - Promotes `X-Proxy-Game-Instance-Id` and `X-Proxy-Tenant-Id` to canonical `X-Game-Instance-Id` and `X-Tenant-Id` where appropriate for gameplay routes.
   - Preserves `X-Proxy-Connection-Id` as an opaque correlation identifier for disconnect events and observability.
-- Downstream services must treat `X-Client-IP`, `X-Session-Id`, and `X-Tenant-Id` as **gateway-owned** headers. Services must ignore or overwrite any attempts by callers to spoof these values via gRPC metadata or additional HTTP headers and should rely on their own Redis/session keys for authoritative identity as described in [Authentication & Authorization](./system-architecture-authentication.md) and [Multi-Tenancy](./system-architecture-multi-tenancy.md).
+- Downstream services must treat `X-Client-IP`, `X-Game-Instance-Id`, and `X-Tenant-Id` as **gateway-owned** headers. Services must ignore or overwrite any attempts by callers to spoof these values via gRPC metadata or additional HTTP headers and should rely on their own Redis/session keys for authoritative identity as described in [Authentication & Authorization](./system-architecture-authentication.md) and [Multi-Tenancy](./system-architecture-multi-tenancy.md).
 - All JWT validation and authorization logic lives in downstream admin and meta services (such as the Logging & Admin Service and Account Service), which must treat Spring Cloud Gateway as a dumb proxy and may not assume it has performed any authentication checks.
 
 ---
@@ -66,15 +66,15 @@ These headers are treated as **untrusted inputs** unless the gateway has authent
 
 - `X-Proxy-Client-IP` – the Telnet client IP address as observed by the TCP Proxy Service (ideally recovered via PROXY protocol from the Telnet edge proxy in Kubernetes SNAT scenarios).
 - `X-Proxy-Connection-Id` – server-generated identifier for the Telnet socket, used to correlate `NotifyDisconnect` events with authenticated sessions.
-- `X-Proxy-Session-Id` / `X-Proxy-Tenant-Id` – advisory context captured from the optional Telnet `SESSION <sessionId> <tenantId>` envelope.
+- `X-Proxy-Game-Instance-Id` / `X-Proxy-Tenant-Id` – advisory context captured from the optional Telnet `SESSION <gameInstanceId> <tenantId>` envelope.
 
 ### Public Ingress Strip/Drop Rules
 
 For any connection that arrives from the public player/admin ingress, Spring Cloud Gateway **strips** all spoofable client/session headers before routing:
 
 - `X-Client-IP`
-- `X-Session-Id`, `X-Tenant-Id`
-- `X-Proxy-Client-IP`, `X-Proxy-Connection-Id`, `X-Proxy-Session-Id`, `X-Proxy-Tenant-Id`
+- `X-Game-Instance-Id`, `X-Tenant-Id`
+- `X-Proxy-Client-IP`, `X-Proxy-Connection-Id`, `X-Proxy-Game-Instance-Id`, `X-Proxy-Tenant-Id`
 
 ### TCP Proxy → Gateway Authentication
 
@@ -95,11 +95,11 @@ After applying strip/authentication rules, the gateway sets or forwards the down
   - If the upstream hop is authenticated as the TCP Proxy Service and `X-Proxy-Client-IP` is present, set `X-Client-IP` from `X-Proxy-Client-IP`.
   - Otherwise derive `X-Client-IP` from the trusted load balancer forwarded headers (for example `X-Forwarded-For`) using the gateway’s configured trusted-proxy rules.
 - `X-Proxy-Connection-Id` – forwarded only when the upstream hop is authenticated as the TCP Proxy Service so downstream services can correlate lifecycle signals.
-- `X-Session-Id` / `X-Tenant-Id` – forwarded only when the upstream hop is authenticated as the TCP Proxy Service and the corresponding `X-Proxy-Session-Id` / `X-Proxy-Tenant-Id` inputs were provided. These remain advisory session hints; the Game Session Service validates any session/tenant claims against Redis and authenticated session state.
+- `X-Game-Instance-Id` / `X-Tenant-Id` – forwarded only when the upstream hop is authenticated as the TCP Proxy Service and the corresponding `X-Proxy-Game-Instance-Id` / `X-Proxy-Tenant-Id` inputs were provided. These remain advisory admission hints; the Game Session Service validates any game-instance/tenant claims against Redis, entitlements, and authenticated session state.
 
-`X-Session-Id` and `X-Tenant-Id` are not authentication material and must never be treated as reconnect tokens or proof of session ownership. They exist to carry the TCP Proxy Service’s optional Telnet `SESSION <gameInstanceId> <tenantId>` envelope context into the gameplay WebSocket handshake for advanced tools:
+`X-Game-Instance-Id` and `X-Tenant-Id` are not authentication material and must never be treated as reconnect tokens or proof of session ownership. They exist to carry the TCP Proxy Service’s optional Telnet `SESSION <gameInstanceId> <tenantId>` envelope context into the gameplay WebSocket handshake for advanced tools:
 
-- `X-Session-Id` is a hint for the desired game instance (`gameInstanceId`), not a gameplay “player session” identifier.
+- `X-Game-Instance-Id` is a hint for the desired game instance (`gameInstanceId`), not a gameplay “player session” identifier.
 - `X-Tenant-Id` is a hint for the desired tenant and must be validated against the authenticated account’s allowed tenants and entitlements during the canonical `LOGIN` + `ENTER_GAME` selection flow.
 - Any mismatch between these hints and Redis-backed session bindings or authenticated claims must result in the hints being ignored (or the enter-game request being rejected) and should be logged as a suspicious attach attempt.
 
@@ -124,11 +124,17 @@ At a configuration level, Spring Cloud Gateway defines WebSocket routes in `appl
 - **Telnet bridge usage** – The TCP Proxy Service connects to Spring Cloud Gateway using the `GATEWAY_WS_URL` environment variable, which by default points at `ws://spring-cloud-gateway:8080/ws/game`. In production deployments this value must be set to a `wss://.../ws/game` URL that targets the Gateway’s internal-only WebSocket mTLS listener (for example `wss://spring-cloud-gateway-mtls:8443/ws/game`) so the proxy–gateway hop uses mTLS as described in [Security Architecture](./system-architecture-security.md#tls-termination-for-gateway). Do not rely on the `ws://` default in player-facing environments. Exact `SESSION` envelope semantics and header propagation rules are defined in the TCP Proxy design’s **Telnet Session Envelope & Event Metrics** section; this document intentionally summarizes only the routing side.
 - **Required headers** – Spring Cloud Gateway preserves or sets:
   - `X-Client-IP` with the originating client address. For web clients this is derived from the external load balancer’s forwarded headers. For Telnet clients this is derived by the gateway from `X-Proxy-Client-IP` after authenticating the TCP Proxy identity (see [Header Trust Model](#header-trust-model)).
-  - `X-Proxy-Session-Id`, `X-Proxy-Tenant-Id`, and `X-Proxy-Connection-Id` on the TCP Proxy → Gateway hop when advanced Telnet clients provide a `SESSION` envelope or when the proxy needs disconnect correlation. The gateway strips these from public ingress and only forwards canonical `X-Session-Id` / `X-Tenant-Id` and `X-Proxy-Connection-Id` after authenticating the TCP Proxy identity (see [Header Trust Model](#header-trust-model)).
+  - `X-Proxy-Game-Instance-Id`, `X-Proxy-Tenant-Id`, and `X-Proxy-Connection-Id` on the TCP Proxy → Gateway hop when advanced Telnet clients provide a `SESSION` envelope or when the proxy needs disconnect correlation. The gateway strips these from public ingress and only forwards canonical `X-Game-Instance-Id` / `X-Tenant-Id` and `X-Proxy-Connection-Id` after authenticating the TCP Proxy identity (see [Header Trust Model](#header-trust-model)).
   - Standard correlation and trace headers defined in the logging/observability guidelines.
 - **TLS expectations**
   - External clients connect over `wss://` to the public load balancer, which forwards to Spring Cloud Gateway as described in [Security Architecture](./system-architecture-security.md#tls-termination--internal-encryption).
   - The TCP Proxy Service connects to `/ws/game/**` using `wss://` with mutual TLS to the Gateway’s internal-only WebSocket mTLS listener in production; plain `ws://` is reserved for local/dev-only flows.
+
+### Gameplay Sharding (Routing Boundary)
+
+The gateway is not the gameplay sharding router. `/ws/game/**` is a single, canonical WebSocket entry point that proxies to the Game Session Service behind a stable in-cluster backend surface.
+
+If and when gameplay execution is sharded across multiple Game Session instances by `<tenantId, regionId>` lease ownership, the sharding boundary is owned by the Game Session layer (and its coordination mechanisms), not by the gateway. The gateway must not introduce a separate routing plane, connection-affinity rules, or shard tokens unless those mechanisms are explicitly designed, implemented, and operationally validated as part of a dedicated sharding/routing design.
 
 ### WebSocket Liveness and Idle Timeouts
 
@@ -239,11 +245,11 @@ This layered model avoids over-counting Telnet/WebSocket frames while still prot
 
 Spring Cloud Gateway is not the owner of tenant isolation policy or authorization decisions: backend services derive, validate, and enforce tenant access as described in [Multi-Tenancy](./system-architecture-multi-tenancy.md) and [Authentication & Authorization](./system-architecture-authentication.md).
 
-At the same time, the gateway must perform deterministic **gameplay shard routing** for `/ws/game/**` so each WebSocket connection reaches the correct Game Session shard that currently owns the relevant `<tenantId, regionId>` lease. This routing uses region/session routing metadata published by Game Session (typically backed by Coordination Redis) and is not itself an authorization mechanism.
+If gameplay execution is sharded across multiple Game Session instances, that sharding boundary is owned by the Game Session layer and its coordination mechanisms. The gateway remains a protocol edge and must not introduce an independent shard-routing plane unless explicitly designed and implemented as part of a dedicated sharding/routing architecture update.
 
 - Tenant identity (`tenantId`) is derived and enforced by backend services as described in [Multi-Tenancy](./system-architecture-multi-tenancy.md), not by Spring Cloud Gateway.
 - Gameplay flows may include tenant markers such as:
-  - `X-Proxy-Session-Id` / `X-Proxy-Tenant-Id` inputs on the TCP Proxy → Gateway hop when advanced Telnet clients send a `SESSION` envelope. The gateway strips these from public ingress and only forwards canonical `X-Session-Id` / `X-Tenant-Id` after authenticating the TCP Proxy identity (see [Header Trust Model](#header-trust-model)).
+  - `X-Proxy-Game-Instance-Id` / `X-Proxy-Tenant-Id` inputs on the TCP Proxy → Gateway hop when advanced Telnet clients send a `SESSION` envelope. The gateway strips these from public ingress and only forwards canonical `X-Game-Instance-Id` / `X-Tenant-Id` after authenticating the TCP Proxy identity (see [Header Trust Model](#header-trust-model)).
   - Session and tenant context inferred by the Game Session Service from the `LOGIN` flow and Redis session keys.
 - Spring Cloud Gateway preserves these headers and forwards them unchanged to backend services but does not:
   - Derive `tenantId` from hostnames or URL paths.
@@ -261,6 +267,19 @@ At the same time, the gateway must perform deterministic **gameplay shard routin
 - Spring Cloud Gateway exposes REST and gRPC management endpoints (such as dynamic route operations and `GatewayManagementService` RPCs) **only on internal network surfaces**, not via the public player-facing ingress.
 - In Kubernetes, these endpoints are reachable only from inside the cluster or a dedicated admin network segment via `ClusterIP` Services, private ingress, and `NetworkPolicy` rules; the public Service/Ingress is limited to HTTP/WebSocket data-plane traffic.
 - Authentication and authorization for these management endpoints is enforced at the gateway boundary: operator tooling must connect using mutual TLS (mTLS) client certificates (issued by cert-manager under ClusterIssuer `firemud-ca-issuer`, with `clientAuth` EKU), and only trusted operator identities are permitted to invoke management operations. JWT-based admin roles apply to product/admin APIs behind the gateway, but gateway-owned management endpoints do not rely on downstream services for authorization. Implementation details and the recommended internal-only exposure model are documented in the [Spring Cloud Gateway service README](./microservices/spring-cloud-gateway/README.md#management-plane-security).
+
+### Dynamic Route Override Lifecycle
+
+Dynamic route management APIs exist to apply **ephemeral overrides** on top of the baseline route configuration loaded from `routes-dev.yml` / `routes-prod.yml`.
+
+The lifecycle expectations for these overrides must be explicit so operators understand convergence and persistence:
+
+- **Persistence:** dynamic overrides are not the canonical source of truth and must not be treated as durable configuration. A restart of all Gateway pods must revert to baseline config unless an operator re-applies the override.
+- **Multi-pod convergence:** in horizontally scaled gateway deployments, an override must either (a) be stored in a shared backend (so all pods observe the same override set) or (b) be applied to every pod consistently. If neither is true, the API must be documented as “single-pod only” and must not be used in production-like environments.
+- **Auditing:** every dynamic route change must emit an audit log entry (who/what changed, previous value, new value, correlation IDs) so operators can reconstruct edge behavior during incidents.
+- **Safety bounds:** dynamic overrides must not allow bypassing management-plane isolation (internal-only surfaces) or weakening header trust rules. Overrides are limited to route targets/predicates/filters and must not enable new public exposure of management endpoints.
+
+If the implementation cannot meet these lifecycle rules yet, the Gateway documentation should include an “Implemented Status” note that explicitly scopes dynamic route APIs to dev/test only.
 
 ## Observability
 

@@ -84,7 +84,7 @@ FireMUD supports seamless gameplay recovery through a layered reconnection model
 | Layer | Responsibility |
 | --- | --- |
 | TCP Proxy Service | Buffers Telnet input; clears on disconnect |
-| Spring Cloud Gateway | Stateless; re-establishes backend connections on reconnect |
+| Spring Cloud Gateway | Stateless; does not replay; enforces close-code taxonomy and triggers reconnects on backend unavailability or reroute events |
 | Game Session Service | Restores gameplay session using Redis |
 
 Certain failures can affect only the Telnet path while web clients remain healthy, such as misconfigured TLS or mTLS on the TCP Proxy → Gateway WebSocket bridge or issues in the Telnet edge proxy/PROXY-protocol chain. When Telnet is degraded but WebSocket remains healthy, operators should consult the [Telnet Path Degraded Runbook](./system-architecture-telnet-degraded-runbook.md) alongside the general [Reconnection Strategy](./system-architecture-reconnection.md).
@@ -147,10 +147,10 @@ See [Redis Architecture](./system-architecture-redis.md) and [Redis Usage & Prof
 
 | Flow | Protocol |
 | --- | --- |
-| Web Clients → Spring Cloud Gateway | WebSocket (wss) / HTTP (https) |
+| Web Clients → Spring Cloud Gateway | WebSocket (wss) / HTTP (https) (public ingress) |
 | MUD Clients → TCP Proxy Service | Raw TCP (Telnet) |
-| TCP Proxy Service → Spring Cloud Gateway | WebSocket (wss) |
-| Spring Cloud Gateway → Game Session Service | WebSocket (wss) |
+| TCP Proxy Service → Spring Cloud Gateway | WebSocket (`ws://` in local/dev; `wss://` with mTLS in production) |
+| Spring Cloud Gateway → Game Session Service | WebSocket (`ws://` in-cluster) |
 | Game Session Service → Other Microservices | gRPC (internal) |
 
 ✅ All internal communication from the Game Session Service onward uses **gRPC** with strict schema enforcement.
@@ -202,6 +202,20 @@ Game Session Service instances are deployed as a **pool of identical workers**. 
 - On reconnect, Gateway uses the region/session mapping stored in Redis to route the WebSocket connection back to the correct shard before gameplay resumes.
 
 This sharding model aligns with the tick-region ownership and lease rules described in [Tick System and Runtime Design](./system-architecture-ticks.md) and the tick topology guidance in `system-architecture-tick-concepts-and-invariants.md`.
+
+### Gameplay Shard Routing Contract (Required)
+
+Because tick execution is lease-owned per `<tenantId, regionId>`, gameplay WebSocket connections must land on the Game Session shard that currently owns that lease.
+
+The routing contract is intentionally narrow and explicit:
+
+- **Authoritative mapping store:** Game Session owns and publishes the current routing view in Coordination Redis. Gateway consumes it for `/ws/game/**` routing decisions; other services must not mint their own shard maps.
+- **Mapping key shape:** the mapping is keyed by `<tenantId, regionId>` and resolves to a stable shard target identity (for example a Kubernetes Service name or an endpoint group identifier). The key format must be documented alongside other coordination keys (and kept compatible with hash-slot rules where applicable).
+- **Lease move behavior:** when a lease moves, the old shard must stop accepting new gameplay connections for that `<tenantId, regionId>` immediately. Existing connections are closed with a canonical “reroute” signal so clients reconnect and land on the new shard.
+- **Missing/stale mapping fallback:** if Gateway cannot resolve a mapping (missing key, stale target, or target health failure), it must fail closed for gameplay admission: reject new `/ws/game/**` handshakes with HTTP `503` (and close established sessions with a canonical backend-unavailable or reroute signal depending on cause). It must not silently round-robin gameplay connections to arbitrary shards because that breaks tick ownership assumptions.
+- **Observability requirements:** Gateway emits counters for mapping lookups, misses, and reroute closes; Game Session emits counters for lease moves and shard handoff events. These signals must line up so operators can see “lease moved” vs “backend down” vs “misrouted/missing map.”
+
+The detailed Redis key formats and the client-visible close taxonomy are defined in the Gateway, Protocol Bridging, and Redis docs; this section exists to make the “must route to lease owner” requirement explicit and non-optional.
 
 ---
 

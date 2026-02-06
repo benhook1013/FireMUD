@@ -27,11 +27,11 @@ Each scenario below assumes that Redis and database metrics are wired according 
 ### Detect
 
 - Alerts fire on tick health, for example:
-  - `tick.status{tenantId,regionId}` reporting `STALLED` or `DEGRADED` for a sustained window.
-  - `tick.execution_time_ms_p95` / `tick.execution_time_ms_p99` ratios vs `lock_ttl_ms` or `tick_budget_ms` exceeding the degraded thresholds described in `system-architecture-tick-concepts-and-invariants.md`.
+  - `tick_status{tenantId,regionId,status="STALLED"}` or `tick_status{tenantId,regionId,status="DEGRADED"}` being `1` for a sustained window.
+  - `tick_execution_time_ms_p95` / `tick_execution_time_ms_p99` ratios vs `tick_lock_ttl_ms` exceeding the degraded thresholds described in `system-architecture-tick-concepts-and-invariants.md`.
 - Redis coordination metrics and dashboards show:
   - A region holding `tick-executor-lease:{tenantRegionTag}` for longer than expected without advancing `tickId`.
-  - Growing `tick_retry_queue_depth` or `tick.command_queue_depth` for the affected `<tenantId, regionId>`.
+  - Growing `tick_retry_queue_depth` or `tick_command_queue_depth` for the affected `<tenantId, regionId>`.
 - Logs and traces:
   - Game Session logs show repeated retries or warnings for the affected region.
   - Jaeger traces for `tick_execute` or equivalent spans show long durations or repeated retries for the same region.
@@ -49,8 +49,8 @@ Each scenario below assumes that Redis and database metrics are wired according 
    - Ensure no new executor instances are attempting to acquire the region lease while you inspect metrics.
 2. **Inspect metrics and traces**
    - Use the Tick Health dashboard to confirm:
-     - `tick.status` is stalled or degraded.
-     - `tick.execution_time_ms_*` ratios and queue depths support the stalled diagnosis.
+     - `tick_status` indicates stalled or degraded state.
+     - `tick_execution_time_ms_*` ratios and queue depths support the stalled diagnosis.
    - Use Jaeger to inspect `tick_execute` spans for this region to verify whether the stall is due to downstream services, coordination, or domain logic.
 3. **Apply a region-scoped coordination reset**
    - Follow the **Per-region reset** flow in `system-architecture-redis-reset-and-recovery.md`, scoping the Job to:
@@ -62,10 +62,10 @@ Each scenario below assumes that Redis and database metrics are wired according 
 4. **Resume ticks and verify recovery**
    - Resume tick scheduling for the region.
    - Confirm via dashboards that:
-     - `tick.status{tenantId,regionId}` returns to `RUNNING`.
-     - `tick.execution_time_ms_*` ratios fall back into healthy envelopes.
+     - `tick_status{tenantId,regionId,status="RUNNING"}` is `1`.
+     - `tick_execution_time_ms_*` ratios fall back into healthy envelopes.
      - Command and retry queue depths stabilize.
-   - Review `tick.effects_pending_total` for the region to ensure the ledger is draining and not accumulating new stuck rows.
+   - Review `tick_effects_pending_total` for the region to ensure the ledger is draining and not accumulating new stuck rows.
 
 ## Tick Replay Storm or Excessive Replays
 
@@ -73,7 +73,7 @@ Each scenario below assumes that Redis and database metrics are wired according 
 
 - Metrics and dashboards show:
   - Elevated `gamesession_tick_replayed_total` relative to `gamesession_tick_executed_total` (or equivalent service-specific counters) for one or more regions.
-  - `tick.effect_outcome_total{outcome="replay_ok"}` significantly higher than `tick.effect_outcome_total{outcome="first_apply"}` for specific `effect_type` or services.
+  - `tick_effect_outcome_total{outcome="replay_ok"}` significantly higher than `tick_effect_outcome_total{outcome="first_apply"}` for specific `effect_type` or services.
   - Redis tail-loss metrics (`redis_coordination_tail_loss_ms`) repeatedly approaching or breaching the SLO envelope, indicating frequent coordination replays.
 - Logs and traces:
   - Game Session and domain services log frequent idempotent replays or guard conflicts.
@@ -89,7 +89,7 @@ Each scenario below assumes that Redis and database metrics are wired according 
 ### Act
 
 1. **Identify hot services and effect types**
-   - Use `tick.effect_outcome_total` dashboards to find:
+   - Use `tick_effect_outcome_total` dashboards to find:
      - Services with the highest `replay_ok` counts.
      - `effect_type` values that dominate replay traffic.
 2. **Inspect domain idempotency behavior**
@@ -112,7 +112,7 @@ Each scenario below assumes that Redis and database metrics are wired according 
 ### Detect
 
 - Dashboards and metrics show:
-  - `tick.effects_pending_total{tenantId,regionId}` remaining high for specific regions even after coordination and domain metrics suggest normal operation.
+  - `tick_effects_pending_total{tenantId,regionId}` remaining high for specific regions even after coordination and domain metrics suggest normal operation.
   - Individual `(tenantId, regionId, region_epoch, tickId, effectKey)` rows staying in `SCHEDULED` status beyond the grace window defined in the tick architecture docs.
   - Alerts firing when `SCHEDULED` rows exceed this grace window.
 - Logs and traces:
@@ -150,7 +150,7 @@ Each scenario below assumes that Redis and database metrics are wired according 
    - Review Game Session and domain handlers to ensure:
      - Ledger status transitions happen atomically with domain commits where required.
      - Errors that prevent ledger updates are surfaced clearly via logs, metrics, and traces.
-   - Add or tighten alerts on `tick.effects_pending_total` and related gauges so future accumulations are detected earlier.
+   - Add or tighten alerts on `tick_effects_pending_total` and related gauges so future accumulations are detected earlier.
 
 ## Using Traces During Tick Incidents
 

@@ -13,6 +13,8 @@ Handles player characters, NPCs, items, and all inventory/containment. Provides 
 
 World Management is therefore the sole owner of authoritative character and NPC location tables (`character_location`, `npc_location`) for each game instance. Entity Management reads location via World Management gRPC APIs or shared projections but must not persist its own competing location fields or treat cached location as authoritative.
 
+For canonical naming and scoping rules, see [Identifier Glossary](../../system-architecture-identifier-glossary.md).
+
 ## Architecture / Design Notes
 
 - Uses JPA for persistence of entity data.
@@ -270,25 +272,25 @@ Entity Management assumes the **per-command execution phases** described in the 
 
 ### Tick Idempotency
 
-Entity Management implements tick idempotency using the **per-aggregate last-tick state** pattern described in the [Tick System and Runtime Design](../../system-architecture-ticks.md#domain-idempotency-rules-tickid-in-postgresql) document:
+Entity Management implements tick idempotency using the **per-aggregate last-tick state** pattern described in the [Tick System and Runtime Design](../../system-architecture-ticks.md#domain-idempotency-rules-region-epoch--tickid-in-postgresql) document:
 
-- A shadow table (for example `entity_tick_state`) tracks `last_tick_id` (and associated tenant/region metadata) per `entityId`.
+- A shadow table (for example `entity_tick_state`) tracks `(last_region_epoch, last_tick_id)` (and associated tenant/region metadata) per `entityId`.
 - Tick-driven handlers that mutate an entity:
   - Load the current tick state for that `entityId`.
-  - Treat calls where `last_tick_id >= currentTickId` as **replays** and perform a no-op (or validation-only check).
-  - Apply changes only when `last_tick_id < currentTickId`, then update `last_tick_id = currentTickId` in the same transaction as the entity update.
+  - Treat calls where `(last_region_epoch, last_tick_id) >= (currentRegionEpoch, currentTickId)` as **replays/out-of-order** and perform a no-op (or validation-only check).
+  - Apply changes only when `(last_region_epoch, last_tick_id) < (currentRegionEpoch, currentTickId)`, then update `(last_region_epoch, last_tick_id) = (currentRegionEpoch, currentTickId)` in the same transaction as the entity update.
 
-Complex multi-entity operations (for example trades that touch two inventories) use the **operation-level effect guard** pattern described in the same tick document, inserting a `(tenantId, regionId, tickId, effectKey)` row into a guard table before applying changes so replays of the same logical effect become safe no-ops instead of double-applications.
+Complex multi-entity operations (for example trades that touch two inventories) use the **operation-level effect guard** pattern described in the same tick document, inserting a `(tenantId, regionId, region_epoch, tickId, effectKey)` row into a guard table before applying changes so replays of the same logical effect become safe no-ops instead of double-applications.
 
 Examples:
 
 - **Damage application** – when a tick instructs Entity Management to apply damage to `entityId`, the handler:
   - Reads `entity_tick_state` for that `entityId`.
-  - Skips the update if `last_tick_id >= currentTickId` (replay), or applies the HP change and sets `last_tick_id = currentTickId` in the same transaction if `last_tick_id < currentTickId`.
+  - Skips the update if `(last_region_epoch, last_tick_id) >= (currentRegionEpoch, currentTickId)` (replay/out-of-order), or applies the HP change and sets `(last_region_epoch, last_tick_id) = (currentRegionEpoch, currentTickId)` in the same transaction if `(last_region_epoch, last_tick_id) < (currentRegionEpoch, currentTickId)`.
 
 - **Trade between two entities** – when a tick performs a trade between `fromEntityId` and `toEntityId`:
   - The handler computes a deterministic `effectKey` such as `trade:<fromEntityId>:<toEntityId>:<itemId>`.
-  - It inserts `(tenantId, regionId, tickId, effectKey)` into the guard table before moving items between inventories.
+  - It inserts `(tenantId, regionId, region_epoch, tickId, effectKey)` into the guard table before moving items between inventories.
   - On primary-key conflict, the trade is treated as an already-applied effect for that tick and becomes a no-op.
 
 - [System Architecture Diagram](../../system-architecture-diagram.md)

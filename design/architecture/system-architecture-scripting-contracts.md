@@ -21,6 +21,8 @@ Audit and outcomes must distinguish between:
 - “DSL evaluated successfully” vs
 - “commands were accepted into the tick system”.
 
+By default, `script_event_audit.finalOutcome=success` must mean “commands were accepted into the tick system”, not merely that the DSL evaluated.
+
 ### 3) Version Fencing (Rollback Safety)
 
 To make script patch rollback meaningful:
@@ -35,7 +37,7 @@ To make script patch rollback meaningful:
 
 `scriptEventId` is the primary idempotency token for “run a handler for this trigger”.
 
-- **Entity-scoped events** (`onSpawn`, `onEnterRegion`, `onCommand`, custom events) must treat the unique trigger identity as including at least `tenantId`, `regionId`, `regionEpoch` (when applicable), `entityId`, `scriptId`, `eventType`, and `scriptPatchVersion`.
+- **Entity-scoped events** (`onSpawn`, `onEnterRegion`, `onCommand`, custom events) must treat the unique trigger identity as including at least `tenantId`, `regionId`, `entityId`, `scriptId`, `eventType`, `scriptPatchVersion`, and `scriptEventId`. If the event is tied to the tick timeline, `regionEpoch` must be included as well.
 - **Scheduler events** (`onInterval`, `onTimerExpire`) must use deterministic identities that include the due point (for example `dueTickId` or a due timestamp) plus `regionEpoch` and `scriptPatchVersion` so leader catch-up and retries do not double-fire.
 
 Callers must reuse the same `scriptEventId` on retries.
@@ -53,10 +55,17 @@ Dry-run executions are privileged and must not destabilize production:
 - Dry-runs do not consume live ScriptQuotaService windows or tenant automation budgets.
 - Dry-runs must not contribute to failure-rate circuit breakers that can disable live scripts by default; if dry-run failures are used for safety gating, they must be isolated (separate breaker or explicitly opt-in per environment/tenant).
 
+### 7) Reload Backpressure Contract
+
+- During `reloadState=RELOADING`, the Automation & Scripting Service must return an explicit application-level backpressure outcome (not a silent drop).
+- For low-rate external events, callers may retry with the same `scriptEventId` using a bounded exponential backoff and jitter.
+- For timer-derived scheduler events, best-effort timer semantics apply; triggers not admitted during reload are not backfilled unless explicitly covered by a bounded catch-up rule.
+
 ## Related Documents
 
 - `design/architecture/system-architecture-scripting.md`
 - `design/architecture/system-architecture-scripting-dsl-reference-and-lifecycle.md`
 - `design/architecture/system-architecture-scripting-quotas-and-operations.md`
+- `design/architecture/system-architecture-scripting-observability-contract.md`
 - `design/architecture/microservices/automation-scripting-service/README.md`
 - `design/architecture/microservices/game-session-service/README.md`

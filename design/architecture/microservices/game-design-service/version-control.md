@@ -66,6 +66,12 @@ services as the source of truth for the current Draft template graphs:
   before starting the publish Saga. Versions that are out of sync cannot be
   published until reconciliation succeeds.
 
+Digest comparison rules:
+
+- The Game Design Service records the per-domain-service `{commitId, contentDigest, digestSchemaVersion}` it observed when a commit was last applied successfully.
+- Reconciliation and publish-time checks compare the current digest reported by each service against the recorded digest for the target commit.
+- If `digestSchemaVersion` differs, publish must fail fast and require an explicit migration of digest semantics (for example by bumping `digestSchemaVersion` and replaying commits to record new digests), rather than silently comparing incompatible hashes.
+
 Future implementations may replace the reconciler with a dedicated design-time
 Saga or outbox-driven workflow that provides stronger atomicity for commits
 that touch multiple services. Regardless of implementation, the contract is

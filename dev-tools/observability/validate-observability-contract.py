@@ -170,6 +170,21 @@ def _validate_grafana_dashboards(grafana_dir: Path) -> list[Finding]:
                 grpc_scope_issue = _check_grpc_app_error_scoping(expr)
                 if grpc_scope_issue:
                     findings.append(Finding(path=json_path, message=grpc_scope_issue))
+
+                if "redis_coordination_used_memory_bytes" in expr and "role=" not in expr:
+                    findings.append(
+                        Finding(
+                            path=json_path,
+                            message="expression references redis_coordination_used_memory_bytes without a role matcher; shared dashboards must scope coordination role explicitly",
+                        )
+                    )
+                if "redis_coordination_keys_total" in expr and "role=" not in expr:
+                    findings.append(
+                        Finding(
+                            path=json_path,
+                            message="expression references redis_coordination_keys_total without a role matcher; shared dashboards must scope coordination role explicitly",
+                        )
+                    )
     return findings
 
 

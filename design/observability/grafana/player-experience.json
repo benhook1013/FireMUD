@@ -33,8 +33,8 @@
       "title": "Telnet/WebSocket Path Availability",
       "targets": [
         {
-          "expr": "1 - (sum by (tenantId) (rate(tcpproxy_connections_limit_exceeded[5m])) / sum by (tenantId) (rate(tcpproxy_connections_total[5m])))",
-          "legendFormat": "{{tenantId}}",
+          "expr": "sum by (tenantId, path) (rate(entrypath_connection_attempts_total{outcome=\"success\"}[5m])) / sum by (tenantId, path) (rate(entrypath_connection_attempts_total[5m]))",
+          "legendFormat": "{{tenantId}} {{path}}",
           "refId": "A"
         }
       ],

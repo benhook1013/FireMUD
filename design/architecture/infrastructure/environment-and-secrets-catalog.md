@@ -63,6 +63,7 @@ Coordination Redis (ticks, locks, timers, sessions):
 | -------- | ------- |
 | `FIREMUD_REDIS_COORD_HOST` | Coordination Redis host |
 | `FIREMUD_REDIS_COORD_PORT` | Coordination Redis port |
+| `FIREMUD_REDIS_COORD_URL` | Coordination Redis URL (for example `redis://redis-coord:6379`) |
 
 Cache/Rate‑Limit Redis (gateway rate limiting, caches):
 
@@ -70,6 +71,11 @@ Cache/Rate‑Limit Redis (gateway rate limiting, caches):
 | -------- | ------- |
 | `FIREMUD_REDIS_CACHE_HOST` | Cache/Rate‑Limit Redis host |
 | `FIREMUD_REDIS_CACHE_PORT` | Cache/Rate‑Limit Redis port |
+| `FIREMUD_REDIS_CACHE_URL` | Cache/Rate‑Limit Redis URL (for example `redis://redis-cache:6379`) |
+
+Precedence rule:
+
+- If `FIREMUD_REDIS_*_URL` is set for a role, it takes precedence over the corresponding `*_HOST` / `*_PORT` pair for that role.
 
 Precedence and safety rules:
 
@@ -77,8 +83,8 @@ Precedence and safety rules:
   - Coordination clients resolve their connection from `FIREMUD_REDIS_COORD_HOST` / `FIREMUD_REDIS_COORD_PORT`.
   - Cache/rate‑limit clients resolve their connection from `FIREMUD_REDIS_CACHE_HOST` / `FIREMUD_REDIS_CACHE_PORT`.
 - Services **fail fast at startup** if:
-  - They require Coordination Redis but lack `FIREMUD_REDIS_COORD_*`, or
-  - They require Cache/Rate‑Limit Redis but lack `FIREMUD_REDIS_CACHE_*`.
+  - They require Coordination Redis but lack either `FIREMUD_REDIS_COORD_URL` or `FIREMUD_REDIS_COORD_HOST` / `FIREMUD_REDIS_COORD_PORT`, or
+  - They require Cache/Rate‑Limit Redis but lack either `FIREMUD_REDIS_CACHE_URL` or `FIREMUD_REDIS_CACHE_HOST` / `FIREMUD_REDIS_CACHE_PORT`.
 - It is **not supported** to point `FIREMUD_REDIS_COORD_HOST:PORT` and `FIREMUD_REDIS_CACHE_HOST:PORT` at the same Redis instance in any **non-ephemeral** environment, including local development, staging, and production. Coordination and cache/rate‑limit roles run on separate Redis deployments (for example, two containers on the same developer machine).
 
 Player‑facing environments (production, staging, QA, and any environment used to validate performance or correctness) **must** configure Coordination Redis and Cache/Rate‑Limit Redis as **distinct logical Redis deployments**. Reusing the same host/port for both is considered non‑compliant with the Redis architecture because it reintroduces eviction and latency coupling between coordination keys and cache/rate‑limit traffic. Any ad-hoc “single Redis for all roles” topology is treated as an unsupported experiment and must not be used for shared or player-facing environments or for any cluster that runs coordination reset tooling.

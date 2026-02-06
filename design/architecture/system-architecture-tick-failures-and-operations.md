@@ -9,7 +9,7 @@ For the canonical, detailed design, see `design/architecture/system-architecture
 ## What This Covers
 
 - Crash recovery and replay behavior.
-- Idempotency rules tied to `tickId`.
+- Idempotency rules tied to the region-scoped tick timeline `(region_epoch, tickId)`.
 - Handling stuck or partial tick entries.
 - Design checklist for new tick-driven commands.
 
@@ -18,7 +18,7 @@ For the canonical, detailed design, see `design/architecture/system-architecture
 The following sections in `system-architecture-ticks.md` contain the main failure-handling and operational rules:
 
 - **Crash Recovery and Replay** – how executors recover from failure and resume processing safely.
-- **Domain Idempotency Rules (TickId in PostgreSQL)** – how tick IDs enforce idempotent domain mutations.
+- **Domain Idempotency Rules (Region Epoch + TickId in PostgreSQL)** – how `(region_epoch, tickId)` enforce idempotent domain mutations.
 - **Design Checklist for New Tick-Driven Commands** – review checklist for new commands to ensure they follow tick invariants.
 - **Tick Execution and Redis Integration** – failure scenarios and invariants around the canonical commit pattern.
 - **Cross-Region Command Execution and Result Relay** – constraints for cross-region retries and replay.
@@ -31,7 +31,7 @@ Tick recovery is driven by Redis coordination state plus domain-level idempotenc
 
 - On executor crash or failover, a new worker acquires the region lease, inspects `tick:{tenantRegionTag}:pending`, `retry:{tenantRegionTag}`, and timers, and replays or resumes work based only on persisted state.
 - Redis is treated as a volatile coordination layer with **at-least-once** semantics; network retries, executor failover, and AOF replay can all cause the same logical effect to be attempted more than once.
-- Domain services rely on `tickId` and effect guards to ensure that replays do not double-apply logical effects even when Redis state is partially lost.
+- Domain services rely on `(region_epoch, tickId)` and effect guards to ensure that replays do not double-apply logical effects even when Redis state is partially lost.
 
 ### Tick Effect Ledger and Replay Guarantees
 
@@ -64,7 +64,7 @@ New designs must not create ad-hoc ledger tables for tick effects in other servi
 
 Replay of a tick is driven from ledger state:
 
-- When reprocessing a tick, the executor loads ledger rows for that `<tenantId, regionId, tickId>` with `status = SCHEDULED` and:
+- When reprocessing a tick, the executor loads ledger rows for that `<tenantId, regionId, region_epoch, tickId>` with `status = SCHEDULED` and:
   - Re-queues/re-runs effects whose domain targets do not yet reflect `APPLIED`, then marks those rows `APPLIED`.
   - Marks effects `ABANDONED` with a precise reason when replay determines they are no longer valid (expired session, entity gone, descheduled tick, and so on).
   - Marks effects `APPLIED` and skips domain calls when it determines the effect has already been applied idempotently.
@@ -92,7 +92,7 @@ The ledger makes replay visible operationally via metrics such as:
 - `tick_effects_pending_total{tenantId,regionId}`
 - `tick_effects_applied_total{tenantId,regionId}`
 - `tick_effects_abandoned_total{tenantId,regionId,reason}`
-- `tick_effects_replayed_total{tenantId,regionId}` (or, where available, `tick.effect_outcome_total{outcome="replay_ok"}` for service-level detail)
+- `tick_effects_replayed_total{tenantId,regionId}` (or, where available, `tick_effect_outcome_total{outcome="replay_ok"}` for service-level detail)
 - `tick_effects_pending_oldest_scheduled_timestamp_seconds{tenantId,regionId}` – helper metric tracking the oldest `created_at` among SCHEDULED rows for each region.
 
 Alerts fire when:
@@ -184,7 +184,7 @@ Retry and timer queues are protected against unbounded growth:
 
 Entity Management provides the reference example for per-aggregate tick idempotency; see `microservices/entity-management-service/README.md#tick-idempotency`.
 
-## Domain Idempotency Rules (TickId in PostgreSQL)
+## Domain Idempotency Rules (Region Epoch + TickId in PostgreSQL)
 
 Domain services must treat the **region-scoped tick timeline** `(region_epoch, tickId)` as the canonical idempotency token for tick-driven effects.
 
@@ -258,7 +258,7 @@ Every gRPC endpoint that can be invoked from tick execution must document and im
 
 Endpoints participating in tick-driven effects should also emit a small, standardized metric:
 
-- `tick.effect_outcome_total{service, effect_type, outcome}`
+- `tick_effect_outcome_total{service, effect_type, outcome}`
   - `service` – owning microservice (for example `entity-management-service`).
   - `effect_type` – low-cardinality side-effect category (for example `entity_state`, `inventory`, `quest`, `room_state`), **not** the full effect identity.
   - `outcome` – `first_apply`, `replay_ok`, or `guard_error` (for unexpected failures at the idempotency boundary).
@@ -358,6 +358,27 @@ Region resets and epoch bumps intentionally sever the old coordination timeline 
 
 Designs that genuinely need to carry cross-region work across region resets or epoch changes must be treated as **exceptional** and implemented using out-of-band saga/outbox workflows with their own reset/runbook stories, not as normal tick behavior.
 
+### Cross-Region Follow-Up Record Contract (Required)
+
+Cross-region follow-ups are durable PostgreSQL records owned by Game Session (or another explicitly designated tick coordinator) that represent “work created in one region but owned by entities in another”. To keep cross-region correctness independent of best-effort Redis hints, follow-up records must satisfy a minimal, explicit contract:
+
+- **Identity and scoping**
+  - Each follow-up is tied to a specific target region timeline and effect identity, including at minimum:
+    - `tenant_id`, `target_region_id`, `target_region_epoch`
+    - `due_tick_id` (or a due-time field that is mapped deterministically to tick eligibility)
+    - `effect_key` (stable, deterministic) and any additional EffectId projection fields needed for traceability.
+- **Uniqueness / de-duplication**
+  - The follow-up table must prevent duplicate scheduling of the same logical follow-up for the same target timeline (for example via a unique key that includes `(tenant_id, target_region_id, target_region_epoch, effect_key)` or an equivalent projection that matches the feature’s semantics).
+- **Claiming and concurrency**
+  - Draining follow-ups into a tick must use database-side concurrency control (for example `FOR UPDATE SKIP LOCKED` or an atomic “claim” update) so that only one executor can claim a follow-up at a time, even during failover or when multiple workers are racing around lease changes.
+- **Epoch boundaries**
+  - Follow-ups must never silently “carry over” to a new epoch:
+    - When `target_region_epoch` changes, old-epoch follow-ups converge to terminal outcomes (typically `ABANDONED` with a reset/topology reason) unless explicit maintenance tooling re-schedules them into the new epoch.
+- **Topology changes**
+  - If region split/merge changes which region owns the target entity, topology-change tooling must either:
+    - Rewrite the follow-up to the new `(target_region_id, target_region_epoch)` with an explicit audit trail, or
+    - Mark it `ABANDONED` with a topology-change reason when replaying it under the new mapping is not valid.
+
 ## Remote Hint Markers and Resets
 
 Cross-region flows may use best-effort Redis hint markers such as `remote:<tenantId>:<entityId>` or `remote:<tenantId>:<targetEntityId>` to reduce latency when draining remote follow-ups. Operationally:
@@ -398,13 +419,13 @@ When introducing a new command type that will run under tick control, design doc
   - Does it run because an entry is dequeued from `tick:{tenantRegionTag}:queue:<entityId>` or because a tick timer/retry fired?
   - If not, it may follow different idempotency rules and does not belong in this section.
 - **What is the idempotency key?**
-  - For single-aggregate updates: which `last_tick_id` field and table enforce “at most one update per tick” for that aggregate?
+  - For single-aggregate updates: which `(last_region_epoch, last_tick_id)` (or equivalent) fields and table enforce “at most one update per tick timeline” for that aggregate?
   - For multi-aggregate or multi-effect operations: what is the `effect_key` used in `tick_effect_guard`, and how is it derived deterministically from the command payload?
 - **Where is the guard persisted?**
-  - Which schema/table holds `last_tick_id` or `tick_effect_guard` entries?
+  - Which schema/table holds the per-aggregate “last applied tick” state or `tick_effect_guard` entries?
   - Is there a primary key or unique index that enforces the idempotency key at the database level?
 - **What happens on replay?**
-  - What does the handler do when it detects that the guard already exists or `last_tick_id >= currentTickId`?
+  - What does the handler do when it detects that the guard already exists or `(last_region_epoch, last_tick_id) >= (currentRegionEpoch, currentTickId)`?
   - Is the “replay” outcome clearly documented and tested (no new logical effects, optional consistency verification)?
 - **Are there any non-idempotent external effects?**
   - If the handler sends email, charges a payment method, or calls an external API with irreversible effects, how is that separated from the tick-driven part (for example, via an outbox entry processed by a saga)?

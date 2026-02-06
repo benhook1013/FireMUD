@@ -41,7 +41,7 @@ The tick system adopts the same **coordination timeline** concept as the Redis a
 - `tickId` is monotonic and uniquely identifies each committed tick for that region.
 - All **region-scoped tick coordination keys** in Redis (for example `tick:{tenantRegionTag}:*`, `timer:{tenantRegionTag}`, `retry:{tenantRegionTag}`, `tick-executor-lease:{tenantRegionTag}`) and all tick effect ledger rows in PostgreSQL conceptually belong to exactly one `(region_epoch, tickId)` pair.
 - Tenant-scoped coordination such as gameplay session keys (`session:game:<tenantId>:<sessionId>`) live on Coordination Redis but are **not** bound to a single region epoch; they follow the authentication/reconnection contracts and reset behavior described in the Redis hub and usage/profile docs rather than the per-region epoch model.
-- When region authority moves or a scoped coordination reset occurs, the tick control plane bumps `region_epoch` and ensures that subsequent tick work for that `<tenantId, regionId>` is scheduled only on the new timeline; survivors from older epochs in region-scoped Redis keys are treated as stale and either ignored or explicitly reconciled via the tick effect ledger and reset tooling.
+- When a scoped coordination reset occurs (or a topology/maintenance operation explicitly severs the old region timeline), the tick control plane bumps `region_epoch` and ensures that subsequent tick work for that `<tenantId, regionId>` is scheduled only on the new timeline; survivors from older epochs in region-scoped Redis keys are treated as stale and either ignored or explicitly reconciled via the tick effect ledger and reset tooling.
 
 The main tick document contains the detailed rules and Redis key shapes behind each of these points.
 
@@ -96,7 +96,7 @@ Distributed locking in the tick system is designed to avoid deadlocks and keep L
 
 - **Default: one entity lock per script**
   - Tick Lua scripts are written, by default, to acquire at most one `tick:{tenantRegionTag}:lock:<entityId>` per invocation.
-  - Multi-entity commands decompose into per-entity legs keyed by a shared `tickId` and effect identifiers; cross-entity consistency is enforced at the PostgreSQL layer via idempotency guards and coordinator records rather than by holding multiple Redis locks at once.
+  - Multi-entity commands decompose into per-entity legs keyed by the same region-scoped timeline `(region_epoch, tickId)` plus effect identifiers; cross-entity consistency is enforced at the PostgreSQL layer via idempotency guards and coordinator records rather than by holding multiple Redis locks at once.
 - **Registry-backed lock and lease management only**
   - Tick and lease keys such as `tick:{tenantRegionTag}:lock:<entityId>` and `tick-executor-lease:{tenantRegionTag}` are created, renewed, and released exclusively via Lua scripts registered in the shared Lua Script Registry.
   - Ad-hoc Redis commands (for example `SET NX PX` or direct deletes) must not be used to manipulate these coordination keys; all flows go through the registry helpers so lock tokens and lease epochs are validated and updated consistently across services.

@@ -100,8 +100,8 @@ Triggers lead to DSL runs, which produce script work items in the automation que
   - The specific encoding is an implementation detail, but it must be derived from stable inputs (for example `<tenantId, regionId, regionEpoch, entityId, scriptId, eventType, dueTickId|dueAt, scriptPatchVersion>`), not from process-local randomness.
 
 - **Handling retries and duplicates**
-  - The Automation & Scripting Service treats script execution as **at-most-once per `<tenantId, regionId, scriptId, scriptEventId>`**. If it receives a duplicate delivery for that tuple—for example, because the caller retried a gRPC call—it does **not** re-run the DSL graph for that trigger. Instead it consults existing `script_event_audit` state and treats the duplicate as a replay of an already completed or skipped trigger.
-  - Downstream services and replay tools rely on `<tenantId, regionId, scriptId, scriptEventId, tickId>` as an idempotency token. Commands produced by the script carry this metadata so replays and retries can be correlated with the original trigger.
+  - The Automation & Scripting Service treats script execution as **at-most-once per Trigger Identity**, as defined in the uniqueness scope above. If it receives a duplicate delivery for the same Trigger Identity—for example, because the caller retried a gRPC call—it does **not** re-run the DSL graph for that trigger. Instead it consults existing `script_event_audit` state and treats the duplicate as a replay of an already completed or skipped trigger.
+  - Downstream services and replay tools rely on stable idempotency tokens derived from Trigger Identity plus tick context when applicable (for example including `tickId` and `regionEpoch`). Commands produced by scripts must carry enough metadata to correlate retries with the original trigger without introducing new high-cardinality metric labels.
 
 ---
 
@@ -171,7 +171,7 @@ Domain services can define **custom events** that feed into the scripting pipeli
 - Service-specific events follow the same trigger → DSL run → automation queue → tick command flow as built-in events.
 - Event schemas are versioned so scripts can be migrated when payloads change.
 
-Custom events must follow the same determinism and idempotency rules as built-in events; they are keyed by the same `<tenantId, regionId, scriptId, scriptEventId, tickId>` tuple when producing commands.
+Custom events must follow the same determinism and idempotency rules as built-in events; they are keyed by Trigger Identity plus tick context when producing commands (for example including `entityId`, `eventType`, `scriptPatchVersion`, `scriptEventId`, and `tickId`/`regionEpoch` where applicable).
 
 ---
 
@@ -301,24 +301,24 @@ When a trigger arrives at the Automation & Scripting Service:
 
 Scripts are designed to behave **deterministically for a given game configuration and event**, so that both the original execution and any offline replay in tools or tests produce the same observable behavior. The Automation & Scripting Service enforces this by constraining how randomness and time are exposed to DSL components:
 
-- All **pseudo-random behavior** (for example, “pick a random waypoint”, “roll for loot”, or encounter selection) flows through curated components that read from a **seeded RNG** supplied by the runtime. The seed is derived from stable identifiers such as `<tenantId, regionId, scriptId, scriptEventId, tickId, scriptPatchVersion>` so that re-evaluating the same trigger with the same inputs produces the **same sequence of random values**. Components must not call process-wide RNG APIs directly; they receive a scoped RNG instance from the sandbox.
+- All **pseudo-random behavior** (for example, “pick a random waypoint”, “roll for loot”, or encounter selection) flows through curated components that read from a **seeded RNG** supplied by the runtime. The seed is derived from stable identifiers such as `<tenantId, regionId, entityId, scriptId, eventType, scriptEventId, tickId, scriptPatchVersion[, regionEpoch]>` so that re-evaluating the same trigger with the same inputs produces the **same sequence of random values**. Components must not call process-wide RNG APIs directly; they receive a scoped RNG instance from the sandbox.
   - Seeds are derived from this tuple primarily so offline replay tools and test harnesses can reproduce behavior for a given event stream; production tick replays never re-enter the DSL for the same `scriptEventId`.
 - **Wall-clock time is not exposed** to scripts. DSL components see only **derived game time** sourced from the tick and session model (for example, `tickId`, region-local “world time” counters, or effect durations computed by Game Logic). This ensures that replaying the same tick timeline yields the same time values from the script’s perspective, independent of real-world clock drift.
 - Any component that introduces variability must either:
   - be implemented in terms of the seeded RNG and tick-based time described above, or
   - be explicitly documented as **non-replayable** and confined to side channels such as logging and metrics where non-determinism does not affect gameplay state or authoritative decisions.
 
-Under these rules, the combination of `<tenantId, regionId, scriptId, scriptEventId, tickId, scriptPatchVersion>` fully determines the observable behavior of a script run that contributes commands to the tick system.
+Under these rules, the combination of Trigger Identity plus tick context (for example `tickId` and `regionEpoch` when applicable) fully determines the observable behavior of a script run that contributes commands to the tick system.
 
 Crucially, **script handlers are not re-executed during tick replay or recovery**. The Automation & Scripting Service evaluates each trigger at most once, produces a set of commands annotated with `scriptEventId`, and hands those commands to the tick system. Tick-level crash recovery and retries reapply those commands idempotently in the Game Session and domain services without re-entering the DSL graph for the same trigger. Determinism for scripting therefore depends on this **“no re-execution per trigger”** guarantee plus the seeded RNG and time constraints.
 
 Script executions are treated as **at-most-once per trigger** at the scheduler level, but the resulting commands participate in the same **idempotent replay model** as other tick actions:
 
-- Script-generated commands must be **idempotent with respect to `tickId` and `scriptEventId`**. These identifiers travel with the command payload and are recorded alongside `scriptId` and `tenantId` in `script_event_audit` records and logs so operators can correlate replays and ensure side effects remain consistent even when ticks are retried.
-- When commands cause database writes or cross-service calls, domain services should treat `<tenantId, regionId, tickId, scriptEventId>` as an idempotency token, either directly or via a stable `effectId` derived from it, following the patterns in `design/architecture/system-architecture-transactions.md` and the tick idempotency rules described in `design/architecture/system-architecture-ticks.md#domain-idempotency-rules-tickid-in-postgresql`.
+- Script-generated commands must be **idempotent with respect to the region-scoped tick timeline and Trigger Identity**: `(regionEpoch, tickId)` and `scriptEventId`. These identifiers travel with the command payload and are recorded alongside `scriptId` and `tenantId` in `script_event_audit` records and logs so operators can correlate replays and ensure side effects remain consistent even when ticks are retried or a reset bumps `regionEpoch`.
+- When commands cause database writes or cross-service calls, domain services should treat `<tenantId, regionId, regionEpoch, tickId, scriptEventId>` as an idempotency token, either directly or via a stable `effectId` derived from it, following the patterns in `design/architecture/system-architecture-transactions.md` and the tick idempotency rules described in `design/architecture/system-architecture-ticks.md#domain-idempotency-rules-region-epoch--tickid-in-postgresql`.
 - Conceptually, `scriptEventId` plays the same role for script-originated work that `effectKey` plays in tick-driven effects:
-  - For purely tick-driven logic, idempotency guards are keyed by `(tenantId, regionId, tickId, effectKey)`.
-  - For script-originated logic, guards may instead use `(tenantId, regionId, tickId, scriptEventId)` or `(tenantId, regionId, tickId, effectKey)` where `effectKey` is derived from `scriptEventId` plus additional context (for example, target entity or aggregate).
+  - For purely tick-driven logic, idempotency guards are keyed by `(tenantId, regionId, regionEpoch, tickId, effectKey)`.
+  - For script-originated logic, guards may instead use `(tenantId, regionId, regionEpoch, tickId, scriptEventId)` or `(tenantId, regionId, regionEpoch, tickId, effectKey)` where `effectKey` is derived from `scriptEventId` plus additional context (for example, target entity or aggregate).
 
 ---
 
@@ -347,7 +347,7 @@ The main Redis keys used by the Automation & Scripting Service are:
 
 | Key pattern | Owner / service | Purpose | Hash tag / shard scope | TTL / retention expectations |
 | --- | --- | --- | --- | --- |
-| `automation:queue:<tenantId>:<entityId>` | Automation & Scripting | Per-tenant, per-entity queue of post-DSL script work items awaiting automation ticks. | Single-key queue per entity; automation ticks drain these and hand off resulting commands to Game Session for enqueue into tick queues. | Ephemeral, best-effort backlog; drained continuously by automation ticks. Loss/reset is acceptable within the system’s tail-loss envelope and must be observable (metrics + `script_event_audit`). Any TTL is a short safety valve, not long-term storage. |
+| `automation:queue:<tenantId>:<entityId>` | Automation & Scripting | Per-tenant, per-entity queue of post-DSL script work item *indexes* awaiting automation ticks. | Single-key queue per entity; automation ticks drain these and hand off resulting commands to Game Session for enqueue into tick queues. | Reset-tolerant, best-effort derived index; authoritative pending work items are persisted durably in PostgreSQL (outbox) so this queue can be rebuilt. Loss/reset must be observable (metrics + `script_event_audit`). Any TTL is a short safety valve, not long-term storage. |
 | `automation:tick:{tenantScriptTag}:lock` | Automation & Scripting (`ScriptTickService`) | Per-script automation tick lock to serialize staging for a script’s work batch. | Hash-tagged on `{tenantScriptTag}` so multi-key operations remain shard-local. | Short-lived lock; lifetime bounded by a single automation tick batch and its retry window. |
 | `automation:tick:{tenantScriptTag}:queue` | Automation & Scripting (`ScriptTickService`) | Staging queue for batched script events before they are written into per-entity tick queues. | Hash-tagged on `{tenantScriptTag}` so staging, draining, and metrics are shard-local. | Short-lived staging; drained quickly by automation ticks. |
 | `automation:timer:{tenantRegionTag}` | Automation & Scripting scheduler | Region-scoped index of script timers and intervals (`onTimerExpire`, `onInterval`, `intervalTicks`). | Hash-tagged on `{tenantRegionTag}` to align with tick-region keys. | Persistent while timers are active; entries are added and removed as timers are created and satisfied. |
@@ -433,7 +433,7 @@ for the current leadership and sharding model.
   - updates bindings and metadata, and
   - transitions scripts through reload states (for example, `reloadState=RELOADING`) to avoid partial visibility.
 - During reloads, triggers are **paused or skipped** while in-flight runs drain under existing concurrency settings:
-  - New triggers for the affected tenant are not admitted; attempts to schedule additional runs are skipped and recorded in `script_event_audit` with outcomes such as `skipped_reloading`, and they are reflected in metrics.
+  - New triggers for the affected tenant are not admitted; attempts to schedule additional runs receive an explicit backpressure outcome (for example `skipped_reloading`). For low-rate external events, callers may retry with the same `scriptEventId` using a bounded backoff policy; audit records must remain keyed by Trigger Identity and must not multiply rows per retry.
   - In-flight runs remain bounded by each script’s configured `maxConcurrent` and `concurrencyPolicy` (for example, `queue_until_free`); any short per-script waiting queues are allowed to drain, but no new entries are added while `reloadState=RELOADING`.
   - Pending timer-based triggers that became due during reload remain in the scheduler’s timer indexes and resume after reload with recalculated `nextTick` / `nextRunAt` so cadences remain coherent.
 - On success, the new `scriptPatchVersion` becomes active for future triggers; on failure:
@@ -466,9 +466,10 @@ Outcome taxonomy must distinguish “DSL evaluated” from “commands were acce
 Retry behavior:
 
 - Logical failures (`sandbox_error`, `validation_error`, `quota_denied`, `disabled_due_to_errors`, `version_unavailable`) are treated as **final** for a trigger; the scheduler does not re-run the script body for the same `scriptEventId`.
+- Reload backpressure outcomes (for example `skipped_reloading`) are not treated as final for low-rate external events; callers may retry the same Trigger Identity until admitted or until their bounded retry policy expires.
 - Infrastructure errors **may be retried** by lower layers following platform-wide retry policies and idempotency contracts, but those retries operate only on idempotent downstream operations, not on the DSL body.
 
-When script components call other services over gRPC, they must pass a stable idempotency key (for example, a composite of `<tenantId, regionId, scriptId, scriptEventId, tickId>` or a dedicated `effectId`) and rely on the transaction strategies in `design/architecture/system-architecture-transactions.md` so those downstream operations can be safely retried without duplicating effects.
+When script components call other services over gRPC, they must pass a stable idempotency key derived from Trigger Identity plus tick context when applicable (for example including `entityId`, `eventType`, `scriptPatchVersion`, `scriptEventId`, and `tickId`/`regionEpoch`) and rely on the transaction strategies in `design/architecture/system-architecture-transactions.md` so those downstream operations can be safely retried without duplicating effects.
 
 ## Version Fencing and Rollback Safety
 

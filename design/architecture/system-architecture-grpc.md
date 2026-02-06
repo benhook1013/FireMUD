@@ -81,14 +81,18 @@ Every gRPC service registers the `LoggingInterceptor`, `MetricsInterceptor`, and
 - Map application-level failures to appropriate gRPC status codes (`INVALID_ARGUMENT`, `NOT_FOUND`, etc.).
 - Use a shared `ErrorDetail` message (e.g., `shared/errors.proto`) when returning rich error info.
 - Prefer returning structured errors over using gRPC metadata for application faults.
-- All RPCs that can fail should include an `ErrorDetail` field in the response instead of invoking `onError()`. Wrap response observers or use an interceptor to log warnings, increment a `grpc.app_error` metric labeled with `error.code`, and tag tracing spans. `onError()` is reserved for transport-level or infrastructure failures. The `grpc.app_error` meter must not include per-request identifiers such as `traceId`, `spanId`, `playerId`, or `sessionId`; those identifiers belong only in logs and spans, not in metric label sets.
+- All RPCs that can fail should include an `ErrorDetail` field in the response instead of invoking `onError()`. Wrap response observers or use an interceptor to log warnings, increment a `grpc.app_error` metric, and tag tracing spans. `onError()` is reserved for transport-level or infrastructure failures.
+- Metric contract:
+  - The Micrometer meter name is `grpc.app_error`; the Prometheus-exported name is typically `grpc_app_error`.
+  - Required labels: `service` (from `spring.application.name`) and a bounded `code` taken from the shared error catalog.
+  - Forbidden labels: per-request identifiers such as `traceId`, `spanId`, `playerId`, or `sessionId`; those identifiers belong only in logs and spans, not in metric label sets.
   See [AI Project Rules](../project-management/ai-rules-local.md) for required logging and metrics interceptors.
 
 Example implementation:
 
 ```java
 private ErrorDetail error(String code, String message) {
-  meterRegistry.counter("grpc.app_error", "code", code).increment();
+  meterRegistry.counter("grpc.app_error", "service", springApplicationName, "code", code).increment();
   return ErrorDetail.newBuilder().setCode(code).setMessage(message).build();
 }
 ```

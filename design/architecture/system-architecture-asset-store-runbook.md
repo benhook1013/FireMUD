@@ -59,7 +59,7 @@ When using a self-hosted MinIO cluster as the asset store:
    lifecycle described in
    [Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md):
 
-   - Only **retired/archived** versions (no `game_instances` rows reference the
+   - Only **retired** versions (no `game_instances` rows reference the
      `version_id` as `runtime_version`, and the version is no longer listed as
      launchable in `game_manifest`) are eligible for asset deletion.
    - Published assets are discovered via the `version_asset` mapping table in the

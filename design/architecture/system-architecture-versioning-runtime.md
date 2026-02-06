@@ -40,7 +40,7 @@ Game versions go through a simple lifecycle:
 - **Published** – the Saga has completed successfully (including asset export) and the version is available for use by game instances.
 - **Active** – a specific Published version is recorded as the `runtime_version` for one or more entries in the `game_instances` table.
 - **Failed** – a version whose publish Saga has failed in a way that leaves data incomplete or unusable. Failed versions are never eligible for activation until a repair/retry step transitions them back to Draft or Published.
-- **Retired/Archived** – the version is no longer eligible to be activated for new instances, and no `game_instances` reference it as `runtime_version`. Only **Retired** versions may have their object-store prefixes or other external assets deleted.
+- **Retired** (also referred to as “Archived” in some UIs) – the version is no longer eligible to be activated for new instances, and no `game_instances` reference it as `runtime_version`. Only **Retired** versions may have their object-store prefixes or other external assets deleted.
 
 Administrative tooling (for example via the Game Design Service or Logging & Admin Service) should:
 

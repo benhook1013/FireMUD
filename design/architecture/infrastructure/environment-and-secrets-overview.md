@@ -42,8 +42,17 @@ This section summarizes the **most important environment variables and rotation 
 
 Key rules:
 
-- **Never** point Coordination Redis and Cache/Rate‑Limit Redis at the same instance, even in development.
+- **Never** point Coordination Redis and Cache/Rate‑Limit Redis at the same instance in any non-ephemeral environment (including local development, staging, and production).
 - Player‑facing environments must use **distinct logical Redis deployments** for coordination and cache/rate‑limit roles.
+- Truly ephemeral CI/preview stacks may collapse roles into a single Redis instance only when explicitly documented as ephemeral and not used to validate coordination SLOs; see `system-architecture-redis-usage-and-profiles.md#environment-mappings`.
+
+Operational notes:
+
+- Coordination Redis hosts both gameplay session bindings (`session:game:*`) and control-plane JWT allowlist entries (`session:auth:*`) as described in `system-architecture-authentication.md`.
+
+### TCP Proxy → Gateway Bridge (Telnet)
+
+The TCP Proxy Service uses `GATEWAY_WS_URL` to connect to Spring Cloud Gateway over WebSocket. This endpoint is configured independently of the `FIREMUD_SERVICES_*` service discovery overrides: changing `FIREMUD_SERVICES_SPRING_CLOUD_GATEWAY_SERVICE` does not automatically update the Telnet bridge. Operators must keep `GATEWAY_WS_URL` aligned with the Gateway’s intended internal WebSocket listener for the environment as described in `system-architecture-protocol-bridging.md` and the TCP Proxy Service design.
 
 ### Secrets & Certificates
 

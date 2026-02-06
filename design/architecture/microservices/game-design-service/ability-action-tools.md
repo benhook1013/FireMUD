@@ -35,9 +35,14 @@ Within a given published game version:
 
 Scripts and plugins may safely reference abilities by identifier within a game version and across script-only or plugin-only patches, but they should not assume that those identifiers remain valid across **different game versions**. Versioning runtime docs describe how these assets are pinned and how rollbacks behave when a game version is reverted.
 
-The Game Design Service’s publish Saga is responsible for enforcing these rules at **design time**: during `PublishVersion`, it verifies that all ability identifiers referenced by scripts and plugins targeting a given `(tenantId, versionId)` exist and are compatible with the ability schema for that version. If mismatches are detected, the Saga marks the version as failed in Game Design’s own status model (for example, `PUBLISH_FAILED_DESIGN`) and does **not** hand the corresponding `scriptPatchVersion` to the Automation & Scripting Service. As a result, no `<tenantId, scriptPatchVersion>` lifecycle row is created and the patch never enters `PENDING_VALIDATION` / `ONLOAD_RUNNING` / `READY` on the runtime side; runtime handlers therefore never execute against missing or incompatible abilities.
+The Game Design Service’s publish workflows are responsible for enforcing these rules at **design time**:
 
-From an observability perspective, script and plugin invocations that exercise abilities are recorded in `script_event_audit` with a `scriptEventId` that you can use to correlate designer-facing events with automation metrics and downstream tick effects, following the patterns in `design/architecture/system-architecture-scripting-quotas-and-operations.md`.
+- During `PublishVersion`, it verifies that all ability identifiers referenced by scripts and plugins targeting a given `(tenantId, versionId)` exist and are compatible with the ability schema for that version.
+- During `PublishScriptPatchVersion` and plugin bundle publication/enablement, it must re-validate that the patch/plugin remains compatible with the pinned `baseVersionId` (the underlying published game version) and its ability schema. Script-only and plugin-only patches must not introduce new dependencies that require a new `versionId`.
+
+If mismatches are detected, Game Design marks the publish/enable attempt as failed in its design-time status model (for example `PUBLISH_FAILED_DESIGN`) and does **not** hand the corresponding patch/plugin version to the Automation & Scripting Service. As a result, no `<tenantId, scriptPatchVersion>` lifecycle row is created and the patch never enters `PENDING_VALIDATION` / `ONLOAD_RUNNING` / `READY` on the runtime side; runtime handlers therefore never execute against missing or incompatible abilities.
+
+From an observability perspective, script and plugin invocations that exercise abilities are recorded in `script_event_audit` with a `scriptEventId` that you can use to correlate designer-facing events with logs/traces and downstream tick effects; aggregate automation metrics should be used at the `scriptId` / `eventType` / `tenantId` level rather than per `scriptEventId`, following the patterns in `design/architecture/system-architecture-scripting-quotas-and-operations.md`.
 
 ## Capabilities
 

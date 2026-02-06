@@ -33,7 +33,7 @@
       "title": "Coordination Memory Usage (bytes)",
       "targets": [
         {
-          "expr": "redis_coordination_used_memory_bytes",
+          "expr": "redis_coordination_used_memory_bytes{role=\"coordination\"}",
           "legendFormat": "used_memory",
           "refId": "A"
         }
@@ -45,7 +45,7 @@
       "title": "Coordination Key Counts by Prefix",
       "targets": [
         {
-          "expr": "redis_coordination_keys_total",
+          "expr": "redis_coordination_keys_total{role=\"coordination\"}",
           "legendFormat": "{{prefix}}",
           "refId": "A"
         }

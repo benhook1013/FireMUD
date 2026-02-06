@@ -7,6 +7,7 @@ This runbook describes operator actions for **player-facing SLO breaches** on lo
 - **Login success ratio below SLO**
 - **Command end-to-end latency above SLO**
 - **Chat delivery latency above SLO**
+- **Telnet/WebSocket path availability below SLO**
 
 Each scenario assumes that the Player Experience, Redis & Coordination Health, and Tick Health & Ledger dashboards under `design/observability/grafana` are available.
 
@@ -133,3 +134,41 @@ Each scenario assumes that the Player Experience, Redis & Coordination Health, a
    - Confirm chat p99 latency returns below the SLO for active channels.
    - Ensure the alert clears and player reports improve.
    - Use the `player-incident-drilldown.json` Kibana saved search to validate that chat-related errors or delays in logs have subsided for affected players and channels.
+## Telnet/WebSocket Path Availability Below SLO
+
+### Detect
+
+- Player reports: failed or flaky connections on one entry path (Telnet or WebSocket/HTTPS).
+- Metrics:
+  - Player Experience dashboard shows a drop in availability computed from `entrypath_connection_attempts_total{path,outcome}` for one or more tenants.
+  - TCP Proxy dashboards show whether `tcpproxy_connections_limit_exceeded` or `tcpproxy_telnet_discarded` are elevated (Telnet path), and Gateway dashboards show whether WebSocket upgrade failures are elevated (WebSocket path).
+
+### Decide
+
+- Determine scope:
+  - Single tenant vs all tenants (group by `tenantId`).
+  - Single `path` vs multiple (`path="telnet"` vs `path="websocket"`).
+- Determine dominant failure outcomes by inspecting `entrypath_connection_attempts_total` broken down by `outcome`:
+  - `limit_exceeded` suggests caps or abusive clients.
+  - `protocol_error` suggests client/edge parsing problems.
+  - `upstream_unreachable` suggests Gateway or downstream availability issues.
+  - `auth_failed` suggests account/JWT or session binding problems.
+
+### Act
+
+1. **Classify by path**
+   - If `path="telnet"` only:
+     - Follow the Telnet degraded runbook (`system-architecture-telnet-degraded-runbook.md`) and TCP Proxy dashboards/logs.
+   - If `path="websocket"` only:
+     - Inspect Gateway WebSocket upgrade metrics/logs and compare to general HTTP health.
+   - If both paths are affected:
+     - Treat as a broader edge/Gateway or downstream capacity incident; cross-check login SLI, Redis tail-loss, and tick health.
+2. **Mitigate**
+   - For cap-driven failures (`outcome="limit_exceeded"`):
+     - Adjust caps (`TCP_PROXY_MAX_CONNECTIONS`, `TCP_PROXY_MAX_CONNECTIONS_PER_IP`) only if dashboards indicate normal load is being rejected rather than abusive traffic.
+     - Consider rate-limiting or blocking abusive sources using documented edge controls.
+   - For upstream failures (`outcome="upstream_unreachable"` or timeouts):
+     - Scale or roll back Gateway/TCP Proxy if a recent change correlates with the incident.
+     - Validate downstream dependencies (Redis/Postgres) and tick health for player-facing regions.
+3. **Verify recovery**
+   - Confirm availability returns above SLO for affected `{tenantId,path}` combinations and the dominant failure outcomes subside.
