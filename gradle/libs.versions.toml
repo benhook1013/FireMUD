@@ -16,24 +16,24 @@ testcontainers = "1.21.4"
 
 [libraries]
 # Spring Boot Starters
-spring-boot-starter = { module = "org.springframework.boot:spring-boot-starter", version = "3.5.7" }
-spring-boot-starter-actuator = { module = "org.springframework.boot:spring-boot-starter-actuator", version = "3.5.7" }
-spring-boot-starter-data-jpa = { module = "org.springframework.boot:spring-boot-starter-data-jpa", version = "3.5.7" }
-spring-boot-starter-data-redis = { module = "org.springframework.boot:spring-boot-starter-data-redis", version = "3.5.7" }
-spring-boot-starter-data-redis-reactive = { module = "org.springframework.boot:spring-boot-starter-data-redis-reactive", version = "3.5.7" }
-spring-boot-starter-aop = { module = "org.springframework.boot:spring-boot-starter-aop", version = "3.5.7" }
-spring-boot-starter-mail = { module = "org.springframework.boot:spring-boot-starter-mail", version = "3.5.7" }
-spring-boot-starter-web = { module = "org.springframework.boot:spring-boot-starter-web", version = "3.5.7" }
-spring-boot-starter-validation = { module = "org.springframework.boot:spring-boot-starter-validation", version = "3.5.7" }
-spring-boot-starter-jdbc = { module = "org.springframework.boot:spring-boot-starter-jdbc", version = "3.5.7" }
-spring-boot-starter-cache = { module = "org.springframework.boot:spring-boot-starter-cache", version = "3.5.7" }
-spring-boot-starter-test = { module = "org.springframework.boot:spring-boot-starter-test", version = "3.5.7" }
-spring-boot-starter-websocket = { module = "org.springframework.boot:spring-boot-starter-websocket", version = "3.5.7" }
-spring-boot-starter-webflux = { module = "org.springframework.boot:spring-boot-starter-webflux", version = "3.5.7" }
-spring-boot-configuration-processor = { module = "org.springframework.boot:spring-boot-configuration-processor", version = "3.5.7" }
+spring-boot-starter = { module = "org.springframework.boot:spring-boot-starter", version = "4.0.2" }
+spring-boot-starter-actuator = { module = "org.springframework.boot:spring-boot-starter-actuator", version = "4.0.2" }
+spring-boot-starter-data-jpa = { module = "org.springframework.boot:spring-boot-starter-data-jpa", version = "4.0.2" }
+spring-boot-starter-data-redis = { module = "org.springframework.boot:spring-boot-starter-data-redis", version = "4.0.2" }
+spring-boot-starter-data-redis-reactive = { module = "org.springframework.boot:spring-boot-starter-data-redis-reactive", version = "4.0.2" }
+spring-boot-starter-aop = { module = "org.springframework.boot:spring-boot-starter-aop", version = "4.0.2" }
+spring-boot-starter-mail = { module = "org.springframework.boot:spring-boot-starter-mail", version = "4.0.2" }
+spring-boot-starter-web = { module = "org.springframework.boot:spring-boot-starter-web", version = "4.0.2" }
+spring-boot-starter-validation = { module = "org.springframework.boot:spring-boot-starter-validation", version = "4.0.2" }
+spring-boot-starter-jdbc = { module = "org.springframework.boot:spring-boot-starter-jdbc", version = "4.0.2" }
+spring-boot-starter-cache = { module = "org.springframework.boot:spring-boot-starter-cache", version = "4.0.2" }
+spring-boot-starter-test = { module = "org.springframework.boot:spring-boot-starter-test", version = "4.0.2" }
+spring-boot-starter-websocket = { module = "org.springframework.boot:spring-boot-starter-websocket", version = "4.0.2" }
+spring-boot-starter-webflux = { module = "org.springframework.boot:spring-boot-starter-webflux", version = "4.0.2" }
+spring-boot-configuration-processor = { module = "org.springframework.boot:spring-boot-configuration-processor", version = "4.0.2" }
 
-flyway-core = { module = "org.flywaydb:flyway-core", version = "11.20.2" }
-flyway-database-postgresql = { module = "org.flywaydb:flyway-database-postgresql", version = "11.20.2" }
+flyway-core = { module = "org.flywaydb:flyway-core", version = "12.0.0" }
+flyway-database-postgresql = { module = "org.flywaydb:flyway-database-postgresql", version = "12.0.0" }
 
 mapstruct = { module = "org.mapstruct:mapstruct", version = "1.6.3" }
 mapstruct-processor = { module = "org.mapstruct:mapstruct-processor", version = "1.6.3" }
@@ -41,13 +41,13 @@ mapstruct-processor = { module = "org.mapstruct:mapstruct-processor", version = 
 lombok = { module = "org.projectlombok:lombok", version = "1.18.42" }
 lombok-mapstruct-binding = { module = "org.projectlombok:lombok-mapstruct-binding", version = "0.2.0" }
 
-grpc-netty-shaded = { module = "io.grpc:grpc-netty-shaded", version = "1.78.0" }
-grpc-protobuf = { module = "io.grpc:grpc-protobuf", version = "1.78.0" }
-grpc-stub = { module = "io.grpc:grpc-stub", version = "1.78.0" }
-protoc-gen-grpc-java = { module = "io.grpc:protoc-gen-grpc-java", version = "1.78.0" }
+grpc-netty-shaded = { module = "io.grpc:grpc-netty-shaded", version = "1.79.0" }
+grpc-protobuf = { module = "io.grpc:grpc-protobuf", version = "1.79.0" }
+grpc-stub = { module = "io.grpc:grpc-stub", version = "1.79.0" }
+protoc-gen-grpc-java = { module = "io.grpc:protoc-gen-grpc-java", version = "1.79.0" }
 
-protobuf-java = { module = "com.google.protobuf:protobuf-java", version = "4.33.4" }
-protoc = { module = "com.google.protobuf:protoc", version = "4.33.4" }
+protobuf-java = { module = "com.google.protobuf:protobuf-java", version = "4.33.5" }
+protoc = { module = "com.google.protobuf:protoc", version = "4.33.5" }
 
 opentelemetry-api = { module = "io.opentelemetry:opentelemetry-api", version = "1.58.0" }
 opentelemetry-sdk = { module = "io.opentelemetry:opentelemetry-sdk", version = "1.58.0" }
@@ -63,7 +63,7 @@ argon2 = { module = "de.mkammerer:argon2-jvm", version = "2.12" }
 
 grpc-spring-boot-starter = { module = "io.github.lognet:grpc-spring-boot-starter", version = "5.2.0" }
 postgresql = { module = "org.postgresql:postgresql", version = "42.7.9" }
-aws-sdk-s3 = { module = "software.amazon.awssdk:s3", version = "2.41.10" }
+aws-sdk-s3 = { module = "software.amazon.awssdk:s3", version = "2.41.23" }
 h2 = { module = "com.h2database:h2", version = "2.4.240" }
 
 # Keep Springdoc on 2.x until we migrate to Spring Boot 4.x. Springdoc 3.x depends on Spring Boot 4.x artifacts,
@@ -78,6 +78,6 @@ testcontainers-junit-jupiter = { module = "org.testcontainers:junit-jupiter", ve
 testcontainers-postgresql = { module = "org.testcontainers:postgresql", version = "1.21.4" }
 
 [plugins]
-spring-boot = { id = "org.springframework.boot", version = "3.5.7" }
-flyway = { id = "org.flywaydb.flyway", version = "11.20.2" }
+spring-boot = { id = "org.springframework.boot", version = "4.0.2" }
+flyway = { id = "org.flywaydb.flyway", version = "12.0.0" }
 protobuf = { id = "com.google.protobuf", version = "0.9.6" }
