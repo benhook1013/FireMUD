@@ -28,7 +28,7 @@ World data uses two distinct identifier families. Template identifiers must not 
 
 Tick-driven, cross-service mutations are at-least-once and must be idempotent.
 
-- `EffectId` – the canonical idempotency identity derived from tick context (`tenantId`, `regionEpoch`, `tickId`, `effectKey`) plus the target aggregate identity. All services participating in a tick-driven effect must use projections of the same `EffectId` for idempotency guards and reconciliation.
+- `EffectId` – the canonical idempotency identity derived from region-scoped tick context (`tenantId`, `regionId`, `regionEpoch`, `tickId`, `effectKey`) plus the target aggregate identity. All services participating in a tick-driven effect must use projections of the same `EffectId` for idempotency guards and reconciliation.
 
 ## Saga Workflow Identity
 

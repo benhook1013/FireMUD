@@ -196,13 +196,13 @@ Prometheus and Alertmanager should expose and alert on these metrics using rules
 
 - **Missed backups (P1)**
   - Expression: “no successful backup in the last N minutes” (for example, `time() - backup_last_success_timestamp_seconds > 90 * 60` in production).
-  - Labels: `service="postgres-backup"`, `severity="P1"`, `owner="platform"`, `runbook="design/architecture/system-architecture-backup-recovery.md#backup-verification--restoration-testing"`.
+  - Labels: `service="postgres-backup"`, `severity="P1"`, `owner="platform"`, `runbook="design/architecture/system-architecture-backup-recovery.md#backup-verification-restoration-testing"`.
 - **Missed verification (P1/P2)**
   - Expression: “no successful verification in the last 24h” (for example, `time() - backup_verify_last_success_timestamp_seconds > 24 * 60 * 60`).
   - Labels similar to the backup alert, with a clear `runbook` annotation.
 - **Backup pause too long (P1)**
   - Expression: pause duration exceeds an agreed budget (for example `backup_tick_pause_duration_seconds{scope="all"} > 30`).
-  - Labels: `service="postgres-backup"`, `severity="P1"`, `owner="platform"`, `runbook="design/architecture/system-architecture-backup-recovery.md#backup-verification--restoration-testing"`.
+  - Labels: `service="postgres-backup"`, `severity="P1"`, `owner="platform"`, `runbook="design/architecture/system-architecture-backup-recovery.md#backup-verification-restoration-testing"`.
 
 Grafana dashboards under `design/observability/grafana` should include a small “Backups” section or dedicated dashboard that visualizes:
 

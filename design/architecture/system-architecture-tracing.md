@@ -81,10 +81,13 @@ All spans should include, where applicable:
 
 - **Sampling**
   - Production-like environments should assume sampling is enabled and that not every request/tick will produce a trace.
+  - Baseline expectation: a non-zero sampling rate that makes it possible to find representative traces for common incident classes (for example, at least ~1% for high-volume entry paths). This is not a correctness boundary; it is an operational usability target.
+  - Incident mode: operators should be able to temporarily increase sampling for a scoped tenant/region/service during an investigation, then return to baseline once the incident is resolved.
   - Runbooks must treat traces as a best-effort diagnostic: when sampling is too low to find a representative trace, operators should pivot to metrics (SLO/SLI panels) and logs (Kibana searches filtered by `tenantId`, `regionId`, and `traceId` when available).
   - If a workflow requires trace availability as part of an operational contract (for example debugging a recurring tick stall), document the minimum sampling expectations for that workflow explicitly in the owning runbook.
 - **Sensitive attributes**
   - Attributes such as `playerId` are operationally useful but should be treated as sensitive data and kept bounded (IDs only, no message payloads).
+  - `playerId` is allowed in production traces as an identifier for correlation and incident drilldown, but it must be protected by access controls and retention policies appropriate to player-linked data.
   - Do not attach user-provided text (chat content, command payloads, free-form error messages) as span attributes; keep that data in logs with appropriate redaction and retention controls.
   - When exporting traces outside of the cluster or into shared tooling, ensure access controls and retention policies match the sensitivity of these identifiers.
 
@@ -101,7 +104,7 @@ During incidents, Jaeger is a first-class tool alongside logs and metrics. The f
   - Verify how often the same effect identity appears in a short time window and correlate with `tick_effect_outcome_total` metrics.
 - **Telnet/TCP Proxy incidents**
   - Filter by `service.name = "tcp-proxy-service"` and spans such as `tcpproxy_connection` or `tcpproxy_notify_disconnect`.
-  - Correlate high `tcpproxy.telnet.discarded` and `tcpproxy.disconnect.notify.failure` metrics with specific traces to understand whether failures are due to abusive clients, PROXY header issues, or downstream Game Session behavior.
+  - Correlate high `tcpproxy.telnet.discarded` and `tcpproxy.disconnect.notify.transport_failure` metrics with specific traces to understand whether failures are due to abusive clients, PROXY header issues, or downstream Game Session behavior.
 - **Backup and pause/resume issues**
   - Search for `backup_pause_ticks` and `backup_resume_ticks` spans around the time of a backup.
   - Confirm that `backup_pg_dump_snapshot` spans align with the expected backup schedule and that pauses are short-lived relative to SLOs.

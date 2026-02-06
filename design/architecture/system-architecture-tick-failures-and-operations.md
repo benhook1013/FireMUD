@@ -72,7 +72,7 @@ Replay of a tick is driven from ledger state:
 
 ### EffectId, Ledger Rows, and Guard Keys
 
-The canonical `EffectId` described in `system-architecture-transactions.md` (a stable identity derived from `tenantId`, `regionEpoch`, `tickId`, `effectKey`, and target aggregate identity) is the logical key that ties together:
+The canonical `EffectId` described in `system-architecture-transactions.md` (a stable identity derived from `tenantId`, `regionId`, `regionEpoch`, `tickId`, `effectKey`, and target aggregate identity) is the logical key that ties together:
 
 - Tick coordination in Redis.
 - Tick effect ledger rows in PostgreSQL.

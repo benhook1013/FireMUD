@@ -122,6 +122,8 @@ Tick timers (cooldowns, regeneration, delayed effects) are:
 
 All writes to timer keys (`timer:{tenantRegionTag}`) are performed under the same region lease and Lua scripts as tick processing; domain services must not modify timer keys via ad-hoc Redis commands. This keeps timers and command queues in the same concurrency domain.
 
+Timer and retry keys are **volatile coordination structures**, not durable schedules. After coordination resets or data loss, only schedules that are also represented durably elsewhere (for example PostgreSQL-backed automation schedules or explicit domain state) are expected to be recovered or re-derived; the existence of a `timer:{tenantRegionTag}` entry is never the only record of a correctness-critical timer.
+
 Durations may be scaled dynamically:
 
 - `scaledDuration = baseDuration * timeScaleMultiplier`

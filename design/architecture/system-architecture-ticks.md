@@ -58,6 +58,16 @@ The tick heartbeat is the **canonical timeline** for each `<tenantId, regionId>`
 - Consumers must be able to reconstruct their view of progress and scheduling purely from the heartbeat stream plus durable domain state; no Redis structure is treated as an authoritative log of past ticks.
 - Consumers that persist offsets or schedules must key them by `(tenantId, regionId, regionEpoch, tickId)` and treat any observed jump in `regionEpoch` as a reset boundary: state derived from the old epoch is discarded or reconciled from PostgreSQL before resuming.
 
+### Tick Commit Definition (Heartbeat Watermark)
+
+For a given `<tenantId, regionId, regionEpoch, tickId>`, the tick is considered **committed** only when:
+
+- The Game Session tick effect ledger has converged all effects for that tick to terminal outcomes (`APPLIED` or `ABANDONED`) and there are no remaining `SCHEDULED` ledger rows for that tick.
+- `RegionStatus.lastCommittedTickId` (or equivalent) has been advanced to that `(regionEpoch, tickId)` as part of the same “commit visibility” boundary (the status surface is the durable source of truth for the commit watermark).
+- Redis cleanup of staging keys (for example `tick:{tenantRegionTag}:pending`) has either completed or will be performed as best-effort maintenance; cleanup is not what makes a tick committed.
+
+A heartbeat `(regionEpoch, tickId)` is emitted only after the durable commit watermark has advanced; consumers treat heartbeats as “last committed tick”, not as “tick started”.
+
 In addition to the gRPC heartbeat, the Game Session Service exposes a **tick event stream** for schedulers and observers:
 
 - Events are keyed by `<tenantId, regionId>` and include:
@@ -283,6 +293,8 @@ Tick timers (cooldowns, regeneration, delayed effects) are:
 - Aligned with the tick heartbeat and tick cadence.
 - Subject to time-scaling rules that speed up or slow down perceived time while preserving ordering.
 
+Tick-region timers and retry queues are **volatile coordination structures**, not durable schedules. After coordination resets or data loss, only timers/schedules that are also represented durably elsewhere (for example PostgreSQL-backed automation schedules or other explicit domain state) are expected to be recovered or re-derived. Gameplay features that require timers to survive resets must store the underlying intent durably and treat Redis timer entries as derived coordination indexes rather than as the only record of the timer.
+
 ### Scheduler Recovery Semantics
 
 Automation & Scripting uses the tick heartbeat plus durable PostgreSQL schedules to implement “every N ticks” and similar timers:
@@ -325,7 +337,7 @@ Domain services must ensure that tick-driven effects are **idempotent** with res
 Effect identity and idempotency rules are defined jointly by:
 
 - The `(regionEpoch, tickId)` carried on tick-driven calls.
-- A stable, structured effect identity (including `tenantId`, `regionEpoch`, `tickId`, `effectKey`, aggregate type, and aggregate id) derived deterministically from the command payload and tick context.
+- A stable, structured effect identity derived deterministically from the command payload and tick context, including at minimum `tenantId`, `regionId`, `regionEpoch`, `tickId`, `effectKey`, aggregate type, and aggregate id.
 
 Together these form the canonical `EffectId` described in `system-architecture-transactions.md`. Tick coordination keys in Redis, tick effect ledger rows, and domain-level guard tables (for example `tick_effect_guard`) must all use projections of this same `EffectId` rather than introducing ad-hoc idempotency keys.
 
