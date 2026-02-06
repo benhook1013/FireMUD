@@ -7,8 +7,8 @@ Orchestrates live game sessions, including tick execution, player input validati
 ### Terminology
 
 - **Tenant** – a hosted game world or project, identified by `tenantId`. All database rows and Redis keys include this prefix so data is isolated between games.
-- **Game instance** – a specific running instance of a tenant’s world, identified by a `gameInstanceId` in the database and runtime APIs as described in [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md#version-activation--rollback). In the initial deployment the platform runs at most one game instance per tenant, so some Redis keys and APIs use `tenantId` where `gameInstanceId` will be threaded in later.
-- **Player gameplay session** – a single player’s live connection and gameplay context bound to a specific game instance. Gameplay sessions are stored in Redis under `session:game:<tenantId>:<sessionId>` (tenant-scoped, and over time instance-scoped) and are purged when the session ends.
+- **Game instance** – a specific running instance of a tenant’s world, identified by a `gameInstanceId` in the database and runtime APIs as described in [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md#version-activation--rollback). Even if a deployment runs at most one instance per tenant, APIs and persistence models still carry `gameInstanceId` explicitly (for example using a stable default like `"primary"`) so multi-instance support does not require rewriting identifiers later.
+- **Player gameplay session** – a single player’s live connection and gameplay context bound to a specific game instance. Gameplay sessions are stored in Redis under `session:game:<tenantId>:<gameInstanceId>:<sessionId>` and are purged when the session ends.
 - **Region / region shard** – a subdivision of the world used for tick execution and scaling. Tick coordination keys are scoped per `<tenantId, regionId>` and do not follow individual player session lifecycles.
 
 ### Responsibilities
@@ -39,7 +39,7 @@ Orchestrates live game sessions, including tick execution, player input validati
   - Every gameplay session record includes a `tenantId` identifying the owning tenant (and, via associated tables, the `gameInstanceId` when multiple instances per tenant are supported). Redis keys and database tables prefix this value so sessions from different games remain isolated. The platform may enforce per-tenant resource quotas at this level so one tenant cannot exhaust cluster capacity.
   See the [Multi-Tenancy](../../system-architecture-multi-tenancy.md) document.
   Player session state for reconnect recovery lives in Redis using keys of the form
-  `session:game:<tenantId>:<sessionId>` and is purged when the session ends. Region-scoped tick queues, locks and pending sets share this tenant-prefixed scheme but follow `<tenantId, regionId>` lifecycles rather than individual player sessions; see also [Session Keys and Gameplay Binding](../../system-architecture-redis.md#session-keys-and-gameplay-binding) and the coordination timeline `(region_epoch, tickId)` described in [Redis Coordination Invariants](../../system-architecture-redis.md#redis-coordination-invariants).
+  `session:game:<tenantId>:<gameInstanceId>:<sessionId>` and is purged when the session ends. Region-scoped tick queues, locks and pending sets share this tenant-prefixed scheme but follow `<tenantId, regionId>` lifecycles rather than individual player sessions; see also [Session Keys and Gameplay Binding](../../system-architecture-redis.md#session-keys-and-gameplay-binding) and the coordination timeline `(region_epoch, tickId)` described in [Redis Coordination Invariants](../../system-architecture-redis.md#redis-coordination-invariants).
 - Restores player sessions after disconnects and enforces single-session control as outlined in the Reconnection Strategy. For Telnet clients, the service also consumes best-effort, at-least-once `NotifyDisconnect` events emitted by the TCP Proxy Service over an internal gRPC link and treats them as idempotent hints keyed by `<proxyConnectionId, disconnectSequence>` rather than a guaranteed source of truth. Game Session persists the latest processed `disconnectSequence` per `<proxyConnectionId>` and ignores older or duplicate events so retry behaviour at the proxy can remain simple while consumption stays idempotent. When the Telnet client supplies a `SESSION <gameInstanceId> <tenantId>` envelope, that `<tenantId, gameInstanceId>` is carried as advisory context and may be used for logging/audit, but Game Session still validates any game-instance ownership claims against Redis and its authenticated session state.
 - Certain operations such as game startup and shutdown are implemented as Sagas
   so that all dependent services remain in sync. See
@@ -66,7 +66,7 @@ Orchestrates live game sessions, including tick execution, player input validati
   - Coordination prefixes are treated as **reset-tolerant** in line with [Redis Reset & Recovery](../../system-architecture-redis-reset-and-recovery.md): incident runbooks may clear them per region/tenant/cluster without affecting authoritative PostgreSQL state, and designs must remain safe under the documented tail-loss envelope.
 - **Cache/Rate-Limit Redis usage**
   - Does not use Cache/Rate-Limit Redis for gameplay-critical coordination; session state, tick queues, locks, timers, and retry metadata always live on Coordination Redis so they share the same AOF and reset semantics described in [Redis Architecture – Redis Availability, Consistency, and Safety Guarantees](../../system-architecture-redis.md#redis-availability-consistency-and-safety-guarantees).
-  - Uses **Cache/Rate-Limit Redis** for read-side caches that help serve hot-path session views, most notably pre-rendered room LOOK aggregates under `view:room-look:<tenantId>:<roomId>` as defined in [Redis Cache & Rate Limiting](../../system-architecture-redis-cache.md#cache-rate-limit-key-catalog).
+  - Uses **Cache/Rate-Limit Redis** for read-side caches that help serve hot-path session views, most notably pre-rendered room LOOK aggregates under `view:room-look:<tenantId>:<gameInstanceId>:<roomInstanceId>` as defined in [Redis Cache & Rate Limiting](../../system-architecture-redis-cache.md#cache-rate-limit-key-catalog).
   - `view:room-look:*` entries are treated as **Class B, TTL-only caches**:
     - They contain rendered room “view” payloads derived from World Management and Entity Management; PostgreSQL remains authoritative for world/entity state.
     - TTLs are configured to be short and bounded so stale views are naturally refreshed; occasional staleness is acceptable because gameplay correctness (combat resolution, movement, visibility rules) is enforced by tick logic and authoritative reads, not by the cache.
@@ -86,7 +86,7 @@ Game Session uses the following Redis key prefixes; the **authoritative catalog*
 
 | Key prefix | Role | Notes |
 | --- | --- | --- |
-| `session:game:<tenantId>:<sessionId>` | Coordination | Session state and reconnect metadata for gameplay sessions (tenant-scoped, and indirectly tied to a `gameInstanceId`). |
+| `session:game:<tenantId>:<gameInstanceId>:<sessionId>` | Coordination | Session state and reconnect metadata for gameplay sessions (instance-scoped). |
 | `tick:{tenantRegionTag}:queue:<entityId>` | Coordination | Per-entity command queues within a tick region. |
 | `tick:{tenantRegionTag}:pending` | Coordination | Single in-flight tick payload per region. |
 | `tick:{tenantRegionTag}:lock:<entityId>` | Coordination | Entity locks during tick execution. |
@@ -356,7 +356,7 @@ OK ENTER_GAME Entered game: demo
 
 LOOK
 OK LOOK
-Room: Crafting Hall of Ember (ID: R-2045)
+Room: Crafting Hall of Ember (Room Instance ID: R-2045)
 Short: A vaulted hall lined with anvils and hanging banners.
 Long: Sparks drift upward from the forges while metalworkers shout over the rhythm of hammers; the far wall is dominated by the etched sigil of the Ember Guild.
 Exits: SOUTH (wide stair toward the guild atrium), WEST (narrow corridor past the glazing ovens).
@@ -376,13 +376,13 @@ The `TextCommandInterpreter` returns a result that includes both enqueue metadat
 For the current Telnet-to-gameplay vertical slice, the implementation intentionally separates "system" commands (session and login related) from gameplay commands:
 
 - `LOGIN` / `LOGON` are treated as system commands owned by the Game Session Service and will be wired into the authentication and world-selection flow described in [Authentication & Authorization](../../system-architecture-authentication.md). At this stage they are defined in the protocol and parser, but the full login flow is still being implemented under `design/project-management/task-list-game-session-service.md`.
-- `LOOK` is implemented through the Game Logic Service's data-driven resolver (`ResolveLook`), which orchestrates room snapshots from World Management and visible entities from Entity Management; Game Session formats that aggregated result, caches the last successful snapshot per session, and streams it back to Telnet and WebSocket clients so the gameplay flow remains deterministic while drawing from the shared world state.
+- `LOOK` is implemented through the Game Logic Service's data-driven resolver (`ResolveLook`), which orchestrates room snapshots from World Management and visible entities from Entity Management; Game Session formats the returned `LookResult`, caches the last successful snapshot per session, and streams it back to Telnet and WebSocket clients so the gameplay flow remains deterministic while drawing from the shared world state.
 - `SAY` and additional gameplay commands follow the same pattern: they are part of the shared text protocol, but their long-term behavior is provided by soft-coded definitions and the Game Logic/World services rather than hard-coded handlers in this service.
 
 ### SAY request flow
 
 1. Game Session validates the same Redis-backed session context leveraged by `LOOK`; unauthenticated inputs are rejected with `ERROR NOT_AUTHENTICATED` before any gameplay command reaches the interpreter.
-2. Authenticated `SAY`/`YELL`/`WHISPER` commands are routed through `SayCommandHandler`, which packages `tenantId`, `sessionId`, `playerId`, `roomId`, normalized text, and alias metadata into a `BroadcastSay` gRPC request to Game Logic.
+2. Authenticated `SAY`/`YELL`/`WHISPER` commands are routed through `SayCommandHandler`, which packages `tenantId`, `gameInstanceId`, `sessionId`, `playerId`, `roomInstanceId` (a `RoomInstanceRef`), normalized text, and alias metadata into a `BroadcastSay` gRPC request to Game Logic.
 3. Game Logic evaluates room visibility, enforces message constraints, and forwards the payload (or a stubbed notification) to the Social & Groups Service for delivery and logging. Upon success it returns the deterministic recipient list, which Game Session uses to render the canonical `OK SAY` response and emit `gamesession.command.say.invocations`/`failures` instrumentation.
 4. Backend failures (e.g., delivery blocked, Social service unavailable) propagate protocol-mapped errors such as `ERROR SAY_NOT_DELIVERED` while `ERROR NOT_AUTHENTICATED` remains the consistent pre-flight guard for untrusted requests.
 
@@ -401,7 +401,7 @@ For the current Telnet-to-gameplay vertical slice, the implementation intentiona
 ### LOOK request flow
 
 1. Game Session validates the Redis-backed session context created by a successful `LOGIN`/`LOGON`. If the guard fails, the service immediately returns `ERROR NOT_AUTHENTICATED`.
-2. Authenticated `LOOK` commands call Game Logic's `ResolveLook`, passing `tenantId`, `sessionId`, `playerId`, and `roomId`. ResolveLook enforces visibility rules and aggregates room metadata from World Management plus visible-entity lists from Entity Management.
+2. Authenticated `LOOK` commands call Game Logic's `ResolveLook`, passing `tenantId`, `gameInstanceId`, `sessionId`, `playerId`, and `roomInstanceId` (a `RoomInstanceRef`). ResolveLook enforces visibility rules, fetches room snapshots from World Management, fetches visible-entity lists from Entity Management, and returns a single `LookResult` with stable snapshot identifiers for caching.
 3. Game Logic returns a structured `LookResult` (name, short/long descriptions, exits, visible entities, optional highlights), which Game Session renders into the `OK LOOK` text response, emits metrics/logs (`gamesession.command.look.*`), and caches the serialized snapshot per session so reconnections can replay it quickly.
 4. Reconnecting Telnet or WebSocket clients receive the cached snapshot before buffered commands replay. If the snapshot is missing or stale, Game Session reruns `ResolveLook`, so the projection stays consistent when the world changes while the player was offline.
 
@@ -434,6 +434,7 @@ OK ENTER_GAME Entered game: demo
 LOOK
 OK LOOK
 Room: Candle-lit Antechamber (ID: R-1021)
+Room: Candle-lit Antechamber (Room Instance ID: R-1021)
 Short: You stand in a basalt chamber warmed by a single brazier.
 Long: Stalactites drip along the northern wall while a faint draft carries the smell of damp earth from the lower tunnels.
 Exits: NORTH (arched passage toward the cavern mouth), EAST (narrow fissure descending toward the forges).
@@ -534,7 +535,7 @@ Game startup and shutdown are coordinated using the shared `Saga` helpers from `
 
 ### Redis Keys
 
-Session state needed for reconnect recovery is stored under `session:game:<tenantId>:<sessionId>`. These **per-session** keys (including any session-scoped command queues or metadata) are removed when the corresponding session stops or expires.
+Session state needed for reconnect recovery is stored under `session:game:<tenantId>:<gameInstanceId>:<sessionId>`. These **per-session** keys (including any session-scoped command queues or metadata) are removed when the corresponding session stops or expires.
 
 Tick coordination is **region-scoped**, not session-scoped. Tick queues, locks, timers, retry metadata, and the `tick:{tenantRegionTag}:pending` key use the `tick:{tenantRegionTag}:...` prefix described in the [Redis Architecture](../../system-architecture-redis.md#tick-integration-resilience-locking-staging). Region keys follow region lifecycle and crash-recovery rules:
 
