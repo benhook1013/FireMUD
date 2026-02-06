@@ -71,8 +71,8 @@ When using a self-hosted MinIO cluster as the asset store:
      from the authoritative `version_asset` mappings rather than attempting manual
      repair.
    - Because Published/Active versions are immutable, rerunning `ExportAssets` for a Published/Active version must produce bit-for-bit identical bytes. If a rerun would change outputs, treat it as a process bug or data corruption incident rather than “fixing” the published version in place.
-   - Prefer invoking a higher-level admin workflow (for example an
-     `ArchiveVersion` or `RetireVersion` operation in the Game Design or
+   - Prefer invoking a higher-level admin workflow (for example a
+     `RetireVersion` operation in the Game Design or
      Logging & Admin Service) that:
        - Verifies the version is eligible for retirement.
        - Updates manifests and internal metadata to mark it as retired.

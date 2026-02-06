@@ -124,6 +124,7 @@ Tooling in the Game Design and Logging & Admin services should surface these rel
 - Listing game templates that reference a given `versionId`, so that designers can migrate or delete them before retiring that version.
 - Bulk migration operations that rewrite `GameTemplateDto.config` references from an old `versionId` to a successor `versionId` in a controlled, auditable way.
   - These operations must be driven by normalized dependency tables (for example `game_template_version_ref` and related reference rows), not by best-effort parsing of arbitrary JSON blobs.
+  - When templates pin defaults such as `scriptPatchVersion`, migration tooling must update both the JSON payload and the normalized `game_template_script_patch_ref` rows atomically so instance creation does not observe mixed dependencies.
 
 ### Schema Migrations vs Design Data
 
