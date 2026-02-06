@@ -22,7 +22,7 @@
       "targets": [
         {
           "expr": "redis_aof_current_size_bytes",
-          "legendFormat": "aof_size",
+          "legendFormat": "{{instance}}",
           "refId": "A"
         }
       ],
@@ -34,7 +34,7 @@
       "targets": [
         {
           "expr": "redis_coordination_used_memory_bytes{role=\"coordination\"}",
-          "legendFormat": "used_memory",
+          "legendFormat": "{{instance}}",
           "refId": "A"
         }
       ],

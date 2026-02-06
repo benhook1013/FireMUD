@@ -33,8 +33,7 @@ def _github_anchor_from_heading(heading: str) -> str:
     base = heading.strip().lower()
     base = re.sub(r"[`*_~]", "", base)
     base = re.sub(r"[^a-z0-9\s-]", "", base)
-    base = re.sub(r"\s+", "-", base)
-    base = re.sub(r"-+", "-", base)
+    base = re.sub(r"\s", "-", base)
     return base
 
 

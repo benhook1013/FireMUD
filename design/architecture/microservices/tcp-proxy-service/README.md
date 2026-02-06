@@ -678,8 +678,8 @@ The full variable list is (treat this table as the canonical source of defaults 
 | `TCP_PROXY_MAX_OVERSIZE_LINES` | Maximum oversized lines per connection before hard close | `10` |
 | `TCP_PROXY_MAX_MALFORMED_ENVELOPES` | Maximum malformed `SESSION` envelopes per connection before hard close (see **Telnet Session Envelope & Event Metrics** for how this counter is applied) | `5` |
 | `TCP_PROXY_NOTIFY_DISCONNECT_MAX_RETRY_MS` | Maximum total time after Telnet socket close during which the proxy retries failed `NotifyDisconnect` calls before giving up | `5000` |
-| `TCP_PROXY_GATEWAY_RECONNECT_WINDOW_MS` | Maximum time to keep a Telnet socket open while reconnecting the Proxy → Gateway WebSocket bridge | `5000` |
-| `TCP_PROXY_GATEWAY_MAX_BUFFERED_LINES` | Maximum buffered Telnet lines while the Proxy → Gateway WebSocket bridge is reconnecting | `64` |
+| `TCP_PROXY_GATEWAY_RECONNECT_WINDOW_MS` | Maximum time to retry establishing the initial Proxy → Gateway WebSocket bridge for a newly accepted Telnet socket before failing closed; the proxy does not keep Telnet sockets open across an established bridge dropping | `5000` |
+| `TCP_PROXY_GATEWAY_MAX_BUFFERED_LINES` | Maximum buffered Telnet lines waiting to be forwarded to the gateway due to upstream backpressure; if this ceiling is exceeded the proxy closes the Telnet connection with `backend_unavailable` rather than silently dropping gameplay commands | `64` |
 | `FIREMUD_GATEWAY_WS_CLIENT_CERT_CHAIN_PATH` | Client certificate chain path for Proxy → Gateway WebSocket mTLS | `certs/client.crt` |
 | `FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH` | Client private key path for Proxy → Gateway WebSocket mTLS | `certs/client.key` |
 | `FIREMUD_GATEWAY_WS_CA_CERT_PATH` | CA bundle path for verifying the gateway certificate on the WebSocket hop | `certs/ca.crt` |
@@ -776,11 +776,11 @@ The connection and envelope limits exposed via `TCP_PROXY_MAX_CONNECTIONS`,
 `TCP_PROXY_MAX_CONNECTIONS_PER_IP`, and `TCP_PROXY_MAX_MALFORMED_ENVELOPES`
 are intended to be tuned per environment.
 
-The WebSocket bridge reconnect window and buffer depth (`TCP_PROXY_GATEWAY_RECONNECT_WINDOW_MS` and `TCP_PROXY_GATEWAY_MAX_BUFFERED_LINES`) should be sized to match expected Spring Cloud Gateway blips and typical player command rates:
+The Proxy → Gateway WebSocket bridge retry budget and input buffer depth (`TCP_PROXY_GATEWAY_RECONNECT_WINDOW_MS` and `TCP_PROXY_GATEWAY_MAX_BUFFERED_LINES`) should be sized to match expected gateway availability characteristics and typical player command rates:
 
-- Shorter reconnect windows (for example `1000`–`3000` ms) minimise how long Telnet sockets wait when the Gateway is unavailable but will drop clients more aggressively during longer deploys or outages. Longer windows reduce disconnects but increase the amount of buffered input held at the DMZ edge.
-- `TCP_PROXY_GATEWAY_MAX_BUFFERED_LINES` should reflect how many recent commands you are willing to buffer during a brief Gateway restart (for example 32–128 lines), balanced against memory usage and the expectation that the proxy never replays commands after a disconnect. If the buffer fills before the Gateway link recovers, the proxy closes the Telnet connection with a `backend_unavailable` Telnet reason and increments `tcpproxy.telnet.discarded{reason="gateway_buffer_full"}` so buffer-fill disconnects appear explicitly in dashboards and the Telnet degraded runbook.
-- When tuning these values, watch `tcpproxy.websocket.reconnects`, `tcpproxy.websocket.reconnect.delay`, and `tcpproxy.telnet.discarded` (including the `gateway_buffer_full` breakdown) over a few releases to ensure you are not either buffering too aggressively or dropping legitimate players too often during normal deploy cycles.
+- Shorter retry budgets (for example `1000`–`3000` ms) minimize how long Telnet sockets wait for the proxy to establish the initial WebSocket bridge when Gateway is unavailable, but will drop clients more aggressively during deploys or outages. Longer retry budgets reduce “connection refused” flaps at the cost of holding the Telnet socket open slightly longer before failing closed.
+- `TCP_PROXY_GATEWAY_MAX_BUFFERED_LINES` should reflect how many recent gameplay commands you are willing to queue at the DMZ edge when the upstream WebSocket send path is backpressured (for example 32–128 lines), balanced against memory usage and the requirement that gameplay commands are not dropped silently while a connection remains open. If the buffer fills, the proxy closes the Telnet connection with a `backend_unavailable` Telnet reason and increments `tcpproxy.telnet.discarded{reason="gateway_buffer_full"}` so buffer-driven disconnects appear explicitly in dashboards and the Telnet degraded runbook.
+- When tuning these values, watch `tcpproxy.websocket.reconnects`, `tcpproxy.websocket.reconnect.delay`, and `tcpproxy.telnet.discarded` (including the `gateway_buffer_full` breakdown) over a few releases to ensure you are not either buffering too aggressively or disconnecting legitimate players too often during normal deploy cycles.
 
 ### Recommended Dev Defaults
 

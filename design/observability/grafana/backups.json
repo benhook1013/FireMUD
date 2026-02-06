@@ -1,0 +1,45 @@
+{
+  "title": "Backups",
+  "schemaVersion": 36,
+  "version": 1,
+  "timezone": "browser",
+  "panels": [
+    {
+      "type": "graph",
+      "title": "Time Since Last Successful Backup (seconds)",
+      "targets": [
+        {
+          "expr": "time() - backup_last_success_timestamp_seconds",
+          "legendFormat": "since_last_backup",
+          "refId": "A"
+        }
+      ],
+      "id": 1
+    },
+    {
+      "type": "graph",
+      "title": "Time Since Last Successful Verification (seconds)",
+      "targets": [
+        {
+          "expr": "time() - backup_verify_last_success_timestamp_seconds",
+          "legendFormat": "since_last_verify",
+          "refId": "A"
+        }
+      ],
+      "id": 2
+    },
+    {
+      "type": "graph",
+      "title": "Backup Tick Pause Duration (seconds)",
+      "targets": [
+        {
+          "expr": "backup_tick_pause_duration_seconds",
+          "legendFormat": "{{scope}}",
+          "refId": "A"
+        }
+      ],
+      "id": 3
+    }
+  ]
+}
+
