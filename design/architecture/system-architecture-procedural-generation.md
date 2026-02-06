@@ -141,6 +141,14 @@ The following rules align generators with the core runtime and tooling:
 4. **Tenant Scoping** – All generation inputs/outputs are tenant‑scoped. Generators resolve tenant feature flags/config before execution.
 5. **Sparse Traversal Rules** – Exit costs between sparse rooms are derived from their coordinate distance. **Game Logic** uses region `spacingMultiplier` to scale the overall pace if needed.
 6. **Post-generation Population** – After rooms are created and persisted, **World Management** may invoke population scripts in the Automation & Scripting Service based on room tags, biome, and difficulty zone. Automation scripts emit commands; they do not directly mutate world topology.
+
+   Failure and retry semantics:
+
+   - Population is treated as a **retryable, idempotent** follow-up phase, not as part of topology persistence.
+   - Topology persistence (template or instance rows) must complete atomically in World Management before population is admitted.
+   - Population commands must carry the same canonical identity used for tick idempotency (`EffectId`) plus the runtime scope (`RoomInstanceRef` for runtime, `(tenantId, versionId)` plus template ids for design-time) so downstream services can safely no-op on replays.
+   - If population partially succeeds (for example some spawns created in Entity Management but later commands fail), the system retries until convergence using the original identities. It must not attempt to “undo” already-persisted topology or “roll back” created entities by issuing compensating deletes from within the tick loop.
+   - The only supported destructive rollback is deleting an entire **ephemeral** instance as a unit (for example a short-lived dungeon instance), after verifying it is no longer referenced by active sessions.
 7. **Validation and Errors** – World Management validates generation requests, validates generator outputs, and persists results atomically for the affected template or instance scope. On failure it returns a `GenerationErrorDetail` and guarantees no partial persistence.
 8. **Editor Overlays** – Generators emit coordinates and optional map layers so the Game Editor can display a preview or dry-run JSON output.
 9. **Pluggable Interface** – Generators implement the `Generator` interface and are discovered via the `GeneratorRegistry` in the World Management Service. Discovery uses Spring bean scanning, and additional generators may be provided by shared libraries or service-local modules.
