@@ -339,7 +339,7 @@ OK ENTER_GAME Entered game: demo
 
 LOOK
 OK LOOK
-Room: Candle-lit Antechamber (ID: R-1021)
+Room: Candle-lit Antechamber (Room Instance ID: R-1021)
 Short: You stand in a basalt chamber warmed by the brazier near the western wall.
 Long: Stalactites drip along the northern wall while a faint draft carries the smell of damp earth from the lower tunnels. Torches flicker in alcoves, casting motion into the shadowy archway to the north.
 Exits: NORTH (arched passage leading toward the cavern mouth), EAST (narrow fissure descending toward the forges).
@@ -433,7 +433,6 @@ OK ENTER_GAME Entered game: demo
 
 LOOK
 OK LOOK
-Room: Candle-lit Antechamber (ID: R-1021)
 Room: Candle-lit Antechamber (Room Instance ID: R-1021)
 Short: You stand in a basalt chamber warmed by a single brazier.
 Long: Stalactites drip along the northern wall while a faint draft carries the smell of damp earth from the lower tunnels.
