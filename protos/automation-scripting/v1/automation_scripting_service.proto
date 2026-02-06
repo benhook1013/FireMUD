@@ -11,6 +11,11 @@ service AutomationScriptingService {
   // Simple ping used by health checks
   rpc Ping(PingRequest) returns (PingResponse);
 
+  // Deliver a script trigger for evaluation. This RPC is idempotent with respect
+  // to Trigger Identity (including script_event_id) and must not evaluate the
+  // DSL body more than once for the same identity.
+  rpc TriggerScriptEvent(TriggerScriptEventRequest) returns (TriggerScriptEventResponse);
+
   // Creates a new NPC formation
   rpc CreateFormation(CreateFormationRequest) returns (CreateFormationResponse);
 
@@ -29,6 +34,16 @@ service AutomationScriptingService {
   // Signals that a new script patch version is available
   rpc NotifyScriptVersionUpdate(NotifyScriptVersionUpdateRequest)
       returns (NotifyScriptVersionUpdateResponse);
+}
+
+// Operator/control-plane surface for patch lifecycle visibility and rollback support.
+service AutomationScriptingControlPlaneService {
+  rpc GetScriptPatchStatus(GetScriptPatchStatusRequest) returns (GetScriptPatchStatusResponse);
+  rpc ListScriptPatchStatuses(ListScriptPatchStatusesRequest) returns (ListScriptPatchStatusesResponse);
+
+  // Cancel pending durable work items for a patch so they are never handed off again.
+  rpc CancelPendingWorkItemsForPatch(CancelPendingWorkItemsForPatchRequest)
+      returns (CancelPendingWorkItemsForPatchResponse);
 }
 
 message PingRequest {}
@@ -102,5 +117,111 @@ message NotifyScriptVersionUpdateRequest {
 
 message NotifyScriptVersionUpdateResponse {
   bool success = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+enum TriggerMode {
+  TRIGGER_MODE_UNSPECIFIED = 0;
+  TRIGGER_MODE_NORMAL = 1;
+  TRIGGER_MODE_CATCH_UP = 2;
+}
+
+enum TriggerAdmissionOutcome {
+  TRIGGER_ADMISSION_OUTCOME_UNSPECIFIED = 0;
+  TRIGGER_ADMISSION_OUTCOME_ADMITTED = 1;
+  TRIGGER_ADMISSION_OUTCOME_BACKPRESSURE_RELOADING = 2;
+  TRIGGER_ADMISSION_OUTCOME_DENIED_QUOTA = 3;
+  TRIGGER_ADMISSION_OUTCOME_DENIED_TENANT_BUDGET = 4;
+  TRIGGER_ADMISSION_OUTCOME_DENIED_DISABLED = 5;
+  TRIGGER_ADMISSION_OUTCOME_DENIED_VERSION_UNAVAILABLE = 6;
+  TRIGGER_ADMISSION_OUTCOME_DENIED_POLICY = 7;
+  TRIGGER_ADMISSION_OUTCOME_INFRASTRUCTURE_ERROR = 8;
+}
+
+message TriggerScriptEventRequest {
+  string tenant_id = 1;
+  string game_instance_id = 2;
+  string region_id = 3;
+
+  // Required for tick-aligned scheduler triggers; should be omitted for entity-scoped
+  // external events that are not aligned to a specific region timeline.
+  int64 region_epoch = 4;
+
+  string entity_id = 5;
+  string script_id = 6;
+  string event_type = 7;
+  string script_patch_version = 8;
+  string script_event_id = 9;
+
+  bool is_dry_run = 10;
+  TriggerMode trigger_mode = 11;
+
+  // Scheduling context (when applicable).
+  int64 due_tick_id = 12;
+  int64 due_at_ms = 13;
+
+  // Event payload envelope (implementation-specific).
+  string payload_json = 14;
+}
+
+message TriggerScriptEventResponse {
+  // Indicates whether the trigger was admitted into the scripting pipeline.
+  // This does not imply that commands have been accepted into tick queues; that
+  // end-to-end handoff is observable via script_event_audit.
+  bool admitted = 1;
+
+  TriggerAdmissionOutcome admission_outcome = 2;
+  string admission_reason = 3;
+  shared.v1.ErrorDetail error = 4;
+}
+
+enum ScriptPatchStatus {
+  SCRIPT_PATCH_STATUS_UNSPECIFIED = 0;
+  SCRIPT_PATCH_STATUS_PENDING = 1;
+  SCRIPT_PATCH_STATUS_READY = 2;
+  SCRIPT_PATCH_STATUS_FAILED = 3;
+  SCRIPT_PATCH_STATUS_ROLLED_BACK = 4;
+}
+
+message GetScriptPatchStatusRequest {
+  string tenant_id = 1;
+  string script_patch_version = 2;
+}
+
+message GetScriptPatchStatusResponse {
+  ScriptPatchStatus status = 1;
+  string status_reason = 2;
+  int64 last_changed_at_ms = 3;
+  shared.v1.ErrorDetail error = 4;
+}
+
+message ListScriptPatchStatusesRequest {
+  string tenant_id = 1;
+}
+
+message ScriptPatchStatusEntry {
+  string script_patch_version = 1;
+  ScriptPatchStatus status = 2;
+  string status_reason = 3;
+  int64 last_changed_at_ms = 4;
+}
+
+message ListScriptPatchStatusesResponse {
+  repeated ScriptPatchStatusEntry patches = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message CancelPendingWorkItemsForPatchRequest {
+  string tenant_id = 1;
+  string script_patch_version = 2;
+  string game_instance_id = 3;
+  string region_id = 4;
+  string control_plane_request_id = 5;
+  string actor_principal = 6;
+  string reason = 7;
+}
+
+message CancelPendingWorkItemsForPatchResponse {
+  int64 canceled_count = 1;
   shared.v1.ErrorDetail error = 2;
 }

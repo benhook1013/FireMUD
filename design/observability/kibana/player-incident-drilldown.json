@@ -1,0 +1,6 @@
+{
+  "title": "Player Incident Drilldown",
+  "description": "Saved search for investigating player-visible incidents by playerId, tenantId, traceId, and service.",
+  "version": 1
+}
+

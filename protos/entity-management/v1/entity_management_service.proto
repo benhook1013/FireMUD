@@ -3,6 +3,7 @@ syntax = "proto3";
 package entity_management.v1;
 
 import "shared/v1/errors.proto";
+import "shared/v1/instance_refs.proto";
 
 option java_package = "net.firedevops.firemud.entitymanagement.v1";
 option java_multiple_files = true;
@@ -14,6 +15,7 @@ service EntityManagementService {
   rpc QueryInventory(QueryInventoryRequest) returns (QueryInventoryResponse);
   rpc ListCharactersByAccount(ListCharactersByAccountRequest) returns (ListCharactersByAccountResponse);
   rpc ListRoomEntities(ListRoomEntitiesRequest) returns (ListRoomEntitiesResponse);
+  rpc GetDraftDesignDigest(GetDraftDesignDigestRequest) returns (GetDraftDesignDigestResponse);
 }
 
 message CreateCharacterRequest {
@@ -71,7 +73,8 @@ message ListCharactersByAccountResponse {
 
 message ListRoomEntitiesRequest {
   string tenant_id = 1;
-  string room_id = 2;
+  string room_id = 2 [deprecated = true];
+  shared.v1.RoomInstanceRef room_instance = 3;
 }
 
 enum EntityType {
@@ -102,6 +105,24 @@ message RoomEntity {
 message ListRoomEntitiesResponse {
   repeated RoomEntity entities = 1;
   shared.v1.ErrorDetail error = 2;
+  string entity_snapshot_id = 3;
+  string tenant_id = 4;
+  string game_instance_id = 5;
+  string room_instance_id = 6;
+}
+
+message GetDraftDesignDigestRequest {
+  string tenant_id = 1;
+  string version_id = 2;
+}
+
+message GetDraftDesignDigestResponse {
+  string tenant_id = 1;
+  string version_id = 2;
+  string applied_commit_id = 3;
+  string content_digest = 4;
+  int32 digest_schema_version = 5;
+  shared.v1.ErrorDetail error = 6;
 }
 
 message PingRequest {}

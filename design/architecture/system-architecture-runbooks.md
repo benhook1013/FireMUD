@@ -1,156 +1,118 @@
 # FireMUD Operational Runbooks
 
-This document summarizes routine procedures for deploying, scaling, and recovering FireMUD environments. Each step references existing architecture docs so operators can quickly locate details.
+This document serves as an **index** to operational runbooks for FireMUD. It provides a high-level map of operator workflows and links to detailed, per-topic runbooks.
 
 ---
 
 ## Deployment
 
-1. **CI Pipeline** builds Docker images and pushes them to GHCR. Kubernetes
-   rollouts are triggered manually via the
-   [`manual-helm-deploy.yml`](../../.github/workflows/manual-helm-deploy.yml)
-   workflow until pipeline automation is complete.
-   See [CI/CD Pipeline](./system-architecture-cicd.md) for workflow details.
-2. **Helm Charts** deploy each microservice. Install the umbrella chart with:
+High-level steps and operator responsibilities for rolling out new versions of FireMUD to Kubernetes-backed environments.
 
-   ```bash
-   helm install firemud ./k8s/helm/firemud -f k8s/helm/values-dev.yaml
-   ```
-
-   See the [Helm Charts guide](../../k8s/helm/README.md) for environment-specific values and the production `values-prod.yaml`.
-
-3. Verify pods are running with `kubectl get pods -n firemud`.
-4. Monitor rollout progress in the CI job summary. Grafana dashboards
-   provide additional visibility.
-
-For local development, use `./gradlew devUp` to start Docker Compose and
-`./gradlew devDown` when finished.
+See: `design/architecture/system-architecture-deployment-runbook.md`.
 
 ## Scaling
 
-1. Adjust replica counts in the Helm chart or use `kubectl scale`:
+Guidance on scaling services and infrastructure (Gateway, Game Session, Redis, PostgreSQL) in response to increased load.
 
-   ```bash
-   kubectl scale deploy account-service --replicas=3 -n firemud
-   ```
+See: `design/architecture/system-architecture-scaling-runbook.md`.
 
-2. Update Horizontal Pod Autoscaler settings if enabled. An example
-   manifest lives at `k8s/base/hpa-example.yaml`.
-3. Review Prometheus metrics to ensure CPU and memory usage remain healthy.
-   Monitoring manifests are provided under `k8s/monitoring/`. Grafana
-   dashboards visualize these metrics.
-   See [Logging & Monitoring](./system-architecture-logging-monitoring.md) for
-   the observability stack configuration.
-4. For database or Redis clusters, scale StatefulSets according to their
-   respective runbooks.
-5. Production rollouts should reuse `k8s/helm/values-prod.yaml` or the per-service overrides defined in [Helm Charts guide](../../k8s/helm/README.md) instead of the dev values referenced above.
+## Operator Access
+
+Operator workflows for mTLS client certificates and other control-plane credentials.
+
+See: `design/architecture/system-architecture-operator-credentials-runbook.md`.
 
 ## Recovery
 
-1. **Database Failure**
-   - **Primary recovery**:
-     1. Run `dev-tools/restores/restore-cluster.sh <backup-name>` to restore from the latest `pg_dump` and restart services.
-     2. Export to a custom namespace by setting `FIREMUD_K8S_NAMESPACE` before restoring.
-   - **Manual recovery** (if the helper script is unavailable):
+This section covers recovery scenarios at a high level; detailed, per-topic runbooks live in their own files.
 
-     ```bash
-     kubectl cp <namespace>/<pg-pod>:/backups/latest.sql.gz ./latest.sql.gz
-     gunzip -c latest.sql.gz | kubectl exec -i <postgres-pod> -- psql -U "$FIREMUD_POSTGRES_USER" "$FIREMUD_POSTGRES_DB"
-     kubectl rollout restart deployment -n firemud
-     kubectl rollout restart statefulset -n firemud
-     ```
+### Database Failure and Cluster Restore
 
-   - **Object bucket restore**: If dumps live in `PG_DUMP_BUCKET`, download with `aws s3 cp s3://$PG_DUMP_BUCKET/<path> ./dump.sql.gz` (add `--endpoint-url` for MinIO) before running the restore steps above.
-   - **Local dev**: run `dev-tools/restores/restore-db.sh <backup-file>` and then `docker compose restart`.
-   - **Automation**:
-     - Terraform schedules backups via `k8s/velero/schedule.yaml`.
-     - The `verify-backups` CronJob (`k8s/velero/verify-backups-cronjob.yaml`) validates daily.
-     - Use `manual-backup-restore.yml` from GitHub Actions to test restores in a temporary namespace.
-   - **Maintain dump volume**: The [`firemud-pg-dump` CronJob](../../k8s/postgres/pg-dump-cronjob.yaml) rotates dumps, but PVCs can still fill. The Docker Compose stack runs `pg-dump-cron` every 15 minutes—periodically inspect the `firemud-pg-dumps` PVC and prune stale `*.sql.gz` files, or run `dev-tools/backups/pg-dump-rotate.sh` manually.
-2. **Redis Failure**
-   - Redis nodes automatically resync using AOF and replication.
-     Services reconnect on restart. See
-     [Redis Architecture](./system-architecture-redis.md)
-     for persistence and recovery details.
-   - For local development, restore an AOF file with
-     `dev-tools/restores/restore-redis-aof.sh <file>` if you need to recover transient
-     state.
+- For PostgreSQL backup and restore procedures (including `dev-tools/restores/restore-cluster.sh` and manual `kubectl cp`/`psql` flows), see:
+  - `design/architecture/system-architecture-backup-recovery.md`
 
-   - **Coordination Redis recovery behavior**
-     - When Coordination Redis recovers after an outage or severe degradation:
-       - Tick executors:
-         - Do **not** attempt to resume in-flight locks or leases based on in-memory state.
-         - Rely solely on surviving Redis keys (`tick:{tenantId}:{regionId}:pending`, `tick-executor-lease:{tenantId}:{regionId}`, and lock keys) plus PostgreSQL idempotency guards to decide what work needs replay.
-         - If `pending` survives for a region, the next executor for that `{tenantId, regionId}` replays the tick as described in the tick system design. If `pending` is missing (for example due to AOF tail loss), the scheduler treats partially executed work as lost and advances to the next `tickId`, relying on monitoring to surface inconsistencies.
-       - Leases:
-         - Discard any in-memory lease tokens; executors must reacquire `tick-executor-lease:{tenantId}:{regionId}` in Redis and treat previously held leases as invalid.
-       - Sessions:
-         - If `session:{tenantId}:{sessionId}` keys survive, reconnect flows behave normally.
-         - If session keys are lost while game instances remain `RUNNING` in PostgreSQL, treat reconnect attempts as “no active binding” (clients may need to perform a fresh `LOGIN` or be rebound to the existing instance depending on ownership rules).
+### Redis Session Schema and TTL Cleanup
 
-   - **Session schema cleanup (deployment mismatch)**
-     - Symptom: the `session.cas_unsupported_schema_total` metric (or logs mentioning `UNSUPPORTED_SCHEMA_VERSION` from the session CAS script) is non-zero outside of brief rollout windows.
-     - Interpretation: services and Lua scripts are out of sync on the highest `schemaVersion` in use for `session:{tenantId}:{sessionId}` keys, or session payloads have been corrupted.
-     - Remediation:
-       1. Verify and correct deployments so all Game Session Service instances run a version whose CAS script understands the highest `schemaVersion` currently present in Redis (follow the “scripts first, writers second” rule from the Redis Architecture docs).
-       2. Run the session schema cleanup tool/Job (once implemented) that:
-          - Scans `session:{tenantId}:*` keys for `schemaVersion` values not supported by the current CAS script, and
-          - Deletes those keys or reduces their TTL so they expire quickly.
-       3. Monitor `session.cas_unsupported_schema_total` and reconnect error rates to confirm the issue has cleared. Affected players may need to log in again; no authoritative PostgreSQL data is lost.
+- For the scoped session cleanup Job (metrics, per-tenant prefixes such as `session:game:<tenantId>:*`, and large-keyspace safety guidelines), see:
+  - `design/architecture/system-architecture-redis-incident-runbook.md#session-schema-and-ttl-cleanup`
 
-3. **Full Cluster Restore**
-   - Recreate the cluster using Terraform modules in `k8s/terraform`. See
-     [`k8s/terraform/README.md`](../../k8s/terraform/README.md) for usage.
-   - Run `velero restore` to recreate Kubernetes manifests.
+### Redis Incident Scenarios
 
-See [Backup & Disaster Recovery](./system-architecture-backup-recovery.md) for backup schedules and retention policies.
+- For Coordination/Cache Redis outages, AOF problems, tail-loss SLO breaches, mis-sharded keys, and automation queue schema issues, see:
+  - `design/architecture/system-architecture-redis-incident-runbook.md#redis-incident-scenarios`
+
+### Tick Incident Scenarios
+
+- For stalled regions, replay storms, or stuck tick effect ledger entries, see:
+  - `design/architecture/system-architecture-tick-incident-runbook.md`
+
+### Player Experience Incidents
+
+- For login success ratio drops, elevated command latency, or chat delivery latency issues, see:
+  - `design/architecture/system-architecture-player-experience-incident-runbook.md`
+
+### Observability Stack Incidents
+
+- For incidents where Prometheus, Alertmanager, Elasticsearch/Kibana, Grafana, or Jaeger/collector are degraded or unavailable, see:
+  - `design/architecture/system-architecture-observability-incident-runbook.md`
+
+### Minimal Coordination & Tick Operator Mental Model
+
+For a single-admin operator, most “what do I do now?” coordination/tick questions reduce to three named operations and a small set of dashboards/metrics:
+
+  - **Dashboards / metrics to watch**
+  - Tick health:
+    - `tick_execution_time_ms_p95` / `tick_execution_time_ms_p99` vs `tick_lock_ttl_ms`.
+    - Per-region tick status (RUNNING/PAUSED/STALLED) and last-committed `tickId`.
+    - Queue depths and retry counts (for example `tick_retry_queue_depth`).
+  - Redis tail-loss and memory:
+    - Tail-loss SLO metrics as described in `system-architecture-redis-operations.md` (for example `redis_coordination_tail_loss_ms{tenantId,regionId}`).
+    - Coordination Redis memory and key counts (coordination prefixes vs total).
+  - Tick effect ledger:
+    - `tick_effects_pending_total`, `tick_effects_applied_total`, `tick_effects_abandoned_total{reason}`.
+  - Cluster health:
+    - Redis primary/replica health, split-brain/sentinel alerts.
+
+- **Named operations**
+  - **Per-region reset** – clear coordination state (`tick:*`, timers, retries, leases) for a single `<tenantId, regionId>` and allow ticks to rebuild from PostgreSQL and the tick effect ledger.
+  - **Per-tenant reset** – clear coordination state (all regions and sessions) for a single tenant and treat it as a tenant-scoped maintenance/reset event.
+  - **Cluster reset** – clear coordination state for all tenants/regions on a Coordination Redis deployment; reserved for catastrophic incidents or planned migrations.
+
+- **How to choose**
+  - If metrics show a brief blip but tail-loss and tick health have already recovered and invariants are intact → **Accept loss and monitor** (no active operation).
+  - If a problem is clearly confined to one region (for example, mis-keyed `tick:*` data or a stuck `pending` entry) → run a **per-region reset**.
+  - If multiple regions for the same tenant are polluted or broken in similar ways → run a **per-tenant reset**.
+  - Only when corruption or topology changes are broad and cannot be addressed region/tenant by tenant (for example, AOF directory corruption, cluster-wide hash-tag mistakes) should you plan a **cluster reset**, ideally during a maintenance window.
+
+Detailed step-by-step commands for these operations live in:
+
+- `design/architecture/system-architecture-redis-reset-and-recovery.md`
+- `design/architecture/system-architecture-redis-operations.md`
 
 ## Asset Store
 
-1. A self-hosted MinIO cluster stores published game assets when an external CDN
-   is unavailable. Deploy the manifests under `k8s/minio/` and create a
-   `minio-credentials` Secret with `accessKey` and `secretKey` keys.
-   Rotate these credentials via the MinIO credentials manifest (`k8s/minio/credentials.yaml`) and follow the [Environment & Secrets Management](./infrastructure/environment-and-secrets.md#minio-credentials) guidelines when updating keys.
-2. Create the `firemud-assets` bucket with the MinIO client:
+Operational guidance for the asset store used by the Game Design Service, including health checks and incident handling.
 
-   ```bash
-   kubectl run mc --rm -it --image=minio/mc --command -- \
-     sh -c "mc alias set local http://minio:9000 $ACCESS $SECRET && mc mb local/firemud-assets"
-   ```
-
-3. Allow public reads and CORS from the gateway domain:
-
-   ```bash
-   kubectl run mc --rm -it --image=minio/mc --command -- \
-     sh -c "mc alias set local http://minio:9000 $ACCESS $SECRET && \
-            mc anonymous set download local/firemud-assets && \
-            printf '[{\"AllowedMethods\":[\"GET\"],\"AllowedOrigins\":[\"https://your-gateway-domain\"],\"AllowedHeaders\":[\"*\"]}]' > /tmp/cors.json && \
-            mc cors set local/firemud-assets /tmp/cors.json"
-   ```
-
-4. Services access the bucket using the `ASSET_STORE_*` environment variables. When the
-   gateway proxies `/assets/**` to MinIO, set `ASSET_STORE_ENDPOINT` to
-   `https://<gateway-domain>/assets` so published manifests generate public URLs.
-5. To remove a published tenant version, delete the corresponding prefix:
-
-   ```bash
-   kubectl run mc --rm -it --image=minio/mc --command -- \
-     sh -c "mc rm -r --force local/firemud-assets/<tenant>/<version>/"
-   ```
+See: `design/architecture/system-architecture-asset-store-runbook.md`.
 
 ## Hotfix Procedure
 
-1. Identify the offending service via logs or alerts.
-2. Commit the fix to `main` and trigger the CI pipeline.
-3. Use `helm upgrade --install` with the new image tag to deploy only the affected service.
-4. Monitor metrics and logs to ensure the issue is resolved; if instability persists, run `helm rollback <release> <revision>` to revert.
+- Use standard deployment workflows with a minimal, well-scoped change set.
+- Ensure tests and smoke checks are run for the hotfix branch.
+- Coordinate any emergency schema or configuration changes with the relevant architecture owners.
 
----
+## Telnet Path Degraded or Failing
 
-These runbooks provide a starting point for operators. Update them as new tooling or workflows evolve.
+Operator guidance for incidents affecting the Telnet path through the TCP Proxy Service, including interpretation of TCP Proxy buffer/slow-client metrics and comparisons against the WebSocket path when only Telnet is impacted.
+
+See: `design/architecture/system-architecture-telnet-degraded-runbook.md` (which also cross-references the ordering/backpressure contracts in `system-architecture-protocol-bridging.md`).
 
 ## Related Documentation
 
-- [Logging & Monitoring Overview](./system-architecture-logging-monitoring.md)
-- [Backup & Disaster Recovery](./system-architecture-backup-recovery.md)
-- [CI/CD Pipeline](./system-architecture-cicd.md)
+- `design/architecture/system-architecture-overview.md`
+- `design/architecture/system-architecture-redis.md`
+- `design/architecture/system-architecture-ticks.md`
+- `design/architecture/system-architecture-gateway.md`
+- `design/architecture/system-architecture-logging-monitoring.md`
+- `design/architecture/system-architecture-backup-recovery.md`
+- `design/architecture/system-architecture-cicd.md`

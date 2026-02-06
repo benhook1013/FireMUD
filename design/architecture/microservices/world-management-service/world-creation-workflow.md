@@ -1,20 +1,51 @@
 # World Creation Workflow
 
-World creation is a long-running process that prepares the initial world state for a new game instance using already-published world data. The workflow uses the shared **Saga** utilities from `firemud-common` so each step can be rolled back if another step fails. `WorldCreationService` is invoked when a tenant launches a new game world, typically from the Game Session Service.
+World creation is a long-running process that prepares the initial world state for a new **game instance** using already-published world data for a given `tenantId`. The workflow uses the shared **Saga** utilities from `firemud-common` so each step can be rolled back if another step fails. `WorldCreationService` is invoked when the platform provisions a new game instance for an existing tenant, typically from the Game Session Service. The identifiers involved are:
 
-The implementation uses the published world topology for the chosen `tenantId` and `version_id`, inserts a starter region instance, schedules initial events, and can generate terrain chunks and spawn default NPCs. Additional stages run for large games that require deeper world seeding.
+- `tenantId` – identifies the game (tenant) as described in
+  [Multi-Tenancy](../../system-architecture-multi-tenancy.md).
+- `versionId` – identifies the published world/template data to use, as described in
+  [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md).
+- `gameInstanceId` – identifies the specific running world instance recorded in
+  the Game Session Service.
+
+The implementation uses the published world topology for the chosen `tenantId` and `version_id`, inserts a starter region instance, schedules initial events, and can generate terrain chunks and register default population rules for expansive worlds. Throughout the workflow, the Saga:
+
+- Reads only **template/topology** rows keyed by `(tenantId, versionId)` (for example `region_template`, `room_template`, or authored generation metadata); and
+- Writes only **instance** rows keyed by `(tenantId, gameInstanceId)` (for example `region_instance`, `room_instance`, `world_event`) plus optional **declarative population bindings** (for example spawn rules owned by World Management) rather than directly creating live entities.
+
+It never mutates template rows for Published versions; any structural changes to the world layout must occur through design-time workflows on Draft versions before publishing a new `versionId`. More broadly, world creation is allowed to invoke procedural generators only in **runtime/instance** mode as described in [Procedural Generation](../../system-architecture-procedural-generation.md); any attempt to write template rows from this Saga, even for non-Published versions, must be rejected by World Management validation. All template edits must flow through Game Design Service design-time APIs.
+
+Initial NPC and item presence is modeled declaratively:
+
+- World-creation stages may register spawn templates or population bindings owned by the **World Management Service** that describe which entity templates (owned by Entity Management) can appear where. These bindings live in World Management tables (for example `world_spawn_template` or equivalent) and reference entity templates by stable identifiers keyed by `(tenantId, versionId)`.
+- Creation of live entities and inventories remains the responsibility of Entity Management and Automation & Scripting workflows, typically driven at runtime via ticks or separate non-gameplay Sagas, and is not performed directly by this world-creation Saga.
 
 ## Steps
 
-1. **Create Starter Region Instance** – uses the published world topology for the chosen `tenantId` and `version_id` and inserts initial regions or instances using the local shard configuration (`WORLD_LOCAL_SHARD_ID`). Default `SimpleDungeonGenerator` parameters populate the initial "Starter Region".
+1. **Create Starter Region Instance** – uses the published world topology for the chosen `tenantId` and `version_id` and inserts initial regions or instances using the local shard configuration (`WORLD_LOCAL_SHARD_ID`). Default `SimpleDungeonGenerator` parameters populate the initial "Starter Region" as instance records associated with `gameInstanceId`; the underlying template graph remains unchanged.
 2. **Schedule Initial Events** – inserts world events such as an initial weather state so `WorldEventService` can apply them after the world starts.
-3. **Generate Terrain & Spawn NPCs** – optional stages that create terrain chunks and seed default NPC populations for expansive worlds.
+3. **Generate Terrain & Register Population Rules** – optional stages that create terrain chunks and register default spawn templates or population rules for expansive worlds.
+
+### Saga Step Idempotency
+
+World creation steps write durable instance rows and must be safely retryable. Each step must implement a durable idempotency guard keyed by at minimum:
+
+- `(tenantId, gameInstanceId, sagaInstanceId, stepName)`
+
+On a retry of the same saga instance:
+
+- If the guard indicates the step has already completed successfully, the step must become a no-op and return success.
+- If partial writes exist without a completed guard record (for example due to a crash), the step must either reconcile deterministically (preferred) or fail fast with a clear operator-visible error so the saga can be retried safely after cleanup.
+
+This guard must be enforced in the same local transaction as the step’s durable writes so “step completed” cannot be recorded without the corresponding instance rows. See `design/architecture/system-architecture-transactions.md` for idempotency and retry expectations.
 
 ```java
 SagaBuilder builder = new SagaBuilder("createWorld");
 builder
-    .step("createStarterRegion", () -> createStarterRegionInstance(tenantId, versionId))
-    .step("scheduleEvents", () -> scheduleInitialEvents(tenantId));
+    .step("createStarterRegion", () -> createStarterRegionInstance(tenantId, versionId, gameInstanceId))
+    .step("scheduleEvents", () -> scheduleInitialEvents(tenantId, gameInstanceId))
+    .step("registerPopulationRules", () -> registerPopulationRules(tenantId, versionId, gameInstanceId));
 sagaRunner.run(builder.build());
 ```
 
@@ -23,3 +54,29 @@ The saga state is stored in the `saga_instance` and `saga_step` tables defined i
 See [World Management Service](README.md) for additional service context.
 
 See [Transaction Strategies](../../system-architecture-transactions.md) for background on how sagas are used across FireMUD.
+
+## Version Switching and Instance Data
+
+A `gameInstanceId` is always tied to a single `runtime_version` and the
+instance data derived from that version:
+
+- All `*_instance` rows for a given `gameInstanceId` must be derivable from the
+  templates for that instance’s `runtime_version` plus any persisted procedural
+  generation metadata (for example `generatorType`, `seed`, and an immutable
+  `configSnapshot` with `schemaVersion`). There is no cross-version mixing of
+  instance data and no reuse of instance layouts across different
+  `gameInstanceId` values.
+- Moving a game to a different version is modeled as starting a **new** game
+  instance with a fresh `gameInstanceId` and running the world-creation Saga
+  again for the new `(tenantId, versionId)`. Existing instances continue to use
+  their original templates until they are shut down.
+- Operational tooling should not attempt to “retarget” an existing
+  `gameInstanceId` to a new `runtime_version` while reusing its world instance
+  rows; doing so would violate the invariant above and can lead to corrupted
+  world state.
+
+This policy keeps the world-creation workflow simple and ensures that every
+game instance has a self-consistent view of templates and instance data for its
+chosen version.
+
+Short-lived, runtime-generated dungeons or similar instanced content are treated as ephemeral and exist only for the lifetime of a specific `gameInstanceId`. Long-lived overworld-style instance layouts that must survive restarts remain bound to the original `(tenantId, runtime_version, gameInstanceId)` tuple; upgrading to a new `runtime_version` always uses a new `gameInstanceId` and reruns world creation rather than attempting to migrate or reuse prior instance layouts.

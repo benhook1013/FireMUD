@@ -20,8 +20,6 @@ import net.firedevops.firemud.common.grpc.TlsCertificateWatcher;
 import net.firedevops.firemud.tcpproxy.config.GrpcClientProperties;
 import net.firedevops.firemud.tcpproxy.v1.NotifyDisconnectRequest;
 import net.firedevops.firemud.tcpproxy.v1.NotifyDisconnectResponse;
-import net.firedevops.firemud.tcpproxy.v1.PushBufferedInputRequest;
-import net.firedevops.firemud.tcpproxy.v1.PushBufferedInputResponse;
 import net.firedevops.firemud.tcpproxy.v1.TcpProxyServiceGrpc;
 import org.slf4j.Logger;
 import org.springframework.core.io.ClassPathResource;
@@ -130,17 +128,6 @@ public class TcpProxyEventClient implements AutoCloseable {
     NotifyDisconnectRequest request =
         NotifyDisconnectRequest.newBuilder().setSessionId(sessionId).setTenantId(tenantId).build();
     return stub.notifyDisconnect(request);
-  }
-
-  public PushBufferedInputResponse pushBufferedInput(
-      String sessionId, List<String> commands, String tenantId) {
-    PushBufferedInputRequest request =
-        PushBufferedInputRequest.newBuilder()
-            .setSessionId(sessionId)
-            .addAllCommands(commands)
-            .setTenantId(tenantId)
-            .build();
-    return stub.pushBufferedInput(request);
   }
 
   @PreDestroy

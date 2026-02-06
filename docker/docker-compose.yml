@@ -6,10 +6,12 @@ x-service-environment: &service-env
   FIREMUD_POSTGRES_DB: ${FIREMUD_POSTGRES_DB:-firemud}
   FIREMUD_POSTGRES_USER: ${FIREMUD_POSTGRES_USER:-firemud}
   FIREMUD_POSTGRES_PASSWORD: ${FIREMUD_POSTGRES_PASSWORD:-firemud}
-  FIREMUD_REDIS_HOST: ${FIREMUD_REDIS_HOST:-redis}
-  FIREMUD_REDIS_PORT: ${FIREMUD_REDIS_PORT:-6379}
+  FIREMUD_REDIS_COORD_HOST: ${FIREMUD_REDIS_COORD_HOST:-redis-coord}
+  FIREMUD_REDIS_COORD_PORT: ${FIREMUD_REDIS_COORD_PORT:-6379}
+  FIREMUD_REDIS_CACHE_HOST: ${FIREMUD_REDIS_CACHE_HOST:-redis-cache}
+  FIREMUD_REDIS_CACHE_PORT: ${FIREMUD_REDIS_CACHE_PORT:-6379}
   SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-dev}
-  OTEL_ENDPOINT: ${OTEL_ENDPOINT:-http://otel-collector:4317}
+  OTEL_ENDPOINT: ${OTEL_ENDPOINT:-}
   FLUENT_ELASTICSEARCH_HOST: ${FLUENT_ELASTICSEARCH_HOST:-elasticsearch}
   FLUENT_ELASTICSEARCH_PORT: ${FLUENT_ELASTICSEARCH_PORT:-9200}
   ASSET_STORE_ENDPOINT: ${ASSET_STORE_ENDPOINT:-http://minio:9000}
@@ -48,7 +50,9 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
+      redis-coord:
+        condition: service_healthy
+      redis-cache:
         condition: service_healthy
     healthcheck:
       <<: *service-health
@@ -65,7 +69,9 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
+      redis-coord:
+        condition: service_healthy
+      redis-cache:
         condition: service_healthy
     healthcheck:
       <<: *service-health
@@ -82,7 +88,9 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
+      redis-coord:
+        condition: service_healthy
+      redis-cache:
         condition: service_healthy
     healthcheck:
       <<: *service-health
@@ -99,7 +107,9 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
+      redis-coord:
+        condition: service_healthy
+      redis-cache:
         condition: service_healthy
     healthcheck:
       <<: *service-health
@@ -116,7 +126,9 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
+      redis-coord:
+        condition: service_healthy
+      redis-cache:
         condition: service_healthy
     healthcheck:
       <<: *service-health
@@ -133,7 +145,9 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
+      redis-coord:
+        condition: service_healthy
+      redis-cache:
         condition: service_healthy
     healthcheck:
       <<: *service-health
@@ -150,7 +164,9 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
+      redis-coord:
+        condition: service_healthy
+      redis-cache:
         condition: service_healthy
     healthcheck:
       <<: *service-health
@@ -167,7 +183,9 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
+      redis-coord:
+        condition: service_healthy
+      redis-cache:
         condition: service_healthy
     healthcheck:
       <<: *service-health
@@ -184,7 +202,9 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
+      redis-coord:
+        condition: service_healthy
+      redis-cache:
         condition: service_healthy
     healthcheck:
       <<: *service-health
@@ -201,7 +221,9 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
+      redis-coord:
+        condition: service_healthy
+      redis-cache:
         condition: service_healthy
     healthcheck:
       <<: *service-health
@@ -218,7 +240,9 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
+      redis-coord:
+        condition: service_healthy
+      redis-cache:
         condition: service_healthy
     healthcheck:
       <<: *service-health
@@ -241,16 +265,31 @@ services:
       timeout: 5s
       retries: 5
 
-  redis:
-    image: redis:7
+  redis-coord:
+    image: redis:7.4.3
     restart: unless-stopped
     env_file: *service-env-file
     command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
     volumes:
       - ./config/redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
-      - redis-data:/data
+      - redis-coord-data:/data
     ports:
       - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis-cache:
+    image: redis:7.4.3
+    restart: unless-stopped
+    env_file: *service-env-file
+    command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
+    volumes:
+      - ./config/redis/redis-cache.conf:/usr/local/etc/redis/redis.conf:ro
+    ports:
+      - "6380:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -313,5 +352,5 @@ services:
 
 volumes:
   postgres-data:
-  redis-data:
+  redis-coord-data:
   minio-data:

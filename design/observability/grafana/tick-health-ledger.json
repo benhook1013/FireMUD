@@ -1,0 +1,83 @@
+{
+  "title": "Tick Health & Ledger",
+  "schemaVersion": 36,
+  "version": 1,
+  "timezone": "browser",
+  "panels": [
+    {
+      "type": "graph",
+      "title": "Tick Status by Region",
+      "targets": [
+        {
+          "expr": "tick_status == 1",
+          "legendFormat": "{{tenantId}}/{{regionId}} = {{status}}",
+          "refId": "A"
+        }
+      ],
+      "id": 1
+    },
+    {
+      "type": "graph",
+      "title": "Tick Execution Time Ratio (p99 / lock TTL)",
+      "targets": [
+        {
+          "expr": "tick_execution_time_ms_p99 / tick_lock_ttl_ms",
+          "legendFormat": "{{tenantId}}/{{regionId}}",
+          "refId": "A"
+        }
+      ],
+      "id": 2
+    },
+    {
+      "type": "graph",
+      "title": "Retry and Command Queue Depth",
+      "targets": [
+        {
+          "expr": "tick_retry_queue_depth",
+          "legendFormat": "retry {{tenantId}}/{{regionId}}",
+          "refId": "A"
+        },
+        {
+          "expr": "tick_command_queue_depth",
+          "legendFormat": "command {{tenantId}}/{{regionId}}",
+          "refId": "B"
+        }
+      ],
+      "id": 3
+    },
+    {
+      "type": "graph",
+      "title": "Tick Effect Ledger (Pending/Applied/Abandoned)",
+      "targets": [
+        {
+          "expr": "tick_effects_pending_total",
+          "legendFormat": "pending {{tenantId}}/{{regionId}}",
+          "refId": "A"
+        },
+        {
+          "expr": "tick_effects_applied_total",
+          "legendFormat": "applied {{tenantId}}/{{regionId}}",
+          "refId": "B"
+        },
+        {
+          "expr": "sum by (tenantId,regionId) (tick_effects_abandoned_total)",
+          "legendFormat": "abandoned {{tenantId}}/{{regionId}}",
+          "refId": "C"
+        }
+      ],
+      "id": 4
+    },
+    {
+      "type": "graph",
+      "title": "Non-RUNNING Regions (count)",
+      "targets": [
+        {
+          "expr": "sum by (status) (tick_status{status!=\"RUNNING\"} == 1)",
+          "legendFormat": "{{status}}",
+          "refId": "A"
+        }
+      ],
+      "id": 5
+    }
+  ]
+}

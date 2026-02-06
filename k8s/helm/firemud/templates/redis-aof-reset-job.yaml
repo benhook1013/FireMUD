@@ -1,15 +1,15 @@
-{{- if .Values.redis.resetAofOnInstallUpgrade }}
+{{- if .Values.redisCoord.resetAofOnInstallUpgrade }}
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: redis-wipe-aof
+  name: redis-coord-wipe-aof
   namespace: {{ .Release.Namespace }}
   labels:
-    app: redis
+    app: redis-coord
   annotations:
     "helm.sh/hook": pre-install,pre-upgrade
     "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
-{{- $claim := .Values.redis.aofPvc | default (printf "redis-data-%s-master-0" .Values.redis.releaseName) }}
+{{- $claim := .Values.redisCoord.aofPvc | default (printf "redis-coord-data-%s-master-0" .Values.redisCoord.releaseName) }}
 spec:
   ttlSecondsAfterFinished: 60
   template:
@@ -18,12 +18,12 @@ spec:
       containers:
         - name: wipe
           image: busybox
-          command: ["sh", "-c", "rm -f /mnt/redis/appendonly.aof"]
+          command: ["sh", "-c", "rm -rf /mnt/redis/*"]
           volumeMounts:
-            - name: redis-data
+            - name: redis-coord-data
               mountPath: /mnt/redis
       volumes:
-        - name: redis-data
+        - name: redis-coord-data
           persistentVolumeClaim:
             claimName: {{ $claim }}
 {{- end }}

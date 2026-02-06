@@ -1,8 +1,92 @@
 {
-  "__inputs": [],
-  "panels": [],
   "title": "Service Overview",
-  "timezone": "browser",
   "schemaVersion": 36,
-  "version": 1
+  "version": 1,
+  "timezone": "browser",
+  "panels": [
+    {
+      "type": "graph",
+      "title": "Request Rate by Service",
+      "targets": [
+        {
+          "expr": "sum by (service) (rate(http_server_requests_seconds_count[5m]))",
+          "legendFormat": "{{service}}",
+          "refId": "A"
+        }
+      ],
+      "id": 1
+    },
+    {
+      "type": "graph",
+      "title": "Error Rate by Service",
+      "targets": [
+        {
+          "expr": "sum by (service) (rate(http_server_requests_seconds_count{status=~\"5..\"}[5m]))",
+          "legendFormat": "{{service}} 5xx",
+          "refId": "A"
+        }
+      ],
+      "id": 2
+    },
+    {
+      "type": "graph",
+      "title": "HTTP p95 Latency by Service",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, service) (rate(http_server_requests_seconds_bucket[5m])))",
+          "legendFormat": "{{service}} p95",
+          "refId": "A"
+        }
+      ],
+      "id": 3
+    },
+    {
+      "type": "graph",
+      "title": "HTTP p99 Latency by Service",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum by (le, service) (rate(http_server_requests_seconds_bucket[5m])))",
+          "legendFormat": "{{service}} p99",
+          "refId": "A"
+        }
+      ],
+      "id": 4
+    },
+    {
+      "type": "graph",
+      "title": "gRPC Request Rate by Service",
+      "targets": [
+        {
+          "expr": "sum by (service) (rate(grpc_server_requests_seconds_count[5m]))",
+          "legendFormat": "{{service}}",
+          "refId": "A"
+        }
+      ],
+      "id": 5
+    },
+    {
+      "type": "graph",
+      "title": "gRPC p95 Latency by Service",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, service) (rate(grpc_server_requests_seconds_bucket[5m])))",
+          "legendFormat": "{{service}} p95",
+          "refId": "A"
+        }
+      ],
+      "id": 6
+    },
+    {
+      "type": "graph",
+      "title": "gRPC p99 Latency by Service",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum by (le, service) (rate(grpc_server_requests_seconds_bucket[5m])))",
+          "legendFormat": "{{service}} p99",
+          "refId": "A"
+        }
+      ],
+      "id": 7
+    }
+  ]
 }

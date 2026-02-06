@@ -20,12 +20,22 @@ In addition to log and moderation tooling, the service acts as a **control-plane
 
 - Consumes metrics and health information published by the Game Session Service (for example, per-region status such as `HEALTHY`, `DEGRADED`, or `COORDINATION_UNTRUSTWORTHY`).
 - Exposes admin APIs and UI controls to:
-  - Pause or resume tick execution for specific `{tenantId, regionId}` pairs.
+  - Pause or resume tick execution for specific `<tenantId, regionId>` pairs.
   - Trigger **scoped coordination resets** using the runbooks in [Redis Operations & Migrations](../../system-architecture-redis-operations.md) (for example, per-region or per-deployment resets).
 - Implements guarded automation that:
   - Automatically pauses ticks and marks regions as unhealthy when dual-leader or split-brain signals are detected.
   - Optionally performs safe, narrow coordination resets (such as single-region resets with clean tick ledgers) without requiring an operator to be present, while still emitting audit events for every action.
 All admin APIs are secured via role-based access control integrated with the Account Service.
+
+## Script Patch and Plugin Control Plane
+
+Logging & Admin is the operator-facing control plane for:
+
+- Enabling/disabling and draining automation scripts (through the Game Design and Automation & Scripting control-plane APIs).
+- Enabling/disabling and rolling back plugins (as described in `design/architecture/microservices/game-design-service/modding-framework.md`).
+- Repinning and rolling back `scriptPatchVersion` for running game instances by calling the Game Session control-plane APIs and following the rollback protocol specified in `design/architecture/system-architecture-scripting-control-plane-api.md`.
+
+Logging & Admin does not write to Redis directly. It drives all runtime changes through documented service APIs and records audit trails so operators can explain why automation behavior changed.
 
 - gRPC connections to this service require mTLS. JWT validation is required for admin or user-facing endpoints; internal gameplay and system calls are authenticated solely via mTLS.
 - The security model relies solely on JWT roles; there is no additional
@@ -39,7 +49,7 @@ All admin APIs are secured via role-based access control integrated with the Acc
 ## Key Features
 
 - Central log search for entries collected via Fluent Bit sidecars.
-- [Analytics dashboards](./analytics-dashboards.md) for operators, embedding Kibana and Grafana panels.
+- [Analytics dashboards](./analytics-dashboards.md) for operators, embedding Kibana and Grafana panels, including Telnet ingress views based on the TCP Proxy metrics described in [Logging & Monitoring](../../system-architecture-logging-monitoring.md) and the example Grafana snippets under `design/observability/grafana/`.
 - Tools for banning or restricting accounts.
 - [Role-based admin UI](./admin-ui.md) for moderators.
 - Saga workflows coordinate moderation tasks across services. See [Transaction Strategies](../../system-architecture-transactions.md).
@@ -124,7 +134,11 @@ details on shared infrastructure components.
 The service uses the configuration approach from
 [Environment Variables & Secrets Management](../../infrastructure/environment-and-secrets.md).
 It relies on the [PostgreSQL credentials](../../infrastructure/environment-and-secrets.md#postgresql-credentials).
-Redis variables are not required.
+
+### Redis Role and Prefixes
+
+- The Logging & Admin Service does **not** connect to Redis at runtime. It consumes Redis-derived metrics and coordination health information via Game Session’s APIs and exporters, but it never issues commands against Coordination Redis or Cache/Rate-Limit Redis directly; all remediation actions are driven through the documented runbooks in [Redis Operations & Migrations](../../system-architecture-redis-operations.md) and Game Session control APIs.
+
 TLS certificates are supplied via [`FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, `FIREMUD_GRPC_CA_CERT_PATH`](../../infrastructure/environment-and-secrets.md#grpc-tls-certificates). Peer services can be discovered using variables prefixed `FIREMUD_SERVICES_`.
 The OpenTelemetry collector endpoint can be overridden via `OTEL_ENDPOINT` (see [Environment Variables & Secrets Management](../../infrastructure/environment-and-secrets.md)).
 
@@ -151,8 +165,8 @@ See [Logging & Monitoring](../../system-architecture-logging-monitoring.md) for 
 - [Security Architecture](../../system-architecture-security.md)
 - [Multi-Tenancy](../../system-architecture-multi-tenancy.md)
 - [Service Responsibility Matrix](../../service-responsibility-matrix.md)
-- [User Journeys – Monitoring and Moderation](../../user-journeys.md#9-monitoring-and-moderation)
-- [User Journeys – Purchases and Subscriptions](../../user-journeys.md#11-purchases-and-subscriptions)
+- [User Journeys – Monitoring and Moderation](../../user-journeys-operators.md#1-monitoring-and-moderation)
+- [User Journeys – Purchases and Subscriptions](../../user-journeys-players.md#5-purchases-and-subscriptions)
 - [gRPC API Style & Versioning Guidelines](../../system-architecture-grpc.md)
 - [Shared Libraries Overview](../../system-architecture-shared-libraries.md)
 - [Backup & Disaster Recovery](../../system-architecture-backup-recovery.md)

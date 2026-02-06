@@ -6,7 +6,7 @@
 
 ## Core Gateway
 
-> **Note:** Telnet and WebSocket login/session behavior (including `/ws/game/**`) is maintained in [the Login & Session vertical slice](vertical-slices/02-task-list-login-and-session-vertical-slice.md), so please consult that checklist for the current work instead of duplicating tasks here.
+> **Note:** Telnet and WebSocket login/session behavior (including `/ws/game/**`) is maintained in [the Login & Session vertical slice](vertical-slices/02-task-list-login-and-session-vertical-slice.md), and the Telnet-side protocol (`SESSION` envelope, headers, and semantics) is defined canonically in the TCP Proxy Service design’s **Telnet Session Envelope & Event Metrics** section. Please consult those docs for the current behaviour instead of duplicating protocol details here.
 
 - [x] Handle API routing and request validation
 - [ ] Terminate TLS and forward traffic to internal services using mTLS
@@ -15,9 +15,9 @@
 - [x] Provide a lightweight `/ws/game/**` proxy stub (`services/tcp-proxy-service/src/test/.../stub/GatewayStubApplication.java`) for tcp-proxy cross-service tests so developers can exercise the gateway hop without starting the full production app.
 - [ ] Automatically re-establish WebSocket tunnels on restart
 - [ ] Trace WebSocket requests and responses for observability
-- [ ] Wire TLS and JWT secret watchers to reload credentials without downtime
+- [ ] Wire TLS certificate watchers to reload credentials without downtime
 - [ ] Relay event-driven game state updates to connected clients
-- [ ] Use `firemud.auth` properties for token parsing
+- [ ] Confirm downstream admin/meta services use `firemud.auth` properties for token parsing; Spring Cloud Gateway must remain a dumb proxy that only enforces the presence of an Authorization header on protected routes
 - [ ] Support horizontal scaling across gateway instances
 
 ## Dynamic Route Management
@@ -26,119 +26,9 @@
 - [x] Create `GatewayController` endpoints for dynamic route management
 - [x] Allow creation of custom gateway routes via API
 - [x] Add gRPC `GatewayManagementService` for remote route configuration
-- [ ] Allow route target overrides via FIREMUD_SERVICES_* env vars
-- [ ] Persist dynamic routes in the route_config table
+- [ ] Allow route target overrides via `FIREMUD_SERVICES_*` env vars in line with `ServiceEndpointsProperties`
+- [ ] Persist dynamic routes in the `route_config` table and clearly document how this persistent state composes with the baseline `routes-*.yml` files
 
 ## Reusable Microservice Checklist
 
-These tasks apply to every FireMUD service unless noted otherwise. Gateway and
-TCP Proxy skip the gRPC and database items but still expose health checks and
-participate in CI.
-
----
-
-## Project Setup & CI
-
-- [x] Register the module in `settings.gradle.kts` and apply the `java` plugin
-- [x] Add a minimal Spring Boot application with `PingController` and gRPC `PingService` *(not needed for Gateway or TCP Proxy)*
-- [x] Provide a `Dockerfile` and Gradle task to build the image
-- [x] Create `README.md` with local setup instructions and design links
-- [x] Add the service to the GitHub Actions build matrix and Buf lint step
-- [x] Include the service in the Docker image workflow (`buildDockerImages`)
-- [x] Define Kubernetes `Deployment` and `Service` manifests
-- [x] Expose `/actuator/health` for readiness and liveness probes
-
----
-
-## API Definition
-
-- [x] Define gRPC service stubs with explicit `Request`/`Response` messages
-- [x] Version proto files under `protos/{service}/v1` with `package {service}.v1`
-- [x] Reuse shared types (e.g., `ErrorDetail`) from `protos/shared/`
-- [x] Generate gRPC stubs via Gradle and include them in the source set
-- [x] Add the proto directory to `buf.yaml` for lint and breaking change checks
-- [x] Provide contract smoke tests using `grpcurl`
-- [x] *(If REST endpoints are exposed)* implement controllers and generate OpenAPI specs
-- [x] *(N/A - stateless service)* define JPA entities, repositories, and Flyway migrations with `tenantId` filtering
-
----
-
-## Authentication & Authorization
-
-- [x] Meta and admin services validate JWTs using helpers from `firemud-common`
-- [x] Check `globalRoles` and `scopedRoles` where applicable
-- [x] Gameplay services rely on the Game Session Service for session validation
-
----
-
-## Inter-Service Communication
-
-- [x] Use `firemud-common` protobuf types for shared messages
-- [x] Map errors to `ErrorDetail` with appropriate gRPC status codes
-- [x] *(N/A - no service discovery)* Register with service discovery via helpers in `firemud-common`
-- [x] Ensure gRPC calls use mTLS certificates issued by cert-manager
-- [x] Internal traffic communicates directly over gRPC (Gateway not involved)
-
----
-
-## Shared Library Integration
-
-- [x] Depend on `firemud-common` via Gradle
-- [x] Apply logging, tracing, and security interceptors from the library
-- [x] Use provided autoconfiguration classes to reduce boilerplate
-- [x] Reuse `DatabaseAutoConfiguration` and `RedisProperties` for environment setup
-
----
-
-## Saga Participation *(if used)*
-
-- [x] *(N/A - gateway does not participate in sagas)* Use saga helpers from `firemud-common` for workflow steps
-- [x] *(N/A - gateway does not participate in sagas)* Emit metrics and correlation IDs for compensation and retries
-- [x] *(N/A - gateway does not participate in sagas)* Document saga participation in `design/README.md`
-
----
-
-## Redis Integration *(if used)*
-
-- [x] *(N/A - no Redis usage)* Use Redis for transient gameplay state only
-- [x] *(N/A - no Redis usage)* Access Redis through helpers in `firemud-common`
-- [x] *(N/A - no Redis usage)* Follow key conventions such as `tick:*`, `timer:*`, and `session:*` with `tenantId` prefixes
-- [x] *(N/A - no Redis usage)* Validate shard-local key usage and avoid per-service caching
-- [x] *(N/A - no Redis usage)* Emit metrics for Redis connectivity and commands
-- [x] *(N/A - no Redis usage)* *(If participating in ticks)* implement locking and staging per the Tick System docs
-- [x] *(N/A - no Redis usage)* Prefix all keys with `tenantId` to isolate game data
-
----
-
-## Testing & Quality Gates
-
-- [x] Add unit tests for gRPC, REST (if present), and startup behaviour
-- [x] Use Spring Boot Test and Testcontainers for integration tests
-- [x] Validate contracts with smoke tests (gRPC and REST)
-- [x] *(N/A - stateless service)* Seed minimal test data for local workflows
-- [x] Run `./gradlew check` in CI to execute all tests
-- [x] *(N/A - no cross-service flows yet)* *(When workflows span services)* add cross-service integration tests
-
----
-
-## Observability & Tracing
-
-- [x] Use Micrometer for Prometheus metrics
-- [x] Enable OpenTelemetry tracing
-- [x] Use shared interceptors to propagate `traceId` and `correlationId`
-- [x] *(N/A - no tick or Redis metrics)* Emit service metrics for ticks and Redis commands when relevant
-- [x] Expose `/actuator/prometheus` for scraping by Prometheus
-
----
-
-## Documentation
-
-- [x] Create `design/README.md` summarizing APIs and sample requests
-- [x] Document proto contracts and any Redis keys in the service README
-- [x] Document required environment variables and configuration
-- [x] Note `tenantId` handling and cross-service dependencies
-- [x] Add a design document under `design/architecture/microservices/<service>/README.md`
-
----
-
-*Game-specific services may define additional commands or entity behavior but follow the same deployment conventions.*
+These tasks apply to every FireMUD service unless noted otherwise. For the shared checklist, see `design/project-management/reusable-microservice-checklist.md`.

@@ -68,6 +68,26 @@ Using a `services:` prefix (for example `:services:tcp-proxy-service:test`) will
 
 Local development and CI default to relaxed Spring profiles so you can run `./gradlew bootRun` or `./gradlew test` without provisioning PostgreSQL. The build script sets `spring.profiles.active` to `dev` for `bootRun` and `test` for `Test` tasks when no profile is provided, and those profiles disable Flyway while pointing to an in-memory H2 datasource. Set `SPRING_PROFILES_ACTIVE=prod` (or `--args=--spring.profiles.active=prod` for `bootRun`) when you specifically want to use PostgreSQL, such as when running the Docker Compose stack or validating migration scripts.
 
+### Telnet Proxy Limits in Local Dev
+
+The TCP Proxy Service enforces connection and envelope limits even in development. When running it locally (for example `./gradlew :tcp-proxy-service:bootRun`), you can override the defaults via environment variables:
+
+- `TCP_PROXY_MAX_CONNECTIONS` – global cap on concurrent Telnet connections (`0` = no explicit ceiling).
+- `TCP_PROXY_MAX_CONNECTIONS_PER_IP` – cap on concurrent Telnet connections from a single client IP (`0` = no explicit ceiling).
+- `TCP_PROXY_MAX_LINE_BYTES` – maximum Telnet line length before the frame is truncated/closed.
+- `TCP_PROXY_MAX_MALFORMED_ENVELOPES` – number of malformed `SESSION` envelopes allowed per connection before it is closed.
+
+For local iteration, it is safe to keep these values low and increase them temporarily in your shell, for example:
+
+```bash
+TCP_PROXY_MAX_CONNECTIONS=50 \
+TCP_PROXY_MAX_CONNECTIONS_PER_IP=10 \
+TCP_PROXY_MAX_MALFORMED_ENVELOPES=10 \
+./gradlew :tcp-proxy-service:bootRun
+```
+
+Do not commit environment-specific defaults for these variables to version control; treat them as deployment-time configuration managed by your shell, Docker Compose, or Kubernetes manifests.
+
 ## GitHub CLI Integration for PRs
 
 Install and authenticate the GitHub CLI so you can manage pull requests locally and allow AI tooling to operate on PR metadata when requested:
@@ -225,8 +245,10 @@ FIREMUD_POSTGRES_PASSWORD=firemud
 FIREMUD_POSTGRES_DB=firemud
 FIREMUD_POSTGRES_HOST=postgres
 FIREMUD_POSTGRES_PORT=5432
-FIREMUD_REDIS_HOST=redis
-FIREMUD_REDIS_PORT=6379
+FIREMUD_REDIS_COORD_HOST=redis-coord
+FIREMUD_REDIS_COORD_PORT=6379
+FIREMUD_REDIS_CACHE_HOST=redis-cache
+FIREMUD_REDIS_CACHE_PORT=6379
 ```
 
 Copy this to `.env` and adjust values as needed before running the stack.
@@ -275,16 +297,18 @@ the files to your object store.
 
 ### Optional Redis Persistence
 
-Redis normally starts empty between service restarts. If you want to keep the
-Append-Only File (AOF) across container launches, the compose stack mounts a
-`redis-data` volume. You can manually restore an AOF backup with:
+Cache/Rate-Limit Redis is best-effort and starts empty between restarts.
+Coordination Redis persists its AOF across container launches via the
+`redis-coord-data` volume. You can manually restore an AOF backup into the
+local Coordination Redis with:
 
 ```bash
 ./dev-tools/restores/restore-redis-aof.sh backups/appendonly.aof
 ```
 
 This helper is intended **only** for local development. Production Redis nodes
-rely on replication and automatically repopulate state from PostgreSQL.
+rely on their own durability/failover behavior and scoped coordination resets
+as described in the Redis architecture and runbooks.
 
 ## Manual Testing Tools
 
@@ -323,20 +347,28 @@ service hostname (e.g., `account-service:6565`).
 
 ### Redis Debugging
 
-Use the Redis CLI (`redis-cli -h localhost -p 6379`) to inspect transient game state. Useful commands include:
+Use the Redis CLI to inspect transient state:
+
+- Coordination Redis: `redis-cli -h localhost -p 6379`
+- Cache/Rate-Limit Redis: `redis-cli -h localhost -p 6380`
+
+Useful commands include:
 
 ```bash
-SCAN 0 MATCH session:*
-GET tick:lock:entity-xyz
-SCAN 0 MATCH timer:player-123:*
+SCAN 0 MATCH 'session:game:<tenantId>:*'
+GET 'tick-executor-lease:{<tenantRegionTag>}'
+ZRANGE 'timer:{<tenantRegionTag>}' 0 10 WITHSCORES
 ```
 
 For a graphical view, a RedisInsight container runs in development via
 `docker/docker-compose.override.yml`. Bring up the stack with `docker compose -f
 docker/docker-compose.yml -f docker/docker-compose.override.yml up --build -d`. RedisInsight is then
-available at <http://localhost:8001> and connects to the default Redis instance
-on `localhost:6379`. Typical key patterns are `session:*`, `tick:*`, and
-`timer:*`.
+available at <http://localhost:8001>. Add both Redis endpoints:
+
+- Coordination: `localhost:6379`
+- Cache/Rate-Limit: `localhost:6380`
+
+Typical key patterns include `session:*`, `tick:*`, `timer:*`, and `ratelimit:*`.
 
 ## Configuration Files
 
@@ -357,8 +389,8 @@ These documents explain how the compose setup differs from production and provid
 
 - Several services expose a **dev-isolated mode** that keeps core flows testable without standing up the full dependency graph. These modes are wired through Gradle `bootRunDevIsolated` tasks and corresponding environment variables, and are intended strictly for local smoke tests and debugging—not for production.
 - When `game-session.dev-isolated` (or `GAME_SESSION_DEV_ISOLATED`) is `true`, the Game Session Service (and dependent tests) uses in-memory replacements (`DevIsolatedSessionContextService`, `DevIsolatedGameInstanceService`, and `DevIsolatedGameInstanceRegistry`) instead of hitting Redis/JPA. This keeps LOGIN + LOOK flows runnable on a developer laptop that lacks PostgreSQL/Redis/Account Service dependencies. You can start this mode with `./gradlew :game-session-service:bootRunDevIsolated` (see `services/game-session-service/README.md` and `design/architecture/microservices/game-session-service/README.md#dev-isolated-mode` for details).
-- The TCP Proxy Service exposes a similar dev-isolated forwarding mode controlled by `TCP_PROXY_DEV_ISOLATED`. The `./gradlew :tcp-proxy-service:bootRunDevIsolated` task and the `docker/docker-compose.tcp-proxy-devisolated.yml` profile both set this flag so you can smoke-test Telnet input against the built-in echo handler without starting the full gateway or game stack (see `design/architecture/microservices/tcp-proxy-service/README.md#local-development-and-echo-loop`).
-- Spring Cloud Gateway also provides a `./gradlew :spring-cloud-gateway:bootRunDevIsolated` task that runs with the `dev` profile and enables `TCP_PROXY_DEV_ISOLATED` for local WebSocket debugging that mirrors the proxy’s dev-isolated behavior.
+- The TCP Proxy Service exposes a similar dev-isolated mode controlled by `TCP_PROXY_DEV_ISOLATED`. The `./gradlew :tcp-proxy-service:bootRunDevIsolated` task and the `docker/docker-compose.tcp-proxy-devisolated.yml` profile both set this flag so you can smoke-test Telnet input against the proxy’s in-process echo handler without starting Spring Cloud Gateway, Game Session, or the rest of the stack (see `design/architecture/microservices/tcp-proxy-service/README.md#local-development-and-echo-loop`).
+- Spring Cloud Gateway also provides a `./gradlew :spring-cloud-gateway:bootRunDevIsolated` task that runs with the `dev` profile and enables `TCP_PROXY_DEV_ISOLATED` for local WebSocket debugging that mirrors the proxy’s dev-isolated behavior, while still relying on in-process stubs instead of full upstream services.
 - The dev-isolated smoke/integration tests (`DevIsolatedGameSessionSmokeTest`, `GameSessionLoginIntegrationTest`, `GameSessionWebSocketHandlerIntegrationTest`, and `SessionResumptionFlowTest`) are currently annotated with `@Disabled` and reference the TODO in `design/project-management/vertical-slices/02-task-list-login-and-session-vertical-slice.md#7-dev-mode-stubs-and-real-service-rollout`. They should be revisited and re-enabled once the real Account/Redis/GameInstance wiring is available so Gradle runs against production services instead of the stubbed dev-isolated path.
 
 ### Running Gradle from WSL

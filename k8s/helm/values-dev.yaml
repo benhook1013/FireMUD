@@ -1,6 +1,8 @@
-redis:
-  host: redis.dev
-  port: 6379
+redisCoord:
+  releaseName: redis-coord
+  resetAofOnInstallUpgrade: true
+redisCache:
+  releaseName: redis-cache
 tickInterval: 200
 features:
   enableFoo: false

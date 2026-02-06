@@ -1,5 +1,27 @@
 # All-Project AI Rules
 
+## Table of Contents
+
+- [1. General Code Rules](#1-general-code-rules)
+- [2. Style and Formatting](#2-style-and-formatting)
+- [3. Validation and Error Handling](#3-validation-and-error-handling)
+- [4. Comments and Explanation](#4-comments-and-explanation)
+- [5. Performance and Security](#5-performance-and-security)
+- [6. Refactoring and Review](#6-refactoring-and-review)
+- [7. Multi-file Contexts](#7-multi-file-contexts)
+- [8. Project Structure](#8-project-structure)
+- [9. Architecture & Documentation Behavior](#9-architecture--documentation-behavior)
+- [10. Testing & Observability](#10-testing--observability)
+- [11. Tooling Available to AI](#11-tooling-available-to-ai)
+
+---
+
+For quick reference in day-to-day work, most edits will rely on:
+
+- Section 2 (**Style and Formatting**) for formatting and structure
+- Section 6 (**Refactoring and Review**) when adjusting existing code
+- Section 10 (**Testing & Observability**) when adding or changing behavior
+
 ## 1. General Code Rules
 
 - Provide complete, functional code unless code-only is requested
@@ -17,8 +39,7 @@
 - Prefer explicit over implicit behavior
 - Include boilerplate unless minimal examples are requested
 - Keep code clean, modular, and well organized
-- Avoid manual line wrapping; let lines flow naturally so content displays correctly in editors and
-  on GitHub.
+- Avoid manual line wrapping; let lines flow naturally so content displays correctly in editors and on GitHub.
 - Refactor files over 300 lines
 
 ## 3. Validation and Error Handling
@@ -81,9 +102,13 @@
 ## 11. Tooling Available to AI
 
 - The development environment includes the GitHub CLI (`gh`) configured for this repository.
+- Python is available in WSL as `python3` (for example `python3 --version`); `python` may not be installed or may not point to Python 3.
 - AI tools may use `gh` to inspect and manage pull requests (for example, listing PRs, viewing diffs, and editing descriptions) when explicitly asked.
 - Do not create, merge, or close pull requests with `gh` unless a human contributor requests that action for a specific task.
 - When working on a feature branch that has (or will have) an open PR, always keep a brief, accurate PR summary up to date as part of the change:
   - Maintain the current summary in the PR body and, when a local `pr-summary.md` file exists, keep that file in sync with the implemented changes.
   - When the user explicitly asks to refresh the PR description, prefer using `gh pr edit --body-file pr-summary.md` to apply the local summary to the PR; if no summary file exists, update the PR body directly via `gh` instead.
   - When creating or editing PR bodies, always provide Markdown via a file (for example `--body-file`) or stdin with real newlines; avoid passing a single shell string with literal `\n` escapes so formatting renders correctly on GitHub.
+- Optional Codex skills may be installed in the dev environment to standardize common workflows. If available, invoke them by name in your request (for example `$gh-fix-ci` or `$gh-address-comments`); after installing new skills, restart Codex to pick them up.
+  - `gh-fix-ci`: Inspect failing PR checks, pull GitHub Actions logs, summarize failure context, propose a fix plan, then implement after human approval.
+  - `gh-address-comments`: Fetch PR review threads/comments, summarize and number them, then apply targeted fixes for the selected items.

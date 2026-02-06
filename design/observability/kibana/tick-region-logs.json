@@ -1,0 +1,6 @@
+{
+  "title": "Tick & Region Logs",
+  "description": "Saved search for tick/region incidents, filtered by tenantId, regionId, tickId, and tick/Redis-related services.",
+  "version": 1
+}
+

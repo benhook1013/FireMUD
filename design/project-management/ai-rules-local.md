@@ -53,11 +53,27 @@ Testing:
 - Verify coverage with JaCoCo by running `./gradlew check` before committing.
 - When invoking Gradle from AI tooling or scripts, prefer the default daemon (no `--no-daemon` flag) so repeated tasks stay fast; only use `--no-daemon` when explicitly debugging daemon issues.
 
-When advising on architecture or operations, keep the “well-engineered hobby/self-hosted deployment” mindset front and center: prefer clean, high-quality patterns but avoid introducing new knobs, clusters, or heavy operational plans unless evidence shows a future need beyond the anticipated single-admin usage. Favor **simple automation and one-shot tools** (for example, a small CLI that drives a reset, migration, or health check) over complex, manual runbooks whenever they reduce day-to-day operator effort without adding long-term complexity.
+When advising on architecture or operations, assume a **single, prod-like topology** (the same core roles and services in dev, hobby/self-hosted, and production) and optimize for a **single-admin operator**. “Hobby/self-hosted” here is about **operational complexity**, not a different deployment architecture. Prefer adding behavior behind existing roles and tools over introducing new configuration knobs, clusters, or manual runbooks; only add new operator-facing options when they provide clear, necessary control that cannot be derived or automated. Favor **simple automation and one-shot tools** (for example, a small CLI that drives a reset, migration, or health check) over complex, multi-step manual procedures whenever they reduce day-to-day operator effort without adding long-term complexity.
 
 Monetization:
 
 - Stripe
+
+---
+
+## Java Service Conventions (Quick Reference)
+
+- **Controllers**
+  - Handle HTTP requests only, annotated with `@RestController` and `@RequestMapping`.
+  - Return `ResponseEntity<ApiResponse<...>>` and rely on `GlobalExceptionHandler` for error mapping.
+- **Services**
+  - Expose behavior via interfaces with `*ServiceImpl` implementations annotated with `@Service` and `@RequiredArgsConstructor`.
+  - Use repositories for all DB access and mark multi-step operations as `@Transactional`.
+- **Repositories**
+  - Extend `JpaRepository<Entity, ID>` with `@Repository`, prefer JPQL in `@Query`, and use `@EntityGraph` for eager graphs.
+- **Entities and DTOs**
+  - Entities are internal (`@Entity`, `@Table`, `@Data`, lazy relationships) and never exposed directly.
+  - DTOs are primarily `record` types with validation in the canonical constructor and MapStruct mappings.
 
 ---
 

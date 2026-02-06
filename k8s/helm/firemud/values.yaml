@@ -31,13 +31,12 @@ tcp-proxy-service:
 world-management-service:
   image:
     tag: latest
-=======
-redis:
-  releaseName: redis
-  # Optional override of the PersistentVolumeClaim used for the AOF file
+redisCoord:
+  releaseName: redis-coord
+  # Optional override of the PersistentVolumeClaim used for the AOF files.
   aofPvc: ""
-  # When true, a Helm hook Job wipes the Redis AOF on each install/upgrade.
-  # This is useful for dev/ephemeral environments to ensure a clean slate
-  # between runs. In production values, set this to false so Redis state
-  # (sessions and tick coordination data) is preserved across deployments.
-  resetAofOnInstallUpgrade: true
+  # When true, a Helm hook Job wipes the Coordination Redis data directory on
+  # each install/upgrade. This is intended only for dev/ephemeral environments.
+  resetAofOnInstallUpgrade: false
+redisCache:
+  releaseName: redis-cache

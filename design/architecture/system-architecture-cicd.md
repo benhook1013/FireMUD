@@ -1,6 +1,6 @@
 # FireMUD System Architecture: CI/CD Pipeline
 
-This document describes the continuous integration strategy for FireMUD using **GitHub Actions**. Every service is built, tested, containerized, and images are pushed to the registry. Deployment to Kubernetes runs through a separate workflow so both local and cloud-hosted clusters use the same pipeline.
+This document describes the continuous integration strategy for FireMUD using **GitHub Actions**. Every service is built, tested, containerized, and images are pushed to the registry. Deployment to Kubernetes runs through separate workflows so both local and cloud-hosted clusters use the same pipeline but use different manifests per environment.
 
 ---
 
@@ -8,7 +8,7 @@ This document describes the continuous integration strategy for FireMUD using **
 
 - **Automate builds and tests** for all microservices whenever code changes are pushed by running the [`ci.yml`](../../.github/workflows/ci.yml) workflow.
 - **Build Docker images** and push them to GitHub Container Registry (GHCR).
-- **Deploy to Kubernetes** by triggering the [`manual-helm-deploy.yml`](../../.github/workflows/manual-helm-deploy.yml) workflow, which applies the Helm charts under [`k8s/helm`](../../k8s/helm) using `values-local.yaml` by default.
+- **Deploy to Kubernetes development/demo clusters** by triggering the [`manual-helm-deploy.yml`](../../.github/workflows/manual-helm-deploy.yml) workflow, which applies the Helm charts under [`k8s/helm`](../../k8s/helm) using `values-local.yaml` by default. Staging and production clusters use Kustomize overlays as described in the Deployment Runbook and are applied via `kubectl` from a secure admin environment rather than directly from CI.
 - Keep the workflow configuration easy to maintain and extensible for additional security scans or nightly jobs.
 - **Generate release notes automatically** whenever version tags are pushed.
 - **Perform code scanning** with CodeQL and open source **license checks** on every pull request.
@@ -124,11 +124,7 @@ The firemud-base image provides a consistent OS and JVM setup across all service
 
 ## Deploying to Kubernetes
 
-Kubernetes rollouts are triggered through the
-[`manual-helm-deploy.yml`](../../.github/workflows/manual-helm-deploy.yml) workflow.
-The job runs `helm upgrade` using the charts in [`k8s/helm`](../../k8s/helm) and
-`values-local.yaml` by default. Cluster credentials and registry secrets must be
-configured beforehand. The example below mirrors the deployment steps.
+Kubernetes rollouts for local and development clusters are triggered through the [`manual-helm-deploy.yml`](../../.github/workflows/manual-helm-deploy.yml) workflow. The job runs `helm upgrade` using the charts in [`k8s/helm`](../../k8s/helm) and `values-local.yaml` by default. Cluster credentials and registry secrets must be configured beforehand. The example below mirrors the deployment steps. Staging and production deployments rely on environment-specific overlays (for example `k8s/overlays/stage` and `k8s/overlays/prod`) applied according to the Deployment Runbook by operators using `kubectl` from a secured workstation or bastion host.
 
 ```yaml
 name: Manual Helm Deploy
@@ -153,9 +149,7 @@ jobs:
 
 ### Rollback Strategy
 
-New service versions are deployed alongside existing ones. If issues appear after
-a rollout, prior releases can be reinstated and the newer copies scaled down or
-removed. Automated rollback and canary deployments handle this process.
+Staging and production rollouts use standard Kubernetes `RollingUpdate` behavior and are rolled back by re-applying the environment’s Kustomize overlay with a previously known-good image tag. FireMUD does not rely on automated canary/auto-rollback infrastructure by default; operators treat rollback as an explicit, auditable action that restores the last known-good tag and verifies post-deploy health checks.
 
 ---
 
@@ -184,4 +178,35 @@ automatically.
 - [Developer Tools & Scripting](./system-architecture-scripting.md)
 - [Infrastructure Overview](./infrastructure/README.md)
 - [Testing Strategy](./system-architecture-testing.md)
-- [User Journeys – Testing & Continuous Delivery](./user-journeys.md#17-testing--continuous-delivery)
+- [User Journeys – Testing & Continuous Delivery](./user-journeys-operators.md#3-testing--continuous-delivery)
+
+---
+
+## Promotion & Rollback Model
+
+FireMUD uses a simple promotion flow from pull requests through staging to production:
+
+- Feature branches are merged into `develop` after passing CI.
+- Staging promotion is performed by updating the staging Kustomize overlay (for example `k8s/overlays/stage`) to the desired image tags via a Git change, merging it, and applying it from a secure operator environment using `kubectl apply -k k8s/overlays/stage`. This keeps “what was deployed” traceable in Git history.
+- When a release is ready, `release-please` opens a release PR and creates a version tag (for example `v1.2.3`) that is merged to `main`. Images for this tag are built and pushed by the Docker image workflow.
+- Production promotion is performed by updating the production Kustomize overlay (for example `k8s/overlays/prod`) to the desired tagged images via a Git change, merging it, and applying it from a secure operator environment using `kubectl apply -k k8s/overlays/prod` following the deployment runbook.
+
+Rollbacks are handled by resuming a previously known-good image tag and re-applying the staging or production manifests with that tag. See the Deployment Runbook for the step-by-step operator flow.
+
+---
+
+## Deployment Credentials & Environments
+
+CI workflows and operators use distinct credentials for each Kubernetes environment:
+
+- **Development clusters**
+  - May use a kubeconfig or token that is available to a wider set of workflows (for example `manual-helm-deploy.yml` and preview environments).
+  - Intended for non-player-facing stacks where rapid iteration is more important than strict change control.
+- **Staging cluster**
+  - Uses credentials limited to operator `kubectl` access and, if introduced later, dedicated staging deployment workflows.
+  - Credentials are not exposed to pull request workflows; only merges to `develop` and explicit operator actions (or approved staging workflows) can update the staging cluster.
+- **Production cluster**
+  - Uses credentials restricted to production deployment paths and operator `kubectl` access from approved workstations or bastion hosts.
+  - No GitHub Actions workflow currently applies production manifests directly; any future workflow that does so must use GitHub Environments and require manual approvals.
+
+Registry credentials (for GHCR) are shared across environments but access to pull images into each cluster is controlled by Kubernetes secrets and RBAC within that environment.

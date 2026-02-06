@@ -20,7 +20,7 @@ Executes the core gameplay rules and command parsing. It processes player action
 ## Architecture / Design Notes
 
 - Stateless service accessed over gRPC by other microservices.
-- Uses a modular command parser for extensibility.
+- Uses a modular command parser for extensibility. The text protocol’s **system commands** (such as `LOGIN`, `LOGON`, and `PING`) are interpreted and completed by the Game Session Service; this service focuses on **gameplay commands** only, as described in the [Game Session Service](../game-session-service/README.md#minimal-text-command-protocol) documentation.
 - Deterministic rule execution; random seeds come from the Game Session Service.
 - Fetches contextual world and entity data on demand via gRPC.
 - Gameplay rules are read from this service's own versioned data when a version
@@ -37,6 +37,26 @@ Executes the core gameplay rules and command parsing. It processes player action
   [Security Architecture](../../system-architecture-security.md).
 - Utilizes the [Shared Libraries](../../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
 - Flyway is enabled for consistency with other services, but the initial migration is empty because no tables are required.
+
+### Saga Participation
+
+The Game Logic Service does not orchestrate or own any Saga workflows. All
+gameplay commands execute inside ticks using Redis-based rollback and the
+transaction model described in [Transaction Strategies](../../system-architecture-transactions.md).
+When a game version is published, its rule data is prepared and finalized by
+the Game Design and Game Session services; this service simply reads the
+already-published, versioned rule data for the active `runtime_version` and
+does not participate directly in the publish Saga.
+
+### Redis Role and Prefixes
+
+- **Coordination Redis**
+  - This service does **not** access Coordination Redis directly. It never issues commands against `tick:*`, `timer:*`, `retry:*`, `session:*`, or other coordination prefixes; all tick scheduling, locking, and staging live in the Game Session Service and its Lua registry as described in [Redis Architecture](../../system-architecture-redis.md).
+  - Tick context is provided by Game Session via gRPC (for example, `tickId`, region metadata, and effect-guard identifiers) rather than by reading Redis state.
+- **Cache/Rate-Limit Redis**
+  - The Game Logic Service does not maintain its own Redis-backed caches today; any future read-side caches for rules or computed aggregates must use **Cache/Rate-Limit Redis** and the key naming/TTL/versioning patterns in [Redis Cache & Rate Limiting](../../system-architecture-redis-cache.md), never Coordination Redis.
+  - Game Logic does not read or write shared cache prefixes owned by other services (for example `view:room-look:*`, `inventory:*`, `character-cache:*`, or `chat:*`) directly; it treats World Management, Entity Management, and Social & Groups as the owners of those aggregates and accesses them via their gRPC APIs. Correctness-critical flows (combat, visibility, movement, chat delivery decisions) are always driven from authoritative service APIs and Class A caches, not from TTL-only caches such as `view:room-look:*`. This matches the restrictions documented for `view:room-look:*` in the central Redis cache design: Game Session is the sole writer for that prefix, and Game Logic consumes LOOK results only via gRPC.
+- Any future Redis usage in this service should adhere to the [Redis Design Checklist](../../system-architecture-redis-design-checklist.md), including prefix registration, role selection, and slotting rules.
 
 ## Key Features
 
@@ -64,7 +84,7 @@ Executes the core gameplay rules and command parsing. It processes player action
 
 ### Implementation status (LOOK slice)
 
-- **Live:** The data-driven `LOOK` path is wired into the command pipeline via `ResolveLook`; it orchestrates World Management snapshots and Entity Management listings, hands the structured `LookResult` to the `LookResultRenderer`, and publishes the telemetry described in `../../project-management/look-instrumentation.md`.
+- **Live:** The data-driven `LOOK` path is wired into the command pipeline via `ResolveLook`; it orchestrates World Management snapshots and Entity Management listings, hands the structured `LookResult` to the `LookResultRenderer`, and publishes the telemetry described in `../../../project-management/look-instrumentation.md`.
 - **Stubbed:** Room and entity context still comes from the seeded demo world and entity fixtures so the canonical transcript remains deterministic; scripted descriptions, complex lighting, and dynamic hazard cues are not yet integrated.
 - **Deferred:** Future slices will expand the renderer with richer prose, annotate `LookResult` with combat/effect metadata, and surface additional visibility hints once the core text shape proves stable.
 
@@ -76,7 +96,7 @@ Executes the core gameplay rules and command parsing. It processes player action
 
 ### SAY broadcast flow
 
-- Game Session channels authenticated commands through `BroadcastSay`, supplying the same `tenantId`/`sessionId`/`playerId`/`roomId` context that guards `LOOK`. The command parser normalizes `SAY`/`YELL`/`WHISPER` aliases before forwarding trimmed text so downstream services can enforce consistent validation.
+- Game Session channels authenticated commands through `BroadcastSay`, supplying the same `RoomInstanceRef` context (`tenantId`, `gameInstanceId`, `roomInstanceId`) that guards `LOOK`. The command parser normalizes `SAY`/`YELL`/`WHISPER` aliases before forwarding trimmed text so downstream services can enforce consistent validation.
 - Game Logic validates message length/whitelist checks, determines the occupied room, and delegates delivery (currently via a stubbed Social & Groups Service hook) rather than rendering the chat locally. The resulting delivery metadata (recipient list, NPC echoes) is returned to Game Session while failures populate `shared.v1.ErrorDetail` so TextCommandInterpreter can emit `ERROR SAY_NOT_DELIVERED` or similar protocol responses.
 - This pathway mirrors the `LOOK` guard: unauthenticated requests never reach BroadcastSay, and any Social/Group service outage is surfaced as a structured `PERMISSION_DENIED`/`UNAVAILABLE` error so Game Session can keep its `ERROR NOT_AUTHENTICATED` gating predictable for Telnet and WebSocket clients.
 
@@ -98,7 +118,7 @@ This service is largely stateless. It relies on:
 
 - `Ping` – basic connectivity check.
 - `ExecuteCommand` – evaluates a parsed command and returns the outcome.
-- `BroadcastSay` – accepts `tenant_id`, `session_id`, `player_id`, `room_id`, normalized `text`, and an alias indicator (`SAY`/`YELL`/`WHISPER`). The handler validates length, enforces room chat controls, and returns delivery metadata (recipient identifiers, NPC echoes, optional acknowledgements) along with structured status codes so Game Session can render the canonical response. Failures populate `shared.v1.ErrorDetail` while the gRPC status remains `OK`, keeping `gamesession.command.say.*` metrics aligned with the existing instrumentation.
+- `BroadcastSay` – accepts `tenant_id`, `session_id`, `player_id`, and a `RoomInstanceRef` (`tenant_id`, `game_instance_id`, `room_instance_id`), plus normalized `text` and an alias indicator (`SAY`/`YELL`/`WHISPER`). The handler validates length, enforces room chat controls, and returns delivery metadata (recipient identifiers, NPC echoes, optional acknowledgements) along with structured status codes so Game Session can render the canonical response. Failures populate `shared.v1.ErrorDetail` while the gRPC status remains `OK`, keeping `gamesession.command.say.*` metrics aligned with the existing instrumentation.
 - All responses include a `shared.v1.ErrorDetail` field for standardized error handling.
   Application errors are returned in this field while the gRPC status remains
   `OK`, and a `grpc.app_error` metric is recorded with the error code.
@@ -161,7 +181,7 @@ the generated code with `./gradlew generateProto` after making changes.
 - [Logging & Monitoring](../../system-architecture-logging-monitoring.md)
 - [gRPC API Style & Versioning Guidelines](../../system-architecture-grpc.md)
 - [Shared Libraries Overview](../../system-architecture-shared-libraries.md)
-- [User Journeys – Player Login and Gameplay](../../user-journeys.md#7-player-login-and-gameplay)
+- [User Journeys – Player Login and Gameplay](../../user-journeys-players.md#3-player-login-and-gameplay)
 - [Testing Strategy](../../system-architecture-testing.md)
 - [CI/CD Pipeline](../../system-architecture-cicd.md)
 

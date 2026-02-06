@@ -2,11 +2,14 @@
 
 This document defines the backup schedule and disaster recovery procedures for FireMUD. Backups are taken only for **production**. Development and staging environments rely on ad hoc snapshots as needed.
 
+Staging is treated as **disposable by default**: it does not run the production backup CronJobs unless operators explicitly install staging-specific schedules. Operators may temporarily restore staging from production backups for disaster recovery rehearsals or investigations; when doing so, staging must follow the same post-restore secret hardening flow before it is considered player-facing again (see [Post-Restore Secret Hardening](#post-restore-secret-hardening)).
+
 ---
 
 ## PostgreSQL Logical Backups
 
 - A `firemud-pg-dump` CronJob (defined in `k8s/postgres/pg-dump-cronjob.yaml`) runs **every 15 minutes** and stores compressed SQL dumps.
+- The CronJob authenticates to the Game Session control plane to invoke `PauseTicks` / `ResumeTicks` using a dedicated Kubernetes service account and a narrowly-scoped mTLS client identity. NetworkPolicies and RBAC restrict this Job so only the backup workflow can call tick-pausing APIs.
 - The production Terraform modules automatically deploy this CronJob. See [`k8s/terraform-production`](../../k8s/terraform-production).
 - Retention policy:
   - **24 hours** of 15‑minute dumps
@@ -15,9 +18,7 @@ This document defines the backup schedule and disaster recovery procedures for F
   - **3 monthly** dumps
 - The CronJob writes to a persistent volume claim `firemud-pg-dumps` and runs
   a script (`pg-dump.sh`) that enforces the retention policy. Dumps are stored under `15min`, `daily`, `weekly`, and `monthly` directories. The environment
-  variables `PG_DUMP_BUCKET` **and** `PG_DUMP_ENDPOINT` must both be set;
-  otherwise uploads are skipped. When defined, the script also uploads each
-  dump to the specified S3/MinIO bucket. The same script is available for local use as `dev-tools/backups/pg-dump-rotate.sh`.
+  variable `PG_DUMP_BUCKET` must be set to enable uploads; `PG_DUMP_ENDPOINT` is optional and is used only when targeting an S3-compatible endpoint such as MinIO. If `PG_DUMP_BUCKET` is unset, uploads are skipped. In production, skipping uploads is treated as a misconfiguration: it is acceptable to keep short-term dumps on the PVC, but the backup pipeline is not considered healthy unless object storage uploads are enabled and verified. When uploads are enabled, the script uploads each dump to the specified bucket. The same script is available for local use as `dev-tools/backups/pg-dump-rotate.sh`.
 - Velero schedules defined in `k8s/velero/schedule.yaml` back up only Kubernetes manifests (`snapshotVolumes: false`). See [k8s/velero/README.md](../../k8s/velero/README.md) for installation details.
 - Copy `k8s/velero/values.example.yaml` to `values.yaml` and configure your object storage bucket. Example:
 
@@ -39,6 +40,17 @@ PostgreSQL dumps must capture a consistent view of gameplay state. Before a `pg_
 2. Polls `GetTickStatus` until the service reports `PAUSED`, which indicates all in‑flight ticks have completed. Command queues continue accepting actions during this pause, but they execute only after ticks resume.
 3. Starts `pg_dump` immediately. Ticks may resume as soon as the dump command starts because PostgreSQL snapshots the data at launch time.
 4. Invokes `ResumeTicks` so queued commands continue processing.
+
+Operational constraints:
+
+- Tick pausing is part of the production backup path, so it must be bounded and observable. Backup tooling should track:
+  - How long it takes for a scope to transition to `PAUSED` (pause latency).
+  - How long the scope remains paused (pause duration), even though the dump itself does not require ticks to stay paused.
+- Pause scope should be limited to the smallest safe blast radius (prefer tenant- or region-scoped pausing over global pausing) so backups do not create unnecessary player impact.
+- If a pause does not reach `PAUSED` within a documented budget, the backup Job should fail fast (skip the dump) and alert operators rather than silently holding the game in a paused state or producing an inconsistent backup.
+  - Recommended budget: `max_pause_wait = max(10s, 2 * tick_interval_ms)` for the affected scope.
+  - Recommended alert threshold: page if `max_pause_wait` is exceeded for any production backup attempt, or if the scope remains `PAUSED` for longer than a small multiple of `max_pause_wait` (indicating the resume step failed).
+  - Backup tooling should expose pause metrics with unambiguous units (for example `backup_tick_pause_wait_seconds` and `backup_tick_pause_duration_seconds`) and include `tenantId`/`regionId` labels only when the pause scope is already bounded to avoid high cardinality.
 
 For convenience, `dev-tools/backups/firemud-backup.sh` automates these steps by pausing ticks, waiting until the service is paused, running `pg_dump`, and then calling `ResumeTicks`.
 
@@ -68,21 +80,22 @@ Run `dev-tools/backups/setup-local-backup.sh` to deploy MinIO, create the `firem
 - If the database service fails completely:
   1. Restore the most recent `pg_dump` file from the `firemud-pg-dumps` volume or object store.
   2. Restart services to resume operation.
-  3. Redis repopulates transient state from PostgreSQL on access.
+  3. Coordination state is treated as reset-tolerant and is rebuilt as services run (where possible) from PostgreSQL state and new activity as described in the Redis architecture and runbooks; cache/rate-limit keys refill on demand.
 
 ## Redis Persistence
 
-- Redis stores only **transient gameplay state**.
-- **AOF (Append‑Only File)** is enabled for crash recovery while the cluster is running.
-- Redis is **not restored** from backup during a cold start; it is repopulated from PostgreSQL after recovery.
-  In development a `redis-data` volume can persist the AOF between container restarts. Restore an AOF file with `dev-tools/restores/restore-redis-aof.sh`.
+- Redis stores only **transient state**:
+  - Coordination Redis stores volatile coordination state (ticks, locks, timers, sessions) and uses AOF for crash recovery while the cluster is running.
+  - Cache/Rate-Limit Redis stores best-effort caches and rate-limit counters and is not treated as durable.
+- Redis is **not restored** from backup during a cold start. If Coordination Redis starts empty (for example after a reset), treat it as a coordination reset event and follow the Coordination Reset Model rather than attempting to “restore Redis”. See [Failover vs Cold Start vs Reset](./system-architecture-redis-reset-and-recovery.md#failover-vs-cold-start-vs-reset) for what “rebuild from PostgreSQL” does and does not mean.
+  In development a `redis-coord-data` volume can persist the Coordination Redis AOF between container restarts. Treat AOF restore as a debugging tool: restore into an isolated, throwaway Redis instance for inspection, and only restore into a live dev stack when services and Lua scripts match the AOF’s originating version.
 
 ### Redis AOF Reset on Deployment
 
 Redis is treated as a **transient coordination layer** in terms of data authority (PostgreSQL owns canonical game data), but in staging and production it is also a **long-lived availability dependency**. The lifecycle of Redis and its AOF differs by environment:
 
 - **Development and ephemeral test environments**
-  - A Kubernetes Job (`k8s/helm/firemud/templates/redis-aof-reset-job.yaml`) may be enabled to delete the Redis Append‑Only File (AOF) on each Helm install or upgrade.
+  - A Kubernetes Job (`k8s/helm/firemud/templates/redis-aof-reset-job.yaml`) may be enabled to wipe Coordination Redis data on each Helm install or upgrade.
   - This guarantees a clean slate between runs so stale gameplay state, tick locks, or timers do not leak across test cycles.
   - This behavior is appropriate for local/dev stacks and short‑lived preview environments where all games are disposable and no replay or uptime guarantees are made.
 
@@ -93,21 +106,47 @@ Redis is treated as a **transient coordination layer** in terms of data authorit
     - All volatile tick state, timers, and queues to be discarded.
     - Games to restart from authoritative PostgreSQL state on next login.
   - Any workflow that resets Redis in staging/production must be documented as a runbook with clear player‑impact notes; it is not part of the default CI/CD pipeline.
+  - The **scope** of any reset (single region, single tenant, or entire cluster) must follow the guidelines in the [Coordination Reset Model](./system-architecture-redis-reset-and-recovery.md#coordination-reset-model) so that player impact and recovery behavior are predictable.
 
 This behavior is distinct from **failover**:
 
-- **Failover (node crash or leader change):** Redis pods restart or leadership moves, but AOF files and replication state are preserved. Tick locks and `tick:{tenantId}:{regionId}:pending` entries survive so the Game Session Service can safely **replay or complete** in-flight ticks using idempotent domain logic.
+- **Failover (node crash or leader change):** Redis pods restart or leadership moves, but AOF files and replication state are preserved. Tick locks and `tick:{tenantRegionTag}:pending` entries survive so the Game Session Service can safely **replay or complete** in-flight ticks using idempotent domain logic.
+- **Cold start (Redis starts empty):** treat as a coordination reset event; replay is not possible because the coordination history is missing. Services re-establish coordination as new activity occurs, and operators may need to run explicit coordination reset tooling to clear partial or mis-keyed remnants.
 - **Deployment (Helm upgrade) in staging/production:** Application pods roll forward while Redis keeps its AOF and in‑memory state. In‑flight ticks and sessions remain active across deployment.
 
 ## Kubernetes Production
 
 - **Velero** backs up Deployments, StatefulSets, ConfigMaps, and Secrets (but not volume snapshots).
-  - Restoration process:
-    1. Restore the latest `pg_dump` file onto the PostgreSQL volume.
-    2. Use Velero to restore Kubernetes manifests.
-    3. Restart the affected pods; Redis starts empty and fills itself from PostgreSQL.
-    4. Operators can run `dev-tools/restores/restore-cluster.sh <backup-name>` to automate these steps in production.
-       Set `FIREMUD_K8S_NAMESPACE` if restoring to a different namespace.
+  - Restoration process (scripted):
+    1. Use `dev-tools/restores/restore-cluster.sh <backup-name>` to restore the latest `pg_dump` and Kubernetes manifests and restart services.
+    2. Set `FIREMUD_K8S_NAMESPACE` if restoring to a non-default namespace.
+  - Restoration process (manual):
+    1. Copy the desired dump out of the PostgreSQL pod:
+
+       ```bash
+       kubectl cp <namespace>/<pg-pod>:/backups/latest.sql.gz ./latest.sql.gz
+       ```
+
+    2. Restore it into the target PostgreSQL pod:
+
+       ```bash
+       gunzip -c latest.sql.gz | kubectl exec -i <postgres-pod> -- psql -U "$FIREMUD_POSTGRES_USER" "$FIREMUD_POSTGRES_DB"
+       ```
+
+    3. Restart services so they pick up the restored database:
+
+       ```bash
+       kubectl rollout restart deployment -n <namespace>
+       kubectl rollout restart statefulset -n <namespace>
+       ```
+
+    4. If dumps live in `PG_DUMP_BUCKET`, download them first with:
+
+       ```bash
+       aws s3 cp s3://$PG_DUMP_BUCKET/<path> ./dump.sql.gz
+       ```
+
+       Add `--endpoint-url` for MinIO-backed buckets as needed.
 
 ## Local Development
 
@@ -117,7 +156,7 @@ This behavior is distinct from **failover**:
   `PG_DUMP_ENDPOINT` are configured.
 - Create ad hoc snapshots with `dev-tools/backups/backup-db.sh` before restoring.
 - Services are restarted with **Docker Compose**.
-- Redis starts empty and repopulates when services access the database.
+- If Coordination Redis starts empty (for example after wiping volumes), treat it as a coordination reset event and rely on the documented reset behavior rather than expecting in-flight timers/retries/sessions to survive.
 - The compose stack includes a `pg-dump-cron` service running
   `dev-tools/backups/pg-dump-rotate.sh` every 15 minutes to mirror the production
   backup schedule.
@@ -138,16 +177,121 @@ This behavior is distinct from **failover**:
   `.github/workflows/manual-backup-restore.yml` can run these checks on
   demand from the GitHub Actions UI. See [Operational Runbooks](./system-architecture-runbooks.md#recovery) for step-by-step instructions.
 
+### Backup Observability and Alerts
+
+Backup and verification jobs must emit simple, environment-agnostic metrics so operators can see whether the pipeline is healthy:
+
+- `backup_last_success_timestamp_seconds` – Unix timestamp of the last successful PostgreSQL logical backup (`pg_dump`) for the environment.
+- `backup_verify_last_success_timestamp_seconds` – Unix timestamp of the last successful verification run from `verify-backups.sh` (for example, verifying that recent dumps exist in the object store).
+- Coordinated pause/resume safety metrics (to ensure backups do not cause prolonged player-visible degradation):
+  - `backup_tick_pause_duration_seconds{scope}` – duration of the tick pause window for a backup attempt (including wait-for-paused time).
+  - `backup_ticks_paused{scope}` – gauge indicating whether ticks are currently paused for a given scope.
+  - `backup_commands_queued_during_pause_total{scope}` – count of commands queued while ticks were paused (helps detect unbounded backlog growth during long pauses).
+- Optional per-job counters such as:
+  - `backup_run_total{result="success"|"failure"}` – counts of backup Job executions.
+  - `backup_verify_run_total{result="success"|"failure"}` – counts of verification Job executions.
+
+Prometheus and Alertmanager should expose and alert on these metrics using rules along the lines of:
+
+- **Missed backups (P1)**
+  - Expression: “no successful backup in the last N minutes” (for example, `time() - backup_last_success_timestamp_seconds > 90 * 60` in production).
+  - Labels: `service="postgres-backup"`, `severity="P1"`, `owner="platform"`, `runbook="design/architecture/system-architecture-backup-recovery.md#backup-verification-restoration-testing"`.
+- **Missed verification (P1/P2)**
+  - Expression: “no successful verification in the last 24h” (for example, `time() - backup_verify_last_success_timestamp_seconds > 24 * 60 * 60`).
+  - Labels similar to the backup alert, with a clear `runbook` annotation.
+- **Backup pause too long (P1)**
+  - Expression: pause duration exceeds an agreed budget (for example `backup_tick_pause_duration_seconds{scope="all"} > 30`).
+  - Labels: `service="postgres-backup"`, `severity="P1"`, `owner="platform"`, `runbook="design/architecture/system-architecture-backup-recovery.md#backup-verification-restoration-testing"`.
+
+Grafana dashboards under `design/observability/grafana` should include a small “Backups” section or dedicated dashboard that visualizes:
+
+- The age of the last successful backup and verification.
+- Recent backup/verify success vs failure counts.
+- Tick pause duration and queue growth signals during backup windows.
+
+These signals allow operators to treat backup and verification health as first-class SLOs alongside tick, Redis, and player experience SLOs.
+
+---
+
+## Post-Restore Secret Hardening
+
+Restoring a production or staging cluster from backup recreates Kubernetes Secrets and ConfigMaps as they existed at the time of the snapshot. To avoid bringing back stale or compromised credentials, operators must rotate critical secrets immediately after a restore.
+
+Post-restore hardening is performed by a dedicated Kubernetes Job (for example `post-restore-secret-hardening`) that coordinates two flows:
+
+1. JWT signing key and JWKS rotation:
+   - Creates or runs the `jwt-rotation` Job described in `system-architecture-security.md#jwt-key--jwks-rotation-workflow`.
+   - Waits for the Job to succeed so a fresh JWT signing key is written to the `jwt-signing-keys` Secret and `jwks.json` is regenerated with updated public keys.
+   - Verifies that the Account Service is healthy and that services can still validate tokens via the JWKS endpoint.
+
+2. Database credential rotation:
+   - Runs a `db-credential-rotation` Job with a dedicated service account (for example `sa-db-rotation`) that:
+     - Reads the current application database credentials from a Secret such as `postgres-credentials`.
+     - Uses an admin credential (for example from `postgres-admin-credentials`) to execute `ALTER ROLE <app_user> WITH PASSWORD '<new password>';` against PostgreSQL.
+     - Updates the `postgres-credentials` Secret with the new password.
+     - Triggers a rolling restart of Deployments and StatefulSets that consume this Secret (for example via `kubectl rollout restart` using the Kubernetes API) so all services reconnect using the new credentials.
+   - The Job fails fast on any error so operators can investigate before exposing the restored environment to players.
+
+3. External credentials (environment-specific secrets):
+   - Restoring a namespace also restores any third-party credentials stored as Kubernetes Secrets (for example S3/MinIO access keys for backups and asset storage, SMTP credentials, webhook/API keys, and operator-only client certificates).
+   - Post-restore hardening must either rotate/re-issue these credentials or re-bind the restored cluster to the correct per-environment secrets before any external traffic is allowed.
+   - At minimum:
+     - Ensure object storage credentials used for `pg_dump` uploads and Velero point to the intended bucket and are not stale.
+     - Ensure asset store credentials (see `design/architecture/system-architecture-asset-store-runbook.md`) are correct for the environment and rotated if compromise is suspected.
+     - Ensure any outbound email/notification credentials are correct for the environment (staging should not be able to send production email).
+   - Suggested post-restore credential checklist:
+     - Backups: `PG_DUMP_BUCKET` / `PG_DUMP_ENDPOINT` access keys, Velero credentials and bucket targets.
+     - Asset storage: `ASSET_STORE_*` credentials and endpoint expectations (and any CDN/gateway proxy configuration that affects published asset URLs).
+     - Outbound comms: SMTP and webhook/API tokens, with explicit “staging cannot send production messages” guards.
+     - Operator access: operator-only client certificates and any kube credentials used by operator tooling.
+   - If these credentials are rotated out-of-band (for example via the cloud provider console), record the required re-bind/re-issue steps in the relevant runbooks so the restore procedure remains repeatable.
+
+The `post-restore-secret-hardening` Job runs after PostgreSQL and core services have been restored and basic health checks pass, but **before** the restored environment is considered player-facing. It uses least-privilege service accounts:
+
+- JWT rotation service accounts can only read/update the `jwt-signing-keys` Secret, the JWKS ConfigMap/Secret, and, optionally, the Account Service Deployment.
+- Database rotation service accounts can only read/update the PostgreSQL credential Secrets and, optionally, restart the Deployments/StatefulSets that use them.
+
+Runbooks should treat this Job as a mandatory step in any production or staging disaster recovery:
+
+1. Restore PostgreSQL and Kubernetes manifests as described above.
+2. Run `post-restore-secret-hardening` in the target namespace and wait for it to complete successfully.
+3. Confirm application health checks, login/session flows, and JWT validation.
+4. Only then route external or player traffic to the restored cluster.
+
+---
+
+## Planned DB Credential Rotation
+
+In addition to post-restore hardening, operators may periodically rotate application database credentials as part of routine security hygiene. Planned DB credential rotation reuses the same `db-credential-rotation` Job and Secrets described above but runs outside of a disaster recovery event.
+
+Recommended flow:
+
+1. Ensure recent PostgreSQL backups exist and are healthy (see the backup verification section).
+2. Schedule a low-traffic window and notify stakeholders of the planned rotation.
+3. Run the `db-credential-rotation` Job in the target namespace so it:
+   - Generates a new password for the application role(s) in PostgreSQL using admin credentials from `postgres-admin-credentials`.
+   - Updates the `postgres-credentials` Secret with the new password.
+   - Triggers a rolling restart of Deployments and StatefulSets that consume this Secret so services reconnect with the new credentials.
+4. Monitor application health checks, logs, and database connections for errors.
+5. If issues appear, revert to the previous known-good password and Secret value and repeat the rotation later with additional diagnostics.
+
+No CronJob is defined for automatic DB credential rotation; any such cadence should be explicitly chosen based on compliance requirements and operational experience.
+
 ---
 
 ## Restore Workflow Summary
 
 | Environment | Steps |
 | --- | --- |
-| **Kubernetes** | Restore PostgreSQL from `pg_dump` → restore other resources with Velero → restart pods → allow Redis to repopulate |
-| **Docker Compose** | `dev-tools/restores/restore-db.sh` snapshot → restart containers → Redis repopulates automatically |
+| **Kubernetes** | Restore PostgreSQL from `pg_dump` → restore other resources with Velero → restart pods → Redis recovers via AOF when PVCs exist (or starts empty and follows cold start/reset behavior) |
+| **Docker Compose** | `dev-tools/restores/restore-db.sh` snapshot → restart containers → Coordination Redis either reuses its AOF volume or starts empty and follows cold start/reset behavior |
 
-Redis always uses AOF for crash recovery during runtime but is **never** restored from backup images. Gameplay resumes after services restart and Redis repopulates from PostgreSQL.
+Redis always uses AOF for crash recovery during runtime but is **never** restored from backup images. If Coordination Redis starts empty, treat it as a reset/cold start scenario as described in the Redis architecture docs.
+
+For **diagnostic purposes**, operators may take ad hoc copies of Coordination Redis AOF files or RDB exports and load them into **isolated, throwaway Redis instances** to inspect keys and coordination history during incident analysis. These diagnostic snapshots are strictly read-only tools:
+
+- They must **not** be restored into live Coordination Redis clusters or used to overwrite existing AOF/volumes.
+- They are never treated as rollback images for gameplay; recovery for player-visible environments always follows the pattern above (restore PostgreSQL, restart services so Redis recovers via AOF or starts empty, and, when needed, apply the [Coordination Reset Model](./system-architecture-redis-reset-and-recovery.md#coordination-reset-model)). Severe logical bugs that corrupt coordination state are remediated via scoped coordination resets, not by rolling Redis back to older snapshots.
 
 ## Related Documentation
 

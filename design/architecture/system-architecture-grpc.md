@@ -81,14 +81,18 @@ Every gRPC service registers the `LoggingInterceptor`, `MetricsInterceptor`, and
 - Map application-level failures to appropriate gRPC status codes (`INVALID_ARGUMENT`, `NOT_FOUND`, etc.).
 - Use a shared `ErrorDetail` message (e.g., `shared/errors.proto`) when returning rich error info.
 - Prefer returning structured errors over using gRPC metadata for application faults.
-- All RPCs that can fail should include an `ErrorDetail` field in the response instead of invoking `onError()`. Wrap response observers or use an interceptor to log warnings, increment a `grpc.app_error` metric labeled with `error.code`, and tag tracing spans. `onError()` is reserved for transport-level or infrastructure failures.
+- All RPCs that can fail should include an `ErrorDetail` field in the response instead of invoking `onError()`. Wrap response observers or use an interceptor to log warnings, increment a `grpc.app_error` metric, and tag tracing spans. `onError()` is reserved for transport-level or infrastructure failures.
+- Metric contract:
+  - The Micrometer meter name is `grpc.app_error`; the Prometheus-exported name is typically `grpc_app_error`.
+  - Required labels: `service` (from `spring.application.name`) and a bounded `code` taken from the shared error catalog.
+  - Forbidden labels: per-request identifiers such as `traceId`, `spanId`, `playerId`, or `sessionId`; those identifiers belong only in logs and spans, not in metric label sets.
   See [AI Project Rules](../project-management/ai-rules-local.md) for required logging and metrics interceptors.
 
 Example implementation:
 
 ```java
 private ErrorDetail error(String code, String message) {
-  meterRegistry.counter("grpc.app_error", "code", code).increment();
+  meterRegistry.counter("grpc.app_error", "service", springApplicationName, "code", code).increment();
   return ErrorDetail.newBuilder().setCode(code).setMessage(message).build();
 }
 ```
@@ -116,6 +120,24 @@ sourceSets["main"].java.srcDirs(
 ```
 
 Running `./gradlew generateProto` compiles stubs into `build/generated/source/proto` for each service.
+
+## Event and Streaming Semantics
+
+Some FireMUD gRPC APIs are used as **event sinks** or long-lived streams (for example, DMZ edge services emitting disconnect hints into core gameplay services). These flows must assume **at-least-once delivery** at the transport layer and rely on idempotent consumers for correctness.
+
+When designing such APIs:
+
+- Treat producer → consumer delivery as **at-least-once**: events may be delivered more than once or arrive late after reconnects or retries.
+- Include a stable idempotency key in every event (for example a composite like `{streamId, sequence}` or an explicit `event_id` field) so consumers can de-duplicate safely.
+- Require consumers to treat events as **idempotent** with respect to that key; repeated delivery of the same key must not cause duplicate side effects.
+- Make failure semantics explicit in the proto comments (for example “transport is at-least-once; consumers must handle duplicates keyed by `disconnect_sequence`”) and link back to the relevant architecture documents such as [Reconnection Strategy](./system-architecture-reconnection.md) and [Transactions & Idempotency](./system-architecture-transactions.md).
+
+The TCP Proxy Service’s `NotifyDisconnect` event sink into Game Session is the canonical example of this pattern: the reconnection model assumes that disconnect hints are best-effort, at-least-once signals, and that Game Session keys handling by `{proxyConnectionId, disconnectSequence}` so duplicates and late arrivals are safe. The behaviour-level contract for this stream – including idempotency keys and how it complements the at-most-once edge delivery guarantees for gameplay commands – is summarised in the **NotifyDisconnect Behavioral Contract** section of [Reconnection Strategy](./system-architecture-reconnection.md#notifydisconnect-behavioral-contract-summary). The TCP Proxy Service design remains canonical for the concrete message fields, retry window configuration, and implementation details, and both must remain consistent with the edge delivery invariants in [Protocol Bridging](./system-architecture-protocol-bridging.md#ordering--delivery-invariants).
+
+Gameplay command streams from clients into Game Session are intentionally **different** from these event sinks: as described in [Protocol Bridging](./system-architecture-protocol-bridging.md#ordering--delivery-invariants), the edge path for client gameplay commands is per‑connection FIFO and **at‑most‑once**, with any retries or replays handled at the Game Session/domain level via effect identifiers and transactional idempotency. When designing new APIs, treat:
+
+- Client‑initiated gameplay command paths as at‑most‑once per connection.
+- Internal event/notification streams as at‑least‑once with required idempotency keys.
 
 ## TLS Requirements
 

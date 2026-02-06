@@ -61,7 +61,8 @@ class TelnetServerHandlerSpringBootTest {
             TelnetServerHandler::createWebSocket,
             eventService,
             bufferDepth,
-            Mockito.mock(LookCacheService.class));
+            Mockito.mock(LookCacheService.class),
+            0);
 
     EmbeddedChannel channel =
         new EmbeddedChannel(

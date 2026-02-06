@@ -1,0 +1,97 @@
+{
+  "title": "TCP Proxy – Telnet Ingress",
+  "schemaVersion": 36,
+  "version": 1,
+  "timezone": "browser",
+  "panels": [
+    {
+      "type": "graph",
+      "title": "Active Telnet Connections",
+      "targets": [
+        {
+          "expr": "tcpproxy_connections_active",
+          "legendFormat": "active",
+          "refId": "A"
+        }
+      ],
+      "id": 1
+    },
+    {
+      "type": "graph",
+      "title": "Connection Limits Exceeded (rate)",
+      "targets": [
+        {
+          "expr": "rate(tcpproxy_connections_limit_exceeded[5m])",
+          "legendFormat": "limit_exceeded",
+          "refId": "A"
+        }
+      ],
+      "id": 2
+    },
+    {
+      "type": "graph",
+      "title": "Discarded Telnet Input (rate)",
+      "targets": [
+        {
+          "expr": "rate(tcpproxy_telnet_discarded[5m])",
+          "legendFormat": "discarded",
+          "refId": "A"
+        }
+      ],
+      "id": 3
+    },
+    {
+      "type": "graph",
+      "title": "WebSocket Reconnects to Gateway (rate)",
+      "targets": [
+        {
+          "expr": "rate(tcpproxy_websocket_reconnects[5m])",
+          "legendFormat": "reconnects",
+          "refId": "A"
+        }
+      ],
+      "id": 4
+    },
+    {
+      "type": "graph",
+      "title": "TLS / mTLS Errors",
+      "targets": [
+        {
+          "expr": "tcpproxy_tls_misconfig",
+          "legendFormat": "tls_misconfig",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (reason) (tcpproxy_gateway_handshake_failures)",
+          "legendFormat": "handshake_failures ({{reason}})",
+          "refId": "B"
+        }
+      ],
+      "id": 5
+    },
+    {
+      "type": "graph",
+      "title": "NotifyDisconnect Failures (rate)",
+      "targets": [
+        {
+          "expr": "rate(tcpproxy_disconnect_notify_failure[5m])",
+          "legendFormat": "notify_failure",
+          "refId": "A"
+        }
+      ],
+      "id": 6
+    },
+    {
+      "type": "graph",
+      "title": "gRPC App Errors by Code",
+      "targets": [
+        {
+          "expr": "sum by (code) (rate(grpc_app_error{service=\"tcp-proxy-service\"}[5m]))",
+          "legendFormat": "{{code}}",
+          "refId": "A"
+        }
+      ],
+      "id": 7
+    }
+  ]
+}

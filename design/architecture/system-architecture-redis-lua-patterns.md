@@ -7,9 +7,61 @@ re-invocation behavior for tick-related scripts.
 > 🔗 The high-level Redis coordination model, key naming, and failure modes are
 > described in [System Architecture: Redis](./system-architecture-redis.md).
 
+## Default Author/Reviewer Expectations
+
+- New or changed scripts must fit one of the existing **script categories** and satisfy the idempotency, determinism, and `schemaVersion` rules described here.
+- Compatibility decisions (for example `compatible`, `requires_region_reset`, `requires_tenant_reset`, `requires_cluster_reset`) and rollout plans are made via the **Lua Script Registry**, not by introducing per-script operational knobs.
+- The registry is the **single source of truth** for script metadata, including:
+  - Key roles and order (`KEYS[1]`, `KEYS[2]`, etc.).
+  - Allowed prefixes and hash-tag assumptions.
+  - The Redis role (`redis_role`) the script is allowed to talk to (for coordination scripts this is always `coordination`).
+  - Reset and tail-loss behavior (`reset_sensitivity`, `tail_loss_behavior`) describing how the script’s keys behave under region/tenant/cluster resets and within the tail-loss envelope described in `system-architecture-redis.md` and `system-architecture-redis-reset-and-recovery.md`.
+
+Any proposal that relies on special per-script runtime flags or bespoke operational handling should be treated as **advanced** and pushed back toward these shared patterns and the central registry.
+
+## Script Categories and Key Families
+
+Every coordination script belongs to a **script category** that constrains which keys it may touch and how those keys are sharded. At a high level:
+
+| Category | Example key families | Shard-locality rules |
+| --- | --- | --- |
+| Region lease | `tick-executor-lease:{tenantRegionTag}` | Single-key scripts scoped to a single `{tenantRegionTag}` hash tag. |
+| Entity lock | `tick:{tenantRegionTag}:lock:<entityId>` | Single-key or small multi-key scripts; all lock keys share the same `{tenantRegionTag}` as their corresponding `pending` structures. |
+| Tick staging / pending | `tick:{tenantRegionTag}:pending` and related effect structures | Single-key or shard-local multi-key scripts that operate entirely within one `{tenantRegionTag}` slot. |
+| Timers and retries | `timer:{tenantRegionTag}`, `retry:{tenantRegionTag}` | Shard-local scripts operating on keys that share the same `{tenantRegionTag}`; no cross-slot operations. |
+| Session CAS / bindings | `session:game:<tenantId>:<sessionId>`, `session:auth:<scope>:<tokenHash>` (for example `session:auth:tenant:<tenantId>:<tokenHash>`) | Single-key scripts; session keys are never mixed with tick keys in the same script unless all keys are shard-local to one `{tenantRegionTag}`. |
+| Maintenance / cleanup | Region-local maintenance keys under `tick:{tenantRegionTag}:*` or `timer:{tenantRegionTag}` | Shard-local scans and deletes constrained to one `{tenantRegionTag}` at a time; no cross-slot operations. |
+| Automation helpers (coordination role only) | `script-scheduler:{tenantRegionTag}:lastTickId` and similar | Shard-local scripts that operate on per-region scheduler metadata; must not touch Cache/Rate-Limit prefixes. |
+
+The Lua Script Registry encodes these category→prefix→shard rules so that callers do not hard-code prefixes or slots. New categories or key families must be added to this table and to the registry schema before scripts using them are accepted.
+
 ## Idempotent Script Patterns and Examples
 
 Tick-related scripts must be idempotent: **re-running the same script with the same `KEYS` and `ARGV` must not apply new logical effects**. To make this concrete, scripts follow a small set of patterns:
+
+Before authoring or reviewing a new script, use this quick checklist:
+
+- The script is **deterministic**: no RNG (`math.random`), no time-based control flow (`TIME`), and no external/global state.
+- All keys are passed via `KEYS[...]` and built using shared key helpers; no hard-coded string concatenation of prefixes.
+- The script’s category (region-lease, session-only, maintenance, automation, etc.) is clearly identified, and the expected **invariants** (lease token, epoch, lock tokens, session binding) are validated before any write.
+- Structured payloads include an explicit `schemaVersion`, and the script:
+  - Treats missing versions as a well-defined default.
+  - Understands at least `N` and `N‑1` for the current rollout.
+  - Returns a non-mutating `"UNSUPPORTED_SCHEMA_VERSION"` outcome for unknown versions.
+- Writes are **idempotent** with respect to their inputs:
+  - Lock and lease operations treat repeated acquire/refresh calls as no-ops with stable outcomes.
+  - Queue/timer/effect insertion uses set-style semantics to avoid duplicate entries on replay.
+- Error outcomes are explicit and non-mutating (for example `"STALE_LEASE"`, `"STALE_LOCK"`, `"SESSION_VERSION_MISMATCH"`); callers can safely retry or escalate based on return codes.
+- The script has an entry in the **Lua Script Registry** (in `firemud-common`) that describes:
+  - Key roles and order (`KEYS[1]`, `KEYS[2]`, etc.).
+  - Allowed prefixes and hash-tag assumptions.
+  - The script category and whether it is single-key or shard-local multi-key.
+  - The Redis role it is permitted to touch (`redis_role=coordination` for tick/session scripts).
+  - Reset behavior (`reset_sensitivity` such as `safe_replay_after_reset`, `requires_region_reset`, `requires_tenant_reset`, `requires_cluster_reset`) and tail-loss behavior (`tail_loss_behavior` such as “duplicate enqueues possible but domain-idempotent”, “pure lease op, safe to lose”).
+- Tests cover at least:
+  - A fresh run from an initial state.
+  - A pure replay with the same `KEYS`/`ARGV` and no intervening changes.
+  - A replay after partial success (for example, some keys pre-populated) to prove the script does not double-apply effects.
 
 ### Determinism Requirements
 
@@ -29,15 +81,100 @@ To keep AOF replay and retries safe, Lua scripts must be **deterministic functio
 
 Scripts that violate these determinism requirements cannot guarantee safe replay and must be rejected during review and CI.
 
-### Mandatory Validation Hedge
+### Schema Versioning and Script Evolution
 
-Every mutating script must perform the following validations before executing any writes:
+Many coordination structures stored in Redis (for example `tick:{tenantRegionTag}:pending` payloads or structured `session:*` values) evolve over time. To keep script behavior compatible with both **old** and **new** shapes while preserving determinism:
 
-- **Lease token** – re-read `tick-executor-lease:{tenantId}:{regionId}` and compare it to the supplied `leaseToken`. If they differ or the key is missing, the script returns a “stale lease” outcome and performs no writes.
-- **Lock tokens** – for each `tick:{tenantId}:{regionId}:lock:{entityId}` key included in `KEYS`, compare the stored token to the expected value. Any mismatch or absence yields a `"STALE_LOCK"` result without mutation.
-- **`tickId` guard** – when touching `tick:{tenantId}:{regionId}:pending` or other tick-scoped structures, verify the stored `tickId` is ≤ the requested `tickId`. Commit/rollback scripts abort if `tickId` is out of order so only the intended tick makes progress.
+- Every structured payload that may evolve must include a small, explicit `schemaVersion` field in its serialized representation.
+- Scripts that read these payloads:
+  - Treat a missing `schemaVersion` as a well-defined default (for example, version `1`).
+  - Support **at least** the current and previous schema versions (`N` and `N‑1`) during rollout windows.
+  - Never silently ignore unknown versions; instead they return a clear, non-mutating outcome such as `"UNSUPPORTED_SCHEMA_VERSION"` that callers can log and surface in metrics.
+- Migration-friendly branching:
+  - Scripts branch on `schemaVersion` only to:
+    - Apply added fields with sensible defaults (for example, treat absent optional fields as `nil` / default values).
+    - Adjust interpretation of existing fields in a way that remains idempotent for both `N` and `N‑1`.
+  - They avoid “upgrade in place” behavior inside Lua (for example, rewriting the payload to a new shape as a side effect of reads) unless that behavior is explicitly designed and tested for replay.
+- Rollout order mirrors the guidance in the Redis architecture doc:
+  1. Deploy new scripts that understand both `N‑1` and `N` payloads everywhere.
+  2. Update services to start writing `schemaVersion = N` payloads.
+  3. Once metrics show old versions have drained, remove the `N‑1` branch from scripts in a separate change.
+- Tests for versioned scripts:
+  - Exercise both `N‑1` and `N` payloads (and the “missing version” default case).
+  - Assert that re-running the script with the same payload and `schemaVersion` is idempotent.
+  - Assert that unknown versions do not mutate Redis state and return the expected `"UNSUPPORTED_SCHEMA_VERSION"` (or equivalent) outcome.
 
-These checks are enforced via the Lua Script Registry descriptors, generated key-builder helpers, and CI linting so reviewers can automatically catch regressions. Scripts that cannot make these validations (for example, because they run outside a region lease context) are rejected or refactored.
+### Script Categories and Validation Hedge
+
+Not every mutating script participates in the same coordination context. For clarity and review, scripts are grouped into a small set of categories, each with its own validation rules.
+
+The **Lua Script Registry** in `firemud-common` records, for each script:
+
+- The script name and category (for example `region_lease_tick`, `session_only`, `automation_queue`, `maintenance`).
+- The expected key roles and order (`KEYS[1] = lockKey`, `KEYS[2] = pendingKey`, etc.).
+- Required invariants for that category (for example, lease and lock token validation for region-lease scripts, session binding and expiry checks for session-only scripts).
+
+This registry is the authoritative mapping from **script name → category → required invariants** and is referenced by both application code and CI. When adding a new script or changing an existing one, update the registry entry so reviewers can see which category rules and validations apply without reverse-engineering the Lua source.
+
+#### Region-lease scripts (tick and coordination)
+
+These scripts operate on region-scoped coordination keys (`tick:{tenantRegionTag}:*`, `timer:{tenantRegionTag}`, `retry:{tenantRegionTag}`, `tick-executor-lease:{tenantRegionTag}`) and must run under an active region lease.
+
+Every region-lease script must perform the following validations before executing any writes:
+
+- **Lease token and epoch** – re-read `tick-executor-lease:{tenantRegionTag}` and compare its stored token and epoch to the supplied values in `ARGV`. If they differ or the key is missing, the script returns a non-mutating outcome such as `"STALE_LEASE"` / `"UNSUPPORTED_EPOCH"` and performs no writes.
+- **Lock tokens** – for each `tick:{tenantRegionTag}:lock:<entityId>` key included in `KEYS`, compare the stored token to the expected value. Any mismatch or absence yields a `"STALE_LOCK"` result without mutation.
+- **`tickId` guard via meta** – when touching `tick:{tenantRegionTag}:pending` or other tick-scoped structures, use the canonical metadata key `tick:{tenantRegionTag}:meta` as the monotonic guard: read `current_tick_id` from that hash and verify it is ≤ the requested `tickId` before staging new work. Commit/cleanup scripts abort if the guard indicates the requested `tickId` is out of order so only the intended tick makes progress. Any `tickId` fields embedded inside `pending` payloads are informational only and must not be used as guards.
+
+These checks are enforced via the Lua Script Registry descriptors, generated key-builder helpers, and CI linting so reviewers can automatically catch regressions. Scripts that cannot make these validations are not allowed to touch tick/coordination prefixes.
+
+#### Session-only scripts
+
+Session scripts operate only on `session:game:<tenantId>:<sessionId>` keys and do **not** run under a region lease. They must instead validate session-specific invariants:
+
+- **Session key and binding** – verify that the target session key exists and, where applicable, that it is bound to the expected `playerId`/`tenantId` or token hash provided in `ARGV`.
+- **Expiry and logical window** – enforce the logical expiry rules described in the session design (for example, do not revive sessions whose logical expiry timestamp has passed, even if the Redis TTL has not).
+- **Optional CAS fields** – when scripts implement compare-and-set semantics on session payloads (for example, update only if a `version` or `lockToken` field matches), they must:
+  - Treat mismatched versions as non-mutating outcomes (for example, `"SESSION_VERSION_MISMATCH"`).
+  - Avoid partial updates that would leave the payload in a mixed version or conflicting binding state.
+
+These rules keep session scripts lightweight while still protecting reconnect and binding invariants. They deliberately avoid a region lease so that session operations are not coupled to tick leadership, but they still behave deterministically and idempotently around reconnection windows.
+
+#### Maintenance and non-lease scripts
+
+Some maintenance or dev-tools scripts may operate on coordination prefixes outside the normal tick/session flow (for example, inspecting or cleaning up keys for a paused tenant/region). These scripts:
+
+- Run only in **maintenance contexts** (for example, dev-tools jobs or coordination reset tooling) and must not be invoked from hot-path gameplay.
+- Must respect the same shard-local and key-shape rules as tick scripts (for example, operate on one `{tenantRegionTag}` at a time).
+- May skip lease validation **only** when the surrounding tool guarantees that ticks are paused for affected scopes and that no active executor is running; in that case they still:
+  - Avoid partial mutations that would violate idempotency or schema assumptions.
+  - Prefer to delegate destructive operations (for example, wiping a region) to the shared coordination reset tooling rather than hand-editing keys.
+
+Scripts that do not clearly fit one of these categories should be refactored until their validation story is explicit. Region-lease scripts are the default for tick/coordination flows; session-only scripts and maintenance scripts are narrow exceptions with tighter scope and clearly defined behavior.
+
+### Automation Scripts and Cluster Slotting
+
+Automation-related Lua scripts follow stricter cluster slotting rules to avoid `CROSSSLOT` errors and keep coordination boundaries clear:
+
+- Scripts that operate on `automation:tick:{tenantScriptTag}:*` keys are registered as **single-hash-slot** scripts:
+  - They may include multiple `automation:tick:{tenantScriptTag}:*` keys for the **same** `<tenantId>` + `<scriptId>` in `KEYS`, but they must not mix different `{tenantScriptTag}` values.
+  - They must not include any `tick:{tenantRegionTag}:*` keys in the same invocation.
+- Scripts that operate on `automation:queue:<tenantId>:*` keys:
+  - Use only `automation:queue:<tenantId>:*` keys for a single tenant in `KEYS`.
+  - Must not include `automation:tick:*` or `tick:*` keys in the same invocation.
+- Cross-boundary rules:
+  - Automation scripts **never** perform multi-key operations that span both `automation:*` and `tick:*` prefixes in one `EVAL`/`EVALSHA` call.
+  - Automation work is staged under `automation:queue:*` and `automation:tick:*` and handed off to Game Session via gRPC; only Game Session scripts mutate `tick:*` prefixes.
+
+CI must reject automation Lua scripts that:
+
+- Reference both `automation:*` and `tick:*` keys in their registry descriptors, or
+- Construct `tick:*` keys by hand instead of using shared key builders.
+
+From a correctness perspective, `automation:queue:*` and related automation caches are always treated as **best-effort buffers**:
+
+- Scripts and callers must assume that queued items can be lost, duplicated, or reordered within the bounds described in the Redis hub doc.
+- Any automation contract that requires “exactly once” semantics or durable ordering must record its authoritative state in PostgreSQL or another durable store and use `automation:queue:*` only as a convenience layer for scheduling, not as the sole record of work.
 
 ### Script Complexity and Runtime Limits
 
@@ -49,30 +186,46 @@ To prevent Redis from stalling, tick-related scripts are bounded in keys touched
 
 Enforcing these limits prevents future scripts from violating hash-slot assumptions or blocking Redis for other regions.
 
+Bulk key-walking is reserved for **offline maintenance tooling**, not tick execution:
+
+- Long-running maintenance tasks that need to inspect or repair many keys (for example, cleaning up old locks, timers, or mis-shaped coordination keys) should:
+  - Live in dedicated maintenance scripts and dev-tools jobs, not in the hot tick/session loop.
+  - Use `SCAN` with strict prefix filters, small batch sizes, and explicit rate limiting or sleeps between batches.
+  - Operate on well-scoped prefixes (for example, a single `{tenantRegionTag}` or tenant) rather than scanning the entire keyspace.
+- Detailed guidance on maintenance scripts and coordination reset lives in the Redis operations and reset documentation; this Lua patterns doc is focused on **hot-path** behavior.
+
 - **Pattern 1 – Lease/lock token validation (guard-then-no-op)**
   - Every mutating script begins by validating the current lease and, where applicable, lock tokens:
-    - Read `tick-executor-lease:{tenantId}:{regionId}` and compare its stored token to the `leaseToken` passed in `ARGV`.
+    - Read `tick-executor-lease:{tenantRegionTag}` and compare its stored token to the `leaseToken` passed in `ARGV`.
     - For each entity lock key, compare the stored lock token to the expected token in `ARGV`.
   - If any token does not match, the script returns a **non-mutating outcome** such as `"STALE_LEASE"` or `"STALE_LOCK"` and performs **no writes**. Callers interpret this as “retry under the new lease” rather than as partial progress.
   - Region lease **renewal** uses a small, dedicated compare-and-extend helper that follows the same pattern:
     - Inputs:
-      - `KEYS[1] = tick-executor-lease:{tenantId}:{regionId}`
+      - `KEYS[1] = tick-executor-lease:{tenantRegionTag}`
       - `ARGV[1] = expectedLeaseToken`
       - `ARGV[2] = lease_ttl_ms`
     - Behavior (sketch):
       - Read `KEYS[1]`; if missing or if the stored token does not equal `expectedLeaseToken`, return `"STALE_LEASE"` and perform **no writes**.
       - If the token matches, extend the TTL via `PEXPIRE` (or `SET ... PX ... XX`) and return `"RENEWED"`.
-    - Callers treat `"STALE_LEASE"` as loss of leadership for that `{tenantId, regionId}` and stop acting as executor, matching the lease semantics described in the Redis architecture document.
+    - Callers treat `"STALE_LEASE"` as loss of leadership for that `<tenantId, regionId>` and stop acting as executor, matching the lease semantics described in the Redis architecture document.
 
-- **Pattern 2 – Compare-and-set on `tickId` (monotonic guard)**
-  - Scripts that touch `tick:{tenantId}:{regionId}:pending` treat `tickId` as a monotonic guard:
-    - Read the current `tickId` stored in `pending`.
-    - If there is an existing `tickId` that is greater than the requested `tickId`, the script returns a replay/out-of-date result and does not modify state.
-    - If the `tickId` is equal, the script proceeds but treats existing effect entries as already staged (see Pattern 3).
-    - If there is no `tickId` or it is less than the requested `tickId`, the script sets/updates it and stages new effects.
+- **Pattern 2 – Compare-and-set on `region_epoch` + `tickId` (monotonic guards)**
+  - Scripts that touch `tick:{tenantRegionTag}:pending` treat both `region_epoch` and `tickId` as monotonic guards:
+    - Inputs include:
+      - The expected `region_epoch` in `ARGV` (or encoded into the lease token associated with `tick-executor-lease:{tenantRegionTag}`).
+      - The requested `tickId` for the staged work.
+    - The script reads the current epoch/tick metadata from the canonical metadata key:
+      - `KEYS` must include `tick:{tenantRegionTag}:meta` (a hash as defined in the Redis architecture doc).
+      - The script loads `region_epoch` and `current_tick_id` from that hash.
+    - Behavior (hot-path tick staging/cleanup):
+      - If the stored `region_epoch` does not match the expected epoch, the script returns a non-mutating `"STALE_EPOCH"` outcome and does not modify state; callers treat this as “reset or handoff happened, abandon this attempt and reacquire lease under the new epoch”.
+      - For hot-path tick execution, callers must only invoke staging/cleanup scripts with `requestedTickId` equal to the scheduler’s current tick for that region (as derived from RegionStatus/ledger); under that assumption:
+        - If `current_tick_id` is unset, the script sets it to `requestedTickId` and stages new effects.
+        - If `current_tick_id == requestedTickId`, the script proceeds and treats existing effect entries as already staged (see Pattern 3).
+        - If `current_tick_id > requestedTickId`, the script returns a non-mutating “out-of-date” outcome and does not modify state; callers must not attempt to re-stage older ticks through these hot-path scripts and should instead rely on ledger-driven replay/maintenance flows to reconcile older work.
 
 - **Pattern 3 – Effect-key sets for staging (no duplicate staging)**
-  - Staged effects inside `pending` are keyed by a deterministic `effectKey` (for example `entity:{entityId}:apply:damage:{commandId}`), and scripts use **set-style semantics**:
+  - Staged effects inside `pending` are keyed by a deterministic `effectKey` (for example `entity:<entityId>:apply:damage:<commandId>`), and scripts use **set-style semantics**:
     - Before adding a staged effect, the script checks whether `effectKey` already exists in the pending structure (for example via `HEXISTS`, membership in a `SET`, or `ZSCORE` on a ZSET).
     - If the effect is already present, the script returns a replay outcome for that effect and does not create a second entry.
     - If it is not present, the script inserts or updates a single canonical entry for that `effectKey`.
@@ -105,10 +258,10 @@ New tick-related scripts are expected to adopt these patterns (or motivated vari
 As a concrete illustration, a simplified lock-acquire Lua script follows these patterns:
 
 - **Inputs**
-  - `KEYS[1]` – `tick:{tenantId}:{regionId}:lock:{entityId}`
+  - `KEYS[1]` – `tick:{tenantRegionTag}:lock:<entityId>`
   - `ARGV[1]` – `lockToken`
   - `ARGV[2]` – `leaseToken`
-  - `KEYS[2]` – `tick-executor-lease:{tenantId}:{regionId}` (optional, when validating lease)
+  - `KEYS[2]` – `tick-executor-lease:{tenantRegionTag}` (optional, when validating lease)
 
 - **Behavior (sketch)**
   1. Read `KEYS[2]` (lease) and verify its token matches `ARGV[2]`; if not, return `"STALE_LEASE"` without writing.
@@ -130,7 +283,62 @@ Unit tests for this script would:
   - The lock key’s value is unchanged.
   - The TTL has not been extended unexpectedly (unless explicitly designed to refresh).
   - The return value is `"ALREADY_HELD"`.
+
 - Simulate a conflicting holder by setting a different token in `KEYS[1]` and assert that the script returns `"LOCK_HELD_BY_OTHER"` and does not overwrite the existing token.
+
+## Script Rollout Compatibility and Reset Sensitivity
+
+Script changes must be rolled out in a way that respects both AOF replay semantics and the reset model described in `system-architecture-redis-reset-and-recovery.md`:
+
+- **Compatibility levels**
+  - `compatible` – purely additive changes (for example, new return fields, extra read-only validations) that do not change key shape or semantics. These may be rolled out without coordination resets as long as callers tolerate older results.
+  - `epoch_aligned` – changes that rely on new ledger fields or tick semantics but preserve key shapes. If an epoch boundary is required to avoid mixing old and new semantics, it must be treated as a **timeline-severing operation** and executed via the same control-plane handshake as a scoped coordination reset (pause ticks → bump `region_epoch` → reconcile ledger → resume). Do not treat `region_epoch` bumps as a routine rollout mechanism.
+  - `requires_region_reset` / `requires_tenant_reset` / `requires_cluster_reset` – changes that alter key shapes or semantics in ways that cannot be safely mixed with old behavior. These must run alongside the corresponding coordination reset flows and are expected to be rare.
+- **Registry as the source of truth**
+  - The Lua Script Registry records a `compatibility_level` (or equivalent) and `reset_sensitivity` for each script and version.
+  - Upgrades that move a script into a stricter compatibility level must be reflected in the registry before rollout, and their expected reset scope must be documented in design docs and runbooks.
+- **AOF replay and schemaVersion**
+  - `schemaVersion` changes must be backwards compatible for at least `N-1` versions, and scripts must treat unknown versions as non-mutating (`"UNSUPPORTED_SCHEMA_VERSION"`) so AOF replay cannot apply effects with mismatched schemas.
+  - When a reset-required change is introduced, operators follow the reset runbooks so that any surviving AOF history for old scripts is discarded for the relevant scope rather than replayed under incompatible semantics.
+
+## Lua Script Registry and CI Expectations
+
+All coordination-related Lua scripts live in a **Lua Script Registry** in the shared library. For each script, the registry records:
+
+- Script identifier and file path.
+- Expected `KEYS` and `ARGV` ordering and allowed prefixes (including hash-tag rules).
+- Script category (for example, tick lock, timer queue, session CAS) and reset-tolerance assumptions.
+- The Redis role the script is allowed to target (for coordination scripts this is strictly `coordination`; they must never reference Cache/Rate-Limit prefixes such as `inventory:*`, `view:*`, `ratelimit:*`, or `automation:queue:*`).
+- Reset and tail-loss metadata:
+  - `reset_sensitivity` describing which reset scopes (region, tenant, cluster) must be considered when changing script behavior or key shape.
+  - `tail_loss_behavior` describing what is expected to happen if the script’s writes are lost or replayed within the tail-loss envelope (for example “pure lease; safe to lose”, “can enqueue duplicates; relies on domain idempotency”, “must not silently drop without a corresponding ledger row”).
+- Shard-locality metadata for multi-key scripts, including whether all `KEYS` must share the same `{tenantRegionTag}` hash tag and slot.
+
+The registry descriptors are sufficient to **drive a generic test harness**: any coordination script must be invokable in isolation using only the registry metadata (script identifier, expected `KEYS`/`ARGV`, and allowed prefixes). Callers must not hard-code key names or slots that diverge from the registry.
+
+CI enforces the following invariants for registered scripts:
+
+- Every Lua file under the coordination scripting path has a corresponding registry entry; unregistered scripts fail CI.
+- Scripts pass determinism checks (no disallowed commands such as `TIME` and no RNG usage) and are covered by idempotency tests similar to the patterns in this document.
+- Registry metadata is validated against tests so that `KEYS`/`ARGV` expectations stay in sync with callers.
+- Registry entries for coordination scripts are rejected if:
+  - They declare a Redis role other than `coordination`, or
+  - They reference prefixes that belong to Cache/Rate-Limit Redis, or
+  - They omit required `reset_sensitivity` / `tail_loss_behavior` metadata.
+- For scripts that declare shard-local multi-key behavior, CI verifies that:
+  - All declared `KEYS` share the same hash tag (for example `{tenantRegionTag}`), and
+  - No script attempts cross-slot operations under the `coordination` role.
+
+## Call-Side Time and Randomness Contract
+
+Determinism requirements forbid time and randomness inside Lua itself. Callers must:
+
+- Generate any required timestamps or random tokens in application code and pass them via `ARGV`.
+- Treat those values as **stable inputs**: AOF replay reuses the same `ARGV` so repeated executions see identical arguments.
+- Avoid embedding current time or random suffixes in Redis key names from inside Lua; any such keys must be constructed by callers and passed in through `KEYS`.
+- For timer/retry scripts, pass `now_ms` (or equivalent) via `ARGV` and treat it as the sole time source for comparisons; scripts must not invoke Redis `TIME`.
+
+CI and code review treat violations of this contract (for example, new scripts that invoke `TIME` or synthesize random IDs) as blocking issues.
 
 ## Related Documentation
 

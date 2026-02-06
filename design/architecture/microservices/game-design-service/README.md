@@ -17,6 +17,7 @@ manifest files.
 - Upload branding assets to version-scoped object storage and generate a
   `manifest.json` so runtime clients can load themes and logos without calling
   this service.
+- Act as the sole owner of game asset publishing to the S3-compatible object store; downstream services and clients read published assets via configured URLs and do not write directly to the asset store. Logical world and entity templates remain in PostgreSQL schemas owned by World Management, Entity Management, and related domain services and are not stored as blobs in the asset store.
 
 ## Architecture / Design Notes
 
@@ -33,9 +34,29 @@ manifest files.
 - Design assets are stored per `tenantId` so multiple games can coexist in the
   same database schema. Queries and version publishing workflows enforce this
   tenant filter. See [Multi-Tenancy](../../system-architecture-multi-tenancy.md).
-- All gRPC APIs require JWT authentication between services. REST authentication is supported.
+- All control-plane (design-time) gRPC APIs require JWT authentication. REST authentication is supported. Runtime gameplay services do not call the Game Design Service during ticks; they load published templates and manifests from the owning domain services and object storage and authenticate internal runtime traffic using mutual TLS plus propagated `SessionContext` rather than per-request JWT parsing.
   Tokens are parsed by a shared `AuthTokenInterceptor` configured in `GrpcConfig`, which stores claims in `SessionContext` for role checks. Service-to-service traffic uses mutual TLS certificates managed by cert-manager as described in the [Security Architecture](../../system-architecture-security.md).
 - Utilizes the [Shared Libraries](../../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
+
+### Script Patch Lifecycle and Runtime Coordination
+
+The Game Design Service owns the **authoring** view of script patches, while the Automation & Scripting Service owns the **runtime** lifecycle of those patches per tenant:
+
+- When `PublishScriptPatchVersion` is called, the Game Design Service:
+  - Validates and persists the new script graphs, bindings, and metadata, including cross-asset compatibility checks against the pinned `baseVersionId` (for example, ensuring referenced ability identifiers exist and match the ability schema for that base version).
+  - Starts a Saga that upserts compiled definitions and bindings into the Automation & Scripting Service schema for the target `<tenantId, scriptPatchVersion>`.
+  - Treats the publish as **asynchronous** from a runtime perspective: the version is recorded as published in design-time tables, but its readiness for execution is determined by the Automation & Scripting Service.
+- For each `<tenantId, scriptPatchVersion>`, the Automation & Scripting Service tracks a lifecycle (`PENDING_VALIDATION`, `ONLOAD_RUNNING`, `READY`, `FAILED`, `ROLLED_BACK`) as described in `design/architecture/system-architecture-scripting-dsl-reference-and-lifecycle.md#script-patch-lifecycle`.
+- The Game Design Service queries this lifecycle via a read-only API such as `GetScriptPatchStatus(tenantId, scriptPatchVersion)` and/or subscribes to `ScriptPatchStatusChanged` events so that UIs can show:
+  - That a patch is published but still **pending runtime validation**.
+  - Whether `onLoad` initialization has succeeded or failed for each tenant.
+  - When a patch has been rolled back at runtime for a tenant.
+
+In the design UI:
+
+- `PublishScriptPatchVersion` should surface that script patches become fully active only after the Automation & Scripting Service marks them `READY` for the tenant.
+- Failed `onLoad` runs that result in `FAILED` patch status should be visible to designers, with links back to `script_event_audit` entries and automation metrics for debugging.
+- Design-time publish Saga failures (for example, invalid ability references) are tracked in Game Design’s own versioning state (for example, a `PUBLISH_FAILED_DESIGN` status) and do **not** create or update patch lifecycle rows in the Automation & Scripting Service. UIs should clearly distinguish these design-time failures from runtime `FAILED` states reported by the Automation & Scripting Service so creators know whether a patch failed before or after reaching the runtime.
 
 ## Key Features
 
@@ -66,6 +87,12 @@ manifest files.
 - [`runtime_flag` table](feature-flags.md) manages feature flag definitions and
   corresponding APIs expose these records.
 - `game_assets` table stores uploaded binary files such as icons or sound effects.
+
+Design-time tables (such as `revision`, `version`, `game_templates`,
+`runtime_flag`, and `game_assets`) are the source of truth for world and entity
+history. Domain services (World Management, Entity Management, etc.) store the
+versioned templates they consume at runtime, but commit and revision history
+remains anchored in the Game Design Service.
 
 ### Design Workflow
 
@@ -107,7 +134,11 @@ details on shared infrastructure components.
 Configuration uses the conventions defined in
 [Environment Variables & Secrets Management](../../infrastructure/environment-and-secrets.md).
 This service relies on the [PostgreSQL credentials](../../infrastructure/environment-and-secrets.md#postgresql-credentials).
-Redis variables are not used.
+
+### Redis Role and Prefixes
+
+- The Game Design Service does **not** use Redis at runtime. It neither reads nor writes Coordination Redis or Cache/Rate-Limit Redis; all state lives in PostgreSQL and external asset storage as described above.
+
 TLS certificates are supplied via [`FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, `FIREMUD_GRPC_CA_CERT_PATH`](../../infrastructure/environment-and-secrets.md#grpc-tls-certificates). Peer services can be discovered using variables prefixed `FIREMUD_SERVICES_`.
 For example, set `FIREMUD_SERVICES_AUTOMATION_SCRIPTING_SERVICE` to override the default gRPC endpoint used by `ServiceEndpointsProperties`.
 The OpenTelemetry collector endpoint can be overridden via `OTEL_ENDPOINT` (see [Environment Variables & Secrets Management](../../infrastructure/environment-and-secrets.md)).
@@ -144,10 +175,10 @@ See [Versioning & Runtime Configuration](../../system-architecture-versioning-ru
 - [Multi-Tenancy](../../system-architecture-multi-tenancy.md)
 - [System Architecture Overview](../../system-architecture-overview.md)
 - [Service Responsibility Matrix](../../service-responsibility-matrix.md)
-- [User Journeys – Game Creation](../../user-journeys.md#2-game-creation)
-- [User Journeys – World and Entity Design](../../user-journeys.md#3-world-and-entity-design)
-- [User Journeys – Publish and Start a Game Instance](../../user-journeys.md#5-publish-and-start-a-game-instance)
-- [User Journeys – Patch and Update a Live Game](../../user-journeys.md#10-patch-and-update-a-live-game)
+- [User Journeys – Game Creation](../../user-journeys-creators.md#1-game-creation)
+- [User Journeys – World and Entity Design](../../user-journeys-creators.md#2-world-and-entity-design)
+- [User Journeys – Publish and Start a Game Instance](../../user-journeys-creators.md#4-publish-and-start-a-game-instance)
+- [User Journeys – Patch and Update a Live Game](../../user-journeys-creators.md#5-patch-and-update-a-live-game)
 - [Asset Storage Setup](asset-storage.md)
 - [World Editing & Customization Tools](world-editing-tools.md)
 - [Ability & Action Design Tools](ability-action-tools.md)

@@ -7,6 +7,9 @@ flowchart TD
         Web[Web Client]
     end
 
+    ExtLB[External Load Balancer / Ingress]
+    TelnetEdge[Telnet Edge Proxy]
+
     subgraph DMZ
         TCPProxy[TCP Proxy Service]
         Gateway[Spring Cloud Gateway]
@@ -26,8 +29,10 @@ flowchart TD
 
     subgraph Datastores
         DB[(PostgreSQL)]
-        Cache[(Redis)]
+        CoordRedis[(Redis - Coordination)]
+        CacheRedis[(Redis - Cache/Rate Limit)]
         ES[(Elasticsearch)]
+        AssetStore[(S3-compatible Asset Store)]
     end
 
     subgraph Observability
@@ -41,11 +46,17 @@ flowchart TD
     end
 
     SMTP[Email / SMTP Provider]
+    Admin[Admin / Operator Tools]
 
-    MUD -- TCP --> TCPProxy
-    Web -- wss/HTTP --> Gateway
-    TCPProxy -- wss --> Gateway
-    Gateway -- wss --> Session
+    MUD -- TCP --> TelnetEdge
+    TelnetEdge -- TCP/PROXY --> TCPProxy
+    Web -- wss/HTTP --> ExtLB
+    ExtLB -- wss/HTTP (public ingress) --> Gateway
+    TCPProxy -- wss (mTLS, internal-only listener) --> Gateway
+    Gateway -- ws (in-cluster) --> Session
+
+    Admin -- gRPC mgmt (infra) --> Gateway
+    Admin -- admin APIs (via Gateway) --> InternalServices
 
     Session -- gRPC --> Account
     Session -- gRPC --> World
@@ -56,7 +67,16 @@ flowchart TD
     Session -- gRPC --> Social
     Session -- gRPC --> Logging
 
-    InternalServices --> Datastores
+    InternalServices --> DB
+    Session --> CoordRedis
+    Entity --> CoordRedis
+    Script --> CoordRedis
+    TCPProxy --> CacheRedis
+    Gateway --> CacheRedis
+    Entity --> CacheRedis
+    Script --> CacheRedis
+    Social --> CacheRedis
+    Design --> AssetStore
     InternalServices -- logs --> FluentBit
     InternalServices -- metrics --> Prom
     InternalServices -- traces --> OTel
@@ -88,6 +108,8 @@ The Web client is built with React and Material‑UI. For component layout and s
 
 All services run as Docker containers inside a shared Kubernetes cluster. They reuse a [common shared library](./system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and metrics helpers. See [Deployment Environments](./infrastructure/deployment-environments.md) for how the cluster is configured.
 
+Note on gateway listener surfaces: the gateway has a public ingress surface (typically behind an external load balancer) and an internal-only WebSocket mTLS listener used by the TCP Proxy Service. The diagram shows both flows terminating at the same gateway component; see [Gateway Architecture](./system-architecture-gateway.md) for the surface-level expectations.
+
 ## Core Services Shown
 
 The diagram covers every microservice in the repository:
@@ -104,19 +126,22 @@ The diagram covers every microservice in the repository:
 - **[Social & Groups Service](./microservices/social-groups-service/README.md)** – Manages chat, guilds, and social networking.
 - **[Logging & Admin Service](./microservices/logging-admin-service/README.md)** – Centralizes logging, metrics, and admin tools with dashboards built from Elasticsearch logs, Prometheus metrics, and Jaeger traces to support moderation.
 
-Only the **TCP Proxy Service** and **Spring Cloud Gateway** are reachable from the internet. They operate in the network DMZ while the remaining microservices run on the internal network. See [Security Architecture](./system-architecture-security.md#network-security--boundary-design) for details.
+Only the **TCP Proxy Service** and **Spring Cloud Gateway** are reachable from the internet. They operate in the network DMZ while the remaining microservices run on the internal network. Admin and creator tools always connect to **Logging & Admin Service and other domain services via the Gateway**; Logging & Admin is not exposed directly at the edge. See [Security Architecture](./system-architecture-security.md#network-security--boundary-design) and [System Architecture Overview](./system-architecture-overview.md#admin-entry-points-and-control-plane) for details.
 
-All internal communication from the **Game Session Service** to downstream microservices uses **gRPC** for high performance and strict schema enforcement. All services persist data in PostgreSQL, cache transient state in Redis, emit metrics to Prometheus, and send structured logs to Elasticsearch.
+All internal communication from the **Game Session Service** to downstream microservices uses **gRPC** for high performance and strict schema enforcement. Stateful domain microservices persist data in PostgreSQL and use Redis for transient state; DMZ components such as the TCP Proxy Service and Spring Cloud Gateway remain stateless with respect to PostgreSQL but use Redis for rate limiting and caches. All services emit metrics to Prometheus and send structured logs to Elasticsearch.
 
 ## Datastore Layer
 
 Databases and caches shared across all services capture authoritative world state, runtime entities, and observability-ready analytics:
 
 - **PostgreSQL** – Primary persistent store for world topology, entities, characters, items, and transactional metadata (tenant-scoped tables include `tenantId` so data never mixes across games).
-- **Redis** – Volatile session, tick, and cache state; Lua scripts enforce atomic command execution and reconnect recovery while TTLs keep the data transient.
+- Not every service writes to PostgreSQL: some services are fully stateless with respect to persistence (for example, Game Logic), and others may be read-heavy. The diagram’s DB arrows indicate “uses the shared datastore layer” rather than “owns tables”.
+- **Coordination Redis** – Volatile session and tick coordination state; Lua scripts enforce atomic command execution and reconnect recovery while TTLs keep the data transient. In production this runs as a dedicated cluster so cache and rate-limit spikes cannot interfere with gameplay coordination.
+- **Cache/Rate-Limit Redis** – Best-effort caches, quotas, and rate limiting; this runs as a separate cluster in production and is safe to evict or scale independently of Coordination Redis.
 - **Elasticsearch** – Stores structured logs emitted by every service (via Fluent Bit); the Logging & Admin Service reads directly from it for dashboards and audits.
+- **S3-compatible Asset Store** – Stores published game assets and exported content produced by the Game Design Service; other services and clients consume these assets via configured URLs, typically fronted by the gateway or a CDN.
 
-These datastores appear in the diagram as individual nodes (`PostgreSQL`, `Redis`, `Elasticsearch`) and are wired to service traffic and observability pipelines in the mermaid flowchart above.
+These datastores appear in the diagram as individual nodes (`PostgreSQL`, `Redis - Coordination`, `Redis - Cache/Rate Limit`, `Elasticsearch`, and the asset store) and are wired to service traffic and observability pipelines in the mermaid flowchart above.
 
 All datastores are shared across games. Tenant-scoped tables include a `tenantId` column (or reference a tenant-keyed parent), and Redis keys use a matching prefix, which isolates per-game data while keeping the services stateless. See [Multi-Tenancy](./system-architecture-multi-tenancy.md) for details.
 

@@ -27,9 +27,9 @@ DTO records for common tasks (paging, IDs, basic metadata) live here so services
   `SessionContext`, `ReloadableJwtUtil`, and `RequireAdminRole` helpers for
   centrally enforcing JWT-based roles and supporting secret rotation. See the
   [Authentication Design](./system-architecture-authentication.md).
-- **Database Connectors** – `DatabaseAutoConfiguration` with `PostgresProperties` and `RedisProperties` reduces boilerplate setup. Defaults suit Docker Compose but any field can be overridden with `FIREMUD_POSTGRES_*` or `FIREMUD_REDIS_*` environment variables. Redis‑backed services choose the appropriate prefix:
-  - Coordination clients (ticks, locks, timers, sessions) typically bind `RedisProperties` to `FIREMUD_REDIS_COORD_HOST` / `FIREMUD_REDIS_COORD_PORT`, falling back to `FIREMUD_REDIS_HOST` / `FIREMUD_REDIS_PORT` when the coordination‑specific variables are unset.
-  - Cache/rate‑limit clients (for example Spring Cloud Gateway) typically bind to `FIREMUD_REDIS_CACHE_HOST` / `FIREMUD_REDIS_CACHE_PORT`, again falling back to the baseline `FIREMUD_REDIS_*` pair in single‑node development setups.
+- **Database Connectors** – `DatabaseAutoConfiguration` with `PostgresProperties` and `RedisProperties` reduces boilerplate setup. Defaults suit Docker Compose but any field can be overridden with `FIREMUD_POSTGRES_*` or the Redis role‑specific environment variables. Redis‑backed services choose the appropriate prefix:
+  - Coordination clients (ticks, locks, timers, sessions) bind `RedisProperties` to `FIREMUD_REDIS_COORD_HOST` / `FIREMUD_REDIS_COORD_PORT`.
+  - Cache/rate‑limit clients (for example Spring Cloud Gateway) bind to `FIREMUD_REDIS_CACHE_HOST` / `FIREMUD_REDIS_CACHE_PORT`.
 - **gRPC Interceptors** – `LoggingInterceptor`, `MetricsInterceptor`, and `TracingInterceptor` provide consistent instrumentation and OpenTelemetry spans for every service. `LoggingInterceptor` automatically records the current `traceId` and `correlationId`, generating a new correlation ID when one is not present.
 - **Tracing Configuration** – `TracingConfig` exports spans to the collector using the `otel.endpoint` property and sets the `service.name` from `spring.application.name`.
 - **Service Discovery & Config** – Central location for discovering other services and handling environment properties.
@@ -39,26 +39,27 @@ DTO records for common tasks (paging, IDs, basic metadata) live here so services
   Logging and JWT helpers are available but are configured manually.
 - **Conflict Tracking** – `ConflictTracker` and `RedisConflictTracker` record
   tick conflicts in Redis for hotspot detection.
-- **TLS & Secret Watchers** – `GrpcServerTlsReloader`, `TlsCertificateWatcher`, and `JwtSecretWatcher` reload certificates and JWT secrets without restarting the service. Client stubs already use `TlsCertificateWatcher`, while `GrpcServerTlsReloader` integrates with the running servers. These watchers monitor the paths from `FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, `FIREMUD_GRPC_CA_CERT_PATH`, and `FIREMUD_AUTH_JWT_SECRET_PATH`. See [Environment & Secrets](./infrastructure/environment-and-secrets.md#grpc-tls-certificates) and [Authentication](./infrastructure/environment-and-secrets.md#authentication) for details.
+- **TLS & Secret Watchers** – `GrpcServerTlsReloader`, `TlsCertificateWatcher`, and `JwtSecretWatcher` reload certificates and JWT secrets without restarting the service. Client stubs already use `TlsCertificateWatcher`, while `GrpcServerTlsReloader` integrates with the running servers. These watchers monitor the paths from `FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, `FIREMUD_GRPC_CA_CERT_PATH`, and `FIREMUD_AUTH_JWT_SECRET_PATH`. HTTP/WebSocket clients that require mTLS (such as the TCP Proxy’s WebSocket connection to Spring Cloud Gateway) also reuse `TlsCertificateWatcher` and the same `FIREMUD_GRPC_*` paths. See [Environment & Secrets](./infrastructure/environment-and-secrets.md#grpc-tls-certificates) and [Authentication](./infrastructure/environment-and-secrets.md#authentication) for details.
 - **gRPC Types** – Shared definitions (e.g., `ErrorDetail`, `PagingRequest`) in `protos/shared/`; each service generates its own stubs.
 
 ### Redis Key Naming & Lua Script Helpers
 
 Tick coordination and other Redis-backed workflows rely on a small set of shared helpers provided by the common library:
 
-- **Key Naming helpers** – A `RedisKeyNaming` (or similarly named) utility centralizes construction of tick-related keys such as `tick:{tenantId}:{regionId}:lock:{entityId}`, `tick:{tenantId}:{regionId}:pending`, `retry:{tenantId}:{regionId}`, and `timer:{tenantId}:{regionId}`. Application code must build these keys exclusively through the helper; direct string concatenation of `tick:`, `retry:`, or `timer:` prefixes in services is discouraged so hash-tag and naming rules remain consistent. The helper enforces the `{tenantId}:{regionId}` hash tag and is the single source of truth for tick key shapes.
+- **Key Naming helpers** – A `RedisKeyNaming` (or similarly named) utility centralizes construction of tick-related keys such as `tick:{tenantRegionTag}:lock:<entityId>`, `tick:{tenantRegionTag}:pending`, `retry:{tenantRegionTag}`, and `timer:{tenantRegionTag}`. Application code must build these keys exclusively through the helper; direct string concatenation of `tick:`, `retry:`, or `timer:` prefixes in services is discouraged so hash-tag and naming rules remain consistent. The helper enforces the `{tenantRegionTag}` hash tag and is the single source of truth for tick key shapes.
 - **Lua scripts, descriptors, and invocation helpers** – The common library owns:
-  - All coordination-related Lua scripts (tick staging/commit/rollback, locks, timers, retries, session CAS, automation scheduling) under a shared `redis/` resources path.
+  - All coordination-related Lua scripts (tick staging/commit/cleanup, locks, timers, retries, session CAS, automation scheduling) under a shared `redis/` resources path.
   - Machine-readable script descriptors that declare `KEYS` order, allowed prefixes, and shard-locality for each script.
   - A small Redis/Lua helper class that wraps `EVALSHA` calls for tick/session/automation scripts. It ensures that:
-  - Scripts are invoked with the correct first key (a tick key with the `{tenantId}:{regionId}` hash tag).
+  - Scripts are invoked with the correct first key (a tick key with the `{tenantRegionTag}` hash tag).
   - `NOSCRIPT` errors are handled by reloading the script on the appropriate master and retrying once.
   - Callers pass keys built via `RedisKeyNaming` so multi-key operations stay shard-local.
 - **Test and lint hooks** – Shared test fixtures validate that:
   - Keys produced by `RedisKeyNaming` share a common hash tag substring and map to the same cluster slot for multi-key operations.
   - Lua scripts respect the configured `MAX_TICK_SCRIPT_KEYS` bound and do not introduce “just one more key” without extending tests.
-  - Automation and session scripts are declared as **single-key** in their descriptors; tests assert that their `KEYS` length is exactly one and fail fast if additional keys are introduced without an explicit design change.
-  - Prefix discipline is enforced consistently: tick scripts are allowed only tick/coordination prefixes (`tick:`, `retry:`, `timer:`, `remote:`), session scripts only `session:`, and automation scripts only `automation_queue:` / `automation:tick:`. CI lints Lua sources against these rules so mixed `tick:*` + `automation:*` or `tick:*` + `session:*` scripts cannot be added inadvertently.
+  - Session scripts are declared as **single-key** in their descriptors; tests assert that their `KEYS` length is exactly one and fail fast if additional keys are introduced without an explicit design change.
+  - Automation scripts are declared as **single-hash-slot** scripts (hash-tagged on `{tenantScriptTag}`) and are forbidden from mixing `automation:tick:{tenantScriptTag}:*` keys with `tick:{tenantRegionTag}:*` keys in a single invocation; tests assert hash-slot alignment for automation keys when they are multi-key.
+  - Prefix discipline is enforced consistently: tick scripts are allowed only tick/coordination prefixes (`tick:`, `retry:`, `timer:`, `remote:`), session scripts only `session:`, and automation scripts only `automation:queue:` / `automation:tick:`. CI lints Lua sources against these rules so mixed `tick:*` + `automation:*` or `tick:*` + `session:*` scripts cannot be added inadvertently.
   - Any new tick-related script or key path added by a service includes corresponding updates to the shared scripts, descriptors, helpers, and tests in `firemud-common`; individual services do not define their own independent copies.
 
 For Redis-backed caches and rate limiting, the common library may also provide:

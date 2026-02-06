@@ -1,0 +1,68 @@
+{
+  "title": "Player Experience",
+  "schemaVersion": 36,
+  "version": 1,
+  "timezone": "browser",
+  "panels": [
+    {
+      "type": "graph",
+      "title": "Login Success Ratio",
+      "targets": [
+        {
+          "expr": "sum by (tenantId) (rate(login_requests_total{outcome=\"success\"}[5m])) / sum by (tenantId) (rate(login_requests_total[5m]))",
+          "legendFormat": "{{tenantId}}",
+          "refId": "A"
+        }
+      ],
+      "id": 1
+    },
+    {
+      "type": "graph",
+      "title": "Command Latency (p99)",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum by (tenantId, le, command) (rate(command_end_to_end_latency_ms_bucket[5m])))",
+          "legendFormat": "{{tenantId}} {{command}}",
+          "refId": "A"
+        }
+      ],
+      "id": 2
+    },
+    {
+      "type": "graph",
+      "title": "Telnet/WebSocket Path Availability",
+      "targets": [
+        {
+          "expr": "sum by (tenantId, path) (rate(entrypath_connection_attempts_total{outcome=\"success\"}[5m])) / sum by (tenantId, path) (rate(entrypath_connection_attempts_total[5m]))",
+          "legendFormat": "{{tenantId}} {{path}}",
+          "refId": "A"
+        }
+      ],
+      "id": 3
+    },
+    {
+      "type": "graph",
+      "title": "Chat Delivery Latency (p99)",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum by (tenantId, le, channel_type) (rate(chat_delivery_latency_ms_bucket[5m])))",
+          "legendFormat": "{{tenantId}} {{channel_type}}",
+          "refId": "A"
+        }
+      ],
+      "id": 4
+    },
+    {
+      "type": "graph",
+      "title": "Entry Path Outcomes (rate)",
+      "targets": [
+        {
+          "expr": "sum by (tenantId, path, outcome) (rate(entrypath_connection_attempts_total[5m]))",
+          "legendFormat": "{{tenantId}} {{path}} {{outcome}}",
+          "refId": "A"
+        }
+      ],
+      "id": 5
+    }
+  ]
+}

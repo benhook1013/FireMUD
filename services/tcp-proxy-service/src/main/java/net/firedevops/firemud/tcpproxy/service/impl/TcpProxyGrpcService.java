@@ -9,8 +9,6 @@ import net.firedevops.firemud.tcpproxy.v1.NotifyDisconnectRequest;
 import net.firedevops.firemud.tcpproxy.v1.NotifyDisconnectResponse;
 import net.firedevops.firemud.tcpproxy.v1.PingRequest;
 import net.firedevops.firemud.tcpproxy.v1.PingResponse;
-import net.firedevops.firemud.tcpproxy.v1.PushBufferedInputRequest;
-import net.firedevops.firemud.tcpproxy.v1.PushBufferedInputResponse;
 import net.firedevops.firemud.tcpproxy.v1.TcpProxyServiceGrpc;
 import org.lognet.springboot.grpc.GRpcService;
 import org.slf4j.Logger;
@@ -61,32 +59,6 @@ public class TcpProxyGrpcService extends TcpProxyServiceGrpc.TcpProxyServiceImpl
     }
   }
 
-  @Override
-  @Timed(value = "tcpproxyGrpc.pushBufferedInput")
-  public void pushBufferedInput(
-      PushBufferedInputRequest request,
-      StreamObserver<PushBufferedInputResponse> responseObserver) {
-    logger.info(
-        "PushBufferedInput for session {} commands {}",
-        request.getSessionId(),
-        request.getCommandsCount());
-    try {
-      PushBufferedInputResponse response =
-          eventService.pushBufferedInput(
-              request.getSessionId(), request.getCommandsList(), request.getTenantId());
-      PushBufferedInputResponse normalized = ensureErrorDetail(response, "PushBufferedInput");
-      logIfError(normalized.getError(), "PushBufferedInput");
-      responseObserver.onNext(normalized);
-      responseObserver.onCompleted();
-    } catch (RuntimeException ex) {
-      logger.warn("PushBufferedInput failed", ex);
-      ErrorDetail error = error("INTERNAL", "PushBufferedInput failed");
-      logIfError(error, "PushBufferedInput");
-      responseObserver.onNext(PushBufferedInputResponse.newBuilder().setError(error).build());
-      responseObserver.onCompleted();
-    }
-  }
-
   private NotifyDisconnectResponse ensureErrorDetail(
       NotifyDisconnectResponse response, String operation) {
     if (response == null) {
@@ -100,21 +72,6 @@ public class TcpProxyGrpcService extends TcpProxyServiceGrpc.TcpProxyServiceImpl
             ? normalizeDetail(safe.getError(), operation)
             : ok(operation + " completed");
     return NotifyDisconnectResponse.newBuilder(safe).setError(detail).build();
-  }
-
-  private PushBufferedInputResponse ensureErrorDetail(
-      PushBufferedInputResponse response, String operation) {
-    if (response == null) {
-      return PushBufferedInputResponse.newBuilder()
-          .setError(error("INTERNAL", operation + " returned no response"))
-          .build();
-    }
-    PushBufferedInputResponse safe = response;
-    ErrorDetail detail =
-        safe.hasError()
-            ? normalizeDetail(safe.getError(), operation)
-            : ok(operation + " completed");
-    return PushBufferedInputResponse.newBuilder(safe).setError(detail).build();
   }
 
   private ErrorDetail ok(String message) {

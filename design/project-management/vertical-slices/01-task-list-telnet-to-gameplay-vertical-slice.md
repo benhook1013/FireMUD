@@ -1,5 +1,9 @@
 # Telnet to Gameplay Vertical Slice Task List
 
+## Goal and Status
+
+Goal: describe the end-to-end Telnet → Gateway → Game Session pipeline as a playable, testable slice, including echo paths, envelopes, reconnection, and a minimal text command protocol. Status: parts of this slice are implemented and under active refinement; where behavior is not yet live, this document still describes the target-state flow, with implementation details tracked in the relevant service design docs and tests.
+
 This checklist focuses on turning the Telnet TCP Proxy + Gateway + Game Session path into a playable, testable vertical slice. Each task is intentionally scoped so it can be handed to Codex (or a developer) as a single, self-contained chunk of work.
 
 ## 1. Dev Echo Path and Local Telnet Loop
@@ -10,7 +14,7 @@ This checklist focuses on turning the Telnet TCP Proxy + Gateway + Game Session 
 
 ## 2. Telnet Session Envelope and Event Metrics
 
-- [x] Document the Telnet session envelope format (`SESSION <sessionId> <tenantId>` and `SESSION <sessionId>:<tenantId>`) in the TCP Proxy design or README so MUD tools and scripts know how to bind a Telnet connection to a session.
+- [x] Document the Telnet session envelope format in the TCP Proxy design so MUD tools and scripts know how to bind a Telnet connection to a session, using the canonical [Telnet Session Envelope & Event Metrics](../../architecture/microservices/tcp-proxy-service/README.md#telnet-session-envelope--event-metrics) section as the single source of truth. The space-separated form (`SESSION <sessionId> <tenantId>`) is canonical for all new clients and examples; the historical compact form (`SESSION <sessionId>:<tenantId>`) remains accepted on the wire for backwards compatibility but is treated as deprecated and may be removed once remaining callers are migrated.
 - [x] Add focused unit tests for `TelnetSessionContext` covering valid envelopes (space-separated, colon-separated) and invalid/malformed cases, asserting sessionId/tenantId handling and log behaviour.
 - [x] Add a Spring Boot test for `TelnetServerHandler` that opens a Netty channel, sends a valid `SESSION` envelope followed by a command, and asserts that `TcpProxyEventService.recordConnectEvent` is invoked with the expected sessionId, tenantId, and client IP.
 
@@ -22,10 +26,9 @@ This checklist focuses on turning the Telnet TCP Proxy + Gateway + Game Session 
 
 ## 4. Game Session gRPC TcpProxyService Implementation
 
-- [x] Scaffold a `TcpProxyServiceImpl` gRPC server in `services/game-session-service` implementing the `TcpProxyService` proto (`NotifyDisconnect`, `PushBufferedInput`) and register it with the existing gRPC server configuration.
-- [x] Implement `NotifyDisconnect` in `TcpProxyServiceImpl` to validate inputs and mark the appropriate session as disconnected/suspended in Redis using the existing session repository or service layer, returning an `ErrorDetail` code of `OK` on success.
-- [x] Implement `PushBufferedInput` in `TcpProxyServiceImpl` to validate inputs and enqueue the provided commands into the per-session command queue in Redis, reusing the existing command enqueue logic used for WebSocket-driven input.
-- [x] Add unit tests for `TcpProxyServiceImpl` covering happy paths and validation failures for both `NotifyDisconnect` and `PushBufferedInput`, ensuring `ErrorDetail` codes and `grpc.app_error` metrics are set correctly.
+- [x] Scaffold a `TcpProxyServiceImpl` gRPC server in `services/game-session-service` implementing the `TcpProxyService` proto (`NotifyDisconnect`) and register it with the existing gRPC server configuration.
+- [x] Implement `NotifyDisconnect` in `TcpProxyServiceImpl` to validate inputs, map `proxyConnectionId` to the authenticated session when available, and mark the appropriate session as disconnected/suspended in Redis using the existing session repository or service layer, returning an `ErrorDetail` code of `OK` on success.
+- [x] Add unit tests for `TcpProxyServiceImpl` covering happy paths and validation failures for `NotifyDisconnect`, ensuring `ErrorDetail` codes and `grpc.app_error` metrics are set correctly.
 
 ## 5. Telnet → Gateway → Game Session Cross-Service Flow
 

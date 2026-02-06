@@ -9,7 +9,6 @@ import net.firedevops.firemud.config.DevIsolatedProperties;
 import net.firedevops.firemud.dto.GameInstanceDto;
 import net.firedevops.firemud.entity.GameInstance;
 import net.firedevops.firemud.repository.GameInstanceRepository;
-import net.firedevops.firemud.service.CommandService;
 import net.firedevops.firemud.service.PingService;
 import net.firedevops.firemud.service.SessionStateService;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
@@ -17,8 +16,6 @@ import net.firedevops.firemud.tcpproxy.v1.NotifyDisconnectRequest;
 import net.firedevops.firemud.tcpproxy.v1.NotifyDisconnectResponse;
 import net.firedevops.firemud.tcpproxy.v1.PingRequest;
 import net.firedevops.firemud.tcpproxy.v1.PingResponse;
-import net.firedevops.firemud.tcpproxy.v1.PushBufferedInputRequest;
-import net.firedevops.firemud.tcpproxy.v1.PushBufferedInputResponse;
 import net.firedevops.firemud.tcpproxy.v1.TcpProxyServiceGrpc;
 import org.lognet.springboot.grpc.GRpcService;
 import org.slf4j.Logger;
@@ -31,7 +28,6 @@ public final class TcpProxyServiceImpl extends TcpProxyServiceGrpc.TcpProxyServi
   private static final String OK_CODE = "OK";
   private static final String SUSPENDED_STATUS = "SUSPENDED";
 
-  private final CommandService commandService;
   private final GameInstanceRepository repository;
   private final SessionStateService sessionStateService;
   private final MeterRegistry meterRegistry;
@@ -39,13 +35,11 @@ public final class TcpProxyServiceImpl extends TcpProxyServiceGrpc.TcpProxyServi
   private final DevIsolatedProperties devIsolatedProperties;
 
   public TcpProxyServiceImpl(
-      CommandService commandService,
       GameInstanceRepository repository,
       SessionStateService sessionStateService,
       MeterRegistry meterRegistry,
       PingService pingService,
       DevIsolatedProperties devIsolatedProperties) {
-    this.commandService = commandService;
     this.repository = repository;
     this.sessionStateService = sessionStateService;
     this.meterRegistry = meterRegistry;
@@ -94,45 +88,6 @@ public final class TcpProxyServiceImpl extends TcpProxyServiceGrpc.TcpProxyServi
       logger.error("Failed to save suspended session state", ex);
       return error("INTERNAL", "Failed to update session state");
     }
-  }
-
-  @Override
-  @Timed("tcpProxyGrpc.pushBufferedInput")
-  public void pushBufferedInput(
-      PushBufferedInputRequest request,
-      StreamObserver<PushBufferedInputResponse> responseObserver) {
-    logger.debug(
-        "PushBufferedInput session={} tenant={} commands={}",
-        request.getSessionId(),
-        request.getTenantId(),
-        request.getCommandsCount());
-    ErrorDetail error = handleBufferedInput(request);
-    responseObserver.onNext(PushBufferedInputResponse.newBuilder().setError(error).build());
-    responseObserver.onCompleted();
-  }
-
-  private ErrorDetail handleBufferedInput(PushBufferedInputRequest request) {
-    if (request.getCommandsCount() == 0) {
-      return error("INVALID_ARGUMENT", "At least one buffered command is required");
-    }
-    SessionValidationResult validation =
-        validateSession(request.getSessionId(), request.getTenantId());
-    if (validation.hasError()) {
-      return validation.errorDetail();
-    }
-    String sessionIdText = String.valueOf(validation.sessionId());
-    for (String command : request.getCommandsList()) {
-      try {
-        var result = commandService.enqueue(sessionIdText, command, false);
-        if (!result.accepted()) {
-          return error(result.errorCode(), result.errorMessage());
-        }
-      } catch (RuntimeException ex) {
-        logger.error("Failed to enqueue buffered command", ex);
-        return error("INTERNAL", "Failed to enqueue buffered input");
-      }
-    }
-    return ok("Buffered commands accepted");
   }
 
   private SessionValidationResult validateSession(String sessionIdText, String tenantIdText) {

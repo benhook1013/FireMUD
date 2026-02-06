@@ -8,8 +8,9 @@ Public login APIs exist for administrators and account portals, but gameplay cli
 ### Responsibilities
 
 - Registration and login flows, including password resets
-- Issuing short-lived JWT tokens for internal gRPC authorization between
-  meta/control services
+- Issuing short-lived JWT tokens for internal meta/control APIs, including:
+  - Browser JWTs for first-party admin/creator web UIs via `/auth/login`, and
+  - Service JWTs for backend gRPC callers via internal authentication flows
 - Tracking profiles, OAuth2 social logins, external account links, and achievements.
 - Managing subscription status and ban enforcement.
 - Self-service account recovery for compromised or lost credentials.
@@ -17,30 +18,47 @@ Public login APIs exist for administrators and account portals, but gameplay cli
 
 ## Architecture / Design Notes
 
-- Stateless authentication uses short-lived JWT tokens strictly for service-to-service authorization. Gameplay clients never see these tokens.
+- Stateless authentication uses short-lived JWT tokens for internal meta/control APIs. Two token profiles are issued:
+  - **Browser JWTs** for first-party admin/creator web UIs via `/auth/login`, with a frontend-oriented audience and short lifetime, and
+  - **Service JWTs** for backend services via internal authentication flows (for example, the `Authenticate` gRPC method), with an internal audience.
+  Gameplay protocol clients (Telnet/WebSocket) never see or transmit these tokens.
 - The service hashes raw passwords with a strong algorithm such as Argon2 and unique salts before storing them in PostgreSQL.
-- Session information is stored in Redis as transient data for quick reconnections.
+- Auth token allowlist entries are stored in Redis as described in [Authentication & Authorization](../../system-architecture-authentication.md); gameplay session bindings are owned by the Game Session Service and are not managed directly here.
 - Creation events are logged to the Logging & Admin Service via a saga step.
 - Ban and recovery events are logged to the Logging & Admin Service for auditability.
 - Account-to-character relationships allow players to own characters across multiple games.
-- All tables include a `tenantId` column so the same platform account can join
-  multiple games without data leakage. Every query enforces this tenant filter as
-  described in the [Multi-Tenancy](../../system-architecture-multi-tenancy.md)
-  design.
+- The core `account` record represents a **global platform account** identified by `accountId`. Tables that represent per-game state or billing attach to tenants via a `tenantId` column so the same platform account can join multiple games without data leakage. Every tenant-scoped query enforces this filter as described in the [Multi-Tenancy](../../system-architecture-multi-tenancy.md) design.
 - Provides a JWKS endpoint for other services to validate tokens. Keys are rotated
   via cert-manager as described in the [Security Architecture](../../system-architecture-security.md).
 - All service-to-service communication is protected by mutual TLS.
-- Client authentication is initiated via the `LOGIN` command flow described in
-  [Authentication & Authorization](../../system-architecture-authentication.md).
-  Session tokens stored in Redis allow seamless reconnection by the Game Session
-  Service without re-entering credentials.
-- Sends notification emails when the Game Session Service reports suspicious
-  login activity. See
+- Gameplay client authentication is initiated via the `LOGIN` command flow described in
+  [Authentication & Authorization](../../system-architecture-authentication.md); gameplay clients never see JWTs. The Game Session Service calls the internal `Authenticate` gRPC method (mTLS-protected) to verify credentials and obtain Service JWTs, while `/auth/login` remains a browser/control-plane endpoint.
+- Admin and creator UI authentication is initiated via the `/auth/login` HTTP endpoint, which issues Browser JWTs used for control-plane APIs as described in the Authentication & Authorization and Frontend architecture designs.
+- Owns brute-force defense and login abuse handling for the platform. The service monitors login attempts per account and per IP, applies throttling and temporary blacklisting policies, and emits structured signals (for example, `AUTH_ACCOUNT_LOCKED`) that the Game Session Service and other consumers honor when binding gameplay sessions. Suspicious activity triggers notification emails and audit events as described in
   [Security Architecture](../../system-architecture-security.md#brute-force-defense-and-abuse-handling).
 - Non-gameplay workflows such as account creation or billing updates are
   orchestrated using the Saga pattern outlined in
   [Transaction Strategies](../../system-architecture-transactions.md).
 - Leverages the [Shared Libraries](../../system-architecture-shared-libraries.md) for common DTOs, logging interceptors, and Micrometer metrics.
+
+### Redis Role and Prefixes
+
+- **Coordination Redis**
+  - The Account Service does **not** participate in tick or gameplay coordination and never touches `tick:*`, `timer:*`, `retry:*`, or other tick-related prefixes on Coordination Redis; those responsibilities remain with the Game Session and Automation & Scripting services as described in [Redis Architecture](../../system-architecture-redis.md).
+  - It does, however, use auth/session keys as documented in [Authentication](../../system-architecture-authentication.md):
+    - `session:auth:account:<accountId>:<tokenHash>` – baseline allowlist entry for a JWT, consulted for control-plane session validity and immediate revocation.
+    - `session:auth:tenant:<tenantId>:<tokenHash>` – tenant-scoped Account/JWT bindings for internal auth, consulted when authorizing tenant-specific operations.
+    - `session:auth:global:<accountId>:<tokenHash>` – cross-tenant Account/JWT bindings for internal auth, consulted when authorizing cross-tenant or platform-wide operations based on `globalRoles`.
+  - These keys live on Coordination Redis so that auth/session bindings share the same AOF and reset semantics as gameplay sessions. They are short-lived but **reset-sensitive**: coordination resets that drop `session:*` force re-authentication and token re-issuance for affected account, tenant, and global scopes.
+- **Cache/Rate-Limit Redis**
+  - The Account Service does not maintain its own Cache/Rate-Limit Redis prefixes today; any future caches for account or profile lookups must use Cache/Rate-Limit Redis and the key naming/TTL/versioning rules in [Redis Cache & Rate Limiting](../../system-architecture-redis-cache.md), not Coordination Redis.
+  - When introducing new Redis usage here, follow the [Redis Design Checklist](../../system-architecture-redis-design-checklist.md) so auth/session keys, roles, and observability remain consistent with the global design.
+
+> If you change Redis usage for this service, you must read and apply:
+>
+> - [Redis Architecture](../../system-architecture-redis.md)
+> - [Redis Cache & Rate Limiting](../../system-architecture-redis-cache.md)
+> - [Redis Operations & Migrations](../../system-architecture-redis-operations.md)
 
 ## Key Features
 
@@ -56,12 +74,11 @@ Public login APIs exist for administrators and account portals, but gameplay cli
 
 ### Data Model
 
-- `account` table stores username, password hash, email, and status flags.
+- `account` table stores username, password hash, email, and status flags for the global platform account.
 - `profile` table captures optional user details and preferences.
 - An `achievement` table records earned achievements keyed by account and game.
 - `external_account` table links third-party OAuth IDs to platform accounts.
-- `session` keys in Redis map temporary session tokens to account IDs for quick
-  reconnects.
+- Tenant- and billing-related tables such as `subscription` and `payment_transaction` associate `accountId` with `tenantId` for hosted games and hosting plans.
 
 External accounts allow players to log in via Google, Discord, or Steam. Each
 link stores the provider name and external ID so the platform account can be
@@ -69,9 +86,8 @@ resolved during authentication.
 
 ### gRPC APIs
 
-- `CreateAccount` – registers a new user and establishes a session for internal
-  services.
-- `Authenticate` – verifies credentials and issues a session token.
+- `CreateAccount` – registers a new user and returns its `accountId` so internal services can establish their own sessions using the authentication flows described below.
+- `Authenticate` – verifies credentials and issues a Service JWT (internal token profile) backed by `session:auth:*` allowlist entries for meta/control APIs.
 - `GetProfile` – retrieves profile information for the current account.
 - `UpdateProfile` – modifies profile fields and triggers notification emails.
 - `ExportAccount` – exports all account and profile data.
@@ -94,7 +110,7 @@ resolved during authentication.
 | Method | Path | Description |
 | --- | --- | --- |
 | `GET` | `/ping` | Simple health check |
-| `POST` | `/auth/login` | Authenticate and establish a session; JWT is kept server-side |
+| `POST` | `/auth/login` | Authenticate and establish a control-plane session for first-party UIs by returning a Browser JWT; the token is allowlisted server-side via `session:auth:*` entries for revocation |
 | `POST` | `/auth/request-password-reset` | Request password reset |
 | `POST` | `/auth/complete-password-reset` | Complete password reset |
 | `POST` | `/auth/request-email-verification` | Send verification email |
@@ -153,6 +169,7 @@ Additional variables configure outbound email delivery:
 | `FIREMUD_AUTH_JWT_SECRET_PATH` | Path to a file containing the JWT secret | *(none)* |
 | `FIREMUD_AUTH_JWT_EXPIRATION_MS` | Lifetime of issued JWTs in milliseconds | `3600000` |
 | `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS` | Extra time added to the JWT lifetime when deriving server-side session TTL | `300000` |
+| `FIREMUD_AUTH_REQUIRE_2FA_FOR_PLAINTEXT_TCP` | Controls whether plaintext Telnet logins are restricted to 2FA-enabled, explicitly opted-in accounts (see Environment & Secrets – Authentication) | `true` |
 
 ## Proto Files
 
@@ -167,9 +184,9 @@ The gRPC schemas for this service live in
 - [Multi-Tenancy](../../system-architecture-multi-tenancy.md)
 - [System Architecture Overview](../../system-architecture-overview.md)
 - [Service Responsibility Matrix](../../service-responsibility-matrix.md)
-- [User Journeys – Sign Up](../../user-journeys.md#1-sign-up)
-- [User Journeys](../../user-journeys.md#11-purchases-and-subscriptions) – payment and subscription workflow.
-- [User Journeys – Account Data Export & Deletion](../../user-journeys.md#18-account-data-export--deletion)
+- [User Journeys – Sign Up](../../user-journeys-players.md#1-sign-up)
+- [User Journeys – Purchases and Subscriptions](../../user-journeys-players.md#5-purchases-and-subscriptions)
+- [User Journeys – Account Data Export & Deletion](../../user-journeys-players.md#8-account-data-export--deletion)
 - [Redis Architecture](../../system-architecture-redis.md)
 - [gRPC API Style & Versioning Guidelines](../../system-architecture-grpc.md)
 - [Shared Libraries Overview](../../system-architecture-shared-libraries.md)
@@ -203,15 +220,35 @@ This service sends verification and password reset emails using a configured SMT
 
 ### Session Management
 
-Authentication generates a JWT that is stored **server-side** in Redis for internal calls. Keys follow `session:{tenantId}:{tokenHash}`, where `tokenHash` is a fixed-length digest (for example, a hex-encoded SHA-256 of the JWT). Their TTL is derived from the JWT lifetime:
+Authentication generates a JWT and records server-side allowlist entries in Redis for immediate revocation, following the scope model defined in [Authentication & Authorization](../../system-architecture-authentication.md):
+
+- Account-scoped entries: `session:auth:account:<accountId>:<tokenHash>` for every issued JWT; this is the baseline “token is currently allowed for this account” allowlist entry.
+- Tenant-scoped entries: `session:auth:tenant:<tenantId>:<tokenHash>` when the token’s effective privileges are limited to a specific tenant and derived from `scopedRoles[tenantId]`.
+- Global/admin entries: `session:auth:global:<accountId>:<tokenHash>` when the token carries cross-tenant `globalRoles` such as `platformAdmin`, `billingAdmin`, or `support`.
+
+The Account Service always creates exactly one account-scoped entry per issued token, may create one tenant-scoped entry per tenant in `scopedRoles`, and creates a single global entry when `globalRoles` are present. In all cases, `tokenHash` is a fixed-length digest (for example, a hex-encoded SHA-256 of the JWT), and TTL is derived from the JWT lifetime:
 
 - `session_expiration_ms = FIREMUD_AUTH_JWT_EXPIRATION_MS + FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS`
 
-See [Environment & Secrets](../../infrastructure/environment-and-secrets.md#authentication).
+See [Environment & Secrets](../../infrastructure/environment-and-secrets.md#authentication) for configuration details.
+
+Browser JWTs and Service JWTs share the same core claim structure (for example, `accountId`, `globalRoles`, `scopedRoles`) but differ in their intended audiences and issuance flows as described in the Authentication & Authorization design. New endpoints must document which profile they issue or accept and validate the expected audience before trusting a token.
 
 ### Two-Factor Authentication
 
 Two-factor authentication is optional and applies only when a `two_factor_secret` is configured on an account. This is typically enabled for administrator or moderator accounts. When present, the `/auth/login` endpoint requires an `otp` field. Codes are validated using the Base32 secret as outlined in the [Security Architecture](../../system-architecture-security.md).
+
+When `FIREMUD_AUTH_REQUIRE_2FA_FOR_PLAINTEXT_TCP` is enabled (the default), logins over **plaintext Telnet** are additionally constrained:
+
+- Only accounts that have a `two_factor_secret` configured and
+- Have explicitly opted in to **allow plaintext Telnet login** in their account settings
+
+may authenticate via the raw TCP Telnet port. The account model includes a boolean flag (for example `allowPlaintextTelnetLogin`) that is exposed both:
+
+- As a checkbox in the web portal account settings (default: unchecked, with a clear explanation of the risks of plaintext Telnet), and
+- As an option in the Telnet account setup flow (default: off, with matching wording).
+
+Accounts that do not meet these conditions must use the TLS Telnet port or the web client instead; the `/auth/login` response returns a dedicated error code so the Game Session Service can present a clear message to the player.
 
 ### Login error codes
 
@@ -220,6 +257,8 @@ Both the `/auth/login` REST endpoint and the gRPC `Authenticate` method return s
 - `AUTH_INVALID_CREDENTIALS` - wrong username or password
 - `AUTH_OTP_REQUIRED` - invalid or missing OTP for a two-factor-protected account
 - `AUTH_ACCOUNT_LOCKED` - account suspended or locked by policy (reserved for future enforcement)
+- `AUTH_2FA_REQUIRED_FOR_PLAINTEXT_TCP` - account attempted to log in over plaintext Telnet but does not yet have two-factor authentication enabled while `FIREMUD_AUTH_REQUIRE_2FA_FOR_PLAINTEXT_TCP` is true
+- `AUTH_PLAINTEXT_TCP_NOT_PERMITTED` - account attempted to log in over plaintext Telnet without having opted in to allow this transport (for example `allowPlaintextTelnetLogin=false`)
 - `AUTH_UPSTREAM_FAILURE` - infrastructure/grpc failures before authentication could complete
 
 The Game Session Service translates these codes into the text-protocol `ERROR <CODE>` responses (`ERROR INVALID_CREDENTIALS`, `ERROR OTP_REQUIRED`, etc.) so Telnet and WebSocket clients always see consistent login error semantics even when human-facing messages evolve.
@@ -232,7 +271,28 @@ The Game Session Service translates these codes into the text-protocol `ERROR <C
 - `POST /accounts` – create a new account and profile.
 - `GET /accounts/{accountId}/export` – export all account data.
 - `DELETE /accounts/{accountId}` – remove an account permanently.
-- `POST /auth/login` – authenticate and establish a session. JWTs are stored for internal service calls and never returned to clients.
+- `POST /auth/login` – authenticate and establish a control-plane session for first-party admin/creator UIs by returning a Browser JWT and associated metadata. The frontend stores this token in memory and sends it on meta/control API calls; gameplay clients do not call this endpoint directly and authenticate exclusively via the text `LOGIN`/`LOGON` flow fronted by the Game Session Service. The response body follows the shared envelope pattern:
+
+  ```json
+  {
+    "status": "SUCCESS",
+    "data": {
+      "token": "jwt-token-here",
+      "expiresAt": "2025-01-01T12:00:00Z",
+      "account": {
+        "accountId": "user-123",
+        "email": "demo@example.com"
+      },
+      "scopedRoles": {
+        "tenant-abc": ["tenantAdmin", "designer"],
+        "tenant-def": ["player"]
+      },
+      "globalRoles": ["platformAdmin"]
+    }
+  }
+  ```
+
+  Error responses use the standard `shared.v1.ErrorDetail` structure and `AuthenticationErrorCodes` as described below.
 - `GET /.well-known/jwks.json` – JWKS for verifying issued JWT tokens.
 - `POST /auth/request-email-verification` – send a verification email for the account.
 - `POST /auth/verify-email` – confirm the verification token.
@@ -245,17 +305,6 @@ curl -X POST http://localhost:8080/accounts \
   -d '{"username":"demo","email":"demo@example.com","password":"secret"}'
 ```
 
-Example response:
-
-```json
-{
-  "id": 123,
-  "tenantId": "tenant-abc",
-  "username": "demo",
-  "email": "demo@example.com"
-}
-```
-
 Example login request:
 
 `otp` is only required when two-factor authentication is enabled for the account.
@@ -264,15 +313,6 @@ Example login request:
 curl -X POST http://localhost:8080/auth/login \
   -H 'Content-Type: application/json' \
   -d '{"username":"demo","password":"secret","otp":"123456"}'
-```
-
-Example login response:
-
-```json
-{
-  "status": "SUCCESS",
-  "data": null
-}
 ```
 
 #### gRPC
@@ -299,21 +339,6 @@ Call the gRPC method with:
 
 ```bash
 grpcurl -plaintext localhost:6565 account.v1.AccountService/Ping
-```
-
-Create an account via gRPC:
-
-```bash
-grpcurl -plaintext -d '{"tenant_id":1,"username":"demo","email":"demo@example.com","password":"secret"}' \
-  localhost:6565 account.v1.AccountService/CreateAccount
-```
-
-Expected response:
-
-```json
-{
-  "accountId": "123"
-}
 ```
 
 ### Saga Participation

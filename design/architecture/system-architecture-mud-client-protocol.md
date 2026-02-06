@@ -10,13 +10,13 @@ This document outlines how FireMUD incorporates the Mud Client Protocol (MCP) to
 
 ## MCP Basics
 
-The MCP 2.1 specification defines a simple, 7-bit ASCII, line-based protocol for sending out-of-band messages on the same channel as normal Telnet traffic. Lines are delimited with `\r\n` and there is no fixed line-length limit. Both connection endpoints are treated symmetrically, and the protocol itself maintains no state; higher-level packages define application behavior. Message names and keywords are case-insensitive, while authentication keys and data tags must preserve their exact case. Lines beginning with the `#$#` marker are interpreted as MCP messages, while other lines remain in-band for legacy clients. Each session uses an authentication key supplied by the client; although the key travels in cleartext, implementations must reject any message with an unexpected key to guard against spoofing.
+The MCP 2.1 specification defines a simple, 7-bit ASCII, line-based protocol for sending out-of-band messages on the same channel as normal Telnet traffic. Lines are delimited with `\r\n` and there is no fixed line-length limit in the spec. FireMUD does impose a transport limit at the TCP Proxy Service: each Telnet/MCP line must fit within `TCP_PROXY_MAX_LINE_BYTES` (default `4096`) as documented in the TCP Proxy Service design. MCP-aware clients should split large payloads across MCP multiline continuation lines (`#$#* ...`) rather than sending a single oversized line. Both connection endpoints are treated symmetrically, and the protocol itself maintains no state; higher-level packages define application behavior. Message names and keywords are case-insensitive, while authentication keys and data tags must preserve their exact case. Lines beginning with the `#$#` marker are interpreted as MCP messages, while other lines remain in-band for legacy clients. Each session uses an authentication key supplied by the client; although the key travels in cleartext, implementations must reject any message with an unexpected key to guard against spoofing.
 
 ## Overview
 
 The TCP Proxy Service negotiates MCP with connecting clients and falls back to plain Telnet when unsupported.
 When MCP is enabled, structured messages (optionally containing JSON payloads) are exchanged inside MCP packages over the same Telnet connection.
-On the server side, the TCP Proxy interprets these messages and maps them to game session operations and events, reusing the same domain logic that drives the text protocol.
+The TCP Proxy Service treats MCP control lines as application-level text: it sanitizes and frames the Telnet transport, then forwards MCP traffic over the WebSocket bridge to the canonical gameplay route. MCP package semantics are handled by the backend session layer (Spring Cloud Gateway → Game Session Service), so Telnet and native WebSocket clients converge on the same runtime behavior.
 From the client’s perspective, all interaction still happens over a single MCP-aware Telnet session, but clients can render additional UI elements based on the structured data they receive.
 
 ## Protocol Handshake
@@ -61,6 +61,52 @@ FireMUD supports the `mcp-cord` package (version 1.0) to multiplex additional ch
 
 These primitives let stateful conversations—such as dedicated chat tabs, map views, or status panels—be tied to specific client windows. Additional packages can be negotiated as needed.
 
+### Interaction with abuse heuristics
+
+MCP control lines (`#$#...`) and their payloads are treated as application‑level text on top of the sanitized Telnet transport. Abuse detection at the TCP Proxy layer operates on Telnet control bytes, envelope handling, connection churn, and similar signals; unknown MCP packages or malformed MCP messages are not treated as abuse by default. Implementations may log or surface MCP parsing issues for diagnostics, but they must not close connections purely because a client sends an unrecognised MCP package.
+
+### MCP resource limits & abuse budgets
+
+To keep MCP traffic from overwhelming the Telnet edge while still being friendly to well-behaved tools, the TCP Proxy Service enforces a set of **MCP-specific budgets** on top of the generic Telnet limits described in the TCP Proxy design:
+
+- Each connection has a bounded number of **active cords** and **concurrent `_data-tag` continuations**; once these limits are exceeded, new MCP control lines are discarded and counted in `tcpproxy.telnet.discarded` with a low-cardinality `reason` label (for example `reason="mcp_budget"`), but the connection may remain open as long as other safety limits are respected.
+- MCP message volume is subject to a per-connection **MCP control-line rate** budget. When a client sends MCP control lines significantly faster than expected (for example due to a misbehaving script), excess lines are dropped rather than forwarded, again contributing to `tcpproxy.telnet.discarded` rather than being treated as immediate hard-close abuse.
+- MCP line size still participates in the generic `TCP_PROXY_MAX_LINE_BYTES` and `TCP_PROXY_MAX_OVERSIZE_LINES` limits, but **MCP parsing failures do not count towards the `TCP_PROXY_MAX_MALFORMED_ENVELOPES` budget**, which is reserved for Telnet `SESSION` envelope errors as described in the TCP Proxy Service design’s **Telnet Session Envelope & Event Metrics** section.
+
+For envelope handling, MCP control lines are treated as out-of-band control traffic: they do not advance or close the TCP Proxy’s `SESSION` envelope capture window on their own. The window closes only when the first non-`SESSION` gameplay line (such as `LOGIN`, `LOOK`, or `SAY`) is forwarded upstream, as defined in the TCP Proxy Service design.
+
+The exact counter and timer names for these budgets live in the TCP Proxy Service design’s **Metrics Summary** and **Connection Limits and Abuse Protection** sections; this document describes only their high-level intent. Thresholds for MCP budgets are configured alongside other proxy limits in the TCP Proxy Service configuration (for example `application.yml`) rather than via dedicated per-budget environment variables; operators should treat them as guardrails that rarely need adjustment in day-to-day operations. As with other safety controls, operators should treat sustained increases in MCP-related discard reasons as a signal to either adjust client behaviour (for example cord usage or update frequency) or tighten limits for obviously abusive sources after consulting the TCP Proxy design. Gameplay text lines that Game Session treats as commands are not dropped silently while a connection remains open; hitting non-MCP safety limits results in the TCP Proxy or gateway closing the connection with a clear reason as described in [Protocol Bridging](./system-architecture-protocol-bridging.md#ordering--delivery-invariants).
+
+### Implementation Status and Client Expectations
+
+MCP support is being rolled out incrementally:
+
+- The underlying line-based Telnet transport and control-line parsing (`#$#...`) are implemented in the TCP Proxy Service.
+- The `mcp-negotiate` handshake and the `mcp-cord` package are supported for basic cord creation and message routing.
+- Higher-level FireMUD-specific MCP packages (for example status panels, map feeds, or structured notifications) are introduced gradually and may evolve as the platform matures.
+
+Client authors should treat MCP integration as **backwards-compatible but evolving**:
+
+- Always fall back gracefully to plain Telnet behaviour if MCP negotiation fails or a package is not advertised by the server.
+- Do not assume that every documented package is available in all environments; rely on the negotiated package list rather than hard-coding expectations.
+- Avoid making gameplay-critical flows depend solely on MCP; the plain text protocol remains the canonical channel for commands and responses, and MCP is used to augment the experience with structured data.
+
+## Reconnection & Session Recovery
+
+MCP state is **strictly per TCP connection** and does not survive reconnects on its own:
+
+- When a Telnet client disconnects and later reconnects (whether due to client-side network loss, TCP Proxy restart, Gateway outages, or other infrastructure events), the TCP connection and its associated MCP negotiation are gone. Redis-backed gameplay session state (account/player bindings, tick queues, cooldowns) lives in the Game Session Service and determines whether gameplay resumes or starts fresh, but it does **not** restore MCP negotiation or cords.
+- After any reconnect, MCP-aware clients must:
+  - Re-run the `mcp` version negotiation and agree on a fresh `authentication-key`.
+  - Re-advertise and activate packages with `mcp-negotiate-can` / `mcp-negotiate-end`.
+  - Re-open any required cords (for example status panels) using `mcp-cord-open`.
+- Telnet `SESSION` envelopes are likewise per TCP connection. Advanced clients that rely on `SESSION` for session/tenant hints must resend the envelope on reconnect if they want those hints to apply again, even when the underlying gameplay session resumes from Redis.
+- The TCP Proxy Service never attempts to “reattach” a new TCP socket to a previous `SESSION` or MCP negotiation; each TCP connection is treated as a fresh transport, even when it leads to a resumed gameplay session in Game Session.
+
+From the gameplay perspective, reconnection and resume behavior follow the rules in [Reconnection Strategy](./system-architecture-reconnection.md): clients always send a fresh `LOGIN` after any disconnect, and Game Session uses Redis-backed state to decide whether to resume or start a new session. MCP and `SESSION` provide additional structure and hints on top of that flow but never replace the core text protocol or Redis session state as the source of truth.
+
+MCP-aware clients should also follow the general reconnection backoff guidance from [Reconnection Strategy](./system-architecture-reconnection.md#client-reconnection-behaviour): use exponential backoff with jitter when reconnecting after failures (including MCP negotiation failures), respect non‑retriable conditions such as clear policy violations, and avoid tight reconnect loops that could overload the TCP Proxy or Gateway during incidents.
+
 ## Example Workflow
 
 1. Client connects and negotiates MCP support with the TCP Proxy Service.
@@ -73,4 +119,4 @@ These primitives let stateful conversations—such as dedicated chat tabs, map v
 - [Protocol Bridging](./system-architecture-protocol-bridging.md)
 - [TCP Proxy Service](./microservices/tcp-proxy-service/README.md)
 - [System Architecture Overview](./system-architecture-overview.md)
-- [User Journeys – Extensibility & External Tools](./user-journeys.md#21-extensibility--external-tools)
+- [User Journeys – Extensibility & External Tools](./user-journeys-creators.md#8-extensibility--external-tools)

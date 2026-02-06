@@ -230,8 +230,6 @@ for conventions on schema evolution and error handling. See each service's
     - [NotifyDisconnectResponse](#tcp_proxy-v1-NotifyDisconnectResponse)
     - [PingRequest](#tcp_proxy-v1-PingRequest)
     - [PingResponse](#tcp_proxy-v1-PingResponse)
-    - [PushBufferedInputRequest](#tcp_proxy-v1-PushBufferedInputRequest)
-    - [PushBufferedInputResponse](#tcp_proxy-v1-PushBufferedInputResponse)
   
     - [TcpProxyService](#tcp_proxy-v1-TcpProxyService)
   
@@ -3009,6 +3007,8 @@ GatewayManagementService allows remote configuration of Spring Cloud Gateway rou
 | ----- | ---- | ----- | ----------- |
 | session_id | [string](#string) |  |  |
 | tenant_id | [string](#string) |  |  |
+| proxy_connection_id | [string](#string) |  |  |
+| disconnect_sequence | [uint64](#uint64) |  |  |
 
 
 
@@ -3055,44 +3055,6 @@ GatewayManagementService allows remote configuration of Spring Cloud Gateway rou
 
 
 
-<a name="tcp_proxy-v1-PushBufferedInputRequest"></a>
-
-### PushBufferedInputRequest
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| session_id | [string](#string) |  |  |
-| commands | [string](#string) | repeated |  |
-| tenant_id | [string](#string) |  |  |
-
-
-
-
-
-
-<a name="tcp_proxy-v1-PushBufferedInputResponse"></a>
-
-### PushBufferedInputResponse
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
-
-
-
-
-
- 
-
- 
-
- 
-
-
 <a name="tcp_proxy-v1-TcpProxyService"></a>
 
 ### TcpProxyService
@@ -3102,7 +3064,6 @@ GatewayManagementService allows remote configuration of Spring Cloud Gateway rou
 | ----------- | ------------ | ------------- | ------------|
 | Ping | [PingRequest](#tcp_proxy-v1-PingRequest) | [PingResponse](#tcp_proxy-v1-PingResponse) |  |
 | NotifyDisconnect | [NotifyDisconnectRequest](#tcp_proxy-v1-NotifyDisconnectRequest) | [NotifyDisconnectResponse](#tcp_proxy-v1-NotifyDisconnectResponse) |  |
-| PushBufferedInput | [PushBufferedInputRequest](#tcp_proxy-v1-PushBufferedInputRequest) | [PushBufferedInputResponse](#tcp_proxy-v1-PushBufferedInputResponse) |  |
 
  
 
@@ -3335,4 +3296,3 @@ GatewayManagementService allows remote configuration of Spring Cloud Gateway rou
 | <a name="bool" /> bool |  | bool | boolean | boolean | bool | bool | boolean | TrueClass/FalseClass |
 | <a name="string" /> string | A string must always contain UTF-8 encoded or 7-bit ASCII text. | string | String | str/unicode | string | string | string | String (UTF-8) |
 | <a name="bytes" /> bytes | May contain any arbitrary sequence of bytes. | string | ByteString | str | []byte | ByteString | string | String (ASCII-8BIT) |
-

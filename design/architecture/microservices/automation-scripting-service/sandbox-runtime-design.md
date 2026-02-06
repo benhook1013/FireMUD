@@ -7,12 +7,24 @@ This document describes how the Automation & Scripting Service enforces script s
 
 ## Implementation Status
 
-This document describes the **target-state architecture** for script sandboxing and resource limits. Some aspects may be partially implemented or stubbed out in the current codebase.
+This document describes the **target-state architecture** for script sandboxing and resource limits. Some aspects may be partially implemented or stubbed out in the current codebase. Together with `design/architecture/system-architecture-scripting-dsl-reference-and-lifecycle.md`, it is the canonical specification for sandbox semantics; the high-level hub in `design/architecture/system-architecture-scripting.md` summarizes behavior and should defer to this document when there is any conflict.
 
-For the latest progress, see:
+For the latest progress and implementation notes, see:
 
 - `design/project-management/task-list-automation-scripting-service.md`
 - `design/architecture/system-architecture-scripting.md#sandboxing--security`
+
+The table below captures the intended behavior and current implementation status of key sandbox features. Keep this matrix up to date as engine work lands so downstream docs and services can rely on it.
+
+| Feature | Description | Status (as of 2025-12-04) | Notes |
+| --- | --- | --- | --- |
+| Per-run wall-clock timeout | Abort a script run that exceeds its allocated wall-clock budget and record `sandbox_error` with `reason=cpu_budget_exceeded`. | Implemented / evolving | Core timeout behavior exists; budgets may be tuned as `AUTOMATION_TICK_BUDGET_MS` and related knobs evolve. |
+| Iteration / loop guards | Enforce per-run iteration limits so even bounded loops cannot hot-loop indefinitely. | Implemented | Backed by loop-safety analysis and runtime iteration counters; see DSL reference for graph rules. |
+| Soft memory guards | Approximate tracking of script-local data sizes and early abort with `reason=memory_budget_exceeded` before JVM OOM. | Partial | Model and outcomes are defined here; enforcement thresholds and telemetry are still being tuned. |
+| Outcome taxonomy | Canonical `outcome` / `reason` pairs for sandbox failures and infrastructure errors written to `script_event_audit`. | Implemented | Must remain consistent with `design/architecture/system-architecture-scripting-quotas-and-operations.md#outcome-to-metric-mapping`. |
+| Failure-rate circuit breaker integration | Use live-traffic sandbox failures to transition scripts into `runtimeStatus=DISABLED_DUE_TO_ERRORS`. | Implemented / evolving | Core wiring is present; thresholds and disable policies are adjusted over time. Dry-run/test executions must be isolated so privileged tooling cannot disable live scripts by default. |
+| Test / dry-run parity | Dry-run executions share the same sandbox limits as live runs while being tracked separately for quotas and metrics. | Partial | Engine behavior is shared; additional dry-run–specific budgets and metrics are being added in the Automation & Scripting Service README and quotas docs. |
+| Plugin sandbox reuse | Plugins run in the same sandbox engine with component allowlists and stricter quotas. | Partial | Core reuse exists; plugin-specific component policy and observability are being expanded in the modding and quotas docs. |
 
 ---
 
@@ -78,7 +90,7 @@ Each script run follows a consistent lifecycle:
      - `quota_denied`
      - `sandbox_error` (with a specific reason)
      - `infrastructure_error`
-   - Outcomes are written to the `script_event_audit` store and exposed via metrics for dashboards and alerts.
+   - Outcomes are written to the `script_event_audit` store and exposed via metrics for dashboards and alerts. Pre-admission quota denials (`quota_denied`) are handled by `ScriptQuotaService` before sandbox work begins and do **not** contribute to sandbox failure metrics; sandbox errors (for example, budget violations) do, and are considered by the failure-rate circuit breaker. See `design/architecture/system-architecture-scripting-quotas-and-operations.md#outcome-to-metric-mapping` for how these outcomes map to metrics and disable behavior.
 
 ---
 
@@ -207,12 +219,27 @@ The combined effect is that noisy or buggy scripts are throttled or disabled qui
 
 ---
 
+## Configuration Knobs
+
+Sandbox behavior is shaped by a combination of in-code defaults and environment variables exposed by the Automation & Scripting Service. The authoritative list of environment variables and their defaults lives in the service README (`design/architecture/microservices/automation-scripting-service/README.md#environment-variables`); this section highlights the ones most directly related to the budgets described above:
+
+- `AUTOMATION_TICK_DURATION_MS` – bounds the wall-clock duration of an automation tick. This, together with the scheduler’s batching strategy, constrains how often sandboxed runs are admitted.
+- `AUTOMATION_TICK_MAX_EVENTS` – caps how many automation events (including script runs) are staged from `automation:queue` per automation tick.
+- `AUTOMATION_TICK_BUDGET_MS` – provides a soft execution budget for script work performed inside a single automation tick; it informs the per-run budget tokens allocated to sandboxed evaluations.
+- `SCRIPT_EVENT_AUDIT_RETENTION_DAYS` / `SCRIPT_EVENT_AUDIT_MAX_ROWS` – control how long sandbox outcomes (for example, `sandbox_error` with `cpu_budget_exceeded` or `memory_budget_exceeded`) remain queryable in `script_event_audit`.
+
+Per-script and per-tenant quotas (for example, `SCRIPT_QUOTA_LIMIT` and `SCRIPT_QUOTA_WINDOWSECONDS`) are documented in the service README and in `design/architecture/system-architecture-scripting-quotas-and-operations.md`; they work in tandem with the sandbox budgets to determine whether a run is admitted and how much CPU and memory it can consume.
+
+Additional resource-related environment variables may be introduced over time. New knobs should be documented first in the Automation & Scripting Service README and, where they materially affect sandbox semantics, referenced from this section so operators and implementers can correlate configuration changes with the behavior described above.
+
+---
+
 ## Operator Guidance
 
 When diagnosing sandbox-related issues in production, operators should:
 
 - Check `script_event_audit` records for:
-  - `outcomeType` (`sandbox_error`, `infrastructure_error`, `quota_denied`)
+  - `outcome` (`sandbox_error`, `infrastructure_error`, `quota_denied`)
   - `reason` fields (`cpu_budget_exceeded`, `memory_budget_exceeded`, other sandbox reasons)
   - Associated `tenantId`, `scriptId`, and `tickId`
 - Inspect metrics such as:

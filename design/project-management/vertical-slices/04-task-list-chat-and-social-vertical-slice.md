@@ -1,5 +1,9 @@
 # Chat & SAY Vertical Slice Task List
 
+## Goal and Status
+
+Goal: extend the text command fabric with a `SAY`-centric chat slice that keeps WebSocket and Telnet behaviour and observability in lockstep across Game Session, Game Logic, and Social/Groups services. Status: key pieces of the SAY path and its tests are implemented; this document describes the target-state behaviour, with up-to-date implementation details captured in the associated microservice design docs and regression test plans.
+
 After `LOOK` flows through the new Game Logic + World + Entity path, the next smallest playable slice expands the text command fabric with the `SAY` chat path that lets players speak to others in the same room, touching Game Logic aggregation, Game Session command parsing, and the cross-service regression suites so we can assert both WebSocket and Telnet experiences stay in sync.
 
 ## 1. Protocol, UX, and Design Alignment for SAY

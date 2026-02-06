@@ -10,3 +10,9 @@ These assets complement the architecture logging and monitoring design by provid
 - [kibana/](./kibana/) – JSON exports of Kibana index patterns, searches, and dashboards focused on log exploration and error investigation.
 
 For a conceptual overview of the observability stack (Prometheus, Elasticsearch, Fluent Bit, OpenTelemetry, Alertmanager, and dashboarding tools), see [System Architecture – Logging & Monitoring](../architecture/system-architecture-logging-monitoring.md) and [Observability Components](../architecture/system-architecture-diagram.md#-observability-components).
+
+## Workflow
+
+- Treat `design/architecture/system-architecture-logging-monitoring.md` and `design/architecture/system-architecture-redis-operations.md` as the contract for alert labels, metric naming/units, and required dimensions (for example `severity ∈ {P0,P1,P2}`, `owner`, `runbook`, and stable `service` labels on shared metrics).
+- When updating Grafana dashboards or Alertmanager snippet templates, keep PromQL aligned with that contract (especially latency units for `_ms` metrics and per-tenant/region scoping where required).
+- Validate changes locally with `python3 dev-tools/observability/validate-observability-contract.py` and keep CI green.

@@ -19,12 +19,65 @@ database when the template is saved. The `config` field uses a structured
 schema describing world layout, starter items, default rulesets, and admin
 accounts.
 
+The `config` payload does not embed authoritative copies of world, entity, or script definitions. Instead it carries:
+
+- References to world templates (regions, rooms) using stable identifiers owned by the World Management Service and scoped by `(tenantId, versionId)`.
+- References to starter items, NPCs, and equipment using stable identifiers owned by the Entity Management Service and scoped by `(tenantId, versionId)`.
+- References to rulesets and scripts via identifiers defined by the Automation & Scripting Service.
+
+Canonical schemas, identifiers, and versioned template rows remain in the owning domain services; `GameTemplateDto.config` is a configuration and wiring layer that composes these existing templates for bootstrapping new games.
+
+### Normalized Reference Storage
+
+Game templates participate in version retirement, auditing, and bulk migration workflows. Because `GameTemplateDto.config` is JSON, the system must not rely on ad hoc JSON parsing to enforce invariants like “do not retire a version that is still referenced” or to perform controlled rewrites of references.
+
+The Game Design Service therefore stores normalized reference rows alongside the JSON config, derived and validated on every create/update:
+
+- `game_template_version_ref` keyed by `(tenantId, gameTemplateId, versionId)` for the base design bundle referenced by the template.
+- `game_template_world_ref` keyed by `(tenantId, gameTemplateId, versionId, regionTemplateId/roomTemplateId/...)` for any explicit world references present in the config.
+- `game_template_entity_ref` keyed by `(tenantId, gameTemplateId, versionId, entityTemplateId/lootTableId/...)` for starter items/NPCs and related entity wiring.
+- `game_template_script_ref` keyed by `(tenantId, gameTemplateId, versionId, scriptId/...)` for script bindings where templates need to pin or validate script identifiers.
+- `game_template_script_patch_ref` keyed by `(tenantId, gameTemplateId, baseVersionId, scriptPatchVersion)` when a template pins a default `scriptPatchVersion` for a base version.
+
+Administrative tooling and lifecycle checks (retirement eligibility, “list templates referencing version”, bulk migrations) operate on these normalized tables. The JSON config remains the user-facing payload and can be reconstructed or validated against normalized rows, but it is not the only queryable representation of dependencies.
+
+Normalized reference invariants:
+
+- The normalized reference tables are authoritative for dependency queries (retirement eligibility checks, “list templates referencing version”, bulk migration planning). The system must not rely on best-effort parsing of arbitrary JSON to determine dependencies.
+- Create/update operations must update `game_templates.config` and all corresponding `game_template_*_ref` rows in the same database transaction. Partial updates are not allowed.
+- If reference derivation fails (for example malformed config), the template write must fail; the service must not persist a config that cannot be represented in normalized reference rows.
+- Introducing normalized reference tables requires a one-time backfill migration/job for existing templates. Backfill must validate consistency and mark templates `INVALID` if dependencies cannot be derived or resolved.
+
 > **Note**
 
 Templates are **versioned** like any other design asset. Publishing a
-version copies these templates to the domain services using the
-`version_id` workflow described in
-[Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md).
+version does **not** copy a separate design database into the domain
+services. Instead:
+
+- The Game Design Service persists `game_templates` rows and their revision history as design-time artifacts.
+- World Management, Entity Management, and related domain services already own the authoritative versioned templates keyed by `(tenantId, versionId)`; publish finalizes those Draft templates via the `version_id` workflow described in [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md).
+- `GameTemplateDto.config` composes existing domain templates by reference and is validated at publish time; it never becomes a competing source of truth for world or entity graphs.
+
+Ownership can be summarized as:
+
+- **Game Design Service** – owns `game_templates` and all version/control metadata for templates.
+- **World Management / Entity Management / Automation & Scripting** – own world, entity, and script templates and their identifiers; game templates only reference these records via stable IDs.
+
+### Runtime Defaults
+
+Game templates may optionally carry default runtime configuration alongside their structural wiring:
+
+- `GameTemplateDto.config` can include optional fields such as a default `scriptPatchVersion` or initial feature-flag presets that the Game Session Service uses when creating new `gameInstanceId` values from the template.
+- When these defaults are present, instance-creation flows should apply them explicitly; when they are absent, callers must provide the desired `scriptPatchVersion` and runtime flags at creation time. Templates must not implicitly select “latest READY patch” or other moving targets without operator input.
+- If a template pins a default `scriptPatchVersion`, instance creation must validate that Automation & Scripting has marked that patch `READY` for the tenant before pinning it for a running instance; otherwise instance creation fails with a clear error and no instance rows are created.
+
+### Interaction with Version Lifecycle
+
+Game templates participate in the same version lifecycle as the domain templates they reference:
+
+- A `GameTemplateDto` may reference only versions that are not in the `Retired` state (also referred to as “Archived” in some UIs). When saving or updating a template, the Game Design Service must validate that all referenced `(tenantId, versionId, templateId)` triples exist and that the corresponding `versionId` is still eligible to be activated.
+- The `RetireVersion` workflow in Game Design or Logging & Admin Services must refuse to retire a version while any game templates still reference it. Designers must migrate those templates to a successor version (for example by creating new templates pointing at the new version’s templates) before the old version can be retired.
+- Templates that reference missing or invalid templates (for example due to a failed migration) should be marked as `OUT_OF_DATE` or `INVALID` in metadata and blocked from use when creating new games until designers repair or migrate them.
 
 ## Creating Templates
 

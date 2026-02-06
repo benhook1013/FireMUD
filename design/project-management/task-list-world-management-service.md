@@ -32,6 +32,8 @@
 - [ ] Copy published version data into world schema via Saga
 - [ ] Publish gRPC notifications when world state changes
 - [ ] Track character locations and instance occupancy
+- [ ] Implement `room:<tenantId>:<roomId>` and `world-dynamic:<tenantId>:<aggregateId>` caches as Class A, versioned caches (room/world version fields, version-checked reads, atomic set+TTL writes) consistent with `system-architecture-redis-cache.md`.
+- [ ] Wire world/room change events and version activations to invalidate or refresh `room:*` and `world-dynamic:*` keys, and add cache metrics/tests (hit/miss, key counts, reset behavior) for these prefixes.
 
 ## Administration & Backup
 
@@ -40,11 +42,7 @@
 
 ## Reusable Microservice Checklist
 
-These tasks apply to every FireMUD service unless noted otherwise. Gateway and
-TCP Proxy skip the gRPC and database items but still expose health checks and
-participate in CI.
-
----
+These tasks apply to every FireMUD service unless noted otherwise. For the shared checklist, see `design/project-management/reusable-microservice-checklist.md`.
 
 ## Project Setup & CI
 
@@ -116,6 +114,7 @@ participate in CI.
 - [x] Emit metrics for Redis connectivity and commands
 - [x] *(N/A - not part of tick system)* implement locking and staging per the Tick System docs
 - [x] Prefix all keys with `tenantId` to isolate game data
+- [ ] For any new or changed Redis prefixes (for coordination or cache), register them in the central key catalogs and follow the [Redis Change Checklist](../architecture/system-architecture-redis.md#redis-change-checklist) for role selection, hash-tagging, and reset behavior.
 
 ---
 

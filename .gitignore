@@ -16,6 +16,10 @@
 .DS_Store
 certs/
 
+# Python bytecode
+__pycache__/
+*.pyc
+
 # Gradle Wrapper
 **/build/
 

@@ -33,6 +33,7 @@ resource "helm_release" "redis" {
   name       = "firemud-redis"
   repository = "https://charts.bitnami.com/bitnami"
   chart      = "redis"
+  version    = "20.13.4"
   namespace  = var.namespace
   values     = [file("${path.module}/redis-values.yaml")]
 }
