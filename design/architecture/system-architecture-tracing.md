@@ -91,6 +91,30 @@ All spans should include, where applicable:
   - Do not attach user-provided text (chat content, command payloads, free-form error messages) as span attributes; keep that data in logs with appropriate redaction and retention controls.
   - When exporting traces outside of the cluster or into shared tooling, ensure access controls and retention policies match the sensitivity of these identifiers.
 
+### Incident-Mode Sampling Procedure (Design Contract)
+
+FireMUD supports two escalation levels for “incident mode” sampling. Operators should choose the least invasive option that provides enough data and should always record start/end times and the chosen scope in the incident timeline.
+
+1. **Service-scoped sampling (fast, coarse)**
+   - Mechanism: adjust head sampling in the affected service(s) via standard OpenTelemetry env vars:
+     - `OTEL_TRACES_SAMPLER=parentbased_traceidratio`
+     - `OTEL_TRACES_SAMPLER_ARG=<ratio>` (for example `0.10` for 10%)
+   - Operational shape:
+     - Roll out a temporary configuration change to the affected Deployment(s).
+     - Verify: in Jaeger, `service.name="<service>"` should show a visibly higher trace volume within a few minutes.
+     - Revert: restore the baseline ratio after the incident.
+   - Limits: this cannot scope sampling to a specific `tenantId` or `regionId`; it increases volume for the service overall.
+
+2. **Tenant/region-scoped sampling (precise, requires collector support)**
+   - Mechanism: configure the OpenTelemetry Collector to apply tail-sampling policies based on span attributes such as `tenantId` and `regionId` (as defined in this document’s span catalog).
+   - Operational shape:
+     - Add a temporary “always sample” policy for the target `<tenantId, regionId>` (and optionally `service.name`) and a time-bound note in the collector config (for example “remove after incident X”).
+     - Verify: in Jaeger, filtering by `tenantId`/`regionId` should yield traces even when baseline sampling is low.
+     - Revert: remove the temporary policy and reload the collector configuration.
+   - Limits: this requires that the collector is deployed with tail-sampling enabled and that the relevant spans actually carry `tenantId`/`regionId` attributes.
+
+Environment defaults and the baseline sampler ratio are documented in `design/architecture/infrastructure/environment-and-secrets-catalog.md#observability`.
+
 ## Operational Playbook: Using Traces During Incidents
 
 During incidents, Jaeger is a first-class tool alongside logs and metrics. The following queries and patterns are used by runbooks:

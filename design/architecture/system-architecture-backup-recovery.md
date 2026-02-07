@@ -63,6 +63,20 @@ For convenience, `dev-tools/backups/firemud-backup.sh` automates these steps by 
 
 Velero continues backing up Kubernetes manifests only and does **not** pause any services. Tick pausing is required only at the start of `pg_dump`, not for its entire runtime.
 
+#### Tick Pause Scope Contract (Normative)
+
+Tick pause/resume APIs support multiple ways to identify scope. To keep operators and automation predictable, the contract is:
+
+- The **canonical scope** is `tenant_id` + `region_id`. This is the scope used by tick health dashboards, SLOs, and incident runbooks.
+- `game_instance_id` is an **alias scope** that is allowed only when a game instance maps cleanly to a single tick region. It exists primarily for early implementations and for backup tooling that is tied to game-instance boundaries.
+- Requests must set `tenant_id` and must set exactly one of:
+  - `region_id` (preferred), or
+  - `game_instance_id` (alias)
+- If both `region_id` and `game_instance_id` are set, the request is rejected as `INVALID_ARGUMENT`.
+- If neither is set, the request is rejected as `INVALID_ARGUMENT`.
+
+Backups should use `region_id` scoping wherever possible to minimize blast radius; use the alias only when the deployment does not yet expose region-scoped pause controls end-to-end.
+
 For local clusters without cloud storage, deploy the `k8s/velero/minio.yaml` manifest and configure Velero with a local backup location:
 
 ```yaml

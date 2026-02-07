@@ -184,6 +184,11 @@ message RollbackScriptPatchVersionResponse {
 }
 
 message PauseTicksForScopeRequest {
+  // Scope rules (normative):
+  // - tenant_id is required.
+  // - Exactly one of region_id or game_instance_id must be set.
+  // - region_id is the canonical tick scope (preferred).
+  // - game_instance_id is an alias scope allowed only when a game instance maps cleanly to a single tick region.
   string tenant_id = 1;
   string game_instance_id = 2;
   string region_id = 3;
@@ -198,6 +203,11 @@ message PauseTicksForScopeResponse {
 }
 
 message ResumeTicksForScopeRequest {
+  // Scope rules (normative):
+  // - tenant_id is required.
+  // - Exactly one of region_id or game_instance_id must be set.
+  // - region_id is the canonical tick scope (preferred).
+  // - game_instance_id is an alias scope allowed only when a game instance maps cleanly to a single tick region.
   string tenant_id = 1;
   string game_instance_id = 2;
   string region_id = 3;

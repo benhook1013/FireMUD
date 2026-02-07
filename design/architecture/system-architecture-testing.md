@@ -119,6 +119,19 @@ In addition to functional, load, and security tests, FireMUD treats observabilit
 
 New services and features that add critical metrics or alerts should extend these observability tests where feasible so configuration errors are caught in CI rather than only in staging or production.
 
+#### Where These Checks Run (Decision)
+
+To keep PR feedback fast while still preventing “it only breaks in staging” drift, FireMUD uses a two-tier expectation:
+
+- **Always (PR + main CI)**:
+  - Design-contract validation of dashboard/snippet consistency (for example `dev-tools/observability/validate-observability-contract.py`).
+  - Markdown link + lint checks so runbook references do not rot.
+- **Prod-like observability smoke (nightly or staging-gated)**:
+  - Alert routing smoke: trigger a test-only alert (`alert_class="test"`, `severity="P2"`) and verify Alertmanager routing and label preservation end-to-end.
+  - Tracing smoke: run a login + representative command flow and verify at least one `gamesession_handle_command` span (and one `tick_execute` span where ticks run) is present in the trace backend.
+
+This split ensures that contract drift is caught on every change, while backend-dependent checks run only where Alertmanager/Jaeger are actually available.
+
 ---
 
 ## Related Documentation

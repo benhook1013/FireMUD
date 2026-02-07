@@ -149,6 +149,21 @@ Environment-specific Alertmanager configurations may add routing rules and notif
 - Logging & Admin can display alerts with clear ownership and links to the appropriate runbooks.
 - Operators can jump from an alert to the corresponding Grafana dashboard and architecture/runbook section without guesswork.
 
+#### Owner Catalog (Normative)
+
+To prevent drift and “everyone owns it” ambiguity, `owner` must come from a bounded catalog:
+
+- `platform` – observability stack, CI/CD, shared libraries, Kubernetes primitives, core reliability glue.
+- `infra` – Redis/PostgreSQL operations, storage, networking, certificates, cluster health.
+- `gameplay` – tick/runtime behavior, domain correctness, player-experience SLOs, region layout.
+- `web` – web client and Gateway UX surface issues (route health, WebSocket behavior from the browser’s perspective).
+- `security` – auth, token/JWKS, operator credentials, cross-service trust failures.
+
+Routing rule requirements:
+
+- Unknown `owner` values must be treated as a configuration error: route to the default operator channel and emit a warning annotation/log so it is fixed quickly.
+- In single-admin deployments, it is acceptable for all `owner` values to route to the same notification destination; `owner` still matters for triage context and for future multi-operator setups.
+
 ### Alert Fallback Recording Rules
 
 When Alertmanager is unavailable but Prometheus is still accessible, Logging & Admin may present a limited view of critical conditions based on recording rules evaluated directly in Prometheus. To keep behavior predictable, only a small set of fallback signals is supported:
@@ -166,6 +181,8 @@ Logging & Admin should:
 
 - Use these recording rules as the sole source of “active issues” when Alertmanager is unreachable, and clearly label the UI as “Alertmanager unavailable – showing fallback Prometheus conditions”.
 - Prefer Alertmanager as the source of truth whenever it is healthy; fallback conditions are a last resort to keep operators informed of the most critical SLO violations.
+
+Fallback recording rules must be installed as part of the Prometheus ruleset for every prod-like environment. The reference starting point for these rules lives at `k8s/monitoring/prometheus-rules-firemud.yaml`; environment overlays may adjust thresholds but must preserve the metric names, labels, and alert label contract described in this document.
 
 For scripting and automation workloads, dashboards and alerts must include both live and dry-run activity:
 
