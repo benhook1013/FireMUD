@@ -84,6 +84,57 @@ Triggers lead to DSL runs, which produce script work items in the automation que
 
 ---
 
+## Work Item Outbox Contract (Normative)
+
+The Automation & Scripting Service must treat Redis automation queues (`automation:queue:*`) as derived indexes/pointers only. The authoritative record of admitted post-DSL work is the durable work item outbox.
+
+This section defines the minimum contract that makes “persist → index → drain → handoff” interoperable and rollback-safe across services and operational tooling.
+
+### Minimum Outbox Record Fields
+
+Each persisted script work item must include:
+
+- Trigger Identity fields from `design/architecture/system-architecture-scripting-normative-contract-tables.md#table-1-trigger-identity-required-fields` (including `gameInstanceId` and, for gameplay/runtime triggers, `regionEpoch`).
+- `outboxWorkItemId` (stable unique identifier).
+- `createdAt` and `updatedAt`.
+- `workItemStatus` (see below).
+- `commands` (the domain commands payload, stored durably).
+- `commandCount` (for budgeting/inspection).
+- `cancelReason` (nullable; required when canceled).
+
+### Minimum Status Model
+
+Statuses are a target-state contract; implementations may use different internal names as long as they are mapped 1:1:
+
+- `PENDING` – persisted, eligible for indexing and draining.
+- `INDEXED` – a pointer/index has been published into `automation:queue:*` (best-effort; may be rederived).
+- `HANDOFF_IN_FLIGHT` – being handed off to Game Session (idempotent retries allowed).
+- `HANDED_OFF` – Game Session has accepted the corresponding tick commands into tick queues (`script_event_audit.finalStage=TICK_HANDOFF` is now eligible for `finalOutcome=success`).
+- `CANCELED` – permanently canceled by control plane (for example rollback, disable, or operator purge).
+- `DEAD_LETTERED` – permanently non-progressing due to repeated infrastructure failures; bounded retention and operator visibility are required.
+
+### Pointer Payload Contract for `automation:queue:*`
+
+Entries in `automation:queue:<tenantId>:<entityId>` must contain enough information to locate and safely process the durable outbox record:
+
+- `outboxWorkItemId`
+- A minimal identity checksum (for example `scriptPatchVersion`, optional `pluginVersionId`) so rebuild/drain logic can detect version-fence mismatches early without reading full payloads.
+
+The pointer/index format must be forward-compatible (versioned envelope) so it can evolve without requiring out-of-band Redis migrations.
+
+### Rebuild and Deduplication Rules
+
+- Rebuilding `automation:queue:*` from the outbox must be safe to run repeatedly and concurrently (idempotent projection).
+- `ScriptTickService` must dedupe drain/handoff by `outboxWorkItemId` (not by Redis list position) so queue resets, re-indexing, and retries do not cause double-handoff.
+- `CancelPendingWorkItemsForPatch` must be implemented as an outbox state transition (`workItemStatus=CANCELED`) so cancellation is durable even if Redis is reset. Cancellation must be reflected in `script_event_audit` stage-aware outcomes (for example `finalStage=ADMISSION` with a cancel outcome/reason for newly arriving triggers, and non-success outcomes for already persisted work that is canceled before handoff).
+
+### Operational Constraints
+
+- Outbox scanning for rebuild and cancellation must be bounded and backpressured (pagination, time windows, per-tenant limits) so it cannot become an unbounded full-table scan on large tenants.
+- Outbox retention must be explicitly defined for `HANDED_OFF`, `CANCELED`, and `DEAD_LETTERED` records, and must preserve enough history for rollback diagnosis and audit queries.
+
+---
+
 ## `scriptEventId` Lifecycle and Deduplication
 
 `scriptEventId` is the canonical identifier for a single script trigger/run; it appears on automation queue entries, tick commands, and `script_event_audit` rows so behavior can be correlated end-to-end.

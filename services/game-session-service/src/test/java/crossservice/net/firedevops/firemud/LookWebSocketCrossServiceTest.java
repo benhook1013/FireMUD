@@ -194,7 +194,7 @@ class LookWebSocketCrossServiceTest {
     WebSocket webSocket =
         client
             .newWebSocketBuilder()
-            .header("X-Session-Id", String.valueOf(sessionId))
+            .header("X-Game-Instance-Id", String.valueOf(sessionId))
             .buildAsync(
                 uri,
                 new Listener() {

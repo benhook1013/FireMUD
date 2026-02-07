@@ -33,6 +33,13 @@ Required identity fields for all triggers:
 | `scriptPatchVersion` | Yes | Pinned patch version for the game instance at the time the trigger is emitted. |
 | `scriptEventId` | Yes | Caller-supplied idempotency token. Must be stable across retries. Must not be used as a Prometheus label. |
 
+Additional required fields for plugin triggers:
+
+| Field | Required | Notes |
+| --- | --- | --- |
+| `pluginId` | Yes (plugin triggers) | Required to distinguish plugin-triggered runs from core scripts when the same `scriptId` model is reused. |
+| `pluginVersionId` | Yes (plugin triggers) | Required for rollback safety, audit correlation, and version-fence drops. |
+
 Additional required fields for scheduler/timer triggers:
 
 | Field | Required | Notes |
@@ -69,11 +76,11 @@ Notes:
 
 ### Required Cleanup Rule for Version Fencing
 
-If Game Session rejects a queued command because its embedded `scriptPatchVersion` does not match the currently pinned patch, it must:
+If Game Session rejects a queued command because its embedded `scriptPatchVersion` does not match the currently pinned patch (or a plugin-produced command does not match the currently active `pluginVersionId` for its `pluginId`), it must:
 
 - Record the drop with identifiers sufficient for diagnosis (including `scriptEventId`, `scriptId`, `scriptPatchVersion`, `gameInstanceId`, `regionId`, `entityId`).
 - Remove the rejected queue entry (or move it to a bounded dead-letter store) so mismatched entries cannot accumulate unboundedly after a rollback.
-- Emit an operator-visible metric for version-fence drops (exact metric name must follow the metric naming conventions in the observability contract).
+- Emit an operator-visible metric for version-fence drops. The normative metric family is `automation_tick_version_fence_dropped_total{tenantId, scriptId, reason}`, where `reason` distinguishes cases such as `script_patch_mismatch` and `plugin_version_mismatch`.
 
 ## Table 3: Timer Semantics Matrix
 
@@ -107,6 +114,8 @@ General rules:
 | `script_quota_allowed_total` | `tenantId`, `scriptId` | `scriptEventId` | Quota decisions are pre-eval. |
 | `script_quota_denied_total` | `tenantId`, `scriptId`, `reason` | `scriptEventId` |  |
 | `automation_tick_events_enqueued_total` | `tenantId` | `scriptEventId` | Counts successful tick handoffs, not DSL evaluations. |
+| `automation_tick_version_fence_dropped_total` | `tenantId`, `scriptId`, `reason` | `scriptEventId` | Counts commands dropped at execution-time due to script patch or plugin version fences. |
 | `automation_script_runtime_seconds` | `tenantId`, `scriptId`, `eventType`, optional `pluginId` | `scriptEventId` | Runtime is sandbox eval time (not tick execution time). |
 | `automation_script_sandbox_failures_total` | `tenantId`, `scriptId`, `reason`, optional `pluginId` | `scriptEventId` |  |
 | `automation_script_test_runs_total` | `tenantId`, `scriptId`, `eventType`, `result`, optional `pluginId` | `scriptEventId` | Must be separate from live-traffic counters. |
+| `automation_script_test_sandbox_failures_total` | `tenantId`, `scriptId`, `eventType`, `reason`, optional `pluginId` | `scriptEventId` | Dry-run/test-only sandbox failures; must not increment live sandbox failure counters. |

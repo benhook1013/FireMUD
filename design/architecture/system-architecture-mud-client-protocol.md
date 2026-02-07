@@ -20,7 +20,9 @@ MCP package semantics are terminated by the backend session layer (Spring Cloud 
 
 ## Protocol Handshake
 
-When a client connects, the server begins with an `mcp` version line advertising a minimum and maximum supported protocol version. The client replies with its own `mcp` line that includes the session’s `authentication-key` along with its version range. Both sides pick the highest overlapping version and tag all subsequent messages with the agreed key; if no overlap exists, MCP cannot be used and the connection must fall back to plain Telnet or close. The authentication key may be any unquoted string but should be hard to guess, as the server will discard any message whose key does not match the one negotiated at startup.
+MCP negotiation begins when either endpoint sends an initial `mcp` line advertising the supported MCP version range. FireMUD and MCP-capable clients then exchange an `authentication-key` and agree on the highest overlapping MCP version; all subsequent MCP messages are tagged with the negotiated key. If no overlap exists, MCP cannot be used and the connection must fall back to plain text or close.
+
+On the Telnet path, the TCP Proxy Service may still be in its `SESSION` envelope capture window when clients begin MCP negotiation. `SESSION` envelopes are consumed by the proxy; MCP control lines are forwarded upstream and do not close the envelope window. Clients that want to use both `SESSION` and MCP should send `SESSION` first, then start MCP negotiation (and then proceed to `LOGIN`) so the proxy can include any captured session hints in the Proxy → Gateway WebSocket handshake.
 
 Each endpoint then advertises its capabilities using `mcp-negotiate-can package: <name> min-version: <x> max-version: <y>` messages and finishes with `mcp-negotiate-end`. FireMUD uses version 2.0 of the `mcp-negotiate` package, so the package must be advertised explicitly and `mcp-negotiate-end` terminates negotiation. A package is considered active only after both sides have sent `mcp-negotiate-can` for it and both have sent `mcp-negotiate-end`. Implementations may defer using a package until receipt of the other side’s `mcp-negotiate-end`. Unknown packages are ignored so legacy clients remain unaffected.
 
@@ -29,8 +31,8 @@ No other MCP traffic should be sent until both sides have exchanged their initia
 Example handshake:
 
 ```text
-#$#mcp version: 2.1 to: 2.1
 #$#mcp authentication-key: 18972163558 version: 2.1 to: 2.1
+#$#mcp version: 2.1 to: 2.1
 #$#mcp-negotiate-can package: mcp-negotiate min-version: 1.0 max-version: 2.0
 #$#mcp-negotiate-can package: mcp-cord min-version: 1.0 max-version: 1.0
 #$#mcp-negotiate-end
@@ -103,7 +105,7 @@ MCP state is **strictly per TCP connection** and does not survive reconnects on 
 - Telnet `SESSION` envelopes are likewise per TCP connection. Advanced clients that rely on `SESSION` for session/tenant hints must resend the envelope on reconnect if they want those hints to apply again, even when the underlying gameplay session resumes from Redis.
 - The TCP Proxy Service never attempts to “reattach” a new TCP socket to a previous `SESSION` or MCP negotiation; each TCP connection is treated as a fresh transport, even when it leads to a resumed gameplay session in Game Session.
 
-From the gameplay perspective, reconnection and resume behavior follow the rules in [Reconnection Strategy](./system-architecture-reconnection.md): clients always send a fresh `LOGIN` after any disconnect, and Game Session uses Redis-backed state to decide whether to resume or start a new session. MCP and `SESSION` provide additional structure and hints on top of that flow but never replace the core text protocol or Redis session state as the source of truth.
+From the gameplay perspective, reconnection and resume behavior follow the rules in [Reconnection Strategy](./system-architecture-reconnection.md): clients always send a fresh `LOGIN` after any disconnect and then re-establish gameplay scope via the lobby commands (`WORLDS` / `CHARS` / `PLAY`). Game Session uses Redis-backed state to decide whether the selected world/character can resume an existing gameplay session or must start a new one. MCP and `SESSION` provide additional structure and hints on top of that flow but never replace the core text protocol, Redis session state, or the canonical authorization/entitlement checks as the source of truth.
 
 MCP-aware clients should also follow the general reconnection backoff guidance from [Reconnection Strategy](./system-architecture-reconnection.md#client-reconnection-behaviour): use exponential backoff with jitter when reconnecting after failures (including MCP negotiation failures), respect non‑retriable conditions such as clear policy violations, and avoid tight reconnect loops that could overload the TCP Proxy or Gateway during incidents.
 

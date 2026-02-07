@@ -160,7 +160,11 @@ The platform performs **extensive validation** at design time and at publish tim
   - For **editor-time issues**, fix the graph based on validation errors in the Game Design Service UI and re-run validation before publishing.
   - For **runtime issues**, start from the script’s recent entries in `script_event_audit` and the associated metrics in `design/architecture/system-architecture-scripting-quotas-and-operations.md`, then adjust quotas or disable/throttle the script using the operational flows described there.
   - For **safe test runs**, use the dry-run or test execution tools exposed by the Game Design / Logging & Admin UIs, which call a non-committing test path in the Automation & Scripting Service. These runs exercise the same sandbox and validation logic but do not enqueue commands into tick queues; see the Automation & Scripting Service README for details. Test tools are **privileged** and subject to their own rate limits and budgets so they cannot overload the scripting cluster; avoid running unbounded batches of dry-runs against production tenants.
-  - When working with support or operators, you can use `scriptEventId` as a “debug ticket” for a single trigger: the Game Design and Logging & Admin audit/log views (for example `script_event_audit` queries and trace/log search) can be filtered by `tenantId`, `scriptId`, and `scriptEventId` to follow one event end-to-end. Plugins use the same identifiers, adding `pluginId` / `pluginVersionId` so you can distinguish plugin activity from core scripts.
+  - When working with support or operators, you can use `scriptEventId` as a “debug ticket” for a single trigger, but always pair it with the full identity scope used at runtime:
+    - Always include `tenantId` and `gameInstanceId`.
+    - Include `scriptId` and `scriptPatchVersion` (and `pluginId` / `pluginVersionId` for plugin executions).
+    - For gameplay/runtime triggers, include `regionId` and `regionEpoch` so the trigger is fenced across coordination resets.
+    The Game Design and Logging & Admin audit/log views (for example `script_event_audit` queries and trace/log search) should support filtering by these fields so a single trigger can be followed end-to-end without ambiguity.
 
 For the detailed loop safety algorithm and runtime budget enforcement, see:
 

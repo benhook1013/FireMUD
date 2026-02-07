@@ -166,6 +166,7 @@ These keys capture:
 
 - Socket binding metadata and transport details.
 - Active `playerId` / `tenantId` context.
+- Server-side auth token identity used for backend calls on behalf of this session (for example `authTokenHash` and `authTokenIssuedAt`), so resume and mid-session revocation checks can be performed without exposing JWTs to gameplay clients.
 - Tick-region participation and queued commands.
 - Session-local coordination metadata (for example reconnect state, transport-level pacing, and other per-connection ephemeral fields).
 
@@ -180,6 +181,8 @@ Key properties:
 - The logical expiry timestamp is the **authoritative bound** on reconnection:
   - Reconnect/resume attempts are rejected as expired once the logical expiry has passed, even if the Redis TTL has not yet removed the key (for example, due to AOF replay or failover drift).
   - When either the key is missing or the logical expiry has passed, the session is treated as non-resumable and requires a fresh `LOGIN`.
+
+Logical expiry is necessary but not sufficient for resuming gameplay: Game Session must also validate server-side auth allowlist and revocation state as defined in `system-architecture-authentication.md` (allowlist presence plus `session:auth:revoked_after:*` watermarks). Redis session bindings must therefore store the `authTokenHash` / `authTokenIssuedAt` values that those checks require.
 - The derived `session_expiration_ms` window is computed as:
   - `session_expiration_ms = FIREMUD_AUTH_JWT_EXPIRATION_MS + FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS`
   - This ensures the reconnection window is aligned with JWT lifetime; operators who want a shorter window should reduce `FIREMUD_AUTH_JWT_EXPIRATION_MS` rather than introducing a separate “session TTL” knob.
@@ -210,6 +213,11 @@ For full details on how session keys integrate with reconnect and takeover flows
 - Authentication & Authorization (`system-architecture-authentication.md`)
 - Reconnection Strategy (`system-architecture-reconnection.md`)
 - Game Session Service Redis keys (`microservices/game-session-service/README.md#redis-keys`)
+
+Session revocation actions (for example “kick all sessions for tenant X” on a billing suspension) must not be implemented by scanning the Redis keyspace in hot paths. Runtime revocation is performed by:
+
+- Publishing a tenant-scoped billing/security event that Game Session consumes promptly, and
+- Closing affected sockets and removing the corresponding per-session keys using in-memory registries and/or purpose-built, bounded indexes.
 
 Authentication/session allowlist entries (`session:auth:<scope>:<tokenHash>`, for example `session:auth:account:<accountId>:<tokenHash>` and `session:auth:tenant:<tenantId>:<tokenHash>`) share the same TTL derivation and reset expectations as gameplay sessions, but are documented in detail in `system-architecture-authentication.md` and the Account Service design; they live on Coordination Redis so resets can force re-authentication in a controlled way.
 

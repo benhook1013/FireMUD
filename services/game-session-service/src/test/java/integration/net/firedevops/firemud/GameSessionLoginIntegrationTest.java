@@ -81,7 +81,7 @@ class GameSessionLoginIntegrationTest {
 
     StandardWebSocketClient client = new StandardWebSocketClient();
     WebSocketHttpHeaders headers = new WebSocketHttpHeaders();
-    headers.add("X-Session-Id", "1");
+    headers.add("X-Game-Instance-Id", "1");
 
     ListenableFuture<WebSocketSession> future =
         client.doHandshake(

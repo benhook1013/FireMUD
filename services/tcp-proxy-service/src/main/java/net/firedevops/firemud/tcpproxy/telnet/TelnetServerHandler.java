@@ -207,7 +207,6 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
       builder.header("X-Proxy-Connection-Id", proxyConnectionId);
     }
     if (gameInstanceId != null && !gameInstanceId.isBlank()) {
-      builder.header("X-Session-Id", gameInstanceId);
       builder.header("X-Game-Instance-Id", gameInstanceId);
       builder.header("X-Proxy-Game-Instance-Id", gameInstanceId);
     }

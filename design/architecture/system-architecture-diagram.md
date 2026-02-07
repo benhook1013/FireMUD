@@ -118,7 +118,7 @@ The diagram covers every microservice in the repository:
 - **[Spring Cloud Gateway](./microservices/spring-cloud-gateway/README.md)** – Routes HTTP and WebSocket traffic to internal services.
 - **[Game Session Service](./microservices/game-session-service/README.md)** – Orchestrates sessions, ticks, and runtime configuration.
 - **[Account Service](./microservices/account-service/README.md)** – Handles accounts, authentication, and subscriptions.
-- **[World Management Service](./microservices/world-management-service/README.md)** – Stores rooms, regions, and world maps with pathfinding APIs; it does not own live entities, items, or inventories.
+- **[World Management Service](./microservices/world-management-service/README.md)** – Stores rooms, regions, and world maps plus navigation metadata; pathfinding algorithms and route computation live in the Game Logic Service. World Management does not own live entities, items, or inventories.
 - **[Entity Management Service](./microservices/entity-management-service/README.md)** – Manages players, NPCs, items, and all inventories/containment, including player gear, containers, and items on the ground.
 - **[Game Logic Service](./microservices/game-logic-service/README.md)** – Resolves commands and core gameplay mechanics.
 - **[Game Design Service](./microservices/game-design-service/README.md)** – Provides authoring tools for game data and feature flags with version publishing copy steps and a web-based editor.

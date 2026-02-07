@@ -60,6 +60,7 @@ Dry-run and test execution paths exposed by the Automation & Scripting Service s
 - They execute handlers through the same engine with the same CPU/iteration and memory budgets.
 - They record `sandbox_error` and `infrastructure_error` outcomes in `script_event_audit` so failure modes are observable.
 - By default they do **not** consume per-script quotas or per-tenant budgets enforced by `ScriptQuotaService`; instead, they are restricted to privileged principals (for example, designers and operators) and should be further protected by separate rate limits or ACLs at the API gateway or Logging & Admin layer.
+  - Dry-run/test executions must not increment live-traffic error counters. Sandbox failures observed during tests are emitted via dry-run/test-only metric families (for example `automation_script_test_sandbox_failures_total`) so production SLO dashboards do not conflate privileged tooling with live automation reliability.
 
 ---
 
@@ -241,12 +242,12 @@ Dry-run and test executions share the same sandbox engine and guards as live tra
 
 - Dry-runs do **not** consume ScriptQuotaService windows or per-tenant automation budgets that gate live triggers, but they:
   - Execute through the same sandbox, CPU, and memory budgets described in `design/architecture/microservices/automation-scripting-service/sandbox-runtime-design.md`.
-  - Contribute to dry-run/test metrics and sandbox failure metrics so behavior is observable.
+  - Contribute to dry-run/test-only metrics (for example, `automation_script_test_runs_total`, `automation_script_test_runtime_seconds`, `automation_script_test_sandbox_failures_total`) so behavior is observable without affecting live-traffic dashboards and SLOs.
 - By default, dry-run/test executions must not contribute to failure-rate circuit breakers that can disable live scripts (`runtimeStatus=DISABLED_DUE_TO_ERRORS`); if dry-run failures are used for gating, they must be isolated (separate breaker or explicit opt-in).
 - To prevent abuse, the Automation & Scripting Service enforces additional dry-run ceilings, such as:
   - Per-tenant and per-principal maximum runs per window (for example, `SCRIPT_TEST_MAX_RUNS_PER_MINUTE`).
   - Maximum concurrent dry-runs per tenant or cluster-wide (for example, `SCRIPT_TEST_MAX_CONCURRENCY`).
-- Dry-run activity is surfaced via dedicated metrics (for example, `automation_script_test_runs_total`, `automation_script_test_runtime_seconds`) and labels on existing metrics so operators can distinguish test traffic from live automation.
+- Dry-run activity is surfaced via dedicated metrics (for example, `automation_script_test_runs_total`, `automation_script_test_runtime_seconds`, `automation_script_test_sandbox_failures_total`) so operators can distinguish test traffic from live automation.
 - Logging & Admin and Game Design tools are responsible for exposing dry-run entry points only to privileged users and for applying complementary API gateway limits; test endpoints must not be wired into game traffic or public-facing flows.
 - When a dry-run request exceeds `SCRIPT_TEST_MAX_RUNS_PER_MINUTE` or `SCRIPT_TEST_MAX_CONCURRENCY` ceilings, the Automation & Scripting Service rejects it with `finalOutcome=quota_denied` and `finalReason=dry_run_budget_exceeded` in `script_event_audit`, and increments `automation_script_test_runs_total` with a label (for example, `result="denied_quota"`) so operators can see overuse of test facilities.
 

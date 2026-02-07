@@ -154,11 +154,14 @@ The following rules align generators with the core runtime and tooling:
    Persistence must use a staged/finalize model so large graphs can be written safely without relying on oversized single transactions:
 
    - Each generation run is assigned a `generationRunId` (scoped to the caller’s target, for example `(tenantId, versionId)` or `(tenantId, gameInstanceId)`).
+   - Callers must supply (or World Management must derive deterministically) a stable `generationRequestId` so retries of “the same request” map to the same `generationRunId` and become replay-safe.
+   - World Management must enforce single-writer semantics per target scope (for example via a lock keyed by `(tenantId, versionId)` for design-time, or `(tenantId, gameInstanceId)` for runtime) so two concurrent runs cannot race to finalize into the same template/instance scope.
    - World Management writes all generated rooms/exits/metadata into staging rows keyed by `(tenantId, generationRunId)` and records an immutable config snapshot (`seed`, `generatorType`, `schemaVersion`, and serialized parameters).
    - A single finalize transaction atomically:
      - Marks the staged run as committed (or swaps it into the active template/instance scope), and
      - Makes the generated topology visible to readers.
    - On failure World Management returns a `GenerationErrorDetail` and guarantees the target scope remains unchanged (staged rows may be left for diagnostics or garbage-collected by `generationRunId`).
+   - World Management must document and implement a garbage-collection policy for abandoned staging rows keyed by `(tenantId, generationRunId)` (for example time-based cleanup for `FAILED`/`ABORTED` runs, while retaining a short diagnostic window).
 8. **Editor Overlays** – Generators emit coordinates and optional map layers so the Game Editor can display a preview or dry-run JSON output.
 9. **Pluggable Interface** – Generators implement the `Generator` interface and are discovered via the `GeneratorRegistry` in the World Management Service. Discovery uses Spring bean scanning, and additional generators may be provided by shared libraries or service-local modules.
 

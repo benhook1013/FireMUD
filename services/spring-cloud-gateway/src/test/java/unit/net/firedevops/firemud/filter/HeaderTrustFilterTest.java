@@ -93,6 +93,29 @@ class HeaderTrustFilterTest {
   }
 
   @Test
+  void doesNotEmitLegacySessionIdWhenDisabled() {
+    GatewayHeaderTrustProperties props = new GatewayHeaderTrustProperties();
+    props.setEmitLegacySessionId(false);
+    props.getTcpProxy().setAllowInsecureHeadersFromTrustedCidrs(true);
+    props.getTcpProxy().setInsecureTrustedCidrs(List.of("10.0.0.0/8"));
+    HeaderTrustFilter filter = new HeaderTrustFilter(props);
+
+    MockServerHttpRequest request =
+        MockServerHttpRequest.get("/ws/game/test")
+            .remoteAddress(new InetSocketAddress("10.1.2.3", 0))
+            .header("X-Proxy-Client-IP", "203.0.113.99")
+            .header("X-Proxy-Connection-Id", "conn-123")
+            .header("X-Proxy-Game-Instance-Id", "42")
+            .header("X-Proxy-Tenant-Id", "7")
+            .build();
+
+    ServerWebExchange mutatedExchange = filterThroughChain(filter, MockServerWebExchange.from(request));
+
+    assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Game-Instance-Id")).isEqualTo("42");
+    assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Session-Id")).isNull();
+  }
+
+  @Test
   void rejectsSessionRouteWhenProxyHeadersPresentButUpstreamNotTrusted() {
     HeaderTrustFilter filter = new HeaderTrustFilter(new GatewayHeaderTrustProperties());
 

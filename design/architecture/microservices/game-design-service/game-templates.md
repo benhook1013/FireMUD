@@ -48,6 +48,19 @@ Normalized reference invariants:
 - If reference derivation fails (for example malformed config), the template write must fail; the service must not persist a config that cannot be represented in normalized reference rows.
 - Introducing normalized reference tables requires a one-time backfill migration/job for existing templates. Backfill must validate consistency and mark templates `INVALID` if dependencies cannot be derived or resolved.
 
+### Backfill, Validation, and Runtime Usage
+
+Normalized reference storage is only safe if it is operationally enforced:
+
+- **Backfill job/migration** – when normalized reference tables are introduced (or when their derivation rules change), the Game Design Service must run a backfill process that:
+  - Re-derives all `game_template_*_ref` rows from existing `game_templates.config`.
+  - Validates that every referenced `(tenantId, versionId, templateId)` exists in the owning domain service and that the referenced `versionId` is not Retired.
+  - Marks the template as `INVALID` (and blocks instance creation) if references cannot be derived, cannot be resolved, or violate lifecycle constraints.
+- **Strict create/update enforcement** – create/update of a template must be rejected if normalized references cannot be derived and written in the same transaction as the JSON config.
+- **Instance creation enforcement** – the Game Session Service (or the instance-creation orchestrator) must validate template dependencies using normalized tables before creating any `gameInstanceId` rows:
+  - Fail fast if any referenced version is Retired, missing, or out of sync with its domain templates.
+  - If the template pins a `scriptPatchVersion`, fail fast unless Automation & Scripting reports that patch is `READY` for the tenant.
+
 > **Note**
 
 Templates are **versioned** like any other design asset. Publishing a

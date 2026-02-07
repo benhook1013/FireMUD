@@ -55,6 +55,8 @@ Digest semantics must be explicitly stable and testable:
   - Explicit exclusion of non-semantic fields such as `created_at`, `updated_at`, and other write-time metadata that should not block publish.
 - `digestSchemaVersion` increments only when the canonicalization rules or included domain objects change, and publish tooling must refuse to compare digests computed under different schema versions.
 
+When digest semantics evolve, the system must follow the explicit “Digest Schema Migration” workflow described in `design/architecture/microservices/game-design-service/version-control.md` so publish gating never compares incompatible hashes.
+
 The Game Design Service reconciler records the per-service digest it observed for a given `commitId` when that commit was last applied successfully, and later compares current digests against those recorded values. Publish-time validation must require that all participating services report `appliedCommitId == commitId` and `contentDigest` equal to the recorded digest for that commit.
 
 Versions

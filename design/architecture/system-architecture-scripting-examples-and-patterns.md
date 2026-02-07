@@ -4,7 +4,7 @@ This document provides **worked examples and design patterns** for common script
 
 Companion docs:
 
-- `design/architecture/system-architecture-scripting-dsl-and-lifecycle.md` – terminology, DSL semantics, event and timer lifecycle, determinism.
+- `design/architecture/system-architecture-scripting-dsl-reference-and-lifecycle.md` – terminology, DSL semantics, event and timer lifecycle, determinism.
 - `design/architecture/system-architecture-scripting-quotas-and-operations.md` – sandboxing, quotas/budgets, operational flows.
 - `design/architecture/system-architecture-scripting.md` – high-level hub and TL;DR flow.
 
@@ -24,7 +24,7 @@ Companion docs:
 
 - **Implementers and backend developers**
   - Use the examples to understand how events, quotas, and automation queues interact across services.
-  - Refer back to `design/architecture/system-architecture-scripting-dsl-and-lifecycle.md` for definitions and lifecycle details.
+  - Refer back to `design/architecture/system-architecture-scripting-dsl-reference-and-lifecycle.md` for definitions and lifecycle details.
 
 ---
 

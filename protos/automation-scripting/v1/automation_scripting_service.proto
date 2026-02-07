@@ -150,6 +150,12 @@ message TriggerScriptEventRequest {
 
   string entity_id = 5;
   string script_id = 6;
+
+  // Plugin identity (required for plugin triggers). For core script triggers, these
+  // fields must be absent.
+  string plugin_id = 15;
+  string plugin_version_id = 16;
+
   string event_type = 7;
   string script_patch_version = 8;
   string script_event_id = 9;

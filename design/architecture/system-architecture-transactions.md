@@ -86,6 +86,8 @@ Ambient world mutations (doors, hazards, weather) are treated as spatial effects
 - All durable ambient mutations must be issued as effect-shaped commands carrying `EffectId` plus the appropriate instance scope (`RoomInstanceRef` for room-scoped changes).
 - Operator tooling and scripts must not bypass this contract by writing instance tables directly; they emit the same effect-shaped commands so retries and crash recovery remain safe.
 
+Concrete per-effect required writes and reconciliation rules live in `design/architecture/system-architecture-spatial-and-ambient-effects-catalog.md`. Any new effect must add an entry there before it is used by runtime gameplay.
+
 ### Tick-Adjacent Workflows (Outbox Boundary)
 
 Some player actions conceptually trigger both in-world effects and “business” side effects such as billing, email, or external webhooks. These **tick-adjacent workflows** must still respect the tick replay model:

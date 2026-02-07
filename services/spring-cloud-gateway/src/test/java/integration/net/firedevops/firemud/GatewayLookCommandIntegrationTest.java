@@ -62,7 +62,7 @@ class GatewayLookCommandIntegrationTest {
     AtomicReference<String> response = new AtomicReference<>();
     CountDownLatch latch = new CountDownLatch(1);
     WebSocketHttpHeaders headers = new WebSocketHttpHeaders();
-    headers.add("X-Session-Id", "42");
+    headers.add("X-Game-Instance-Id", "42");
     client
         .doHandshake(
             new TextWebSocketHandler() {
@@ -175,10 +175,11 @@ class GatewayLookCommandIntegrationTest {
 
     @Override
     public Mono<Void> handle(org.springframework.web.reactive.socket.WebSocketSession session) {
-      String sessionId = session.getHandshakeInfo().getHeaders().getFirst("X-Session-Id");
-      if (!StringUtils.hasText(sessionId)) {
+      String gameInstanceId =
+          session.getHandshakeInfo().getHeaders().getFirst("X-Game-Instance-Id");
+      if (!StringUtils.hasText(gameInstanceId)) {
         WebSocketMessage errorMessage =
-            session.textMessage("ERROR INVALID_ARGUMENT sessionId header required");
+            session.textMessage("ERROR INVALID_ARGUMENT gameInstanceId header required");
         return session
             .send(Mono.just(errorMessage))
             .then(Mono.defer(() -> session.close(CloseStatus.BAD_DATA)));

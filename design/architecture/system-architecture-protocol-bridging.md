@@ -216,9 +216,10 @@ Dev-only diagnostic routes (for example `/dev/echo`) may exist to support isolat
 The [Game Session Service](./microservices/game-session-service/README.md) is the central component responsible for:
 
 - Maintaining game session state per client connection.
-- Handling command parsing and game world interaction.
-- Sending and receiving text streams in a line-based protocol format.
-- Persists session state in Redis to enable reconnect recovery.
+- Interpreting and completing **system commands** (for example `LOGIN`, `LOGON`, and `PING`) and routing **gameplay commands** into the tick/command pipeline.
+- Queuing gameplay commands, enforcing tick/region admission rules, and invoking the Game Logic Service to parse and resolve gameplay commands deterministically.
+- Sending and receiving text streams in a line-based protocol format for both WebSocket and Telnet-bridged clients.
+- Persisting session state in Redis to enable reconnect recovery.
 - Manages disconnects, reconnections, and session cleanup.
 
 > Whether a client is connected via WebSocket directly or tunneled through the TCP Proxy Service, the backend **treats all sessions the same**.

@@ -63,6 +63,17 @@ Dry-run executions are privileged and must not destabilize production:
 - For low-rate external events, callers may retry with the same `scriptEventId` using a bounded exponential backoff and jitter.
 - For timer-derived scheduler events, best-effort timer semantics apply; triggers not admitted during reload are not backfilled unless explicitly covered by a bounded catch-up rule.
 
+### 8) Plugin Version Fencing and Control-Plane Scope
+
+Plugins are executed by the same runtime engine as scripts and must not rely on weaker rollback semantics:
+
+- Plugin enablement and active `pluginVersionId` selection are explicit per `(tenantId, gameInstanceId, pluginId)` and are controlled by operator control-plane APIs (typically via Logging & Admin driving Automation & Scripting registry APIs).
+- Plugin triggers must follow the same Trigger Identity rules, including `gameInstanceId` and (for gameplay/runtime triggers) `regionEpoch`. For plugin triggers, `pluginId` and `pluginVersionId` are required identity fields as defined in `design/architecture/system-architecture-scripting-normative-contract-tables.md`.
+- Script work items and tick commands produced by plugins must carry `pluginId` and `pluginVersionId` in addition to `scriptPatchVersion`.
+- On execution, Game Session must enforce a **plugin version fence** analogous to the script patch fence:
+  - If a command’s embedded `pluginVersionId` does not match the instance’s currently active plugin version for that `pluginId`, Game Session must not execute it.
+  - Rejection must be recorded with enough identifiers for diagnosis, and the rejected queue entry must be removed or moved to a bounded dead-letter store so mismatches cannot accumulate unboundedly.
+
 ## Related Documents
 
 - `design/architecture/system-architecture-scripting.md`

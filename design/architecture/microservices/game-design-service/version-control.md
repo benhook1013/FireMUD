@@ -72,6 +72,21 @@ Digest comparison rules:
 - Reconciliation and publish-time checks compare the current digest reported by each service against the recorded digest for the target commit.
 - If `digestSchemaVersion` differs, publish must fail fast and require an explicit migration of digest semantics (for example by bumping `digestSchemaVersion` and replaying commits to record new digests), rather than silently comparing incompatible hashes.
 
+### Digest Schema Migration
+
+Digest semantics are part of the publish safety contract. Changing which rows/fields participate in a domain digest, or how they are canonicalized, requires an explicit migration plan:
+
+1. **Introduce the new digest semantics**
+   - Bump `digestSchemaVersion` in every participating domain service whose digest rules changed.
+   - Deploy readers/reconcilers that understand both old and new schema versions before enabling new writers (follow the “readers first, writers second” rollout rule).
+2. **Re-record digests for existing commits**
+   - The Game Design Service must replay commits (or a designated “recompute digests” workflow) so it can record the `{commitId, contentDigest, digestSchemaVersion}` values observed under the new rules.
+   - During this phase, `PublishVersion` must reject any attempt to compare digests across different schema versions.
+3. **Enforce the new schema version**
+   - Once all participating services and the Game Design Service have recorded new digests, publish gating switches to require the new `digestSchemaVersion` for all participating domains.
+
+Any attempt to ship a digest semantics change without this workflow risks false “OUT_OF_SYNC” states or, worse, publishing versions whose Draft templates were not actually converged under a consistent digest definition.
+
 Future implementations may replace the reconciler with a dedicated design-time
 Saga or outbox-driven workflow that provides stronger atomicity for commits
 that touch multiple services. Regardless of implementation, the contract is

@@ -280,7 +280,11 @@ Telnet and WebSocket clients share this line-based syntax, but Telnet sessions f
 
 **Note:** Prompt-based exchanges are planned but not implemented in this slice. Sending bare `LOGIN` currently returns `ERROR PROMPT_LOGIN_UNSUPPORTED Prompt-based login is not implemented yet; send LOGIN <username> <password>.` so Telnet clients should use the parameterized form until the prompt flow lands. Gameplay commands such as `LOOK` require a successful `PLAY` after `LOGIN`/`LOGON`; unauthenticated attempts still receive `ERROR NOT_AUTHENTICATED`, and the most recent successful room snapshot is cached per session so reconnecting clients can immediately redraw the world before pending commands replay.
 
-After `LOGIN` succeeds, clients must issue `PLAY <world> [character]` before any gameplay commands (such as `LOOK` or `SAY`). This play step binds the authenticated connection to a world-scoped gameplay session and enforces tenant authorization and entitlements as defined in the Authentication & Authorization design. If a client attempts gameplay commands before selecting a world, the service returns `ERROR WORLD_NOT_SELECTED Use WORLDS/PLAY first` (or the equivalent canonical code) so clients can recover deterministically.
+After `LOGIN` succeeds, clients must issue `PLAY <world> [character]` before any gameplay commands (such as `LOOK` or `SAY`). This play step binds the authenticated connection to a world-scoped gameplay session and enforces tenant authorization and entitlements as defined in the Authentication & Authorization design.
+
+If a gameplay session already exists for the selected `{tenantId, gameInstanceId, playerId}` and is still resumable (TTL and server-side auth state are valid), `PLAY` resumes it and rebinds the new socket to the existing session. If no resumable session exists, `PLAY` creates a new gameplay session binding. This model allows the same account to have multiple characters in multiple worlds, but requires an explicit `PLAY` selection after every reconnect so the platform never guesses which tenant/character to resume.
+
+If a client attempts gameplay commands before selecting a world, the service returns `ERROR WORLD_NOT_SELECTED Use WORLDS/PLAY first` (or the equivalent canonical code) so clients can recover deterministically.
 
 The Account Service returns canonical `AUTH_*` error codes (`AUTH_INVALID_CREDENTIALS`, `AUTH_OTP_REQUIRED`, `AUTH_ACCOUNT_LOCKED`, `AUTH_UPSTREAM_FAILURE`), and the Game Session Service translates them into the protocol-level responses (`ERROR INVALID_CREDENTIALS`, `ERROR OTP_REQUIRED`, etc.) so Telnet and WebSocket clients can rely on stable error semantics while the human-readable message remains flexible.
 
@@ -546,6 +550,13 @@ Game startup and shutdown are coordinated using the shared `Saga` helpers from `
 ### Redis Keys
 
 Session state needed for reconnect recovery is stored under `session:game:<tenantId>:<gameInstanceId>:<sessionId>`. These **per-session** keys (including any session-scoped command queues or metadata) are removed when the corresponding session stops or expires.
+
+Gameplay session bindings must include the server-side auth token identity used for backend calls on behalf of the session (for example `authTokenHash` and `authTokenIssuedAt`) so resume logic can validate:
+
+- Allowlist presence (`session:auth:account:*` and `session:auth:tenant:*`), and
+- Bulk revocation watermarks (`session:auth:revoked_after:*`)
+
+as defined in `design/architecture/system-architecture-authentication.md#session-and-identity-management`.
 
 Tick coordination is **region-scoped**, not session-scoped. Tick queues, locks, timers, retry metadata, and the `tick:{tenantRegionTag}:pending` key use the `tick:{tenantRegionTag}:...` prefix described in the [Redis Architecture](../../system-architecture-redis.md#tick-integration-resilience-locking-staging). Region keys follow region lifecycle and crash-recovery rules:
 

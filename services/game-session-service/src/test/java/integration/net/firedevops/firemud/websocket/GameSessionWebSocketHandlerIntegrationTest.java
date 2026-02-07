@@ -74,7 +74,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
 
     StandardWebSocketClient client = new StandardWebSocketClient();
     WebSocketHttpHeaders headers = new WebSocketHttpHeaders();
-    headers.add("X-Session-Id", "42");
+    headers.add("X-Game-Instance-Id", "42");
     AtomicReference<String> responsePayload = new AtomicReference<>();
     CountDownLatch latch = new CountDownLatch(1);
 

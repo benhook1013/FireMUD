@@ -183,6 +183,8 @@ Room-entity data is derived from runtime entity state plus authoritative world l
 
 Entity Management must not maintain a competing “room occupancy index” that can drift from World Management’s location tables. Visibility and filtering rules are applied after aggregation so LOOK output remains player-correct.
 
+Concrete per-effect required writes and reconciliation rules live in `design/architecture/system-architecture-spatial-and-ambient-effects-catalog.md`.
+
 Only entities approved by the `EntityVisibilityPolicy` are returned; hidden NPCs, private inventory, or offstage summons are filtered out so `LOOK` always aligns with the player’s perspective. The response deliberately omits detailed stats to keep the text output focused on presence rather than numbers.
 
 ### Implementation status (LOOK slice)

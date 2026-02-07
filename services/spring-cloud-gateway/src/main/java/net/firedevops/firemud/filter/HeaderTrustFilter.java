@@ -109,7 +109,9 @@ public class HeaderTrustFilter implements WebFilter, Ordered {
                             if (incomingProxyGameInstanceId != null
                                 && !incomingProxyGameInstanceId.isBlank()) {
                               headers.set(HDR_GAME_INSTANCE_ID, incomingProxyGameInstanceId);
-                              headers.set(HDR_SESSION_ID, incomingProxyGameInstanceId);
+                              if (properties.isEmitLegacySessionId()) {
+                                headers.set(HDR_SESSION_ID, incomingProxyGameInstanceId);
+                              }
                             }
                             if (incomingProxyTenantId != null && !incomingProxyTenantId.isBlank()) {
                               headers.set(HDR_TENANT_ID, incomingProxyTenantId);

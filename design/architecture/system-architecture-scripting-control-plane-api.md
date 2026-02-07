@@ -147,6 +147,47 @@ Semantics:
 - Idempotent.
 - Resumes normal scheduling after rollback/drain steps complete.
 
+### Game Session: Purge Queued Tick Commands (Rollback Support)
+
+Rollback safety relies on execution-time fences, but operators also need a deterministic cleanup hook so queues do not accumulate mismatched entries after a pin/disable event.
+
+#### `PurgeQueuedTickCommandsForScriptPatch`
+
+Inputs:
+
+- `tenantId`
+- `gameInstanceId`
+- Optional scope: `regionId`
+- `scriptPatchVersion` (the patch version to remove from queues)
+- `controlPlaneRequestId`
+- `actor`
+- `reason`
+
+Semantics:
+
+- Idempotent.
+- Removes (or moves to a bounded dead-letter store) any queued tick commands whose embedded `scriptPatchVersion` matches the supplied value for the scope.
+- Emits an operator-visible metric for purge activity and for version-fence drops (exact metric names and label sets follow the observability contract).
+
+Outputs:
+
+- `purgedCount` (best-effort count; may be approximate for large batches)
+
+#### `PurgeQueuedTickCommandsForPluginVersion`
+
+Inputs:
+
+- `tenantId`
+- `gameInstanceId`
+- Optional scope: `regionId`
+- `pluginId`
+- `pluginVersionId` (the plugin version to remove from queues)
+- `controlPlaneRequestId`
+- `actor`
+- `reason`
+
+Semantics and outputs: same as `PurgeQueuedTickCommandsForScriptPatch`, scoped to plugin-produced commands.
+
 ### Automation & Scripting: Patch Lifecycle Visibility
 
 #### `GetScriptPatchStatus`
@@ -173,6 +214,86 @@ Inputs:
 Outputs:
 
 - A list of `GetScriptPatchStatus` records.
+
+### Automation & Scripting: Plugin Lifecycle Management
+
+Plugins are controlled by operators via Logging & Admin, but the runtime registry and enforcement live in Automation & Scripting. All mutating plugin operations must be idempotent and scoped to a running instance.
+
+#### `GetPluginStatus`
+
+Inputs:
+
+- `tenantId`
+- `gameInstanceId`
+- `pluginId`
+
+Outputs:
+
+- `tenantId`, `gameInstanceId`, `pluginId`
+- `activePluginVersionId` (nullable)
+- `pendingPluginVersionId` (nullable)
+- `pluginState` (`ENABLED`, `DISABLED`, `DRAINING`, `RELOADING`, `FAILED`)
+- `statusReason` (optional)
+- `lastChangedAt`
+
+#### `SetPluginActiveVersion`
+
+Inputs:
+
+- `tenantId`
+- `gameInstanceId`
+- `pluginId`
+- `targetPluginVersionId`
+- `controlPlaneRequestId`
+- `actor`
+- `reason`
+
+Semantics:
+
+- Idempotent.
+- Validates that the target bundle is allowed for the environment (signature verified, signer allowed, component policy satisfied).
+- On success, updates the registry for `(tenantId, gameInstanceId, pluginId)` and emits `PluginVersionActivated` (or `PluginVersionDisabled` as appropriate if this operation also transitions state).
+
+Outputs:
+
+- `previousPluginVersionId` (nullable)
+- `activePluginVersionId`
+- `controlPlaneRequestId`
+
+#### `DisablePlugin`
+
+Inputs:
+
+- `tenantId`
+- `gameInstanceId`
+- `pluginId`
+- `controlPlaneRequestId`
+- `actor`
+- `reason`
+
+Semantics:
+
+- Idempotent.
+- Transitions the plugin into a non-admitting state immediately.
+- Triggers are rejected at admission with a dedicated outcome (for example `finalOutcome=plugin_disabled`) and recorded in `script_event_audit`.
+- Emits `PluginVersionDisabled(newState=DISABLED)`.
+
+#### `DrainPlugin`
+
+Inputs:
+
+- `tenantId`
+- `gameInstanceId`
+- `pluginId`
+- `controlPlaneRequestId`
+- `actor`
+- `reason`
+
+Semantics:
+
+- Idempotent.
+- Transitions the plugin to `DRAINING` so no new triggers are admitted while previously admitted work is allowed to complete within bounded limits.
+- Emits `PluginVersionDisabled(newState=DRAINING)` (or a dedicated draining event if introduced later).
 
 ### Automation & Scripting: Drain/Purge Hooks (Rollback Support)
 
@@ -287,7 +408,8 @@ Fields:
 1. Call `PauseTicks` for the affected scope.
 2. Call `RollbackScriptPatchVersion` (or `SetPinnedScriptPatchVersion`) to repin to the target known-good patch.
 3. Call `CancelPendingWorkItemsForPatch` in Automation & Scripting for the rolled-back patch (and optionally purge volatile coordination indexes).
-4. Resume ticks with `ResumeTicks`.
+4. Call `PurgeQueuedTickCommandsForScriptPatch` (and, if applicable, `PurgeQueuedTickCommandsForPluginVersion`) so mismatched queued entries do not accumulate after repin.
+5. Resume ticks with `ResumeTicks`.
 
 Notes:
 

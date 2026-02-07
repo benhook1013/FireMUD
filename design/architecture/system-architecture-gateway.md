@@ -40,6 +40,7 @@ For the Telnet-to-WebSocket bridge – including the `GATEWAY_WS_URL` contract, 
 ### Authentication Responsibilities
 
 - Spring Cloud Gateway never parses or validates JWTs. It only enforces the presence of an `Authorization` header on selected admin routes and forwards tokens unchanged.
+- `/ws/game/**` must not require an `Authorization` header at the HTTP handshake layer. Gameplay authentication and tenant selection are performed inside the Game Session Service via `LOGIN` and `PLAY` after the WebSocket is established (see `system-architecture-authentication.md`).
 
 ### Header Trust Model
 
@@ -81,11 +82,15 @@ For any connection that arrives from the public player/admin ingress, Spring Clo
 The TCP Proxy → Gateway hop uses **mutual TLS (mTLS)** by connecting to a dedicated **internal-only** Gateway WebSocket mTLS listener (for example a `spring-cloud-gateway-mtls` `ClusterIP` Service on a separate TLS port). Spring Cloud Gateway treats the upstream hop as authenticated as the TCP Proxy Service only when:
 
 - The presented client certificate chains to the cluster trust root (cert-manager under ClusterIssuer `firemud-ca-issuer`), and
-- The certificate contains an expected SAN identity for the TCP Proxy Service (for example a URI SAN such as `spiffe://firemud/ns/<namespace>/sa/tcp-proxy-service`, or a DNS SAN such as `tcp-proxy-service.<namespace>.svc.cluster.local`).
+- The certificate contains an expected SAN identity for the TCP Proxy Service.
 
 If either check fails, the gateway rejects the WebSocket handshake and does not promote any `X-Proxy-*` inputs.
 
-Gateway config enforces this trust boundary by allowlisting the expected TCP Proxy identity from the mTLS peer certificate. Configure the allowlist via `firemud.gateway.header-trust.tcp-proxy.trusted-client-cert-dns-sans`, `firemud.gateway.header-trust.tcp-proxy.trusted-client-cert-uri-sans`, and/or `firemud.gateway.header-trust.tcp-proxy.trusted-client-cert-fingerprints-sha256`.
+Gateway config enforces this trust boundary by allowlisting the expected TCP Proxy identity from the mTLS peer certificate. The canonical production model is:
+
+- **Canonical (prod):** allowlist the TCP Proxy by **URI SAN** (SPIFFE-style identity), configured via `firemud.gateway.header-trust.tcp-proxy.trusted-client-cert-uri-sans` (for example `spiffe://firemud/ns/<namespace>/sa/tcp-proxy-service`).
+- **Transitional (migration only):** allowlist by **DNS SAN** when URI SANs are not yet consistently issued, configured via `firemud.gateway.header-trust.tcp-proxy.trusted-client-cert-dns-sans` (for example `tcp-proxy-service.<namespace>.svc.cluster.local`).
+- **Break-glass (incident only):** pin by leaf certificate **SHA-256 fingerprint** when SAN-based identity is unavailable or compromised, configured via `firemud.gateway.header-trust.tcp-proxy.trusted-client-cert-fingerprints-sha256`. This is intentionally operationally expensive and should not be treated as the steady state because it makes rotation and multi-environment deployments harder.
 
 Until mTLS is fully deployed for the TCP Proxy → Gateway hop, treat any non-mTLS acceptance of `X-Proxy-*` headers as a **temporary dev-only stopgap**, protected by strict internal-only network exposure and NetworkPolicies. Do not rely on “internal network” alone for player-facing environments.
 
@@ -98,6 +103,7 @@ After applying strip/authentication rules, the gateway sets or forwards the down
   - Otherwise derive `X-Client-IP` from the trusted load balancer forwarded headers (for example `X-Forwarded-For`) using the gateway’s configured trusted-proxy rules.
 - `X-Proxy-Connection-Id` – forwarded only when the upstream hop is authenticated as the TCP Proxy Service so downstream services can correlate lifecycle signals.
 - `X-Game-Instance-Id` / `X-Tenant-Id` – forwarded only when the upstream hop is authenticated as the TCP Proxy Service and the corresponding `X-Proxy-Game-Instance-Id` / `X-Proxy-Tenant-Id` inputs were provided. These remain advisory admission hints; the Game Session Service validates any game-instance/tenant claims against Redis, entitlements, and authenticated session state.
+- **Legacy alias:** `X-Session-Id` is a deprecated alias for `X-Game-Instance-Id`. When enabled, Gateway may emit `X-Session-Id` with the same value as `X-Game-Instance-Id` for backwards compatibility. New tooling and services must not rely on `X-Session-Id`. **Target removal date:** October 1, 2026. Configure emission via `firemud.gateway.header-trust.emit-legacy-session-id`.
 
 `X-Game-Instance-Id` and `X-Tenant-Id` are not authentication material and must never be treated as reconnect tokens or proof of session ownership. They exist to carry the TCP Proxy Service’s optional Telnet `SESSION <gameInstanceId> <tenantId>` envelope context into the gameplay WebSocket handshake for advanced tools:
 
@@ -154,7 +160,7 @@ For gameplay WebSocket sessions, FireMUD standardises a small set of close codes
 - `1011` with reason `internal_error` – unexpected server‑side failures that are not attributable to the client and are not clearly a backend‑unavailable condition.
 - `1013` with reason `backend_unavailable` – Spring Cloud Gateway has concluded that backend services needed for gameplay are unavailable or overloaded beyond a short tolerance window (see [Reconnection Strategy](./system-architecture-reconnection.md#backend-unavailable-scenarios)).
 
-Gateway and Game Session implementations must always map platform‑initiated closures into one of these categories. Game Session indicates categories through its upstream behaviour (for example how it closes or errors its side of the connection), while Gateway is responsible for translating those signals into the client‑facing close codes/reasons above and logging the mapped category and contributing metrics (for example `gateway.websocket.close_reason` and `gamesession.connection.closed{reason=...}`) so operations teams can distinguish idle timeouts, policy enforcement, backend outages, and internal errors.
+Gateway and Game Session implementations must always map platform‑initiated closures into one of these categories. Game Session indicates categories through its upstream behaviour (for example how it closes or errors its side of the connection), while Gateway is responsible for translating those signals into the client‑facing close codes/reasons above and logging the mapped category and contributing metrics (for example `gateway.websocket.closes{reason=...}` and `gamesession.connection.closed{reason=...}`) so operations teams can distinguish idle timeouts, policy enforcement, backend outages, and internal errors.
 
 To keep behaviour consistent and avoid double-closing sessions, ownership of these close codes is divided as follows:
 
@@ -169,8 +175,10 @@ To keep behaviour consistent and avoid double-closing sessions, ownership of the
 Spring Cloud Gateway applies a small grace window before closing WebSocket sessions due to sustained backend outages so that brief flaps do not cause unnecessary reconnects:
 
 - The `firemud.gateway.backendUnavailableGraceMs` configuration property controls how long (in milliseconds) Gateway tolerates continuous backend failures for gameplay routes before closing affected WebSocket sessions with `1013/backend_unavailable`. “Continuous failure” here means that all attempts to call Game Session for that route are failing with `UNAVAILABLE`/5xx responses or failing Gateway’s configured health checks; any successful call or healthy check resets the internal backend-unavailable timer to zero.
+- Gateway defines “backend unavailable” at the route level as: the `/ws/game/**` upstream (Game Session WebSocket) cannot be established or maintained and the route remains in an “all failed” state (for example repeated `UNAVAILABLE`/5xx failures while proxying or connecting).
 - Gateway starts the backend-unavailable timer when a route first enters this “all failed” state. Within the `firemud.gateway.backendUnavailableGraceMs` window, Gateway keeps existing WebSocket sessions open so brief flaps do not force every idle client to reconnect immediately.
-- When the backend has been continuously unavailable beyond `firemud.gateway.backendUnavailableGraceMs` without any successful calls or healthy checks, Gateway must close affected gameplay WebSocket sessions with `1013/backend_unavailable` and reject new `/ws/game/**` connections with HTTP `503` so clients can apply the reconnection and backoff rules defined in [Reconnection Strategy](./system-architecture-reconnection.md#client-reconnection-behaviour).
+- When the backend is currently unavailable, Gateway rejects new `/ws/game/**` connections with HTTP `503` so clients can apply the reconnection and backoff rules defined in [Reconnection Strategy](./system-architecture-reconnection.md#client-reconnection-behaviour). The grace window is an established-session behaviour; it does not create “maybe works” handshake outcomes.
+- When the backend has been continuously unavailable beyond `firemud.gateway.backendUnavailableGraceMs` without any successful calls or healthy checks, Gateway must close affected gameplay WebSocket sessions with `1013/backend_unavailable`.
 - Load balancers or CDNs in front of Gateway should be configured with idle and failure timeouts that do not undercut this grace window; otherwise, they may terminate connections before Gateway can emit the canonical `backend_unavailable` signal.
 - **Established-session input handling while backend is unavailable** – Gateway is a WebSocket proxy and does not generate gameplay-protocol error frames when the upstream Game Session hop is down. To avoid silently discarding gameplay commands while a connection appears healthy:
   - If an established `/ws/game/**` session is in the backend-unavailable grace window and the client attempts to send a gameplay message while the upstream is unavailable, Gateway closes that session immediately with `1013/backend_unavailable` (and logs/records metrics for the close reason).
@@ -288,6 +296,12 @@ If the implementation cannot meet these lifecycle rules yet, the Gateway documen
 All gateway gRPC endpoints are instrumented with the shared `LoggingInterceptor`, `MetricsInterceptor`, and `TracingInterceptor`.
 WebSocket traffic is tracked using the `ConnectionMetricsFilter`. By default, tracing for WebSocket sessions records **connection-level metadata only** (for example, route ID, tenant, session identifiers, and basic timing) without full text payloads.
 Full request/response payload tracing for WebSocket sessions is treated as an **opt‑in diagnostic mode**: it is disabled in player‑facing environments and, when enabled for debugging, must use aggressive sampling and redaction as described in [Logging & Monitoring](./system-architecture-logging-monitoring.md).
+
+Gateway must expose a small set of low-cardinality WebSocket meters so incidents can be triaged without relying on logs alone:
+
+- `gateway.websocket.closes{reason="<reason>"}` – counter incremented whenever the gateway closes a client WebSocket, with `reason` drawn from the bounded close taxonomy (`logout`, `idle_timeout`, `policy_violation`, `internal_error`, `backend_unavailable`).
+- `gateway.websocket.handshake.rejected{status="<status>"}` – counter incremented when the gateway rejects a `/ws/game/**` handshake, with `status` bounded to expected outcomes (`429`, `503`, `403`, and a small set of other configured policy statuses if used).
+- `gateway.websocket.slow_client_closes` – counter incremented when the gateway closes a WebSocket because the client is not reading fast enough (send timeout / outbound buffer pressure). This meter is a subset of `gateway.websocket.closes{reason="policy_violation"}` and exists so operators can distinguish slow-client/network backpressure from other policy enforcement without introducing high-cardinality labels.
 
 ## Internal gRPC Communication
 

@@ -83,14 +83,14 @@ Each script run follows a consistent lifecycle:
    - If a budget check fails or a runtime guard trips (for example, too-large payload), evaluation is interrupted with a sandbox error.
 
 4. **Command staging**
-   - Successful runs emit a list of commands which are staged into the entity’s command queue via `ScriptTickService`.
-   - Staging is subject to automation tick limits (`AUTOMATION_TICK_MAX_EVENTS`, `AUTOMATION_TICK_BUDGET_MS`) and uses the same Redis Lua scripts and hash tags as described in the tick architecture.
+   - Successful runs emit a list of commands which are persisted as part of a durable work item (outbox) and then indexed for batching/draining by `ScriptTickService`.
+   - Staging is subject to automation tick limits (`AUTOMATION_TICK_MAX_EVENTS`, `AUTOMATION_TICK_BUDGET_MS`) and uses only `automation:*` Redis prefixes. The Automation & Scripting Service never writes `tick:*` keys directly; it hands off commands to Game Session over internal gRPC so Game Session can enqueue tick commands under its own tick and locking model.
 
 5. **Outcome recording**
    - The engine records a **stage-aware outcome** for the run in `script_event_audit`:
      - `finalStage` (`ADMISSION`, `DSL_EVAL`, `WORK_ITEM_PERSIST`, `TICK_HANDOFF`)
      - `finalOutcome` and `finalReason`
-   - Pre-admission quota denials (`finalStage=ADMISSION`, `finalOutcome=quota_denied`) are handled by `ScriptQuotaService` before sandbox work begins and do **not** contribute to sandbox failure metrics; sandbox errors (`finalStage=DSL_EVAL`, `finalOutcome=sandbox_error`) do, and are considered by the failure-rate circuit breaker. See `design/architecture/system-architecture-scripting-quotas-and-operations.md#outcome-to-metric-mapping` for how these outcomes map to metrics and disable behavior.
+   - Pre-admission quota denials (`finalStage=ADMISSION`, `finalOutcome=quota_denied`) are handled by `ScriptQuotaService` before sandbox work begins and do **not** contribute to sandbox failure metrics; sandbox errors (`finalStage=DSL_EVAL`, `finalOutcome=sandbox_error`) do, and are considered by the failure-rate circuit breaker. Dry-run/test executions must emit failures via test-only metrics (for example `automation_script_test_sandbox_failures_total`) rather than incrementing live-traffic error counters. See `design/architecture/system-architecture-scripting-observability-contract.md` for the authoritative metric families and label sets.
 
 ---
 

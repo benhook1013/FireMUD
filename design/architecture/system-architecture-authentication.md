@@ -46,6 +46,13 @@ Token validity semantics:
 - Coordination Redis therefore acts as a server-side allowlist and immediate revocation surface: deleting `session:auth:*:<tokenHash>` revokes a still-unexpired JWT; coordination resets that drop `session:auth:*` force re-authentication for the affected scopes.
 - During Coordination Redis outages, token-gated internal calls fail closed (authorization cannot be established without the allowlist check). This is an explicit availability vs security tradeoff; gameplay clients do not transmit JWTs directly, but backend calls made on their behalf still require the server-side auth-session/token entries to be present.
 
+Bulk revocation (for example “logout all devices”, account bans, or tenant-wide billing suspensions) must not rely on wildcard deletes or key scans. Instead, the platform uses **revocation watermarks** in addition to per-token allowlist entries:
+
+- `session:auth:revoked_after:account:<accountId>` – tokens with `iat` older than this timestamp are treated as revoked for this account, even if their allowlist entries still exist.
+- `session:auth:revoked_after:tenant:<tenantId>` – tokens with `iat` older than this timestamp are treated as revoked for tenant-scoped operations targeting this tenant.
+
+Per-token logout remains a single-key delete of the token’s allowlist entries; bulk revocation uses watermarks and relies on TTL for eventual allowlist key cleanup.
+
 Coordination Redis outage behavior must be deterministic:
 
 - **Control-plane APIs (HTTP/gRPC)** – Requests that require allowlist checks fail closed while Coordination Redis is unavailable, returning a clear infrastructure error (for example `AUTH_UNAVAILABLE` / `SERVICE_UNAVAILABLE`) rather than silently bypassing authorization.
@@ -87,7 +94,7 @@ All meta/control services (Account, Game Design, Logging & Admin, and similar HT
 - Each incoming request is authenticated to a single `accountId` using a JWT validated against the Account Service JWKS.
 - The effective tenant set for the request is derived from the token:
   - For tenant-scoped operations, the service computes the set of `tenantId` values present in `scopedRoles` combined with any tenant IDs implied by `globalRoles` (for example, `platformAdmin` may be permitted to act on all tenants; `billingAdmin` may act only on billing-safe surfaces for all tenants).
-  - For cross-tenant operations, the service must explicitly check that the caller has a `globalRole` that authorizes cross-tenant access for the specific API category (for example, only `platformAdmin` for gameplay- or data-bearing operations, and `billingAdmin` or `platformAdmin` for billing-safe control-plane operations). Tenant-scoped roles must never implicitly grant cross-tenant privileges.
+  - For cross-tenant operations, the service must explicitly check that the caller has a `globalRole` that authorizes cross-tenant access for the specific API category (for example, only `platformAdmin` for gameplay- or data-bearing operations, `billingAdmin` or `platformAdmin` for billing-safe control-plane operations, and `support` or `platformAdmin` only for explicitly designated support-safe troubleshooting surfaces). Tenant-scoped roles must never implicitly grant cross-tenant privileges.
 - If an API accepts a `tenantId` (path, query parameter, or body field), the service must validate that:
   - `tenantId` is in the effective tenant set for tenant-scoped calls, or
   - The caller holds a cross-tenant `globalRole` that explicitly allows operating on the requested tenant.
@@ -101,17 +108,21 @@ Any HTTP/gRPC route that depends on identity, roles, or tenant scoping must be p
 
 1. **Validate the JWT** – Verify signature (JWKS), time-based claims (`exp`, `nbf`), and the expected token profile/audience (`aud`). Reject tokens with an unexpected profile (for example a Browser JWT presented to an internal-only endpoint).
 2. **Check baseline allowlist** – Compute `tokenHash` and require `session:auth:account:<accountId>:<tokenHash>` to exist in Coordination Redis. If missing, treat the session as revoked and return the canonical “session revoked” error (`AUTH_SESSION_REVOKED` or equivalent).
-3. **Apply route classification** – Every protected route is classified as one of the following, and the middleware must enforce the corresponding allowlist and role rules:
+3. **Check revocation watermarks** – Enforce bulk revocation without relying on wildcard deletes or key scans:
+   - If `session:auth:revoked_after:account:<accountId>` exists and the token’s `iat` is older than that value, treat the session as revoked.
+   - For routes that target a specific `tenantId`, if `session:auth:revoked_after:tenant:<tenantId>` exists and the token’s `iat` is older than that value, treat the token as revoked for that tenant-scoped operation.
+4. **Apply route classification** – Every protected route is classified as one of the following, and the middleware must enforce the corresponding allowlist and role rules:
 
 | Route classification | Required allowlist entries | Required role checks | Tenant validation rules |
 | --- | --- | --- | --- |
 | Public | *(none)* | *(none)* | *(none)* |
 | Tenant-scoped (regular) | `session:auth:account:<accountId>:<tokenHash>` + `session:auth:tenant:<tenantId>:<tokenHash>` | Require a tenant role in `scopedRoles[tenantId]` that authorizes the operation (for example `tenantAdmin`, `designer`, `moderator`, `player`) | `tenantId` must be in the effective tenant set derived from `scopedRoles` (or explicitly allowed by `globalRoles` when applicable); enforce DB query scoping by `tenantId` |
 | Billing-safe (tenant-scoped) | `session:auth:account:<accountId>:<tokenHash>` | Require `tenantAdmin` for the tenant, or a global billing role (`billingAdmin`/`platformAdmin`) | `tenantId` must be validated against the caller’s effective tenant set (or permitted by global billing roles); this route must remain reachable even when the tenant is `suspended`/`canceled` for gameplay |
+| Cross-tenant (support-safe) | `session:auth:account:<accountId>:<tokenHash>` + `session:auth:global:<accountId>:<tokenHash>` | Require `support` or `platformAdmin` | Tenant parameters are allowed only because the caller holds a cross-tenant support role; responses must be limited to high-level, troubleshooting-safe data (for example derived entitlements and subscription status, not invoices/payment methods); log/audit the target tenant |
 | Cross-tenant (billing-safe) | `session:auth:account:<accountId>:<tokenHash>` + `session:auth:global:<accountId>:<tokenHash>` | Require `billingAdmin` or `platformAdmin` | Tenant parameters are allowed only because the caller holds a global billing role; log/audit the target tenant |
 | Cross-tenant (data-bearing) | `session:auth:account:<accountId>:<tokenHash>` + `session:auth:global:<accountId>:<tokenHash>` | Require `platformAdmin` | Tenant parameters are allowed only because the caller holds `platformAdmin`; log/audit the target tenant |
 
-1. **Entitlement gating** – For gameplay admission and non-billing-safe operational control-plane routes (instance start/stop, gameplay-affecting changes), services must consult `GetTenantEntitlements(tenantId)` and deny requests when the tenant is not available for gameplay (for example `suspended`/`canceled`). Billing-safe routes must not be blocked solely due to tenant unavailability for gameplay.
+1. **Entitlement gating** – For gameplay admission and non-billing-safe operational control-plane routes (instance start/stop, gameplay-affecting changes), services must consult `GetTenantEntitlements(tenantId)` and deny requests when the tenant is not available for gameplay (for example `suspended`/`canceled`). Billing-safe and support-safe routes must not be blocked solely due to tenant unavailability for gameplay.
 
 ---
 
@@ -169,7 +180,7 @@ The `PLAY` flow:
 - `CHARACTER_NOT_FOUND` / `CHARACTER_ACCESS_DENIED` – character selection is requested but the character cannot be found or is not owned by the account (reserved for when character selection ships).
 - Any subsequent attempt to switch tenants or characters for a socket must go through the same tenant-selection flow so that role checks and entitlements are re-evaluated; there is no implicit cross-tenant switching based solely on the initial `LOGIN`.
 
-Clients re-authenticate **only after disconnecting** (TCP or WebSocket loss) or when auth token sessions have expired or been revoked. If a valid gameplay session key exists (`accountId + playerId + tenantId`) and the corresponding auth token sessions are still present, the Game Session Service resumes gameplay seamlessly on reconnect.
+Clients re-authenticate **only after disconnecting** (TCP or WebSocket loss) or when server-side auth state has expired or been revoked. After a reconnect, clients always issue a fresh `LOGIN` and then complete lobby selection again (`PLAY <world> [character]`). If a resumable gameplay session exists for the selected `{tenantId, gameInstanceId, playerId}`, the Game Session Service resumes it; otherwise it creates a fresh gameplay session binding.
 
 In the target design, `playerId` represents a **character-level identity** within a tenant. All Redis key formats and Game Session Service APIs must treat `playerId` as an abstract character identifier so sessions bind sockets to characters rather than raw accounts.
 
@@ -325,12 +336,28 @@ FireMUD uses distinct lifetimes and invariants for each session type:
 - **Gameplay session bindings**  
   - Keys: tenant-scoped session keys described in [Redis Architecture](./system-architecture-redis.md#session-keys-and-gameplay-binding), storing `accountId`, `tenantId`, character identifiers, and tick-region context.  
   - Purpose: Bind a connected socket (or reconnect token) to a character in a specific tenant, enforce “one session per character”, and support reconnect flows.  
-  - Lifetime: Sliding TTL refreshed while the player remains active. When the TTL elapses, the session is considered abandoned and is eligible for cleanup. On reconnect, the Game Session Service must both locate the gameplay session key and confirm that the account-scoped allowlist entry still exists for the session’s current token and that the appropriate tenant-scoped allowlist entry exists for the bound `tenantId`; if the allowlist checks fail, reconnect fails with a “session expired” error and the player must log in again.
+  - Lifetime: Sliding TTL refreshed while the player remains active. When the TTL elapses, the session is considered abandoned and is eligible for cleanup.
+
+    Each gameplay session binding must store the **server-side auth token identity it is operating under**:
+
+    - `authTokenHash` – the token hash for the internal JWT that Game Session uses when making backend calls for this session (clients never see or transmit this token).
+    - `authTokenIssuedAt` (`iat`) – the issuance time of that JWT.
+    - When roles are refreshed mid-session, the Game Session Service must update the stored `authTokenHash` / `authTokenIssuedAt` in the gameplay session binding.
+
+    On reconnect/resume (after the client re-`LOGIN`s and re-`PLAY`s), Game Session must load the gameplay session binding and confirm:
+
+    - `session:auth:account:<accountId>:<authTokenHash>` exists.
+    - For tenant-scoped gameplay admission, `session:auth:tenant:<tenantId>:<authTokenHash>` exists.
+    - Revocation watermarks do not invalidate the token for this scope:
+      - `authTokenIssuedAt` is not older than `session:auth:revoked_after:account:<accountId>`.
+      - `authTokenIssuedAt` is not older than `session:auth:revoked_after:tenant:<tenantId>` for operations targeting that tenant.
+
+    If any of these checks fail, resume is rejected with a canonical “session expired/revoked” error and the player must log in again.
 
 Security- and billing-related events (for example, account bans, password resets, enabling two-factor auth, tenant suspension, or subscription state changes) do not all behave identically; they follow subscription-aware rules:
 
 - For **account-level security events** such as account bans or password resets, services must:
-  - Delete `session:auth:account:<accountId>:*`, `session:auth:global:<accountId>:*`, and all tenant-scoped entries for that account.
+  - Set `session:auth:revoked_after:account:<accountId>` to “now” so previously issued tokens become invalid without requiring key scans.
   - Revoke any gameplay session keys bound to the affected account across tenants so active sockets are kicked and must re-login under the new security conditions.
 - For **tenant-level billing events**, see the subscription-state mapping below and [Subscription Management](./microservices/account-service/subscription-management.md#tenant-availability-and-quota-enforcement) for when revocation is mandatory vs when quotas and warnings apply.
 
@@ -349,8 +376,8 @@ Subscription and billing state drives how aggressively sessions are revoked:
   - Tenant-level hosting is disabled for gameplay:  
     - Game Session and world-management flows must reject new game instance creations, restarts, or tenant selection for gameplay for the affected `tenantId` based on `GetTenantEntitlements`.  
     - New player logins and tenant-selection attempts for that tenant are rejected with a dedicated billing error code.  
-  - Existing gameplay sessions for the tenant must be revoked: gameplay Redis keys for that tenant are deleted so connected sockets are kicked and cannot reconnect.
-  - Tenant-scoped auth token sessions are revoked for gameplay and regular tenant-scoped operations (`session:auth:tenant:<tenantId>:*`), but a small, explicitly documented “billing-safe” control-plane surface remains available as described in [Subscription Management](./microservices/account-service/subscription-management.md#tenant-availability-and-quota-enforcement). Billing-safe routes must be explicitly marked (for example `@BillingSafe`) and must rely on `session:auth:account:<accountId>:<tokenHash>` presence plus role checks, rather than requiring tenant-scoped allowlist entries.
+  - Existing gameplay sessions for the tenant must be revoked so connected sockets are kicked and cannot reconnect into gameplay for that tenant.
+  - Tenant-scoped authorization must be bulk-revoked by setting `session:auth:revoked_after:tenant:<tenantId>` to “now”. Services must not rely on wildcard deletes (`session:auth:tenant:<tenantId>:*`) in hot paths. Billing-safe and support-safe control-plane routes remain available as described in [Subscription Management](./microservices/account-service/subscription-management.md#tenant-availability-and-quota-enforcement).
 
 ### Control-Plane Logout
 

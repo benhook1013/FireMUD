@@ -19,7 +19,7 @@ For the architecture of asset storage, see `design/architecture/microservices/ga
 3. **Data Integrity Concerns**
    - Verify checksums or version metadata where available.
    - Coordinate with backup and recovery procedures if persistent corruption is suspected.
-   - Prefer comparing the published version’s recorded `manifestHash` (and, where implemented, per-asset `contentHash` values) against the currently served `manifest.json` and objects to detect silent drift.
+   - Prefer comparing the published version’s recorded `manifestHash` (and, where implemented, per-asset `contentHash` values) against the currently served `manifest.json` and objects to detect silent drift. `manifestHash` is mandatory for Published/Active versions; missing hashes should be treated as a publish contract violation.
 
 ## MinIO Deployment and Configuration
 

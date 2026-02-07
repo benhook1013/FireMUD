@@ -162,7 +162,7 @@ interaction.
 
 - `script` table holds the compiled component definitions and version metadata.
 - `npc_memory` table stores persistent state for NPC behaviors.
-- `automation:queue` keys in Redis buffer **work-item indexes/pointers** after a script runs and its work item is persisted durably (outbox). Each entry includes enough identity to locate the durable work item (for example an outbox ID) and must not be treated as an authoritative log of commands.
+- `automation:queue` keys in Redis buffer **work-item indexes/pointers** after a script runs and its work item is persisted durably (outbox). Each entry includes enough identity to locate the durable work item (for example an outbox ID) and must not be treated as an authoritative log of commands. The normative outbox and pointer contract is defined in `design/architecture/system-architecture-scripting-dsl-reference-and-lifecycle.md#work-item-outbox-contract-normative`.
 - Internal automation tick staging uses a dedicated namespace:
   - `automation:tick:{tenantScriptTag}:queue` – per-script queue of work items being staged into tick-compatible commands.
   - `automation:tick:{tenantScriptTag}:pending` – per-script pending list of work items currently being applied.
@@ -379,7 +379,7 @@ In addition to live event handling, the Automation & Scripting Service exposes a
 - Test runs execute handlers in the same sandbox and with the same loop-safety and resource limits as production runs.
 - Instead of persisting and indexing work items (or handing off to tick queues), test runs return the would-be commands to the caller for inspection.
 - Test executions are recorded in `script_event_audit` with `isDryRun=true` and the normal `eventType` for the event being exercised (for example, `onEnterRegion` or `onInterval`) so they can be distinguished from live traffic while still being grouped by logical event.
-- By default, dry runs **do not consume ScriptQuotaService windows or tenant automation budgets**, but they do contribute to sandbox failure metrics to keep behavior consistent and observable.
+- By default, dry runs **do not consume ScriptQuotaService windows or tenant automation budgets**, and they must not increment live-traffic error counters. Sandbox failures observed during tests are emitted via dry-run/test-only metric families (for example `automation_script_test_sandbox_failures_total`) so production SLO dashboards do not conflate privileged tooling with live automation reliability.
 - By default, dry runs must not contribute to failure-rate circuit breakers that can disable live scripts (`runtimeStatus=DISABLED_DUE_TO_ERRORS`). If an environment chooses to gate live enablement on dry-run results, that gating must be explicit and isolated (separate breaker or opt-in policy) so privileged tooling cannot accidentally disable production automation.
 - Separate **dry-run budgets** cap how much test traffic a tenant or principal can generate (for example, max runs per minute and max concurrent dry-runs) so test tools cannot overload the automation cluster even though they bypass mainline quotas.
 
@@ -390,8 +390,7 @@ This test facility is intended for pre-production validation and privileged diag
 `ScriptQuotaService` limits how many times a script may execute within a
 configurable window. Counters are stored in Redis using keys of the form
 `automation:quota:<tenantId>:<scriptId>`. When the quota is exceeded the event is
-ignored and `script_quota_denied_total` is incremented. Enforcement metrics are
-exported via the standard `sagas.active` gauge.
+ignored and `script_quota_denied_total{tenantId, scriptId, reason}` is incremented. Saga orchestration emits separate Saga-specific metrics (for example `sagas.active`) and must not be conflated with quota enforcement.
 
 Key Automation & Scripting–specific metrics include:
 
@@ -399,7 +398,7 @@ Key Automation & Scripting–specific metrics include:
 - `automation_script_queue_delay_seconds` and `automation_script_leadership_changes_total` for queue latency and leader stability.
 - `automation_script_tenant_budget_seconds{tenantId, tier}` for per-tenant automation budgets.
 - `script_quota_allowed_total`, `script_quota_denied_total`, and `automation_tick_events_enqueued_total` for quota enforcement and tick integration.
-- `automation_script_sandbox_failures_total{reason=...}`, `automation_script_errors_total{tenantId, reason=...}`, and `automation_script_runtime_seconds` for sandbox and runtime health.
+- `automation_script_sandbox_failures_total{tenantId, scriptId, reason}`, `automation_script_errors_total{tenantId, scriptId, reason}`, and `automation_script_runtime_seconds{tenantId, scriptId, eventType}` for sandbox and runtime health.
 
 See [Logging & Monitoring](../../system-architecture-logging-monitoring.md) and `design/architecture/system-architecture-scripting-observability-contract.md` for how these metrics map to audit records, are scraped, and are used for alerting.
 

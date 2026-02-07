@@ -95,7 +95,8 @@ manifest metadata:
   - `version_asset` rows for `(tenantId, versionId)` must be treated as immutable mappings.
   - Referenced `game_assets` binaries must not be modified in place; replacing bytes requires a new `game_assets` row and (for Draft versions only) an updated mapping.
   - Retrying `ExportAssets` for a Published/Active version must be bit-for-bit identical (the overwrite is a retry mechanism, not a mutation mechanism).
-  - Version metadata should record a `manifestHash` (and optionally per-asset `contentHash` values) so operators and CI can detect drift between database mappings and object-store contents.
+  - Version metadata must record a `manifestHash` (and optionally per-asset `contentHash` values) so operators and CI can detect drift between database mappings and object-store contents.
+  - If `manifestHash` verification fails for a Published/Active version, treat it as a data corruption or process bug incident. Do not “fix” the version in place; repair requires republishing a new `versionId` or executing an operator-approved recovery workflow that re-derives the exact bytes from the authoritative database mappings.
 - If any downstream publish step fails, the Saga compensates by either deleting
   the newly written prefix or marking the version as **Failed** in the Game
   Design Service so it cannot be activated. Failed versions follow the

@@ -74,6 +74,8 @@ All spatial effects must carry the target `RoomInstanceRef` and a canonical tick
 
 Ambient world mutations (doors, hazards, weather) follow the same rule: they are applied only via effect-shaped commands carrying `EffectId` + `RoomInstanceRef`. Operators and scripts must not write World Management instance tables directly.
 
+Concrete per-effect required writes and reconciliation rules live in `design/architecture/system-architecture-spatial-and-ambient-effects-catalog.md`.
+
 ## Architecture / Design Notes
 
 - World data is stored in PostgreSQL. Redis holds only transient active state used during gameplay.
@@ -127,9 +129,8 @@ Ambient world mutations (doors, hazards, weather) follow the same rule: they are
 
 ## Key Features
 
-- Region and location management with shard support. Each region stores a
-  `shard_id` value so the world can span multiple servers.
-- Automated region redistribution balances shard load when cluster capacity changes.
+- Region and location management for each running game instance (`tenantId`, `gameInstanceId`), including authoritative occupant/location tables owned by this service.
+- Horizontal scaling via stateless replicas and stable in-cluster service discovery (no per-region shard routing plane or cross-cluster handoff contract in the core architecture).
 - Instance-based zones are treated as regular rooms; this service records which
   characters occupy each instance so private dungeons or housing do not affect
   the shared world map.
@@ -156,19 +157,8 @@ Ambient world mutations (doors, hazards, weather) follow the same rule: they are
   - An optional `generation_rule_override` table may store version-specific overrides keyed by `(tenantId, versionId)` for tenants that require different tuning per version; when present for a given version, overrides are applied instead of the tenant-global defaults when running generators for that version. Overrides may exist only for non-Retired versions and must be kept consistent with the version lifecycle and migration rules described in [Database Migrations](../../system-architecture-database-migrations.md).
   - `world_event` table stores timed changes such as weather updates.
   - `region_instance.weather` (or equivalent) records the current weather state for live regions; template rows may include default weather or climate metadata but are not updated during gameplay.
-  - `region_instance.shard_id` indicates which server shard hosts the region at runtime.
 - Redis caches hot rooms for active sessions to speed up lookups.
 - Cached rooms use keys `room:<tenantId>:<gameInstanceId>:<roomInstanceId>` and expire after `world.room.cache-ttl-seconds`. Caches must never be keyed by template identifiers because instance rows may differ due to runtime generation, instancing, or transient ambient state.
-
-### Multi-Server Shards
-
-Large worlds can span multiple server clusters. Each `region` is assigned a
-`shard_id` so the Game Session Service knows which cluster hosts the active
-state for that region. When a player crosses into a region on another shard the
-session handoff flow described in the Game Session Service design is invoked.
-Administrators can reassign regions between shards using the `RegionController`
-endpoint `POST /regions/{id}/move`, which updates the `shard_id` column for the
-specified region.
 
 ### gRPC APIs
 
@@ -176,7 +166,7 @@ specified region.
 - `GetRoomSnapshot` – returns a minimal, `LOOK`-focused view (room identity, names, descriptions, exit metadata, ambient state) scoped by `RoomInstanceRef`.
 - `ListRoomOccupants` – returns the authoritative set of occupant `entityId` values present in a room, scoped by `RoomInstanceRef`.
 - `ApplyRoomAmbientStatePatch` – applies an ambient state patch to the target `RoomInstanceRef`, guarded by `EffectId`.
-- `UpdateWorldState` – applies pending world updates and notifies other services.
+- `UpdateWorldState` – deprecated bulk update surface. Prefer effect-shaped, instance-scoped mutation RPCs (for example `ApplyRoomAmbientStatePatch`) so every durable world mutation is scoped correctly and guarded by `EffectId`.
 
 ### LOOK snapshot contract
 
@@ -188,6 +178,7 @@ specified region.
 - `shortDescription` and `longDescription` text; descriptions longer than the `LOOK_MAX_DESCRIPTION_CHARS` config should be truncated with an ellipsis so clients don’t wrap aggressively.
 - `exits`, each annotated with `label` (e.g., `NORTH`), `targetRoomInstanceId` (within the same `gameInstanceId`), and a human-friendly direction string (e.g., “arched passage toward the cavern mouth”). Game Logic renders this list into the `LOOK` exits line.
 - `ambientState` fields such as `lighting`, `weather`, or `hazardLevel` to enrich the narrative without extra queries.
+- `ambientStateV2` (typed, schema-versioned ambient state) is the canonical representation. The legacy `ambientState` map is deprecated and exists only for backwards compatibility.
 - Optional `roomFlags` (for example `isQuestArea` or `isInstanceEntry`) so `LOOK` can warn players before they step into special zones.
 
 Game Logic caches snapshots for the duration of a tick but refreshes them after movement. World Management publishes change events when rooms mutate so downstream caches remain consistent and `LOOK` clients never read stale text.
@@ -251,11 +242,10 @@ and [Redis connection](../../infrastructure/environment-and-secrets.md#redis-con
 TLS certificates are supplied via [`FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, `FIREMUD_GRPC_CA_CERT_PATH`](../../infrastructure/environment-and-secrets.md#grpc-tls-certificates). Peer services can be discovered using variables prefixed `FIREMUD_SERVICES_`.
 The OpenTelemetry collector endpoint can be overridden via `OTEL_ENDPOINT` (see [Environment Variables & Secrets Management](../../infrastructure/environment-and-secrets.md)).
 
-Additional variables configure world data caching and sharding:
+Additional variables configure world data caching and housekeeping:
 
 | Variable | Purpose | Default |
 | -------- | ------- | ------- |
-| `WORLD_LOCAL_SHARD_ID` | Numeric identifier for this shard instance | `0` |
 | `WORLD_ROOM_CACHE_TTL_SECONDS` | Seconds to retain room data in the cache | `60` |
 | `WORLD_INSTANCE_EXPIRATION_HOURS` | Hours before a transient instance expires | `24` |
 | `WORLD_EVENT_CHECK_DELAY_MS` | Delay between event processing checks (ms) | `60000` |
@@ -295,7 +285,6 @@ The service creates temporary **instances** of zones for dungeons or housing. In
 
 - `GET /ping` – basic health check returning `"pong"`.
 - `GET /regions?tenantId=...` – list regions for a tenant.
-- `POST /regions/{id}/move` – change a region's shard assignment.
 
 The service exposes an OpenAPI specification under `/v3/api-docs` with a Swagger UI at `/swagger-ui.html` when running locally.
 

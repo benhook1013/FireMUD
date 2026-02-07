@@ -54,7 +54,9 @@ The Game Design Service owns the **authoring** view of script patches, while the
 
 In the design UI:
 
-- `PublishScriptPatchVersion` should surface that script patches become fully active only after the Automation & Scripting Service marks them `READY` for the tenant.
+- `PublishScriptPatchVersion` should surface that “published” means “accepted into design-time history”, not “active at runtime”.
+  - The UI must treat runtime readiness as a separate phase and should show an explicit “runtime validation pending” state until Automation & Scripting reports `READY` (or `FAILED`) for `<tenantId, scriptPatchVersion>`.
+  - Any control-plane workflow that would pin/promote a patch for a running game instance must be blocked until `READY` is observed via `GetScriptPatchStatus` and/or `ScriptPatchStatusChanged`.
 - Failed `onLoad` runs that result in `FAILED` patch status should be visible to designers, with links back to `script_event_audit` entries and automation metrics for debugging.
 - Design-time publish Saga failures (for example, invalid ability references) are tracked in Game Design’s own versioning state (for example, a `PUBLISH_FAILED_DESIGN` status) and do **not** create or update patch lifecycle rows in the Automation & Scripting Service. UIs should clearly distinguish these design-time failures from runtime `FAILED` states reported by the Automation & Scripting Service so creators know whether a patch failed before or after reaching the runtime.
 

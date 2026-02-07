@@ -163,7 +163,8 @@ sequenceDiagram
     Player->>GameSession: Command / world event
     GameSession-->>Scripting: Script trigger (event + metadata)
     Scripting->>Scripting: Run sandboxed DSL handler
-    Scripting->>Redis: Enqueue script work to automation:queue:<tenantId>:<entityId>
+    Scripting->>Scripting: Persist work item (outbox)
+    Scripting->>Redis: Index work-item pointer to automation:queue:<tenantId>:<entityId>
     Scripting->>Redis: ScriptTickService stages automation:tick:{tenantScriptTag}:*
     Scripting->>GameSession: Enqueue automation commands (internal gRPC)
     GameSession->>Redis: Append into tick:{tenantRegionTag}:queue:<entityId> (Lua)

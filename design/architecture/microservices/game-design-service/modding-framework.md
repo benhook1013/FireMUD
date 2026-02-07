@@ -12,7 +12,7 @@ Plugin bundles are uploaded through the Game Design Service and stored in the sa
 - Enable runtime loading of approved plugins written in the same **component‑based** scripting DSL used for automation.
 - Provide a secure sandbox so plugins cannot access unauthorized data or system resources.
 - Allow plugins to hook into game events exposed by the Game Logic and World Management services.
-- Isolate plugin data per `tenantId` so multiple games can run on the same infrastructure.
+- Isolate plugin enablement and data per `tenantId` and `gameInstanceId` so a tenant can run multiple instances with different plugin selections safely.
 - Forward plugin execution metrics and error logs to the Logging & Admin Service for auditing.
 
 ## Trust Model & Roles
@@ -33,7 +33,15 @@ Minimum requirements:
 
 - **Algorithm**: plugin bundles are signed using **Ed25519**.
 - **Bundle digest**: each uploaded bundle computes a stable `bundleDigest` (for example SHA-256 over the canonical bundle bytes) which is the input to signature verification and is recorded in audit trails.
+  - **Canonicalization (required)**: the bundle format must define “canonical bundle bytes” precisely so the same logical bundle always hashes the same:
+    - Archive format is fixed (for example `tar` with deterministic headers, or `zip` with normalized timestamps).
+    - File ordering is deterministic.
+    - Timestamps/UID/GID/permissions are normalized or excluded from the digest input.
+    - The bundle digest input must exclude any transport-layer wrapper (for example HTTP multipart boundaries).
 - **Key identity**: every signature is tied to a `signerKeyId` (stable identifier for the public key used to verify the signature).
+- **Signature envelope (required)**:
+  - Bundles must contain a machine-readable signature manifest (for example `signatures.json`) that includes `bundleDigest`, `signerKeyId`, the `ed25519Signature` bytes, and an optional `signatureCreatedAt`.
+  - Multiple signatures may be present; verification succeeds if at least one signature is by an allowlisted `signerKeyId` and none are by explicitly revoked keys.
 - **Verification points**:
   - Game Design verifies the signature at upload time and records `bundleDigest`, `signerKeyId`, and `signatureVerifiedAt`.
   - Automation & Scripting re-verifies signatures at load/activation time (defense in depth) and rejects activation if verification fails or the signer is not allowed for the environment.
@@ -43,6 +51,10 @@ Minimum requirements:
 - **Revocation**:
   - Operators can revoke a signer by removing its `signerKeyId` from the allowlist and adding it to a revocation list.
   - When a signer is revoked, subsequent loads/activations of bundles signed by that key must fail, and already-enabled plugins must transition to a disabled state (for example `DISABLED_DUE_TO_SIGNER_REVOKED`) with triggers rejected and the reason recorded in `script_event_audit`.
+  - **Propagation (required)**:
+    - The allowlist and revocation list must be distributed to runtime services as a signed configuration artifact with a bounded refresh interval.
+    - Automation & Scripting must refresh signer policy on a bounded cadence (for example every 60 seconds) and must disable affected plugins within a fixed operator SLO (for example “revocation disables affected plugins within 5 minutes”).
+    - Disablement due to revocation must emit an operator-visible control-plane event and be visible in audit tooling so operators can prove when revocation took effect.
 
 Logging & Admin must surface signer identity and verification status (including `bundleDigest` and `signerKeyId`) so operators can explain why a plugin version was accepted or rejected.
 
@@ -139,6 +151,8 @@ Policy configs should be versioned so operators can roll back to a previous allo
 Operationally, the **Logging & Admin Service** acts as the control plane for plugin lifecycle management. Enabling, disabling, draining, and rolling back plugin versions are all performed via Logging & Admin APIs that update the registry in the Automation & Scripting Service; tenants do not manipulate `activeVersionId` or `pluginState` directly inside game traffic.
 
 To roll back a misbehaving plugin, operators promote a previously trusted `pluginVersionId` to `activeVersionId` for the affected `<tenantId, gameInstanceId, pluginId>` via Logging & Admin. The Automation & Scripting Service then resumes admitting triggers for the restored version while continuing to enforce quotas, budgets, and sandbox limits as described in `design/architecture/system-architecture-scripting-quotas-and-operations.md`.
+
+The normative control-plane API shapes and required events for plugin management are defined in `design/architecture/system-architecture-scripting-control-plane-api.md` (for example `SetPluginActiveVersion`, `DisablePlugin`, and `DrainPlugin`).
 
 ## Monitoring & Debugging
 
