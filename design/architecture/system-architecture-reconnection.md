@@ -8,7 +8,7 @@ FireMUD enables seamless gameplay recovery across network interruptions, client 
 
 - **Session takeover and resume** – Game Session now detects existing `accountId`/`playerId` links, emits `gamesession.session.takeover` and `gamesession.session.resume` counters, and rebinds Redis tick/command queues when the same character logs back in after a disconnect or another client takes over.
 - **Telnet/WebSocket parity** – The TCP Proxy → Gateway → Game Session path now shares the same login/resume flow so Telnet SESSION envelopes and WebSocket clients follow identical reconnection behavior.
-- **Remaining work** – Cross-region handoff and admin-driven forced session transfers remain planned future steps. FireMUD does not attempt to replay or reconstruct lost gameplay commands after long outages or coordination resets; command queues are volatile coordination buffers and commands may be lost outside the bounded tail-loss envelope.
+- **Remaining work** – Admin-driven forced session transfers remain planned future steps. FireMUD does not attempt to replay or reconstruct lost gameplay commands after long outages or coordination resets; command queues are volatile coordination buffers and commands may be lost outside the bounded tail-loss envelope.
 
 ## Reconnection Layers
 

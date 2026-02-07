@@ -522,7 +522,6 @@ grpcurl -plaintext -d '{"tenantId":"demo","runtimeVersion":"v42","scriptPatchVer
 
 ### Additional Notes
 
-- See [Cross-Region Sharding and Session Handoff](#cross-region-sharding-and-session-handoff) for how sessions migrate between clusters.
 - Metrics emitted by this service feed the operator [Analytics Dashboards](../logging-admin-service/analytics-dashboards.md). Prometheus scrapes metrics from `/actuator/prometheus`.
 - Logs and metrics include a `script_patch_version` label so operators know which
   hotfix revision is active.
@@ -590,26 +589,13 @@ details.
 
 ## Additional Features
 
-- Cross-region sharding for massive worlds.
 - Built-in analytics for player behavior.
 
-### Cross-Region Sharding and Session Handoff
+### Multi-Cluster Sharding (Out of Scope)
 
-Massive games may outgrow a single Kubernetes cluster. To support global player
-bases, sessions can be sharded across regions using consistent hashing on the
-`tenantId`. Each shard runs an independent **Coordination Redis cluster**, an
-independent **Cache/Rate-Limit Redis deployment**, and its own database pair.
-Coordination and cache roles remain separated inside each shard exactly as
-described in [Redis Architecture](../../system-architecture-redis.md); shards
-do not reuse a single Redis instance for both roles even when they are hosted
-on the same nodes.
+The core FireMUD architecture assumes a single Kubernetes cluster per deployment, with horizontal scaling achieved via **tick-region leasing** and executor rebalancing inside the Game Session layer (see **Scaling and Region Rebalancing** earlier in this document, plus `design/architecture/decisions/adr-0007-edge-sharding-and-close-taxonomy.md` for the edge scope decision).
 
-When a player travels to a region hosted elsewhere, the session state is
-serialized to a compact protobuf and transferred via gRPC to the target
-cluster. The source cluster marks the session as handed off and clients
-reconnect using the new endpoint. This strategy minimizes latency while
-keeping per-region failure domains isolated and ensures that Redis coordination
-and cache workloads scale with the shard topology.
+If multi-cluster gameplay sharding is introduced in the future, it must be captured as a dedicated design update (routing-key transport, trust model, reconnection/backoff policy) and must not conflict with the current edge contract (no client-visible shard handoff signal; close-and-reconnect remains the default).
 
 ### Gameplay Analytics
 

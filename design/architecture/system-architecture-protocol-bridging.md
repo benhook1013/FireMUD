@@ -105,7 +105,7 @@ The underlying authentication and gameplay services enforce a **single active ga
   - A Telnet client connects via the TCP Proxy and issues `LOGIN` for a character. Gameplay continues normally over the Telnet connection.
   - Later, a Web client connects via WebSocket to `/ws/game/**` and successfully issues `LOGIN` for the same character.
   - Game Session treats the Web client as the new active binding, terminates or demotes the Telnet connection according to takeover rules, and closes the Telnet path with a `logout` Telnet reason (mapped to WebSocket `1000/logout` in the taxonomy above). No ordering guarantees are provided between the last Telnet commands and the first WebSocket commands; only per-connection FIFO holds on each individual connection.
-  - The Telnet client must treat this disconnect as a normal session handoff, apply its reconnection/backoff rules if it wishes to reconnect, and not assume that any new Telnet connection can “resume” alongside the active WebSocket binding.
+  - The Telnet client must treat this disconnect as a normal session takeover outcome, apply its reconnection/backoff rules if it wishes to reconnect, and not assume that any new Telnet connection can “resume” alongside the active WebSocket binding.
 - **Web → Telnet takeover**
   - A Web client connects via `/ws/game/**` and issues `LOGIN` for a character. Gameplay continues normally over the WebSocket connection.
   - A Telnet client later connects through the TCP Proxy and logs in as the same character.

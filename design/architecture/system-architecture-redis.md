@@ -176,16 +176,18 @@ Key properties:
 
 - `sessionId` is an opaque, server-generated identifier (for example, a UUID or fixed-length hash) chosen so key length stays bounded and independent of the raw JWT or account token.
 - Session entries use a **derived session TTL** computed from authentication settings (see `infrastructure/environment-and-secrets.md#authentication`):
+
   - A logical expiry timestamp is stored inside the session value.
   - The Redis TTL for `session:game:<tenantId>:<gameInstanceId>:<sessionId>` is set to the same derived duration when the session is created or refreshed.
 - The logical expiry timestamp is the **authoritative bound** on reconnection:
+
   - Reconnect/resume attempts are rejected as expired once the logical expiry has passed, even if the Redis TTL has not yet removed the key (for example, due to AOF replay or failover drift).
   - When either the key is missing or the logical expiry has passed, the session is treated as non-resumable and requires a fresh `LOGIN`.
-
-Logical expiry is necessary but not sufficient for resuming gameplay: Game Session must also validate server-side auth allowlist and revocation state as defined in `system-architecture-authentication.md` (allowlist presence plus `session:auth:revoked_after:*` watermarks). Redis session bindings must therefore store the `authTokenHash` / `authTokenIssuedAt` values that those checks require.
 - The derived `session_expiration_ms` window is computed as:
+
   - `session_expiration_ms = FIREMUD_AUTH_JWT_EXPIRATION_MS + FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS`
   - This ensures the reconnection window is aligned with JWT lifetime; operators who want a shorter window should reduce `FIREMUD_AUTH_JWT_EXPIRATION_MS` rather than introducing a separate “session TTL” knob.
+- Logical expiry is necessary but not sufficient for resuming gameplay: Game Session must also validate server-side auth allowlist and revocation state as defined in `system-architecture-authentication.md` (allowlist presence plus `session:auth:revoked_after:*` watermarks). Redis session bindings must therefore store the `authTokenHash` / `authTokenIssuedAt` values that those checks require.
 
 Session design assumes **reasonably synchronized clocks** on Game Session nodes (for example, via NTP); large clock skew is treated as an infrastructure misconfiguration, not a normal edge case of the session protocol. The combination of JWT expiry, derived session TTL, and Redis TTL defines the maximum reconnection window; TTL acts as garbage collection, while logical expiry governs gameplay semantics.
 
