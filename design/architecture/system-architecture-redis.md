@@ -303,6 +303,7 @@ Key principles:
 - **Coordination vs cache prefixes**
   - Coordination prefixes (for example `tick:*`, `timer:*`, `retry:*`, `session:*`, `tick-executor-lease:*`) live **only** on Coordination Redis.
   - Cache and rate‑limit prefixes (for example `inventory:*`, `view:room-look:*`, `ratelimit:*`) live **only** on Cache/Rate‑Limit Redis.
+  - Coordination prefix ownership is normative: Game Session owns gameplay coordination prefixes, Automation & Scripting owns `automation:*`, and non-owner participation is contract-bound through approved helpers. See `design/architecture/decisions/adr-0009-coordination-redis-ownership-boundary.md`.
   - New prefixes must be registered in the canonical catalogs:
     - Coordination prefixes and their reset policies belong in the reset policy matrix and any extended catalogs in `system-architecture-redis-reset-and-recovery.md`.
     - Cache/rate-limit prefixes belong in the Cache/Rate-Limit Key Catalog in `system-architecture-redis-cache.md`, including their correctness class and reset tolerance.
@@ -337,11 +338,11 @@ This table lists representative coordination keys and their responsibilities. Fu
 | `tick:{tenantRegionTag}:lock:<entityId>` | Lock for an entity during tick execution within a region. |
 | `tick:{tenantRegionTag}:pending` | Staged results for a tick region (single in‑flight tick). |
 | `tick:{tenantRegionTag}:queue:<entityId>` | Per‑entity command queue within a region. |
-| `retry:{tenantRegionTag}` | Retry queue for failed actions. |
+| `retry:{tenantRegionTag}` | Retry queue for failed actions, keyed by `next_eligible_tick_id` on the target region timeline (not wall-clock due time). |
 | `timer:{tenantRegionTag}` | Sorted set of timers for a region; score is expiration timestamp (ms), members encode entity/effect metadata. |
-| `remote:<tenantId>:<entityId>` | Best‑effort, TTL-bounded hint marker for cross‑region follow‑ups (durable follow‑ups live in PostgreSQL). Expiry/missing keys affect latency only. |
+| `remote:<tenantId>:<entityId>` | Best‑effort, TTL-bounded hint marker for cross‑region follow‑ups (durable follow‑ups live in PostgreSQL). Default `remote_hint_ttl_ms = 60_000`; expiry/missing keys affect latency only. |
 | `route:{tenantRegionTag}:gamesession` | Reserved for a potential future gameplay routing view for `<tenantId, regionId> → shardTarget`. Per ADR 0007, lease-aware edge admission and a client-visible shard handoff signal are not part of the current edge contract; do not implement Gateway consumption of this mapping without a dedicated sharding/routing design update. |
-| `tick-events:{tenantRegionTag}` and `tick-events-offset:{tenantRegionTag}` | Best-effort per-region tick event stream and consumer offset (typically Redis Stream entry ID). Streams are retention-capped; consumers treat trimmed history as normal truncation and bootstrap from committed heartbeats/RegionStatus. |
+| `tick-events:{tenantRegionTag}` and `tick-events-offset:{tenantRegionTag}` | Best-effort per-region tick event stream and consumer offset (typically Redis Stream entry ID). Streams are retention-capped (default `tick_events_maxlen = 2048` per region); consumers treat trimmed history as normal truncation and bootstrap from committed heartbeats/RegionStatus. |
 | `tick-events-lease:{tenantRegionTag}` | Best-effort lease to avoid duplicate tick-event consumption work by observers. Safe to drop; consumers reacquire after restarts/resets. |
 | `automation:tick:{tenantScriptTag}:lock` / `queue` / `pending` | Per-script automation tick locks and staging (Automation & Scripting Service). |
 | `script-scheduler:{tenantRegionTag}:lastTickId` | Automation & Scripting scheduler checkpoint for “every N ticks” triggers; used to resume interval counting after leader changes. Durable automation schedules and quotas live in PostgreSQL; this key is a coordination hint, not the source of truth for which scripts should eventually run. |

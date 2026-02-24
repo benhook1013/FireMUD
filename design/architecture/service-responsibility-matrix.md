@@ -72,6 +72,8 @@
 - **Redis-backed automation tick coordination (`automation:*` keys)** – Automation & Scripting Service owns the `automation:*` keyspace and Lua scripts that drive automation ticks. Game Session and other services interact with automation via gRPC APIs, not by writing `automation:*` keys directly.
 - **Cache/Rate-Limit Redis usage (caches, quotas, rate limiting)** – TCP Proxy Service, Spring Cloud Gateway, Entity Management Service, Automation & Scripting Service, and Social & Groups Service all use shared cache and rate‑limit helpers backed by Redis (for example, `cache:*` and `ratelimit:*` prefixes). The schema, TTL policies, and correctness guarantees for these prefixes are defined in the shared cache/rate-limit library and in the Redis Cache & Rate Limiting design; individual services should not diverge from these patterns.
 
+These ownership boundaries are normative per `design/architecture/decisions/adr-0009-coordination-redis-ownership-boundary.md`.
+
 ## Related Documentation
 
 - [Microservices Overview](./microservices/README.md)

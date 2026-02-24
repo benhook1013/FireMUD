@@ -8,7 +8,8 @@ Orchestrates live game sessions, including tick execution, player input validati
 
 - **Tenant** – a hosted game world or project, identified by `tenantId`. All database rows and Redis keys include this prefix so data is isolated between games.
 - **Game instance** – a specific running instance of a tenant’s world, identified by a `gameInstanceId` in the database and runtime APIs as described in [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md#version-activation--rollback). Even if a deployment runs at most one instance per tenant, APIs and persistence models still carry `gameInstanceId` explicitly (for example using a stable default like `"primary"`) so multi-instance support does not require rewriting identifiers later.
-- **Player gameplay session** – a single player’s live connection and gameplay context bound to a specific game instance. Gameplay sessions are stored in Redis under `session:game:<tenantId>:<gameInstanceId>:<sessionId>` and are purged when the session ends.
+- **Character identity** – gameplay identity keyed by `characterId`; legacy `playerId` fields are temporary aliases and map one-to-one to `characterId`.
+- **Player gameplay session** – a single player’s live connection and gameplay context bound to a specific game instance and character identity. Gameplay sessions are stored in Redis under `session:game:<tenantId>:<gameInstanceId>:<sessionId>` and are purged when the session ends.
 - **Region / region shard** – a subdivision of the world used for tick execution and scaling. Tick coordination keys are scoped per `<tenantId, regionId>` and do not follow individual player session lifecycles.
 
 ### Responsibilities
@@ -251,9 +252,9 @@ At the protocol level, commands are split into two groups:
 | ------- | ------- | ------- |
 | `LOGIN <username> <password> [otp]` | Authenticates a session and binds it to an account; append an OTP when two-factor auth is enabled. | `LOGIN demo@example.com swordfish 123456` |
 | `LOGON <username> <password> [otp]` | Exact alias for `LOGIN`; Telnet users often prefer the shorter name when typing from prompts. | `LOGON demo@example.com swordfish` |
-| `WORLDS` | Lists worlds the authenticated account can enter (numbered menu + stable world slug). | `WORLDS` |
-| `CHARS <world>` | Lists characters for a world (`<world>` is a world slug or a menu index from `WORLDS`). | `CHARS demo` |
-| `PLAY <world> [character]` | Binds the authenticated connection to a world and character after `LOGIN`, enforcing tenant authorization and entitlements. `<world>` is a slug or menu index; `[character]` is optional name/index. | `PLAY demo 1` |
+| `WORLDS` | Lists worlds the authenticated account can enter (numbered menu + stable world slug) from Account Service membership + entitlement state. | `WORLDS` |
+| `CHARS <world>` | Lists characters for a world (`<world>` is a world slug or a menu index from `WORLDS`) from the authoritative character store, filtered to `{accountId, tenantId}` ownership. | `CHARS demo` |
+| `PLAY <world> [character]` | Binds the authenticated connection to a world and character after `LOGIN`, enforcing tenant authorization and entitlements. `<world>` is a slug or menu index; `[character]` is optional name/index. Current flow always binds `gameInstanceId=\"primary\"` per tenant. | `PLAY demo 1` |
 | `LOOK` | Requests the current room snapshot (name, descriptions, exits, and visible entities) aggregated from Game Logic plus World and Entity services. | `LOOK` |
 | `SAY <text>` | Broadcasts chat text to everyone in the same room. | `SAY Hello travelers` |
 | `YELL <text>` | Alias for `SAY` that is rendered with higher emphasis but still delivers to the current room. | `YELL Hear me, comrades` |
@@ -282,7 +283,7 @@ Telnet and WebSocket clients share this line-based syntax, but Telnet sessions f
 
 After `LOGIN` succeeds, clients must issue `PLAY <world> [character]` before any gameplay commands (such as `LOOK` or `SAY`). This play step binds the authenticated connection to a world-scoped gameplay session and enforces tenant authorization and entitlements as defined in the Authentication & Authorization design.
 
-If a gameplay session already exists for the selected `{tenantId, gameInstanceId, playerId}` and is still resumable (TTL and server-side auth state are valid), `PLAY` resumes it and rebinds the new socket to the existing session. If no resumable session exists, `PLAY` creates a new gameplay session binding. This model allows the same account to have multiple characters in multiple worlds, but requires an explicit `PLAY` selection after every reconnect so the platform never guesses which tenant/character to resume.
+If a gameplay session already exists for the selected `{tenantId, gameInstanceId, characterId}` and is still resumable (TTL and server-side auth state are valid), `PLAY` resumes it and rebinds the new socket to the existing session. If no resumable session exists, `PLAY` creates a new gameplay session binding. This model allows the same account to have multiple characters in multiple worlds, but requires an explicit `PLAY` selection after every reconnect so the platform never guesses which tenant/character to resume.
 
 If a client attempts gameplay commands before selecting a world, the service returns `ERROR WORLD_NOT_SELECTED Use WORLDS/PLAY first` (or the equivalent canonical code) so clients can recover deterministically.
 
@@ -593,7 +594,7 @@ details.
 
 ### Multi-Cluster Sharding (Out of Scope)
 
-The core FireMUD architecture assumes a single Kubernetes cluster per deployment, with horizontal scaling achieved via **tick-region leasing** and executor rebalancing inside the Game Session layer (see **Scaling and Region Rebalancing** earlier in this document, plus `design/architecture/decisions/adr-0007-edge-sharding-and-close-taxonomy.md` for the edge scope decision).
+The core FireMUD architecture assumes a single Kubernetes cluster per deployment, with horizontal scaling achieved via **tick-region leasing** and executor rebalancing inside the Game Session layer (see **Scaling and Region Rebalancing** earlier in this document, plus `design/architecture/decisions/adr-0007-edge-sharding-and-close-taxonomy.md` for the edge scope decision and `design/architecture/decisions/adr-0008-multi-cluster-gameplay-sharding-scope.md` for multi-cluster adoption scope).
 
 If multi-cluster gameplay sharding is introduced in the future, it must be captured as a dedicated design update (routing-key transport, trust model, reconnection/backoff policy) and must not conflict with the current edge contract (no client-visible shard handoff signal; close-and-reconnect remains the default).
 

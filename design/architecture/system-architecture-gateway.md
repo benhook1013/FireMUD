@@ -92,6 +92,8 @@ Gateway config enforces this trust boundary by allowlisting the expected TCP Pro
 - **Transitional (migration only):** allowlist by **DNS SAN** when URI SANs are not yet consistently issued, configured via `firemud.gateway.header-trust.tcp-proxy.trusted-client-cert-dns-sans` (for example `tcp-proxy-service.<namespace>.svc.cluster.local`).
 - **Break-glass (incident only):** pin by leaf certificate **SHA-256 fingerprint** when SAN-based identity is unavailable or compromised, configured via `firemud.gateway.header-trust.tcp-proxy.trusted-client-cert-fingerprints-sha256`. This is intentionally operationally expensive and should not be treated as the steady state because it makes rotation and multi-environment deployments harder.
 
+This policy is normative per `design/architecture/decisions/adr-0010-tcp-proxy-identity-canonicalization.md`.
+
 Until mTLS is fully deployed for the TCP Proxy → Gateway hop, treat any non-mTLS acceptance of `X-Proxy-*` headers as a **temporary dev-only stopgap**, protected by strict internal-only network exposure and NetworkPolicies. Do not rely on “internal network” alone for player-facing environments.
 
 ### Gateway Output Rules (Downstream-Trusted)
