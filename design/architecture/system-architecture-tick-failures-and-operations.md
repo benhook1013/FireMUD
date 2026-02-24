@@ -178,7 +178,7 @@ In rare cases, a `tick:{tenantRegionTag}:pending` entry may remain present even 
 
 Retry and timer queues are protected against unbounded growth:
 
-- Retry queues (`retry:{tenantRegionTag}`) are ZSETs keyed by `next_eligible_ms` (absolute wall-clock milliseconds); scripts accept `now_ms` as a caller-supplied `ARGV` value (never Redis `TIME`), process at most `N` entries per invocation, and enforce a maximum retry budget per action.
+- Retry queues (`retry:{tenantRegionTag}`) are ZSETs keyed by `next_eligible_tick_id` (target region timeline tick IDs). Scripts accept the scheduler’s current `(region_epoch, tickId)` context, process at most `N` entries per invocation, and enforce a maximum retry budget per action.
 - Timer keys (`timer:{tenantRegionTag}`) are ZSETs keyed by `due_ms` (absolute wall-clock milliseconds); scripts accept `now_ms` as a caller-supplied `ARGV` value (never Redis `TIME`), pop at most `N` timers per call, and delete processed members.
 - Defensive limits (for example, maximum timers per region) trigger alerts or throttling if exceeded so bugs cannot create unbounded timer or retry growth.
 
@@ -367,6 +367,9 @@ Cross-region follow-ups are durable PostgreSQL records owned by Game Session (or
     - `tenant_id`, `target_region_id`, `target_region_epoch`
     - `due_tick_id` in the target region timeline (preferred; do not use wall-clock due-time fields for cross-region follow-up eligibility)
     - `effect_key` (stable, deterministic) and any additional EffectId projection fields needed for traceability.
+  - `due_tick_id` is computed from the target region’s durable status surface (for example `GetRegionTickStatus` / `RegionStatus.lastCommittedTickId`), not from Redis hint keys:
+    - Canonical baseline: `due_tick_id = target_last_committed_tick_id + delta_ticks` (for immediate eligibility, `delta_ticks = 1`).
+    - The writer must persist `target_region_epoch` and `due_tick_id` together from the same read so eligibility is deterministic across retries and failover.
 - **Uniqueness / de-duplication**
   - The follow-up table must prevent duplicate scheduling of the same logical follow-up for the same target timeline (for example via a unique key that includes `(tenant_id, target_region_id, target_region_epoch, effect_key)` or an equivalent projection that matches the feature’s semantics).
 - **Claiming and concurrency**
@@ -387,7 +390,7 @@ Cross-region flows may use best-effort Redis hint markers such as `remote:<tenan
   - They may be overwritten, duplicated, or lost.
   - Correctness is derived from durable follow-up rows in PostgreSQL, not from the presence of `remote:*` keys.
 - The marker key must be TTL-bounded so the hint keyspace cannot grow without bound:
-  - Canonical write form: `SET remote:<tenantId>:<entityId> 1 PX remote_hint_ttl_ms`.
+  - Canonical write form: `SET remote:<tenantId>:<entityId> 1 PX remote_hint_ttl_ms` with default `remote_hint_ttl_ms = 60_000`.
   - TTL refresh happens when new durable follow-ups are recorded for that target entity (and optionally while backlog remains due); expiry is treated as normal and must not be interpreted as “no work exists”.
 - Region-level coordination resets do not attempt to delete `remote:*` keys because these keys are tenant-scoped rather than region-scoped.
 - Tenant- and cluster-scoped coordination resets may drop `remote:*` keys alongside other coordination state for the affected tenant; losing them remains safe because they only affect how quickly remote follow-ups are noticed, not whether those follow-ups eventually apply.

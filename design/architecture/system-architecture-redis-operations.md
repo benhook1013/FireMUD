@@ -614,6 +614,7 @@ The **Lua Compatibility Registry** lives in the shared `firemud-common` module a
 
 - `schemaVersionsSupported`.
 - `KEYS`/`ARGV` contract.
+- `outcomesSupported` (explicit, low-cardinality outcome enum) and per-outcome caller policy (retryable, terminal, fatal-on-unknown).
 - A compatibility tag and rationale:
   - `compatible` – the new script is **behavior-preserving** for all `(KEYS, ARGV, Redis state)` combinations produced by current services and supported `schemaVersion` values.
   - `breaking_requires_reset` – the new script **changes behavior** for any existing state or inputs (including AOF replay of old calls) and therefore requires a coordination reset or an explicit multi-version/migration strategy.
@@ -659,6 +660,8 @@ When in doubt, default to `breaking_requires_reset` or introduce explicit multi-
      - Add or update **compatibility tests** in `firemud-common` that exercise a representative set of Redis fixtures (including edge cases and partially applied states) and prove that running the old script vs the new script with the same `(KEYS, ARGV)` yields identical:
        - Return values, and
        - Key mutations for all keys in the script’s descriptor.
+     - For outcomes documented as non-mutating, include assertions proving zero writes (including no TTL refresh side effects).
+     - Include a caller-contract check: unknown outcomes are treated as fatal by call sites and are surfaced via metrics/alerts.
      - CI must run these golden tests and fail if any observable behavior diverges.
    - For scripts tagged `breaking_requires_reset` or scripts that introduce multi-version handling, document the upgrade expectations in the registry (for example, “v2 adds support for schemaVersion=3; old data must be drained or migrated before support for schemaVersion=1 is removed”).
 2. Run the **coordination upgrade planner** (dev-tools):

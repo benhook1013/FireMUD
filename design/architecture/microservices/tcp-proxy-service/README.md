@@ -525,7 +525,7 @@ The TCP Proxy Service participates in three distinct TLS / trust boundaries:
 | WebSocket mTLS bridge | TCP Proxy Service ↔ Spring Cloud Gateway | Internal WebSocket hop that normalizes Telnet traffic into the same `/ws/game/**` route used by web clients. Uses mutual TLS in the target state so the gateway can authenticate the proxy and safely promote `X-Proxy-*` headers. | `GATEWAY_WS_URL`, `FIREMUD_GATEWAY_WS_CLIENT_CERT_CHAIN_PATH`, `FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH`, `FIREMUD_GATEWAY_WS_CA_CERT_PATH`. |
 | Internal gRPC mTLS | Game Session Service (and other internal clients) ↔ TCP Proxy Service | Internal‑only gRPC endpoints such as `Ping` and the `NotifyDisconnect` event sink; no player traffic flows directly here. | `FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, `FIREMUD_GRPC_CA_CERT_PATH`. |
 
-Telnet‑over‑TLS and WebSocket mTLS may reuse the same certificate files in very small deployments, but they represent different trust surfaces and should be managed as separate concerns in production. See [Security Architecture](../../system-architecture-security.md#tls-termination-for-gateway) for the cluster‑wide TLS topology and [Protocol Bridging](../../system-architecture-protocol-bridging.md) for how these surfaces fit into the end‑to‑end Telnet/WebSocket flow.
+Telnet‑over‑TLS and WebSocket mTLS may reuse the same certificate files in very small deployments, but they represent different trust surfaces and should be managed as separate concerns in production. See [Security Architecture](../../system-architecture-security.md#tls-termination-for-gateway) for the cluster‑wide TLS topology and [Protocol Bridging](../../system-architecture-protocol-bridging.md) for how these surfaces fit into the end‑to‑end Telnet and WebSocket flow.
 
 > **Certificate reuse guidance:** The default environment variable paths for WebSocket mTLS (`FIREMUD_GATEWAY_WS_CLIENT_CERT_CHAIN_PATH`, `FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH`) and internal gRPC mTLS (`FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`) may point at the same files in local or hobby deployments. In production and other shared environments, operators should provision **separate certificates and keys per surface** and override these defaults accordingly so a compromise in one trust surface does not automatically extend to the others.
 
@@ -766,7 +766,7 @@ Edge protection at the TCP Proxy layer combines several types of limits:
 
 These controls are designed to be layered with, not a replacement for, higher-level protections:
 
-- Spring Cloud Gateway still owns HTTP/WebSocket rate limiting and global abuse filters.
+- Spring Cloud Gateway still owns HTTP and WebSocket rate limiting and global abuse filters.
 - Game Session Service still owns per-account, per-session, and per-tenant quotas.
 
 Use the **Tuning TCP Proxy for Different Environments** section below for recommended starting values and adjust over time based on observed metrics such as `tcpproxy.connections.limit.exceeded`, `tcpproxy.telnet.discarded`, and MCP-related discard reasons.

@@ -43,20 +43,23 @@ For the design of the Telnet and protocol-bridging path, see:
      - Watch the same metrics after the change to confirm the limits are no longer frequently hit.
    - If the metric is dominated by a small number of IPs:
      - Treat those IPs as abusive or misconfigured clients; prefer blocking or throttling them via firewall rules, ingress rules, or specific rate-limiter policies rather than raising global limits.
+
 2. **Check WebSocket bridge and TLS configuration**
    - If `tcpproxy.websocket.reconnects` and `tcpproxy.gateway.handshake.failures{reason="cert_validation"}` increase:
      - Confirm `GATEWAY_WS_URL` points to a hostname that matches the Gateway certificate SANs.
-     - Verify `FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, and `FIREMUD_GRPC_CA_CERT_PATH` are valid and mounted in the proxy deployment.
+     - Verify `FIREMUD_GATEWAY_WS_CLIENT_CERT_CHAIN_PATH`, `FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH`, and `FIREMUD_GATEWAY_WS_CA_CERT_PATH` are valid and mounted in the proxy deployment.
      - If needed, roll back recent TLS or gateway changes and reapply them with correct hostnames and certificate bundles.
    - If Telnet client IP-related behaviour looks incorrect (for example, per-IP limits clearly not matching real client IPs, or logs showing node/LoadBalancer IPs as the client address), validate the PROXY protocol deployment:
      - Confirm that the public Telnet `LoadBalancer` fronts a dedicated Telnet edge proxy (for example HAProxy) and that it forwards to the TCP Proxy Service using PROXY protocol on the internal-only listener/port configured by `TCP_PROXY_PROXY_PROTOCOL_PORT`.
      - Ensure the raw Telnet listener (`TCP_PROXY_PORT`) is not PROXY-enabled and is not exposed directly on the Internet in production; accepting PROXY headers from public clients allows client-IP spoofing.
      - When PROXY protocol is not enabled (or source IP is not preserved), treat `TCP_PROXY_MAX_CONNECTIONS_PER_IP` as a best-effort heuristic and rely primarily on global `TCP_PROXY_MAX_CONNECTIONS` and higher-layer rate limits, as described in the TCP Proxy design and Deployment Environments docs.
+
 3. **Run Telnet smoke tests**
    - Use the Telnet smoke script described in the TCP Proxy README (or the `dev-echo-loop.sh` flow) to:
      - Connect to the proxy with `telnet` or a test client.
      - Send `SESSION` + `LOGIN` + `LOOK` and confirm that responses match the WebSocket path for the same account.
      - Capture the raw transcript and include it in incident notes.
+
 4. **Escalation and mitigation**
    - If Telnet is degraded but WebSocket is healthy and the root cause is not immediately fixable:
      - Communicate to players that Telnet may be unreliable and recommend the Web client as a temporary workaround.
@@ -80,7 +83,7 @@ The TCP Proxy Service and WebSocket path enforce backpressure rather than silent
     - Verify that the `/ws/game/**` route is still present and correctly configured in Spring Cloud Gateway (route predicates, filters, and target Service).
     - Check Gateway metrics for elevated connection churn or WebSocket send failures on the gameplay route, and correlate with Game Session metrics to ensure backend pods are healthy. In particular, distinguish:
       - **Slow-client / policy enforcement** at the gateway (for example `gateway.websocket.slow_client_closes` or close-reason metrics dominated by `1008` / `policy_violation`), which typically point to individual misbehaving or very slow Web clients.
-      - **Backend-unavailable conditions** (for example close-reason metrics dominated by `1013` / `backend_unavailable` and matching Game Session health issues), which indicate that Web clients are being dropped because gameplay backends are unavailable rather than because of client behaviour.
+      - **`backend_unavailable` conditions** (for example close-reason metrics dominated by `1013` / `backend_unavailable` and matching Game Session health issues), which indicate that Web clients are being dropped because gameplay backends are unavailable rather than because of client behaviour.
     - Confirm that any load balancer or CDN in front of the gateway is not terminating idle WebSocket connections more aggressively than the gateway’s own WebSocket idle timeout and ping/pong interval described in [Gateway Architecture](./system-architecture-gateway.md#websocket-liveness-and-idle-timeouts).
   - WebSocket send failures and slow-client issues should result in the connection being closed rather than frames being silently dropped. If you observe symptoms that look like partial updates or missing messages without disconnects, treat this as a bug in the gateway or Game Session implementation and open an incident referencing this runbook and [Protocol Bridging](./system-architecture-protocol-bridging.md#backpressure--slow-clients).
 

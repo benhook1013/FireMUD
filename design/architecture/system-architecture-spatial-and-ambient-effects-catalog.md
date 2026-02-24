@@ -116,6 +116,27 @@ Reconciliation:
 
 - Retry WMS until the weather state matches the intended value for the effect.
 
-## Open Items (Must Be Resolved Before New Effects Ship)
+### Hazard State Update (Gameplay-Authoritative)
 
-- Define whether hazards are purely descriptive ambient state or drive tick damage computations; if hazards drive gameplay computations, document the read API and caching rules for the hazard state used by Game Logic.
+Required inputs:
+
+- `EffectId`
+- `roomInstanceRef`
+- `hazardId`
+- `targetState` (ACTIVE/INACTIVE)
+
+Required writes:
+
+- **World Management**
+  - Persist hazard state as typed ambient room state under an idempotency guard keyed by `EffectId`.
+  - Advance `worldSnapshotId` for the room instance so downstream LOOK/gameplay caches invalidate deterministically.
+
+Read/API contract:
+
+- Hazard state used by gameplay is authoritative in World Management and exposed via typed ambient fields in `GetRoomSnapshot`.
+- Game Logic must treat `worldSnapshotId` as the cache validator for hazard reads; when it changes, cached hazard state is stale.
+- Game Logic and Automation & Scripting must not maintain independent authoritative hazard tables or map-only hazard interpretations.
+
+Reconciliation:
+
+- Retry WMS with the same `EffectId` until hazard state matches `targetState`.

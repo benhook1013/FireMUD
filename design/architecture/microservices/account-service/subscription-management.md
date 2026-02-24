@@ -40,6 +40,14 @@ To keep authorization consistent, subscription and billing operations map to the
 
 Implementations must not introduce ad-hoc “owner” or “admin” concepts; they should rely on `tenantAdmin`, `platformAdmin`, and `billingAdmin` from the shared role model and the Tenant Authorization Contract. Support roles (`support`) may read high-level subscription state and derived entitlements for troubleshooting purposes but must not be granted access to detailed billing artifacts (for example, invoices or payment methods) or to any subscription-mutating APIs. These troubleshooting endpoints must be explicitly classified as **support-safe** in the auth middleware contract (`design/architecture/system-architecture-authentication.md#auth-middleware-algorithm-normative`) so support access cannot accidentally expand to billing-safe or data-bearing surfaces.
 
+Current support-safe allowlist in this domain:
+
+- `GetTenantEntitlements(tenantId)`
+- `GetSubscription(tenantId)` with high-level status/plan fields only
+- `ListSubscriptions` with high-level status/plan fields only
+
+The following are explicitly not support-safe: invoice exports, payment method details, Stripe customer metadata, and any subscription mutation (`CreateSubscription`, plan change, cancellation).
+
 ## Lifecycle Flows
 
 The subscription lifecycle is modeled as a finite state machine:
@@ -80,6 +88,10 @@ Subscription status feeds directly into tenant availability and resource enforce
   - Tenant-level hosting is disabled for gameplay:
     - The Game Session Service and world-management flows must reject new game instance creations, restarts, and startup requests for the tenant when consulting `GetTenantEntitlements(tenantId)`.  
     - New player logins and tenant-selection attempts for that tenant are rejected with a dedicated error code and user-facing message indicating that the game is currently unavailable due to billing.
+  - Existing running game instances for the tenant must be transitioned to shutdown:
+    - Admission is closed immediately (no new sessions).
+    - Connected gameplay sessions are revoked immediately.
+    - Instance processes enter a bounded drain window (target: 5 minutes maximum) for internal cleanup and then stop. During this window they are not gameplay-admissible.
   - A small, explicitly defined **billing-safe control-plane surface** remains accessible so owners can resolve billing issues or export data. This surface includes actions such as updating payment methods, viewing invoices, and initiating exports, but does not include starting game instances or editing live gameplay configuration. Service-specific docs and shared authorization middleware must explicitly mark which routes participate in this billing-safe surface so they remain reachable while gameplay is blocked.
   - As part of the transition into `suspended` or `canceled`, the Account Service emits a `TenantBillingStateChanged` event with `billing_state` set to `suspended` or `canceled`. Game Session and related services consume this event and immediately:
     - Revoke all gameplay sessions for the affected `tenantId` (kicking connected sockets and preventing reconnect), and  

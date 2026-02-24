@@ -60,7 +60,7 @@ Creates compact room graphs with bidirectional exits — ideal for dungeons, int
 
 > 🔗 Ideal for quest dungeons, temples, abandoned mines, etc.
 
-Procedural generators are invoked by the World Management Service, which calls pure `Generator` implementations as library functions using a seed, parameters, and world context. The generators return an abstract room/region graph that World Management validates and persists as either versioned **template** records or per-instance **runtime** records depending on the calling context:
+Procedural generators are invoked by the World Management Service, which calls pure `Generator` implementations as library functions using a seed, parameters, and world context. The generators return an abstract room/region graph that World Management validates and persists as either versioned **template** records or per-instance **runtime** records depending on the calling context. Automation & Scripting must not execute generators or return topology graphs for persistence.
 
 - When invoked from Game Design workflows for **design templates**, results are
   persisted as template rows keyed by `(tenantId, versionId)` and become part of
@@ -145,6 +145,7 @@ The following rules align generators with the core runtime and tooling:
    Failure and retry semantics:
 
    - Population is treated as a **retryable, idempotent** follow-up phase, not as part of topology persistence.
+   - Topology generation/persistence is a pre-activation workflow (Class A rollback semantics in `system-architecture-transactions.md`); post-activation population and subsequent gameplay effects follow Class B retry-until-convergence semantics.
    - Topology persistence (template or instance rows) must complete atomically in World Management before population is admitted.
    - Population commands must carry the same canonical identity used for tick idempotency (`EffectId`) plus the runtime scope (`RoomInstanceRef` for runtime, `(tenantId, versionId)` plus template ids for design-time) so downstream services can safely no-op on replays.
    - If population partially succeeds (for example some spawns created in Entity Management but later commands fail), the system retries until convergence using the original identities. It must not attempt to “undo” already-persisted topology or “roll back” created entities by issuing compensating deletes from within the tick loop.

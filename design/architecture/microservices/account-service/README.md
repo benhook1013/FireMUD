@@ -21,7 +21,7 @@ Public login APIs exist for administrators and account portals, but gameplay cli
 - Stateless authentication uses short-lived JWT tokens for internal meta/control APIs. Two token profiles are issued:
   - **Browser JWTs** for first-party admin/creator web UIs via `/auth/login`, with a frontend-oriented audience and short lifetime, and
   - **Service JWTs** for backend services via internal authentication flows (for example, the `Authenticate` gRPC method), with an internal audience.
-  Gameplay protocol clients (Telnet/WebSocket) never see or transmit these tokens.
+  Gameplay protocol clients (Telnet and WebSocket) never see or transmit these tokens.
 - The service hashes raw passwords with a strong algorithm such as Argon2 and unique salts before storing them in PostgreSQL.
 - Auth token allowlist entries are stored in Redis as described in [Authentication & Authorization](../../system-architecture-authentication.md); gameplay session bindings are owned by the Game Session Service and are not managed directly here.
 - Creation events are logged to the Logging & Admin Service via a saga step.
@@ -232,7 +232,7 @@ The Account Service always creates exactly one account-scoped entry per issued t
 
 See [Environment & Secrets](../../infrastructure/environment-and-secrets.md#authentication) for configuration details.
 
-Browser JWTs and Service JWTs share the same core claim structure (for example, `accountId`, `globalRoles`, `scopedRoles`) but differ in their intended audiences and issuance flows as described in the Authentication & Authorization design. New endpoints must document which profile they issue or accept and validate the expected audience before trusting a token.
+Browser JWTs and Service JWTs share the same core claim structure (for example, `accountId`, required `iat`, `globalRoles`, `scopedRoles`) but differ in their intended audiences and issuance flows as described in the Authentication & Authorization design. New endpoints must document which profile they issue or accept and validate the expected audience before trusting a token.
 
 ### Two-Factor Authentication
 

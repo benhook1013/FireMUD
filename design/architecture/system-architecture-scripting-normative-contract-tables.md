@@ -74,13 +74,37 @@ Notes:
 | `WORK_ITEM_PERSIST` | If durable persistence fails, the audit record must not show success. It must record a persistence failure outcome and must not claim that effects were enqueued. |
 | `TICK_HANDOFF` | `finalOutcome=success` is permitted only when Game Session has accepted commands into tick queues. “DSL evaluated successfully but handoff failed” must be a non-success handoff outcome. |
 
+### Canonical `finalOutcome` Values (Normative)
+
+Use a single canonical outcome taxonomy across docs, protos, metrics, and dashboards. Aliases are not allowed in new writes.
+
+| Canonical value | Stage | Notes |
+| --- | --- | --- |
+| `success` | `TICK_HANDOFF` | Commands accepted into tick queues. |
+| `skipped_reloading` | `ADMISSION` | Explicit reload backpressure; caller may retry with same Trigger Identity if policy allows. |
+| `quota_denied` | `ADMISSION` | Script quota or concurrency/capacity denial before DSL evaluation. |
+| `tenant_budget_exceeded` | `ADMISSION` | Tenant budget exhausted. |
+| `version_unavailable` | `ADMISSION` | Unknown/failed/not-ready patch or plugin version. |
+| `plugin_component_blocked` | `ADMISSION` | Plugin rejected by component policy. |
+| `plugin_disabled` | `ADMISSION` | Plugin disabled or draining state. |
+| `sandbox_error` | `DSL_EVAL` | Runtime or guard failure; reason required. |
+| `validation_error` | `DSL_EVAL` | Static/semantic validation failure before effect persistence. |
+| `infrastructure_error` | Any non-success stage | Transport/storage/runtime infrastructure failure. |
+| `disabled_due_to_errors` | `ADMISSION` | Script disabled by failure-rate policy. |
+
+Deprecated aliases:
+
+- `skipped_version_unavailable` is deprecated. Use `finalOutcome=version_unavailable` with `finalReason` for specificity.
+
 ### Required Cleanup Rule for Version Fencing
 
 If Game Session rejects a queued command because its embedded `scriptPatchVersion` does not match the currently pinned patch (or a plugin-produced command does not match the currently active `pluginVersionId` for its `pluginId`), it must:
 
 - Record the drop with identifiers sufficient for diagnosis (including `scriptEventId`, `scriptId`, `scriptPatchVersion`, `gameInstanceId`, `regionId`, `entityId`).
 - Remove the rejected queue entry (or move it to a bounded dead-letter store) so mismatched entries cannot accumulate unboundedly after a rollback.
-- Emit an operator-visible metric for version-fence drops. The normative metric family is `automation_tick_version_fence_dropped_total{tenantId, scriptId, reason}`, where `reason` distinguishes cases such as `script_patch_mismatch` and `plugin_version_mismatch`.
+- Emit an operator-visible metric for version-fence drops:
+  - `automation_tick_version_fence_dropped_total{tenantId, scriptId, reason}` for script patch mismatches (for example `reason="script_patch_mismatch"`).
+  - `automation_tick_plugin_version_fence_dropped_total{tenantId, pluginId, pluginVersionId, reason}` for plugin version mismatches (for example `reason="plugin_version_mismatch"`).
 
 ## Table 3: Timer Semantics Matrix
 
@@ -114,7 +138,8 @@ General rules:
 | `script_quota_allowed_total` | `tenantId`, `scriptId` | `scriptEventId` | Quota decisions are pre-eval. |
 | `script_quota_denied_total` | `tenantId`, `scriptId`, `reason` | `scriptEventId` |  |
 | `automation_tick_events_enqueued_total` | `tenantId` | `scriptEventId` | Counts successful tick handoffs, not DSL evaluations. |
-| `automation_tick_version_fence_dropped_total` | `tenantId`, `scriptId`, `reason` | `scriptEventId` | Counts commands dropped at execution-time due to script patch or plugin version fences. |
+| `automation_tick_version_fence_dropped_total` | `tenantId`, `scriptId`, `reason` | `scriptEventId` | Counts commands dropped at execution-time due to script patch version fence mismatches. |
+| `automation_tick_plugin_version_fence_dropped_total` | `tenantId`, `pluginId`, `pluginVersionId`, `reason` | `scriptEventId` | Counts commands dropped at execution-time due to plugin version fence mismatches. |
 | `automation_script_runtime_seconds` | `tenantId`, `scriptId`, `eventType`, optional `pluginId` | `scriptEventId` | Runtime is sandbox eval time (not tick execution time). |
 | `automation_script_sandbox_failures_total` | `tenantId`, `scriptId`, `reason`, optional `pluginId` | `scriptEventId` |  |
 | `automation_script_test_runs_total` | `tenantId`, `scriptId`, `eventType`, `result`, optional `pluginId` | `scriptEventId` | Must be separate from live-traffic counters. |

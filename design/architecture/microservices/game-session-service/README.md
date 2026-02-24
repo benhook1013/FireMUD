@@ -411,7 +411,7 @@ For the current Telnet-to-gameplay vertical slice, the implementation intentiona
 ### LOOK slice status
 
 - **Live:** Data-driven `LOOK` flows now route through Game Logic's `ResolveLook`; Game Session renders the canonical text, caches the last snapshot per session, and emits the instrumentation metrics/logs documented in `../../../project-management/look-instrumentation.md` before replying over Telnet or WebSocket.
-- **Stubbed:** Room/exit metadata and visible entities still derive from the seeded demo world migration and the `firemud.look.rooms` fixtures so transcripts and regression tests stay stable while the cross-service WebSocket/Telnet flows rely on the shared stub utilities.
+- **Stubbed:** Room/exit metadata and visible entities still derive from the seeded demo world migration and the `firemud.look.rooms` fixtures so transcripts and regression tests stay stable while the cross-service WebSocket and Telnet flows rely on the shared stub utilities.
 - **Deferred:** Dynamic lighting, line-of-sight filtering, script-driven room prose, and the optional reconnection replay of cached snapshots remain future work once instrumentation, metrics, and cross-service regression coverage stabilize.
 
 ### LOOK request flow

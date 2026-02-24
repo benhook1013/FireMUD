@@ -132,7 +132,7 @@ This matrix is the authoritative reference for configuring the Proxy → Gateway
 - **Zero-trust** principles are enforced through mTLS and JWT-based validation, providing a foundation for ongoing hardening efforts.
 - Spring Cloud Gateway is the canonicalization point for gateway-owned identity headers:
   - It strips inbound `X-Client-IP`, `X-Tenant-Id`, and `X-Game-Instance-Id` from public ingress and rewrites them to canonical values before forwarding to backend services.
-  - For HTTP/WebSocket clients, it derives the canonical `X-Client-IP` from load-balancer forwarded headers (`Forwarded`, `X-Forwarded-For`, `X-Real-IP`) only when the immediate peer address is a configured trusted proxy CIDR. Otherwise it falls back to the direct TCP peer address. The trusted-proxy CIDRs are configured on the gateway via `firemud.gateway.header-trust.forwarded-client-ip.trusted-proxy-cidrs`.
+  - For HTTP and WebSocket clients, it derives the canonical `X-Client-IP` from load-balancer forwarded headers (`Forwarded`, `X-Forwarded-For`, `X-Real-IP`) only when the immediate peer address is a configured trusted proxy CIDR. Otherwise it falls back to the direct TCP peer address. The trusted-proxy CIDRs are configured on the gateway via `firemud.gateway.header-trust.forwarded-client-ip.trusted-proxy-cidrs`.
   - For Telnet traffic, it promotes `X-Proxy-*` inputs into canonical headers only on the authenticated TCP Proxy → Gateway hop as described in [Gateway Architecture](./system-architecture-gateway.md#header-trust-model). In the target-state production model, the gateway identifies the TCP Proxy Service by allowlisting its mTLS peer certificate URI SAN (SPIFFE-style identity); DNS SAN allowlists are transitional only and fingerprint pinning is break-glass.
 
 ---
@@ -229,7 +229,7 @@ See `design/architecture/system-architecture-operator-credentials-runbook.md` fo
 | TLS Termination | Load balancer |
 | Internal Encryption | mTLS via Kubernetes Secrets; server certificate hot reload enabled |
 | Trust Enforcement | JWT + mTLS + Kubernetes NetworkPolicies |
-| Brute-Force Defense | Spring Cloud Gateway enforces Redis-backed request rate limiting for HTTP/WebSocket/Telnet-bridged traffic; Game Session Service enforces per-IP connection and command rate limits |
+| Brute-Force Defense | Spring Cloud Gateway enforces Redis-backed request rate limiting for HTTP and WebSocket and Telnet-bridged traffic; Game Session Service enforces per-IP connection and command rate limits |
 | Abuse Detection | Login tracking and command-level heuristics enforce usage patterns |
 | Telnet Controls | TCP Proxy Service applies Telnet protocol command whitelisting, sanitization, idle timeouts, and per-connection buffer depth limits; rate-limit policy lives in Gateway and Game Session Service. Plaintext Telnet logins are further constrained by `FIREMUD_AUTH_REQUIRE_2FA_FOR_PLAINTEXT_TCP` and per-account “allow plaintext Telnet login” flags. |
 | Admin Role Access | Product admin APIs are JWT-only with no special network-level restrictions; operator control-plane endpoints are internal-only and require mTLS client certificates |

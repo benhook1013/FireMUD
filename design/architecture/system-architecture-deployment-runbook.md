@@ -24,6 +24,7 @@ For high-level CI/CD architecture, see `design/architecture/system-architecture-
    - Use a pull request for the overlay change so promotion and rollback remain auditable (the merged commit is the source of truth for what is intended to be running in that environment).
 4. **Apply Kubernetes Manifests**
    - From a secure operator environment, apply the overlay (for example `kubectl apply -k k8s/overlays/prod`).
+   - Shared staging/production environments use the standard `firemud` namespace by default. When using a non-default namespace for drills or temporary restores, treat that namespace as an explicit override tied to the selected overlay or restore script inputs.
    - Treat the apply as an operational action that enacts the already-reviewed overlay change.
    - Record which overlay commit was applied so “what is deployed?” is answerable even when cluster state drifts:
      - Capture the Git commit SHA and timestamp in the deployment notes/runbook record for the environment.
@@ -69,3 +70,5 @@ If a deployment causes instability:
 | --- | --- | --- |
 | **Staging** | Ensure CI is green → open/merge PR that updates image tags in `k8s/overlays/stage` → apply overlay: `kubectl apply -k k8s/overlays/stage` → monitor rollout and run smoke tests | Open/merge PR that reverts `k8s/overlays/stage` to the last known-good tags → re-apply overlay → monitor rollout |
 | **Production** | Create/merge release tag (for example `v1.2.3`) via `release-please` → ensure CI and security scans are green → open/merge PR that updates `k8s/overlays/prod` to the tagged images → apply overlay: `kubectl apply -k k8s/overlays/prod` → monitor rollout and run smoke tests | Open/merge PR that reverts `k8s/overlays/prod` to the last known-good tags → re-apply overlay → monitor rollout; follow database migration downgrade guidance when schema changes are involved |
+
+Overlay PRs should include a clear deployment intent payload: target environment, service image tags, source commit/tag, and rollback tag. CI validates overlay images via [`.github/workflows/validate-kustomize-overlays.yml`](../../.github/workflows/validate-kustomize-overlays.yml) before merge.

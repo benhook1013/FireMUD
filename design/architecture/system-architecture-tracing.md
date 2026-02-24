@@ -51,7 +51,7 @@ To make traces consistently useful across services and runbooks, FireMUD uses a 
 
 - **Gateway and command path**
   - Gateway spans:
-    - `gateway_request` – inbound HTTP/WebSocket/Telnet-bridged request into Spring Cloud Gateway or the TCP Proxy Service, tagged with `route`, `method`, `tenantId`, and, where applicable, `playerId`.
+    - `gateway_request` – inbound HTTP and WebSocket and Telnet-bridged request into Spring Cloud Gateway or the TCP Proxy Service, tagged with `route`, `method`, `tenantId`, and, where applicable, `playerId`.
     - `gateway_command_dispatch` – dispatch from Gateway/Proxy into Game Session or other domain services, tagged with `command`, `tenantId`, `regionId`, and `playerId`.
   - Game Session and domain spans:
     - `gamesession_handle_command` – top-level span for handling a gameplay command, tagged with `command`, `tenantId`, `regionId`, `playerId`, and `instanceId`.
@@ -114,6 +114,19 @@ FireMUD supports two escalation levels for “incident mode” sampling. Operato
    - Limits: this requires that the collector is deployed with tail-sampling enabled and that the relevant spans actually carry `tenantId`/`regionId` attributes.
 
 Environment defaults and the baseline sampler ratio are documented in `design/architecture/infrastructure/environment-and-secrets-catalog.md#observability`.
+
+#### Collector Capability Contract (For Scoped Incident Sampling)
+
+Environments that claim support for tenant/region-scoped incident sampling (staging and production-like) must satisfy all of the following:
+
+- OpenTelemetry Collector is deployed with tail-sampling processors enabled.
+- Tail-sampling policies can match on `tenantId` and `regionId` span attributes, and optionally `service.name`.
+- Collector config supports safe runtime update/reload for temporary incident policies.
+- Runbook-level verification exists:
+  - Positive check: traces for the scoped `<tenantId, regionId>` appear above baseline after policy enablement.
+  - Negative check: trace volume returns to baseline after policy removal.
+
+If an environment does not meet this contract, it must be documented as **service-scoped sampling only** and incident procedures must not claim tenant/region-scoped escalation there.
 
 ## Operational Playbook: Using Traces During Incidents
 

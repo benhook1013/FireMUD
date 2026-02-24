@@ -4,7 +4,7 @@ This document describes the role and configuration of **Spring Cloud Gateway** i
 
 ## Gateway Pattern
 
-**Spring Cloud Gateway** serves as the **single HTTP(S)/WebSocket entry point** into the FireMUD system for all **external client traffic** that speaks HTTP or WebSocket. Traditional Telnet/TCP clients enter via the dedicated TCP Proxy Service as described in [Protocol Bridging](./system-architecture-protocol-bridging.md); together, Spring Cloud Gateway (for HTTP/WebSocket) and the TCP Proxy Service (for Telnet/TCP) form the public edge of the platform. The behaviour of this edge – including ordering guarantees, backpressure, and reconnection semantics for gameplay command streams – is defined canonically in [Protocol Bridging](./system-architecture-protocol-bridging.md); this document focuses on gateway responsibilities and defers to that design for detailed client-path invariants.
+**Spring Cloud Gateway** serves as the **single HTTP(S) and WebSocket entry point** into the FireMUD system for all **external client traffic** that speaks HTTP or WebSocket. Traditional Telnet/TCP clients enter via the dedicated TCP Proxy Service as described in [Protocol Bridging](./system-architecture-protocol-bridging.md); together, Spring Cloud Gateway (for HTTP and WebSocket) and the TCP Proxy Service (for Telnet/TCP) form the public edge of the platform. The behaviour of this edge – including ordering guarantees, backpressure, and reconnection semantics for gameplay command streams – is defined canonically in [Protocol Bridging](./system-architecture-protocol-bridging.md); this document focuses on gateway responsibilities and defers to that design for detailed client-path invariants.
 
 - Built as a Spring Boot microservice
 - Handles **client** request routing, filtering, CORS, rate limiting, retries, and monitoring
@@ -47,7 +47,7 @@ For the Telnet-to-WebSocket bridge – including the `GATEWAY_WS_URL` contract, 
 Spring Cloud Gateway acts as the canonicalizer for client identity and session/tenant headers. It defines a strict trust boundary between **public ingress**, the **Telnet TCP Proxy**, and **internal services**:
 
 - Headers that may carry client or session identity (`X-Client-IP`, `X-Game-Instance-Id`, `X-Tenant-Id`, and all `X-Proxy-*` headers) are **never trusted directly from public clients**. The gateway strips any such headers that arrive from the external load balancer or browser/WebSocket clients before routing to backend services.
-- For HTTP/WebSocket clients, the gateway derives `X-Client-IP` from a small, environment‑specific set of load-balancer headers (for example, `X-Forwarded-For` and `X-Real-IP`) plus the immediate peer address. The exact header list and precedence rules are defined in the [Security Architecture](./system-architecture-security.md#network-security--boundary-design), but the invariant is that downstream services treat only the gateway-produced `X-Client-IP` as authoritative.
+- For HTTP and WebSocket clients, the gateway derives `X-Client-IP` from a small, environment‑specific set of load-balancer headers (for example, `X-Forwarded-For` and `X-Real-IP`) plus the immediate peer address. The exact header list and precedence rules are defined in the [Security Architecture](./system-architecture-security.md#network-security--boundary-design), but the invariant is that downstream services treat only the gateway-produced `X-Client-IP` as authoritative.
 - For Telnet traffic, the TCP Proxy Service supplies `X-Proxy-Client-IP`, `X-Proxy-Game-Instance-Id`, `X-Proxy-Tenant-Id`, and `X-Proxy-Connection-Id` on the mTLS-authenticated WebSocket hop. After verifying the TCP Proxy client certificate on the internal WebSocket mTLS listener, the gateway:
   - Derives canonical `X-Client-IP` from `X-Proxy-Client-IP` (and any PROXY-provided metadata) and overwrites any existing `X-Client-IP`.
   - Promotes `X-Proxy-Game-Instance-Id` and `X-Proxy-Tenant-Id` to canonical `X-Game-Instance-Id` and `X-Tenant-Id` where appropriate for gameplay routes.
@@ -106,6 +106,17 @@ After applying strip/authentication rules, the gateway sets or forwards the down
 - `X-Proxy-Connection-Id` – forwarded only when the upstream hop is authenticated as the TCP Proxy Service so downstream services can correlate lifecycle signals.
 - `X-Game-Instance-Id` / `X-Tenant-Id` – forwarded only when the upstream hop is authenticated as the TCP Proxy Service and the corresponding `X-Proxy-Game-Instance-Id` / `X-Proxy-Tenant-Id` inputs were provided. These remain advisory admission hints; the Game Session Service validates any game-instance/tenant claims against Redis, entitlements, and authenticated session state.
 - **Legacy alias:** `X-Session-Id` is a deprecated alias for `X-Game-Instance-Id`. When enabled, Gateway may emit `X-Session-Id` with the same value as `X-Game-Instance-Id` for backwards compatibility. New tooling and services must not rely on `X-Session-Id`. **Target removal date:** October 1, 2026. Configure emission via `firemud.gateway.header-trust.emit-legacy-session-id`.
+
+#### Legacy Alias Removal Contract (`X-Session-Id`)
+
+To avoid migration ambiguity, `X-Session-Id` deprecation follows this explicit contract:
+
+| Time window | Gateway producer behavior | Downstream consumer behavior |
+| --- | --- | --- |
+| Until September 30, 2026 | Must emit canonical `X-Game-Instance-Id`. May emit `X-Session-Id` only when `firemud.gateway.header-trust.emit-legacy-session-id=true`. | Must treat `X-Game-Instance-Id` as canonical. May accept `X-Session-Id` as a temporary alias. |
+| October 1, 2026 and later | Must emit only `X-Game-Instance-Id`. `X-Session-Id` emission must be disabled in all player-facing environments. | Must ignore `X-Session-Id` for gameplay/session binding decisions. New code must not read it. |
+
+If a downstream service receives both headers during migration, it must prefer `X-Game-Instance-Id` and log a low-cardinality migration warning. This deprecation does not change authentication or authorization semantics.
 
 `X-Game-Instance-Id` and `X-Tenant-Id` are not authentication material and must never be treated as reconnect tokens or proof of session ownership. They exist to carry the TCP Proxy Service’s optional Telnet `SESSION <gameInstanceId> <tenantId>` envelope context into the gameplay WebSocket handshake for advanced tools:
 
@@ -172,19 +183,36 @@ To keep behaviour consistent and avoid double-closing sessions, ownership of the
 - `internal_error` (`1011`) – Any layer that encounters an unexpected server‑side error (not clearly attributable to the client and not covered by `backend_unavailable`) closes with `internal_error` and logs the underlying failure. Other layers treat it as a generic peer failure and avoid emitting a second, conflicting close reason for the same session.
 - `backend_unavailable` (`1013`) – Gateway owns closing WebSocket sessions when core gameplay backends are continuously unavailable beyond the configured grace window. Game Session surfaces its own health via metrics and health checks; Gateway uses that information plus its own upstream connectivity failures to decide when to send `1013/backend_unavailable` as described in [Reconnection Strategy](./system-architecture-reconnection.md#backend-unavailable-scenarios). Telnet clients see the corresponding `backend_unavailable` Telnet reason from the TCP Proxy.
 
+#### Canonical Close Translation Matrix
+
+Gateway is the authoritative translation point for client-visible WebSocket closes. The following mapping is canonical for `/ws/game/**`:
+
+| Upstream/session condition | Client-visible WebSocket close | Telnet reason token |
+| --- | --- | --- |
+| Explicit logout / takeover completion | `1000` / `logout` | `logout` |
+| Idle timeout detected by first observing layer | `1001` / `idle_timeout` | `idle_timeout` |
+| Edge or gameplay policy violation | `1008` / `policy_violation` | `policy_violation` |
+| Unexpected non-policy server failure | `1011` / `internal_error` | `internal_error` |
+| Sustained gameplay backend unavailability or unreachable upstream | `1013` / `backend_unavailable` | `backend_unavailable` |
+
+Precedence when multiple failures are observed in the same interval is: `policy_violation` > `backend_unavailable` > `internal_error` > `idle_timeout` > `logout`, except that explicit user/admin logout always remains `logout`.
+
 ### Backend-Unavailable Grace Window
 
 Spring Cloud Gateway applies a small grace window before closing WebSocket sessions due to sustained backend outages so that brief flaps do not cause unnecessary reconnects:
 
-- The `firemud.gateway.backendUnavailableGraceMs` configuration property controls how long (in milliseconds) Gateway tolerates continuous backend failures for gameplay routes before closing affected WebSocket sessions with `1013/backend_unavailable`. “Continuous failure” here means that all attempts to call Game Session for that route are failing with `UNAVAILABLE`/5xx responses or failing Gateway’s configured health checks; any successful call or healthy check resets the internal backend-unavailable timer to zero.
-- Gateway defines “backend unavailable” at the route level as: the `/ws/game/**` upstream (Game Session WebSocket) cannot be established or maintained and the route remains in an “all failed” state (for example repeated `UNAVAILABLE`/5xx failures while proxying or connecting).
-- Gateway starts the backend-unavailable timer when a route first enters this “all failed” state. Within the `firemud.gateway.backendUnavailableGraceMs` window, Gateway keeps existing WebSocket sessions open so brief flaps do not force every idle client to reconnect immediately.
+- Gateway uses two explicit backend health states for gameplay routes:
+  - `degraded_but_reachable` – upstream is connected and can still return explicit gameplay/protocol errors for requests.
+  - `unreachable` – upstream cannot be established or maintained (`UNAVAILABLE`, connect failures, handshake failures, or equivalent all-failed route state).
+- The `firemud.gateway.backendUnavailableGraceMs` configuration property applies only to the `unreachable` state and controls how long Gateway tolerates continuous unreachability before closing affected sessions with `1013/backend_unavailable`.
+- Gateway enters `unreachable` when the `/ws/game/**` upstream cannot be established or maintained and route checks are continuously failing. Gateway returns to `degraded_but_reachable` or healthy routing only after hysteresis criteria are met: at least `N` consecutive successful upstream connect/forward attempts (default `N=3`) or an equivalent configured healthy-check threshold.
+- While in `degraded_but_reachable`, sessions stay open and command outcomes are explicit backend errors. While in `unreachable`, the backend unavailable timer runs and handshake/sending behavior follows the rules below.
 - When the backend is currently unavailable, Gateway rejects new `/ws/game/**` connections with HTTP `503` so clients can apply the reconnection and backoff rules defined in [Reconnection Strategy](./system-architecture-reconnection.md#client-reconnection-behaviour). The grace window is an established-session behaviour; it does not create “maybe works” handshake outcomes.
 - When the backend has been continuously unavailable beyond `firemud.gateway.backendUnavailableGraceMs` without any successful calls or healthy checks, Gateway must close affected gameplay WebSocket sessions with `1013/backend_unavailable`.
 - Load balancers or CDNs in front of Gateway should be configured with idle and failure timeouts that do not undercut this grace window; otherwise, they may terminate connections before Gateway can emit the canonical `backend_unavailable` signal.
 - **Established-session input handling while backend is unavailable** – Gateway is a WebSocket proxy and does not generate gameplay-protocol error frames when the upstream Game Session hop is down. To avoid silently discarding gameplay commands while a connection appears healthy:
-  - If an established `/ws/game/**` session is in the backend-unavailable grace window and the client attempts to send a gameplay message while the upstream is unavailable, Gateway closes that session immediately with `1013/backend_unavailable` (and logs/records metrics for the close reason).
-  - If the backend-unavailable timer exceeds `firemud.gateway.backendUnavailableGraceMs`, Gateway closes remaining affected sessions with `1013/backend_unavailable` even if they are idle, so clients receive a clear canonical signal instead of sitting on half-open connections indefinitely.
+  - If an established `/ws/game/**` session is in `unreachable` state and the client attempts to send a gameplay message while upstream is unavailable, Gateway closes that session immediately with `1013/backend_unavailable` (and logs/records metrics for the close reason).
+  - If the backend unavailable timer exceeds `firemud.gateway.backendUnavailableGraceMs`, Gateway closes remaining affected sessions with `1013/backend_unavailable` even if they are idle, so clients receive a clear canonical signal instead of sitting on half-open connections indefinitely.
 
 ### Gateway Restart Semantics
 
@@ -195,7 +223,7 @@ Gateway restarts can be planned (for example, rolling deploys) or unplanned (for
 - **Unplanned internal failures at Gateway**
   - When Gateway encounters an unexpected internal error that forces it to drop gameplay WebSocket sessions independently of backend health (for example, container crashes, unrecoverable configuration errors), it closes affected sessions with code `1011` and reason `internal_error`. Clients should treat this like other internal errors and apply the standard exponential backoff rules described in [Reconnection Strategy](./system-architecture-reconnection.md#client-reconnection-behaviour).
 - **Backend-unavailable vs restart**
-  - `1013/backend_unavailable` remains reserved for cases where Gateway’s backend-unavailable timer exceeds `firemud.gateway.backendUnavailableGraceMs` because core gameplay backends are failing or unreachable. Gateway must not emit `1013/backend_unavailable` solely because of its own process restarts; those conditions are covered by the planned/unplanned restart semantics above.
+  - `1013/backend_unavailable` remains reserved for cases where Gateway’s backend unavailable timer exceeds `firemud.gateway.backendUnavailableGraceMs` because core gameplay backends are failing or unreachable. Gateway must not emit `1013/backend_unavailable` solely because of its own process restarts; those conditions are covered by the planned/unplanned restart semantics above.
 
 ---
 
@@ -241,7 +269,7 @@ Spring Cloud Gateway and the TCP Proxy Service share responsibility for protecti
   - Tenant-aware edge rate limiting for gameplay requires a trustworthy tenant signal at WebSocket handshake time (for example, a short-lived, server-minted connect token that binds the intended tenant). Without such a pre-login signal, the gateway treats gameplay traffic as tenant-opaque and limits it by IP/connection while Game Session enforces tenant-aware quotas after `LOGIN` binds the session.
   - Game Session Service enforces **per-session and per-command** limits (for example, commands per tick region) using Redis coordination keys. See [Reconnection Strategy](./system-architecture-reconnection.md) and [Redis Architecture](./system-architecture-redis.md) for session/tick-level controls.
 - **WebSocket vs HTTP semantics**
-  - Spring Cloud Gateway’s Redis-backed `RequestRateLimiter` is applied to **connection establishment and discrete HTTP requests**, not to every WebSocket frame. This prevents Telnet/WebSocket gameplay traffic from being throttled as if each frame were a separate HTTP call.
+  - Spring Cloud Gateway’s Redis-backed `RequestRateLimiter` is applied to **connection establishment and discrete HTTP requests**, not to every WebSocket frame. This prevents Telnet and WebSocket gameplay traffic from being throttled as if each frame were a separate HTTP call.
   - Once a WebSocket connection is established to `/ws/game/**`, ongoing gameplay messages traverse the connection without additional gateway-level rate limiting; downstream services (especially Game Session Service) enforce per-session and per-command safety.
 - **Gameplay WebSocket handshake errors**
   - HTTP `429` responses from `/ws/game/**` indicate that edge rate or connection limits have been exceeded (for example, RequestRateLimiter buckets or per-IP connection quotas). Gateway uses `429` only for these rate/policy conditions, and clients should treat this as equivalent to a `policy_violation` outcome as described in [Reconnection Strategy](./system-architecture-reconnection.md#http-handshake-failures-on-ws-game).
@@ -251,7 +279,7 @@ Spring Cloud Gateway and the TCP Proxy Service share responsibility for protecti
   - **Spring Cloud Gateway** enforces **request- and connection-creation limits** using the Cache/Rate‑Limit Redis instance configured via `FIREMUD_REDIS_CACHE_HOST` and `FIREMUD_REDIS_CACHE_PORT`, protecting backend services from floods of new connections or HTTP calls.
   - The **Game Session Service** applies **fine-grained gameplay limits** (per-session command rates, login attempt throttling, and region-level protections) so in-game abuse is handled close to business logic.
 
-This layered model avoids over-counting Telnet/WebSocket frames while still protecting the platform: the gateway guards connection churn and HTTP floods, the TCP Proxy Service governs raw Telnet behavior, and the Game Session Service enforces gameplay-specific policies.
+This layered model avoids over-counting Telnet and WebSocket frames while still protecting the platform: the gateway guards connection churn and HTTP floods, the TCP Proxy Service governs raw Telnet behavior, and the Game Session Service enforces gameplay-specific policies.
 
 ## Multi-Tenancy at the Gateway
 
@@ -277,7 +305,7 @@ If gameplay execution is sharded across multiple Game Session instances, that sh
 ## Management Plane Security
 
 - Spring Cloud Gateway exposes REST and gRPC management endpoints (such as dynamic route operations and `GatewayManagementService` RPCs) **only on internal network surfaces**, not via the public player-facing ingress.
-- In Kubernetes, these endpoints are reachable only from inside the cluster or a dedicated admin network segment via `ClusterIP` Services, private ingress, and `NetworkPolicy` rules; the public Service/Ingress is limited to HTTP/WebSocket data-plane traffic.
+- In Kubernetes, these endpoints are reachable only from inside the cluster or a dedicated admin network segment via `ClusterIP` Services, private ingress, and `NetworkPolicy` rules; the public Service/Ingress is limited to HTTP and WebSocket data-plane traffic.
 - Authentication and authorization for these management endpoints is enforced at the gateway boundary: operator tooling must connect using mutual TLS (mTLS) client certificates (issued by cert-manager under ClusterIssuer `firemud-ca-issuer`, with `clientAuth` EKU), and only trusted operator identities are permitted to invoke management operations. JWT-based admin roles apply to product/admin APIs behind the gateway, but gateway-owned management endpoints do not rely on downstream services for authorization. Implementation details and the recommended internal-only exposure model are documented in the [Spring Cloud Gateway service README](./microservices/spring-cloud-gateway/README.md#management-plane-security).
 
 ### Dynamic Route Override Lifecycle
@@ -292,6 +320,8 @@ The lifecycle expectations for these overrides must be explicit so operators und
 - **Safety bounds:** dynamic overrides must not allow bypassing management-plane isolation (internal-only surfaces) or weakening header trust rules. Overrides are limited to route targets/predicates/filters and must not enable new public exposure of management endpoints.
 
 If the implementation cannot meet these lifecycle rules yet, the Gateway documentation should include an “Implemented Status” note that explicitly scopes dynamic route APIs to dev/test only.
+
+**Current decision:** until shared persistence, multi-pod convergence, and full route-change auditing are implemented, dynamic route override APIs are scoped to dev/test only and must not be used as a production control plane.
 
 ## Observability
 

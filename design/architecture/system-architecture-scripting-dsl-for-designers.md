@@ -80,7 +80,7 @@ When designing scripts, it helps to think in terms of a few core ideas:
   - Complex logic is built by chaining condition and action nodes rather than embedding code.
 
 - **Timers and intervals**
-  - **Timer nodes** schedule work to happen later or on a cadence (for example, every N ticks or seconds of game time, depending on the configuration).
+  - **Timer nodes** schedule work to happen later or on a cadence expressed in **game ticks** (for example, every N ticks). Designer-facing UIs may offer seconds as an input helper, but the persisted/runtime contract is tick-based.
   - Timers create **new triggers** when they fire; from your perspective, they “wake up” parts of your graph at the right times.
 
 - **Counters and bounded loops**

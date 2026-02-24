@@ -15,6 +15,22 @@ on:
         description: 'Backup name to restore (defaults to latest)'
         required: false
         default: ''
+      restore_environment:
+        description: 'Environment identity for external credential validation'
+        required: false
+        default: 'staging'
+      expected_pg_dump_bucket:
+        description: 'Expected backup bucket for validation'
+        required: false
+        default: ''
+      expected_asset_store_bucket:
+        description: 'Expected asset bucket for validation'
+        required: false
+        default: ''
+      expected_asset_store_endpoint:
+        description: 'Expected asset endpoint for validation'
+        required: false
+        default: ''
 
 jobs:
   verify:
@@ -52,3 +68,14 @@ jobs:
           fi
           dev-tools/restore-cluster.sh "$BACKUP"
 
+      - name: Validate external credential bindings
+        if: ${{ inputs.restore == 'true' }}
+        env:
+          PG_DUMP_BUCKET: ${{ inputs.expected_pg_dump_bucket }}
+          ASSET_STORE_BUCKET: ${{ inputs.expected_asset_store_bucket }}
+          ASSET_STORE_ENDPOINT: ${{ inputs.expected_asset_store_endpoint }}
+          EXPECTED_PG_DUMP_BUCKET: ${{ inputs.expected_pg_dump_bucket }}
+          EXPECTED_ASSET_STORE_BUCKET: ${{ inputs.expected_asset_store_bucket }}
+          EXPECTED_ASSET_STORE_ENDPOINT: ${{ inputs.expected_asset_store_endpoint }}
+        run: |
+          dev-tools/restores/validate-external-credentials.sh "${{ inputs.restore_environment }}"

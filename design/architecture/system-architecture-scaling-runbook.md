@@ -20,7 +20,7 @@ For the conceptual overview of scaling, see `design/architecture/system-architec
    - Apply changes via Helm or Kustomize for the target environment.
 3. **Validate Behavior**
    - Monitor request latency, error rates, and tick duration metrics.
-   - Ensure tick regions remain **HEALTHY** per the tick health rules in `design/architecture/system-architecture-tick-concepts-and-invariants.md` (for example, `tick_execution_time_ms_p95`/`tick_execution_time_ms_p99` vs `tick_budget_ms` and `tick_lock_ttl_ms`) and that Redis tail-loss SLOs from `design/architecture/system-architecture-redis-operations.md` are not being violated.
+   - Ensure tick regions remain **HEALTHY** per the tick health rules in `design/architecture/system-architecture-tick-concepts-and-invariants.md` (for example, `tick_execution_time_ms_p95`/`tick_execution_time_ms_p99` and `tick_execution_time_ms_p99 / tick_lock_ttl_ms`) and that Redis tail-loss SLOs from `design/architecture/system-architecture-redis-operations.md` are not being violated.
 
 ## Scaling Redis
 

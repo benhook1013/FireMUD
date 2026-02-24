@@ -72,6 +72,21 @@ Digest comparison rules:
 - Reconciliation and publish-time checks compare the current digest reported by each service against the recorded digest for the target commit.
 - If `digestSchemaVersion` differs, publish must fail fast and require an explicit migration of digest semantics (for example by bumping `digestSchemaVersion` and replaying commits to record new digests), rather than silently comparing incompatible hashes.
 
+### Digest Participants by Publish Type
+
+Publish workflows must use an explicit participant matrix so digest gating is deterministic:
+
+| Publish Type | Required digest participants (`GetDraftDesignDigest`) | Not part of digest gate |
+| --- | --- | --- |
+| `PublishVersion` (full version) | World Management, Entity Management, Game Logic, Automation & Scripting (for version-scoped script/binding templates) | Asset export/object-store bytes (validated by `manifestHash` in publish saga), Game Design internal history tables |
+| `PublishScriptPatchVersion` (script-only) | Automation & Scripting only (for the target `<tenantId, scriptPatchVersion>` design graph) | World Management, Entity Management, Game Logic template digests (must remain unchanged for base version) |
+
+Rules:
+
+- The publish request type determines the participant set; do not infer participants dynamically from transient service availability.
+- A service outside the matrix for the current publish type may be validated separately, but must not block digest gating for that publish type.
+- Changes to this matrix require an explicit doc + migration update in both `version-control.md` and `world-editing-tools.md`.
+
 ### Digest Schema Migration
 
 Digest semantics are part of the publish safety contract. Changing which rows/fields participate in a domain digest, or how they are canonicalized, requires an explicit migration plan:

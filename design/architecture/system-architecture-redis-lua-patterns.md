@@ -364,7 +364,8 @@ Determinism requirements forbid time and randomness inside Lua itself. Callers m
 - Generate any required timestamps or random tokens in application code and pass them via `ARGV`.
 - Treat those values as **stable inputs**: AOF replay reuses the same `ARGV` so repeated executions see identical arguments.
 - Avoid embedding current time or random suffixes in Redis key names from inside Lua; any such keys must be constructed by callers and passed in through `KEYS`.
-- For timer/retry scripts, pass `now_ms` (or equivalent) via `ARGV` and treat it as the sole time source for comparisons; scripts must not invoke Redis `TIME`.
+- For timer scripts, pass `now_ms` (or equivalent) via `ARGV` and treat it as the sole time source for comparisons; scripts must not invoke Redis `TIME`.
+- For retry scripts, pass tick-timeline inputs (for example `current_tick_id`, `next_eligible_tick_id`, and expected `region_epoch`) via `ARGV`; retry eligibility is based on tick IDs rather than wall-clock time.
 
 CI and code review treat violations of this contract (for example, new scripts that invoke `TIME` or synthesize random IDs) as blocking issues.
 

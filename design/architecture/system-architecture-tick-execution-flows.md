@@ -31,7 +31,7 @@ When changing execution behavior, update these sections in the main tick documen
 Within a region’s tick, each command proceeds through several phases:
 
 1. **Enqueue**
-   - Game Session accepts commands from Telnet/WebSocket clients, AI, or automation.
+   - Game Session accepts commands from Telnet and WebSocket clients, AI, or automation.
    - Commands are enqueued into per-entity (or occasionally per-region) queues such as `tick:{tenantRegionTag}:queue:<entityId>`.
 2. **Target Resolution (read-only)**
    - During the tick, the executor resolves targets from the pinned snapshot for that `<tenantId, regionId>`:
@@ -44,7 +44,9 @@ Within a region’s tick, each command proceeds through several phases:
 4. **Cross-Region Effects (if any)**
    - For cross-region commands, the origin region:
      - Applies local-only effects first (for example, text feedback, animations).
-     - Records durable follow-up work in PostgreSQL for the target entities (tick effect ledger / follow-up tables), with a stable effect identity.
+     - Records durable follow-up work in PostgreSQL for the target entities (tick effect ledger / follow-up tables), with a stable effect identity and explicit target timeline eligibility (`target_region_epoch`, `due_tick_id`).
+       - `due_tick_id` is derived from the target region’s durable status surface (for example `GetRegionTickStatus` / `RegionStatus.lastCommittedTickId`) as `due_tick_id = target_last_committed_tick_id + delta_ticks` (immediate eligibility uses `delta_ticks = 1`).
+       - Writers must persist `target_region_epoch` and `due_tick_id` from the same status read so retries and failover cannot shift eligibility non-deterministically.
      - Optionally writes a best-effort Redis hint marker such as `remote:<tenantId>:<entityId>` (for the target entity) to reduce latency when the target region drains follow-ups.
    - The target region later drains these follow-ups into its own tick pipeline and applies them under its lease and locks.
 5. **Completion / Finalization (optional)**
@@ -109,7 +111,7 @@ If FireMUD later introduces limited intra-region parallelism (for example by sha
 
 Commands that cannot complete inside the configured tick budget are deferred via retry queues rather than blocking the current tick.
 
-Retry queues store, for each action, a retry counter and `next-eligible-tick` so that:
+Retry queues store, for each action, a retry counter and `next_eligible_tick_id` so that:
 
 - Retries are scheduled for future ticks using an exponential backoff in ticks (for example, `nextTick = currentTick + min(2^retryCount, MAX_BACKOFF_TICKS)`).
 - Retries are appended to the originating entity’s queue, preserving per-entity FIFO ordering.

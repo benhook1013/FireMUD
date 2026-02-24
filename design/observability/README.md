@@ -16,4 +16,5 @@ For a conceptual overview of the observability stack (Prometheus, Elasticsearch,
 - Treat `design/architecture/system-architecture-logging-monitoring.md` and `design/architecture/system-architecture-redis-operations.md` as the contract for alert labels, metric naming/units, and required dimensions (for example `severity ∈ {P0,P1,P2}`, `owner`, `runbook`, and stable `service` labels on shared metrics).
 - When updating Grafana dashboards or Alertmanager snippet templates, keep PromQL aligned with that contract (especially latency units for `_ms` metrics and per-tenant/region scoping where required).
 - For prod-like environments, install the reference Prometheus recording rules and alerts from `k8s/monitoring/prometheus-rules-firemud.yaml` (or an overlay derived from it) so fallback conditions and SLO panels have stable, shared recording rules.
+- In nightly/staging-gated observability smoke, validate rule presence through Prometheus rules API checks, not only by inspecting dashboards.
 - Validate changes locally with `python3 dev-tools/observability/validate-observability-contract.py` and keep CI green.

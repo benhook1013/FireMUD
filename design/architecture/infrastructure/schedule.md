@@ -28,3 +28,5 @@ By default, staging is treated as **disposable** and does not run the production
 - No scheduled `pg_dump` or Velero schedules in staging.
 - Staging rebuilds from manifests and fresh data as needed.
 - When staging is temporarily restored from production backups (for example for disaster recovery rehearsals), operators must run post-restore secret hardening before opening the environment to playtests (see `../system-architecture-backup-recovery.md#post-restore-secret-hardening`).
+- PRs that modify `k8s/` run [`.github/workflows/validate-kustomize-overlays.yml`](../../../.github/workflows/validate-kustomize-overlays.yml), which blocks staging backup schedule resources unless `k8s/overlays/stage/STAGING_BACKUPS_ENABLED` is present.
+- If staging schedules are intentionally enabled, the PR should include the marker file, an explicit operator rationale, and a rollback plan to return staging to disposable defaults.

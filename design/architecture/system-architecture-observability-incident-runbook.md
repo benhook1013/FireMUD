@@ -43,6 +43,7 @@ It complements the degraded-mode expectations in `design/architecture/system-arc
 - Treat Alertmanager state as unreliable if Prometheus is stale.
 - Use service health endpoints, Kubernetes events, and logs to determine whether player-facing SLOs are likely being violated.
 - If tick safety is in question, prefer defensive actions (pause affected regions/tenants) based on authoritative tick controls and error logs rather than waiting for metrics to recover.
+  - If your deployment does not yet expose `region_id`-scoped pause controls end-to-end, apply the closest available scope (for example `tenant_id` + `game_instance_id` alias) and record the scope substitution in the incident timeline.
 
 ### Prometheus recovery and verification
 

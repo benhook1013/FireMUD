@@ -35,6 +35,10 @@ service GameSessionControlPlaneService {
 
   rpc PauseTicksForScope(PauseTicksForScopeRequest) returns (PauseTicksForScopeResponse);
   rpc ResumeTicksForScope(ResumeTicksForScopeRequest) returns (ResumeTicksForScopeResponse);
+  rpc PurgeQueuedTickCommandsForScriptPatch(PurgeQueuedTickCommandsForScriptPatchRequest)
+      returns (PurgeQueuedTickCommandsForScriptPatchResponse);
+  rpc PurgeQueuedTickCommandsForPluginVersion(PurgeQueuedTickCommandsForPluginVersionRequest)
+      returns (PurgeQueuedTickCommandsForPluginVersionResponse);
 }
 
 message StartSessionRequest {
@@ -186,12 +190,14 @@ message RollbackScriptPatchVersionResponse {
 message PauseTicksForScopeRequest {
   // Scope rules (normative):
   // - tenant_id is required.
-  // - Exactly one of region_id or game_instance_id must be set.
+  // - Exactly one scope must be set via the `scope` oneof.
   // - region_id is the canonical tick scope (preferred).
-  // - game_instance_id is an alias scope allowed only when a game instance maps cleanly to a single tick region.
+  // - game_instance_id is allowed when tooling is instance-scoped.
   string tenant_id = 1;
-  string game_instance_id = 2;
-  string region_id = 3;
+  oneof scope {
+    string game_instance_id = 2;
+    string region_id = 3;
+  }
   string control_plane_request_id = 4;
   string actor_principal = 5;
   string reason = 6;
@@ -205,12 +211,14 @@ message PauseTicksForScopeResponse {
 message ResumeTicksForScopeRequest {
   // Scope rules (normative):
   // - tenant_id is required.
-  // - Exactly one of region_id or game_instance_id must be set.
+  // - Exactly one scope must be set via the `scope` oneof.
   // - region_id is the canonical tick scope (preferred).
-  // - game_instance_id is an alias scope allowed only when a game instance maps cleanly to a single tick region.
+  // - game_instance_id is allowed when tooling is instance-scoped.
   string tenant_id = 1;
-  string game_instance_id = 2;
-  string region_id = 3;
+  oneof scope {
+    string game_instance_id = 2;
+    string region_id = 3;
+  }
   string control_plane_request_id = 4;
   string actor_principal = 5;
   string reason = 6;
@@ -218,5 +226,36 @@ message ResumeTicksForScopeRequest {
 
 message ResumeTicksForScopeResponse {
   bool success = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message PurgeQueuedTickCommandsForScriptPatchRequest {
+  string tenant_id = 1;
+  string game_instance_id = 2;
+  string region_id = 3;
+  string script_patch_version = 4;
+  string control_plane_request_id = 5;
+  string actor_principal = 6;
+  string reason = 7;
+}
+
+message PurgeQueuedTickCommandsForScriptPatchResponse {
+  int64 purged_count = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message PurgeQueuedTickCommandsForPluginVersionRequest {
+  string tenant_id = 1;
+  string game_instance_id = 2;
+  string region_id = 3;
+  string plugin_id = 4;
+  string plugin_version_id = 5;
+  string control_plane_request_id = 6;
+  string actor_principal = 7;
+  string reason = 8;
+}
+
+message PurgeQueuedTickCommandsForPluginVersionResponse {
+  int64 purged_count = 1;
   shared.v1.ErrorDetail error = 2;
 }

@@ -20,7 +20,12 @@ MCP package semantics are terminated by the backend session layer (Spring Cloud 
 
 ## Protocol Handshake
 
-MCP negotiation begins when either endpoint sends an initial `mcp` line advertising the supported MCP version range. FireMUD and MCP-capable clients then exchange an `authentication-key` and agree on the highest overlapping MCP version; all subsequent MCP messages are tagged with the negotiated key. If no overlap exists, MCP cannot be used and the connection must fall back to plain text or close.
+MCP negotiation in FireMUD is role-specific:
+
+- **Target state (canonical):** Game Session is the MCP server endpoint and sends the initial server greeting (`#$#mcp version: ...`); the client responds with its `#$#mcp authentication-key: ...` line.
+- **Transitional compatibility mode (temporary):** a proxy-side greeting shim may emit the initial server greeting in environments where backend-owned greeting rollout is incomplete. This mode is compatibility-only and does not transfer package ownership to the proxy.
+
+In both modes, FireMUD and MCP-capable clients agree on the highest overlapping version and use the client-supplied `authentication-key` for all subsequent MCP messages. If no overlap exists, MCP cannot be used and the connection must fall back to plain text or close.
 
 On the Telnet path, the TCP Proxy Service may still be in its `SESSION` envelope capture window when clients begin MCP negotiation. `SESSION` envelopes are consumed by the proxy; MCP control lines are forwarded upstream and do not close the envelope window. Clients that want to use both `SESSION` and MCP should send `SESSION` first, then start MCP negotiation (and then proceed to `LOGIN`) so the proxy can include any captured session hints in the Proxy → Gateway WebSocket handshake.
 
@@ -31,8 +36,8 @@ No other MCP traffic should be sent until both sides have exchanged their initia
 Example handshake:
 
 ```text
-#$#mcp authentication-key: 18972163558 version: 2.1 to: 2.1
 #$#mcp version: 2.1 to: 2.1
+#$#mcp authentication-key: 18972163558 version: 2.1 to: 2.1
 #$#mcp-negotiate-can package: mcp-negotiate min-version: 1.0 max-version: 2.0
 #$#mcp-negotiate-can package: mcp-cord min-version: 1.0 max-version: 1.0
 #$#mcp-negotiate-end
@@ -66,6 +71,8 @@ These primitives let stateful conversations—such as dedicated chat tabs, map v
 
 MCP control lines (`#$#...`) and their payloads are treated as application‑level text on top of the sanitized Telnet transport. Abuse detection at the TCP Proxy layer operates on Telnet control bytes, envelope handling, connection churn, and similar signals; unknown MCP packages or malformed MCP messages are not treated as abuse by default. Implementations may log or surface MCP parsing issues for diagnostics, but they must not close connections purely because a client sends an unrecognised MCP package.
 
+Repeated MCP negotiation failures are handled separately from unknown-package tolerance. If a connection exceeds a bounded negotiation-failure budget (default: `5` MCP negotiation failures in `60s`), the proxy may close it as `policy_violation` to protect the edge from tight failure loops. This budget is implementation-configured and must remain low-cardinality in metrics.
+
 ### MCP resource limits & abuse budgets
 
 To keep MCP traffic from overwhelming the Telnet edge while still being friendly to well-behaved tools, the TCP Proxy Service enforces a set of **MCP-specific budgets** on top of the generic Telnet limits described in the TCP Proxy design:
@@ -84,6 +91,7 @@ MCP support is being rolled out incrementally:
 
 - The underlying line-based Telnet transport and control-line parsing (`#$#...`) are implemented in the TCP Proxy Service.
 - Some environments temporarily enable a proxy-side MCP “server greeting” (`#$#mcp version: ...`) as a compatibility shim during rollout. The target-state design is that the backend session layer is the MCP endpoint and emits the canonical server greeting and package advertisements; the proxy remains a transport bridge and does not define package semantics.
+- Transitional proxy-side greeting shims must be explicitly feature-flagged and tracked with rollout metrics. The shim is removed once all player-facing environments run backend-owned MCP greeting and negotiation.
 - The `mcp-negotiate` handshake and the `mcp-cord` package are supported for basic cord creation and message routing.
 - Higher-level FireMUD-specific MCP packages (for example status panels, map feeds, or structured notifications) are introduced gradually and may evolve as the platform matures.
 

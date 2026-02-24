@@ -44,6 +44,13 @@ service AutomationScriptingControlPlaneService {
   // Cancel pending durable work items for a patch so they are never handed off again.
   rpc CancelPendingWorkItemsForPatch(CancelPendingWorkItemsForPatchRequest)
       returns (CancelPendingWorkItemsForPatchResponse);
+
+  // Plugin lifecycle/control-plane APIs.
+  rpc GetPluginStatus(GetPluginStatusRequest) returns (GetPluginStatusResponse);
+  rpc SetPluginActiveVersion(SetPluginActiveVersionRequest)
+      returns (SetPluginActiveVersionResponse);
+  rpc DisablePlugin(DisablePluginRequest) returns (DisablePluginResponse);
+  rpc DrainPlugin(DrainPluginRequest) returns (DrainPluginResponse);
 }
 
 message PingRequest {}
@@ -184,10 +191,13 @@ message TriggerScriptEventResponse {
 
 enum ScriptPatchStatus {
   SCRIPT_PATCH_STATUS_UNSPECIFIED = 0;
-  SCRIPT_PATCH_STATUS_PENDING = 1;
+  // Deprecated compatibility alias for clients that only understand "pending".
+  SCRIPT_PATCH_STATUS_PENDING = 1 [deprecated = true];
   SCRIPT_PATCH_STATUS_READY = 2;
   SCRIPT_PATCH_STATUS_FAILED = 3;
   SCRIPT_PATCH_STATUS_ROLLED_BACK = 4;
+  SCRIPT_PATCH_STATUS_PENDING_VALIDATION = 5;
+  SCRIPT_PATCH_STATUS_ONLOAD_RUNNING = 6;
 }
 
 message GetScriptPatchStatusRequest {
@@ -204,6 +214,9 @@ message GetScriptPatchStatusResponse {
 
 message ListScriptPatchStatusesRequest {
   string tenant_id = 1;
+  ScriptPatchStatus status = 2;
+  int64 changed_after_ms = 3;
+  int64 changed_before_ms = 4;
 }
 
 message ScriptPatchStatusEntry {
@@ -230,5 +243,74 @@ message CancelPendingWorkItemsForPatchRequest {
 
 message CancelPendingWorkItemsForPatchResponse {
   int64 canceled_count = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+enum PluginState {
+  PLUGIN_STATE_UNSPECIFIED = 0;
+  PLUGIN_STATE_ENABLED = 1;
+  PLUGIN_STATE_DISABLED = 2;
+  PLUGIN_STATE_DRAINING = 3;
+  PLUGIN_STATE_RELOADING = 4;
+  PLUGIN_STATE_FAILED = 5;
+}
+
+message GetPluginStatusRequest {
+  string tenant_id = 1;
+  string game_instance_id = 2;
+  string plugin_id = 3;
+}
+
+message GetPluginStatusResponse {
+  string active_plugin_version_id = 1;
+  string pending_plugin_version_id = 2;
+  PluginState plugin_state = 3;
+  string status_reason = 4;
+  int64 last_changed_at_ms = 5;
+  shared.v1.ErrorDetail error = 6;
+}
+
+message SetPluginActiveVersionRequest {
+  string tenant_id = 1;
+  string game_instance_id = 2;
+  string plugin_id = 3;
+  string target_plugin_version_id = 4;
+  string control_plane_request_id = 5;
+  string actor_principal = 6;
+  string reason = 7;
+}
+
+message SetPluginActiveVersionResponse {
+  string previous_plugin_version_id = 1;
+  string active_plugin_version_id = 2;
+  string control_plane_request_id = 3;
+  shared.v1.ErrorDetail error = 4;
+}
+
+message DisablePluginRequest {
+  string tenant_id = 1;
+  string game_instance_id = 2;
+  string plugin_id = 3;
+  string control_plane_request_id = 4;
+  string actor_principal = 5;
+  string reason = 6;
+}
+
+message DisablePluginResponse {
+  bool success = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message DrainPluginRequest {
+  string tenant_id = 1;
+  string game_instance_id = 2;
+  string plugin_id = 3;
+  string control_plane_request_id = 4;
+  string actor_principal = 5;
+  string reason = 6;
+}
+
+message DrainPluginResponse {
+  bool success = 1;
   shared.v1.ErrorDetail error = 2;
 }

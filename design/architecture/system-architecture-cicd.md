@@ -164,7 +164,7 @@ manual steps.
 
 ## PR Preview Environments
 
-Pull requests spin up a short-lived Docker Compose stack so reviewers can test changes interactively. The [`.github/workflows/preview.yml`](../../.github/workflows/preview.yml) workflow uses Docker Buildx to build service images with cached layers, copies `.env.sample` to `.env`, generates development certificates, and launches the stack via Docker Compose.
+Pull requests targeting `develop`, `main`, and `release/**` spin up a short-lived Docker Compose stack so reviewers can test changes interactively. The [`.github/workflows/preview.yml`](../../.github/workflows/preview.yml) workflow uses Docker Buildx to build service images with cached layers, copies `.env.sample` to `.env`, generates development certificates, and launches the stack via Docker Compose.
 A status comment is posted once the gateway passes its health check, and the
 runner tears the stack down at the end of the job so the preview is removed
 automatically.
@@ -190,6 +190,7 @@ FireMUD uses a simple promotion flow from pull requests through staging to produ
 - Staging promotion is performed by updating the staging Kustomize overlay (for example `k8s/overlays/stage`) to the desired image tags via a Git change, merging it, and applying it from a secure operator environment using `kubectl apply -k k8s/overlays/stage`. This keeps “what was deployed” traceable in Git history.
 - When a release is ready, `release-please` opens a release PR and creates a version tag (for example `v1.2.3`) that is merged to `main`. Images for this tag are built and pushed by the Docker image workflow.
 - Production promotion is performed by updating the production Kustomize overlay (for example `k8s/overlays/prod`) to the desired tagged images via a Git change, merging it, and applying it from a secure operator environment using `kubectl apply -k k8s/overlays/prod` following the deployment runbook.
+- Overlay PRs are validated by [`.github/workflows/validate-kustomize-overlays.yml`](../../.github/workflows/validate-kustomize-overlays.yml), which checks that referenced images exist in GHCR and blocks staging backup schedules unless the explicit marker `k8s/overlays/stage/STAGING_BACKUPS_ENABLED` is present.
 
 Rollbacks are handled by resuming a previously known-good image tag and re-applying the staging or production manifests with that tag. See the Deployment Runbook for the step-by-step operator flow.
 

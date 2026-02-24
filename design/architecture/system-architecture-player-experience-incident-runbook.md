@@ -7,7 +7,7 @@ This runbook describes operator actions for **player-facing SLO breaches** on lo
 - **Login success ratio below SLO**
 - **Command end-to-end latency above SLO**
 - **Chat delivery latency above SLO**
-- **Telnet/WebSocket path availability below SLO**
+- **Telnet and WebSocket path availability below SLO**
 
 Each scenario assumes that the Player Experience, Redis & Coordination Health, and Tick Health & Ledger dashboards under `design/observability/grafana` are available.
 
@@ -135,7 +135,7 @@ Each scenario assumes that the Player Experience, Redis & Coordination Health, a
    - Ensure the alert clears and player reports improve.
    - Use the `player-incident-drilldown.json` Kibana saved search to validate that chat-related errors or delays in logs have subsided for affected players and channels.
 
-## Telnet/WebSocket Path Availability Below SLO
+## Telnet and WebSocket Path Availability Below SLO
 
 ### Detect (Entry path availability)
 

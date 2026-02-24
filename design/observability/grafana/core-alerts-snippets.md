@@ -161,7 +161,7 @@ These example rules enforce the player-centric SLOs defined in the Logging & Mon
         ) > 1000
   for: 10m
   labels:
-    service: chat
+    service: social-groups-service
     severity: P1
     owner: gameplay
     runbook: design/architecture/system-architecture-player-experience-incident-runbook.md#chat-delivery-latency-above-slo
@@ -169,21 +169,39 @@ These example rules enforce the player-centric SLOs defined in the Logging & Mon
     summary: Chat delivery latency above SLO
     description: Chat delivery p99 latency has exceeded 1s over the last 5 minutes for active regions.
 
-- alert: EntryPathAvailabilityLow
+- alert: EntryPathAvailabilityLowGateway
   expr: (
-    sum by (tenantId, path) (increase(entrypath_connection_attempts_total{outcome="success"}[1d]))
+    sum by (tenantId, path) (increase(entrypath_connection_attempts_total{service="spring-cloud-gateway", outcome="success"}[1d]))
       /
-    sum by (tenantId, path) (increase(entrypath_connection_attempts_total[1d]))
+    sum by (tenantId, path) (increase(entrypath_connection_attempts_total{service="spring-cloud-gateway"}[1d]))
   ) < 0.999
   for: 30m
   labels:
-    service: gateway
+    service: spring-cloud-gateway
+    component: entrypath
     severity: P0
     owner: platform
     runbook: design/architecture/system-architecture-player-experience-incident-runbook.md#telnetwebsocket-path-availability-below-slo
   annotations:
-    summary: Entry path availability below SLO
-    description: One or more tenants have sustained connection failures on a specific entry path (telnet/websocket). Inspect outcomes in entrypath_connection_attempts_total and follow the player experience runbook.
+    summary: Gateway entry-path availability below SLO
+    description: One or more tenants have sustained connection failures on a gateway-owned entry path. Inspect entrypath_connection_attempts_total and follow the player experience runbook.
+
+- alert: EntryPathAvailabilityLowTcpProxy
+  expr: (
+    sum by (tenantId, path) (increase(entrypath_connection_attempts_total{service="tcp-proxy-service", outcome="success"}[1d]))
+      /
+    sum by (tenantId, path) (increase(entrypath_connection_attempts_total{service="tcp-proxy-service"}[1d]))
+  ) < 0.999
+  for: 30m
+  labels:
+    service: tcp-proxy-service
+    component: entrypath
+    severity: P0
+    owner: platform
+    runbook: design/architecture/system-architecture-player-experience-incident-runbook.md#telnetwebsocket-path-availability-below-slo
+  annotations:
+    summary: TCP Proxy entry-path availability below SLO
+    description: One or more tenants have sustained connection failures on TCP Proxy entry paths. Inspect entrypath_connection_attempts_total and follow the player experience runbook.
 ```
 
 ## Observability Smoke Test (Non-Production)

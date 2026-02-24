@@ -41,6 +41,7 @@ Audit records must include at least:
     - DSL evaluation outcome
     - Work-item persistence outcome (if using a durable outbox)
     - Handoff/enqueue outcome into the tick system
+  - `policyViolations` (optional array, plugin policy rollouts only; see schema below)
 
 Outcome fields must be sufficient to distinguish “DSL evaluated successfully” from “commands were accepted into the tick system”. Do not collapse these into a single `success` signal.
 
@@ -75,6 +76,31 @@ Stage semantics:
 - Backpressure outcomes like `skipped_reloading` must use `finalStage=ADMISSION`.
 - Quota denials must use `finalStage=ADMISSION` unless quotas are evaluated inside the DSL runtime for a given trigger (rare; avoid mixing).
 
+### Canonical Outcome Taxonomy (Required)
+
+Audit writers must use the canonical `finalOutcome` values defined in `design/architecture/system-architecture-scripting-normative-contract-tables.md#canonical-finaloutcome-values-normative`.
+
+In particular:
+
+- Use `version_unavailable` (never `skipped_version_unavailable`).
+- Encode specific cause in `finalReason` (for example `onload_failed`, `plugin_version_failed`, `script_patch_missing`).
+
+### `policyViolations` Schema (Required When Present)
+
+`policyViolations` is used only for plugin component policy report-only/enforcing flows.
+
+- Type: JSON array
+- Max entries: `20`
+- Max serialized size: `16 KiB`
+- Entry schema:
+  - `policyVersion` (string, required)
+  - `componentId` (string, required)
+  - `decision` (enum string, required: `REPORT_ONLY` or `BLOCKED`)
+  - `reason` (string, required, bounded enum or stable short code)
+  - `observedAt` (timestamp, required)
+
+If limits are exceeded, writers must truncate deterministically and set `finalReason` or an auxiliary field to indicate truncation.
+
 ## Metrics (Authoritative Names and Label Rules)
 
 The following metric families are the supported contract for automation/scripting operations:
@@ -90,6 +116,7 @@ The following metric families are the supported contract for automation/scriptin
 - Tick integration and queueing
   - `automation_tick_events_enqueued_total{tenantId}`
   - `automation_tick_version_fence_dropped_total{tenantId, scriptId, reason}`
+  - `automation_tick_plugin_version_fence_dropped_total{tenantId, pluginId, pluginVersionId, reason}`
   - `automation_script_queue_delay_seconds{tenantId, scriptId}`
   - `automation_queue_orphaned_entries_total{tenantId}` (when applicable)
 - Sandbox and runtime health

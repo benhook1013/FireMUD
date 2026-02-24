@@ -20,6 +20,8 @@ RPC expectations:
 
 - `Ping` – safe to retry freely; no side effects.
 - `UpdateScript` / `NotifyScriptVersionUpdate` – **idempotent with respect to their request identifiers** (for example, script IDs and patch versions). Callers should treat transport-level retries as safe as long as they resend the same payload.
+- `GetScriptPatchStatus` / `ListScriptPatchStatuses` – visibility over patch lifecycle states (`PENDING_VALIDATION`, `ONLOAD_RUNNING`, `READY`, `FAILED`, `ROLLED_BACK`).
+- Plugin control-plane mutating RPCs (`SetPluginActiveVersion`, `DisablePlugin`, `DrainPlugin`) are idempotent with respect to `controlPlaneRequestId`.
 - Event ingress RPCs (for example, `TriggerScriptEvent`) – **idempotent with respect to `scriptEventId`**:
   - Re-sending the same request with the same Trigger Identity must not cause the DSL body to run twice.
   - For entity-scoped external gameplay/runtime events, the Trigger Identity is at least `<tenantId, gameInstanceId, regionId, regionEpoch, entityId, scriptId, eventType, scriptPatchVersion, scriptEventId>`.
@@ -36,7 +38,8 @@ The proto files in this directory define several RPCs consumed by domain service
 - **Health and admin**
   - `Ping(PingRequest) returns (PingResponse)` – basic health check; see the service README for REST and gRPC ping usage.
 - **Runtime control-plane APIs**
-  - `AutomationScriptingControlPlaneService` exposes read-only patch lifecycle APIs (`GetScriptPatchStatus`, `ListScriptPatchStatuses`) and rollback-support hooks (`CancelPendingWorkItemsForPatch`) as specified in `design/architecture/system-architecture-scripting-control-plane-api.md`.
+  - `AutomationScriptingControlPlaneService` exposes script patch lifecycle APIs (`GetScriptPatchStatus`, `ListScriptPatchStatuses`) and rollback-support hooks (`CancelPendingWorkItemsForPatch`) as specified in `design/architecture/system-architecture-scripting-control-plane-api.md`.
+  - It also exposes plugin lifecycle APIs (`GetPluginStatus`, `SetPluginActiveVersion`, `DisablePlugin`, `DrainPlugin`) for operator orchestration via Logging & Admin.
 - **Design-time APIs**
   - `UpdateScript` – uploads or replaces a script definition for later use as part of the Game Design → Automation & Scripting publish Saga.
   - `GetScriptStatus` – queries whether a script is queued or running for a given entity.

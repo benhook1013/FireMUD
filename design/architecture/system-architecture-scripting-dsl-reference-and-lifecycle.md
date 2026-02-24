@@ -491,7 +491,7 @@ for the current leadership and sharding model.
 - On success, the new `scriptPatchVersion` becomes active for future triggers; on failure:
   - `activePatchVersion` remains unchanged and continues to govern live execution.
   - `pendingPatchVersion` is marked failed along with an error reason, and leaders discard any partially loaded state for that patch and resume scheduling using the existing `activePatchVersion`.
-  - Triggers referencing a failed or unknown patch are rejected explicitly with audit outcomes such as `skipped_version_unavailable` and metrics like `automation_script_triggers_dropped_total{reason="version_unavailable"}` rather than silently falling back to an older patch.
+  - Triggers referencing a failed or unknown patch are rejected explicitly with `finalOutcome=version_unavailable` (with specific cause in `finalReason`) and metrics like `automation_script_triggers_dropped_total{reason="version_unavailable"}` rather than silently falling back to an older patch.
 
 - **Timer-based triggers** such as `onInterval` and `onTimerExpire` always execute against the **currently pinned `scriptPatchVersion`** for the game at the moment they are evaluated; they do not continue running older definitions after a patch is promoted.
 - **Older script versions** remain in the Automation & Scripting Service database for auditing and potential rollback, but only the **pinned active version** is used for live execution.
@@ -509,7 +509,7 @@ Common outcome classes include:
 - `sandbox_error` – exception in the sandboxed DSL runtime or validation failure.
 - `validation_error` – static validation on inputs or script configuration failed.
 - `disabled_due_to_errors` – failure-rate circuit breaker opened for the script.
-- `version_unavailable` / `skipped_version_unavailable` – trigger referenced a script patch version that failed reload or is unknown.
+- `version_unavailable` – trigger referenced a script patch version that failed reload or is unknown.
 - `infrastructure_error` – transient infrastructure issues such as gRPC `UNAVAILABLE` or Redis timeouts.
 - `disabled_unsafe_component` – script was refused because it depends on a DSL component version marked `UNSAFE`.
 

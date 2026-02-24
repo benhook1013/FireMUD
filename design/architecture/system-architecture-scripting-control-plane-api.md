@@ -127,8 +127,9 @@ Rollback protocols require a coordination barrier so gameplay does not execute m
 Inputs:
 
 - `tenantId`
-- `regionId` (optional; if absent, pauses all regions for the instance)
-- `gameInstanceId`
+- Exactly one scope key:
+  - `regionId` (preferred)
+  - `gameInstanceId` (allowed for instance-scoped tooling)
 - `controlPlaneRequestId`
 - `actor`
 - `reason`
@@ -140,7 +141,7 @@ Semantics:
 
 #### `ResumeTicks`
 
-Inputs: same identity + `controlPlaneRequestId` + `actor` + `reason`.
+Inputs: same scope model as `PauseTicks` + `controlPlaneRequestId` + `actor` + `reason`.
 
 Semantics:
 
@@ -167,7 +168,7 @@ Semantics:
 
 - Idempotent.
 - Removes (or moves to a bounded dead-letter store) any queued tick commands whose embedded `scriptPatchVersion` matches the supplied value for the scope.
-- Emits an operator-visible metric for purge activity and for version-fence drops (exact metric names and label sets follow the observability contract).
+- Emits an operator-visible metric for purge activity and for version-fence drops (exact metric names and label sets follow the observability contract, including separate script and plugin version-fence metric families).
 
 Outputs:
 
@@ -200,7 +201,7 @@ Inputs:
 Outputs:
 
 - `tenantId`, `scriptPatchVersion`
-- `status` (for example `READY`, `FAILED`, `ROLLED_BACK`, `PENDING`)
+- `status` (for example `PENDING_VALIDATION`, `ONLOAD_RUNNING`, `READY`, `FAILED`, `ROLLED_BACK`)
 - `statusReason` (optional)
 - `lastChangedAt`
 

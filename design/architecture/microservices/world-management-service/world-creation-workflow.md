@@ -16,6 +16,8 @@ The implementation uses the published world topology for the chosen `tenantId` a
 
 It never mutates template rows for Published versions; any structural changes to the world layout must occur through design-time workflows on Draft versions before publishing a new `versionId`. More broadly, world creation is allowed to invoke procedural generators only in **runtime/instance** mode as described in [Procedural Generation](../../system-architecture-procedural-generation.md); any attempt to write template rows from this Saga, even for non-Published versions, must be rejected by World Management validation. All template edits must flow through Game Design Service design-time APIs.
 
+World creation uses **Class A (pre-activation) rollback semantics** from [Transaction Strategies](../../system-architecture-transactions.md#rollback-boundaries-by-operation-class): compensation is allowed until the instance is admitted for gameplay. Once admission opens, runtime mutations move to Class B retry/reconciliation semantics and are no longer rolled back through this Saga.
+
 Initial NPC and item presence is modeled declaratively:
 
 - World-creation stages may register spawn templates or population bindings owned by the **World Management Service** that describe which entity templates (owned by Entity Management) can appear where. These bindings live in World Management tables (for example `world_spawn_template` or equivalent) and reference entity templates by stable identifiers keyed by `(tenantId, versionId)`.

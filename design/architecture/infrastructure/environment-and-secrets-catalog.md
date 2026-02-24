@@ -192,6 +192,11 @@ Local Docker Compose stacks that do not run an OpenTelemetry collector should se
 
 Service design documents reference this table for the OpenTelemetry endpoint configuration.
 
+Scoped incident sampling support (matching by `tenantId` / `regionId`) also depends on OpenTelemetry Collector policy configuration, not only service env vars. Environments should be explicitly tagged as either:
+
+- `service-scoped-sampling-only`, or
+- `scoped-tenant-region-sampling-enabled` (tail-sampling policy support present and verified).
+
 ---
 
 ## Asset Storage
@@ -218,9 +223,10 @@ Operational scripts and CronJobs rely on the following variables when uploading 
 | -------- | ------- | ------- |
 | `PG_DUMP_BUCKET` | Object storage bucket for pg_dump files | *(none)* |
 | `PG_DUMP_ENDPOINT` | Optional S3-compatible endpoint URL | *(none)* |
-| `FIREMUD_K8S_NAMESPACE` | Target namespace for restore scripts | `firemud` |
+| `FIREMUD_K8S_NAMESPACE` | Namespace override used by restore/verification scripts for drills or non-default restores | `firemud` |
 
 In Kubernetes environments, object-store credentials should be stored in per-environment Secrets and must not be shared between staging and production. `PG_DUMP_ENDPOINT` is required only for S3-compatible endpoints such as MinIO; when unset, tooling uses the AWS default endpoint behavior.
+Shared staging/production environments use the standard `firemud` namespace by default; `FIREMUD_K8S_NAMESPACE` is primarily an explicit override for throwaway-namespace restore tests and rehearsals.
 
 See `../system-architecture-backup-recovery.md` for schedules and retention policies.
 
@@ -235,7 +241,7 @@ Service-specific settings such as SMTP credentials for the Account Service or `G
 
 This catalog covers only shared configuration keys.
 
-Operational scripts like `dev-tools/restores/restore-cluster.sh` use an optional `FIREMUD_K8S_NAMESPACE` variable to target the Kubernetes namespace. It defaults to `firemud` when unset.
+Operational scripts like `dev-tools/restores/restore-cluster.sh` use an optional `FIREMUD_K8S_NAMESPACE` override to target non-default namespaces during restore drills. In normal shared-environment operations, namespace selection should stay aligned with the standard overlay namespace (`firemud`).
 
 ---
 

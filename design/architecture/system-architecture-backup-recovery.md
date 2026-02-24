@@ -77,6 +77,26 @@ Tick pause/resume APIs support multiple ways to identify scope. To keep operator
 
 Backups should use `region_id` scoping wherever possible to minimize blast radius; use the alias only when the deployment does not yet expose region-scoped pause controls end-to-end.
 
+#### Tick Pause Scope Migration Plan (Normative)
+
+To remove long-term ambiguity between alias and canonical scope, the control-plane migration should follow explicit phases:
+
+1. **Phase A (current): dual accept**
+   - Accept `region_id` and `game_instance_id` (exactly one).
+   - Emit usage metrics/counters for alias-scope requests and include a deprecation warning in control-plane logs for `game_instance_id` requests.
+2. **Phase B: dual accept + warning enforcement**
+   - Keep request acceptance unchanged.
+   - Require dashboards/alerts for alias-scope usage so operators can verify clients and jobs are migrating.
+3. **Phase C: canonical required**
+   - Reject `game_instance_id`-only pause/resume requests with `INVALID_ARGUMENT`.
+   - Require `region_id` for all production backup and incident automation.
+
+Exit criteria for Phase C:
+
+- Backup jobs in all prod-like environments invoke pause/resume with `tenant_id` + `region_id`.
+- Tick incident tooling and runbooks no longer rely on `game_instance_id` fallback.
+- Alias-scope usage metric is zero for a full release window before cutover.
+
 For local clusters without cloud storage, deploy the `k8s/velero/minio.yaml` manifest and configure Velero with a local backup location:
 
 ```yaml
@@ -197,6 +217,7 @@ This behavior is distinct from **failover**:
   services start successfully. A manual workflow
   `.github/workflows/manual-backup-restore.yml` can run these checks on
   demand from the GitHub Actions UI. See [Operational Runbooks](./system-architecture-runbooks.md#recovery) for step-by-step instructions.
+- Shared staging/production operations use the standard `firemud` namespace. `FIREMUD_K8S_NAMESPACE` is an explicit override for throwaway restore drills and non-default restore targets.
 
 ### Backup Observability and Alerts
 
@@ -266,6 +287,9 @@ Post-restore hardening is performed by a dedicated Kubernetes Job (for example `
      - Outbound comms: SMTP and webhook/API tokens, with explicit “staging cannot send production messages” guards.
      - Operator access: operator-only client certificates and any kube credentials used by operator tooling.
    - If these credentials are rotated out-of-band (for example via the cloud provider console), record the required re-bind/re-issue steps in the relevant runbooks so the restore procedure remains repeatable.
+   - Before enabling external traffic, run a mandatory external credential validation pass and fail the restore if validation does not pass:
+     - `dev-tools/restores/validate-external-credentials.sh <staging|production>`
+     - Provide expected values via environment variables such as `EXPECTED_PG_DUMP_BUCKET`, `EXPECTED_ASSET_STORE_BUCKET`, and `EXPECTED_ASSET_STORE_ENDPOINT`, and optionally `PRODUCTION_PG_DUMP_BUCKET` / `PRODUCTION_ASSET_STORE_BUCKET` when validating staging isolation.
 
 The `post-restore-secret-hardening` Job runs after PostgreSQL and core services have been restored and basic health checks pass, but **before** the restored environment is considered player-facing. It uses least-privilege service accounts:
 
@@ -276,8 +300,9 @@ Runbooks should treat this Job as a mandatory step in any production or staging 
 
 1. Restore PostgreSQL and Kubernetes manifests as described above.
 2. Run `post-restore-secret-hardening` in the target namespace and wait for it to complete successfully.
-3. Confirm application health checks, login/session flows, and JWT validation.
-4. Only then route external or player traffic to the restored cluster.
+3. Run `dev-tools/restores/validate-external-credentials.sh <staging|production>` with environment-specific expected values and ensure it succeeds.
+4. Confirm application health checks, login/session flows, and JWT validation.
+5. Only then route external or player traffic to the restored cluster.
 
 ---
 

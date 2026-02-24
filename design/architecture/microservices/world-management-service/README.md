@@ -164,9 +164,9 @@ Concrete per-effect required writes and reconciliation rules live in `design/arc
 
 - `GetRoom` – retrieves room data including exits and environmental effects.
 - `GetRoomSnapshot` – returns a minimal, `LOOK`-focused view (room identity, names, descriptions, exit metadata, ambient state) scoped by `RoomInstanceRef`.
-- `ListRoomOccupants` – returns the authoritative set of occupant `entityId` values present in a room, scoped by `RoomInstanceRef`.
+- `ListRoomOccupants` – returns the authoritative typed occupant list (`occupants`) for actors in a room, scoped by `RoomInstanceRef`. The legacy `occupantEntityIds` list is a derived compatibility mirror only.
 - `ApplyRoomAmbientStatePatch` – applies an ambient state patch to the target `RoomInstanceRef`, guarded by `EffectId`.
-- `UpdateWorldState` – deprecated bulk update surface. Prefer effect-shaped, instance-scoped mutation RPCs (for example `ApplyRoomAmbientStatePatch`) so every durable world mutation is scoped correctly and guarded by `EffectId`.
+- `UpdateWorldState` – deprecated legacy bulk update surface. It is not authoritative for runtime mutations and remains only for backwards compatibility during migration.
 
 ### LOOK snapshot contract
 
@@ -178,7 +178,8 @@ Concrete per-effect required writes and reconciliation rules live in `design/arc
 - `shortDescription` and `longDescription` text; descriptions longer than the `LOOK_MAX_DESCRIPTION_CHARS` config should be truncated with an ellipsis so clients don’t wrap aggressively.
 - `exits`, each annotated with `label` (e.g., `NORTH`), `targetRoomInstanceId` (within the same `gameInstanceId`), and a human-friendly direction string (e.g., “arched passage toward the cavern mouth”). Game Logic renders this list into the `LOOK` exits line.
 - `ambientState` fields such as `lighting`, `weather`, or `hazardLevel` to enrich the narrative without extra queries.
-- `ambientStateV2` (typed, schema-versioned ambient state) is the canonical representation. The legacy `ambientState` map is deprecated and exists only for backwards compatibility.
+- `ambientStateV2` (typed, schema-versioned ambient state) as the canonical representation used by gameplay logic and cache keys.
+- Legacy `ambientState` map support only as a derived compatibility payload for old clients; new runtime logic must not treat it as canonical.
 - Optional `roomFlags` (for example `isQuestArea` or `isInstanceEntry`) so `LOOK` can warn players before they step into special zones.
 
 Game Logic caches snapshots for the duration of a tick but refreshes them after movement. World Management publishes change events when rooms mutate so downstream caches remain consistent and `LOOK` clients never read stale text.
@@ -198,7 +199,7 @@ The `V10__seed_demo_world.sql` migration seeds the demo rooms referenced by this
 
 - **Live:** `GetRoomSnapshot` returns the room metadata, descriptions, and exit labels that Game Logic needs to render the canonical `LOOK` transcript, and the telemetry for this pipeline is documented in `../../../project-management/look-instrumentation.md`.
 - **Stubbed:** The current snapshot data comes from the seeded demo rooms so scripted room events, line-of-sight lighting, and procedural text remain deterministic for regression tests.
-- **Deferred:** Future work will enrich snapshots with ambient metadata (weather, hazard warnings) and push updates through `/ws/game/**` so Gateway/TCP Proxy clients can react to world changes as soon as they happen.
+- **Deferred:** Future work will push live snapshot updates through `/ws/game/**` so Gateway/TCP Proxy clients can react to world changes as soon as they happen.
 
 ### `/ws/game/**` LOOK contract and local overrides
 
@@ -301,7 +302,9 @@ the [Security Architecture](../../system-architecture-security.md) for details.
 - `Ping(PingRequest) returns (PingResponse)` – basic connectivity check defined in [`world_management_service.proto`](../../../../protos/world-management/v1/world_management_service.proto).
 - `GetRoom(GetRoomRequest) returns (GetRoomResponse)` – fetches a room's JSON representation. The legacy `room_id` field is deprecated; callers should provide a `RoomInstanceRef`.
 - `GetRoomSnapshot(GetRoomSnapshotRequest) returns (GetRoomSnapshotResponse)` – returns the minimal, LOOK-focused snapshot scoped by `RoomInstanceRef`.
-- `UpdateWorldState(UpdateWorldStateRequest) returns (UpdateWorldStateResponse)` – applies pending world updates and notifies other services.
+- `ListRoomOccupants(ListRoomOccupantsRequest) returns (ListRoomOccupantsResponse)` – returns canonical typed occupants for a `RoomInstanceRef`.
+- `ApplyRoomAmbientStatePatch(ApplyRoomAmbientStatePatchRequest) returns (ApplyRoomAmbientStatePatchResponse)` – applies effect-idempotent ambient mutations to a room instance.
+- `UpdateWorldState(UpdateWorldStateRequest) returns (UpdateWorldStateResponse)` – deprecated compatibility API; new runtime behavior must use effect-shaped mutation RPCs.
 
 Call the `Ping` method with:
 

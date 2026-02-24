@@ -129,6 +129,7 @@ To keep PR feedback fast while still preventing “it only breaks in staging” 
 - **Prod-like observability smoke (nightly or staging-gated)**:
   - Alert routing smoke: trigger a test-only alert (`alert_class="test"`, `severity="P2"`) and verify Alertmanager routing and label preservation end-to-end.
   - Tracing smoke: run a login + representative command flow and verify at least one `gamesession_handle_command` span (and one `tick_execute` span where ticks run) is present in the trace backend.
+  - Prometheus rules conformance smoke: query the Prometheus rules API and verify the required fallback/recording rules are loaded (tail-loss fallback, tick safety ratio recording, login success ratio recording, command p99 latency recording).
 
 This split ensures that contract drift is caught on every change, while backend-dependent checks run only where Alertmanager/Jaeger are actually available.
 

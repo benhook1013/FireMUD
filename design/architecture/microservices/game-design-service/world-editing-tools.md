@@ -59,6 +59,11 @@ When digest semantics evolve, the system must follow the explicit “Digest Sche
 
 The Game Design Service reconciler records the per-service digest it observed for a given `commitId` when that commit was last applied successfully, and later compares current digests against those recorded values. Publish-time validation must require that all participating services report `appliedCommitId == commitId` and `contentDigest` equal to the recorded digest for that commit.
 
+Participant selection is explicit by publish type and must follow the matrix in `design/architecture/microservices/game-design-service/version-control.md#digest-participants-by-publish-type`:
+
+- Full `PublishVersion`: World Management, Entity Management, Game Logic, and Automation & Scripting participate in digest gating.
+- `PublishScriptPatchVersion`: only Automation & Scripting participates in digest gating for the patch graph; world/entity/game-logic template digests are not re-gated for that publish operation.
+
 Versions
 must be `IN_SYNC` before they can be published.
 

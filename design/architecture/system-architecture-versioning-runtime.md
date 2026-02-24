@@ -14,6 +14,7 @@ The **Game Design Service** manages version metadata and publish workflows for g
 2. The service writes a new `version_id` and associated records to its database, linking the version to each tenant and recording notes and base versions.
 3. During authoring, the Game Design Service applies revisions incrementally to **Draft** template rows hosted by the owning domain services via idempotent design APIs keyed by `(tenantId, versionId)`. At publish time, a Saga coordinates all domain services so they validate and finalize their existing Draft data for the given `tenantId` and `version_id`, marking that data as Published and ready for runtime use. No separate design database is copied into the domain services; they already host the versioned graphs for their domains.
    - Publish-time validation must be based on durable, domain-owned digests: every participating domain service must report `GetDraftDesignDigest(tenantId, versionId)` matching the commit being published (`appliedCommitId`, `contentDigest`, and `digestSchemaVersion`). If any digest is missing or mismatched, publish must fail fast and the version must remain Draft/OUT_OF_SYNC until reconciliation succeeds. See `design/architecture/microservices/game-design-service/world-editing-tools.md`.
+   - Participant selection is fixed by publish type (full publish vs script-only patch) using the matrix in `design/architecture/microservices/game-design-service/version-control.md#digest-participants-by-publish-type`; publish workflows must not change digest participants implicitly at runtime.
 4. As part of the Saga, the Game Design Service runs an **asset export** step for each `(tenantId, versionId)` that uploads design-time assets to object storage, generates a deterministic `manifest.json` for the version, and updates version metadata with the manifest location. This step is implemented as an idempotent Saga step with compensation as described in [Asset Storage Setup](./microservices/game-design-service/asset-storage.md). If this step or another publish step fails irrecoverably, the Saga can mark the version as **Failed** so it is not eligible for activation.
    - The asset export step must persist a `manifestHash` in version metadata and treat any mismatch between recorded hash and served bytes as drift/corruption, not a legitimate “update” to a Published/Active version.
 5. A notification or message informs the Game Session Service that a new version exists so game instances can be started or patched against it.
@@ -181,7 +182,20 @@ Before any operation that changes whether a tenant is actively serving gameplay 
   - The requested instance count and configuration remain within plan-derived quotas (for example, maximum concurrent instances for the tenant).
 - If entitlements indicate that the tenant is unavailable for gameplay or that quotas would be exceeded, the operation fails with a clear, tenant-scoped error and no instance-level changes are applied.
 
+When entitlements transition to hard-cutoff states (`suspended` or `canceled`) after an instance is already running, runtime behavior is deterministic:
+
+- New admissions are blocked immediately.
+- Existing player gameplay sessions are revoked immediately.
+- Running instances enter a bounded non-admissible drain phase (target: 5 minutes maximum) for cleanup, then stop.
+
+Activation, rollback, and restart operations remain blocked until `GetTenantEntitlements(tenantId)` returns gameplay-available status again.
+
 Because rollback relies on being able to reactivate previously published `version_id` values, schema migrations must be coordinated with versioned data. See the **Version-Aware Migration Guidelines** in [Database Migrations](./system-architecture-database-migrations.md) for constraints on dropping or reshaping columns that are still used by any published version.
+
+Rollback class boundary for versioning flows:
+
+- Publish/finalization and activation-prep run under **Class A** Saga rollback semantics (compensation allowed before activation).
+- Once a version is active and runtime effects are being applied, mutations run under **Class B** runtime semantics (retry/reconcile with stable `EffectId`; no destructive cross-service rollback). See [Transaction Strategies](./system-architecture-transactions.md#rollback-boundaries-by-operation-class).
 
 ## Runtime Feature Flags
 

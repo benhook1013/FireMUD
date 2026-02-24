@@ -83,7 +83,7 @@ In addition to the gRPC heartbeat, the Game Session Service exposes a **tick eve
 - The event stream is a **best-effort coordination structure**, not a durable log of record:
   - It is implemented on Coordination Redis under a region-scoped prefix such as `tick-events:{tenantRegionTag}`.
   - Production-like profiles that persist offsets use **Redis Streams** for this prefix so consumers can resume from an offset; pub/sub is reserved for fire-and-forget observers that never track offsets or history.
-  - Producers must cap stream retention (for example via `XADD ... MAXLEN ~ tick_events_maxlen`) so `tick-events:*` cannot grow without bound; consumers must treat “offset too old / trimmed” as normal truncation and re-bootstrap from the heartbeat/RegionStatus baseline.
+  - Producers must cap stream retention (for example via `XADD ... MAXLEN ~ tick_events_maxlen`, default `tick_events_maxlen = 2048` per `<tenantId, regionId>`) so `tick-events:*` cannot grow without bound; consumers must treat “offset too old / trimmed” as normal truncation and re-bootstrap from the heartbeat/RegionStatus baseline.
   - Events may be dropped, duplicated, or reordered relative to the heartbeat; correctness must not rely on seeing every past event.
   - Events represent **tick start notifications** (a “tick began” signal), not a commit guarantee:
     - A tick may begin and later be retried or abandoned due to failures; consumers must use the heartbeat/RegionStatus as the commit watermark.
@@ -111,6 +111,7 @@ For any consumer or operator that needs to locate “where a region is” on the
   - Health: a bounded `status`/`health` value (for example `RUNNING`, `DEGRADED`, `PAUSED`, `STALLED`).
   - Backlog indicators (optional but recommended): retry depth and remote follow-up lag/backlog so origin-side admission control can shed load without relying on Redis hints.
   - Update rule: `lastCommittedTickId` advances only after a tick is committed; it is monotonic within an epoch and resets only when `regionEpoch` is bumped by a scoped reset or explicit timeline-severing maintenance. In steady state it advances by exactly `+1` per committed tick; any “fast-forward” is allowed only via explicit, audited maintenance tooling and must never regress within an epoch.
+  - Epoch-start sentinel: on a newly created epoch, `lastCommittedTickId = -1` (default), so the first committable tick in that epoch is `tickId=0`.
 - **Follow** via streaming heartbeats:
   - After bootstrapping, consumers attach to `StreamTickHeartbeats` and treat the combination of the bootstrap status and the live heartbeat as the authoritative progression of the timeline.
   - If the heartbeat stream drops or a reset bumps `regionEpoch`, consumers use the new `(regionEpoch, tickId)` from the stream plus durable state to re-establish their position.

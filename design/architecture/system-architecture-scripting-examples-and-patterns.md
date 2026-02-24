@@ -78,7 +78,7 @@ If the `scriptPatchVersion` pinned by the Game Session Service for a given game 
 This example shows how a script that runs on a fixed cadence (for example, an NPC patrol) moves through the pipeline using `onInterval`. For the underlying timer and failover internals (including `automation:timer:{tenantRegionTag}` and `script-scheduler:{tenantRegionTag}:lastTickId`), see **End-to-End `onInterval` Timer Lifecycle** in `design/architecture/system-architecture-scripting-dsl-reference-and-lifecycle.md`.
 
 1. **Script configuration and publish**
-   - A designer configures an NPC patrol script in the Game Design Service, binding an `onInterval` handler with a chosen cadence (for example, every N ticks or seconds) and a sequence of waypoints.
+   - A designer configures an NPC patrol script in the Game Design Service, binding an `onInterval` handler with a chosen cadence (for example, every N ticks) and a sequence of waypoints.
    - When the script is published, its compiled DSL graph, `intervalTicks` (or equivalent cadence configuration), and version metadata are stored in the Automation & Scripting Service database and exposed under the current `scriptPatchVersion` for that game.
 
 2. **Scheduling the next interval**

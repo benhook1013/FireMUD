@@ -40,8 +40,10 @@ This document describes how FireMUD collects logs, metrics, and traces across al
     - Lock refresh usage, via counters such as `redis_tick_lock_refresh_requests_total` and `redis_tick_lock_refresh_denied_total`, so operators can detect commands that routinely rely on the optional lock refresh helper instead of completing within the normal lock TTL.
 - **Automation & Scripting metrics** surface scheduler, quota, and sandbox behavior:
   - Scheduler and budget meters such as `automation_script_triggers_total`, `automation_script_skips_total`, `automation_script_triggers_dropped_total`, `automation_script_queue_delay_seconds`, `automation_script_leadership_changes_total`, and `automation_script_tenant_budget_seconds{tenantId, tier}`.
-  - Quota and tick integration meters such as `script_quota_allowed_total`, `script_quota_denied_total`, and `automation_tick_events_enqueued_total`.
+  - Quota and tick integration meters such as `script_quota_allowed_total`, `script_quota_denied_total`, `automation_tick_events_enqueued_total`, `automation_tick_version_fence_dropped_total`, and `automation_tick_plugin_version_fence_dropped_total`.
   - Sandbox and runtime meters such as `automation_script_sandbox_failures_total{reason=...}`, `automation_script_errors_total{tenantId, reason=...}`, and `automation_script_runtime_seconds`.
+  - Dry-run/test isolation meters such as `automation_script_test_runs_total`, `automation_script_test_runtime_seconds`, and `automation_script_test_sandbox_failures_total`.
+  - Plugin policy enforcement meters such as `automation_plugin_policy_violations_total`.
   These metrics are described in more detail in [System Architecture: Scripting & Automation](./system-architecture-scripting.md) and the [Automation & Scripting Service README](./microservices/automation-scripting-service/README.md).
 - **TCP Proxy metrics** capture Telnet DMZ behavior:
   - Connection meters such as `tcpproxy.connections.active` (Prometheus: `tcpproxy_connections_active`), `tcpproxy.connections.total` (Prometheus counter: `tcpproxy_connections_total`), and `tcpproxy.connections.limit.exceeded` (Prometheus counter: `tcpproxy_connections_limit_exceeded_total`) to surface global and per-IP caps derived from `TCP_PROXY_MAX_CONNECTIONS` and `TCP_PROXY_MAX_CONNECTIONS_PER_IP`.
@@ -74,7 +76,7 @@ In addition to infrastructure-level SLOs for Redis, ticks, and backup pipelines,
   - SLI: gateway-to-domain command latency, measured from reception at Gateway or TCP Proxy through to domain commit, for example `command_end_to_end_latency_ms` histogram with labels such as `command`, `tenantId`, `regionId`.
   - SLO: 99% of core gameplay commands (movement, look, combat) complete in < 250ms over a 5-minute window, per `tenantId`/`regionId`.
   - Instrumentation: emitted by Gateway (and optionally the TCP Proxy for Telnet) with labels `{command, tenantId, regionId}`. Core commands such as movement, LOOK, and combat should use a small, documented set of `command` label values so per-command latency panels remain low-cardinality.
-- **Telnet/WebSocket path availability**
+- **Telnet and WebSocket path availability**
   - SLI: fraction of successful connection attempts over total attempts for each entry path (Telnet and WebSocket). This SLI must be computed from an explicit attempts counter so it captures all failure modes, not just cap rejections.
   - SLO: ≥ 99.9% of connection attempts succeed over a 1-day window, evaluated per `tenantId` and `path`; sustained deviations are treated as P0 incidents for the affected entry path.
   - Instrumentation:
@@ -83,6 +85,8 @@ In addition to infrastructure-level SLOs for Redis, ticks, and backup pipelines,
       - `outcome` is a bounded enum (for example `success`, `limit_exceeded`, `auth_failed`, `upstream_unreachable`, `timeout`, `protocol_error`, `unknown`).
     - The SLI should be computed as `sum(rate(entrypath_connection_attempts_total{outcome="success"}[...])) / sum(rate(entrypath_connection_attempts_total[...]))` per `{tenantId,path}`.
     - Auxiliary meters such as `tcpproxy_connections_limit_exceeded_total` remain useful drilldowns but are not sufficient to define availability by themselves.
+  - Alert routing:
+    - Entry-path alerts should preserve `service` from the emitting series and include `component="entrypath"` so Telnet-path and WebSocket-path incidents can route and page independently.
 - **Chat delivery latency**
   - SLI: time from chat message submission to delivery to all intended recipients, for example `chat_delivery_latency_ms` histogram keyed by `tenantId` and chat channel type.
   - SLO: 99% of chat messages are delivered in < 1s over a 5-minute window for active regions.
@@ -133,7 +137,7 @@ New moderation features and admin tools must explicitly document:
 Alertmanager routes alerts based on a small, consistent label set so ownership and severity are always clear:
 
 - Core labels:
-  - `service` – owning service or component (for example `redis-coordination`, `game-session`, `tcp-proxy-service`, `postgres-backup`).
+  - `service` – owning runtime service identity (derived from `spring.application.name`), for example `game-session-service`, `tcp-proxy-service`, `spring-cloud-gateway`, `postgres-backup`.
   - `component` – optional, for finer-grained subsystems (for example `tick`, `backup`, `coordination`).
   - `severity` – one of `P0`, `P1`, or `P2`.
   - `alert_class` – optional classifier for non-standard routing (for example `alert_class="test"` for smoke-test alerts that must never page).
@@ -163,6 +167,11 @@ Routing rule requirements:
 
 - Unknown `owner` values must be treated as a configuration error: route to the default operator channel and emit a warning annotation/log so it is fixed quickly.
 - In single-admin deployments, it is acceptable for all `owner` values to route to the same notification destination; `owner` still matters for triage context and for future multi-operator setups.
+
+Service label requirements:
+
+- `service` values in alerts must be runtime-identities that match emitted metric labels (from `spring.application.name`), not ad-hoc domain names.
+- If an alert expression intentionally spans multiple runtime services (for example, entry-path SLIs across Gateway and TCP Proxy), do not hardcode a single `service` label in rule metadata. Keep `service` from the metric series and use `component` (for example `component="entrypath"`) to group routing and dashboards.
 
 ### Alert Fallback Recording Rules
 

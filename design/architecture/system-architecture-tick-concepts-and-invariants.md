@@ -180,7 +180,7 @@ Downstream behavior for stalled regions (rejecting new commands, marking instanc
 
 Lock contention and transient failures are handled by a bounded retry and backoff policy that preserves fairness:
 
-- Each rescheduled action carries a per-command retry counter and a `next-eligible-tick` value; retries are delayed using an exponential backoff in ticks, for example `nextTick = currentTick + min(2^retryCount, MAX_BACKOFF_TICKS)`.
+- Each rescheduled action carries a per-command retry counter and a `next_eligible_tick_id` value; retries are delayed using an exponential backoff in ticks, for example `nextTick = currentTick + min(2^retryCount, MAX_BACKOFF_TICKS)`.
 - Retries are appended to the back of the originating entity’s queue and are scheduled **no earlier than a future tick**; the executor never spins inside a single tick waiting for locks.
 - After a bounded number of failed attempts (for example `MAX_RETRIES`), the command is marked permanently failed, a player-visible error is emitted, and metrics/logs capture the contention so operators can see hotspots.
 - Fairness is guaranteed per entity: within a given entity’s queue, commands are processed FIFO; cross-entity fairness is best-effort and driven by normal tick scheduling plus the backoff rules.

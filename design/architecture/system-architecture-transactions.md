@@ -84,6 +84,7 @@ To prevent cross-instance collisions and make retries safe, spatial tick effects
 Ambient world mutations (doors, hazards, weather) are treated as spatial effects for replay and idempotency purposes:
 
 - All durable ambient mutations must be issued as effect-shaped commands carrying `EffectId` plus the appropriate instance scope (`RoomInstanceRef` for room-scoped changes).
+- World Management is authoritative for ambient state used by gameplay (including hazard activation/inactivation state). Game Logic reads this state through World Management snapshot APIs and must not maintain an independent hazard-authority store.
 - Operator tooling and scripts must not bypass this contract by writing instance tables directly; they emit the same effect-shaped commands so retries and crash recovery remain safe.
 
 Concrete per-effect required writes and reconciliation rules live in `design/architecture/system-architecture-spatial-and-ambient-effects-catalog.md`. Any new effect must add an entry there before it is used by runtime gameplay.
@@ -128,6 +129,19 @@ These workflows:
 - Happen **outside the tick loop**
 - Modify **persistent storage (PostgreSQL)** across multiple services
 - Require durable coordination and rollback capabilities
+
+### Rollback Boundaries by Operation Class
+
+Cross-service workflows must explicitly choose one of the following rollback classes before implementation:
+
+- **Class A (Pre-Activation Saga Rollback):**
+  - Scope: publish-time and pre-runtime workflows where outputs are not yet active for gameplay (for example `PublishVersion` before a version is activated, or world-creation before admission opens).
+  - Contract: compensating actions are allowed; saga failure may roll back durable writes or mark the target version/workflow as `FAILED` with deterministic retry/repair.
+- **Class B (Post-Activation Runtime Convergence):**
+  - Scope: tick-driven gameplay and any mutation visible to live players (movement, containment, ambient mutations, live script-trigger side effects).
+  - Contract: no destructive cross-service rollback. Effects are retried with the same `EffectId` until convergence; partial success is resolved by reconciliation, not compensation deletes.
+
+Designs that cross this boundary (for example, activation and live mutations in one flow) must split into two phases with an explicit hand-off point from Class A to Class B.
 
 ### State Ownership and Mutation Boundaries
 

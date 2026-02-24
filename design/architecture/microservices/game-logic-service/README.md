@@ -80,7 +80,7 @@ does not participate directly in the publish Saga.
 
 - `ResolveLook` orchestrates World Management and Entity Management: World provides room topology and ambient world state, while Entity provides the live entities and items (including room/ground inventory from room-ground container entities belonging to that room/instance) to build a deterministic `LookResult` that Game Session renders for clients.
 - A dedicated `LookResultRenderer` keeps the canonical textual output in sync with the documented protocol transcripts (room name/desc/exits/entities) so the service can log or inspect the text while keeping the structured DTO clean.
-- Downstream errors from World or Entity services are labeled (`WorldManagement`, `EntityManagement`) so they surface as precise error codes (`ROOM_NOT_FOUND`, `WORLD_UNAVAILABLE`, `ENTITY_UNAVAILABLE`) when Game Session formats replies for Telnet/WebSocket clients.
+- Downstream errors from World or Entity services are labeled (`WorldManagement`, `EntityManagement`) so they surface as precise error codes (`ROOM_NOT_FOUND`, `WORLD_UNAVAILABLE`, `ENTITY_UNAVAILABLE`) when Game Session formats replies for Telnet and WebSocket clients.
 
 ### Implementation status (LOOK slice)
 
@@ -91,7 +91,7 @@ does not participate directly in the publish Saga.
 ### Implementation status (chat slice)
 
 - **Live:** `BroadcastSay` accepts authenticated `SAY`/`YELL`/`WHISPER` payloads, validates length, aggregates recipient/NPC metadata, and forwards the normalized message to the Social & Groups Service stub. The API returns delivery metadata and `shared.v1.ErrorDetail` codes so Game Session can render the canonical transcript and surface `gamesession.command.say.*` instrumentation.
-- **Stubbed:** Delivery currently uses the regression stubbed Social & Groups Service that records `SendMessage` calls and echoes success while the cross-service WebSocket/Telnet tests assert the structured response before adding a narrative layer for listeners.
+- **Stubbed:** Delivery currently uses the regression stubbed Social & Groups Service that records `SendMessage` calls and echoes success while the cross-service WebSocket and Telnet tests assert the structured response before adding a narrative layer for listeners.
 - **Deferred:** Richer behavior (NPC roleplay replies, localized listening areas, channel filters, profanity escalation) will arrive in later slices once the foundational flow proves stable and the instrumentation captures both success and failure paths.
 
 ### SAY broadcast flow
