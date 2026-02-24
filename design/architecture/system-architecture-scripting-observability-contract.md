@@ -2,9 +2,7 @@
 
 This document defines the **authoritative** observability contract for scripting and automation: what is recorded in `script_event_audit`, what is emitted as metrics, and which identifiers may be used for correlation.
 
-If other documents conflict on metric names/labels or audit field semantics, treat this document as the tie-breaker.
-
-For the normative “single source of truth” tables (Trigger Identity required fields, audit stages/outcomes, timer semantics, and metric label sets), see `design/architecture/system-architecture-scripting-normative-contract-tables.md`.
+Document conflict resolution order is defined in `design/architecture/system-architecture-scripting-normative-contract-tables.md#document-precedence-normative`. This document is authoritative for observability details not fully enumerated in the normative tables.
 
 ## Correlation Rules (High Cardinality)
 
@@ -22,7 +20,7 @@ Audit records must include at least:
   - `tenantId`
   - `gameInstanceId`
   - `regionId`
-  - `regionEpoch` (when the trigger is tick-aligned)
+  - `regionEpoch` (required for gameplay/runtime and scheduler triggers; exceptions must be explicitly documented in the normative Trigger Identity table)
   - `entityId` (for entity-scoped events)
   - `scriptId`
   - `pluginId` and `pluginVersionId` (required for plugin triggers)
@@ -44,6 +42,8 @@ Audit records must include at least:
   - `policyViolations` (optional array, plugin policy rollouts only; see schema below)
 
 Outcome fields must be sufficient to distinguish “DSL evaluated successfully” from “commands were accepted into the tick system”. Do not collapse these into a single `success` signal.
+
+Dry-run/test executions must use a separate idempotency namespace from live traffic. A dry-run record must never dedupe or overwrite a live trigger with the same `scriptEventId`.
 
 ### Stage Model (Required)
 
@@ -74,6 +74,7 @@ Stage semantics:
 
 - `finalOutcome=success` must imply `finalStage=TICK_HANDOFF` (commands were accepted into tick queues). “DSL evaluated successfully but handoff failed” is not success.
 - Backpressure outcomes like `skipped_reloading` must use `finalStage=ADMISSION`.
+- Rollback pause backpressure `skipped_rollback_pause` must use `finalStage=ADMISSION`.
 - Quota denials must use `finalStage=ADMISSION` unless quotas are evaluated inside the DSL runtime for a given trigger (rare; avoid mixing).
 
 ### Canonical Outcome Taxonomy (Required)
@@ -84,6 +85,7 @@ In particular:
 
 - Use `version_unavailable` (never `skipped_version_unavailable`).
 - Encode specific cause in `finalReason` (for example `onload_failed`, `plugin_version_failed`, `script_patch_missing`).
+- Use `pin_state_unavailable` when admission fails closed because bounded-staleness pin data cannot be refreshed.
 
 ### `policyViolations` Schema (Required When Present)
 
@@ -100,6 +102,14 @@ In particular:
   - `observedAt` (timestamp, required)
 
 If limits are exceeded, writers must truncate deterministically and set `finalReason` or an auxiliary field to indicate truncation.
+
+### Policy Decision to Outcome Rules (Required)
+
+When `policyViolations` is present, `decision` values and final outcomes must align with policy mode:
+
+- If all entries have `decision=REPORT_ONLY`, execution may continue and `finalOutcome` must still represent pipeline result (`success`, `sandbox_error`, `infrastructure_error`, and so on). `finalOutcome=plugin_component_blocked` is not valid in this case.
+- If any entry has `decision=BLOCKED`, admission must stop with `finalStage=ADMISSION` and `finalOutcome=plugin_component_blocked`.
+- `automation_plugin_policy_violations_total` must be emitted in both report-only and enforcing modes so operators can compare rollout behavior before and after enforcement.
 
 ## Metrics (Authoritative Names and Label Rules)
 

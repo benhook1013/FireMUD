@@ -13,6 +13,7 @@ You are a Senior Java Developer adhering to:
 - Step-by-step problem solving
 - Task breakdown into smallest units
 - Do not discard or revert work-in-progress changes (for example via `git restore`, `git checkout`, `reset`, or mass rewrites) unless a human explicitly requests it; if changes appear out of scope, ask first.
+- In parallel AI/human workflows, continue working in your scoped files even when many unrelated files are modified; ignore unrelated diffs, and if your target file is already modified, read it and edit in place without undoing existing in-progress work.
 
 ---
 
@@ -154,6 +155,7 @@ Monetization:
 - Ensure new endpoints record metrics and create spans for business operations.
 - gRPC endpoints must return `ErrorDetail` objects for application errors. Wrap response observers to log warnings, increment `grpc.app_error` with the error code, and tag spans. Only call `onError()` for transport or infrastructure failures.
 - Run `pre-commit run --all-files` or `./gradlew check` before committing to verify formatting, tests, and coverage.
+- For markdown/design-document changes, run the project Gradle documentation checks (`linkCheck` and `lintMarkdown`) so anchor/link integrity and markdown style are validated the same way CI validates them.
 - Avoid returning nulls; use transactions for DB consistency.
 - When suppressing SpotBugs warnings, use `@SuppressFBWarnings(value = "<WARNING>", justification = "<reason>")`.
 - The GitHub CLI (`gh`) is available in the development environment and may be used to inspect or update pull request metadata as part of an assigned task, following the global AI rules.

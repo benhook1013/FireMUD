@@ -46,6 +46,8 @@ revisions until domain services report a matching draft digest for that version.
 - `contentDigest` (a stable hash of the service’s Draft template graph relevant to publishing)
 - `digestSchemaVersion` so hash semantics can evolve without ambiguity
 
+Game Design also computes a control-plane digest over normalized publish-critical metadata (for example `game_template_*_ref` and `version_asset`) and validates it in the same `designSyncStatus` gate using a dedicated read-only API (`GetDesignControlPlaneDigest`).
+
 Digest semantics must be explicitly stable and testable:
 
 - `contentDigest` covers all version-scoped **template** and **binding** rows that participate in publish for the service’s domain for that `(tenantId, versionId)`. It must not include runtime/instance rows keyed by `gameInstanceId`, and it must not include audit/history tables.
@@ -61,8 +63,8 @@ The Game Design Service reconciler records the per-service digest it observed fo
 
 Participant selection is explicit by publish type and must follow the matrix in `design/architecture/microservices/game-design-service/version-control.md#digest-participants-by-publish-type`:
 
-- Full `PublishVersion`: World Management, Entity Management, Game Logic, and Automation & Scripting participate in digest gating.
-- `PublishScriptPatchVersion`: only Automation & Scripting participates in digest gating for the patch graph; world/entity/game-logic template digests are not re-gated for that publish operation.
+- Full `PublishVersion`: World Management, Entity Management, Game Logic, and Automation & Scripting must each pass `GetDraftDesignDigest`, and Game Design must pass `GetDesignControlPlaneDigest`.
+- `PublishScriptPatchVersion`: Automation & Scripting must pass `GetDraftDesignDigest` for the patch graph and Game Design must pass `GetDesignControlPlaneDigest` for patch metadata/wiring; world/entity/game-logic template digests are not re-gated for that publish operation.
 
 Versions
 must be `IN_SYNC` before they can be published.

@@ -1,0 +1,49 @@
+version: 1
+updated_by: "platform-security+account-service"
+default_classification: tenant_regular
+classifications:
+  - public
+  - tenant_regular
+  - billing_safe_tenant
+  - cross_tenant_support_safe
+  - cross_tenant_billing_safe
+  - cross_tenant_data_bearing
+routes:
+  - service: account-service
+    route: GetTenantEntitlements
+    scope: tenant
+    classification: cross_tenant_support_safe
+    roles:
+      any_of: [support, platformAdmin, tenantAdmin]
+  - service: account-service
+    route: GetSubscription
+    scope: tenant
+    classification: cross_tenant_support_safe
+    response_profile: high_level_only
+    roles:
+      any_of: [support, platformAdmin, tenantAdmin]
+  - service: account-service
+    route: ListSubscriptions
+    scope: tenant_or_cross_tenant
+    classification: cross_tenant_support_safe
+    response_profile: high_level_only
+    roles:
+      any_of: [support, platformAdmin, tenantAdmin]
+  - service: account-service
+    route: BillingArtifacts
+    scope: tenant_or_cross_tenant
+    classification: billing_safe_tenant
+    roles:
+      any_of: [tenantAdmin, billingAdmin, platformAdmin]
+  - service: game-session-service
+    route: PLAY
+    scope: tenant
+    classification: tenant_regular
+    roles:
+      any_of: [player, moderator, designer, tenantAdmin, platformAdmin]
+  - service: game-session-service
+    route: StartSession
+    scope: tenant
+    classification: tenant_regular
+    roles:
+      any_of: [tenantAdmin, platformAdmin]

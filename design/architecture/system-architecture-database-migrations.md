@@ -98,6 +98,15 @@ engineers should follow this checklist:
    - Only drop or repurpose fields once all versions that depend on the old
      semantics have been Retired, in line with the lifecycle defined in
      [Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md).
+6. **Enforce deploy-order compatibility (expand/migrate/contract)**
+   - Apply schema and code changes in three phases:
+     - **Expand** – add new schema elements and ship dual-read/dual-write compatible code.
+     - **Migrate** – backfill and verify old + new representations while mixed service versions are still running.
+     - **Contract** – remove deprecated paths/columns only after compatibility windows and retirement checks pass.
+   - Never combine incompatible reader/writer changes in one deploy step when services may roll independently.
+7. **Run mixed-version CI checks**
+   - CI must include at least one scenario where new migrations run with a mixed old/new service set (old readers with new schema and new readers with old-era data fixtures).
+   - Destructive contract-phase migrations are blocked unless mixed-version compatibility checks and fixture-based rollback reads pass.
 
 Services that own versioned templates (such as Game Design, World Management,
 Entity Management, and Asset Storage) should reference this checklist in their

@@ -14,7 +14,7 @@ This document describes the role and configuration of **Spring Cloud Gateway** i
 - **Stateless and horizontally scalable** – no cookie-based session affinity is required. The gateway does not own gameplay lease state or shard-mapping state (those are owned by Game Session and stored in Coordination Redis). `/ws/game/**` routes to a stable Game Session service surface; lease ownership and any shard coordination remain internal to the Game Session layer per `design/architecture/decisions/adr-0007-edge-sharding-and-close-taxonomy.md`.
 - Auto‑scaling policies handle high concurrency
   - Telnet clients keep a **persistent TCP connection** to the TCP Proxy Service; Spring Cloud Gateway itself does not hold session state between reconnects
-  - Spring Cloud Gateway restarts **disconnect WebSocket clients**; browsers and other WebSocket tools must open a fresh WebSocket connection and issue `LOGIN` again. Once reconnected, the gateway resumes routing and the Game Session Service uses Redis-backed state to decide whether to resume or start fresh as described in [Reconnection Strategy](./system-architecture-reconnection.md#resume-vs-reload-scenarios). The gateway does not maintain hidden, long‑lived WebSocket tunnels across its own restarts or attempt to replay in‑flight messages; edge delivery remains per‑connection FIFO and at‑most‑once as defined in [Protocol Bridging](./system-architecture-protocol-bridging.md#ordering--delivery-invariants).
+  - Spring Cloud Gateway restarts **disconnect WebSocket clients**; browsers and other WebSocket tools must open a fresh WebSocket connection, issue `LOGIN`, and re-bind gameplay scope with `PLAY`. Once reconnected, the gateway resumes routing and the Game Session Service uses Redis-backed state to decide whether to resume or start fresh as described in [Reconnection Strategy](./system-architecture-reconnection.md#resume-vs-reload-scenarios). The gateway does not maintain hidden, long‑lived WebSocket tunnels across its own restarts or attempt to replay in‑flight messages; edge delivery remains per‑connection FIFO and at‑most‑once as defined in [Protocol Bridging](./system-architecture-protocol-bridging.md#ordering--delivery-invariants).
   - The Gateway and TCP Proxy Service run in the **network DMZ** and are the only ingress points for clients. NetworkPolicies restrict direct access to internal services. See [Security Architecture](./system-architecture-security.md#network-security--boundary-design) for details.
 
 > **Implementation status note (Telnet WebSocket mTLS):**
@@ -124,6 +124,8 @@ If a downstream service receives both headers during migration, it must prefer `
 - `X-Tenant-Id` is a hint for the desired tenant and must be validated against the authenticated account’s allowed tenants and entitlements during the canonical `LOGIN` + lobby selection (`PLAY`) flow.
 - Any mismatch between these hints and Redis-backed session bindings or authenticated claims must result in the hints being ignored (or the enter-game request being rejected) and should be logged as a suspicious attach attempt.
 
+After `PLAY` succeeds, Redis-backed session binding is authoritative for tenant/gameplay scope. Header hints (`X-Game-Instance-Id`, `X-Tenant-Id`) remain admission-only context and must not override already-bound session scope.
+
 For canonical Telnet `SESSION` parsing and forwarding rules, see the TCP Proxy Service design’s **Telnet Session Envelope & Event Metrics** section. For canonical tenant-selection behavior, see [Tenant Selection for Gameplay](./system-architecture-authentication.md#tenant-selection-for-gameplay).
 
 ---
@@ -165,15 +167,27 @@ Gameplay WebSocket connections are long-lived but not unbounded. To avoid half-o
 - If no `pong` or other traffic is observed for a configured idle window (for example 90 seconds), the connection is closed with a clear close reason. Load balancers or CDNs in front of the gateway must be configured with idle timeouts greater than this window so they do not terminate connections more aggressively than the gateway itself.
 - Web clients are not required to send their own application-level heartbeats, but they may do so; they must be prepared for the gateway to close idle or unreachable connections according to these limits and to follow the reconnection rules in [Reconnection Strategy](./system-architecture-reconnection.md).
 
+The canonical handshake-failure classification and client backoff policy for `/ws/game/**` is defined in [Reconnection Strategy](./system-architecture-reconnection.md#http-handshake-failures-on-ws-game). This document must not introduce a conflicting retry/backoff matrix.
+
 For gameplay WebSocket sessions, FireMUD standardises a small set of close codes and reasons so clients and operators can interpret failures consistently. Spring Cloud Gateway is the **only component that emits WebSocket close frames to external clients**; backend services (including Game Session) express their intent via upstream failures or closes, and Gateway maps those outcomes into the standard close codes below. Telnet disconnect messages on the TCP Proxy Service map directly onto the same categories as described in [Protocol Bridging](./system-architecture-protocol-bridging.md#telnet-disconnect-reasons):
 
-- `1000` with reason `logout` – explicit, clean shutdown (for example, user-initiated logout or admin‑initiated session end where no error occurred).
+- `1000` with reason `logout` – explicit, clean shutdown (for example, user-initiated logout, takeover completion, admin‑initiated session end, or planned edge drain where no error occurred).
 - `1001` with reason `idle_timeout` – idle-connection timeout where the gateway or Game Session has not observed traffic within its configured idle window.
 - `1008` with reason `policy_violation` – client behaviour that violates platform policies (for example, sustained command‑rate abuse, malformed frames, repeated protocol violations, or sustained slow-client behaviour at the network edge where send buffers repeatedly overflow or time out).
 - `1011` with reason `internal_error` – unexpected server‑side failures that are not attributable to the client and are not clearly a backend‑unavailable condition.
 - `1013` with reason `backend_unavailable` – Spring Cloud Gateway has concluded that backend services needed for gameplay are unavailable or overloaded beyond a short tolerance window (see [Reconnection Strategy](./system-architecture-reconnection.md#backend-unavailable-scenarios)).
 
 Gateway and Game Session implementations must always map platform‑initiated closures into one of these categories. Game Session indicates categories through its upstream behaviour (for example how it closes or errors its side of the connection), while Gateway is responsible for translating those signals into the client‑facing close codes/reasons above and logging the mapped category and contributing metrics (for example `gateway.websocket.closes{reason=...}` and `gamesession.connection.closed{reason=...}`) so operations teams can distinguish idle timeouts, policy enforcement, backend outages, and internal errors.
+
+In addition to the bounded top-level reason taxonomy, implementations must emit a bounded close `subreason` for client policy tuning and operations correlation without creating new top-level categories. Supported values are `user_logout`, `takeover`, `gateway_restart`, `admin_termination`, and `none`. The `subreason` field must be present in structured logs and close metrics and must remain low-cardinality.
+
+Wire compatibility for `subreason` is explicit:
+
+- The WebSocket close code and top-level reason remain the only mandatory client-facing transport contract.
+- `subreason` is emitted as a best-effort hint on the wire when transport/framework constraints allow it, and is always emitted in structured logs/metrics.
+- Clients and services must treat missing wire `subreason` as `none` (backward-compatible default), and must not fail protocol handling when only the top-level reason is present.
+- When emitted on-wire, `subreason` is encoded as a close-reason suffix in the form `;subreason=<value>` appended to the top-level reason token.
+- If transport/framework limits would exceed the WebSocket close-reason payload limit, producers must keep the top-level reason and omit the `subreason` suffix (equivalent to `none`) instead of truncating mid-token.
 
 To keep behaviour consistent and avoid double-closing sessions, ownership of these close codes is divided as follows:
 
@@ -189,13 +203,15 @@ Gateway is the authoritative translation point for client-visible WebSocket clos
 
 | Upstream/session condition | Client-visible WebSocket close | Telnet reason token |
 | --- | --- | --- |
-| Explicit logout / takeover completion | `1000` / `logout` | `logout` |
+| Explicit logout / takeover completion / planned gateway drain | `1000` / `logout` | `logout` |
 | Idle timeout detected by first observing layer | `1001` / `idle_timeout` | `idle_timeout` |
 | Edge or gameplay policy violation | `1008` / `policy_violation` | `policy_violation` |
 | Unexpected non-policy server failure | `1011` / `internal_error` | `internal_error` |
 | Sustained gameplay backend unavailability or unreachable upstream | `1013` / `backend_unavailable` | `backend_unavailable` |
 
 Precedence when multiple failures are observed in the same interval is: `policy_violation` > `backend_unavailable` > `internal_error` > `idle_timeout` > `logout`, except that explicit user/admin logout always remains `logout`.
+
+For `1000/logout`, producers must attach the most specific supported `subreason` (`user_logout`, `takeover`, `gateway_restart`, `admin_termination`) when known, else `none`.
 
 ### Backend-Unavailable Grace Window
 
@@ -219,7 +235,7 @@ Spring Cloud Gateway applies a small grace window before closing WebSocket sessi
 Gateway restarts can be planned (for example, rolling deploys) or unplanned (for example, crashes or infrastructure failures). To keep client behaviour and operational signals consistent:
 
 - **Planned, graceful restarts**
-  - During a controlled drain or rolling restart, Gateway closes existing gameplay WebSocket sessions with code `1000` and reason `logout` plus an implementation-defined subreason such as `gateway_restart`. Clients should treat this as a clean, expected shutdown and may reconnect with their normal backoff policy.
+  - During a controlled drain or rolling restart, Gateway closes existing gameplay WebSocket sessions with code `1000`, reason `logout`, and subreason `gateway_restart`. Clients should treat this as a clean, expected shutdown and may reconnect with their normal backoff policy.
 - **Unplanned internal failures at Gateway**
   - When Gateway encounters an unexpected internal error that forces it to drop gameplay WebSocket sessions independently of backend health (for example, container crashes, unrecoverable configuration errors), it closes affected sessions with code `1011` and reason `internal_error`. Clients should treat this like other internal errors and apply the standard exponential backoff rules described in [Reconnection Strategy](./system-architecture-reconnection.md#client-reconnection-behaviour).
 - **Backend-unavailable vs restart**
@@ -264,16 +280,59 @@ Spring Cloud Gateway provides centralized management of client traffic, offering
 
 Spring Cloud Gateway and the TCP Proxy Service share responsibility for protecting the platform from abusive traffic:
 
+### Tenant-Aware Edge Connect Token (Gameplay Handshake)
+
+Tenant-aware edge limiting on `/ws/game/**` depends on a short-lived server-minted connect token presented at WebSocket handshake time.
+
+- **Issuer and audience**
+  - Issued only by the account/authentication control-plane after account authentication and tenant entitlement checks.
+  - Audience is the gateway gameplay route (`/ws/game/**`) and must not be accepted on unrelated routes.
+- **Transport location**
+  - Sent in a dedicated handshake header (`X-Firemud-Connect-Token`) on `/ws/game/**`.
+  - Gateway must not accept connect tokens from query parameters in player-facing environments.
+- **Required claims**
+  - `accountId`
+  - `tenantId`
+  - `gameInstanceId`
+  - `exp` (absolute expiration)
+  - `jti` (single-use nonce for replay defense)
+- **Lifetime and replay**
+  - Token TTL must be short (target: <= 30s).
+  - Gateway must reject expired tokens and tokens whose `jti` has already been observed within the replay window.
+  - Replay cache entries must expire automatically at `exp + small_skew`.
+- **Validation outcomes**
+  - Invalid/expired/replayed token is rejected with HTTP `403` whenever connect-token validation is enabled for the route.
+  - Missing token behavior is controlled by the explicit enforcement mode contract below.
+  - Rate-limit exhaustion remains HTTP `429`.
+  - Backend-unavailable remains HTTP `503`.
+- **Enforcement modes (normative)**
+  - Gateway connect-token behavior is configured per environment as one of three explicit modes:
+
+| Mode | Missing token | Invalid/expired/replayed token | Intended environments |
+| --- | --- | --- | --- |
+| `disabled` | Allow handshake; apply tenant-opaque edge limits | N/A | Local/dev-only stacks while token issuance is being developed |
+| `observe` | Allow handshake; apply tenant-opaque edge limits and emit drift metrics/logs | Reject with `403` | Short-lived staging validation windows |
+| `enforce` | Reject with `403` | Reject with `403` | All player-facing environments |
+
+- `enforce` is required for production and any other player-facing environment.
+- `observe` and `disabled` are non-production-only modes and must not be used as steady-state policy in player-facing stacks.
+- In `observe` mode, gateway must emit low-cardinality metrics that count missing-token handshakes so compatibility debt is visible and burn-down can be tracked.
+
+This token is an edge admission/rate-limiting hint only. It does not replace `LOGIN` + lobby selection + `PLAY` and does not grant gameplay authorization by itself.
+
 - **Keying strategy**
   - Gateway rate limiting is primarily **per-client IP** with optional route-level differentiation. The default `RequestRateLimiter` configuration uses the Cache/Rate‑Limit Redis deployment and derives keys from the client IP (as seen by the gateway after load balancer and TCP Proxy headers) and route ID, keeping key cardinality modest while still following the canonical `ratelimit:<tenantId>:<bucket>:<timeWindow>` key pattern from [Redis Cache & Rate Limiting](./system-architecture-redis-cache.md#rate-limit-bucket-design). For the gateway itself, `tenantId` is a synthetic, edge-scope identifier (for example `gateway-edge`), and `bucket` incorporates the client IP and route identifier via a stable hash.
-  - Tenant-aware edge rate limiting for gameplay requires a trustworthy tenant signal at WebSocket handshake time (for example, a short-lived, server-minted connect token that binds the intended tenant). Without such a pre-login signal, the gateway treats gameplay traffic as tenant-opaque and limits it by IP/connection while Game Session enforces tenant-aware quotas after `LOGIN` binds the session.
+  - Tenant-aware edge rate limiting for gameplay uses the connect-token contract above. In `enforce` mode, gameplay handshakes without a connect token are rejected (`403`). In `observe` or `disabled` modes, handshakes may proceed with tenant-opaque IP/connection limiting while Game Session enforces tenant-aware quotas after `LOGIN` binds the session.
   - Game Session Service enforces **per-session and per-command** limits (for example, commands per tick region) using Redis coordination keys. See [Reconnection Strategy](./system-architecture-reconnection.md) and [Redis Architecture](./system-architecture-redis.md) for session/tick-level controls.
 - **WebSocket vs HTTP semantics**
   - Spring Cloud Gateway’s Redis-backed `RequestRateLimiter` is applied to **connection establishment and discrete HTTP requests**, not to every WebSocket frame. This prevents Telnet and WebSocket gameplay traffic from being throttled as if each frame were a separate HTTP call.
   - Once a WebSocket connection is established to `/ws/game/**`, ongoing gameplay messages traverse the connection without additional gateway-level rate limiting; downstream services (especially Game Session Service) enforce per-session and per-command safety.
 - **Gameplay WebSocket handshake errors**
-  - HTTP `429` responses from `/ws/game/**` indicate that edge rate or connection limits have been exceeded (for example, RequestRateLimiter buckets or per-IP connection quotas). Gateway uses `429` only for these rate/policy conditions, and clients should treat this as equivalent to a `policy_violation` outcome as described in [Reconnection Strategy](./system-architecture-reconnection.md#http-handshake-failures-on-ws-game).
-  - HTTP `503` responses from `/ws/game/**` indicate that Gateway currently considers gameplay backends unavailable according to the `firemud.gateway.backendUnavailableGraceMs` logic described in [Backend-Unavailable Grace Window](./system-architecture-gateway.md#backend-unavailable-grace-window). In these cases Gateway may also close existing WebSocket sessions with `1013/backend_unavailable`, and clients should treat `503` as equivalent to `1013` for backoff behaviour, per [Reconnection Strategy](./system-architecture-reconnection.md#http-handshake-failures-on-ws-game).
+  - HTTP `429` responses from `/ws/game/**` indicate edge rate/connection policy boundaries.
+  - HTTP `503` responses from `/ws/game/**` indicate current gameplay-backend unavailability per `firemud.gateway.backendUnavailableGraceMs`.
+  - HTTP `403` responses indicate handshake denial by policy or trust boundaries (for example internal-only listener, mTLS/client-identity mismatch, explicit route policy deny, or invalid connect token when token enforcement is enabled).
+  - HTTP `401` is not part of the normal `/ws/game/**` handshake taxonomy. If observed, treat as policy drift/misconfiguration and investigate.
+  - Client retry/backoff handling for these statuses is canonical in [Reconnection Strategy](./system-architecture-reconnection.md#http-handshake-failures-on-ws-game).
 - **Edge vs core responsibilities**
   - The **TCP Proxy Service** enforces **connection-level and per-socket safety** for Telnet clients: idle timeouts, per-IP connection caps, buffer depth limits, and basic abuse heuristics. It relies on Spring Cloud Gateway and Game Session Service for cross-tenant and content-aware rate limiting.
   - **Spring Cloud Gateway** enforces **request- and connection-creation limits** using the Cache/Rate‑Limit Redis instance configured via `FIREMUD_REDIS_CACHE_HOST` and `FIREMUD_REDIS_CACHE_PORT`, protecting backend services from floods of new connections or HTTP calls.
@@ -318,6 +377,8 @@ The lifecycle expectations for these overrides must be explicit so operators und
 - **Multi-pod convergence:** in horizontally scaled gateway deployments, an override must either (a) be stored in a shared backend (so all pods observe the same override set) or (b) be applied to every pod consistently. If neither is true, the API must be documented as “single-pod only” and must not be used in production-like environments.
 - **Auditing:** every dynamic route change must emit an audit log entry (who/what changed, previous value, new value, correlation IDs) so operators can reconstruct edge behavior during incidents.
 - **Safety bounds:** dynamic overrides must not allow bypassing management-plane isolation (internal-only surfaces) or weakening header trust rules. Overrides are limited to route targets/predicates/filters and must not enable new public exposure of management endpoints.
+- **Player-facing fail-fast guard:** in player-facing environments, gateway startup must fail if dynamic route mutation is enabled while shared persistence, multi-pod convergence, and route-change auditing are not enabled.
+  - Recommended control flags: `firemud.gateway.dynamic-routes.enabled` and `firemud.gateway.dynamic-routes.allow-player-facing`; startup should fail when both evaluate true without the required control-plane capabilities above.
 
 If the implementation cannot meet these lifecycle rules yet, the Gateway documentation should include an “Implemented Status” note that explicitly scopes dynamic route APIs to dev/test only.
 
@@ -332,7 +393,7 @@ Full request/response payload tracing for WebSocket sessions is treated as an **
 Gateway must expose a small set of low-cardinality WebSocket meters so incidents can be triaged without relying on logs alone:
 
 - `gateway.websocket.closes{reason="<reason>"}` – counter incremented whenever the gateway closes a client WebSocket, with `reason` drawn from the bounded close taxonomy (`logout`, `idle_timeout`, `policy_violation`, `internal_error`, `backend_unavailable`).
-- `gateway.websocket.handshake.rejected{status="<status>"}` – counter incremented when the gateway rejects a `/ws/game/**` handshake, with `status` bounded to expected outcomes (`429`, `503`, `403`, and a small set of other configured policy statuses if used).
+- `gateway.websocket.handshake.rejected{status="<status>"}` – counter incremented when the gateway rejects a `/ws/game/**` handshake, with `status` bounded to expected outcomes (`429`, `503`, `403`, `401`, `426`, and a small set of other configured policy statuses if used).
 - `gateway.websocket.slow_client_closes` – counter incremented when the gateway closes a WebSocket because the client is not reading fast enough (send timeout / outbound buffer pressure). This meter is a subset of `gateway.websocket.closes{reason="policy_violation"}` and exists so operators can distinguish slow-client/network backpressure from other policy enforcement without introducing high-cardinality labels.
 
 ## Internal gRPC Communication

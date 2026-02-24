@@ -20,7 +20,7 @@ The Account Service owns billing records and maps them to Stripe resources while
 
 - `subscription`  
   - Represents a recurring billing agreement between a creator (platform account) and the platform for a specific tenant’s hosting plan.  
-  - Key fields: internal ID, `accountId`, `tenantId`, `plan_code`, `status` (`trialing`, `active`, `past_due`, `grace`, `canceled`), current period start/end, `provider_subscription_id` (Stripe `subscription` ID), and `provider_customer_id` (Stripe `customer` ID).  
+  - Key fields: internal ID, `accountId`, `tenantId`, `plan_code`, `status` (`trialing`, `active`, `past_due`, `grace`, `suspended`, `canceled`), current period start/end, `provider_subscription_id` (Stripe `subscription` ID), and `provider_customer_id` (Stripe `customer` ID).  
   - Plan metadata defines quota-related attributes (for example, maximum active sessions, world size tiers) that the platform uses to drive per-tenant resource limits as described in [Multi-Tenancy](../../system-architecture-multi-tenancy.md#tenant-configuration--scaling).
 
 - `billing_customer` (optional)  

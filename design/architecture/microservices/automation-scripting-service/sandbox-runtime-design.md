@@ -18,7 +18,7 @@ For the latest progress and implementation notes, see:
 
 The table below captures the intended behavior and current implementation status of key sandbox features. Keep this matrix up to date as engine work lands so downstream docs and services can rely on it.
 
-| Feature | Description | Status (as of 2025-12-04) | Notes |
+| Feature | Description | Status | Notes |
 | --- | --- | --- | --- |
 | Per-run wall-clock timeout | Abort a script run that exceeds its allocated wall-clock budget and record `finalStage=DSL_EVAL` with `finalOutcome=sandbox_error` and `finalReason=cpu_budget_exceeded`. | Implemented / evolving | Core timeout behavior exists; budgets may be tuned as `AUTOMATION_TICK_BUDGET_MS` and related knobs evolve. |
 | Iteration / loop guards | Enforce per-run iteration limits so even bounded loops cannot hot-loop indefinitely. | Implemented | Backed by loop-safety analysis and runtime iteration counters; see DSL reference for graph rules. |

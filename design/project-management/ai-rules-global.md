@@ -13,6 +13,7 @@
 - [9. Architecture & Documentation Behavior](#9-architecture--documentation-behavior)
 - [10. Testing & Observability](#10-testing--observability)
 - [11. Tooling Available to AI](#11-tooling-available-to-ai)
+- [12. Parallel AI Sessions & Dirty Worktrees](#12-parallel-ai-sessions--dirty-worktrees)
 
 ---
 
@@ -95,6 +96,7 @@ For quick reference in day-to-day work, most edits will rely on:
 
 - Provide unit tests for new logic and integration tests for features that touch databases or external services.
 - Verify coverage with JaCoCo by running `./gradlew check` before committing.
+- For documentation changes (especially under `design/`), run the repository’s Gradle documentation quality tasks (`linkCheck` and `lintMarkdown`) and treat them as the source of truth for markdown/link integrity in CI.
 - Instrument new code with Micrometer metrics and OpenTelemetry tracing following `design/architecture/system-architecture-logging-monitoring.md`.
 - Use `LoggingInterceptor`, `MetricsInterceptor`, and `TracingInterceptor` from the shared library when adding new gRPC endpoints so logs, metrics, and spans are recorded consistently.
 - When editing `.proto` files or gRPC APIs, follow the conventions in `design/architecture/system-architecture-grpc.md` for schema layout, versioning, and error-handling rules.
@@ -112,3 +114,12 @@ For quick reference in day-to-day work, most edits will rely on:
 - Optional Codex skills may be installed in the dev environment to standardize common workflows. If available, invoke them by name in your request (for example `$gh-fix-ci` or `$gh-address-comments`); after installing new skills, restart Codex to pick them up.
   - `gh-fix-ci`: Inspect failing PR checks, pull GitHub Actions logs, summarize failure context, propose a fix plan, then implement after human approval.
   - `gh-address-comments`: Fetch PR review threads/comments, summarize and number them, then apply targeted fixes for the selected items.
+
+## 12. Parallel AI Sessions & Dirty Worktrees
+
+- It is normal for this repository to have many unrelated modified files from other concurrent AI or human sessions.
+- Do not stop work just because the working tree is dirty.
+- Scope your edits to the files needed for the current task and ignore unrelated diffs.
+- Do not revert, clean up, or reformat unrelated files.
+- If a file required for your task is already modified, read the current on-disk version and make targeted edits that preserve existing in-progress changes.
+- If overlapping edits make intent unclear or risky, ask the human for direction before proceeding.

@@ -39,6 +39,7 @@ To keep authorization consistent, subscription and billing operations map to the
     - `billingAdmin` for billing-focused reporting surfaces.
 
 Implementations must not introduce ad-hoc “owner” or “admin” concepts; they should rely on `tenantAdmin`, `platformAdmin`, and `billingAdmin` from the shared role model and the Tenant Authorization Contract. Support roles (`support`) may read high-level subscription state and derived entitlements for troubleshooting purposes but must not be granted access to detailed billing artifacts (for example, invoices or payment methods) or to any subscription-mutating APIs. These troubleshooting endpoints must be explicitly classified as **support-safe** in the auth middleware contract (`design/architecture/system-architecture-authentication.md#auth-middleware-algorithm-normative`) so support access cannot accidentally expand to billing-safe or data-bearing surfaces.
+For billing-safe tenant routes that intentionally remain reachable during `suspended`/`canceled` periods, services must perform a live membership/role check against authoritative account-tenant membership data before allowing mutations; JWT role claims alone are insufficient for billing-safe mutations.
 
 Current support-safe allowlist in this domain:
 
@@ -47,6 +48,8 @@ Current support-safe allowlist in this domain:
 - `ListSubscriptions` with high-level status/plan fields only
 
 The following are explicitly not support-safe: invoice exports, payment method details, Stripe customer metadata, and any subscription mutation (`CreateSubscription`, plan change, cancellation).
+
+All billing/support route classifications in this domain must be registered in [Authorization Route Matrix](../../system-architecture-authz-route-matrix.md).
 
 ## Lifecycle Flows
 
@@ -58,6 +61,8 @@ The subscription lifecycle is modeled as a finite state machine:
 - `grace` – A configured grace period after `past_due` where some or all entitlements may be restricted (for example, blocking new game instances while allowing existing ones to run).  
 - `suspended` – Hosting entitlements are temporarily disabled due to non-payment or policy; new sessions and instance starts are blocked for the tenant.  
 - `canceled` – The subscription has been terminated; long-term data retention and clean-up policies apply.
+
+This lifecycle table is the canonical subscription status contract for FireMUD. Other documents (including Stripe integration and auth/session gating) must reuse these exact status values and transition semantics.
 
 State transitions are driven by:
 
@@ -93,9 +98,13 @@ Subscription status feeds directly into tenant availability and resource enforce
     - Connected gameplay sessions are revoked immediately.
     - Instance processes enter a bounded drain window (target: 5 minutes maximum) for internal cleanup and then stop. During this window they are not gameplay-admissible.
   - A small, explicitly defined **billing-safe control-plane surface** remains accessible so owners can resolve billing issues or export data. This surface includes actions such as updating payment methods, viewing invoices, and initiating exports, but does not include starting game instances or editing live gameplay configuration. Service-specific docs and shared authorization middleware must explicitly mark which routes participate in this billing-safe surface so they remain reachable while gameplay is blocked.
-  - As part of the transition into `suspended` or `canceled`, the Account Service emits a `TenantBillingStateChanged` event with `billing_state` set to `suspended` or `canceled`. Game Session and related services consume this event and immediately:
-    - Revoke all gameplay sessions for the affected `tenantId` (kicking connected sockets and preventing reconnect), and  
-    - Bulk-revoke tenant-scoped authorization for that tenant by setting `session:auth:revoked_after:tenant:<tenantId>` to “now”, while preserving account-scoped allowlist entries (`session:auth:account:<accountId>:<tokenHash>`) so explicitly marked billing-safe control-plane routes remain available under role checks (`tenantAdmin` for the tenant, or `platformAdmin` / `billingAdmin` for cross-tenant billing tools). Implementations must not rely on wildcard deletes (`session:auth:tenant:<tenantId>:*`) in hot paths; opportunistic cleanup of tenant-scoped allowlist entries is allowed only via purpose-built, bounded indexes and background work.
+  - As part of the transition into `suspended` or `canceled`, the Account Service must:
+    - Write `session:auth:revoked_after:tenant:<tenantId>` with the current timestamp (authoritative writer), and
+    - Emit a `TenantBillingStateChanged` event with `billing_state` set to `suspended` or `canceled`.
+  - Game Session and related services consume this event and immediately:
+    - Revoke all gameplay sessions for the affected `tenantId` (kicking connected sockets and preventing reconnect), and
+    - Reconcile entitlement caches and admission gates for the tenant.
+  - Downstream services must not write `session:auth:revoked_after:*` watermark keys directly. Implementations must not rely on wildcard deletes (`session:auth:tenant:<tenantId>:*`) in hot paths; opportunistic cleanup of tenant-scoped allowlist entries is allowed only via purpose-built, bounded indexes and background work.
 
 These behaviors tie directly into the session revocation rules described in [Authentication & Authorization](../../system-architecture-authentication.md#session-and-identity-management): `TenantBillingStateChanged` events for `suspended` or `canceled` must trigger revocation of gameplay sessions and regular tenant-scoped auth entries, while softer billing states (`trialing`, `active`, `past_due`, `grace`) do not trigger automatic revocation and instead rely on quota and availability rules.
 
@@ -114,6 +123,7 @@ Runtime services such as the Game Session Service and world-management component
 - On game instance start, restart, rollback that changes the active version, or significant scaling operations, they call `GetTenantEntitlements(tenantId)` and enforce both availability and quotas before admitting new load.  
 - When admitting new player sessions for a tenant, they consult entitlements (either via a fresh call or a cached snapshot) to confirm that the tenant is still available for new logins.  
 - They cache entitlements for a bounded period (for example, at most 60 seconds) and **must** invalidate or refresh them immediately when `SubscriptionStatusChanged` or `TenantBillingStateChanged` events are received, rather than checking entitlements on every tick. Admission paths (new player logins and game instance start/restart flows) must always consult a fresh or recently refreshed entitlement snapshot and must not bypass revocation rules based solely on stale cache entries.
+- Admission-critical paths (`PLAY`, new session admission, instance start/restart/rollback) must enforce a hard entitlement freshness bound of 15 seconds. If the local entitlement snapshot is older than this bound and a refresh cannot be completed immediately, the path fails closed with a retriable infrastructure/availability error.
 
 ## Edge Cases and Failure Handling
 

@@ -21,7 +21,7 @@ It exists to remove ambiguity from “conceptual APIs” referenced in service R
 This document covers:
 
 - Pinning and rolling back `scriptPatchVersion` for a running `gameInstanceId`.
-- Patch lifecycle visibility (`READY` / `FAILED` / `ROLLED_BACK`) as an operator-facing contract.
+- Patch lifecycle visibility (`READY` / `FAILED`) plus per-instance rollout/rollback visibility as an operator-facing contract.
 - Operational interactions needed for safe rollback (pause/resume, drain/purge).
 - Plugin lifecycle operations (enable/disable/rollback) scoped to a running `gameInstanceId`, as part of the same operational surface as scripts.
 
@@ -33,6 +33,7 @@ This document does not define the designer-facing DSL, sandbox internals, or per
 - **Pinned versions are explicit.** Runtime must never “auto-upgrade” to a newer patch without an operator/designer action captured in the control plane.
 - **Control plane is idempotent.** Every mutating operation must accept a caller-provided `controlPlaneRequestId` and be safely retryable.
 - **Auditable and observable.** Every mutating action must emit an audit entry and a durable status event that downstream tooling can consume.
+- **Pin visibility is bounded-staleness.** Services that cache pinned patch/plugin versions must enforce a max staleness bound and fail closed on stale/unknown pin state for admission-critical decisions.
 
 ## Actors and Responsibilities
 
@@ -43,8 +44,8 @@ This document does not define the designer-facing DSL, sandbox internals, or per
 
 - **Automation & Scripting Service (runtime + patch lifecycle)**
   - Evaluates triggers, persists script work items durably, and hands off to Game Session.
-  - Tracks per-tenant patch lifecycle state (`READY` / `FAILED` / `ROLLED_BACK`) and enforces admission rules (“only `READY` is runnable”).
-  - Emits `ScriptPatchStatusChanged` when lifecycle state changes.
+  - Tracks per-tenant patch lifecycle state (`READY` / `FAILED`) and enforces admission rules (“only `READY` is runnable”).
+  - Emits patch lifecycle and rollout events (`ScriptPatchTenantStatusChanged`, `ScriptPatchInstanceRolloutChanged`) when state changes.
 
 - **Game Session Service (gameplay + tick control plane)**
   - Owns the pinned `scriptPatchVersion` for each `(tenantId, gameInstanceId)`.
@@ -148,6 +149,69 @@ Semantics:
 - Idempotent.
 - Resumes normal scheduling after rollback/drain steps complete.
 
+### Automation & Scripting: Admission Pause/Resume (Rollback Support)
+
+Rollback requires an Automation-side admission barrier in addition to tick pause so new triggers are not admitted while control-plane cleanup is in progress.
+
+#### `SetAutomationAdmissionMode`
+
+Inputs:
+
+- `tenantId`
+- Optional scope: `gameInstanceId`, `regionId`
+- `mode` (`NORMAL` | `PAUSED_FOR_ROLLBACK`)
+- `controlPlaneRequestId`
+- `actor`
+- `reason`
+
+Semantics:
+
+- Idempotent.
+- `PAUSED_FOR_ROLLBACK` prevents admission of new external and scheduler triggers for the scope while allowing already-admitted work to be drained or canceled.
+- During pause, ingress calls return explicit rollback backpressure outcomes (`finalOutcome=skipped_rollback_pause`) and remain audit-visible.
+
+### Rollback Convergence Readiness (Required)
+
+Rollback orchestration must verify that runtime services have observed the new pin before admission/ticks resume.
+
+#### `GetAutomationPinConvergence`
+
+Inputs:
+
+- `tenantId`
+- `gameInstanceId`
+
+Outputs:
+
+- `tenantId`, `gameInstanceId`
+- `observedPinnedScriptPatchVersion`
+- `lastObservedControlPlaneRequestId`
+- `observedAt`
+
+Semantics:
+
+- Read-only.
+- Reports the latest pin observation used by admission and scheduler logic.
+
+#### `GetGameSessionPinConvergence`
+
+Inputs:
+
+- `tenantId`
+- `gameInstanceId`
+
+Outputs:
+
+- `tenantId`, `gameInstanceId`
+- `observedPinnedScriptPatchVersion`
+- `lastObservedControlPlaneRequestId`
+- `observedAt`
+
+Semantics:
+
+- Read-only.
+- Reports the latest pin observation used by tick command intake and execution-time version fences.
+
 ### Game Session: Purge Queued Tick Commands (Rollback Support)
 
 Rollback safety relies on execution-time fences, but operators also need a deterministic cleanup hook so queues do not accumulate mismatched entries after a pin/disable event.
@@ -201,7 +265,7 @@ Inputs:
 Outputs:
 
 - `tenantId`, `scriptPatchVersion`
-- `status` (for example `PENDING_VALIDATION`, `ONLOAD_RUNNING`, `READY`, `FAILED`, `ROLLED_BACK`)
+- `status` (for example `PENDING_VALIDATION`, `ONLOAD_RUNNING`, `READY`, `FAILED`)
 - `statusReason` (optional)
 - `lastChangedAt`
 
@@ -215,6 +279,32 @@ Inputs:
 Outputs:
 
 - A list of `GetScriptPatchStatus` records.
+
+#### `GetScriptPatchInstanceRolloutStatus`
+
+Inputs:
+
+- `tenantId`
+- `gameInstanceId`
+- `scriptPatchVersion`
+
+Outputs:
+
+- `tenantId`, `gameInstanceId`, `scriptPatchVersion`
+- `rolloutStatus` (for example `PINNED`, `ROLLED_BACK`, `REPINNED`)
+- `statusReason` (optional)
+- `lastChangedAt`
+
+#### `ListScriptPatchInstanceRollouts`
+
+Inputs:
+
+- `tenantId`
+- Optional filters: `gameInstanceId`, `scriptPatchVersion`, `rolloutStatus`, `changedAfter`, `changedBefore`
+
+Outputs:
+
+- A list of `GetScriptPatchInstanceRolloutStatus` records.
 
 ### Automation & Scripting: Plugin Lifecycle Management
 
@@ -321,6 +411,28 @@ Outputs:
 
 - `canceledCount` (best-effort count; may be approximate for large batches)
 
+#### `CancelPendingWorkItemsForPluginVersion`
+
+Inputs:
+
+- `tenantId`
+- `pluginId`
+- `pluginVersionId`
+- Optional scope: `gameInstanceId`, `regionId`
+- `controlPlaneRequestId`
+- `actor`
+- `reason`
+
+Semantics:
+
+- Idempotent.
+- Marks pending outbox work items produced by the specified plugin version as canceled so they are never handed off again.
+- Required for plugin disable/rollback/revocation workflows to avoid repeated execution-time plugin version fence drops and queue growth.
+
+Outputs:
+
+- `canceledCount` (best-effort count; may be approximate for large batches)
+
 ### Logging & Admin: Operator Workflow APIs
 
 Logging & Admin may expose a single high-level orchestration API (internally driving the lower-level calls above) for operators:
@@ -335,15 +447,16 @@ If implemented, these APIs must remain thin orchestration and must not become an
 All events must be:
 
 - Durable (delivered at-least-once).
-- Idempotent for consumers (carry `controlPlaneRequestId` and stable identity fields).
+- Idempotent for consumers (carry stable identity fields; include `controlPlaneRequestId` when operator-caused).
 - Emitted only after the producing service commits its state change.
 
 ### Event Transport Contract (Required)
 
 To keep control-plane behavior predictable, transport and ordering guarantees must be explicit:
 
-- **Partition key**: control-plane events must be partitioned by `tenantId` + `gameInstanceId` so ordering is stable for a single running instance.
-- **Ordering**: consumers may assume per-partition order, but must not assume global order across tenants or instances.
+- **Partition key (instance-scoped events)**: events scoped to a running instance (for example `ScriptPatchPinChanged`, `ScriptPatchInstanceRolloutChanged`, and plugin lifecycle events) must use `tenantId` + `gameInstanceId` so ordering is stable for that instance.
+- **Partition key (tenant-scoped patch lifecycle events)**: tenant patch readiness events (`ScriptPatchTenantStatusChanged`) must use `tenantId` only.
+- **Ordering**: consumers may assume per-partition order within each event family/scope, but must not assume global order across tenants or instances.
 - **Replay**: new consumers must be able to replay at least N days of control-plane events (or reconstruct state from durable service APIs) so operator UIs can be rebuilt without data loss.
 - **Idempotency**: consumers must treat `controlPlaneRequestId` as the primary idempotency key for operator-driven events and must be safe under at-least-once delivery.
 
@@ -366,9 +479,9 @@ Fields:
 
 Optional dedicated event; if not used, `ScriptPatchPinChanged(changeType=ROLLBACK)` is required.
 
-### `ScriptPatchStatusChanged` (Automation & Scripting → Event Bus)
+### `ScriptPatchTenantStatusChanged` (Automation & Scripting → Event Bus)
 
-Emitted whenever a tenant’s view of a patch’s lifecycle changes.
+Emitted whenever tenant-scoped readiness lifecycle changes.
 
 Fields:
 
@@ -376,6 +489,24 @@ Fields:
 - `scriptPatchVersion`
 - `previousStatus`
 - `newStatus`
+- `causedBy` (`RUNTIME_VALIDATION` | `SYSTEM` | `OPERATOR`)
+- `controlPlaneRequestId` (optional; required when `causedBy=OPERATOR`)
+- `statusReason` (optional)
+- `occurredAt`
+
+### `ScriptPatchInstanceRolloutChanged` (Game Session or Automation & Scripting → Event Bus)
+
+Emitted whenever instance rollout history changes for a patch.
+
+Fields:
+
+- `tenantId`
+- `gameInstanceId`
+- `scriptPatchVersion`
+- `previousRolloutStatus`
+- `newRolloutStatus` (`PINNED` | `ROLLED_BACK` | `REPINNED`)
+- `causedBy` (`OPERATOR` | `SYSTEM`)
+- `controlPlaneRequestId` (required when `causedBy=OPERATOR`)
 - `statusReason` (optional)
 - `occurredAt`
 
@@ -402,15 +533,29 @@ Fields:
 2. Call `SetPinnedScriptPatchVersion` in Game Session.
 3. Game Session emits `ScriptPatchPinChanged`.
 4. Automation & Scripting observes the event for visibility (not for authority) and treats the pinned patch as the expected active one for tick handoffs.
-5. Operators monitor `script_event_audit` and automation metrics; per-event correlation uses `scriptEventId` in audit/logs/traces, not metric labels.
+5. Schedulers use a bounded-staleness pin cache for admission and timer firing decisions:
+   - If cached pin data is stale beyond the configured max-age, they must refresh from authoritative control-plane APIs/events before admitting new work.
+   - If fresh authoritative pin data cannot be obtained, admission must fail closed with `finalStage=ADMISSION`, `finalOutcome=pin_state_unavailable`, and an explicit `finalReason`.
+6. Operators monitor `script_event_audit` and automation metrics; per-event correlation uses `scriptEventId` in audit/logs/traces, not metric labels.
 
 ### Patch Rollback (Operator-Driven, Required)
 
 1. Call `PauseTicks` for the affected scope.
-2. Call `RollbackScriptPatchVersion` (or `SetPinnedScriptPatchVersion`) to repin to the target known-good patch.
-3. Call `CancelPendingWorkItemsForPatch` in Automation & Scripting for the rolled-back patch (and optionally purge volatile coordination indexes).
-4. Call `PurgeQueuedTickCommandsForScriptPatch` (and, if applicable, `PurgeQueuedTickCommandsForPluginVersion`) so mismatched queued entries do not accumulate after repin.
-5. Resume ticks with `ResumeTicks`.
+2. Call `SetAutomationAdmissionMode(..., mode=PAUSED_FOR_ROLLBACK)` for the same scope.
+3. Call `RollbackScriptPatchVersion` (or `SetPinnedScriptPatchVersion`) to repin to the target known-good patch.
+4. Call `CancelPendingWorkItemsForPatch` in Automation & Scripting for the rolled-back patch (and optionally purge volatile coordination indexes).
+5. If plugin versions are also being rolled back/disabled/revoked, call `CancelPendingWorkItemsForPluginVersion`.
+6. Call `PurgeQueuedTickCommandsForScriptPatch` (and, if applicable, `PurgeQueuedTickCommandsForPluginVersion`) so mismatched queued entries do not accumulate after repin.
+7. Wait for pin-convergence acknowledgments from both Automation & Scripting and Game Session for the new pin (`controlPlaneRequestId` must match).
+8. Call `SetAutomationAdmissionMode(..., mode=NORMAL)` once convergence and cleanup complete.
+9. Resume ticks with `ResumeTicks`.
+
+Convergence timeout semantics (required):
+
+- Rollback orchestration must apply a bounded convergence timeout (for example `ROLLBACK_CONVERGENCE_TIMEOUT_MS`) for step 7.
+- If timeout is reached before both convergence APIs report the expected `controlPlaneRequestId`, the rollback enters terminal state `ROLLBACK_CONVERGENCE_TIMEOUT`.
+- In `ROLLBACK_CONVERGENCE_TIMEOUT`, Automation admission remains paused for scope safety and ticks remain paused until an operator explicitly issues resume/abort actions.
+- The system must emit an operator-visible terminal event (for example `ScriptRollbackConvergenceTimedOut`) and increment a dedicated timeout metric.
 
 Notes:
 

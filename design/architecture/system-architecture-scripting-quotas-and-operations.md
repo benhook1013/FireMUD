@@ -243,6 +243,7 @@ Dry-run and test executions share the same sandbox engine and guards as live tra
 - Dry-runs do **not** consume ScriptQuotaService windows or per-tenant automation budgets that gate live triggers, but they:
   - Execute through the same sandbox, CPU, and memory budgets described in `design/architecture/microservices/automation-scripting-service/sandbox-runtime-design.md`.
   - Contribute to dry-run/test-only metrics (for example, `automation_script_test_runs_total`, `automation_script_test_runtime_seconds`, `automation_script_test_sandbox_failures_total`) so behavior is observable without affecting live-traffic dashboards and SLOs.
+- Dry-run/test triggers must use a separate idempotency namespace from live traffic (for example include `isDryRun=true` in Trigger Identity) so test executions cannot dedupe, suppress, or overwrite live trigger handling/audit rows.
 - By default, dry-run/test executions must not contribute to failure-rate circuit breakers that can disable live scripts (`runtimeStatus=DISABLED_DUE_TO_ERRORS`); if dry-run failures are used for gating, they must be isolated (separate breaker or explicit opt-in).
 - To prevent abuse, the Automation & Scripting Service enforces additional dry-run ceilings, such as:
   - Per-tenant and per-principal maximum runs per window (for example, `SCRIPT_TEST_MAX_RUNS_PER_MINUTE`).
@@ -257,7 +258,6 @@ This section is **illustrative**, not normative. The **authoritative definitions
 
 - `design/architecture/system-architecture-logging-monitoring.md`
 - `design/architecture/system-architecture-scripting-observability-contract.md`
-- Automation & Scripting Service README: `design/architecture/microservices/automation-scripting-service/README.md`
 
 Implementations should align emitted metrics with those documents; the intent here is only to show how common outcomes map conceptually to “counted”, “skipped”, or “dropped” signals so readers understand the observability story.
 
@@ -296,7 +296,8 @@ Use the following patterns to answer common operational questions:
   - Use `automation_script_skips_total{reason="priority_throttled"}` and compare `automation_script_triggers_total` broken out by `priorityTag` to confirm that background work is yielding capacity to high-priority scripts as configured.
 
 - **“Are reloads or version issues causing skips?”**
-  - Inspect `automation_script_triggers_total{outcome="skipped_reloading"}` and `automation_script_triggers_dropped_total{reason="version_unavailable"}` (paired with `script_event_audit.finalStage=ADMISSION` and `finalOutcome=skipped_reloading` / `finalOutcome=version_unavailable`) to distinguish reload pauses from missing or failed script versions.
+  - Inspect `automation_script_triggers_total{outcome="skipped_reloading"}`, `automation_script_triggers_total{outcome="skipped_rollback_pause"}`, and `automation_script_triggers_dropped_total{reason="version_unavailable"}` (paired with `script_event_audit.finalStage=ADMISSION` and `finalOutcome=skipped_reloading` / `skipped_rollback_pause` / `version_unavailable`) to distinguish reload pauses, rollback pauses, and missing or failed script versions.
+  - For stale control-plane pin visibility, inspect admissions with `finalOutcome=pin_state_unavailable` and corresponding drop metrics keyed by the bounded `finalReason`.
 
 ### Tuning Playbook: Misbehaving Scripts
 
@@ -442,13 +443,17 @@ Rollback must prevent previously queued work from a rolled-back `scriptPatchVers
 At a minimum, rollback consists of:
 
 1. **Fence new evaluation**
+   - Pause tick execution and set Automation & Scripting admission to rollback pause mode for the affected scope before repin, so new triggers do not refill queues during cleanup.
    - Repin the affected game instance(s) to the target `scriptPatchVersion` using Game Session / Logging & Admin control-plane APIs.
    - Ensure Automation & Scripting rejects triggers for non-`READY` patches and records explicit outcomes (for example `version_unavailable`) rather than silently falling back.
 2. **Drain/purge queued automation work**
    - Drain or purge queued script work items and staging entries that carry the rolled-back patch so they cannot enqueue into tick queues after repin.
+   - If plugin versions are also being rolled back/disabled/revoked, cancel pending work for those `pluginVersionId` values before queue purge.
    - Any purge must be scoped and auditable (tenant/region/script as appropriate) and must not require ad-hoc `redis-cli` deletes.
 3. **Enforce execution-time version fencing**
    - Game Session must reject any queued tick commands whose embedded `scriptPatchVersion` does not match the instance’s currently pinned version, and record the rejection so operators can diagnose rollback impact.
+4. **Resume in order**
+   - Return Automation & Scripting admission to normal only after cancel/purge completes, then resume ticks.
 
 These requirements are summarized in `design/architecture/system-architecture-scripting-contracts.md#3-version-fencing-rollback-safety`.
 
@@ -473,11 +478,13 @@ Operator actions:
    - Use the normal disable/throttle flows in this document to set offending scripts to `runtimeStatus=DISABLED` or a drain state while you triage (for example, `DISABLE_AFTER_DRAIN`).
 3. Roll back the active script patch if necessary
    - If regressions are widespread or difficult to isolate, use Logging & Admin or Game Session tooling to repin the game back to the previous known-good `scriptPatchVersion` for the affected tenant and game instance. Concretely:
-     - Query the Automation & Scripting Service via a read-only API such as `GetScriptPatchStatus(tenantId, scriptPatchVersion)` (or consume `ScriptPatchStatusChanged` events) to confirm which patches are `READY` or `FAILED` for the tenant.
+     - Query the Automation & Scripting Service via read-only APIs such as `GetScriptPatchStatus(tenantId, scriptPatchVersion)` and `GetScriptPatchInstanceRolloutStatus(...)` (or consume `ScriptPatchTenantStatusChanged` / `ScriptPatchInstanceRolloutChanged` events) to confirm tenant readiness and instance rollout state.
      - Call the Game Session control-plane APIs to update the pin (for example `SetPinnedScriptPatchVersion` or `RollbackScriptPatchVersion`) following the contract in `design/architecture/system-architecture-scripting-control-plane-api.md`.
    - Repinning does **not** attempt to backfill skipped triggers or rewrite existing automation queues; automation and tick processing continue from the current point in time under the older patch, and at-most-once guarantees for past triggers are preserved.
    - Repinning must also ensure rollback safety:
+     - Automation admission should remain paused for the affected scope while repin and cancel/purge steps run.
      - Queued automation work items and staging entries that carry the rolled-back `scriptPatchVersion` are drained/purged so they cannot enqueue or execute after repin.
+     - If plugin versions are also being rolled back/disabled/revoked, pending work for displaced `pluginVersionId` values is canceled before queue purge.
      - Game Session enforces a version fence at execution time and must reject any tick-queue entries whose embedded `scriptPatchVersion` does not match the currently pinned value.
      - These drops must be visible in `script_event_audit` and operator dashboards so rollback impact is diagnosable.
 4. Repair and republish

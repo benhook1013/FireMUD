@@ -61,7 +61,7 @@ To make traces consistently useful across services and runbooks, FireMUD uses a 
   - `tick_execute` – execution of a single tick, tagged with `tenantId`, `regionId`, `tickId`, `region_epoch`, and a `tick_phase` attribute for major phases (for example `load_effects`, `apply_effects`, `persist_ledger`, `drain_followups`).
   - `tick_apply_effect` – per-effect spans for calls into domain services, tagged with `tenantId`, `regionId`, `tickId`, `effectKey`, `effect_type`, and `targetAggregateType`.
 - **Telnet/TCP Proxy and WebSocket bridge**
-  - `tcpproxy_connection` – lifecycle of a Telnet connection at the DMZ edge, tagged with `remote_ip`, `tenantId`, and high-level `connection_outcome` (for example `ok`, `limit_exceeded`, `malformed`).
+  - `tcpproxy_connection` – lifecycle of a Telnet connection at the DMZ edge, tagged with `remote_ip_hash` (and optionally `remote_ip_prefix`), `tenantId`, and high-level `connection_outcome` (for example `ok`, `limit_exceeded`, `malformed`).
   - `tcpproxy_command` – command forwarding from Telnet to Gateway, tagged with `command`, `tenantId`, and `playerId`.
   - `tcpproxy_notify_disconnect` – spans for `NotifyDisconnect` calls into Game Session, tagged with `tenantId`, `playerId`, and `disconnect_reason`.
 - **Cross-region and saga flows**
@@ -88,6 +88,7 @@ All spans should include, where applicable:
 - **Sensitive attributes**
   - Attributes such as `playerId` are operationally useful but should be treated as sensitive data and kept bounded (IDs only, no message payloads).
   - `playerId` is allowed in production traces as an identifier for correlation and incident drilldown, but it must be protected by access controls and retention policies appropriate to player-linked data.
+  - Client address attributes in production traces must be privacy-safe and bounded: use `remote_ip_hash` for stable correlation and optionally `remote_ip_prefix` (`/24` for IPv4, `/56` for IPv6) for coarse network triage. Do not store raw full client IP addresses in long-retention traces.
   - Do not attach user-provided text (chat content, command payloads, free-form error messages) as span attributes; keep that data in logs with appropriate redaction and retention controls.
   - When exporting traces outside of the cluster or into shared tooling, ensure access controls and retention policies match the sensitivity of these identifiers.
 

@@ -152,8 +152,9 @@ The platform performs **extensive validation** at design time and at publish tim
   - If a graph would create an unsafe loop, the editor surfaces a clear validation error pointing at the offending nodes; fix the wiring and re-run validation before publishing.
 
 - **Runtime outcomes you may see**
-- When a script misbehaves at runtime—exceeding quotas, hitting sandbox errors, or being disabled by the failure-rate circuit breaker—the Automation & Scripting Service records stage-aware outcome fields in `script_event_audit` (`finalStage`, `finalOutcome`, `finalReason`) so you can distinguish “rejected before evaluation” from “failed during evaluation” from “never accepted into tick queues”.
-  - Common outcomes surfaced via tooling include `quota_denied`, `sandbox_error`, `disabled_due_to_errors`, and `skipped_disabled`.
+  - When a script misbehaves at runtime, the Automation & Scripting Service records stage-aware outcome fields in `script_event_audit` (`finalStage`, `finalOutcome`, `finalReason`) so you can distinguish “rejected before evaluation” from “failed during evaluation” from “never accepted into tick queues”.
+  - Common outcomes surfaced via tooling include `quota_denied`, `sandbox_error`, `disabled_due_to_errors`, `skipped_reloading`, `skipped_rollback_pause`, and `version_unavailable`.
+  - Use the canonical outcome taxonomy in `design/architecture/system-architecture-scripting-normative-contract-tables.md#canonical-finaloutcome-values-normative` as the source of truth for names and meanings.
   - Administrative disables and throttling (for example, `runtimeStatus=DISABLED` or `DISABLE_AFTER_DRAIN`) are reflected in script metadata and surfaced through the Game Design and Logging & Admin tools so you can see which scripts are paused, why they were disabled, and when they can be safely re-enabled.
 
 - **Where to look when debugging**

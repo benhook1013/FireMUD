@@ -65,7 +65,7 @@ When session-related metrics indicate schema or TTL problems, use this scoped cl
 1. **Align deployments**
    - Verify and correct deployments so all Game Session Service instances run a version whose CAS script understands the highest `schemaVersion` currently present in Redis (follow the “scripts first, writers second” rule from the Redis architecture docs).
 1. **Run the session cleanup Job**
-   - Use the session schema/TTL cleanup Job described in [Session Schema Cleanup and Large Keyspaces](./system-architecture-redis.md#session-schema-cleanup-and-large-keyspaces):
+   - Use the session schema/TTL cleanup Job described in [Session Schema Cleanup and Large Keyspaces](./system-architecture-redis-operations.md#session-schema-cleanup-and-large-keyspaces):
      - Scope the Job to one tenant at a time by prefix (for example `session:game:<tenantId>:*`).
      - Configure it to delete keys with unsupported `schemaVersion` values or aggressively reduce their TTL so they expire quickly when performing a TTL cut-over.
 1. **Verify recovery**
@@ -87,7 +87,7 @@ The following Redis-focused incident flows build on the general recovery steps a
 ### Coordination AOF Tail-Loss SLO Breach
 
 1. **Detect**
-   - Tail-loss indicators such as `redis_coordination_tail_loss_ms` or `tail_loss_ticks` regularly exceed the 1–2 second envelope (or 2× `tick_interval_ms`) for one or more `<tenantId, regionId>` shards.
+   - Tail-loss indicators such as `redis_coordination_tail_loss_ms` or `tail_loss_ticks` regularly exceed the canonical envelope (`tail_loss_budget_ms = max(2000, 2 * tick_interval_ms)` from `system-architecture-redis-operations.md`) for one or more `<tenantId, regionId>` shards.
    - Region health shows `DEGRADED` or `COORDINATION_UNTRUSTWORTHY` for those shards.
 2. **Decide**
    - For short-lived degradations where gameplay impact is minimal, investigate disk/replication performance, but keep serving traffic.

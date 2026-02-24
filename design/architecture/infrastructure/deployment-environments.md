@@ -1,9 +1,10 @@
 # Deployment Environments
 
-This document outlines how FireMUD is deployed across different environments, focusing on **Docker Compose** for local development and **Kubernetes** for production. It includes discovery mechanisms, health check strategies, and environment-specific configurations.
+This document outlines how FireMUD is deployed across environments including local Docker Compose, ephemeral CI/preview stacks, self-hosted hobby deployments, and Kubernetes-backed shared environments (dev/demo, staging, production). It includes discovery mechanisms, health check strategies, and environment-specific control expectations.
 
 ## Table of Contents
 
+- [Canonical Environment Classes](#canonical-environment-classes)
 - [Local Development: Docker Compose](#local-development-docker-compose)
 - [Production: Kubernetes](#production-kubernetes)
 - [Telnet Edge Deployment](#telnet-edge-deployment)
@@ -19,6 +20,30 @@ This document outlines how FireMUD is deployed across different environments, fo
 - Use **Docker Compose** when developing locally or running short-lived preview stacks from pull requests.
 - Use **Kubernetes (dev/stage/prod clusters)** for any shared or player-facing environment where autoscaling, high availability, and full observability are required.
 - Prefer **staging** for playtests that should mirror production routing, TLS, and Redis/Postgres topologies before promoting changes. Treat PR preview stacks as fast functional review environments, not as a substitute for prod-like validation.
+
+---
+
+## Canonical Environment Classes
+
+Use these classes as the source of truth for environment roles and control expectations across architecture docs:
+
+| Class | Typical Topology | Secret Source | Rotation/Hardening | Backup/Restore Posture | Deploy Path |
+| --- | --- | --- | --- | --- | --- |
+| `local-dev` | Docker Compose on a developer machine | `.env` plus local files; generated certs/keys allowed | Convenience-first; manual | Local snapshots/ad hoc restore | `./gradlew devUp` / `devDown` |
+| `ci-preview` | Short-lived CI runner stacks, usually Docker Compose | Ephemeral CI secrets and sample defaults | Short-lived; no long-term rotation guarantees | Disposable | GitHub Actions preview workflows |
+| `dev-demo-cluster` | Shared but non-player-facing Kubernetes cluster | Kubernetes Secrets/ConfigMaps | Basic hardening; can prioritize iteration speed | Ad hoc unless explicitly scheduled | Helm/manual workflows (`manual-helm-deploy.yml`) |
+| `hobby-self-hosted` | Small player-facing deployment with production-like roles at low scale | Kubernetes Secrets (or equivalent mapped secret backend) | Production-like for Tier A credentials; simplified ops acceptable | Operator-managed backups expected | Operator-applied manifests/charts |
+| `staging` | Prod-like Kubernetes cluster with smaller sizing | Kubernetes Secrets/ConfigMaps | Production-like controls; required post-restore secret hardening before playtests | Disposable by default unless explicitly enabling schedules | Git-tracked Kustomize overlays + operator `kubectl apply -k` |
+| `production` | Player-facing Kubernetes cluster | Kubernetes Secrets/ConfigMaps | Strictest controls and change gates | Scheduled backups + verification + mandatory post-restore hardening | Git-tracked Kustomize overlays + operator `kubectl apply -k` |
+
+Cross-document rules:
+
+- Canonical class names are exactly: `local-dev`, `ci-preview`, `dev-demo-cluster`, `hobby-self-hosted`, `staging`, `production`. Terms such as `qa` are aliases only and must be mapped explicitly to one of these classes in environment documentation and automation.
+- Staging and production overlay updates must use immutable image digests and follow the promotion/attestation model defined in `system-architecture-cicd.md`.
+- Player-facing classes (`hobby-self-hosted`, `staging`, `production`) must treat JWT secret files (`FIREMUD_AUTH_JWT_SECRET_PATH`) and TCP Proxy `GATEWAY_WS_URL` listener alignment as required preflight invariants.
+- Classes documented as disposable (`ci-preview`, default `staging`) must not be used as evidence for backup/SLO guarantees unless their controls are explicitly upgraded.
+- Staging and production deployments must run the canonical preflight policy gate defined in `system-architecture-deploy-preflight-policy.md`; production promotions must satisfy the attestation contract in `system-architecture-promotion-attestation.md`.
+- `hobby-self-hosted` deployments are also player-facing and must run equivalent checks for player-facing invariants (JWT file-path contract, JWKS resource contract, Redis role split, and `GATEWAY_WS_URL` alignment) before opening traffic, even when not using the staging/production Kustomize overlay workflow.
 
 ---
 
@@ -88,7 +113,7 @@ In production, FireMUD is deployed into Kubernetes (e.g., AWS EKS, Google GKE, o
   - Local development runs **two Redis containers** under Docker Compose with the same role split: a Coordination Redis service and a Cache/Rate-Limit Redis service, with Coordination Redis durable via AOF and Cache/Rate-Limit Redis configured for eviction-driven workloads. When operators want to **reset** coordination state (for example, to test reset-tolerant behavior or remediate mis-keyed data), they run an explicit coordination-reset Job or script that wipes the Coordination Redis AOF volume as described in the Redis Operations runbook, rather than relying on Helm to clear data automatically on every deploy.
 - PostgreSQL is deployed within the cluster (or provided as a managed database service) to store persistent domain data. See [System Architecture Overview](../system-architecture-overview.md#data-and-state-management). Backup and restore procedures are outlined in [Backup & Disaster Recovery](../system-architecture-backup-recovery.md) and the [Operational Runbooks](../system-architecture-runbooks.md#recovery).
 - **Dev/demo Kubernetes clusters** may be deployed via Helm using [manual-helm-deploy.yml](../../../.github/workflows/manual-helm-deploy.yml) (for example with `k8s/helm/values-local.yaml` or `values-dev.yaml`).
-- **Staging and production** deployments are applied from a secure operator environment using **Kustomize overlays** (for example `kubectl apply -k k8s/overlays/stage` and `kubectl apply -k k8s/overlays/prod`). Image tag changes for these overlays are tracked in Git so promotion and rollback are auditable. See [Deployment Runbook](../system-architecture-deployment-runbook.md) and [CI/CD Pipeline](../system-architecture-cicd.md#promotion--rollback-model).
+- **Staging and production** deployments are applied from a secure operator environment using **Kustomize overlays** (for example `kubectl apply -k k8s/overlays/stage` and `kubectl apply -k k8s/overlays/prod`). Immutable image digest changes for these overlays are tracked in Git so promotion and rollback are auditable. See [Deployment Runbook](../system-architecture-deployment-runbook.md) and [CI/CD Pipeline](../system-architecture-cicd.md#promotion--rollback-model).
 
 A sample Terraform module for a local Kind cluster is provided in [k8s/terraform](../../../k8s/terraform). This demo module creates a `firemud` namespace and optional Redis Helm release for quick testing. Use `helm install` with the example charts in [k8s/helm](../../../k8s/helm) to deploy services locally.
 

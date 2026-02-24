@@ -52,6 +52,16 @@ Normalized reference invariants:
 
 Normalized reference storage is only safe if it is operationally enforced:
 
+- **Cutover phases** – normalized-reference rollout is stateful and must use explicit phases:
+  - `BACKFILLING` – reference rows are being derived and validated; templates may exist that are not yet safe for runtime dependency checks.
+  - `VALIDATED` – backfill completed and consistency checks passed for all templates in scope.
+  - `ENFORCED` – runtime and control-plane reads for dependency/retirement checks use normalized tables as the sole source of truth.
+  - Instance creation must be blocked for tenants/versions still in `BACKFILLING`.
+  - Once in `ENFORCED`, dependency checks must not fall back to best-effort JSON parsing.
+  - Phase scope must be explicit and persisted (default: per `tenantId`; optional stricter scope per `(tenantId, versionId)` for phased rollouts). Tooling must not infer phase from partial row counts.
+  - Phase must be stored in a durable control-plane row (for example `template_reference_phase`) with a monotonic epoch for CAS-safe transitions (`BACKFILLING -> VALIDATED -> ENFORCED`).
+  - A read API such as `GetTemplateReferencePhase(tenantId)` must expose the persisted phase to Game Session and retirement tooling.
+
 - **Backfill job/migration** – when normalized reference tables are introduced (or when their derivation rules change), the Game Design Service must run a backfill process that:
   - Re-derives all `game_template_*_ref` rows from existing `game_templates.config`.
   - Validates that every referenced `(tenantId, versionId, templateId)` exists in the owning domain service and that the referenced `versionId` is not Retired.
@@ -60,6 +70,7 @@ Normalized reference storage is only safe if it is operationally enforced:
 - **Instance creation enforcement** – the Game Session Service (or the instance-creation orchestrator) must validate template dependencies using normalized tables before creating any `gameInstanceId` rows:
   - Fail fast if any referenced version is Retired, missing, or out of sync with its domain templates.
   - If the template pins a `scriptPatchVersion`, fail fast unless Automation & Scripting reports that patch is `READY` for the tenant.
+  - Fail fast if `GetTemplateReferencePhase` is not `ENFORCED` for the target scope.
 
 > **Note**
 

@@ -70,6 +70,7 @@ For a single-admin operator, most “what do I do now?” coordination/tick ques
   - Coordination Redis memory and key counts (coordination prefixes vs total).
 - Tick effect ledger:
   - `tick_effects_pending_total`, `tick_effects_applied_total`, `tick_effects_abandoned_total{reason}`.
+  - `tick_durable_commit_total`, `tick_coordination_cleared_total`, `tick_cleanup_lag_ms` to detect durable/cleanup divergence.
 - Cluster health:
   - Redis primary/replica health, split-brain/sentinel alerts.
 

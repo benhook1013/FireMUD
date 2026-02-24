@@ -11,7 +11,8 @@ These JSON files can be imported into a Grafana instance connected to the projec
 - [tcp-proxy-alerts-snippets.md](./tcp-proxy-alerts-snippets.md) – Reference PromQL and Alertmanager rule snippets for TCP Proxy ingress metrics (Telnet connection limits, discarded input, TLS/mTLS and WebSocket reconnect behaviour). Import these into your environment-specific dashboards and rulesets as needed.
 - [tcp-proxy.json](./tcp-proxy.json) – TCP Proxy service dashboard (Telnet connection limits, discarded Telnet input, WebSocket reconnects, and NotifyDisconnect transport/app errors).
 - [core-alerts-snippets.md](./core-alerts-snippets.md) – Reference Alertmanager rule snippets for core Redis, tick, and backup pipeline alerts (tail-loss SLO breaches, unsafe tick runtime ratios, tick ledger backlogs, and backup/verification health).
-- [player-experience.json](./player-experience.json) – Canonical player experience dashboard with SLIs for login success ratio, command end-to-end latency, Telnet/WebSocket path availability, and chat delivery latency.
+- [player-experience.json](./player-experience.json) – Canonical player experience SLO dashboard with login success ratio, command end-to-end latency (p99), Telnet/WebSocket path availability, and chat delivery latency (p99).
+- [player-experience-drilldown.json](./player-experience-drilldown.json) – Player incident drilldown dashboard with outcome breakdowns and per-command/per-channel latency views for triage after an SLO breach.
 - [redis-coordination-health.json](./redis-coordination-health.json) – Redis and coordination health dashboard, including tail-loss, AOF size/restart, coordination memory and key counts, and per-prefix coordination metrics.
 - [tick-health-ledger.json](./tick-health-ledger.json) – Tick health and ledger dashboard, including tick status, execution-time histograms and ratios, retry and command queue depths, and ledger pending/applied/abandoned metrics.
 

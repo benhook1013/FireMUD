@@ -77,7 +77,12 @@ At each tick for a `<tenantId, regionId>`, the executor:
 
 ### Commit Point and Replay Semantics (Conceptual)
 
-The canonical “commit point” for a tick is the same durable boundary used by the heartbeat watermark and `RegionStatus` (see the **Tick Commit Definition (Heartbeat Watermark)** section in `system-architecture-ticks.md`). Conceptually, tick commit proceeds through these phases:
+The canonical commit model uses the same two boundaries defined in `system-architecture-ticks.md`:
+
+- `durable_committed` – the durable heartbeat/RegionStatus commit boundary.
+- `coordination_cleared` – the “no longer in flight” Redis cleanup boundary.
+
+Conceptually, tick commit proceeds through these phases:
 
 1. **Staging complete**
    - All effects selected for the tick have been written into `tick:{tenantRegionTag}:pending` and mirrored into the ledger with `status = SCHEDULED`.
@@ -92,18 +97,20 @@ The canonical “commit point” for a tick is the same durable boundary used by
 
 From the perspective of the `(region_epoch, tickId)` timeline:
 
-- A tick is considered **committed** once:
+- A tick is `durable_committed` once:
   - All ledger rows for that `(tenantId, regionId, region_epoch, tickId)` have reached a terminal state (`APPLIED` or `ABANDONED`), and
-  - The durable commit watermark (for example `RegionStatus.lastCommittedTickId`) has advanced to that `(region_epoch, tickId)`, and
-  - There is no remaining `pending` entry for that tick in Redis.
-- Any state before this point is **replayable**:
+  - The durable commit watermark (for example `RegionStatus.lastCommittedTickId`) has advanced to that `(region_epoch, tickId)`.
+- A tick is `coordination_cleared` once:
+  - There is no remaining `pending` entry for that tick in Redis and lock cleanup for that tick has completed.
+- Any state before `durable_committed` is **replayable**:
   - Executors may crash after staging but before all effects are applied; the next executor replays remaining SCHEDULED entries using ledger and idempotency rules.
   - AOF replay or tail-loss may cause staging scripts to be re-run; domain idempotency guards and the ledger ensure that replays converge to the same terminal outcome.
+- If a crash occurs after `durable_committed` but before `coordination_cleared`, recovery must finish cleanup before the next tick stages new work; this window does not regress the durable commit watermark.
 
 The **TickScheduler** in Game Session enforces a **single in-flight tick per region** invariant and derives tick positions from durable state:
 
-- A region is considered busy while `tick:{tenantRegionTag}:pending` exists for any in-flight `tickId`.
-- The scheduler does not start a new tick for that `<tenantId, regionId>` until the `pending` entry has been cleared as part of a successful commit or explicitly handled during crash recovery.
+- A region is considered busy while prior tick coordination state has not reached `coordination_cleared` (in practice, while `tick:{tenantRegionTag}:pending` exists for an in-flight `tickId`).
+- The scheduler does not start a new tick for that `<tenantId, regionId>` until the previous tick is `coordination_cleared` as part of normal cleanup or explicitly handled during crash recovery.
 - The scheduler obtains the current `(region_epoch, tickId)` baseline for each region from PostgreSQL (for example, a `RegionStatus` table and/or the tick effect ledger); it **does not** use `tick:{tenantRegionTag}:meta.current_tick_id` to decide which tick to run next.
 - Additional work enqueued for the same region while a tick is in flight is modeled as retries or follow-up work for a later `tickId`, not as a second concurrent tick.
 

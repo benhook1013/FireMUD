@@ -24,6 +24,16 @@ This document describes the continuous integration strategy for FireMUD using **
 
 Workflows live in the `.github/workflows/` directory. A typical pipeline runs on every pull request and push to the main branch.
 
+Branch-to-environment promotion contract:
+
+| Source branch/event | Primary purpose | Deployment target |
+| --- | --- | --- |
+| Pull requests (`develop`, `main`, `release/**`) | Validation, preview checks, and review evidence | No direct staging/production apply |
+| `develop` merges | Integration and staging candidate flow | Staging overlay updates (operator apply after policy gates) |
+| Release PR merged to `main` + release tag (for example `v1.2.3`) | Production release candidate artifacting | Production overlay updates (operator apply after attestation + policy gates) |
+
+The workflow YAML files remain the source of truth for concrete triggers; this table is the architecture contract for promotion intent.
+
 The main [`ci.yml`](../../.github/workflows/ci.yml) workflow:
 
 - Performs a **Buf breaking change check** to keep protobuf APIs compatible.
@@ -149,7 +159,7 @@ jobs:
 
 ### Rollback Strategy
 
-Staging and production rollouts use standard Kubernetes `RollingUpdate` behavior and are rolled back by re-applying the environment’s Kustomize overlay with a previously known-good image tag. FireMUD does not rely on automated canary/auto-rollback infrastructure by default; operators treat rollback as an explicit, auditable action that restores the last known-good tag and verifies post-deploy health checks.
+Staging and production rollouts use standard Kubernetes `RollingUpdate` behavior and are rolled back by re-applying the environment’s Kustomize overlay with a previously known-good image digest set. FireMUD does not rely on automated canary/auto-rollback infrastructure by default; operators treat rollback as an explicit, auditable action that restores the last known-good digest set and verifies post-deploy health checks.
 
 ---
 
@@ -187,12 +197,15 @@ automatically.
 FireMUD uses a simple promotion flow from pull requests through staging to production:
 
 - Feature branches are merged into `develop` after passing CI.
-- Staging promotion is performed by updating the staging Kustomize overlay (for example `k8s/overlays/stage`) to the desired image tags via a Git change, merging it, and applying it from a secure operator environment using `kubectl apply -k k8s/overlays/stage`. This keeps “what was deployed” traceable in Git history.
-- When a release is ready, `release-please` opens a release PR and creates a version tag (for example `v1.2.3`) that is merged to `main`. Images for this tag are built and pushed by the Docker image workflow.
-- Production promotion is performed by updating the production Kustomize overlay (for example `k8s/overlays/prod`) to the desired tagged images via a Git change, merging it, and applying it from a secure operator environment using `kubectl apply -k k8s/overlays/prod` following the deployment runbook.
-- Overlay PRs are validated by [`.github/workflows/validate-kustomize-overlays.yml`](../../.github/workflows/validate-kustomize-overlays.yml), which checks that referenced images exist in GHCR and blocks staging backup schedules unless the explicit marker `k8s/overlays/stage/STAGING_BACKUPS_ENABLED` is present.
+- Staging promotion is performed by updating the staging Kustomize overlay (for example `k8s/overlays/stage`) to the desired image digests (`image@sha256:...`) via a Git change, merging it, and applying it from a secure operator environment using `kubectl apply -k k8s/overlays/stage`. This keeps “what was deployed” traceable in Git history and removes mutable-tag drift.
+- When a release is ready, `release-please` opens a release PR against `main`; after that PR is merged, the release tag (for example `v1.2.3`) is created and images for that tag are built/pushed by the Docker image workflow.
+- Production promotion is performed by updating the production Kustomize overlay (for example `k8s/overlays/prod`) to image digests that have already passed staging validation, via a Git change, merging it, and applying it from a secure operator environment using `kubectl apply -k k8s/overlays/prod` following the deployment runbook.
+- Overlay PRs are validated by [`.github/workflows/validate-kustomize-overlays.yml`](../../.github/workflows/validate-kustomize-overlays.yml), which checks that referenced images exist in GHCR, enforces digest pinning for staging/production overlays, and blocks staging backup schedules unless the explicit marker `k8s/overlays/stage/STAGING_BACKUPS_ENABLED` is present.
+- Production overlay PRs must include a staging promotion attestation that follows `system-architecture-promotion-attestation.md`. Production PRs are rejected if they reference digests that cannot be tied to a valid attestation artifact.
 
-Rollbacks are handled by resuming a previously known-good image tag and re-applying the staging or production manifests with that tag. See the Deployment Runbook for the step-by-step operator flow.
+Rollbacks are handled by resuming a previously known-good image digest set and re-applying the staging or production manifests with those digests. See the Deployment Runbook for the step-by-step operator flow.
+
+Pre-apply policy checks for staging and production must run through the canonical preflight contract in `system-architecture-deploy-preflight-policy.md`. Static checks run in overlay PR CI, and resolved-manifest/runtime checks run in operator preflight execution. Both use the same policy IDs and evidence shape.
 
 ---
 

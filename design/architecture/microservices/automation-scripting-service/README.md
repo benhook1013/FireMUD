@@ -49,11 +49,7 @@ An OpenAPI specification for the REST endpoints is available at `src/main/resour
   runtime registry. See [Hot Reload & Failure Handling](#hot-reload--failure-handling)
   for how `activePatchVersion`, `pendingPatchVersion`, and `reloadState` are
   managed.
-- Uploading or replacing scripts via the `UpdateScript` gRPC method is handled as a Saga workflow so that failures
-    can be rolled back. The service uses the shared `SagaBuilder` and
-    `SagaRunner` helpers to persist the script and emit `sagas.active` metrics
-    with a `correlationId` for troubleshooting. See
-    [Transaction Strategies](../../system-architecture-transactions.md).
+- Direct script upload/update APIs (for example `UpdateScript`) are limited to bootstrap/dev tooling and must not be used as a production runtime publish path. Production patch rollout uses the Game Design–driven publish Saga and `NotifyScriptVersionUpdate` lifecycle (`PENDING_VALIDATION` -> `ONLOAD_RUNNING` -> `READY`/`FAILED`) so all runtime gating, audit, and rollback contracts are preserved.
 - Each game's scripts live in tables keyed by `tenantId`, ensuring automation for
   one game cannot access another's data. Redis queues also include the tenant
   prefix; see [Multi-Tenancy](../../system-architecture-multi-tenancy.md).
@@ -61,16 +57,13 @@ An OpenAPI specification for the REST endpoints is available at `src/main/resour
 
 ### Saga Participation
 
-The Automation & Scripting Service uses the shared Saga library in two ways:
+The Automation & Scripting Service uses the shared Saga library as follows:
 
-- **Script upload/update orchestration** – the `UpdateScript` gRPC method runs
-  as a Saga to persist new script definitions, update metadata, and emit audit
-  records with compensation on failure, as noted above and in
-  [Transaction Strategies](../../system-architecture-transactions.md).
 - **Script patch consumption** – when a script-only patch version is published,
   the Game Design Service drives the Saga; this service participates as a
   consumer via `NotifyScriptVersionUpdate`, reloading scripts in memory without
   coordinating its own Saga steps.
+- **Bootstrap/dev-only upload path** – if `UpdateScript` exists in an environment, it must be explicitly marked non-production and must not bypass patch lifecycle gates, readiness checks, or control-plane events.
 
 Tick-driven automation and event handling never use Sagas; they follow the
 Redis and tick contracts described in
@@ -168,8 +161,7 @@ interaction.
   - `automation:tick:{tenantScriptTag}:pending` – per-script pending list of work items currently being applied.
   - `automation:tick:{tenantScriptTag}:lock` – per-script lock ensuring only one automation tick for a `<tenantId>` + `<scriptId>` pair runs at a time.
   These keys are separate from the game tick keys (`tick:{tenantRegionTag}:...`) used by the Game Session Service and are only touched by the Automation & Scripting Service’s own Lua scripts. Script ticks never acquire `tick:{tenantRegionTag}:lock:<entityId>`; they stage commands for later execution by the Game Session Service’s tick loop.
-- `automation_queue_enqueued_total` and `automation_queue_drained_total` metrics
-  track Redis queue activity.
+- Queue activity must be surfaced through the canonical observability contract metric families (for example `automation_tick_events_enqueued_total`, `automation_script_queue_delay_seconds`, `automation_queue_orphaned_entries_total`) rather than introducing a parallel unsupported metric surface.
 - The staging Lua script processes only a limited number of events each tick
   (controlled by `AUTOMATION_TICK_MAX_EVENTS`) to keep automation work
   predictable.
@@ -199,7 +191,7 @@ This behavior ensures that a script patch either becomes the new active version 
 
 ### gRPC APIs
 
-- `UpdateScript` – uploads or replaces a script definition for later use.
+- `UpdateScript` – bootstrap/dev-only script upload path. Not part of the production runtime publish contract; production rollout uses `PublishScriptPatchVersion` + `NotifyScriptVersionUpdate` lifecycle gates.
 - `GetScriptStatus` – queries whether a script is queued or running for a given
   entity.
 - `NotifyScriptVersionUpdate` – informs the service that a new `script_patch_version`
@@ -208,17 +200,18 @@ This behavior ensures that a script patch either becomes the new active version 
   - `tenantId`, `gameInstanceId`, `regionId`, and `entityId` for the target context.
   - `regionEpoch` for gameplay/runtime triggers and scheduler triggers so Trigger Identity is fenced across scoped coordination resets (see the normative Trigger Identity table in `design/architecture/system-architecture-scripting-normative-contract-tables.md`).
   - `scriptEventId` as a stable, caller-supplied identifier for the trigger.
+  - `isDryRun` so live and dry-run/test traffic are always in separate idempotency namespaces.
   - `eventType` and versioning metadata such as `scriptPatchVersion`.
   - An envelope for the event payload, including any domain-specific fields.
   Event ingress RPCs are **idempotent** with respect to Trigger Identity (including `scriptEventId`) and the script that handles the event: repeated calls with the same Trigger Identity must not cause the DSL body to run twice. The Automation & Scripting Service implements this in accordance with the `scriptEventId` lifecycle and deduplication rules described in `design/architecture/system-architecture-scripting-dsl-reference-and-lifecycle.md#scripteventid-lifecycle-and-deduplication`.
 
 ### Idempotency & Retries
 
-The Automation & Scripting Service relies on upstream callers (typically the Game Session Service) to generate **stable `scriptEventId` values** for each trigger. These identifiers serve as the canonical idempotency keys for event ingress:
+For live event ingress, the Automation & Scripting Service relies on upstream callers (typically the Game Session Service) to generate **stable `scriptEventId` values** for each trigger. For dry-run/test endpoints, the service should generate `scriptEventId` values server-side by default. These identifiers serve as the canonical idempotency keys for event ingress:
 
 - Any RPC that accepts `scriptEventId` as part of its request (for example, `TriggerScriptEvent` and timer-driven internal scheduling) is **idempotent with respect to Trigger Identity**:
-  - For entity-scoped external events, the idempotency key is at least `<tenantId, gameInstanceId, regionId, regionEpoch, entityId, scriptId, eventType, scriptPatchVersion, scriptEventId>` for gameplay/runtime triggers.
-  - For scheduler events, the idempotency key also includes a due point (for example `dueTickId` / `dueAt`) in the deterministic `scriptEventId` derivation.
+  - For entity-scoped external events, the idempotency key is at least `<tenantId, gameInstanceId, regionId, regionEpoch, entityId, scriptId, eventType, scriptPatchVersion, scriptEventId, isDryRun>` for gameplay/runtime triggers.
+  - For scheduler events, the idempotency key also includes a due point (`dueTickId` / `dueAt`) in the deterministic `scriptEventId` derivation.
   - Re-sending the same request with the same idempotency key must not cause the DSL body to run twice.
   - The service records at most one `script_event_audit` row per idempotency key.
 - Downstream calls made from DSL components (for example, to Game Logic or World Management) must also carry a **stable idempotency token** derived from Trigger Identity plus tick context when applicable (for example including `entityId`, `eventType`, `scriptPatchVersion`, `scriptEventId`, and optionally `tickId`/`regionEpoch`) so infrastructure-level retries do not duplicate side effects. See `design/architecture/system-architecture-transactions.md` for recommended patterns.
@@ -238,10 +231,25 @@ During `reloadState=RELOADING`, this service must return explicit backpressure s
 
 In addition, the service records `script_event_audit.finalStage=ADMISSION` with `finalOutcome=skipped_reloading` and `finalReason=reloading` for correlation and operator visibility.
 
+During operator rollback pause (`PAUSED_FOR_ROLLBACK`), ingress must return an explicit rollback backpressure outcome and audit record:
+
+- `script_event_audit.finalStage=ADMISSION`
+- `script_event_audit.finalOutcome=skipped_rollback_pause`
+- `script_event_audit.finalReason=rollback_pause`
+
 - For low-rate external events, callers may retry with the same `scriptEventId` using a bounded exponential backoff and jitter.
 - For timer-derived scheduler events, best-effort timer semantics apply; triggers not admitted during reload are not backfilled unless explicitly covered by a bounded catch-up rule.
 
 See `design/architecture/system-architecture-scripting-contracts.md#7-reload-backpressure-contract`.
+
+### Pinned Version Visibility Consistency
+
+Admission and scheduler decisions must use a bounded-staleness view of pinned script patch/plugin versions:
+
+- A local cache populated by control-plane events is allowed, but it must enforce a configured max-age.
+- If pin data for a scope is stale beyond max-age, the service must refresh from authoritative control-plane APIs/events before admitting new work.
+- If fresh authoritative pin data cannot be obtained, admission must fail closed with an explicit non-success outcome and audit visibility rather than speculatively running with stale pin state.
+- The canonical failure contract for this case is `finalStage=ADMISSION`, `finalOutcome=pin_state_unavailable`, and a bounded `finalReason` (for example `pin_cache_stale_source_unreachable`).
 
 ## Faction & Reputation System
 
@@ -310,13 +318,18 @@ Any additional, less common tuning variables should be documented alongside thei
 
 In addition to event-handling and test endpoints, the Automation & Scripting Service exposes control-plane APIs for script patch visibility and plugin lifecycle management. Script patch pin authority remains in Game Session/Logging & Admin; plugin runtime lifecycle authority lives in Automation & Scripting and is orchestrated by Logging & Admin.
 
-- `GetScriptPatchStatus(tenantId, scriptPatchVersion)` – returns the current lifecycle state (`PENDING_VALIDATION`, `ONLOAD_RUNNING`, `READY`, `FAILED`, `ROLLED_BACK`), timestamps, and any last-error details for the given `<tenantId, scriptPatchVersion>`.
+- `GetScriptPatchStatus(tenantId, scriptPatchVersion)` – returns the current lifecycle state (`PENDING_VALIDATION`, `ONLOAD_RUNNING`, `READY`, `FAILED`), timestamps, and any last-error details for the given `<tenantId, scriptPatchVersion>`.
 - `ListScriptPatchStatuses(tenantId, status?, changedAfter?, changedBefore?)` – lists known script patches and their status for a tenant so operators and tools can see which patches are eligible to be pinned.
-- `ScriptPatchStatusChanged` event – emitted whenever a patch transitions between lifecycle states for a tenant. Logging & Admin and Game Design subscribe to this event so UIs and dashboards stay in sync with runtime state.
+- `ScriptPatchTenantStatusChanged` event – emitted whenever `<tenantId, scriptPatchVersion>` transitions between tenant readiness lifecycle states.
+- `ScriptPatchInstanceRolloutChanged` event – emitted whenever `<tenantId, gameInstanceId, scriptPatchVersion>` rollout history changes (`PINNED`, `ROLLED_BACK`, `REPINNED`).
+- `GetScriptPatchInstanceRolloutStatus(tenantId, gameInstanceId, scriptPatchVersion)` and `ListScriptPatchInstanceRollouts(...)` – read APIs for instance-scoped rollout history and UI/operator correlation.
+- `GetAutomationPinConvergence(tenantId, gameInstanceId)` – reports the latest pinned patch observation (`observedPinnedScriptPatchVersion`, `lastObservedControlPlaneRequestId`, `observedAt`) used by admission/scheduler logic so rollback orchestration can gate resume on convergence.
 - `GetPluginStatus(tenantId, gameInstanceId, pluginId)` – returns plugin runtime state (`ENABLED`, `DISABLED`, `DRAINING`, `RELOADING`, `FAILED`) and active/pending version IDs.
 - `SetPluginActiveVersion`, `DisablePlugin`, and `DrainPlugin` – idempotent plugin lifecycle operations used by Logging & Admin to promote, disable, or drain plugin versions per `<tenantId, gameInstanceId, pluginId>`.
 
 Game Session and Logging & Admin use script patch visibility APIs and events to decide which `scriptPatchVersion` values may be passed to the runtime. Mutating operations that change the pinned patch for a running game instance are defined on the Game Session control-plane surface (and orchestrated by Logging & Admin) and must follow the API and event contracts in `design/architecture/system-architecture-scripting-control-plane-api.md` (for example `SetPinnedScriptPatchVersion` / `RollbackScriptPatchVersion` and the `ScriptPatchPinChanged` event). The Automation & Scripting Service uses pin-change events for visibility and admission alignment, but it does not become the source of truth for the pin; it enforces that incoming triggers reference patches that are `READY` for the tenant and records lifecycle changes that authoritative control-plane services request.
+
+Rollback orchestration must treat convergence waiting as bounded: if `GetAutomationPinConvergence` + Game Session convergence checks do not match the expected `controlPlaneRequestId` before the configured timeout, rollback enters terminal timeout state and admission/ticks remain paused until explicit operator action.
 
 ## Proto Files
 
@@ -381,6 +394,8 @@ In addition to live event handling, the Automation & Scripting Service exposes a
 - Test runs execute handlers in the same sandbox and with the same loop-safety and resource limits as production runs.
 - Instead of persisting and indexing work items (or handing off to tick queues), test runs return the would-be commands to the caller for inspection.
 - Test executions are recorded in `script_event_audit` with `isDryRun=true` and the normal `eventType` for the event being exercised (for example, `onEnterRegion` or `onInterval`) so they can be distinguished from live traffic while still being grouped by logical event.
+- Dry-run/test requests must use an idempotency namespace that is separate from live traffic (for example include `isDryRun=true` in Trigger Identity) so test calls cannot dedupe, suppress, or overwrite live trigger records.
+- Dry-run/test APIs should use server-generated `scriptEventId` values by default. If tooling passes a caller-supplied value, the service must enforce namespace validation and reject identity collisions deterministically.
 - By default, dry runs **do not consume ScriptQuotaService windows or tenant automation budgets**, and they must not increment live-traffic error counters. Sandbox failures observed during tests are emitted via dry-run/test-only metric families (for example `automation_script_test_sandbox_failures_total`) so production SLO dashboards do not conflate privileged tooling with live automation reliability.
 - By default, dry runs must not contribute to failure-rate circuit breakers that can disable live scripts (`runtimeStatus=DISABLED_DUE_TO_ERRORS`). If an environment chooses to gate live enablement on dry-run results, that gating must be explicit and isolated (separate breaker or opt-in policy) so privileged tooling cannot accidentally disable production automation.
 - Separate **dry-run budgets** cap how much test traffic a tenant or principal can generate (for example, max runs per minute and max concurrent dry-runs) so test tools cannot overload the automation cluster even though they bypass mainline quotas.
@@ -394,7 +409,7 @@ configurable window. Counters are stored in Redis using keys of the form
 `automation:quota:<tenantId>:<scriptId>`. When the quota is exceeded the event is
 ignored and `script_quota_denied_total{tenantId, scriptId, reason}` is incremented. Saga orchestration emits separate Saga-specific metrics (for example `sagas.active`) and must not be conflated with quota enforcement.
 
-Key Automation & Scripting–specific metrics include:
+Non-normative metric examples (the authoritative contract is `design/architecture/system-architecture-scripting-observability-contract.md`) include:
 
 - `automation_script_triggers_total`, `automation_script_skips_total`, and `automation_script_triggers_dropped_total` for scheduler activity and drops.
 - `automation_script_queue_delay_seconds` and `automation_script_leadership_changes_total` for queue latency and leader stability.

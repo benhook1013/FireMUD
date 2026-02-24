@@ -150,11 +150,15 @@ Concrete per-effect required writes and reconciliation rules live in `design/arc
   - `terrain_template` and related tables capture generator outputs or authored terrain data where it is part of the versioned topology.
 - **Instance tables** (keyed by `(tenantId, gameInstanceId)` and referring back to the active `versionId`):
   - `region_instance`, `zone_instance`, and `room_instance` materialize the topology for a running game instance based on the chosen version and any runtime procedural generation.
-  - `instance` table tracks temporary copies of zones for instanced gameplay, with an `expires_at` column defining when instances are cleaned up by a scheduled job.
+  - `instance` table tracks temporary copies of zones for instanced gameplay, with an `expires_at` column defining when instances enter the `InstanceTermination` workflow.
+  - `world_instance_status` (or equivalent lifecycle column) tracks monotonic lifecycle transitions: `PREPARING` → (`ACTIVE` | `FAILED_PRE_ACTIVATION`) and `ACTIVE` → `TERMINATING` → `TERMINATED`.
+  - `FAILED_PRE_ACTIVATION` is terminal for that `gameInstanceId`; recovery is modeled as provisioning a new `gameInstanceId` and rerunning world creation.
+  - `world_instance_lifecycle_lock` (or equivalent fenced token) enforces single-writer lifecycle transitions per `(tenantId, gameInstanceId)` so activation and termination workflows cannot commit concurrently.
   - `character_location` table records the current room for each character, including which instance they are in; item locations and containment are modeled and stored by the Entity Management Service rather than this table.
 - **Runtime configuration and events**:
   - `generation_rule` table stores per-tenant procedural generation parameters used by the [Procedural Generation Rules API](#procedural-generation-rules-api). These rules are runtime configuration defaults, not versioned design data; each generation run snapshots the effective rule set (including `schemaVersion`) alongside the affected template or instance records so that the inputs for that run remain reconstructable even if live rules are later updated.
   - An optional `generation_rule_override` table may store version-specific overrides keyed by `(tenantId, versionId)` for tenants that require different tuning per version; when present for a given version, overrides are applied instead of the tenant-global defaults when running generators for that version. Overrides may exist only for non-Retired versions and must be kept consistent with the version lifecycle and migration rules described in [Database Migrations](../../system-architecture-database-migrations.md).
+  - `generation_run` (or equivalent) persists deterministic generation artifacts for replay-safe publish/reconciliation (`generationRunId`, `generationRequestId`, `generatorImplementationVersion`, canonical `configSnapshot`, and `outputDigest`).
   - `world_event` table stores timed changes such as weather updates.
   - `region_instance.weather` (or equivalent) records the current weather state for live regions; template rows may include default weather or climate metadata but are not updated during gameplay.
 - Redis caches hot rooms for active sessions to speed up lookups.
@@ -166,7 +170,19 @@ Concrete per-effect required writes and reconciliation rules live in `design/arc
 - `GetRoomSnapshot` – returns a minimal, `LOOK`-focused view (room identity, names, descriptions, exit metadata, ambient state) scoped by `RoomInstanceRef`.
 - `ListRoomOccupants` – returns the authoritative typed occupant list (`occupants`) for actors in a room, scoped by `RoomInstanceRef`. The legacy `occupantEntityIds` list is a derived compatibility mirror only.
 - `ApplyRoomAmbientStatePatch` – applies an ambient state patch to the target `RoomInstanceRef`, guarded by `EffectId`.
+- `GetDraftDesignDigest` – returns publish-gating digest for Draft world templates keyed by `(tenantId, versionId)`. Minimum response fields are `{tenantId, versionId, appliedCommitId or lastAppliedRevisionId, contentDigest, digestSchemaVersion}`. `contentDigest` must cover only version-scoped template/binding rows (for example region/zone/room templates and spawn bindings) and must exclude runtime/instance rows and audit metadata.
 - `UpdateWorldState` – deprecated legacy bulk update surface. It is not authoritative for runtime mutations and remains only for backwards compatibility during migration.
+
+### Instance termination contract (World ↔ Entity)
+
+World Management owns the lifecycle of `gameInstanceId` rows, but teardown is a cross-service workflow:
+
+- Game Session must first mark the instance non-admissible/draining before World transitions lifecycle.
+- Expiry or operator shutdown transitions the instance to `TERMINATING` and starts an `InstanceTermination` Saga.
+- Entity Management must acknowledge idempotent cleanup of containment and room-ground containers scoped to the same `(tenantId, gameInstanceId)` before World marks the instance `TERMINATED`.
+- Scheduled expiry jobs must enqueue this Saga and must not directly delete world rows for a still-unconfirmed termination.
+- Lifecycle fencing is mandatory: termination acquires the same per-instance lifecycle fence used by activation. If activation and termination race, termination is authoritative unless admission has already opened (`ACTIVE` committed).
+- Game Session finalizes runtime `game_instances` termination only after World reports `TERMINATED`.
 
 ### LOOK snapshot contract
 
@@ -278,7 +294,7 @@ Run `./gradlew generateProto` to regenerate sources after editing these files.
 
 ## Additional Details
 
-The service creates temporary **instances** of zones for dungeons or housing. Instances expire automatically based on the `world.instance.expiration-hours` property and a scheduled cleanup task removes expired records hourly.
+The service creates temporary **instances** of zones for dungeons or housing. Instances expire automatically based on the `world.instance.expiration-hours` property. Expiry processing enqueues `InstanceTermination` workflows; direct periodic deletion of instance rows is not a valid cleanup path.
 
 ### REST & gRPC Endpoints
 

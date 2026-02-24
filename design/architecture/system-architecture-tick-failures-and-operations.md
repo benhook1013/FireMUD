@@ -33,6 +33,24 @@ Tick recovery is driven by Redis coordination state plus domain-level idempotenc
 - Redis is treated as a volatile coordination layer with **at-least-once** semantics; network retries, executor failover, and AOF replay can all cause the same logical effect to be attempted more than once.
 - Domain services rely on `(region_epoch, tickId)` and effect guards to ensure that replays do not double-apply logical effects even when Redis state is partially lost.
 
+### Durable Commit vs Coordination-Cleared Boundaries
+
+Failure handling assumes the same two-boundary model defined in the main tick design:
+
+- `durable_committed`:
+  - Ledger rows for `(tenantId, regionId, region_epoch, tickId)` are terminal (`APPLIED` or `ABANDONED`), and
+  - `RegionStatus.lastCommittedTickId` has advanced.
+- `coordination_cleared`:
+  - Redis `pending`/lock coordination for that tick is no longer in flight.
+
+Crash-window behavior:
+
+- Crash before `durable_committed`:
+  - Tick work remains replayable; recovery replays remaining `SCHEDULED` effects using idempotent handlers and ledger rules.
+- Crash after `durable_committed` but before `coordination_cleared`:
+  - Recovery must finish coordination cleanup before allowing the next tick to stage new work.
+  - The durable watermark does not regress, and heartbeat chronology does not rewind.
+
 ### Tick Effect Ledger and Replay Guarantees
 
 To make replays observable and bounded, Game Session maintains a **tick effect ledger** in PostgreSQL. Conceptually, the ledger captures the same coordination timeline described in the Redis and tick architecture docs:
@@ -94,6 +112,9 @@ The ledger makes replay visible operationally via metrics such as:
 - `tick_effects_abandoned_total{tenantId,regionId,reason}`
 - `tick_effects_replayed_total{tenantId,regionId}` (or, where available, `tick_effect_outcome_total{outcome="replay_ok"}` for service-level detail)
 - `tick_effects_pending_oldest_scheduled_timestamp_seconds{tenantId,regionId}` – helper metric tracking the oldest `created_at` among SCHEDULED rows for each region.
+- `tick_durable_commit_total{tenantId,regionId}` – count of ticks that reached the durable commit boundary.
+- `tick_coordination_cleared_total{tenantId,regionId}` – count of ticks whose Redis coordination state reached the in-flight clearance boundary.
+- `tick_cleanup_lag_ms{tenantId,regionId}` – lag from durable commit to coordination-cleared for each tick.
 
 Alerts fire when:
 
@@ -414,6 +435,9 @@ Because crash recovery relies on idempotent handlers, each service with tick-dri
   - Constructs synthetic `tick:{tenantRegionTag}:pending` payloads.
   - Drives the same sequence of domain calls multiple times, mimicking replay of a pending tick after a crash.
   - Verifies that final PostgreSQL state is identical regardless of how many times the tick is “reapplied”.
+- Include crash-window tests for the two-boundary model:
+  - Crash before durable commit: verify replay convergence and no double-apply.
+  - Crash after durable commit but before coordination cleanup: verify no watermark regression, no duplicate effects, and cleanup completion before next tick staging.
 
 CI pipelines should run these replay tests; changes to tick handlers that break idempotency ought to fail tests before reaching production.
 

@@ -59,7 +59,8 @@ Conceptually, domain services treat Redis locks and leases as **opaque tick-engi
 
 Redis coordination state is subject to a bounded tail-loss envelope (see `system-architecture-redis.md` and `system-architecture-redis-operations.md`). From the tick system’s perspective:
 
-- A normal failover or restart may drop or replay the last `N` ticks for a `<tenantId, regionId>`, where `N` corresponds roughly to **≤ 2 × `tick_interval_ms`** in production-like profiles.
+- A normal failover or restart may drop or replay the last `N` ticks for a `<tenantId, regionId>`, where the loss window is bounded by the canonical Redis SLO formula:
+  - `tail_loss_budget_ms = max(2000, 2 * tick_interval_ms)` (see `system-architecture-redis-operations.md`).
 - Tick-driven designs must tolerate:
   - Some commands and timers near the tail of the timeline being lost, re-ordered slightly, or replayed.
   - Region leases being briefly lost and re-acquired under the same or a new `region_epoch`.

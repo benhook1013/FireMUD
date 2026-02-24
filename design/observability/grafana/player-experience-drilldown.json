@@ -1,0 +1,56 @@
+{
+  "title": "Player Experience Drilldown",
+  "schemaVersion": 36,
+  "version": 1,
+  "timezone": "browser",
+  "panels": [
+    {
+      "type": "graph",
+      "title": "Entry Path Outcomes (rate)",
+      "targets": [
+        {
+          "expr": "sum by (tenantId, path, outcome) (rate(entrypath_connection_attempts_total[5m]))",
+          "legendFormat": "{{tenantId}} {{path}} {{outcome}}",
+          "refId": "A"
+        }
+      ],
+      "id": 1
+    },
+    {
+      "type": "graph",
+      "title": "Login Outcomes by Service (rate)",
+      "targets": [
+        {
+          "expr": "sum by (tenantId, service, outcome) (rate(login_requests_total[5m]))",
+          "legendFormat": "{{tenantId}} {{service}} {{outcome}}",
+          "refId": "A"
+        }
+      ],
+      "id": 2
+    },
+    {
+      "type": "graph",
+      "title": "Command Latency by Command (p99)",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum by (tenantId, command, le) (rate(command_end_to_end_latency_ms_bucket[5m])))",
+          "legendFormat": "{{tenantId}} {{command}}",
+          "refId": "A"
+        }
+      ],
+      "id": 3
+    },
+    {
+      "type": "graph",
+      "title": "Chat Delivery by Channel (p99)",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum by (tenantId, channel_type, le) (rate(chat_delivery_latency_ms_bucket[5m])))",
+          "legendFormat": "{{tenantId}} {{channel_type}}",
+          "refId": "A"
+        }
+      ],
+      "id": 4
+    }
+  ]
+}

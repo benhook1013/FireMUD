@@ -60,15 +60,28 @@ The tick heartbeat is the **canonical timeline** for each `<tenantId, regionId>`
 
 ### Tick Commit Definition (Heartbeat Watermark)
 
-For a given `<tenantId, regionId, regionEpoch, tickId>`, the tick is considered **committed** only when:
+FireMUD uses two explicit tick boundaries for `<tenantId, regionId, regionEpoch, tickId>`:
 
-- The Game Session tick effect ledger has converged all effects for that tick to terminal outcomes (`APPLIED` or `ABANDONED`) and there are no remaining `SCHEDULED` ledger rows for that tick.
-- `RegionStatus.lastCommittedTickId` (or equivalent) has been advanced to that `(regionEpoch, tickId)` as part of the same “commit visibility” boundary (the status surface is the durable source of truth for the commit watermark).
-- Redis staging keys for that tick are no longer actively driving work:
-  - Staging keys such as `tick:{tenantRegionTag}:pending` are expected to be cleared/abandoned as part of normal commit and cleanup, but the durable commit watermark does **not** depend on Redis cleanup completing successfully.
-  - If a crash window leaves stale `pending` state behind after the durable watermark has advanced, crash recovery replays the tick idempotently (ledger + domain guards) and then clears the stale state; this is treated as an operational smell (extra work / replay) rather than a correctness boundary for “committed”.
+- **`durable_committed`** (authoritative commit boundary):
+  - The Game Session tick effect ledger has converged all effects for that tick to terminal outcomes (`APPLIED` or `ABANDONED`) and there are no remaining `SCHEDULED` ledger rows for that tick.
+  - `RegionStatus.lastCommittedTickId` (or equivalent) has been advanced to that `(regionEpoch, tickId)` as part of the same durable visibility boundary.
+- **`coordination_cleared`** (in-flight clearance boundary):
+  - Redis staging/lock state for that tick is no longer in flight (for example, `tick:{tenantRegionTag}:pending` is cleared/abandoned and lock cleanup has completed).
 
-A heartbeat `(regionEpoch, tickId)` is emitted only after the durable commit watermark has advanced; consumers treat heartbeats as “last committed tick”, not as “tick started”.
+Heartbeat emission and consumer semantics are tied to `durable_committed`, not to Redis cleanup:
+
+- A heartbeat `(regionEpoch, tickId)` is emitted only after `durable_committed` has been reached.
+- Consumers treat heartbeat as the authoritative “last committed tick” watermark and must not infer commit from Redis `pending` state.
+
+If a crash occurs after `durable_committed` but before `coordination_cleared`, recovery finishes cleanup under idempotent replay rules. This is an operational lag window, not a commit regression.
+
+### In-Flight Clearance Boundary (Scheduler Behavior)
+
+`coordination_cleared` defines when a tick is no longer considered in flight for scheduler gating:
+
+- The region scheduler may treat `<tenantId, regionId>` as busy while previous tick coordination state remains uncleared.
+- The scheduler does not start the next tick for a region until the previous tick reaches `coordination_cleared` (or recovery explicitly resolves the stale coordination state).
+- This preserves the single in-flight tick invariant without redefining commit semantics away from the durable watermark.
 
 In addition to the gRPC heartbeat, the Game Session Service exposes a **tick event stream** for schedulers and observers:
 

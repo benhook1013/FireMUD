@@ -66,6 +66,14 @@ services as the source of truth for the current Draft template graphs:
   before starting the publish Saga. Versions that are out of sync cannot be
   published until reconciliation succeeds.
 
+In addition to domain-service digests, publish safety requires a Game Design control-plane digest:
+
+- Game Design computes a canonical digest over normalized dependency rows that affect launchability and publish immutability (for example `game_template_*_ref`, `version_asset`, and related version wiring metadata).
+- This control-plane digest is recorded per commit/version scope and validated in the same gating pass as domain-service digests.
+- Control-plane digest mismatch is treated exactly like a domain digest mismatch (`OUT_OF_SYNC`, publish blocked).
+- The control-plane digest surface should be exposed through a read-only API (for example `GetDesignControlPlaneDigest`) so publish tooling uses a uniform participant contract.
+- `GetDesignControlPlaneDigest` should return at minimum `{tenantId, versionId or scriptPatchVersion scope, appliedCommitId, contentDigest, digestSchemaVersion}` so publish gates compare like-for-like payloads across all participants.
+
 Digest comparison rules:
 
 - The Game Design Service records the per-domain-service `{commitId, contentDigest, digestSchemaVersion}` it observed when a commit was last applied successfully.
@@ -76,10 +84,10 @@ Digest comparison rules:
 
 Publish workflows must use an explicit participant matrix so digest gating is deterministic:
 
-| Publish Type | Required digest participants (`GetDraftDesignDigest`) | Not part of digest gate |
-| --- | --- | --- |
-| `PublishVersion` (full version) | World Management, Entity Management, Game Logic, Automation & Scripting (for version-scoped script/binding templates) | Asset export/object-store bytes (validated by `manifestHash` in publish saga), Game Design internal history tables |
-| `PublishScriptPatchVersion` (script-only) | Automation & Scripting only (for the target `<tenantId, scriptPatchVersion>` design graph) | World Management, Entity Management, Game Logic template digests (must remain unchanged for base version) |
+| Publish Type | Required domain digests (`GetDraftDesignDigest`) | Required Game Design control-plane digest (`GetDesignControlPlaneDigest`) | Not part of digest gate |
+| --- | --- | --- | --- |
+| `PublishVersion` (full version) | World Management, Entity Management, Game Logic, Automation & Scripting (for version-scoped script/binding templates) | Required for normalized references and publish-critical metadata (for example `game_template_*_ref`, `version_asset`) | Asset export/object-store bytes (validated by `manifestHash` in publish saga), Game Design internal history/audit tables that do not affect launchability |
+| `PublishScriptPatchVersion` (script-only) | Automation & Scripting (for the target `<tenantId, scriptPatchVersion>` design graph) | Required for patch metadata/wiring for the same base version scope | World Management, Entity Management, Game Logic template digests (must remain unchanged for base version) |
 
 Rules:
 

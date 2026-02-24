@@ -1,6 +1,33 @@
 {
-  "title": "Tick & Region Logs",
-  "description": "Saved search for tick/region incidents, filtered by tenantId, regionId, tickId, and tick/Redis-related services.",
-  "version": 1
+  "type": "search",
+  "id": "firemud-tick-region-logs",
+  "attributes": {
+    "title": "FireMUD Tick & Region Logs",
+    "description": "Saved search for tick/region incidents, filtered by tenantId, regionId, tickId, and tick/Redis-related services.",
+    "columns": [
+      "@timestamp",
+      "service",
+      "tenantId",
+      "regionId",
+      "tickId",
+      "traceId",
+      "correlationId",
+      "message"
+    ],
+    "sort": [
+      "@timestamp",
+      "desc"
+    ],
+    "kibanaSavedObjectMeta": {
+      "searchSourceJSON": "{\"indexRefName\":\"searchSourceJSON.index\",\"query\":{\"language\":\"kuery\",\"query\":\"tenantId:* and regionId:* and (service:game-session-service or service:redis or service:redis-exporter) and (tickId:* or traceId:* or correlationId:*)\"},\"filter\":[]}"
+    },
+    "version": 1
+  },
+  "references": [
+    {
+      "name": "searchSourceJSON.index",
+      "type": "index-pattern",
+      "id": "firemud-logs-*"
+    }
+  ]
 }
-

@@ -33,6 +33,18 @@ the **Implementation Status** section below. The table here is descriptive and i
 | Connection limits and abuse protection | Connection caps, idle timeouts, input size limits, and malformed-envelope budgets protect the DMZ boundary, with metrics such as `tcpproxy.connections.limit.exceeded`. Recommended per-environment defaults, including guidance for NAT-heavy deployments, are defined in **Tuning TCP Proxy for Different Environments**. | Core limit handling is implemented; tuning and additional metrics may evolve as production behaviour is observed. | `design/project-management/task-list-tcp-proxy-service.md` (connection management and security sections). |
 | Telnet client IP preservation via PROXY protocol | Telnet client IPs are preserved by terminating public TCP on a Telnet edge proxy (for example HAProxy) that forwards to the TCP Proxy Service using PROXY protocol on an internal-only listener/port, so the proxy can recover the real client IP and set `X-Proxy-Client-IP` on its WebSocket hop to Spring Cloud Gateway. On the PROXY-protocol listener, malformed or truncated PROXY headers are treated as a hard failure: the proxy closes the connection, increments the appropriate `tcpproxy.telnet.discarded{reason="proxy_protocol"}` counter, and never silently falls back to using the TCP peer IP. | Deployment pattern and trust model are documented across the Security, Protocol Bridging, Gateway, and Deployment Environments docs; code-level PROXY protocol parsing on the dedicated listener (see `TCP_PROXY_PROXY_PROTOCOL_PORT`) and the associated observability metrics remain TODO. In production, the preferred and supported pattern is to place a Telnet edge proxy in front of TCP Proxy and enable PROXY protocol on an internal-only listener; exposing the TCP Proxy’s raw Telnet port directly to the Internet is reserved for dev/test-only environments. | `design/project-management/task-list-tcp-proxy-service.md` (PROXY protocol task). |
 
+### Cross-Path Compatibility Matrix (Current Rollout)
+
+This matrix is the canonical rollout-status reference for edge connectivity behavior that spans TCP Proxy, Gateway, and Protocol Bridging documents.
+
+| Capability | Target-state contract | Current rollout status |
+| --- | --- | --- |
+| Telnet login-first without `SESSION` | Supported (`LOGIN` then `PLAY`; `SESSION` optional) | Not fully implemented yet in current Telnet handler; treat as blocked until rollout task closes. |
+| Proxy → Gateway WebSocket mTLS with authenticated proxy identity | Required in player-facing environments | Partial rollout; some environments still rely on transitional/non-mTLS paths. |
+| Proxy bridge-availability circuit breaker | Deterministic open/half-open/closed admission behavior during sustained upstream unreachability | Target-state normative contract; implementation rollout in progress. |
+
+All other docs should reference this matrix for current-state claims rather than duplicating per-capability rollout assertions.
+
 ### Minimal Production Configuration Checklist
 
 For any shared or player-facing environment, operators should ensure at least:
@@ -58,7 +70,7 @@ For any shared or player-facing environment, operators should ensure at least:
     Game Session Service using Redis-backed state.
 - Implements baseline Telnet negotiation and character encoding handling; advanced heuristics and option handling follow the Security and MCP sections in this document and their **Implementation Status** notes.
 - Implements MCP 2.1 control-line handling and resource limits at the transport edge while forwarding MCP payloads verbatim. MCP package semantics and canonical negotiation behavior are owned by the backend session layer as described in [Mud Client Protocol (MCP) Support](../../system-architecture-mud-client-protocol.md); the proxy enforces only transport-safety and abuse budgets as described in this document’s **MCP Resource Limits & Abuse Budgets** section.
-- Integrates with the [Reconnection Strategy](../../system-architecture-reconnection.md) so backend session state can be resumed when clients reconnect and send `LOGIN` again; Telnet clients always reconnect and reauthenticate after any disconnect.
+- Integrates with the [Reconnection Strategy](../../system-architecture-reconnection.md) so backend session state can be resumed when clients reconnect, send `LOGIN` again, and re-bind gameplay scope with `PLAY`; Telnet clients always reconnect and reauthenticate after any disconnect.
 - Can optionally terminate Telnet-over-TLS while always supporting raw Telnet
   on the configured TCP port for classic clients (for example the Windows
   `telnet` command). Forwarding to the gateway uses WebSocket connections and
@@ -110,7 +122,7 @@ reconnection logic centralized in the Game Session Service:
   a second client logs in as the same character, so only one active session per
   character is allowed at any time.
 - The proxy does not emit a positive “reconnect” event. It only calls
-  `NotifyDisconnect` when a Telnet socket closes, using a server-generated `proxyConnectionId` and a per-connection `disconnectSequence` counter for idempotency; Game Session interprets a subsequent `LOGIN` (with or without a `SESSION` envelope) as either a fresh login or a resume/takeover based on Redis session state.
+  `NotifyDisconnect` when a Telnet socket closes, using a server-generated `proxyConnectionId` and a per-connection `disconnectSequence` counter for idempotency; Game Session interprets a subsequent `LOGIN` + `PLAY` flow (with or without a `SESSION` envelope) as either a fresh login or a resume/takeover based on Redis session state.
 - After `NotifyDisconnect`, session state remains eligible for reconnection
   until the configured `session_expiration_ms` window elapses; see the
   [Reconnection Strategy](../../system-architecture-reconnection.md) and
@@ -200,6 +212,7 @@ These flows describe how Telnet traffic is forwarded into the shared login/sessi
 - **Minimal / legacy client (no `SESSION`)**
   - Connect to the TCP Proxy Service.
   - Send a `LOGIN` command with the appropriate credentials (and optional OTP where required).
+  - Complete lobby selection with `PLAY <world> [character]` before gameplay commands.
   - Send gameplay commands (`LOOK`, `SAY`, movement, etc.) as normal.
   - The proxy forwards all lines verbatim to Spring Cloud Gateway; the Game Session Service creates or binds the gameplay session exactly as it does for native WebSocket clients.
 - **Advanced client (attach/resume with `SESSION` + `LOGIN`)**
@@ -207,8 +220,9 @@ These flows describe how Telnet traffic is forwarded into the shared login/sessi
   - Connect to the TCP Proxy Service.
   - Immediately send a `SESSION <gameInstanceId> <tenantId>` envelope as the first line on the connection. The space-separated form is canonical; the compact `SESSION <gameInstanceId>:<tenantId>` form remains accepted only for backwards compatibility and may be removed after callers are updated.
   - Send a `LOGIN` command over the same connection.
+  - Complete lobby selection with `PLAY <world> [character]`.
   - Continue with gameplay commands as normal.
-  - Game Session evaluates the combination of `SESSION` and `LOGIN` against Redis-backed session state and the authentication rules described in the [Authentication & Authorization](../../system-architecture-authentication.md) and [Reconnection Strategy](../../system-architecture-reconnection.md) documents to decide whether to resume a prior session or start a fresh one.
+  - Game Session evaluates the combination of `SESSION`, `LOGIN`, and `PLAY` against Redis-backed session state and the authentication rules described in the [Authentication & Authorization](../../system-architecture-authentication.md) and [Reconnection Strategy](../../system-architecture-reconnection.md) documents to decide whether to resume a prior session or start a fresh one.
 
 ### Advanced Multi-Connection Scenarios
 
@@ -220,8 +234,8 @@ Service’s “one session per character” rules described in the
 and [Authentication & Authorization](../../system-architecture-authentication.md#👥-multi-client-behavior-and-session-takeover):
 
 - **Two Telnet windows without `SESSION`**
-  - Window A connects and issues `LOGIN`. Gameplay continues normally.
-  - Window B connects and issues `LOGIN` for the same character. Game Session
+  - Window A connects, issues `LOGIN`, and enters gameplay with `PLAY`.
+  - Window B connects and issues `LOGIN` for the same character, then `PLAY`. Game Session
     treats this as a takeover: the old session is terminated and the new window
     becomes authoritative. Window A is disconnected and stops receiving updates.
   - If Window A reconnects and logs in again, it in turn takes over from
@@ -230,9 +244,9 @@ and [Authentication & Authorization](../../system-architecture-authentication.md
     forwards traffic from both TCP connections.
 - **Two Telnet windows with the same `{gameInstanceId, tenantId}` envelope**
   - Both windows connect to the TCP Proxy Service and send
-    `SESSION <gameInstanceId> <tenantId>` followed by `LOGIN`.
+    `SESSION <gameInstanceId> <tenantId>` followed by `LOGIN` and `PLAY`.
   - The proxy forwards both flows independently; Game Session binds
-    socket-level control to whichever `LOGIN` most recently succeeded for the
+    socket-level control to whichever `LOGIN`/`PLAY` flow most recently succeeded for the
     character backing that session. Earlier connections may be disconnected or
     treated as superseded by the takeover logic depending on the exact timing.
   - Clients should design UI/behaviour assuming that only one window at a time
@@ -247,11 +261,12 @@ and [Authentication & Authorization](../../system-architecture-authentication.md
 - Incoming bytes are queued and forwarded to the gateway in order.
 - If the proxy cannot establish the WebSocket bridge to Spring Cloud Gateway (for example because the gateway listener is unavailable or the Proxy → Gateway mTLS handshake fails), it fail-closes the Telnet socket with a clear user-facing message (for example “Gateway link unavailable; please reconnect”) and a Telnet disconnect reason of `backend_unavailable` as defined in the Telnet disconnect taxonomy in [Protocol Bridging](../../system-architecture-protocol-bridging.md#telnet-disconnect-reasons).
 - If the WebSocket bridge drops at any point after the Telnet connection is established, the proxy fail-closes the Telnet socket with a Telnet disconnect reason of `backend_unavailable`. The proxy does not attempt to keep the Telnet socket open across upstream disconnects because doing so would require an explicit, secure “reattach without credentials” contract that is outside the Telnet text protocol and is not part of the target-state design.
+- During sustained Gateway gameplay unreachability, proxy admission uses a bridge-availability circuit-breaker model: new Telnet sockets are rejected quickly with `backend_unavailable` instead of being held while repeated bridge attempts fail. Admission resumes only after bridge-health recovery criteria are met (`TCP_PROXY_GATEWAY_CIRCUIT_RECOVERY_SUCCESS_COUNT` consecutive successful probes) so reconnect storms do not amplify edge resource pressure.
 - If the connection is lost, the in-memory queue is cleared and no Telnet
   commands are replayed by the proxy. Reconnection hooks notify downstream
   services so the Game Session Service can resume gameplay from Redis-backed
   session state where available.
-- All gameplay commands, including the mandatory `LOGIN` command, are forwarded
+- All gameplay commands, including the mandatory `LOGIN` and `PLAY` admission steps, are forwarded
   verbatim over the WebSocket bridge, so Spring Cloud Gateway and the Game Session Service
   see the same protocol lines as native WebSocket clients. Telnet handlers only
   parse the optional initial `SESSION` envelope for first-party/advanced clients;
@@ -280,7 +295,7 @@ When a `NotifyDisconnect` call fails with a **transport-level** error (for examp
 - Within that window, the proxy applies exponential backoff between attempts and gives up permanently once the total elapsed time since Telnet socket close exceeds `TCP_PROXY_NOTIFY_DISCONNECT_MAX_RETRY_MS`.
 - After the window elapses, the proxy relies entirely on Game Session’s own liveness detection and Redis-backed timeouts; no further retries are attempted for that `{proxyConnectionId, disconnectSequence}`.
 
-When the gRPC transport returns `OK` but the `NotifyDisconnectResponse.error` field is populated, the proxy **does not retry**: these are treated as logical, contract-level failures (for example “unknown session”) that Game Session has already decided how to handle. The proxy logs these errors, increments `grpc_app_error_total{code="..."}` and `tcpproxy_disconnect_notify_app_error_total{code="..."}`, and moves on without further attempts for that event.
+When the gRPC transport returns `OK` but the `NotifyDisconnectResponse.error` field is populated, the proxy treats most codes as permanent contract-level failures and **does not retry** (for example “unknown session”). The exception is `RESOURCE_EXHAUSTED`, which is treated as temporary app-level overload and may be retried within `TCP_PROXY_NOTIFY_DISCONNECT_MAX_RETRY_MS`. The proxy logs all app errors, increments `grpc_app_error_total{code="..."}` and `tcpproxy_disconnect_notify_app_error_total{code="..."}`, and moves on once retry policy for that code is exhausted.
 
 This keeps retry behaviour simple while still surfacing most transient gRPC failures without risking long-lived retry storms.
 
@@ -291,6 +306,9 @@ The `NotifyDisconnectResponse.error.code` field uses a small, bounded set of val
 | `OK` | Event accepted and processed successfully. The Game Session implementation may set this explicitly, and the TCP Proxy normalizes responses that omit an `error` field to `OK` so callers always see a concrete code. | Never retried; this is a successful completion. |
 | `INVALID_ARGUMENT` | Request was structurally or semantically invalid (for example a non-UUID tenant/session identifier or a tenant that does not own the requested session). | Treated as a permanent contract failure; the proxy does not retry and relies on metrics/logs for visibility. |
 | `NOT_FOUND` | Target session or game instance was not found or has already been cleaned up. | Treated as a permanent contract failure; the proxy does not retry and relies on metrics/logs for visibility. |
+| `PERMISSION_DENIED` | Caller identity is authenticated but not authorized for the target event sink/session scope. | Treated as a permanent contract failure; the proxy does not retry and relies on metrics/logs for visibility. |
+| `FAILED_PRECONDITION` | Event shape is valid but the target session state cannot accept it right now (for example stale connection context or superseded binding). | Treated as a permanent contract failure for that event; the proxy does not retry and relies on metrics/logs for visibility. |
+| `RESOURCE_EXHAUSTED` | Consumer-side capacity guardrail hit while processing disconnect hints (for example dedupe store pressure). | Treated as a temporary application-level overload; the proxy may retry only within `TCP_PROXY_NOTIFY_DISCONNECT_MAX_RETRY_MS`, then gives up. |
 
 Additional codes may be introduced in the future as new failure modes are surfaced, but they must remain few in number and be added to this table when introduced. Implementations should avoid inventing arbitrary, high-cardinality codes; instead, they should map related failures into these shared buckets and, where necessary, record more detailed context in logs and traces rather than in the error code itself.
 
@@ -493,11 +511,12 @@ To keep MCP traffic from overwhelming the Telnet edge while still being friendly
 - MCP control-line volume is also subject to a per-connection **MCP control-line rate** budget. When a client sends MCP control lines significantly faster than expected (for example due to a misbehaving script), excess lines are dropped rather than forwarded, again contributing to `tcpproxy.telnet.discarded{reason="mcp_budget"}` instead of being treated as immediate hard-close abuse.
 - MCP line size still participates in the generic `TCP_PROXY_MAX_LINE_BYTES` and `TCP_PROXY_MAX_OVERSIZE_LINES` limits, but **MCP parsing failures do not count towards the `TCP_PROXY_MAX_MALFORMED_ENVELOPES` budget**, which is reserved for Telnet `SESSION` envelope errors as described in **Telnet Session Envelope & Event Metrics**.
 
-The exact thresholds for these MCP budgets are environment-specific and may evolve over time. Implementations typically configure them alongside other proxy limits (for example in `application.yml` or via future `TCP_PROXY_MCP_*` knobs) rather than exposing them as primary operator-facing settings. Treat them as guardrails that keep obviously misbehaving MCP clients from overwhelming the proxy while remaining generous enough that normal tools never hit them in practice.
+The exact thresholds for these MCP budgets are environment-specific and may evolve over time. Implementations configure them via `TCP_PROXY_MCP_*` knobs (see **Environment Variables**) and should treat them as guardrails that keep obviously misbehaving MCP clients from overwhelming the proxy while remaining generous enough that normal tools never hit them in practice.
 
 Metrics and diagnostics for these budgets integrate with the existing observability surface:
 
 - `tcpproxy.telnet.discarded{reason="mcp_budget"}` increments whenever MCP control lines are dropped due to active-cord, continuation, or control-line-rate budgets.
+- `tcpproxy.mcp.negotiation_failures` increments when MCP negotiation parsing/handshake validation fails; once failures exceed `TCP_PROXY_MCP_NEGOTIATION_FAILURE_MAX` within `TCP_PROXY_MCP_NEGOTIATION_FAILURE_WINDOW_MS`, the connection is closed with `policy_violation`.
 - A small set of MCP-focused meters provide additional visibility without adding high-cardinality labels:
   - `tcpproxy.mcp.control_lines` – counter for MCP control lines processed per connection.
   - `tcpproxy.mcp.discarded` – counter for MCP control lines discarded before reaching the gateway (mirrors the `mcp_budget` subset of `tcpproxy.telnet.discarded` in some deployments).
@@ -603,7 +622,8 @@ When wiring alerts and runbooks for the TCP Proxy Service, focus on a small set 
   - Cross-check these alerts with Gateway health and TLS/mTLS metrics from the Security and Logging & Monitoring docs so incidents are triaged at the correct layer (proxy vs gateway vs cluster networking).
 - **NotifyDisconnect health**
   - Monitor `tcpproxy_disconnect_notify_transport_failure_total` and the associated `grpc_app_error_total{code="<code>"}` meter for spikes in `UNAVAILABLE` or `DEADLINE_EXCEEDED`, which may indicate Game Session outages or network issues on the internal gRPC path.
-  - Treat sustained increases in permanent error codes (for example `INVALID_ARGUMENT`, `PERMISSION_DENIED`) as configuration or contract issues rather than transient incidents; runbooks should direct operators to inspect Game Session logs and configuration when this happens.
+  - Treat sustained increases in permanent error codes (for example `INVALID_ARGUMENT`, `PERMISSION_DENIED`, `FAILED_PRECONDITION`) as configuration or contract issues rather than transient incidents; runbooks should direct operators to inspect Game Session logs and configuration when this happens.
+  - Treat `RESOURCE_EXHAUSTED` spikes as consumer-side overload and check dedupe-capacity guardrails and Game Session saturation before changing retry settings.
 
 Runbooks should always pair these TCP Proxy metrics with corresponding Spring Cloud Gateway and Game Session dashboards. Edge symptoms such as elevated discard counts or connection churn often originate from higher-layer changes (for example new rate limits or authentication flows), and resolving them in isolation at the proxy can mask the real cause.
 
@@ -680,7 +700,15 @@ The full variable list is (treat this table as the canonical source of defaults 
 | `TCP_PROXY_MAX_MALFORMED_ENVELOPES` | Maximum malformed `SESSION` envelopes per connection before hard close (see **Telnet Session Envelope & Event Metrics** for how this counter is applied) | `5` |
 | `TCP_PROXY_NOTIFY_DISCONNECT_MAX_RETRY_MS` | Maximum total time after Telnet socket close during which the proxy retries failed `NotifyDisconnect` calls before giving up | `5000` |
 | `TCP_PROXY_GATEWAY_RECONNECT_WINDOW_MS` | Maximum time to retry establishing the initial Proxy → Gateway WebSocket bridge for a newly accepted Telnet socket before failing closed; the proxy does not keep Telnet sockets open across an established bridge dropping | `5000` |
+| `TCP_PROXY_GATEWAY_CIRCUIT_OPEN_MS` | Continuous upstream-unreachable duration required to open the bridge-availability circuit breaker and fast-reject new Telnet admissions with `backend_unavailable` | `3000` |
+| `TCP_PROXY_GATEWAY_CIRCUIT_HALF_OPEN_MAX_PROBES` | Maximum concurrent bridge probe attempts while the circuit breaker is half-open before returning to open on failure | `3` |
+| `TCP_PROXY_GATEWAY_CIRCUIT_RECOVERY_SUCCESS_COUNT` | Consecutive successful half-open bridge probes required before returning to closed admission | `3` |
 | `TCP_PROXY_GATEWAY_MAX_BUFFERED_LINES` | Maximum buffered Telnet lines waiting to be forwarded to the gateway due to upstream backpressure; if this ceiling is exceeded the proxy closes the Telnet connection with `backend_unavailable` rather than silently dropping gameplay commands | `64` |
+| `TCP_PROXY_MCP_NEGOTIATION_FAILURE_MAX` | Maximum MCP negotiation failures allowed per connection within the MCP negotiation failure window before closing as `policy_violation` | `5` |
+| `TCP_PROXY_MCP_NEGOTIATION_FAILURE_WINDOW_MS` | MCP negotiation failure rolling window duration in milliseconds | `60000` |
+| `TCP_PROXY_MCP_MAX_ACTIVE_CORDS` | Maximum concurrent MCP cords per connection before MCP control lines are discarded with `reason="mcp_budget"` | `16` |
+| `TCP_PROXY_MCP_MAX_ACTIVE_DATA_TAGS` | Maximum concurrent MCP multiline `_data-tag` continuations per connection before MCP control lines are discarded with `reason="mcp_budget"` | `16` |
+| `TCP_PROXY_MCP_MAX_CONTROL_LINES_PER_SEC` | Maximum MCP control-line processing rate per connection before excess lines are discarded with `reason="mcp_budget"` | `50` |
 | `FIREMUD_GATEWAY_WS_CLIENT_CERT_CHAIN_PATH` | Client certificate chain path for Proxy → Gateway WebSocket mTLS | `certs/client.crt` |
 | `FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH` | Client private key path for Proxy → Gateway WebSocket mTLS | `certs/client.key` |
 | `FIREMUD_GATEWAY_WS_CA_CERT_PATH` | CA bundle path for verifying the gateway certificate on the WebSocket hop | `certs/ca.crt` |
@@ -782,6 +810,12 @@ The Proxy → Gateway WebSocket bridge retry budget and input buffer depth (`TCP
 - Shorter retry budgets (for example `1000`–`3000` ms) minimize how long Telnet sockets wait for the proxy to establish the initial WebSocket bridge when Gateway is unavailable, but will drop clients more aggressively during deploys or outages. Longer retry budgets reduce “connection refused” flaps at the cost of holding the Telnet socket open slightly longer before failing closed.
 - `TCP_PROXY_GATEWAY_MAX_BUFFERED_LINES` should reflect how many recent gameplay commands you are willing to queue at the DMZ edge when the upstream WebSocket send path is backpressured (for example 32–128 lines), balanced against memory usage and the requirement that gameplay commands are not dropped silently while a connection remains open. If the buffer fills, the proxy closes the Telnet connection with a `backend_unavailable` Telnet reason and increments `tcpproxy.telnet.discarded{reason="gateway_buffer_full"}` so buffer-driven disconnects appear explicitly in dashboards and the Telnet degraded runbook.
 - When tuning these values, watch `tcpproxy.websocket.reconnects`, `tcpproxy.websocket.reconnect.delay`, and `tcpproxy.telnet.discarded` (including the `gateway_buffer_full` breakdown) over a few releases to ensure you are not either buffering too aggressively or disconnecting legitimate players too often during normal deploy cycles.
+
+Bridge-availability circuit-breaker settings should also be tuned explicitly:
+
+- `TCP_PROXY_GATEWAY_CIRCUIT_OPEN_MS` (recommended default `3000`) controls how long upstream gameplay unreachability must persist before the breaker opens and new Telnet admissions are fast-rejected as `backend_unavailable`.
+- `TCP_PROXY_GATEWAY_CIRCUIT_HALF_OPEN_MAX_PROBES` (recommended default `3`) controls how many concurrent bridge probe attempts are allowed while half-open.
+- `TCP_PROXY_GATEWAY_CIRCUIT_RECOVERY_SUCCESS_COUNT` (default `3`) controls how many consecutive successful half-open probe bridge establishments are required before returning to closed admission.
 
 ### Recommended Dev Defaults
 

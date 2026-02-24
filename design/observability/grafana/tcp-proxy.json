@@ -57,12 +57,12 @@
       "title": "TLS / mTLS Errors",
       "targets": [
         {
-          "expr": "tcpproxy_tls_misconfig",
+          "expr": "rate(tcpproxy_tls_misconfig_total[5m])",
           "legendFormat": "tls_misconfig",
           "refId": "A"
         },
         {
-          "expr": "sum by (reason) (tcpproxy_gateway_handshake_failures)",
+          "expr": "sum by (reason) (rate(tcpproxy_gateway_handshake_failures_total[5m]))",
           "legendFormat": "handshake_failures ({{reason}})",
           "refId": "B"
         }

@@ -15,7 +15,7 @@ Each scenario assumes that the Player Experience, Redis & Coordination Health, a
 
 ### Detect (Login success ratio)
 
-- Alert: `LoginSuccessRatioLow` fires (for example, success ratio < 99.5% over 15 minutes).
+- Alert: `LoginSuccessRatioLowGateway` or `LoginSuccessRatioLowTcpProxy` fires (for example, success ratio < 99.5% over 15 minutes).
 - Player reports: widespread login failures or timeouts.
 - Metrics:
   - Player Experience dashboard shows a drop in the login success panel.
@@ -61,7 +61,7 @@ Each scenario assumes that the Player Experience, Redis & Coordination Health, a
 
 ### Detect (Command latency)
 
-- Alert: `CommandLatencyP99High` fires (p99 command latency > 250ms over 5 minutes).
+- Alert: `CommandLatencyP99HighGateway` or `CommandLatencyP99HighTcpProxy` fires (p99 command latency > 250ms over 5 minutes).
 - Player reports: perceived lag or delayed command responses in game.
 - Metrics:
   - Player Experience dashboard shows elevated command p99 latency.

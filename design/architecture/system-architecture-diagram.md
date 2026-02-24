@@ -56,7 +56,12 @@ flowchart TD
     Gateway -- ws (in-cluster) --> Session
 
     Admin -- gRPC mgmt (infra) --> Gateway
-    Admin -- admin APIs (via Gateway) --> InternalServices
+    Admin -- admin APIs (via Gateway allowlist) --> Gateway
+    Gateway -- routed admin API --> Logging
+    Gateway -- routed admin API --> Account
+    Gateway -- routed admin API --> Session
+    Gateway -- routed admin API --> Social
+    Gateway -- routed admin API --> Design
 
     Session -- gRPC --> Account
     Session -- gRPC --> World
@@ -68,9 +73,10 @@ flowchart TD
     Session -- gRPC --> Logging
 
     InternalServices --> DB
-    Session --> CoordRedis
-    Entity --> CoordRedis
-    Script --> CoordRedis
+    Session -- owner writes --> CoordRedis
+    Account -- auth-owner writes --> CoordRedis
+    Entity -- shared-helper participation --> CoordRedis
+    Script -- automation-owner writes --> CoordRedis
     TCPProxy --> CacheRedis
     Gateway --> CacheRedis
     Entity --> CacheRedis
@@ -110,6 +116,10 @@ All services run as Docker containers inside a shared Kubernetes cluster. They r
 
 Note on gateway listener surfaces: the gateway has a public ingress surface (typically behind an external load balancer) and an internal-only WebSocket mTLS listener used by the TCP Proxy Service. The diagram shows both flows terminating at the same gateway component; see [Gateway Architecture](./system-architecture-gateway.md) for the surface-level expectations.
 
+Admin and creator API exposure is intentionally allowlisted: external tools call domain admin APIs only through Gateway-routed routes for owning services (for example Logging & Admin, Account, Game Session, Social & Groups, and Game Design). Internal service-to-service gRPC remains direct and does not traverse Gateway.
+
+For Gateway control-plane behavior in production-like environments (including the dynamic-route override dev/test scope), see the canonical [Gateway Management Plane Capability Matrix](./system-architecture-overview.md#gateway-management-plane-capability-matrix-canonical).
+
 ## Core Services Shown
 
 The diagram covers every microservice in the repository:
@@ -129,6 +139,8 @@ The diagram covers every microservice in the repository:
 Only the **TCP Proxy Service** and **Spring Cloud Gateway** are reachable from the internet. They operate in the network DMZ while the remaining microservices run on the internal network. Admin and creator tools always connect to **Logging & Admin Service and other domain services via the Gateway**; Logging & Admin is not exposed directly at the edge. See [Security Architecture](./system-architecture-security.md#network-security--boundary-design) and [System Architecture Overview](./system-architecture-overview.md#admin-entry-points-and-control-plane) for details.
 
 All internal communication from the **Game Session Service** to downstream microservices uses **gRPC** for high performance and strict schema enforcement. Stateful domain microservices persist data in PostgreSQL and use Redis for transient state; DMZ components such as the TCP Proxy Service and Spring Cloud Gateway remain stateless with respect to PostgreSQL but use Redis for rate limiting and caches. All services emit metrics to Prometheus and send structured logs to Elasticsearch.
+
+Coordination Redis arrows in this diagram follow ownership boundaries from ADR 0009: Game Session owns gameplay coordination prefixes (for example `session:game:*`, `coord:*`, and `tick:*`), Account owns `session:auth:*`, Automation & Scripting owns `automation:*`, and non-owner services (for example Entity) participate only through approved shared-helper contracts rather than ad hoc key ownership.
 
 ## Datastore Layer
 

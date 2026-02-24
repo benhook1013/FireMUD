@@ -320,8 +320,8 @@ Script changes must be rolled out in a way that respects both AOF replay semanti
 
 - **Compatibility levels**
   - `compatible` – purely additive changes (for example, new return fields, extra read-only validations) that do not change key shape or semantics. These may be rolled out without coordination resets as long as callers tolerate older results.
-  - `epoch_aligned` – changes that rely on new ledger fields or tick semantics but preserve key shapes. If an epoch boundary is required to avoid mixing old and new semantics, it must be treated as a **timeline-severing operation** and executed via the same control-plane handshake as a scoped coordination reset (pause ticks → bump `region_epoch` → reconcile ledger → resume). Do not treat `region_epoch` bumps as a routine rollout mechanism.
   - `requires_region_reset` / `requires_tenant_reset` / `requires_cluster_reset` – changes that alter key shapes or semantics in ways that cannot be safely mixed with old behavior. These must run alongside the corresponding coordination reset flows and are expected to be rare.
+  - If a rollout requires an epoch boundary to avoid mixed old/new semantics, classify it as the corresponding `requires_*_reset` scope and execute the full reset handshake (pause ticks → bump `region_epoch` → reconcile ledger → resume). Do not treat `region_epoch` bumps as a routine rollout mechanism outside this compatibility contract.
 - **Registry as the source of truth**
   - The Lua Script Registry records a `compatibility_level` (or equivalent) and `reset_sensitivity` for each script and version.
   - Upgrades that move a script into a stricter compatibility level must be reflected in the registry before rollout, and their expected reset scope must be documented in design docs and runbooks.

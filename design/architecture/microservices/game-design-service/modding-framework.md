@@ -108,7 +108,7 @@ Plugins follow a lifecycle similar to script patches but scoped to `<tenantId, g
 - Each plugin version is identified by `pluginVersionId`. A registry in the Automation & Scripting Service tracks, per `<tenantId, gameInstanceId, pluginId>`:
   - `activeVersionId` – the plugin version currently enabled.
   - `pendingVersionId` – a plugin version being loaded or validated.
-  - `pluginState` – state such as `IDLE`, `ENABLED`, `DISABLED`, `RELOADING`, or `FAILED`.
+  - `pluginState` – canonical runtime state: `ENABLED`, `DISABLED`, `DRAINING`, `RELOADING`, or `FAILED`.
 - Enabling a plugin sets `pluginState=ENABLED` for a `<tenantId, gameInstanceId, pluginId, pluginVersionId>` and allows the scheduler to admit triggers for that plugin, subject to quotas and budgets.
 - Disabling a plugin can follow two modes:
   - **Hard disable** – immediately marks the plugin `DISABLED`; new triggers are rejected at admission (`finalStage=ADMISSION`, `finalOutcome=plugin_disabled`) and recorded in `script_event_audit`, while in-flight runs complete under existing budgets.
@@ -140,10 +140,11 @@ For metrics and outcome naming conventions around plugin policy enforcement, see
 To avoid unintentionally breaking large numbers of plugins when component policies change, platform operators should roll out new policies in two phases:
 
 - **Report-only phase** – a new policy version is loaded in a non-enforcing mode:
-  - Policy violations are recorded as structured metadata on `script_event_audit` rows via `policyViolations[]` using the schema and size limits defined in `design/architecture/system-architecture-scripting-observability-contract.md`, and via `automation_plugin_policy_violations_total`, but plugin triggers are still admitted and executed (so `finalOutcome` continues to reflect the end-to-end result rather than “violation observed”).
+  - Policy violations are recorded as structured metadata on `script_event_audit` rows via `policyViolations[]` using the schema and size limits defined in `design/architecture/system-architecture-scripting-observability-contract.md`, and via `automation_plugin_policy_violations_total`, but plugin triggers are still admitted and executed.
+  - In report-only mode, `policyViolations[].decision` must be `REPORT_ONLY`, and `finalOutcome` must remain the actual pipeline result (`success`, `sandbox_error`, `infrastructure_error`, and so on). `finalOutcome=plugin_component_blocked` is invalid while report-only mode is active.
   - Dashboards and alerts use these signals to show which plugins would be blocked if enforcement were enabled.
 - **Enforcing phase** – once violations are understood and unacceptable plugins have been migrated or disabled:
-  - Enforcement is enabled for the policy version; subsequent violations cause triggers to be rejected at admission with `finalStage=ADMISSION`, `finalOutcome=plugin_component_blocked`, and a `finalReason` that identifies the blocked component/policy decision.
+  - Enforcement is enabled for the policy version; subsequent violations must set `policyViolations[].decision=BLOCKED` and cause triggers to be rejected at admission with `finalStage=ADMISSION`, `finalOutcome=plugin_component_blocked`, and a `finalReason` that identifies the blocked component/policy decision.
   - Operators continue to monitor `automation_plugin_policy_violations_total` to detect regressions.
 
 Policy configs should be versioned so operators can roll back to a previous allowlist if enforcement causes unexpected disruption. Report-only and enforcing behavior are configuration choices on the policy version and must be applied consistently across environments as part of the normal deployment pipeline.
@@ -151,6 +152,8 @@ Policy configs should be versioned so operators can roll back to a previous allo
 Operationally, the **Logging & Admin Service** acts as the control plane for plugin lifecycle management. Enabling, disabling, draining, and rolling back plugin versions are all performed via Logging & Admin APIs that update the registry in the Automation & Scripting Service; tenants do not manipulate `activeVersionId` or `pluginState` directly inside game traffic.
 
 To roll back a misbehaving plugin, operators promote a previously trusted `pluginVersionId` to `activeVersionId` for the affected `<tenantId, gameInstanceId, pluginId>` via Logging & Admin. The Automation & Scripting Service then resumes admitting triggers for the restored version while continuing to enforce quotas, budgets, and sandbox limits as described in `design/architecture/system-architecture-scripting-quotas-and-operations.md`.
+
+Plugin rollback/disable/revocation flows must also cancel pending outbox work for the displaced plugin version (for example via `CancelPendingWorkItemsForPluginVersion`) before or alongside queue purges, so stale plugin-version work cannot continue to hand off after control-plane changes.
 
 The normative control-plane API shapes and required events for plugin management are defined in `design/architecture/system-architecture-scripting-control-plane-api.md` (for example `SetPluginActiveVersion`, `DisablePlugin`, and `DrainPlugin`).
 

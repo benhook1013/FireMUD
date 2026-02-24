@@ -13,9 +13,9 @@ The **Game Design Service** manages version metadata and publish workflows for g
 1. When a version is ready, creators trigger a **Publish** action in the Game Design Service using the `PublishVersion` gRPC method.
 2. The service writes a new `version_id` and associated records to its database, linking the version to each tenant and recording notes and base versions.
 3. During authoring, the Game Design Service applies revisions incrementally to **Draft** template rows hosted by the owning domain services via idempotent design APIs keyed by `(tenantId, versionId)`. At publish time, a Saga coordinates all domain services so they validate and finalize their existing Draft data for the given `tenantId` and `version_id`, marking that data as Published and ready for runtime use. No separate design database is copied into the domain services; they already host the versioned graphs for their domains.
-   - Publish-time validation must be based on durable, domain-owned digests: every participating domain service must report `GetDraftDesignDigest(tenantId, versionId)` matching the commit being published (`appliedCommitId`, `contentDigest`, and `digestSchemaVersion`). If any digest is missing or mismatched, publish must fail fast and the version must remain Draft/OUT_OF_SYNC until reconciliation succeeds. See `design/architecture/microservices/game-design-service/world-editing-tools.md`.
+   - Publish-time validation must be based on durable digests: every participating domain service must report `GetDraftDesignDigest(tenantId, versionId)` matching the commit being published (`appliedCommitId`, `contentDigest`, and `digestSchemaVersion`), and the Game Design Service must report a control-plane digest for normalized dependency tables (`game_template_*_ref`, `version_asset`, and related publish-critical metadata) for the same commit/version scope. If any required digest is missing or mismatched, publish must fail fast and the version must remain Draft/OUT_OF_SYNC until reconciliation succeeds. See `design/architecture/microservices/game-design-service/world-editing-tools.md`.
    - Participant selection is fixed by publish type (full publish vs script-only patch) using the matrix in `design/architecture/microservices/game-design-service/version-control.md#digest-participants-by-publish-type`; publish workflows must not change digest participants implicitly at runtime.
-4. As part of the Saga, the Game Design Service runs an **asset export** step for each `(tenantId, versionId)` that uploads design-time assets to object storage, generates a deterministic `manifest.json` for the version, and updates version metadata with the manifest location. This step is implemented as an idempotent Saga step with compensation as described in [Asset Storage Setup](./microservices/game-design-service/asset-storage.md). If this step or another publish step fails irrecoverably, the Saga can mark the version as **Failed** so it is not eligible for activation.
+4. As part of the Saga, the Game Design Service runs an **asset export** step for each `(tenantId, versionId)` that uploads design-time assets to object storage, generates a deterministic `manifest.json` for the version, and updates version metadata with the manifest location. This step is implemented as an idempotent Saga step with compensation as described in [Asset Storage Setup](./microservices/game-design-service/asset-storage.md). If this step or another publish step fails irrecoverably, the Saga marks the version as **Failed** and records the asset artifact as `TOMBSTONED` (quarantined) so it is not eligible for activation.
    - The asset export step must persist a `manifestHash` in version metadata and treat any mismatch between recorded hash and served bytes as drift/corruption, not a legitimate “update” to a Published/Active version.
 5. A notification or message informs the Game Session Service that a new version exists so game instances can be started or patched against it.
 
@@ -48,10 +48,34 @@ Game versions go through a simple lifecycle:
 Administrative tooling (for example via the Game Design Service or Logging & Admin Service) should:
 
 - Prevent retiring a version while any `game_instances` still reference it.
+- Prevent retiring a version while any activation workflow is in-flight for the same `(tenantId, versionId)` (for example world creation still in `PREPARING` state).
 - Prevent retiring a version while any **game templates** still reference it as their underlying world/entity/script version; designers must migrate those templates to a successor version before retirement.
 - Ensure the `game_manifest` table and any launch manifests are updated when a version is retired so operators cannot accidentally start new instances against it.
 
 Runbooks that remove published assets from the object store must validate that the corresponding version has already reached the **retired** state.
+
+### Version State Ownership and CAS Authority
+
+`versionState` and `versionStateEpoch` are control-plane metadata owned by the Game Design Service:
+
+- Game Design persists version lifecycle state and epoch in its authoritative version tables.
+- Other services may cache this metadata but must not mutate it directly.
+- Logging & Admin and Game Session mutate lifecycle state only through Game Design control-plane APIs.
+
+Required control-plane APIs:
+
+- `GetVersionState(tenantId, versionId)` -> `{versionState, versionStateEpoch, updatedAt}`
+- `CompareAndSetVersionState(tenantId, versionId, expectedVersionStateEpoch, newState, reason)` -> success/failure with current `{versionState, versionStateEpoch}`
+
+`versionStateEpoch` increments on any lifecycle transition that can affect activation eligibility (for example `Published -> Retired`, `Failed -> Draft`, or admin policy transitions).
+
+Normative CAS call flow for activation and rollback:
+
+1. Game Session calls `GetVersionState` and stores `versionStateEpoch` in workflow state.
+2. Pre-activation world setup runs under instance lifecycle fence (`PREPARING` only).
+3. Game Session re-calls `GetVersionState` immediately before admission.
+4. If state/epoch differs from the stored value, workflow fails closed and does not admit gameplay.
+5. Admission can open only when state/epoch still match and world lifecycle transition succeeds.
 
 ### Template Mutability Rules
 
@@ -136,6 +160,12 @@ Tooling in the Game Design and Logging & Admin services should surface these rel
   - These operations must be driven by normalized dependency tables (for example `game_template_version_ref` and related reference rows), not by best-effort parsing of arbitrary JSON blobs.
   - When templates pin defaults such as `scriptPatchVersion`, migration tooling must update both the JSON payload and the normalized `game_template_script_patch_ref` rows atomically so instance creation does not observe mixed dependencies.
 
+Normalized-template dependency checks require explicit phase enforcement:
+
+- Game Design exposes persisted cutover state via `GetTemplateReferencePhase(tenantId)` (or stricter scoped equivalent) with values `BACKFILLING`, `VALIDATED`, `ENFORCED`.
+- Game Session and retirement tooling must block dependency-sensitive operations unless the relevant scope is `ENFORCED`.
+- Once `ENFORCED`, control-plane checks must not fall back to JSON parsing for dependency resolution.
+
 ### Schema Migrations vs Design Data
 
 Published game versions are **design-data bundles** (world templates, entity templates, abilities/actions, scripts/plugins, and asset manifests) keyed by `versionId` and scoped to a `tenantId`. Database schema changes remain the responsibility of each microservice and are applied via Flyway when a service container restarts during a platform deployment. Publishing a new design version therefore does not run Flyway migrations—it finalizes versioned data already stored in domain services, exports version-scoped manifests/assets, and makes the new `versionId` eligible for activation. Runtime instances load data by `runtime_version` and may hot-reload only script/plugin patch layers where explicitly supported. See
@@ -175,12 +205,33 @@ The **Game Session Service** controls which published version is active for each
 - Only one version is active per game instance. If an issue occurs, administrators can instruct the service to roll back by selecting a previous `version_id` and restarting the instance.
 - All runtime services read their data using the active `runtime_version`, ensuring consistent rules during play.
 
+Activation and rollback must be guarded by a version-state compare-and-set token (for example `versionStateEpoch`) to avoid races with retirement or state transitions:
+
+- At activation start, Game Session calls `GetVersionState(tenantId, versionId)` and records the returned epoch in the activation workflow.
+- Before committing activation (or rollback) and admitting gameplay, Game Session re-validates the same epoch.
+- If the epoch changed (for example due to retirement or admin state edits), activation fails with no admission and requires a new explicit operator action.
+
+Activation workflows must also respect per-instance lifecycle fencing in World Management so activation and termination cannot both commit for the same `gameInstanceId`. See [World Creation Workflow](./microservices/world-management-service/world-creation-workflow.md#activation-vs-termination-fencing).
+
+### Instance Termination Handoff
+
+Termination requires ordered handoff across runtime and domain owners:
+
+1. Game Session marks the instance non-admissible/draining and blocks new admissions.
+2. World Management acquires the lifecycle fence, transitions to `TERMINATING`, and runs `InstanceTermination` with Entity Management cleanup.
+3. World Management commits `TERMINATED` only after Entity Management confirms cleanup.
+4. Game Session marks the `game_instances` runtime record terminated/stopped only after step 3.
+
+If any step after step 1 fails, admission remains closed and the same termination workflow identity must retry until convergence.
+
 Before any operation that changes whether a tenant is actively serving gameplay for a given instance (for example, starting a new instance, restarting an instance with a different `runtime_version`, or rolling back to a previous version), the Game Session Service must consult the runtime entitlement contract:
 
 - Call `GetTenantEntitlements(tenantId)` in the Account Service and enforce that:
   - The tenant is currently **available for gameplay** under its subscription and billing state (for example, not `suspended` or `canceled`).  
   - The requested instance count and configuration remain within plan-derived quotas (for example, maximum concurrent instances for the tenant).
 - If entitlements indicate that the tenant is unavailable for gameplay or that quotas would be exceeded, the operation fails with a clear, tenant-scoped error and no instance-level changes are applied.
+- Entitlement snapshots used by these admission/control operations must be no older than 15 seconds. If a fresh snapshot cannot be obtained (for example due to event lag or Account Service uncertainty), operations fail closed with a retriable infrastructure/availability error.
+- Until a dedicated player-facing instance-selection protocol exists, runtime operations must preserve the single gameplay-admissible instance invariant (`gameInstanceId="primary"`). If operational workflows temporarily create additional running instances, gameplay admission remains blocked for those extra instances and player admission must never implicitly choose among them.
 
 When entitlements transition to hard-cutoff states (`suspended` or `canceled`) after an instance is already running, runtime behavior is deterministic:
 

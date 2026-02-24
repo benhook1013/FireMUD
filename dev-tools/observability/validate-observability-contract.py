@@ -13,6 +13,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 ALLOWED_SEVERITIES = {"P0", "P1", "P2"}
 REQUIRED_ALERT_LABELS = {"service", "severity", "owner", "runbook"}
+DISALLOWED_ALERT_SERVICE_LABELS = {"gateway", "game-session"}
 
 
 @dataclass(frozen=True)
@@ -142,6 +143,16 @@ def _check_grpc_app_error_scoping(expr: str) -> str | None:
     return None
 
 
+def _check_dotted_metric_tokens(expr: str) -> str | None:
+    for token in re.findall(r"\b[A-Za-z_][A-Za-z0-9_\.]*\b", expr):
+        if "." not in token:
+            continue
+        if re.fullmatch(r"\d+\.\d+", token):
+            continue
+        return f"expression references dotted token {token!r}; Prometheus metric names in shared assets must use snake_case"
+    return None
+
+
 def _validate_alert_snippet(path: Path) -> list[Finding]:
     findings: list[Finding] = []
     markdown = _read_text(path)
@@ -157,6 +168,18 @@ def _validate_alert_snippet(path: Path) -> list[Finding]:
             severity = labels.get("severity", "")
             if severity not in ALLOWED_SEVERITIES:
                 findings.append(Finding(path=path, message=f"alert rule has invalid severity={severity!r}; expected one of {sorted(ALLOWED_SEVERITIES)}"))
+
+            service_label = labels.get("service", "")
+            if service_label in DISALLOWED_ALERT_SERVICE_LABELS:
+                findings.append(
+                    Finding(
+                        path=path,
+                        message=(
+                            f"alert rule uses ad-hoc service label {service_label!r}; use runtime identity labels "
+                            "(for example spring-cloud-gateway, game-session-service, tcp-proxy-service)"
+                        ),
+                    )
+                )
 
             runbook = labels.get("runbook", "")
             if not runbook.startswith("design/") or ".md" not in runbook or "#" not in runbook:
@@ -187,6 +210,18 @@ def _validate_alert_snippet(path: Path) -> list[Finding]:
             grpc_scope_issue = _check_grpc_app_error_scoping(expr)
             if grpc_scope_issue:
                 findings.append(Finding(path=path, message=grpc_scope_issue))
+
+            dotted_metric_issue = _check_dotted_metric_tokens(expr)
+            if dotted_metric_issue:
+                findings.append(Finding(path=path, message=dotted_metric_issue))
+
+            if 'backup_tick_pause_duration_seconds{scope="all"}' in expr.replace(" ", ""):
+                findings.append(
+                    Finding(
+                        path=path,
+                        message="backup pause alerts must support scoped pauses; avoid hardcoding backup_tick_pause_duration_seconds{scope=\"all\"}",
+                    )
+                )
     return findings
 
 
@@ -223,6 +258,95 @@ def _validate_grafana_dashboards(grafana_dir: Path) -> list[Finding]:
                             message="expression references redis_coordination_keys_total without a role matcher; shared dashboards must scope coordination role explicitly",
                         )
                     )
+                dotted_metric_issue = _check_dotted_metric_tokens(expr)
+                if dotted_metric_issue:
+                    findings.append(Finding(path=json_path, message=dotted_metric_issue))
+    return findings
+
+
+def _validate_kibana_saved_objects(kibana_dir: Path) -> list[Finding]:
+    findings: list[Finding] = []
+    required_columns: dict[str, set[str]] = {
+        "log-volume.json": {"service", "tenantId", "regionId", "message"},
+        "player-incident-drilldown.json": {"service", "tenantId", "playerId", "traceId", "correlationId", "message"},
+        "tick-region-logs.json": {"service", "tenantId", "regionId", "tickId", "traceId", "correlationId", "message"},
+    }
+
+    for json_path in sorted(kibana_dir.glob("*.json")):
+        try:
+            payload = json.loads(_read_text(json_path))
+        except json.JSONDecodeError as exc:
+            findings.append(Finding(path=json_path, message=f"invalid JSON: {exc}"))
+            continue
+
+        expected = required_columns.get(json_path.name)
+        if expected is None:
+            continue
+
+        serialized = json.dumps(payload)
+        missing = sorted(column for column in expected if column not in serialized)
+        if missing:
+            findings.append(
+                Finding(
+                    path=json_path,
+                    message=f"Kibana saved object is missing required structured log fields for runbooks: {', '.join(missing)}",
+                )
+            )
+    return findings
+
+
+def _validate_doc_semantics() -> list[Finding]:
+    findings: list[Finding] = []
+
+    backup_doc = REPO_ROOT / "design" / "architecture" / "system-architecture-backup-recovery.md"
+    backup_text = _read_text(backup_doc)
+    if 'service="postgres-backup"' in backup_text and 'owner="platform"' in backup_text:
+        findings.append(
+            Finding(
+                path=backup_doc,
+                message=(
+                    "backup alert examples still include owner=\"platform\" with service=\"postgres-backup\"; "
+                    "owner must be \"infra\" per logging/monitoring owner mapping"
+                ),
+            )
+        )
+
+    core_alerts = REPO_ROOT / "design" / "observability" / "grafana" / "core-alerts-snippets.md"
+    core_text = _read_text(core_alerts)
+    for yaml_block in _extract_fenced_blocks(core_text, "yaml"):
+        for rule_lines in _split_alert_rules(yaml_block):
+            alert_name = None
+            first_line = rule_lines[0] if rule_lines else ""
+            match = re.match(r"^\s*-\s*alert:\s*(\S+)", first_line)
+            if match:
+                alert_name = match.group(1).strip()
+            if not alert_name:
+                continue
+            labels = _parse_labels(rule_lines)
+            expr = _parse_expr(rule_lines) or ""
+            compact_expr = re.sub(r"\s+", "", expr)
+
+            if alert_name == "LoginSuccessRatioLowGateway":
+                if labels.get("service") != "spring-cloud-gateway":
+                    findings.append(Finding(path=core_alerts, message="LoginSuccessRatioLowGateway must use labels.service=spring-cloud-gateway"))
+                if 'login_requests_total{service="spring-cloud-gateway"' not in compact_expr:
+                    findings.append(Finding(path=core_alerts, message="LoginSuccessRatioLowGateway must scope expr to service=\"spring-cloud-gateway\""))
+            if alert_name == "LoginSuccessRatioLowTcpProxy":
+                if labels.get("service") != "tcp-proxy-service":
+                    findings.append(Finding(path=core_alerts, message="LoginSuccessRatioLowTcpProxy must use labels.service=tcp-proxy-service"))
+                if 'login_requests_total{service="tcp-proxy-service"' not in compact_expr:
+                    findings.append(Finding(path=core_alerts, message="LoginSuccessRatioLowTcpProxy must scope expr to service=\"tcp-proxy-service\""))
+            if alert_name == "CommandLatencyP99HighGateway":
+                if labels.get("service") != "spring-cloud-gateway":
+                    findings.append(Finding(path=core_alerts, message="CommandLatencyP99HighGateway must use labels.service=spring-cloud-gateway"))
+                if 'command_end_to_end_latency_ms_bucket{service="spring-cloud-gateway"' not in compact_expr:
+                    findings.append(Finding(path=core_alerts, message="CommandLatencyP99HighGateway must scope expr to service=\"spring-cloud-gateway\""))
+            if alert_name == "CommandLatencyP99HighTcpProxy":
+                if labels.get("service") != "tcp-proxy-service":
+                    findings.append(Finding(path=core_alerts, message="CommandLatencyP99HighTcpProxy must use labels.service=tcp-proxy-service"))
+                if 'command_end_to_end_latency_ms_bucket{service="tcp-proxy-service"' not in compact_expr:
+                    findings.append(Finding(path=core_alerts, message="CommandLatencyP99HighTcpProxy must scope expr to service=\"tcp-proxy-service\""))
+
     return findings
 
 
@@ -233,6 +357,8 @@ def main() -> int:
     findings.extend(_validate_alert_snippet(grafana_dir / "core-alerts-snippets.md"))
     findings.extend(_validate_alert_snippet(grafana_dir / "tcp-proxy-alerts-snippets.md"))
     findings.extend(_validate_grafana_dashboards(grafana_dir))
+    findings.extend(_validate_kibana_saved_objects(REPO_ROOT / "design" / "observability" / "kibana"))
+    findings.extend(_validate_doc_semantics())
 
     if not findings:
         print("Observability contract validation: OK")

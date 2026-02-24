@@ -14,7 +14,7 @@ The documents linked from this overview describe the target-state design, but th
 - **Lease moves and reconnect behavior:** The platform favors **close-and-reconnect** over mid-connection migration. The edge contract does not define a distinct “shard handoff” close category; client-visible outcomes remain limited to the standard close taxonomy (for example `backend_unavailable` for sustained gameplay-path failures). If a future design introduces explicit handoff semantics at the edge, it must be defined as a dedicated design update and integrated into the gateway + protocol bridging contracts (see `design/architecture/decisions/adr-0007-edge-sharding-and-close-taxonomy.md`).
 - **Quotas and entitlements source of truth:** Subscription entitlements and plan-driven quota values are owned by the Account Service (for example via `GetTenantEntitlements(tenantId)`). Logging & Admin provides dashboards, audit trails, and operator UX; any operator overrides must be represented as an overlay that is merged into the Account Service entitlement contract so enforcement points consume a single canonical view.
 - **Redis topology policy:** In all non-ephemeral environments, Coordination Redis and Cache/Rate-Limit Redis are separate deployments. Local development is treated as non-ephemeral and should run two Redis deployments to exercise role separation. Truly ephemeral CI/preview stacks may collapse roles into a single Redis instance only when explicitly documented and guarded as an ephemeral topology.
-- **Coordination Redis ownership boundary:** Coordination Redis prefixes are owner-governed (Game Session for gameplay coordination prefixes, Automation & Scripting for `automation:*`), and non-owner participation is allowed only through documented shared-helper contracts. See `design/architecture/decisions/adr-0009-coordination-redis-ownership-boundary.md`.
+- **Coordination Redis ownership boundary:** Coordination Redis prefixes are owner-governed (Game Session for gameplay coordination prefixes such as `session:game:*`, `tick:*`, `timer:*`, `retry:*`, and `tick-executor-lease:*`; Account Service for `session:auth:*`; Automation & Scripting for `automation:*`), and non-owner participation is allowed only through documented shared-helper contracts. See `design/architecture/decisions/adr-0009-coordination-redis-ownership-boundary.md`.
 - **TCP Proxy identity canonicalization:** For Gateway header trust on the TCP Proxy → Gateway mTLS hop, URI SAN identity is canonical in production; DNS SAN is transitional and fingerprint pinning is break-glass only. See `design/architecture/decisions/adr-0010-tcp-proxy-identity-canonicalization.md`.
 
 ## Core Architecture Principles
@@ -26,7 +26,7 @@ The documents linked from this overview describe the target-state design, but th
 - **All application-level gameplay and admin traffic is routed through the Spring Cloud Gateway**, ensuring centralized **traffic routing, monitoring, and observability**. Raw Telnet TCP terminates at the Telnet edge proxy and TCP Proxy Service before being bridged to the Gateway over WebSocket. See [Gateway Architecture](./system-architecture-gateway.md) for deployment details and stateless behavior.
   - Ordering and delivery guarantees for the combined Telnet and WebSocket path (FIFO where delivered, at-most-once semantics, and explicit drop conditions) are documented in [Protocol Bridging](./system-architecture-protocol-bridging.md#ordering--delivery-invariants).
   - Backpressure and slow-client behavior across the TCP Proxy and WebSocket layers are described in [Protocol Bridging](./system-architecture-protocol-bridging.md#backpressure--slow-clients).
-   > 🛑 **Gameplay login is fronted by the Game Session Service**, which handles the `LOGIN` command and binds sessions in Redis. It calls the Account Service to verify credentials and obtain JWTs/tokens. The Gateway simply forwards any admin tokens, and JWTs are validated by the admin or logging services themselves; gameplay clients connect without tokens. See [Authentication & Authorization](./system-architecture-authentication.md#-login-and-session-flow) for the full login flow.
+   > 🛑 **Gameplay login is fronted by the Game Session Service**, which handles the `LOGIN` command and binds sessions in Redis. It calls the Account Service to verify credentials and obtain JWTs/tokens. The Gateway simply forwards any admin tokens, and JWTs are validated by the admin or logging services themselves; gameplay clients connect without tokens. See [Authentication & Authorization](./system-architecture-authentication.md#login-and-session-flow) for the full login flow.
 - **Telnet clients maintain sticky TCP connections only to the TCP Proxy Service**, which buffers **active input** but **discards it across reconnects**
 - **Reconnection logic is handled in layers** to preserve gameplay continuity
 - **All internal service-to-service communication from the Game Session Service onward uses gRPC**, with strict schema enforcement and low latency. All calls are encrypted with **mutual TLS**; see [Security Architecture](./system-architecture-security.md)
@@ -50,6 +50,18 @@ Network policies and ingress configuration must reflect this model:
 
 - Only Gateway and TCP Proxy Service are reachable from external networks.
 - Logging & Admin Service accepts traffic only from Gateway (and from observability systems where necessary), not from the public internet or VPN clients directly.
+
+#### Gateway Management Plane Capability Matrix (Canonical)
+
+The management-plane contract must be explicit so operator tooling does not assume unsupported mutating behavior in production-like environments.
+
+| Gateway capability | Intended use | Current production-like status | Notes |
+| --- | --- | --- | --- |
+| gRPC/REST health and route inspection | Internal diagnostics and control-plane health checks | Supported | Internal-only network surface; mTLS-authenticated operator clients. |
+| Baseline route configuration (`routes-*.yml` + env overrides) | Canonical route definitions and controlled deployment-time changes | Supported | Baseline config files remain the source of truth. |
+| Dynamic route override APIs (runtime mutating overrides) | Ephemeral route changes without redeploy | **Not supported in production-like environments (dev/test only)** | Until shared persistence, multi-pod convergence, and full route-change auditing are implemented. |
+
+This matrix is canonical for high-level architecture docs and must remain aligned with [Gateway Architecture](./system-architecture-gateway.md#dynamic-route-override-lifecycle).
 
 ### Authentication Modes and Boundaries
 
@@ -110,9 +122,10 @@ Within Redis, keys are further partitioned by responsibility and, in production,
 - **Coordination and session keys (Coordination Redis)**  
   - Examples: gameplay sessions, tick-region leases, command queues, timers, and automation tick coordination.  
   - Canonical prefixes include (non-exhaustive):  
-    - `session:*` – gameplay session bindings and takeover metadata.  
-    - `coord:*` – distributed locks, leases, and tick/timer coordination.  
+    - `session:game:*` – gameplay session bindings and takeover metadata (Game Session-owned).
+    - `session:auth:*` – auth token allowlist and revocation-watermark prefixes (Account-owned).
     - `tick:*` – tick queues, region scheduling, and pacing-related state.  
+    - `timer:*`, `retry:*`, `tick-executor-lease:*` – tick coordination helpers owned by Game Session.
     - `automation:*` – automation and scripting coordination keys owned by Automation & Scripting Service (other services interact via gRPC APIs rather than writing these keys directly).
 
 - **Cache and rate-limit keys (Cache/Rate-Limit Redis)**  
@@ -136,7 +149,7 @@ See [Redis Architecture](./system-architecture-redis.md) and [Redis Usage & Prof
 | **[TCP Proxy Service](./microservices/tcp-proxy-service/README.md)** | Accepts Telnet connections, buffers input, forwards over WebSocket; proxy-to-gateway mTLS secures the link |
 | **[Spring Cloud Gateway](./microservices/spring-cloud-gateway/README.md)** | Handles WebSocket termination, routing, and observability; enforces coarse-grained admin access controls but does not own gameplay authentication or authorization decisions |
 | **[Game Session Service](./microservices/game-session-service/README.md)** | Fronts gameplay login commands and session binding, manages player sessions, tick orchestration, runtime flags, and input validation |
-| **[Account Service](./microservices/account-service/README.md)** | Manages player accounts, credentials, authentication, and JWT/JWKS issuance; handles subscriptions and bans; publishes the canonical tenant entitlement/quota contract consumed by enforcement points |
+| **[Account Service](./microservices/account-service/README.md)** | Manages player accounts, credentials, authentication, and JWT/JWKS issuance; handles subscriptions and account-security ban state; publishes the canonical tenant entitlement/quota contract consumed by enforcement points |
 | **[Entity Management Service](./microservices/entity-management-service/README.md)** | Handles all runtime entity data: players, NPCs, items, stats, and all inventories/containment (player inventory/equipment, containers, and items on the ground held in room-ground container entities keyed by room/instance ID) |
 | **[World Management Service](./microservices/world-management-service/README.md)** | Owns maps, rooms, and tick region structure; provides room/region geometry and snapshots, plus authoritative runtime location/occupancy and mutable room-environment state (doors, hazards, and persistent ambient flags) |
 | **[Game Logic Service](./microservices/game-logic-service/README.md)** | Executes gameplay mechanics; resolves actions deterministically, including movement/travel cost computation |
@@ -213,7 +226,7 @@ If a future architecture introduces explicit edge shard routing or client-visibl
 
 Clients authenticate using the `LOGIN` command, processed by the **Game Session Service**.
 On initial login, Game Session delegates full credential verification (including lockout and MFA rules) to the **Account Service**.
-On disconnect, clients reconnect by issuing `LOGIN` again with credentials (and OTP when required). Game Session uses Coordination Redis to decide whether to resume an existing gameplay session (for example, when the previous session binding is still valid and not revoked) or start a fresh session when keys or auth state no longer permit resumption.
+On disconnect, clients reconnect by issuing `LOGIN` again with credentials (and OTP when required), then re-binding gameplay scope with `PLAY` (`PLAY <world> [character]`) before gameplay commands are accepted. Game Session uses Coordination Redis to decide whether to resume an existing gameplay session for the selected `{tenantId, gameInstanceId, characterId}` binding (for example, when the previous session binding is still valid and not revoked) or start a fresh session when keys or auth state no longer permit resumption.
 Session state is stored in Coordination Redis and reused for recovery when the Redis-backed gameplay session and auth token allowlist entries are still valid.
 
 > 🔗 See [Authentication & Authorization](./system-architecture-authentication.md) and [Reconnection Strategy](./system-architecture-reconnection.md) for detailed JWT format and session flow.
@@ -290,6 +303,46 @@ The following examples illustrate where key concepts live; the full matrix remai
 | Live sessions, ticks, command queues | Game Session Service | Owns Redis-backed coordination for active gameplay. |
 | Chat, groups, social graph | Social & Groups Service | Manages chat channels, guilds, friends/blocks. |
 | Moderation events, admin dashboards | Logging & Admin Service | Aggregates logs/metrics/traces and powers moderation tooling. |
+
+### Movement and Location Consistency Contract
+
+To avoid drift between gameplay orchestration, entity state, and world occupancy, movement and location updates use one explicit write contract:
+
+1. Game Session orchestrates the movement command under the tick timeline and supplies the idempotency/effect identity for downstream writes.
+2. Game Logic computes deterministic movement/travel outcomes (valid destination, cost, and mechanics).
+3. World Management performs the authoritative location/occupancy commit for the target room/region instance.
+4. Entity Management applies entity-side state updates (stats/effects/inventory consequences) but does not maintain a competing authoritative occupancy index.
+5. Retries/replays use the same effect identity and converge through idempotent handlers; no service may treat partial local updates as authoritative completion.
+
+If a feature needs a different movement write order, it must be documented as a design change in tick + transactions docs before implementation.
+
+### Moderation Policy Distribution and Enforcement Contract
+
+Moderation behavior is split between policy ownership and enforcement points and must follow a single propagation contract:
+
+1. Logging & Admin Service is the source of truth for moderation policy definitions and audit history.
+2. Enforcement services (at minimum Game Session for gameplay bans and Social & Groups for chat mutes/bans) consume policy updates through versioned APIs/events and record the policy version used for each enforcement decision.
+3. Enforcement caches must be bounded and invalidated by policy-version changes; enforcement on stale policy beyond the bounded window is an incident.
+4. On policy-source or propagation outages, enforcement behavior must be explicit and fail-safe for high-risk actions (for example, deny message send or gameplay admission when required policy cannot be validated), while emitting clear operator-visible errors/metrics.
+5. Cross-service moderation decisions must remain auditable end-to-end (policy version, actor, target, enforcement outcome, timestamp).
+
+Service-specific APIs and TTL/eventing details belong in service docs, but any deviation from this contract is an architecture change.
+
+### Ban and Moderation Taxonomy (Canonical)
+
+To remove ambiguity around “bans,” FireMUD uses the following canonical taxonomy:
+
+| Ban/Moderation Type | Policy Owner | Primary Enforcement Point | Scope |
+| --- | --- | --- | --- |
+| `account_security_ban` (for example compromised account, severe ToS account suspension) | Account Service | Account auth and token/session revocation surfaces | Account-wide across tenants |
+| `gameplay_ban` (deny gameplay admission/actions for a tenant) | Logging & Admin Service | Game Session Service | Tenant gameplay scope |
+| `chat_mute` / `chat_ban` | Logging & Admin Service | Social & Groups Service | Tenant chat and messaging scope |
+
+Implementation notes:
+
+- Account Service remains the sole writer for auth revocation watermarks and account-security lockout/ban state.
+- Logging & Admin defines moderation policy and audit trails for gameplay/chat moderation; enforcement services consume that policy through the moderation propagation contract above.
+- “Bans” in docs and APIs must name the specific taxonomy type above instead of using an unqualified `ban` term.
 
 ### Design-Time vs Runtime World Data
 

@@ -121,6 +121,7 @@ Sagas are only used for **non-tick, multi-service workflows** involving persiste
 | --- | --- |
 | **Account Creation** | Create account → provision default character → initialize world state |
 | **Game Publishing** | Validate and persist design → push to World Service → toggle publish flags |
+| **Instance Termination** | Coordinated shutdown/expiry cleanup across World and Entity services for a `gameInstanceId` |
 | **Admin Operations** | Issue bans, content revocation, or entity cleanup with audit logging |
 | **In-Game Purchase (rare)** | Only if involving external billing or cross-service coordination beyond Redis tick safety |
 
@@ -142,6 +143,8 @@ Cross-service workflows must explicitly choose one of the following rollback cla
   - Contract: no destructive cross-service rollback. Effects are retried with the same `EffectId` until convergence; partial success is resolved by reconciliation, not compensation deletes.
 
 Designs that cross this boundary (for example, activation and live mutations in one flow) must split into two phases with an explicit hand-off point from Class A to Class B.
+
+For world creation and similar activation flows, this hand-off point must be a persisted, monotonic status transition (for example `world_instance_status: PREPARING -> ACTIVE`, with `FAILED_PRE_ACTIVATION` as the non-admitted failure terminal state). Compensation is valid only before the transition commits.
 
 ### State Ownership and Mutation Boundaries
 

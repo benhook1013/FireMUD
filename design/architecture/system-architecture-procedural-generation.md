@@ -79,6 +79,27 @@ Runtime-only dungeons or short-lived instances may be treated as ephemeral data 
 
 Optional post-generation population hooks can then run to seed NPCs, spawns, or environmental details appropriate to the template or instance context.
 
+### Deterministic Replay Contract for Design-Time Generation
+
+Design-time generation is part of publish safety and reconciliation, so retries must not depend on mutable defaults or the currently deployed generator binary alone.
+
+For each design-time generation run, World Management must persist a durable generation artifact that includes:
+
+- `generationRunId` and stable `generationRequestId`
+- `tenantId`, `versionId`, `generationMode`
+- `generatorType` and `generatorImplementationVersion` (or equivalent immutable build identifier)
+- canonicalized `configSnapshot` including explicit `schemaVersion`
+- seed and any derived deterministic inputs
+- `outputDigest` computed from a canonical serialized topology output
+
+Reconciliation behavior:
+
+- Replaying a previously applied design revision must either:
+  - reuse the persisted staged/finalized output artifact directly, or
+  - rerun generation and verify that the regenerated output matches the recorded `outputDigest`.
+- If regenerated output does not match the recorded digest, reconciliation must fail fast and mark the version `OUT_OF_SYNC` rather than silently accepting a drifted topology.
+- The digest for publish gating must cover the finalized template rows produced by this artifact, so replay and publish checks converge on the same canonical state.
+
 ---
 
 ### 2. `OverworldMapGenerator`
@@ -156,6 +177,8 @@ The following rules align generators with the core runtime and tooling:
 
    - Each generation run is assigned a `generationRunId` (scoped to the caller’s target, for example `(tenantId, versionId)` or `(tenantId, gameInstanceId)`).
    - Callers must supply (or World Management must derive deterministically) a stable `generationRequestId` so retries of “the same request” map to the same `generationRunId` and become replay-safe.
+   - `generationRequestId` must be derived from business identity rather than saga instance identity (for example hash of `tenantId`, target scope key, generation step name, and canonicalized generator config). Retries through a new `sagaInstanceId` must reuse the same `generationRequestId`.
+   - World Management must enforce a uniqueness constraint on `(tenantId, targetScopeKey, generationRequestId)` so duplicate requests converge to one run.
    - World Management must enforce single-writer semantics per target scope (for example via a lock keyed by `(tenantId, versionId)` for design-time, or `(tenantId, gameInstanceId)` for runtime) so two concurrent runs cannot race to finalize into the same template/instance scope.
    - World Management writes all generated rooms/exits/metadata into staging rows keyed by `(tenantId, generationRunId)` and records an immutable config snapshot (`seed`, `generatorType`, `schemaVersion`, and serialized parameters).
    - A single finalize transaction atomically:

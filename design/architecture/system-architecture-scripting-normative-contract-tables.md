@@ -4,6 +4,16 @@ This document centralizes the **normative tables** for scripting and automation 
 
 If another document conflicts with these tables (field names, required identifiers, timer semantics, or metric label sets), treat this document as the tie-breaker.
 
+## Document Precedence (Normative)
+
+When documents disagree, resolve conflicts in this order:
+
+1. `system-architecture-scripting-normative-contract-tables.md` (this document)
+2. `system-architecture-scripting-observability-contract.md` (metric/audit behavior not fully enumerated in tables)
+3. `system-architecture-scripting-contracts.md` (cross-service invariants)
+4. `system-architecture-scripting-control-plane-api.md` (operator API/event shapes)
+5. DSL/service/hub docs (`system-architecture-scripting-dsl-reference-and-lifecycle.md`, service READMEs, and overview hubs)
+
 ## Table of Contents
 
 - [Table 1: Trigger Identity (Required Fields)](#table-1-trigger-identity-required-fields)
@@ -31,7 +41,8 @@ Required identity fields for all triggers:
 | `scriptId` | Yes | The script definition identity that will run. If bindings fan out, each `<scriptId>` is a distinct Trigger Identity. |
 | `eventType` | Yes | Logical event key (for example `onEnterRegion`, `onInterval`). |
 | `scriptPatchVersion` | Yes | Pinned patch version for the game instance at the time the trigger is emitted. |
-| `scriptEventId` | Yes | Caller-supplied idempotency token. Must be stable across retries. Must not be used as a Prometheus label. |
+| `scriptEventId` | Yes | Idempotency token. Live ingress uses caller-supplied IDs that must be stable across retries. Dry-run/test ingress may use server-generated IDs by default. Must not be used as a Prometheus label. |
+| `isDryRun` | Yes | Required identity dimension for dedupe/audit namespace separation. Dry-run/test and live traffic must never share the same idempotency namespace. |
 
 Additional required fields for plugin triggers:
 
@@ -49,7 +60,8 @@ Additional required fields for scheduler/timer triggers:
 
 Notes:
 
-- If an implementation wants to treat some gameplay lifecycle events as “not tick-aligned”, it must define that exception explicitly and document why it is safe across scoped coordination resets. The default contract is that gameplay lifecycle triggers are fenced by `regionEpoch`.
+- If an implementation wants to treat some gameplay lifecycle events as “not tick-aligned”, it must define that exception explicitly in this table (not only in prose docs) and document why it is safe across scoped coordination resets. The default contract is that gameplay lifecycle triggers are fenced by `regionEpoch`.
+- Dry-run/test ingress must use a namespace separate from live ingress (`isDryRun=true`) regardless of whether `scriptEventId` is caller-generated or server-generated.
 - Downstream service calls made from scripts must propagate an idempotency token derived from Trigger Identity plus tick context when applicable (for example `tickId`), following `design/architecture/system-architecture-transactions.md`.
 
 ## Table 2: `script_event_audit` Stages and Outcomes
@@ -69,7 +81,7 @@ Notes:
 
 | Stage | Required rule |
 | --- | --- |
-| `ADMISSION` | Must record explicit backpressure outcomes during `reloadState=RELOADING` (for example `finalOutcome=skipped_reloading`) rather than silent drops. |
+| `ADMISSION` | Must record explicit backpressure outcomes during `reloadState=RELOADING` (`finalOutcome=skipped_reloading`) and `PAUSED_FOR_ROLLBACK` (`finalOutcome=skipped_rollback_pause`) rather than silent drops. |
 | `DSL_EVAL` | Sandbox failures must be recorded as `finalOutcome=sandbox_error` with a specific `finalReason` (for example `cpu_budget_exceeded`, `memory_budget_exceeded`). |
 | `WORK_ITEM_PERSIST` | If durable persistence fails, the audit record must not show success. It must record a persistence failure outcome and must not claim that effects were enqueued. |
 | `TICK_HANDOFF` | `finalOutcome=success` is permitted only when Game Session has accepted commands into tick queues. “DSL evaluated successfully but handoff failed” must be a non-success handoff outcome. |
@@ -82,9 +94,11 @@ Use a single canonical outcome taxonomy across docs, protos, metrics, and dashbo
 | --- | --- | --- |
 | `success` | `TICK_HANDOFF` | Commands accepted into tick queues. |
 | `skipped_reloading` | `ADMISSION` | Explicit reload backpressure; caller may retry with same Trigger Identity if policy allows. |
+| `skipped_rollback_pause` | `ADMISSION` | Explicit rollback backpressure while control-plane rollback pause is active. |
 | `quota_denied` | `ADMISSION` | Script quota or concurrency/capacity denial before DSL evaluation. |
 | `tenant_budget_exceeded` | `ADMISSION` | Tenant budget exhausted. |
 | `version_unavailable` | `ADMISSION` | Unknown/failed/not-ready patch or plugin version. |
+| `pin_state_unavailable` | `ADMISSION` | Bounded-staleness pin cache could not be refreshed from an authoritative source; admission fails closed. |
 | `plugin_component_blocked` | `ADMISSION` | Plugin rejected by component policy. |
 | `plugin_disabled` | `ADMISSION` | Plugin disabled or draining state. |
 | `sandbox_error` | `DSL_EVAL` | Runtime or guard failure; reason required. |
@@ -116,7 +130,8 @@ The matrix below defines what the scheduler does when a firing becomes due under
 | --- | --- | --- |
 | Normal operation | Evaluate once per due firing under budgets and quotas. | One `script_event_audit` row per due Trigger Identity with stage-aware outcomes. |
 | Quota/budget denied | Skip the firing; do not replay later. | `finalStage=ADMISSION` and an explicit deny outcome/reason. |
-| `reloadState=RELOADING` | Do not admit new timer firings; do not backfill by default. | `finalStage=ADMISSION` with `finalOutcome=skipped_reloading` (or equivalent). |
+| `reloadState=RELOADING` | Do not admit new timer firings; do not backfill by default. | `finalStage=ADMISSION` with `finalOutcome=skipped_reloading`. |
+| `PAUSED_FOR_ROLLBACK` | Do not admit new timer firings while rollback cleanup and repin complete. | `finalStage=ADMISSION` with `finalOutcome=skipped_rollback_pause`. |
 | Leader failover / short downtime | May perform bounded catch-up for missed cadence boundaries: at most one synthetic firing per cadence boundary crossed, and never more than a bounded limit per resume window. | Catch-up firings must use `triggerMode=CATCH_UP` and deterministic `scriptEventId` derived from the due point. |
 | Long downtime or sustained overload | No guarantee of eventual execution for every firing; the system converges by running future firings once capacity returns. | Missed firings must be visible as skips/drops in metrics and audit. |
 | Infrastructure error after admission | Do not re-run the DSL body for the same `scriptEventId`. Only idempotent downstream ops may retry. | `finalStage` must reflect where it failed; do not record `success`. |

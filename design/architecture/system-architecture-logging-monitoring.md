@@ -18,6 +18,15 @@ This document describes how FireMUD collects logs, metrics, and traces across al
 - The local Docker Compose stack streams logs to the console by default and may optionally run a small observability stack (for example Prometheus/Grafana/Jaeger) for local debugging. Docker Compose is not treated as the canonical production observability environment; Kubernetes manifests under `k8s/monitoring` remain the source of truth for prod-like deployments.
 - Operators search logs primarily through Kibana. Sample Grafana and Kibana dashboards live under [`design/observability`](../observability) and are described in [Operator Dashboards](./microservices/logging-admin-service/analytics-dashboards.md). The Logging & Admin Service provides a dedicated UI for moderation and audit trails.
 
+### Log Service Identity Contract
+
+To keep Kibana queries and alert triage consistent, log records and alert labels use different identity scopes:
+
+- Log `service` is the runtime emitter identity (normally `spring.application.name` for services and explicit runtime names for infrastructure emitters such as `redis` or `redis-exporter`).
+- Alert `service` may use runtime identity or canonical infra signal identity (for example `redis-coordination`, `postgres-backup`) for routing clarity.
+- Do not use alert-only identities as log `service` values.
+- For infra roles in logs, use additional structured fields (for example `component`, `redis_role`) rather than overloading log `service`.
+
 ## Metrics & Tracing
 
 - **Prometheus** scrapes metrics from all services and triggers alerts via **Alertmanager**.
@@ -137,7 +146,7 @@ New moderation features and admin tools must explicitly document:
 Alertmanager routes alerts based on a small, consistent label set so ownership and severity are always clear:
 
 - Core labels:
-  - `service` – owning runtime service identity (derived from `spring.application.name`), for example `game-session-service`, `tcp-proxy-service`, `spring-cloud-gateway`, `postgres-backup`.
+  - `service` – owning service identity for the alert source. For application alerts, use runtime identity derived from `spring.application.name` (for example `game-session-service`, `tcp-proxy-service`, `spring-cloud-gateway`). For infrastructure/exporter-backed alerts, use the canonical infra identity for that signal (for example `redis-coordination`, `postgres-backup`).
   - `component` – optional, for finer-grained subsystems (for example `tick`, `backup`, `coordination`).
   - `severity` – one of `P0`, `P1`, or `P2`.
   - `alert_class` – optional classifier for non-standard routing (for example `alert_class="test"` for smoke-test alerts that must never page).
@@ -170,8 +179,18 @@ Routing rule requirements:
 
 Service label requirements:
 
-- `service` values in alerts must be runtime-identities that match emitted metric labels (from `spring.application.name`), not ad-hoc domain names.
+- `service` values in alerts must come from the canonical service catalog:
+  - Runtime services: `spring.application.name` identities.
+  - Infra/exporter services: documented infra identities such as `redis-coordination` and `postgres-backup`.
+  Avoid ad-hoc domain names.
 - If an alert expression intentionally spans multiple runtime services (for example, entry-path SLIs across Gateway and TCP Proxy), do not hardcode a single `service` label in rule metadata. Keep `service` from the metric series and use `component` (for example `component="entrypath"`) to group routing and dashboards.
+
+Alert owner mapping guidelines:
+
+- Redis coordination health, tail-loss, AOF growth, and failover alerts: `owner="infra"`.
+- PostgreSQL backup/restore and backup-pause safety alerts: `owner="infra"`.
+- Tick behavior and gameplay-flow correctness alerts (for example replay storms, ledger backlogs, unsafe tick runtime ratios): `owner="gameplay"`.
+- Observability stack availability/routing alerts (Prometheus, Alertmanager, Elasticsearch, Jaeger, Grafana): `owner="platform"`.
 
 ### Alert Fallback Recording Rules
 

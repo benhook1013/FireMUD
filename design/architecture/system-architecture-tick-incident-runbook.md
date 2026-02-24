@@ -24,6 +24,7 @@ When applying scope substitution, use a deterministic mapping source (control-pl
 
 - **Stalled tick region** (lease held but no forward progress)
 - **Tick replay storm or excessive replays**
+- **Durable commit/coordination cleanup divergence**
 - **Stuck tick effect ledger entries** (`SCHEDULED` rows that never converge)
 
 Each scenario below assumes that Redis and database metrics are wired according to the Redis and tick operations docs, and that the tick dashboards under `design/observability/grafana` are available.
@@ -112,6 +113,43 @@ Each scenario below assumes that Redis and database metrics are wired according 
    - For domain-driven replays:
      - Fix idempotency guards, error classification, or handler logic so that effects converge to `first_apply` with fewer retries.
    - Consider temporarily reducing tick fan-out or region density for heavily affected regions until replay rates normalize.
+
+## Durable Commit/Coordination Cleanup Divergence
+
+### Detect (durable commit/coordination cleanup divergence)
+
+- Alert: `TickCleanupLagHigh` fires (`tick_cleanup_lag_ms` sustained above the configured threshold).
+- Metrics and dashboards show:
+  - `tick_durable_commit_total` continues increasing, but `tick_coordination_cleared_total` lags for the same regions.
+  - `tick_cleanup_lag_ms` remains elevated for affected `<tenantId, regionId>` scopes.
+- Logs and traces:
+  - Game Session logs show repeated cleanup retries or failed transitions from durable commit to coordination-cleared.
+  - `tick_execute` traces show long or repeated cleanup-related phases after durable state has been committed.
+
+### Decide (durable commit/coordination cleanup divergence)
+
+- If lag clears quickly and counters re-align, continue monitoring without intervention.
+- If lag persists:
+  - Treat as a coordination cleanup incident first (not a domain correctness incident) unless ledger/backlog signals also indicate stuck effects.
+  - Prefer region-scoped remediation before tenant- or cluster-scoped actions.
+- If cleanup lag is coupled with growing ledger backlog (`tick_effects_pending_total`) and stale `SCHEDULED` age, run replay-controller and ledger remediation flow in parallel.
+
+### Act (durable commit/coordination cleanup divergence)
+
+1. **Scope affected regions**
+   - Identify regions where `tick_durable_commit_total - tick_coordination_cleared_total` stays non-zero and growing.
+   - Correlate with `tick_cleanup_lag_ms` to confirm sustained divergence.
+2. **Inspect cleanup path**
+   - Check Game Session logs and traces for cleanup-token mismatches, Redis write failures, or retry exhaustion in cleanup phases.
+   - Validate Redis health (latency, memory pressure, tail-loss) using Redis coordination dashboards.
+3. **Apply scoped remediation**
+   - For isolated regions, pause and resume tick scheduling to force a clean cleanup cycle.
+   - If a region remains stuck, execute the region-scoped coordination reset flow in `system-architecture-redis-reset-and-recovery.md`.
+   - If ledger backlog also accumulates, trigger ledger replay-controller remediation for the same scope.
+4. **Verify convergence**
+   - Confirm `tick_cleanup_lag_ms` returns to normal envelope.
+   - Confirm `tick_coordination_cleared_total` catches up with durable commits for affected regions.
+   - Ensure no sustained growth remains in `tick_effects_pending_total` for the remediated scope.
 
 ## Stuck Tick Effect Ledger Entries
 

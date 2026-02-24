@@ -118,7 +118,7 @@ Service design docs and per-service READMEs should link to this matrix (or any f
 | `tick:{tenantRegionTag}:meta` | Coordination | **Reset-tolerant** | Epoch/tick guard metadata is dropped; scripts reinitialize metadata under the region lease and/or reset tooling re-establishes it from durable RegionStatus baselines for the new epoch. | `tick:{tenantRegionTag}:meta` is a monotonic guard and coordination helper only; authoritative baselines for `(region_epoch, tickId)` come from PostgreSQL RegionStatus/ledger plus heartbeats. Reset tooling reinitializes `region_epoch` and `current_tick_id` during the tick reset handshake. |
 | `timer:{tenantRegionTag}` and `retry:{tenantRegionTag}` | Coordination | **Reset-tolerant** | Timers and retries for affected regions are discarded; future ticks process only newly scheduled timers/retries. | Only timers/retries that are also represented durably elsewhere (for example, PostgreSQL-backed automation schedules or durable follow-ups) are re-discovered after a reset; region-scoped timer/retry coordination keys themselves are not treated as reconstructible logs. |
 | `tick-executor-lease:{tenantRegionTag}` and tick lock keys (`tick:{tenantRegionTag}:lock:*`) | Coordination | **Reset-tolerant** | Existing leases/locks vanish; new executors reacquire leadership and locks as ticks resume. | Leases and locks are transient; executors reacquire leases and lock state after reset. |
-| `session:game:<tenantId>:<gameInstanceId>:<sessionId>` | Coordination | **Reset-sensitive** | Active sessions are invalidated; players must perform a fresh `LOGIN` and re-establish gameplay sessions. | Non-authoritative but player-visible. Region/tenant resets may discard active sessions; cluster-wide resets require clear operator communication and may force players to log in again. |
+| `session:game:<tenantId>:<gameInstanceId>:<sessionId>` | Coordination | **Reset-sensitive** | Region-scoped resets preserve active sessions by default; tenant- and cluster-scoped resets may invalidate sessions, requiring fresh `LOGIN`. | Non-authoritative but player-visible. Region resets should avoid session eviction unless explicitly requested; broader resets require clear operator communication. |
 | `session:auth:<scope>:<tokenHash>` (for example `session:auth:account:<accountId>:<tokenHash>`, `session:auth:tenant:<tenantId>:<tokenHash>`, `session:auth:global:<accountId>:<tokenHash>`) | Coordination | **Reset-sensitive** | JWT allowlist entries are dropped; internal calls must re-authenticate and obtain new tokens. | Security-critical but non-authoritative. Resets force re-authentication and token re-issuance; see `system-architecture-authentication.md` for full semantics. |
 | `remote:<tenantId>:*` hint markers | Coordination | **Reset-tolerant** | Cross-region follow-ups rely solely on durable tables; hints may be temporarily missing, increasing latency only. Region-scoped coordination resets leave these tenant-scoped hints intact; tenant- and cluster-scoped resets may clear them. | Best-effort cross-region wake-up hints only; durable follow-ups live in PostgreSQL so dropping or retaining hints (including during tenant/cluster resets) affects latency, not correctness. Hint keys are TTL-bounded (default `remote_hint_ttl_ms = 60_000`) so stale hints age out automatically. |
 | `ratelimit:<tenantId>:*` (and optional `:<shard>`) | Cache/Rate-Limit | **Reset-tolerant** | Rate-limit counters reset; future requests rebuild bucket state from zero. | Token buckets are best-effort; resets clear buckets and counters but do not affect authoritative state. Temporary post-reset bursts are acceptable as long as gateway policies still enforce global abuse limits. |
@@ -169,7 +169,7 @@ When coordination state appears incorrect or unhealthy, operators and designers 
      - Cleaning up a small number of malformed entries in a pending set after a known bug.
    - Rules:
      - Repairs must use the shared key builders and Lua registry helpers.
-     - Break‑glass direct mutations to coordination prefixes (`tick:*`, `timer:*`, `retry:*`, `session:*`, `tick-executor-lease:*`) require a follow‑up scoped reset for the affected region/tenant and must be recorded as an incident.
+     - Break‑glass direct mutations to coordination prefixes (`tick:*`, `timer:*`, `retry:*`, `remote:*`, `session:*`, `tick-executor-lease:*`) require a follow‑up scoped reset for the affected region/tenant and must be recorded as an incident.
 
 3. **Otherwise, reset at the smallest safe scope**
    - Choose **Reset** when:
@@ -237,7 +237,7 @@ Expected impact:
 
 Symptoms:
 
-- An operator used `redis-cli` or a raw script to mutate `tick:*`, `timer:*`, `retry:*`, `session:*`, or `tick-executor-lease:*`.
+- An operator used `redis-cli` or a raw script to mutate `tick:*`, `timer:*`, `retry:*`, `remote:*`, `session:*`, or `tick-executor-lease:*`.
 
 Recommended actions:
 

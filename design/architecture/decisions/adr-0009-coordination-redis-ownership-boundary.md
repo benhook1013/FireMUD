@@ -14,7 +14,8 @@ The architecture already distinguishes ownership from participation, but the bou
 
 Coordination Redis ownership is explicit and narrow:
 
-- Game Session Service owns coordination keyspace and schema for gameplay execution (for example `tick:*`, `timer:*`, `retry:*`, `session:*`, and lease-related prefixes).
+- Game Session Service owns gameplay coordination keyspace and schema (for example `tick:*`, `timer:*`, `retry:*`, `session:game:*`, and lease-related prefixes).
+- Account Service owns authentication allowlist/session-auth prefixes (`session:auth:*`) and their lifecycle semantics.
 - Automation & Scripting Service owns the `automation:*` coordination keyspace and scripts for automation scheduling/execution.
 - Non-owner services may participate only through approved shared helpers and documented prefixes/contracts.
 

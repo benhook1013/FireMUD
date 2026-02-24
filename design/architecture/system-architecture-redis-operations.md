@@ -31,7 +31,9 @@ This section centralizes the **normative targets** for Redis behavior that other
 ### Coordination Redis – Core Targets
 
 - **Tail-loss window**
-  - Production-like profiles (`hobby_self_hosted`, `production_clustered`) target a tail-loss envelope of **~1–2 seconds** of coordination activity per `<tenantId, regionId>`, or roughly **≤ 2 × `tick_interval_ms`** where that is larger.
+  - Production-like profiles (`hobby_self_hosted`, `production_clustered`) target a tail-loss envelope computed as:
+    - `tail_loss_budget_ms = max(2000, 2 * tick_interval_ms)`
+  - In common deployments this corresponds to roughly 1–2 seconds of coordination activity per `<tenantId, regionId>`, but the formula above is authoritative.
   - Ephemeral profiles (`dev_local`, certain CI stacks) may accept wider or unbounded tail-loss, but must be clearly labelled as such and **must not** be used to validate tail-loss SLOs.
   - From the tick system’s perspective (see `system-architecture-tick-concepts-and-invariants.md`), any sustained breach of this envelope is a **tick SLO violation**, not just a Redis metric anomaly: it means coordination state inside the tail-loss window can no longer be treated as reliably reflecting the tick effect ledger.
   - Even under SLO breach, domain-level idempotency and the canonical `EffectId` contract still prevent **double-application** of tick effects; what degrades is:
@@ -265,6 +267,9 @@ To make coordination and tick health observable in a consistent way across servi
   - `tick_command_queue_depth{tenantId,regionId}` – aggregate per-region command queue depth.
   - `tick_current_id{tenantId,regionId}` – the last committed tick id for the region, used as a coarse tick progression watermark.
   - `tick_pending_oldest_id{tenantId,regionId}` – the oldest tick id still considered “in-flight” (pending, retrying, or awaiting ledger convergence), used to estimate effective loss/replay windows.
+  - `tick_durable_commit_total{tenantId,regionId}` – count of ticks that reached the durable commit boundary (heartbeat/RegionStatus watermark).
+  - `tick_coordination_cleared_total{tenantId,regionId}` – count of ticks whose coordination state reached the in-flight clearance boundary.
+  - `tick_cleanup_lag_ms{tenantId,regionId}` – lag from durable commit to coordination-cleared for each tick; sustained growth indicates cleanup/recovery pressure even when durable commit continues.
 - **Tick effect ledger**
   - `tick_effects_pending_total{tenantId,regionId}` – count of ledger rows with `status=SCHEDULED`.
   - `tick_effects_applied_total{tenantId,regionId}` – cumulative applied effects.
@@ -445,7 +450,12 @@ These budgets complement the AOF size and restart targets in this document. Envi
    - Stop Redis.
    - Delete or recreate the volume that holds the AOF.
    - Start Redis with an empty keyspace and the desired AOF configuration (`appendonly yes`, `appendfsync everysec`, `aof-use-rdb-preamble yes`, etc.).
-5. Resume ticks and player traffic once services are healthy.
+5. Execute the tick reset handshake for affected scope(s):
+   - Pause ticks/new command intake (if not already paused).
+   - Bump `region_epoch` in PostgreSQL for affected regions.
+   - Run scoped ledger reconcile so old-epoch `SCHEDULED` rows converge to terminal outcomes.
+   - Reinitialize `tick:{tenantRegionTag}:meta` from durable baselines.
+6. Resume ticks and player traffic once services are healthy.
    - Expect players to re-login or restart games.
    - Coordination state is rebuilt from PostgreSQL and fresh gameplay activity.
 
@@ -523,28 +533,29 @@ Several Redis maintenance flows (session cleanup, scoped coordination resets, no
 
 Docs that introduce new maintenance flows must reference this section and describe how their jobs participate in the shared coordination model.
 
-### Runbook: Explicit Coordination Reset
+### Runbook: Explicit Coordination Reset (Full Wipe)
 
-**Goal:** Provide a single, clear mechanism for deliberately starting Coordination Redis from an empty keyspace while keeping the normal posture “AOF persists across rollouts”.
+**Goal:** Provide a clear mechanism for deliberately starting Coordination Redis from an empty keyspace while keeping the normal posture “AOF persists across rollouts”.
 
-This reset is intentionally **rare** – it is used for controlled scenarios such as:
+This full wipe is intentionally **rare** – it is used for controlled scenarios such as:
 
 - Validating reset-tolerant behavior in a test or preview environment.
 - Recovering from mis-keyed coordination prefixes where dropping state is acceptable.
-- Applying a `breaking_requires_reset` Lua change when the upgrade planner indicates a reset is required.
+- Applying a Lua change classified as `requires_cluster_reset`.
 
 The steps mirror the “AOF too large” runbook but are driven by operator intent rather than metric thresholds:
 
-1. **Plan scope**
-   - Decide whether the reset applies:
-     - To a whole Coordination Redis deployment (dev, small clusters), or
-     - To one logical deployment / tenant subset in larger setups (for example, a specific Coordination Redis instance per environment or shard).
-   - Confirm that all affected workloads are classified as **reset-tolerant** in the main Redis architecture doc; do not use this runbook for prefixes marked reset-sensitive or reset-forbidden.
+1. **Plan scope and reset mode**
+   - Decide whether you need:
+     - A **scoped coordination reset** (region/tenant) using the Coordination Reset Model handshake in `system-architecture-redis-reset-and-recovery.md`, or
+     - A **full wipe** of a Coordination Redis deployment (this runbook).
+   - Use scoped reset by default. Use full wipe only when scope cannot be safely isolated or when `requires_cluster_reset` compatibility demands it.
+   - For reset-sensitive prefixes (for example `session:*`), require explicit operator sign-off and player-impact communication before proceeding.
    - Verify that **Coordination Redis and Cache/Rate-Limit Redis are distinct deployments**. Coordination reset tooling and jobs must refuse to run if `FIREMUD_REDIS_COORD_HOST:PORT == FIREMUD_REDIS_CACHE_HOST:PORT`, since a reset in that topology would also discard cache/rate-limit state and violate the role separation guarantees.
 2. **Quiesce gameplay**
    - Pause ticks and stop accepting new gameplay commands for the affected scope using the Game Session admin/control APIs (or by shutting down dependent services for small/self-hosted installs).
    - Wait for in-flight requests to drain; regions should stop advancing and no new `pending` entries should be created.
-3. **Run the reset tooling**
+3. **Run reset tooling (storage-level wipe)**
    - For Kubernetes/Helm deployments:
      - Run the coordination-reset Job or script provided with the charts (for example, the `redis-aof-reset` Job under `charts/firemud/templates/redis-aof-reset-job.yaml`), which:
        - Stops or disconnects the target Redis instance.
@@ -555,14 +566,20 @@ The steps mirror the “AOF too large” runbook but are driven by operator inte
        - Stops the dev stack.
        - Clears the Redis data directory/volume used for Coordination Redis.
        - Restarts the stack so Redis comes up with an empty coordination keyspace.
-4. **Verify health**
+4. **Execute the tick reset handshake**
+   - Before resuming gameplay, run the control-plane reset handshake for the affected scope:
+     - Pause ticks for the selected scope (if not already paused).
+     - Bump `region_epoch` in PostgreSQL for affected regions.
+     - Reconcile old-epoch `SCHEDULED` ledger rows to terminal `APPLIED`/`ABANDONED`.
+     - Reinitialize `tick:{tenantRegionTag}:meta` (`region_epoch`, `current_tick_id`) from durable baselines.
+5. **Verify health**
    - Ensure Coordination Redis is reachable and scripts preload successfully (no persistent `NOSCRIPT` errors).
    - Run a lightweight smoke test:
      - Schedule a tick for a test region.
      - Confirm that locks, `pending`, and timers can be created and cleared as expected.
-5. **Resume gameplay**
+6. **Resume gameplay**
    - Unpause ticks and re-enable command intake for the affected tenants/regions.
-   - Expect players to re-login or restart games; coordination state (locks, queues, timers, sessions) is rebuilt from PostgreSQL and fresh tick activity.
+   - Expect players to re-login or restart games where reset-sensitive prefixes were dropped; coordination state (locks, queues, timers, and possibly sessions) is rebuilt from PostgreSQL and fresh tick activity.
 
 Normal Helm upgrades and restarts **do not** run this reset by default. The reset is always an explicit, operator-driven action guarded by this runbook so that “AOF persists across rollouts” remains the common case.
 
@@ -572,13 +589,13 @@ Not all Redis-backed workloads tolerate coordination resets equally. FireMUD the
 
 - **Reset-tolerant** – workloads that can safely discard their Redis state and rebuild from PostgreSQL and fresh activity using the idempotent replay rules:
   - Tick locks, `pending` entries, timers, retry queues, and conflict metadata.
-  - Short-lived gameplay sessions that rely on Redis only for reconnection windows and volatile state.
 - **Reset-sensitive** – workloads where a reset is acceptable but has visible impact and may require explicit operator sign-off or tenant scoping:
+  - Gameplay/auth session prefixes (`session:game:*`, `session:auth:*`) where reset may force re-login or re-authentication.
   - Certain automation queues or non-critical analytics that can be recomputed or re-enqueued.
 - **Reset-forbidden** – workloads that must not be dropped by generic coordination reset tooling:
   - Future features that treat Redis as a durable component of a long-lived contract (for example, replay timelines, high-value automation contracts, or analytics streams that cannot be recomputed).
 
-Today, Coordination Redis is intentionally used only for reset-tolerant workloads. Any new feature that wants to use Coordination Redis must explicitly declare its reset tolerance class in design docs and, where necessary, use:
+Today, Coordination Redis is intentionally used for reset-tolerant workloads plus explicitly documented reset-sensitive session prefixes (`session:game:*`, `session:auth:*`). Any new feature that wants to use Coordination Redis must explicitly declare its reset tolerance class in design docs and, where necessary, use:
 
 - Separate deployments or prefixes with their own runbooks, or
 - Stronger durable stores (for example PostgreSQL or Kafka) as the primary record of long-lived streams, with Redis limited to cache/index roles that remain reset-tolerant.
@@ -593,7 +610,7 @@ Session lifetimes and coordination resets interact in predictable ways. The tabl
 | --- | --- | --- | --- | --- |
 | Decrease JWT/session TTL without reset | Lower `FIREMUD_AUTH_JWT_EXPIRATION_MS` and/or `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS`, roll out services. | New `session:game:<tenantId>:<gameInstanceId>:<sessionId>` and `session:auth:<scope>:<tokenHash>` keys (for example `session:auth:account:<accountId>:<tokenHash>` and `session:auth:tenant:<tenantId>:<tokenHash>`) get shorter TTLs; existing keys keep their original TTL until they expire naturally. | Existing sessions continue until their original TTLs; new logins and reconnects enforce the tighter lifetime immediately. | Not required. Operators may optionally run per‑tenant session cleanup (delete `session:game:<tenantId>:*`) to accelerate convergence if memory is tight. |
 | Decrease JWT/session TTL and intentionally force reconnect | Same as above, then proactively delete session keys for selected tenants/regions (for example, `session:game:<tenantId>:*`) during a maintenance window. | Coordination Redis drops affected session keys immediately; memory for those sessions is reclaimed at once. | All affected players must log in again; reconnect attempts for deleted sessions behave like expired sessions. | Recommended when making a large TTL reduction and wanting a clean cut-over or when reclaiming session memory quickly. |
-| Coordination reset with many active sessions | Follow the **Explicit Coordination Reset** runbook for the targeted scope; all coordination prefixes, including `session:*`, are dropped for the affected deployment/regions. | Coordination Redis restarts with an empty keyspace for coordination prefixes (locks, timers, queues, `session:*`, etc.). | All gameplay sessions are effectively terminated; players must log in again and sessions are recreated under the new coordination state. | No separate session cleanup is needed; the reset itself drops `session:*` keys. Operators should communicate expected reconnect behavior to players and monitor memory/latency as sessions rebuild. |
+| Full coordination wipe with many active sessions | Follow the **Explicit Coordination Reset (Full Wipe)** runbook; all coordination prefixes, including `session:*`, are dropped for the affected deployment/scope. | Coordination Redis restarts with an empty keyspace for coordination prefixes (locks, timers, queues, `session:*`, etc.). | Gameplay sessions are terminated; players must log in again and sessions are recreated under the new coordination state. | No separate session cleanup is needed; the full wipe drops `session:*` keys. Operators should communicate expected reconnect behavior to players and monitor memory/latency as sessions rebuild. |
 
 ### Cluster-Safe Session Cleanup Procedure (No `KEYS`)
 
@@ -617,7 +634,7 @@ The **Lua Compatibility Registry** lives in the shared `firemud-common` module a
 - `outcomesSupported` (explicit, low-cardinality outcome enum) and per-outcome caller policy (retryable, terminal, fatal-on-unknown).
 - A compatibility tag and rationale:
   - `compatible` – the new script is **behavior-preserving** for all `(KEYS, ARGV, Redis state)` combinations produced by current services and supported `schemaVersion` values.
-  - `breaking_requires_reset` – the new script **changes behavior** for any existing state or inputs (including AOF replay of old calls) and therefore requires a coordination reset or an explicit multi-version/migration strategy.
+  - `requires_region_reset` / `requires_tenant_reset` / `requires_cluster_reset` – the new script changes behavior for existing state or inputs (including AOF replay of old calls) and therefore requires the corresponding reset scope (or explicit multi-version/migration strategy).
 - Optional metadata such as:
   - A brief **compatibility rationale** (for example, “refactor only; behavior verified via golden tests”).
   - The minimum/maximum `schemaVersion` values known to exist in production deployments.
@@ -633,13 +650,13 @@ For the purposes of this registry, **`compatible` is intentionally narrow**:
   - Additional observability (metrics, logs) that does not affect control flow.
   - Targeted bug fixes where the previous behavior was already *outside* the documented contract; such fixes must be explicitly called out in the rationale.
 
-All other changes must be tagged `breaking_requires_reset` or accompanied by explicit multi-version handling and data migration for affected keys.
+All other changes must be tagged with the appropriate `requires_*_reset` scope (or accompanied by explicit multi-version handling and data migration for affected keys).
 
-#### Concrete examples: `compatible` vs `breaking_requires_reset`
+#### Concrete examples: `compatible` vs `requires_*_reset`
 
 To make the boundary less subjective, use these examples as guidance:
 
-- Changes that are **not compatible** (must be `breaking_requires_reset` or multi-version), even if they “feel minor”:
+- Changes that are **not compatible** (must be `requires_region_reset`, `requires_tenant_reset`, or `requires_cluster_reset`, or multi-version), even if they “feel minor”:
   - Changing a script’s return code for any valid input (for example, from `"OK"` to `"ALREADY_APPLIED"`), because callers and AOF replay may observe different outcomes.
   - Turning an error/early-return path into a mutating path (for example, previously returning `"STALE_LOCK"` without writes, now attempting a best-effort recovery write).
   - Reinterpreting existing `schemaVersion = N` payload fields (for example, changing how a flag or counter is mapped to behavior) without first draining or migrating data written under the old semantics.
@@ -649,12 +666,12 @@ To make the boundary less subjective, use these examples as guidance:
   - Adding **extra observability only** (for example, incrementing a metrics counter or emitting structured logs) without branching on those signals.
   - Fixing behavior that was already outside the documented contract (for example, a bug where a script sometimes failed to enforce a documented `STALE_LEASE` check) when the compatibility rationale calls this out explicitly and golden tests cover both before/after states.
 
-When in doubt, default to `breaking_requires_reset` or introduce explicit multi-version handling; optimistic “this is probably compatible” classifications without golden tests are not acceptable.
+When in doubt, default to the smallest safe `requires_*_reset` scope or introduce explicit multi-version handling; optimistic “this is probably compatible” classifications without golden tests are not acceptable.
 
 ### Runbook: Upgrading scripts
 
 1. Classify changes:
-   - For each modified script, decide whether the change is intended to be behavior-preserving (`compatible`) or intentionally changes semantics (`breaking_requires_reset` or multi-version).
+   - For each modified script, decide whether the change is intended to be behavior-preserving (`compatible`) or intentionally changes semantics (`requires_region_reset`, `requires_tenant_reset`, `requires_cluster_reset`, or multi-version).
    - For any script tagged `compatible`:
      - Update the registry rationale to describe why it is compatible.
      - Add or update **compatibility tests** in `firemud-common` that exercise a representative set of Redis fixtures (including edge cases and partially applied states) and prove that running the old script vs the new script with the same `(KEYS, ARGV)` yields identical:
@@ -663,14 +680,14 @@ When in doubt, default to `breaking_requires_reset` or introduce explicit multi-
      - For outcomes documented as non-mutating, include assertions proving zero writes (including no TTL refresh side effects).
      - Include a caller-contract check: unknown outcomes are treated as fatal by call sites and are surfaced via metrics/alerts.
      - CI must run these golden tests and fail if any observable behavior diverges.
-   - For scripts tagged `breaking_requires_reset` or scripts that introduce multi-version handling, document the upgrade expectations in the registry (for example, “v2 adds support for schemaVersion=3; old data must be drained or migrated before support for schemaVersion=1 is removed”).
+   - For scripts tagged `requires_*_reset` or scripts that introduce multi-version handling, document the upgrade expectations in the registry (for example, “v2 adds support for schemaVersion=3; old data must be drained or migrated before support for schemaVersion=1 is removed”).
 2. Run the **coordination upgrade planner** (dev-tools):
    - Compares the current deployment’s registry to the target version.
-   - Reports whether a **coordination reset** is required based on scripts tagged `breaking_requires_reset` and any recorded multi-version windows that have closed.
+   - Reports whether a **coordination reset** is required based on scripts tagged `requires_*_reset` and any recorded multi-version windows that have closed.
 3. If all changes are `compatible` and their compatibility tests pass:
    - Deploy new scripts and services as part of the normal rollout.
    - Rely on existing `NOSCRIPT` handling and Lua preload behavior.
-4. If any script is `breaking_requires_reset` (and not covered by a live multi-version strategy):
+4. If any script is tagged `requires_*_reset` (and not covered by a live multi-version strategy):
    - Use the upgrade planner’s reset plan:
      1. Pause ticks and stop accepting new gameplay commands globally (or for the affected tenants/regions).
      2. Stop the Coordination Redis instance (or logical deployment) used for ticks and sessions.
@@ -686,7 +703,7 @@ When in doubt, default to `breaking_requires_reset` or introduce explicit multi-
    - Verify the tick effect ledger reports no `SCHEDULED` rows for the affected `(tenantId, regionId)` pairs.
    - Ensure any in-flight commands are either retried or marked `ABANDONED` at the domain layer.
 
-The registry, together with its golden compatibility tests in `firemud-common`, remains the **single source of truth** for whether coordination state can be safely replayed across script versions (`compatible`) or must be reset (`breaking_requires_reset` or explicit migration).
+The registry, together with its golden compatibility tests in `firemud-common`, remains the **single source of truth** for whether coordination state can be safely replayed across script versions (`compatible`) or must be reset (`requires_*_reset` or explicit migration).
 
 ---
 
@@ -817,7 +834,7 @@ Scoped reset tooling intentionally operates over **known prefix families** only;
   - Compares discovered key prefixes against the canonical catalogs:
     - Reset policy matrix and coordination catalogs in `system-architecture-redis-reset-and-recovery.md`.
     - Cache/Rate-Limit key catalog in `system-architecture-redis-cache.md`.
-  - Emits metrics (for example, `redis.unknown_prefix_keys_total` tagged with the raw prefix) and logs samples of unknown keys.
+  - Emits metrics (for example, `redis_unknown_prefix_keys_total` tagged with the raw prefix) and logs samples of unknown keys.
 - The scanner must:
   - Run at most one worker per deployment and treat itself as a low-priority **maintenance job** with strict runtime and rate limits similar to session cleanup.
   - Never mutate keys; it is purely observational.
@@ -834,7 +851,7 @@ This detector does not replace the canonical catalogs; it acts as a guardrail th
 - Repeated `STALE_LEASE`, `UNSUPPORTED_EPOCH`, or other Lua script responses that reference inconsistent `region_epoch` values for the same `<tenantId, regionId>`.
 - PostgreSQL epoch validation rejecting writes because a second executor attempted to bump the same `coordination_meta` row with an older epoch.
 - Redis/Sentinel/Cluster alerts showing simultaneous primaries for the same hash slot or other signs of split-brain.
-- Explicit dual-leader metrics such as `redis.coordination_dual_leader_detected_total{tenantId,regionId}` raised by lease-checking scripts or the control plane.
+- Explicit dual-leader metrics such as `redis_coordination_dual_leader_detected_total{tenantId,regionId}` raised by lease-checking scripts or the control plane.
 
 ### Runbook (control-plane implementation)
 

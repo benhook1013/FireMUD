@@ -21,11 +21,13 @@ Orchestrates live game sessions, including tick execution, player input validati
 - Own the authoritative, pinned `scriptPatchVersion` for each running game instance and enforce version fencing for script-generated work.
 - Publish **coordination and tick health metrics** (per `<tenantId, regionId>`) and expose admin/control APIs that allow authorized services (such as Logging & Admin) to pause/resume tick execution and participate in scoped coordination resets.
 - Front gameplay login commands and session binding, calling Account Service to verify credentials and obtain JWTs/tokens while enforcing single-session control for each character.
+- Mint and attach short-lived internal `SessionAttestation` payloads on gameplay-service gRPC calls so downstream gameplay services can verify delegated player identity (`accountId`, `tenantId`, `gameInstanceId`, `characterId`, `sessionId`) in addition to mTLS caller identity.
 
 ## Architecture / Design Notes
 
 - Coordinates with Redis to store volatile session state and command queues.
 - Communicates with other microservices exclusively via gRPC.
+- For gameplay-domain gRPC calls made on behalf of a player, includes a signed `SessionAttestation` (as defined in Authentication & Authorization) and rotates it on bounded TTL; downstream gameplay services must reject calls missing valid attestation even when mTLS is present.
 - Communicates game lifecycle changes to other services via gRPC so they can react to games starting or ending.
 - Provides a single point of truth for current tick and world time.
 - Ensures atomic command execution using Redis Lua scripts for all multi-key operations; the service does not rely on Redis `MULTI`/`EXEC` for consistency. Tick-related multi-key operations (locks, pending state, queues, timers, retry metadata) are performed exclusively via the shared Lua scripts described in [Redis Architecture](../../system-architecture-redis.md#atomicity-and-concurrency-control); ad-hoc multi-key sequences against tick keys are not allowed outside these scripts.

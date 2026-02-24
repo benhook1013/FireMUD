@@ -43,6 +43,19 @@ exists for a version in the Published or Active state described in
 the referenced asset must be treated as immutable; replacing the binary requires
 creating a new `game_assets` row and a new `version_asset` mapping.
 
+Artifact lifecycle state for each exported prefix must be persisted in a dedicated state table:
+
+- `version_asset_artifact`:
+  - `tenant_id`
+  - `version_id`
+  - `artifact_state` (`STAGED`, `PUBLISHED`, `FAILED`, `TOMBSTONED`, `PURGED`)
+  - `state_epoch` (monotonic CAS token)
+  - `manifest_hash`
+  - `last_workflow_id` (publish/repair workflow identity)
+  - `updated_at`
+
+`(tenant_id, version_id)` is unique in `version_asset_artifact`. All lifecycle transitions must use compare-and-set on `state_epoch` so concurrent publish/repair/purge workflows cannot race.
+
 The `data` column uses PostgreSQL `BYTEA` type to store the file contents.
 When returned by the REST API this byte array is Base64 encoded by default so the JSON response remains text based.
 
@@ -77,6 +90,28 @@ Script-only patches (see `system-architecture-versioning-runtime.md`) do not cha
 The publish workflow uses a dedicated Saga step to export assets and update
 manifest metadata:
 
+Artifact lifecycle states for a `(tenantId, versionId)` prefix are explicit:
+
+- `STAGED` – publish attempt has written candidate bytes but version is not yet Published.
+- `PUBLISHED` – publish succeeded and `manifestHash` is committed for the immutable bytes.
+- `FAILED` – publish workflow failed for this version.
+- `TOMBSTONED` – failed or abandoned artifact is quarantined for diagnostics and excluded from activation paths.
+
+Allowed transitions:
+
+- `STAGED -> PUBLISHED` on successful `ExportAssets` completion and `manifestHash` commit.
+- `STAGED -> FAILED` when publish workflow fails before activation eligibility.
+- `FAILED -> STAGED` only through an explicit repair/retry workflow.
+- `FAILED -> TOMBSTONED` when operators abandon retry and quarantine bytes.
+- `TOMBSTONED -> STAGED` only via explicit operator-approved restore workflow.
+- `TOMBSTONED -> PURGED` (physical deletion) only after deletion eligibility checks pass; purge is not an implicit publish compensation action.
+
+Transition enforcement contract:
+
+- Every transition is persisted by updating `version_asset_artifact` with CAS on `state_epoch`.
+- Failed CAS means another workflow already changed state; callers must reload current state and re-evaluate.
+- Publish Saga and operator runbooks must both use this same state record; object-store state is never treated as authoritative by itself.
+
 - For each `(tenantId, versionId)` the Saga runs an `ExportAssets` step that:
   - Selects assets by joining `version_asset` to `game_assets` for the target
     `(tenantId, versionId)`; assets not referenced via `version_asset` are **never**
@@ -97,13 +132,22 @@ manifest metadata:
   - Retrying `ExportAssets` for a Published/Active version must be bit-for-bit identical (the overwrite is a retry mechanism, not a mutation mechanism).
   - Version metadata must record a `manifestHash` (and optionally per-asset `contentHash` values) so operators and CI can detect drift between database mappings and object-store contents.
   - If `manifestHash` verification fails for a Published/Active version, treat it as a data corruption or process bug incident. Do not “fix” the version in place; repair requires republishing a new `versionId` or executing an operator-approved recovery workflow that re-derives the exact bytes from the authoritative database mappings.
-- If any downstream publish step fails, the Saga compensates by either deleting
-  the newly written prefix or marking the version as **Failed** in the Game
-  Design Service so it cannot be activated. Failed versions follow the
-  lifecycle rules in
+- If any downstream publish step fails, the Saga must:
+  - mark the version as **Failed** in the Game Design Service so it cannot be activated, and
+  - transition the asset artifact to `TOMBSTONED` instead of silently deleting bytes.
+
+  Manual deletion of failed artifact prefixes is not part of normal compensation. Purge is a separate operator workflow after failure triage. Failed versions follow the lifecycle rules in
   [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md)
   and require an explicit repair or retry action before they can transition
   back to Draft or Published.
+
+Deletion-eligibility authority:
+
+- Game Design Service is the sole authority for deletion eligibility checks through `CanDeleteVersionAssets(tenantId, versionId)`.
+- The check must validate all of the following before returning deletable:
+  - no non-Retired `version_asset` references remain,
+  - no reachable `revision_asset` / branch references require retained bytes,
+  - no normalized template or launch metadata still references the version prefix.
 
 The database is optimized for design-time editing rather than long-term bulk
 storage. Implementations should treat `game_assets` as:

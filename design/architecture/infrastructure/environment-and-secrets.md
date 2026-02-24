@@ -78,6 +78,7 @@ JWT and session-related environment variables, including `FIREMUD_AUTH_JWT_SECRE
 - `../system-architecture-security.md`
 
 The catalog’s Authentication section also documents how the JWT expiration and session safety margin combine into a single derived session TTL, including operational guidance for tightening or relaxing this window.
+For player-facing environments (`hobby-self-hosted`, staging, production), use file-mounted JWT key material via `FIREMUD_AUTH_JWT_SECRET_PATH`; inline-only JWT secrets are for local/dev and explicitly ephemeral stacks.
 
 ### Service Discovery
 

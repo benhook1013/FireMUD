@@ -13,7 +13,7 @@ This document lists automated jobs that run on a schedule. Each entry links to t
 
 ## Kubernetes Cluster (Production)
 
-The following CronJobs run in the **production** Kubernetes cluster. Development and staging clusters rely on ad hoc backup and restore scripts instead of scheduled jobs unless explicitly configured otherwise.
+The following CronJobs run in the **production** Kubernetes cluster. Production is the only environment class with mandatory scheduled backup jobs by default.
 
 | Scheduled Item | Frequency (UTC) | Documentation | Configuration |
 | --- | --- | --- | --- |
@@ -30,3 +30,14 @@ By default, staging is treated as **disposable** and does not run the production
 - When staging is temporarily restored from production backups (for example for disaster recovery rehearsals), operators must run post-restore secret hardening before opening the environment to playtests (see `../system-architecture-backup-recovery.md#post-restore-secret-hardening`).
 - PRs that modify `k8s/` run [`.github/workflows/validate-kustomize-overlays.yml`](../../../.github/workflows/validate-kustomize-overlays.yml), which blocks staging backup schedule resources unless `k8s/overlays/stage/STAGING_BACKUPS_ENABLED` is present.
 - If staging schedules are intentionally enabled, the PR should include the marker file, an explicit operator rationale, and a rollback plan to return staging to disposable defaults.
+
+## Hobby / Self-Hosted Environments
+
+`hobby-self-hosted` environments are player-facing and must run backups with a minimum baseline, even when schedules are operator-managed:
+
+- Logical PostgreSQL backups at least every 24 hours.
+- Retention of at least the latest 7 daily backups.
+- At least one restore verification drill every 30 days.
+- Documented post-restore secret-hardening steps before reopening player traffic.
+
+Operators may choose tighter cadence or longer retention, but not lower than this baseline. Tooling can be local scripts, CronJobs, or managed services as long as the minimum baseline is met and recorded in deployment notes.

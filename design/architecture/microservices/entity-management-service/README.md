@@ -150,6 +150,15 @@ Testing expectations for these caches follow the “Class A (versioned, correctn
   Service rather than this service, but all item instances and inventories remain owned and persisted here.
 - Entity graphs cache inventory relationships for fast lookups.
 
+#### Instance termination cleanup contract
+
+Synthetic room-ground containers scoped by `(tenantId, gameInstanceId, roomInstanceId)` must be removed through the cross-service `InstanceTermination` Saga described in World Management docs:
+
+- Game Session must already have closed admissions for the target instance before cleanup starts.
+- Entity Management owns cleanup of containers and contained items for a terminating `gameInstanceId`.
+- Cleanup must be idempotent and guarded by a durable saga step key so retries converge without double-deletes.
+- Entity Management must not treat world row deletion as implicit cleanup confirmation; World Management marks an instance `TERMINATED` only after this service confirms cleanup completion.
+
 ### gRPC APIs
 
 - `CreateCharacter` – builds a new player character from a template.
@@ -157,6 +166,7 @@ Testing expectations for these caches follow the “Class A (versioned, correctn
 - `QueryInventory` – lists items for an entity with pagination.
 - `ListCharactersByAccount` – returns all characters owned by an account across tenants.
 - `ListRoomEntities` – returns players, NPCs, and visible items present in a room, scoped by `(tenantId, gameInstanceId, roomInstanceId)` (a `RoomInstanceRef`) so room presence and ground items are instance-safe.
+- `GetDraftDesignDigest` – returns publish-gating digest for Draft entity templates keyed by `(tenantId, versionId)`. Minimum response fields are `{tenantId, versionId, appliedCommitId or lastAppliedRevisionId, contentDigest, digestSchemaVersion}`. `contentDigest` must cover only version-scoped entity template/binding rows (for example item/NPC templates, loot mappings, balance curves) and must exclude live runtime entities and audit/history metadata.
 
 ### LOOK entity listing contract
 

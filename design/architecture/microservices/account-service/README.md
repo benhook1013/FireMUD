@@ -111,6 +111,8 @@ resolved during authentication.
 | --- | --- | --- |
 | `GET` | `/ping` | Simple health check |
 | `POST` | `/auth/login` | Authenticate and establish a control-plane session for first-party UIs by returning a Browser JWT; the token is allowlisted server-side via `session:auth:*` entries for revocation |
+| `POST` | `/auth/logout` | Revoke the currently presented control-plane token (`session:auth:*:<tokenHash>` delete for that token) |
+| `POST` | `/auth/logout-all` | Revoke all active control-plane tokens for the authenticated account by advancing `session:auth:revoked_after:account:<accountId>` |
 | `POST` | `/auth/request-password-reset` | Request password reset |
 | `POST` | `/auth/complete-password-reset` | Complete password reset |
 | `POST` | `/auth/request-email-verification` | Send verification email |
@@ -232,7 +234,9 @@ The Account Service always creates exactly one account-scoped entry per issued t
 
 See [Environment & Secrets](../../infrastructure/environment-and-secrets.md#authentication) for configuration details.
 
-Browser JWTs and Service JWTs share the same core claim structure (for example, `accountId`, required `iat`, `globalRoles`, `scopedRoles`) but differ in their intended audiences and issuance flows as described in the Authentication & Authorization design. New endpoints must document which profile they issue or accept and validate the expected audience before trusting a token.
+Browser JWTs and Service JWTs share the same claim schema (`iss`, `sub`, `jti`, `accountId`, `aud`, `iat`, `nbf`, `exp`, optional `globalRoles`, optional `scopedRoles`) but differ in their intended audiences and issuance flows as described in the Authentication & Authorization design. New endpoints must document which profile they issue or accept and validate the expected audience before trusting a token.
+
+The Account Service is the sole writer for auth revocation watermark keys (`session:auth:revoked_after:account:*`, `session:auth:revoked_after:tenant:*`). Other services request revocation via events or APIs and must not write watermark keys directly.
 
 ### Two-Factor Authentication
 
@@ -293,6 +297,9 @@ The Game Session Service translates these codes into the text-protocol `ERROR <C
   ```
 
   Error responses use the standard `shared.v1.ErrorDetail` structure and `AuthenticationErrorCodes` as described below.
+- `POST /auth/logout` – revoke only the currently presented token. The service computes `tokenHash` from `Authorization: Bearer <token>`, deletes associated `session:auth:*:<tokenHash>` allowlist entries, and emits an audit event.
+- `POST /auth/logout-all` – revoke all active tokens for the authenticated account by setting `session:auth:revoked_after:account:<accountId>` to now and emitting an audit event. This operation is idempotent.
+  - The account watermark is the immediate revocation authority. Existing `session:auth:tenant:*` and `session:auth:global:*` keys for the account may be removed asynchronously by bounded background cleanup and are not required for immediate correctness.
 - `GET /.well-known/jwks.json` – JWKS for verifying issued JWT tokens.
 - `POST /auth/request-email-verification` – send a verification email for the account.
 - `POST /auth/verify-email` – confirm the verification token.

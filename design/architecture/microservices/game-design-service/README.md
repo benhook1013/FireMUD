@@ -18,6 +18,8 @@ manifest files.
   `manifest.json` so runtime clients can load themes and logos without calling
   this service.
 - Act as the sole owner of game asset publishing to the S3-compatible object store; downstream services and clients read published assets via configured URLs and do not write directly to the asset store. Logical world and entity templates remain in PostgreSQL schemas owned by World Management, Entity Management, and related domain services and are not stored as blobs in the asset store.
+- Own version lifecycle state and CAS epoch metadata (`versionState`, `versionStateEpoch`) and expose control-plane APIs for activation/retirement-safe transitions.
+- Expose control-plane integrity APIs such as `GetDesignControlPlaneDigest` and `CanDeleteVersionAssets` used by publish gating and asset-retention workflows.
 
 ## Architecture / Design Notes
 
@@ -46,17 +48,17 @@ The Game Design Service owns the **authoring** view of script patches, while the
   - Validates and persists the new script graphs, bindings, and metadata, including cross-asset compatibility checks against the pinned `baseVersionId` (for example, ensuring referenced ability identifiers exist and match the ability schema for that base version).
   - Starts a Saga that upserts compiled definitions and bindings into the Automation & Scripting Service schema for the target `<tenantId, scriptPatchVersion>`.
   - Treats the publish as **asynchronous** from a runtime perspective: the version is recorded as published in design-time tables, but its readiness for execution is determined by the Automation & Scripting Service.
-- For each `<tenantId, scriptPatchVersion>`, the Automation & Scripting Service tracks a lifecycle (`PENDING_VALIDATION`, `ONLOAD_RUNNING`, `READY`, `FAILED`, `ROLLED_BACK`) as described in `design/architecture/system-architecture-scripting-dsl-reference-and-lifecycle.md#script-patch-lifecycle`.
-- The Game Design Service queries this lifecycle via a read-only API such as `GetScriptPatchStatus(tenantId, scriptPatchVersion)` and/or subscribes to `ScriptPatchStatusChanged` events so that UIs can show:
+- For each `<tenantId, scriptPatchVersion>`, the Automation & Scripting Service tracks a tenant readiness lifecycle (`PENDING_VALIDATION`, `ONLOAD_RUNNING`, `READY`, `FAILED`) as described in `design/architecture/system-architecture-scripting-dsl-reference-and-lifecycle.md#script-patch-lifecycle`.
+- The Game Design Service queries readiness via a read-only API such as `GetScriptPatchStatus(tenantId, scriptPatchVersion)` and subscribes to tenant + instance rollout events (`ScriptPatchTenantStatusChanged`, `ScriptPatchInstanceRolloutChanged`) so that UIs can show:
   - That a patch is published but still **pending runtime validation**.
   - Whether `onLoad` initialization has succeeded or failed for each tenant.
-  - When a patch has been rolled back at runtime for a tenant.
+  - When a patch has been rolled back or repinned for a specific game instance.
 
 In the design UI:
 
 - `PublishScriptPatchVersion` should surface that “published” means “accepted into design-time history”, not “active at runtime”.
   - The UI must treat runtime readiness as a separate phase and should show an explicit “runtime validation pending” state until Automation & Scripting reports `READY` (or `FAILED`) for `<tenantId, scriptPatchVersion>`.
-  - Any control-plane workflow that would pin/promote a patch for a running game instance must be blocked until `READY` is observed via `GetScriptPatchStatus` and/or `ScriptPatchStatusChanged`.
+  - Any control-plane workflow that would pin/promote a patch for a running game instance must be blocked until `READY` is observed via `GetScriptPatchStatus` and/or `ScriptPatchTenantStatusChanged`.
 - Failed `onLoad` runs that result in `FAILED` patch status should be visible to designers, with links back to `script_event_audit` entries and automation metrics for debugging.
 - Design-time publish Saga failures (for example, invalid ability references) are tracked in Game Design’s own versioning state (for example, a `PUBLISH_FAILED_DESIGN` status) and do **not** create or update patch lifecycle rows in the Automation & Scripting Service. UIs should clearly distinguish these design-time failures from runtime `FAILED` states reported by the Automation & Scripting Service so creators know whether a patch failed before or after reaching the runtime.
 
@@ -112,6 +114,9 @@ remains anchored in the Game Design Service.
 - `PublishScriptPatchVersion` – creates a script-only patch version referencing a base version.
 - `ListVersions` – enumerates published versions for selection when creating a
   game instance.
+- `GetVersionState` / `CompareAndSetVersionState` – authoritative control-plane version lifecycle reads and CAS transitions.
+- `GetDesignControlPlaneDigest` – digest surface for publish gating over normalized metadata.
+- `CanDeleteVersionAssets` – deletion-eligibility oracle for version-scoped asset prefixes.
 
 ## Dependencies
 

@@ -2,7 +2,7 @@
 
 This document is the **hub** for FireMUD’s scripting and automation architecture. It outlines how custom in-game behavior is executed through a sandboxed scripting framework and points to focused reference docs for details. It is intentionally high level: for precise DSL semantics and sandbox behavior, treat `design/architecture/system-architecture-scripting-dsl-reference-and-lifecycle.md` and `design/architecture/microservices/automation-scripting-service/sandbox-runtime-design.md` as the canonical specifications.
 
-For cross-service invariants (especially tick queue ownership and rollback safety), also treat `design/architecture/system-architecture-scripting-contracts.md` as a tie-breaker when other docs disagree.
+Document conflict resolution order is defined in `design/architecture/system-architecture-scripting-normative-contract-tables.md#document-precedence-normative`.
 
 For control-plane operations (pinning/rollback of `scriptPatchVersion`, pause/resume, and required status events), see `design/architecture/system-architecture-scripting-control-plane-api.md`.
 
@@ -14,9 +14,7 @@ It complements:
 
 ## Implementation Status
 
-This section summarizes where the scripting and automation framework stands relative to the target-state design as of 2025-12-04. For fine-grained sandbox semantics and their implementation status, refer to the matrix in `design/architecture/microservices/automation-scripting-service/sandbox-runtime-design.md#implementation-status`.
-
-For the most accurate, fine-grained status, refer to the [Automation & Scripting Service Task List](../project-management/task-list-automation-scripting-service.md).
+This section is a high-level snapshot. For the current implementation ledger and fine-grained progress, use `design/project-management/task-list-automation-scripting-service.md` as the source of truth. For sandbox-specific status, see `design/architecture/microservices/automation-scripting-service/sandbox-runtime-design.md#implementation-status`.
 
 - **Implemented and in active use**
   - Sandboxed script runtime and core Automation & Scripting Service, including quota enforcement via `ScriptQuotaService` and Redis-backed `ScriptTickService` staging.
@@ -35,9 +33,9 @@ Maintainers should update this section whenever major scripting features land or
 
 ### Area Status Snapshot
 
-The table below summarizes the high-level implementation status of major areas in the scripting and automation stack:
+The table below summarizes high-level implementation status categories; verify current state against the implementation ledger linked above:
 
-| Area | Status (as of 2025-12-04) | Notes |
+| Area | Status | Notes |
 | --- | --- | --- |
 | Script runtime & DSL | Implemented | Sandbox execution, core Automation & Scripting Service, and visual DSL editor are in active use, including basic quotas. |
 | Automation queues & script ticks | Implemented | `automation:queue:<tenantId>:<entityId>` and `automation:tick:{tenantScriptTag}:...` staging are implemented; script work items flow into tick commands as described under [TL;DR Flow](#tldr-flow). |
@@ -181,10 +179,10 @@ sequenceDiagram
 This hub intentionally keeps only high-level flows and routing; detailed topics live in focused documents:
 
 - **DSL semantics, terminology, lifecycle, determinism**
-  - `design/architecture/system-architecture-scripting-dsl-and-lifecycle.md`
+  - `design/architecture/system-architecture-scripting-dsl-reference-and-lifecycle.md`
 
 - **Deployment & versioning for scripts**
-  - `design/architecture/system-architecture-scripting-dsl-and-lifecycle.md` (see **Deployment & Versioning** and **Hot Reload & Resume Behavior**)
+  - `design/architecture/system-architecture-scripting-dsl-reference-and-lifecycle.md` (see **Script Patch Lifecycle** and **Hot Reload & Resume Behavior**)
   - `design/architecture/system-architecture-versioning-runtime.md` (see **Script-only patch versions**)
 
 - **Examples and common patterns**

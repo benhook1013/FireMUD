@@ -78,6 +78,35 @@
         }
       ],
       "id": 5
+    },
+    {
+      "type": "graph",
+      "title": "Durable Commit vs Coordination Cleared",
+      "targets": [
+        {
+          "expr": "rate(tick_durable_commit_total[5m])",
+          "legendFormat": "durable {{tenantId}}/{{regionId}}",
+          "refId": "A"
+        },
+        {
+          "expr": "rate(tick_coordination_cleared_total[5m])",
+          "legendFormat": "cleared {{tenantId}}/{{regionId}}",
+          "refId": "B"
+        }
+      ],
+      "id": 6
+    },
+    {
+      "type": "graph",
+      "title": "Tick Cleanup Lag (ms)",
+      "targets": [
+        {
+          "expr": "tick_cleanup_lag_ms",
+          "legendFormat": "{{tenantId}}/{{regionId}}",
+          "refId": "A"
+        }
+      ],
+      "id": 7
     }
   ]
 }

@@ -1,6 +1,11 @@
 # FireMUD System Architecture: Backup & Disaster Recovery
 
-This document defines the backup schedule and disaster recovery procedures for FireMUD. Backups are taken only for **production**. Development and staging environments rely on ad hoc snapshots as needed.
+This document defines the backup schedule and disaster recovery procedures for FireMUD. Backup expectations are defined by environment class:
+
+- **production**: scheduled backups and verification are mandatory.
+- **hobby-self-hosted**: backups are mandatory with a minimum baseline (at least daily logical backup, at least 7 daily restore points retained, and at least one restore drill every 30 days). Operators may choose cadence/automation above this floor.
+- **staging**: disposable by default with no scheduled backups unless explicitly enabled for specific goals.
+- **local-dev / ci-preview / dev-demo-cluster**: disposable or ad hoc backup posture unless explicitly upgraded.
 
 Staging is treated as **disposable by default**: it does not run the production backup CronJobs unless operators explicitly install staging-specific schedules. Operators may temporarily restore staging from production backups for disaster recovery rehearsals or investigations; when doing so, staging must follow the same post-restore secret hardening flow before it is considered player-facing again (see [Post-Restore Secret Hardening](#post-restore-secret-hardening)).
 
@@ -122,6 +127,7 @@ Run `dev-tools/backups/setup-local-backup.sh` to deploy MinIO, create the `firem
   1. Restore the most recent `pg_dump` file from the `firemud-pg-dumps` volume or object store.
   2. Restart services to resume operation.
   3. Coordination state is treated as reset-tolerant and is rebuilt as services run (where possible) from PostgreSQL state and new activity as described in the Redis architecture and runbooks; cache/rate-limit keys refill on demand.
+     - Reset-sensitive session prefixes (`session:game:*`, `session:auth:*`) may be dropped as part of this rebuild; expect player re-login and internal token re-authentication where applicable.
 
 ## Redis Persistence
 
@@ -177,8 +183,15 @@ This behavior is distinct from **failover**:
     3. Restart services so they pick up the restored database:
 
        ```bash
-       kubectl rollout restart deployment -n <namespace>
-       kubectl rollout restart statefulset -n <namespace>
+       kubectl rollout restart deployment --all -n <namespace>
+       kubectl rollout restart statefulset --all -n <namespace>
+       ```
+
+       Wait for rollouts to complete before marking restore steps successful:
+
+       ```bash
+       kubectl rollout status deployment --all -n <namespace>
+       kubectl rollout status statefulset --all -n <namespace>
        ```
 
     4. If dumps live in `PG_DUMP_BUCKET`, download them first with:
@@ -237,13 +250,16 @@ Prometheus and Alertmanager should expose and alert on these metrics using rules
 
 - **Missed backups (P1)**
   - Expression: “no successful backup in the last N minutes” (for example, `time() - backup_last_success_timestamp_seconds > 90 * 60` in production).
-  - Labels: `service="postgres-backup"`, `severity="P1"`, `owner="platform"`, `runbook="design/architecture/system-architecture-backup-recovery.md#backup-verification-restoration-testing"`.
+  - Labels: `service="postgres-backup"`, `severity="P1"`, `owner="infra"`, `runbook="design/architecture/system-architecture-backup-recovery.md#backup-verification-restoration-testing"`.
 - **Missed verification (P1/P2)**
   - Expression: “no successful verification in the last 24h” (for example, `time() - backup_verify_last_success_timestamp_seconds > 24 * 60 * 60`).
   - Labels similar to the backup alert, with a clear `runbook` annotation.
 - **Backup pause too long (P1)**
-  - Expression: pause duration exceeds an agreed budget (for example `backup_tick_pause_duration_seconds{scope="all"} > 30`).
-  - Labels: `service="postgres-backup"`, `severity="P1"`, `owner="platform"`, `runbook="design/architecture/system-architecture-backup-recovery.md#backup-verification-restoration-testing"`.
+  - Expression: pause duration exceeds an agreed budget for any scope (for example `max by (scope) (backup_tick_pause_duration_seconds) > 30`).
+  - Labels: `service="postgres-backup"`, `severity="P1"`, `owner="infra"`, `runbook="design/architecture/system-architecture-backup-recovery.md#backup-verification-restoration-testing"`.
+- **Backup scope stuck paused (P1)**
+  - Expression: a pause gauge remains asserted unexpectedly (for example `backup_ticks_paused == 1` for multiple minutes).
+  - Labels: `service="postgres-backup"`, `severity="P1"`, `owner="infra"`, `runbook="design/architecture/system-architecture-backup-recovery.md#backup-verification-restoration-testing"`.
 
 Grafana dashboards under `design/observability/grafana` should include a small “Backups” section or dedicated dashboard that visualizes:
 

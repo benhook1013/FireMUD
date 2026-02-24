@@ -63,6 +63,11 @@ When using a self-hosted MinIO cluster as the asset store:
      `version_id` as `runtime_version`, and the version is no longer listed as
      launchable in `game_manifest`) are eligible for asset deletion.
    - Retired eligibility must also account for **design-time dependencies**: the version must not be referenced by any game templates. Operators should validate that no normalized `game_template_*_ref` rows in the Game Design Service still reference `(tenantId, versionId)` before deleting the corresponding object-store prefix.
+   - Asset deletion eligibility must account for design-history reachability as well as version mappings. Use the Game Design control-plane check `CanDeleteVersionAssets(tenantId, versionId)` that validates:
+     - no non-Retired `version_asset` references remain,
+     - no reachable `revision_asset` / branch references require retained bytes,
+     - no template or launch metadata still points to the version prefix.
+   - Operators must verify the persisted artifact lifecycle row (`version_asset_artifact`) is in a deletable terminal state (`TOMBSTONED` or retired-path equivalent) before issuing purge actions. Do not infer lifecycle state solely from object-store contents.
    - Published assets are discovered via the `version_asset` mapping table in the
      Game Design Service. Operators must never delete individual objects that are
      still referenced by any `version_asset` row for a non-retired version.
@@ -97,7 +102,13 @@ leaves a version incomplete or unusable:
   start game instances against it.
 - Failed versions may have partially written prefixes in the object store. Do
   not delete these manually unless the Game Design Service has already marked
-  the version Failed and there is no intention to retry publish.
+  the version Failed and there is no intention to retry publish. Failed prefixes
+  should normally be marked `TOMBSTONED` and retained for diagnostics.
+- State transitions for failed artifacts must follow the asset lifecycle contract:
+  - `FAILED -> STAGED` only through documented repair/retry workflow.
+  - `FAILED -> TOMBSTONED` when retry is abandoned.
+  - `TOMBSTONED -> PURGED` only after `CanDeleteVersionAssets(tenantId, versionId)` passes.
+- All transitions above are CAS-guarded using the artifact state epoch in `version_asset_artifact`. If a transition fails CAS, reload current state and re-run the approved workflow rather than forcing manual object-store edits.
 - Preferred recovery is to:
   - Investigate and fix the underlying issue (for example missing assets or
     permission errors).
@@ -109,5 +120,6 @@ leaves a version incomplete or unusable:
     `ExportAssets` so manifests are regenerated consistently for the new schema
     version rather than attempting manual edits.
 - If clean-up is required after deciding to abandon a Failed version, follow
-  the same safety checks as for Retired versions, then remove the corresponding
+  the same safety checks as for Retired versions (including
+  `CanDeleteVersionAssets(tenantId, versionId)`), then remove the corresponding
   `<tenant>/<version>/` prefix from the object store.

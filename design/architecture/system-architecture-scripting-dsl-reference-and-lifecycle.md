@@ -2,7 +2,7 @@
 
 This document is the **canonical reference** for the scripting DSL’s terminology, execution lifecycle, semantics, and failure modes. It is intended for implementers and backend developers integrating with the Automation & Scripting Service, Tick System, and related infrastructure. For sandbox enforcement details (CPU, time, and memory budgets, and how failures surface in `script_event_audit`), pair this document with `design/architecture/microservices/automation-scripting-service/sandbox-runtime-design.md`, which is the canonical spec for the sandbox engine itself.
 
-For cross-service invariants (especially tick queue ownership, version fencing, and dry-run safety), also treat `design/architecture/system-architecture-scripting-contracts.md` as a tie-breaker when other docs disagree.
+Document conflict resolution order is defined in `design/architecture/system-architecture-scripting-normative-contract-tables.md#document-precedence-normative`. This document provides DSL/runtime semantics and must align with higher-precedence contract documents.
 
 It is a companion to:
 
@@ -126,7 +126,7 @@ The pointer/index format must be forward-compatible (versioned envelope) so it c
 
 - Rebuilding `automation:queue:*` from the outbox must be safe to run repeatedly and concurrently (idempotent projection).
 - `ScriptTickService` must dedupe drain/handoff by `outboxWorkItemId` (not by Redis list position) so queue resets, re-indexing, and retries do not cause double-handoff.
-- `CancelPendingWorkItemsForPatch` must be implemented as an outbox state transition (`workItemStatus=CANCELED`) so cancellation is durable even if Redis is reset. Cancellation must be reflected in `script_event_audit` stage-aware outcomes (for example `finalStage=ADMISSION` with a cancel outcome/reason for newly arriving triggers, and non-success outcomes for already persisted work that is canceled before handoff).
+- `CancelPendingWorkItemsForPatch` and `CancelPendingWorkItemsForPluginVersion` must be implemented as outbox state transitions (`workItemStatus=CANCELED`) so cancellation is durable even if Redis is reset. Cancellation must be reflected in `script_event_audit` stage-aware outcomes (for example `finalStage=ADMISSION` with a cancel outcome/reason for newly arriving triggers, and non-success outcomes for already persisted work that is canceled before handoff).
 
 ### Operational Constraints
 
@@ -142,6 +142,7 @@ The pointer/index format must be forward-compatible (versioned envelope) so it c
 - **Generation rules**
   - For **external events** (for example, `onEnterRegion`, `onSpawn`, `onCommand`, and custom service events), the **event source** that owns the trigger (typically the Game Session Service or another domain service) creates a `scriptEventId` when the event is first emitted and includes it in the `TriggerScriptEvent` payload. If the caller retries the gRPC call due to infrastructure errors, it must reuse the same `scriptEventId` so the Automation & Scripting Service can recognize the trigger as the same logical event.
   - For **scheduler-originated events** such as `onInterval` and `onTimerExpire`, the **Automation & Scripting Service scheduler** creates the `scriptEventId` when the timer or interval becomes due.
+  - For **dry-run/test invocations**, the Automation & Scripting Service generates `scriptEventId` by default so test tooling does not create cross-client collisions. If caller-supplied IDs are allowed for specific tooling, they must still be validated in the dry-run namespace and rejected on collision.
 
 - **Uniqueness scope**
   - Uniqueness is enforced over the full **Trigger Identity** field set, including `gameInstanceId` and (for gameplay/tick-aligned triggers) `regionEpoch`. The authoritative field list and required due-point rules for scheduler triggers live in `design/architecture/system-architecture-scripting-normative-contract-tables.md#table-1-trigger-identity-required-fields`.
@@ -319,7 +320,12 @@ From the Automation & Scripting Service’s point of view, each `<tenantId, scri
 
 ## Script Patch Lifecycle
 
-Script patches move through a shared state machine that is owned by the Automation & Scripting Service and observed by the Game Design and Game Session services. The lifecycle is tracked per `<tenantId, scriptPatchVersion>` and governs whether a patch may be pinned as the active version for any game in that tenant.
+Script patches have two related but distinct lifecycle views:
+
+- A tenant patch lifecycle owned by the Automation & Scripting Service and tracked per `<tenantId, scriptPatchVersion>`.
+- A per-instance pin rollout lifecycle owned by Game Session/control-plane orchestration and tracked per `<tenantId, gameInstanceId, scriptPatchVersion>`.
+
+The tenant lifecycle governs patch readiness and eligibility. The instance lifecycle governs rollout/rollback for running games.
 
 The canonical states are:
 
@@ -327,19 +333,20 @@ The canonical states are:
 - `ONLOAD_RUNNING` – `onLoad` handlers for scripts in the patch are executing for the tenant. These executions are keyed by `<tenantId, scriptId, scriptPatchVersion>` and must be idempotent.
 - `READY` – all `onLoad` handlers for the patch have completed successfully for the tenant. The patch is eligible to become the `activePatchVersion` for games in that tenant, and Game Session may pin it as the current `scriptPatchVersion`.
 - `FAILED` – one or more `onLoad` handlers for the patch have failed for the tenant with a logical, sandbox, or infrastructure error after retries are exhausted. The previous `activePatchVersion` remains in use, and the failed patch is not eligible to be pinned.
-- `ROLLED_BACK` – an operator has explicitly repinned a game or tenant back to a previous `scriptPatchVersion` via Logging & Admin or Game Session tooling. The rolled-back patch remains in the database for audit purposes but is not active.
 
 Typical transitions are:
 
 1. `PENDING_VALIDATION → ONLOAD_RUNNING` when Automation & Scripting begins `onLoad` initialization for the tenant after successfully ingesting a published patch from Game Design. Patches whose publish Saga fails in Game Design (for example, ability schema mismatches) never enter this lifecycle; from Automation’s perspective they do not exist or remain invisible runtime-only.
 2. `ONLOAD_RUNNING → READY` when all `onLoad` executions for scripts in the patch succeed for the tenant.
 3. `ONLOAD_RUNNING → FAILED` when any `onLoad` execution fails fatally after bounded retries; the previous `activePatchVersion` remains in effect.
-4. `READY → ROLLED_BACK` when operators repin a game or tenant to an older patch using the control-plane APIs described in the Automation & Scripting Service README and the quotas and operations document. In practice this is driven by control-plane services (Game Session or Logging & Admin) emitting a rollback/status-change event (for example, `ScriptPatchRollbackRequested`) that Automation & Scripting consumes to update lifecycle state; Automation does not unilaterally decide to roll back patches.
+
+Per-instance rollout state is tracked separately (for example `PINNED`, `ROLLED_BACK`, `REPINNED`) and is driven by control-plane APIs/events (`SetPinnedScriptPatchVersion`, `RollbackScriptPatchVersion`, `ScriptPatchPinChanged`). An instance rollback does not imply tenant patch state transition away from `READY`.
 
 Automation & Scripting exposes this lifecycle to other services via:
 
 - A read-only API such as `GetScriptPatchStatus(tenantId, scriptPatchVersion)` that returns the current state and relevant timestamps.
-- An event such as `ScriptPatchStatusChanged`, emitted whenever a patch transitions between states for a tenant, so Game Design and Logging & Admin can update their views and UIs.
+- Tenant readiness events (`ScriptPatchTenantStatusChanged`) emitted when `<tenantId, scriptPatchVersion>` transitions between readiness states.
+- Instance rollout events (`ScriptPatchInstanceRolloutChanged`) emitted when `<tenantId, gameInstanceId, scriptPatchVersion>` rollout history changes (for example `PINNED` / `ROLLED_BACK` / `REPINNED`).
 
 When a trigger arrives at the Automation & Scripting Service:
 
@@ -485,7 +492,7 @@ for the current leadership and sharding model.
   - updates bindings and metadata, and
   - transitions scripts through reload states (for example, `reloadState=RELOADING`) to avoid partial visibility.
 - During reloads, triggers are **paused or skipped** while in-flight runs drain under existing concurrency settings:
-  - New triggers for the affected tenant are not admitted; attempts to schedule additional runs receive an explicit backpressure outcome (for example `skipped_reloading`). For low-rate external events, callers may retry with the same `scriptEventId` using a bounded backoff policy; audit records must remain keyed by Trigger Identity and must not multiply rows per retry.
+  - New triggers for the affected tenant are not admitted; attempts to schedule additional runs receive explicit backpressure outcomes (`skipped_reloading` during reload, `skipped_rollback_pause` during rollback pause). For low-rate external events, callers may retry with the same `scriptEventId` using a bounded backoff policy; audit records must remain keyed by Trigger Identity and must not multiply rows per retry.
   - In-flight runs remain bounded by each script’s configured `maxConcurrent` and `concurrencyPolicy` (for example, `queue_until_free`); any short per-script waiting queues are allowed to drain, but no new entries are added while `reloadState=RELOADING`.
   - Pending timer-based triggers that became due during reload remain in the scheduler’s timer indexes and resume after reload with recalculated `nextTick` / `nextRunAt` so cadences remain coherent.
 - On success, the new `scriptPatchVersion` becomes active for future triggers; on failure:
@@ -520,7 +527,7 @@ For audit records, outcomes are **stage-aware** (admission vs DSL evaluation vs 
 Retry behavior:
 
 - Logical failures (`sandbox_error`, `validation_error`, `quota_denied`, `disabled_due_to_errors`, `version_unavailable`) are treated as **final** for a trigger; the scheduler does not re-run the script body for the same `scriptEventId`.
-- Reload backpressure outcomes (for example `finalOutcome=skipped_reloading` at `finalStage=ADMISSION`) are not treated as final for low-rate external events; callers may retry the same Trigger Identity until admitted or until their bounded retry policy expires.
+- Backpressure outcomes (for example `finalOutcome=skipped_reloading` or `finalOutcome=skipped_rollback_pause` at `finalStage=ADMISSION`) are not treated as final for low-rate external events; callers may retry the same Trigger Identity until admitted or until their bounded retry policy expires.
 - Infrastructure errors **may be retried** by lower layers following platform-wide retry policies and idempotency contracts, but those retries operate only on idempotent downstream operations, not on the DSL body.
 
 When script components call other services over gRPC, they must pass a stable idempotency key derived from Trigger Identity plus tick context when applicable (for example including `entityId`, `eventType`, `scriptPatchVersion`, `scriptEventId`, and `tickId`/`regionEpoch`) and rely on the transaction strategies in `design/architecture/system-architecture-transactions.md` so those downstream operations can be safely retried without duplicating effects.
@@ -552,10 +559,10 @@ Operators and designers should rely on automation metrics and `script_event_audi
 
 ### `onLoad` Semantics and Failure Handling
 
-The `onLoad` lifecycle event is used to initialize shared script state for a given `<tenantId, scriptPatchVersion>` before that patch becomes active:
+The `onLoad` lifecycle event is used to initialize shared script state for scripts in a given `<tenantId, scriptPatchVersion>` before that patch becomes active:
 
 - `onLoad` handlers run **after** static validation and compilation succeed, but **before** the patch is marked `READY` for a tenant and before the Game Session Service pins it as the active `scriptPatchVersion` for any game in that tenant.
-- Each `onLoad` execution is keyed by `<tenantId, scriptPatchVersion>` and is treated as at-most-once; repeated attempts (for example, after transient infrastructure errors) must be idempotent.
+- Each `onLoad` execution is keyed by `<tenantId, scriptId, scriptPatchVersion>` and is treated as at-most-once; repeated attempts (for example, after transient infrastructure errors) must be idempotent.
 - Handlers are expected to:
   - Use idempotent operations and stable idempotency keys when calling downstream services, following patterns from `design/architecture/system-architecture-transactions.md`.
   - Avoid irreversible side effects that cannot be safely retried or compensated.
@@ -571,4 +578,4 @@ Failure handling:
 
 All `onLoad` runs are recorded in `script_event_audit` with `eventType=onLoad`, the target `scriptPatchVersion`, and their final stage-aware outcome (`finalStage`, `finalOutcome`, `finalReason`), so operators can verify initialization state for each patch and tenant.
 
-In practice, individual `onLoad` executions are keyed by `<tenantId, scriptId, scriptPatchVersion>`, and patch-level readiness for `<tenantId, scriptPatchVersion>` is derived from the aggregate of these per-script runs: a patch becomes `READY` for a tenant only after all `onLoad` handlers for scripts in that patch have completed successfully, and any script-level `onLoad` failure leaves the patch in a `FAILED` state with the previous `activePatchVersion` remaining in use.
+Patch-level readiness for `<tenantId, scriptPatchVersion>` is derived from the aggregate of per-script `onLoad` runs: a patch becomes `READY` for a tenant only after all `onLoad` handlers for scripts in that patch have completed successfully, and any script-level `onLoad` failure leaves the patch in a `FAILED` state with the previous `activePatchVersion` remaining in use.

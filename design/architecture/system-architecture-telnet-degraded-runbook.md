@@ -27,7 +27,9 @@ For the design of the Telnet and protocol-bridging path, see:
      - `tcpproxy.connections.limit.exceeded` for sustained non-zero values, which indicate global or per-IP caps are rejecting new connections.
      - `tcpproxy.telnet.discarded` for spikes that may reflect malformed Telnet sequences, buffer overflows, repeated malformed `SESSION` envelopes, or upstream backpressure that forces the proxy to close connections (for example `tcpproxy.telnet.discarded{reason="gateway_buffer_full"}` when the Telnet → Gateway input buffer reaches its configured ceiling).
      - `tcpproxy.websocket.reconnects` and `tcpproxy.websocket.reconnect.delay` for repeated Proxy → Gateway WebSocket bridge connection attempts and backoff delays (these correlate with Telnet disconnects because the proxy fail-closes when it cannot maintain the bridge).
+     - Circuit-breaker/open-admission indicators for sustained Gateway unreachability (for example counters of quick rejects with `backend_unavailable`) to distinguish intentional protective rejects from random network churn.
      - `tcpproxy.tls.misconfig` and `tcpproxy.gateway.handshake.failures{reason=...}` for TLS/mTLS configuration issues.
+     - MCP protection indicators for negotiation loops and control-line floods (for example `tcpproxy.telnet.discarded{reason="mcp_budget"}` and MCP negotiation failure counters) to distinguish protocol-tooling regressions from generic Telnet instability.
      - If Telnet client IP preservation relies on PROXY protocol, verify that `tcpproxy.telnet.discarded{reason="proxy_protocol"}` is not elevated; sustained `proxy_protocol` discard reasons often indicate a misconfigured Telnet edge proxy (for example PROXY headers sent to the wrong listener or malformed headers).
 4. **Compare Telnet vs WebSocket flows**
    - Pick a specific `{gameInstanceId, tenantId}` (or user) when available and:
@@ -53,11 +55,16 @@ For the design of the Telnet and protocol-bridging path, see:
      - Confirm that the public Telnet `LoadBalancer` fronts a dedicated Telnet edge proxy (for example HAProxy) and that it forwards to the TCP Proxy Service using PROXY protocol on the internal-only listener/port configured by `TCP_PROXY_PROXY_PROTOCOL_PORT`.
      - Ensure the raw Telnet listener (`TCP_PROXY_PORT`) is not PROXY-enabled and is not exposed directly on the Internet in production; accepting PROXY headers from public clients allows client-IP spoofing.
      - When PROXY protocol is not enabled (or source IP is not preserved), treat `TCP_PROXY_MAX_CONNECTIONS_PER_IP` as a best-effort heuristic and rely primarily on global `TCP_PROXY_MAX_CONNECTIONS` and higher-layer rate limits, as described in the TCP Proxy design and Deployment Environments docs.
+   - If MCP negotiation failures or MCP budget discards are elevated:
+     - Confirm whether a recent client/tool rollout changed MCP handshake behavior.
+     - Tune MCP guardrails (`TCP_PROXY_MCP_NEGOTIATION_FAILURE_MAX`, `TCP_PROXY_MCP_NEGOTIATION_FAILURE_WINDOW_MS`, `TCP_PROXY_MCP_MAX_ACTIVE_CORDS`, `TCP_PROXY_MCP_MAX_ACTIVE_DATA_TAGS`, `TCP_PROXY_MCP_MAX_CONTROL_LINES_PER_SEC`) only as needed, and prefer fixing misbehaving client scripts before broadly relaxing limits.
 
 3. **Run Telnet smoke tests**
    - Use the Telnet smoke script described in the TCP Proxy README (or the `dev-echo-loop.sh` flow) to:
      - Connect to the proxy with `telnet` or a test client.
-     - Send `SESSION` + `LOGIN` + `LOOK` and confirm that responses match the WebSocket path for the same account.
+     - Run baseline gameplay admission without advanced hints: `LOGIN` + `PLAY` + `LOOK`.
+     - Run advanced attach hint path: `SESSION` + `LOGIN` + `PLAY` + `LOOK`.
+     - Confirm both flows match expected WebSocket behavior for the same account/character.
      - Capture the raw transcript and include it in incident notes.
 
 4. **Escalation and mitigation**
@@ -96,6 +103,7 @@ When inspecting Telnet-side disconnects, prefer reasoning in terms of the standa
 - Treat `policy_violation` closes as non-retriable or very low-rate retriable; they usually indicate client behaviour that must change (scripts, bots, abusive traffic) rather than platform outages.
 - Treat `backend_unavailable` closes as indicators of core gameplay outages or edge-to-gateway bridge failures, comparable to WebSocket `1013` (`backend_unavailable`) from the gateway, and prioritise checking Game Session, Redis, and Gateway health (including whether the Telnet → Gateway buffer is filling, as indicated by `tcpproxy.telnet.discarded{reason="gateway_buffer_full"}`) before tuning Telnet limits.
 - Treat `idle_timeout` and `logout` as expected lifecycle noise rather than indicators of incidents unless volumes spike unexpectedly.
+- If correlating with WebSocket dashboards, use the bounded close `subreason` taxonomy from Gateway Architecture (`user_logout`, `takeover`, `gateway_restart`, `admin_termination`, `none`) so planned edge restarts are not misclassified as player-driven logout volume.
 
 ### Web-Only WebSocket Degradation Playbook
 
