@@ -16,21 +16,21 @@ testcontainers = "1.21.4"
 
 [libraries]
 # Spring Boot Starters
-spring-boot-starter = { module = "org.springframework.boot:spring-boot-starter", version = "4.0.2" }
-spring-boot-starter-actuator = { module = "org.springframework.boot:spring-boot-starter-actuator", version = "4.0.2" }
-spring-boot-starter-data-jpa = { module = "org.springframework.boot:spring-boot-starter-data-jpa", version = "4.0.2" }
-spring-boot-starter-data-redis = { module = "org.springframework.boot:spring-boot-starter-data-redis", version = "4.0.2" }
-spring-boot-starter-data-redis-reactive = { module = "org.springframework.boot:spring-boot-starter-data-redis-reactive", version = "4.0.2" }
-spring-boot-starter-aop = { module = "org.springframework.boot:spring-boot-starter-aop", version = "4.0.2" }
-spring-boot-starter-mail = { module = "org.springframework.boot:spring-boot-starter-mail", version = "4.0.2" }
-spring-boot-starter-web = { module = "org.springframework.boot:spring-boot-starter-web", version = "4.0.2" }
-spring-boot-starter-validation = { module = "org.springframework.boot:spring-boot-starter-validation", version = "4.0.2" }
-spring-boot-starter-jdbc = { module = "org.springframework.boot:spring-boot-starter-jdbc", version = "4.0.2" }
-spring-boot-starter-cache = { module = "org.springframework.boot:spring-boot-starter-cache", version = "4.0.2" }
-spring-boot-starter-test = { module = "org.springframework.boot:spring-boot-starter-test", version = "4.0.2" }
-spring-boot-starter-websocket = { module = "org.springframework.boot:spring-boot-starter-websocket", version = "4.0.2" }
-spring-boot-starter-webflux = { module = "org.springframework.boot:spring-boot-starter-webflux", version = "4.0.2" }
-spring-boot-configuration-processor = { module = "org.springframework.boot:spring-boot-configuration-processor", version = "4.0.2" }
+spring-boot-starter = { module = "org.springframework.boot:spring-boot-starter", version = "4.0.3" }
+spring-boot-starter-actuator = { module = "org.springframework.boot:spring-boot-starter-actuator", version = "4.0.3" }
+spring-boot-starter-data-jpa = { module = "org.springframework.boot:spring-boot-starter-data-jpa", version = "4.0.3" }
+spring-boot-starter-data-redis = { module = "org.springframework.boot:spring-boot-starter-data-redis", version = "4.0.3" }
+spring-boot-starter-data-redis-reactive = { module = "org.springframework.boot:spring-boot-starter-data-redis-reactive", version = "4.0.3" }
+spring-boot-starter-aop = { module = "org.springframework.boot:spring-boot-starter-aop", version = "4.0.3" }
+spring-boot-starter-mail = { module = "org.springframework.boot:spring-boot-starter-mail", version = "4.0.3" }
+spring-boot-starter-web = { module = "org.springframework.boot:spring-boot-starter-web", version = "4.0.3" }
+spring-boot-starter-validation = { module = "org.springframework.boot:spring-boot-starter-validation", version = "4.0.3" }
+spring-boot-starter-jdbc = { module = "org.springframework.boot:spring-boot-starter-jdbc", version = "4.0.3" }
+spring-boot-starter-cache = { module = "org.springframework.boot:spring-boot-starter-cache", version = "4.0.3" }
+spring-boot-starter-test = { module = "org.springframework.boot:spring-boot-starter-test", version = "4.0.3" }
+spring-boot-starter-websocket = { module = "org.springframework.boot:spring-boot-starter-websocket", version = "4.0.3" }
+spring-boot-starter-webflux = { module = "org.springframework.boot:spring-boot-starter-webflux", version = "4.0.3" }
+spring-boot-configuration-processor = { module = "org.springframework.boot:spring-boot-configuration-processor", version = "4.0.3" }
 
 flyway-core = { module = "org.flywaydb:flyway-core", version = "12.0.1" }
 flyway-database-postgresql = { module = "org.flywaydb:flyway-database-postgresql", version = "12.0.1" }
@@ -78,6 +78,6 @@ testcontainers-junit-jupiter = { module = "org.testcontainers:junit-jupiter", ve
 testcontainers-postgresql = { module = "org.testcontainers:postgresql", version = "1.21.4" }
 
 [plugins]
-spring-boot = { id = "org.springframework.boot", version = "4.0.2" }
+spring-boot = { id = "org.springframework.boot", version = "4.0.3" }
 flyway = { id = "org.flywaydb.flyway", version = "12.0.1" }
 protobuf = { id = "com.google.protobuf", version = "0.9.6" }
