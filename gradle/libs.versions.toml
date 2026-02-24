@@ -63,7 +63,7 @@ argon2 = { module = "de.mkammerer:argon2-jvm", version = "2.12" }
 
 grpc-spring-boot-starter = { module = "io.github.lognet:grpc-spring-boot-starter", version = "5.2.0" }
 postgresql = { module = "org.postgresql:postgresql", version = "42.7.10" }
-aws-sdk-s3 = { module = "software.amazon.awssdk:s3", version = "2.41.29" }
+aws-sdk-s3 = { module = "software.amazon.awssdk:s3", version = "2.42.0" }
 h2 = { module = "com.h2database:h2", version = "2.4.240" }
 
 # Keep Springdoc on 2.x until we migrate to Spring Boot 4.x. Springdoc 3.x depends on Spring Boot 4.x artifacts,
