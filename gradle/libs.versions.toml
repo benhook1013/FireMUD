@@ -32,8 +32,8 @@ spring-boot-starter-websocket = { module = "org.springframework.boot:spring-boot
 spring-boot-starter-webflux = { module = "org.springframework.boot:spring-boot-starter-webflux", version = "4.0.3" }
 spring-boot-configuration-processor = { module = "org.springframework.boot:spring-boot-configuration-processor", version = "4.0.3" }
 
-flyway-core = { module = "org.flywaydb:flyway-core", version = "12.0.1" }
-flyway-database-postgresql = { module = "org.flywaydb:flyway-database-postgresql", version = "12.0.1" }
+flyway-core = { module = "org.flywaydb:flyway-core", version = "12.0.2" }
+flyway-database-postgresql = { module = "org.flywaydb:flyway-database-postgresql", version = "12.0.2" }
 
 mapstruct = { module = "org.mapstruct:mapstruct", version = "1.6.3" }
 mapstruct-processor = { module = "org.mapstruct:mapstruct-processor", version = "1.6.3" }
@@ -79,5 +79,5 @@ testcontainers-postgresql = { module = "org.testcontainers:postgresql", version 
 
 [plugins]
 spring-boot = { id = "org.springframework.boot", version = "4.0.3" }
-flyway = { id = "org.flywaydb.flyway", version = "12.0.1" }
+flyway = { id = "org.flywaydb.flyway", version = "12.0.2" }
 protobuf = { id = "com.google.protobuf", version = "0.9.6" }
