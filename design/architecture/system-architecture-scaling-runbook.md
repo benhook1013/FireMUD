@@ -10,6 +10,25 @@ For the conceptual overview of scaling, see `design/architecture/system-architec
 - Ensure **Redis and PostgreSQL capacity** scales ahead of or alongside service replicas.
 - Avoid sudden, large jumps in tick-region concurrency without monitoring Redis latency and database saturation.
 
+## Pre-Scale Topology Decision Gate (Required)
+
+Before applying scaling changes, classify the change:
+
+- **Replica-only scaling**:
+  - Adds/removes service replicas or resource limits without changing region boundaries or entity-to-region mapping.
+  - Safe to execute with normal rollout and validation.
+- **Topology-changing scaling**:
+  - Any split/merge/re-home of regions, or any change that moves entities between region mappings.
+  - Must follow the topology-change protocol from `system-architecture-ticks.md`:
+    1. Freeze/fence affected scope.
+    2. Converge ledger outcomes.
+    3. Bump `region_epoch` for mapping changes.
+    4. Migrate coordination keys via shared tooling.
+    5. Reconcile cross-region follow-ups.
+    6. Resume.
+
+Do not treat topology-changing scaling as a simple replica adjustment.
+
 ## Scaling Application Services
 
 1. **Identify Hot Paths**
@@ -20,7 +39,7 @@ For the conceptual overview of scaling, see `design/architecture/system-architec
    - Apply changes via Helm or Kustomize for the target environment.
 3. **Validate Behavior**
    - Monitor request latency, error rates, and tick duration metrics.
-   - Ensure tick regions remain **HEALTHY** per the tick health rules in `design/architecture/system-architecture-tick-concepts-and-invariants.md` (for example, `tick_execution_time_ms_p95`/`tick_execution_time_ms_p99` and `tick_execution_time_ms_p99 / tick_lock_ttl_ms`) and that Redis tail-loss SLOs from `design/architecture/system-architecture-redis-operations.md` are not being violated.
+   - Ensure tick regions remain in canonical non-incident states (`RUNNING` or bounded `DEGRADED`) per `design/architecture/system-architecture-tick-concepts-and-invariants.md` and that Redis tail-loss SLOs from `design/architecture/system-architecture-redis-operations.md` are not being violated.
 
 ## Scaling Redis
 
@@ -49,7 +68,7 @@ When deciding **what** to scale, prefer signals tied to the tick model and Redis
 
 - Tick duration vs budget (primary safety ratio):
   - Watch `tick_execution_time_ms_p95` and `tick_execution_time_ms_p99` (recording rules derived from `tick_execution_time_ms_bucket`) relative to **lock TTLs** as described in `system-architecture-tick-concepts-and-invariants.md` (that is, `tick_execution_time_ms_p99 / tick_lock_ttl_ms`).
-  - Treat `tick_execution_time_ms_p99 / tick_lock_ttl_ms` as the primary safety ratio for tick runtime; regions that sustain ratios near the “Degraded/Unsafe” thresholds in the concepts doc should first reduce region density per Game Session instance or add Game Session replicas before changing tick cadence.
+  - Treat `tick_execution_time_ms_p99 / tick_lock_ttl_ms` as the primary safety ratio for tick runtime; regions that sustain ratios near `DEGRADED`/`STALLED` transition thresholds from the concepts doc should first reduce region density per Game Session instance or add Game Session replicas before changing tick cadence.
   - For intuition, you may also track `tick_execution_time_ms_p99 / tick_interval_ms`, but decisions should be grounded in the TTL-based ratio since `lock_ttl_ms` is derived from `tick_interval_ms` via the canonical formulas.
 - Tail-loss envelopes:
   - Monitor tail-loss metrics such as `redis_coordination_tail_loss_ms{tenantId,regionId}` and related Redis tail-loss SLO metrics from `system-architecture-redis-operations.md`.
@@ -69,12 +88,25 @@ The exact safe limits for a deployment depend on hardware and tuning, but the fo
 
 - **Per-Game Session instance region density**
   - For tick intervals around `100–250ms`, start with **no more than 50–100 active regions** per Game Session pod.
-  - If `tick_execution_time_ms_p99 / tick_lock_ttl_ms` regularly approaches the Degraded/Unsafe thresholds from the tick concepts doc for any region, treat that as a signal to reduce regions per pod or increase pod resources before tightening tick cadence.
+  - If `tick_execution_time_ms_p99 / tick_lock_ttl_ms` regularly approaches the canonical `DEGRADED`/`STALLED` thresholds from the tick concepts doc for any region, treat that as a signal to reduce regions per pod or increase pod resources before tightening tick cadence.
 - **Per-region coordination load**
   - Aim for `tick:{tenantRegionTag}:pending` to represent at most **one in-flight tick** plus a small buffer of staged work; thousands of uncommitted effects for a single region should be treated as an anomaly and investigated.
   - Keep `timer:{tenantRegionTag}` and `retry:{tenantRegionTag}` counts per region within the “tens of thousands” envelope from the Redis operations doc; sustained higher values usually indicate that timers or retries are being used as data stores rather than scheduling hints.
 - **Redis tail-loss envelope**
   - Size Coordination Redis so that measured `redis_coordination_tail_loss_ms` remains within `tail_loss_budget_ms = max(2000, 2 * tick_interval_ms)` under expected peak load.
   - If tail-loss regularly exceeds that envelope after scaling application services, prioritize Coordination Redis capacity (CPU, memory, AOF layout) or region density before adding more tick producers.
+
+## Capacity Model (Required Inputs)
+
+Baseline guardrails are only a starting point. Before materially increasing region density, estimate capacity using a simple per-pod model:
+
+- `pod_tick_cost_ms = active_regions * (p99_region_tick_ms + p99_remote_drain_ms + p99_replay_overhead_ms)`
+- Keep `pod_tick_cost_ms` below the effective scheduling envelope implied by `tick_interval_ms`, lock TTL headroom, and observed Redis script latency.
+- Calibrate each term from load tests in the target profile (`dev_local`, `hobby_self_hosted`, `production_clustered`) and record:
+  - `p99_region_tick_ms` from `tick_execution_time_ms_p99`.
+  - `p99_remote_drain_ms` from remote follow-up lag/drain metrics.
+  - `p99_replay_overhead_ms` from replay-controller and tick replay metrics.
+
+Scaling plans should include this calibration so “add replicas” and “increase regions per pod” decisions are tied to measured tick and coordination cost, not only static guardrail numbers.
 
 Environment docs and load-test reports should record any deviations from these starting numbers along with the observed tick and tail-loss metrics so operators can make informed scaling decisions in future iterations.

@@ -38,6 +38,10 @@ Minimum requirements:
     - File ordering is deterministic.
     - Timestamps/UID/GID/permissions are normalized or excluded from the digest input.
     - The bundle digest input must exclude any transport-layer wrapper (for example HTTP multipart boundaries).
+- **Bundle ingestion safety limits (required)**:
+  - Upload and extraction must enforce bounded limits before runtime validation (for example `maxBundleBytes`, `maxExpandedBytes`, `maxFileCount`, and `maxCompressionRatio`).
+  - Extraction and manifest parsing must use bounded timeouts and memory limits; over-limit bundles must fail closed.
+  - Limits and failures must be audit-visible with deterministic bounded reason codes (for example `bundle_too_large`, `bundle_compression_ratio_exceeded`, `bundle_file_count_exceeded`, `bundle_parse_timeout`).
 - **Key identity**: every signature is tied to a `signerKeyId` (stable identifier for the public key used to verify the signature).
 - **Signature envelope (required)**:
   - Bundles must contain a machine-readable signature manifest (for example `signatures.json`) that includes `bundleDigest`, `signerKeyId`, the `ed25519Signature` bytes, and an optional `signatureCreatedAt`.
@@ -56,6 +60,8 @@ Minimum requirements:
   - Automation & Scripting must refresh signer policy on a bounded cadence (for example every 60 seconds) and must disable affected plugins within a fixed operator SLO (for example “revocation disables affected plugins within 5 minutes”).
   - Disablement due to revocation must emit an operator-visible control-plane event and be visible in audit tooling so operators can prove when revocation took effect.
   - Runtime signer-policy visibility must be queryable via control-plane read APIs (for example `GetSignerPolicyConvergence`) so operators can verify policy propagation before and after revocation.
+  - If signer policy cannot be refreshed/verified for a scope beyond max-age, plugin admission must fail closed with `finalOutcome=signer_policy_unavailable` until policy converges.
+  - Any override that permits plugin admission while signer policy is unavailable must be explicit, time-bounded, scoped, and operator-audited, and must auto-expire back to fail-closed mode.
 
 Logging & Admin must surface signer identity and verification status (including `bundleDigest` and `signerKeyId`) so operators can explain why a plugin version was accepted or rejected.
 Logging & Admin must also surface signer-policy propagation status and revocation application events (for example `SignerPolicyVersionObserved` and `SignerRevocationApplied`) so operators can prove enforcement timing across services.

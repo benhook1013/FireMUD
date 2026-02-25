@@ -124,6 +124,7 @@ Taxonomy governance rule:
 | `tenant_budget_exceeded` | `ADMISSION` | Tenant budget exhausted. |
 | `version_unavailable` | `ADMISSION` | Unknown/failed/not-ready patch or plugin version. |
 | `pin_state_unavailable` | `ADMISSION` | Bounded-staleness pin cache could not be refreshed from an authoritative source; admission fails closed. |
+| `signer_policy_unavailable` | `ADMISSION` | Plugin admission fails closed because signer policy cannot be refreshed/verified from authoritative policy sources. |
 | `plugin_component_blocked` | `ADMISSION` | Plugin rejected by component policy. |
 | `plugin_disabled` | `ADMISSION` | Plugin disabled or draining state. |
 | `script_disabled` | `ADMISSION` | Script disabled or draining due to operator action. |
@@ -163,7 +164,7 @@ The matrix below defines what the scheduler does when a firing becomes due under
 | Quota/budget denied | Skip the firing; do not replay later. | `finalStage=ADMISSION` and an explicit deny outcome/reason. |
 | `reloadState=RELOADING` | Do not admit new timer firings; do not backfill by default. | `finalStage=ADMISSION` with `finalOutcome=skipped_reloading`. |
 | `PAUSED_FOR_ROLLBACK` | Do not admit new timer firings while rollback cleanup and repin complete. | `finalStage=ADMISSION` with `finalOutcome=skipped_rollback_pause`. |
-| Leader failover / short downtime | May perform bounded catch-up for missed cadence boundaries: at most one synthetic firing per cadence boundary crossed, and never more than a bounded limit per resume window. | Catch-up firings must use `triggerMode=CATCH_UP` and deterministic `scriptEventId` derived from the due point. |
+| Leader failover / short downtime | May perform bounded catch-up for missed cadence boundaries: at most one synthetic firing per cadence boundary crossed, and never more than `SCRIPT_TIMER_CATCH_UP_MAX_FIRINGS_PER_RESUME` for a resume window. Excess candidates are coalesced/dropped and never enqueued as triggers. | Catch-up firings must use `triggerMode=CATCH_UP` and deterministic `scriptEventId` derived from the due point. Truncated catch-up must emit an operator-visible metric and bounded reason code. |
 | Long downtime or sustained overload | No guarantee of eventual execution for every firing; the system converges by running future firings once capacity returns. | Missed firings must be visible as skips/drops in metrics and audit. |
 | Infrastructure error after admission | Do not re-run the DSL body for the same `scriptEventId`. Only idempotent downstream ops may retry. | `finalStage` must reflect where it failed; do not record `success`. |
 
@@ -178,9 +179,9 @@ General rules:
 
 | Metric family | Required labels | Forbidden labels | Notes |
 | --- | --- | --- | --- |
-| `automation_script_triggers_total` | `tenantId`, `scriptId`, `eventType`, `outcome`, optional `pluginId`, `pluginVersionId` | `scriptEventId` | Outcome is final, stage-aware outcome as defined by audit rules; do not treat “DSL eval success” as success if handoff failed. |
-| `automation_script_skips_total` | `tenantId`, `scriptId`, `reason`, optional `pluginId` | `scriptEventId` | “Skip” is pre-eval. |
-| `automation_script_triggers_dropped_total` | `tenantId`, `scriptId`, `reason`, optional `pluginId` | `scriptEventId` | “Dropped” indicates the trigger was not processed to tick acceptance. |
+| `automation_script_triggers_total` | `tenantId`, `scriptId`, `eventType`, `outcome`, optional `pluginId`, `pluginVersionId`, `priorityTag` | `scriptEventId` | Counts all observed triggers (admitted and non-admitted) with final stage-aware outcome; do not treat “DSL eval success” as success if handoff failed. |
+| `automation_script_skips_total` | `tenantId`, `scriptId`, `reason`, optional `pluginId`, `priorityTag` | `scriptEventId` | “Skip” is pre-eval. |
+| `automation_script_triggers_dropped_total` | `tenantId`, `scriptId`, `reason`, optional `pluginId`, `priorityTag` | `scriptEventId` | “Dropped” indicates the trigger was not processed to tick acceptance. |
 | `script_quota_allowed_total` | `tenantId`, `scriptId` | `scriptEventId` | Quota decisions are pre-eval. |
 | `script_quota_denied_total` | `tenantId`, `scriptId`, `reason` | `scriptEventId` |  |
 | `automation_tick_events_enqueued_total` | `tenantId` | `scriptEventId` | Counts successful tick handoffs, not DSL evaluations. |
@@ -191,6 +192,7 @@ General rules:
 | `automation_script_test_runs_total` | `tenantId`, `scriptId`, `eventType`, `result`, optional `pluginId` | `scriptEventId` | Must be separate from live-traffic counters. |
 | `automation_script_test_runtime_seconds` | `tenantId`, `scriptId`, `eventType`, optional `pluginId` | `scriptEventId` | Dry-run/test runtime latency; must remain separate from live runtime histograms. |
 | `automation_script_test_sandbox_failures_total` | `tenantId`, `scriptId`, `eventType`, `reason`, optional `pluginId` | `scriptEventId` | Dry-run/test-only sandbox failures; must not increment live sandbox failure counters. |
+| `automation_script_timer_catchup_truncated_total` | `tenantId`, `scriptId`, `eventType`, `reason` | `scriptEventId` | Counts catch-up firings that were intentionally truncated/dropped by resume-window limits. |
 | `automation_rollback_convergence_timeout_total` | `tenantId`, `gameInstanceId`, `reason` | `scriptEventId` | Incremented when rollback orchestration reaches timeout terminal state before convergence acknowledgment. |
 
 ## Documentation Drift Guardrails

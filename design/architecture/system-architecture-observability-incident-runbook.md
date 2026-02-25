@@ -69,6 +69,7 @@ It complements the degraded-mode expectations in `design/architecture/system-arc
 ### Alertmanager operator fallback
 
 - Use the fallback recording-rule approach documented in `design/architecture/system-architecture-logging-monitoring.md` only for a small, explicitly supported set of critical conditions.
+- During fallback, explicitly check all supported player SLO conditions (login success ratio, command p99 latency, entry-path availability, and chat delivery latency) so edge and chat incidents are not hidden when Alertmanager is unavailable.
 - If Logging & Admin consumes Alertmanager notifications, ensure the UI clearly shows “Alertmanager unavailable” and does not present fallback conditions as canonical alerts.
 
 ### Alertmanager recovery and verification
@@ -113,7 +114,13 @@ It complements the degraded-mode expectations in `design/architecture/system-arc
 
 ### Grafana operator fallback
 
-- Query Prometheus directly for a small set of critical “is it healthy?” checks (login success ratio, command latency, tick safety ratio, coordination tail-loss).
+- Query Prometheus directly for a small set of critical “is it healthy?” checks:
+  - login success ratio (`login_success_ratio_gateway_15m`, `login_success_ratio_tcpproxy_15m` or equivalent expressions),
+  - command latency (`command_latency_ms_p99_gateway_5m`, `command_latency_ms_p99_tcpproxy_5m`),
+  - entry-path availability (`entrypath_availability_gateway_1d`, `entrypath_availability_tcpproxy_1d`),
+  - chat latency (`chat_delivery_latency_ms_p99_5m`),
+  - tick safety ratio (`tick_execution_safety_ratio_p99`),
+  - coordination tail-loss (`redis_coordination_tail_loss_ms`).
 - Prefer recorded rules where available so operators do not hand-craft complex PromQL during an incident.
 
 ## Jaeger / OpenTelemetry Collector Down

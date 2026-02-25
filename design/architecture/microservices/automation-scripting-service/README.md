@@ -257,6 +257,7 @@ During operator rollback pause (`PAUSED_FOR_ROLLBACK`), ingress must return an e
 - For low-rate external events, callers may retry with the same `scriptEventId` using bounded exponential backoff and jitter with explicit limits (`maxAttempts`, `maxElapsedMs`) and non-zero jitter.
 - Backpressure responses should include `retryAfterMs` so clients can avoid thundering-herd retries during reload.
 - For timer-derived scheduler events, best-effort timer semantics apply; triggers not admitted during reload are not backfilled unless explicitly covered by a bounded catch-up rule.
+- Event-ingress response fields (`admitted`, `admissionOutcome`, `admissionReason`, `retryAfterMs`) and enum values are normative API contract and must align with `design/architecture/system-architecture-scripting-control-plane-api.md`.
 
 See `design/architecture/system-architecture-scripting-contracts.md#7-reload-backpressure-contract`.
 
@@ -269,6 +270,11 @@ Admission and scheduler decisions must use a bounded-staleness view of pinned sc
 - If fresh authoritative pin data cannot be obtained, admission must fail closed with an explicit non-success outcome and audit visibility rather than speculatively running with stale pin state.
 - The canonical failure contract for this case is `finalStage=ADMISSION`, `finalOutcome=pin_state_unavailable`, and a bounded `finalReason` (for example `pin_cache_stale_source_unreachable`).
 - Any override of this fail-closed behavior must be explicit, time-bounded, and operator-audited (`controlPlaneRequestId`, actor, reason, scope), and must auto-expire back to fail-closed mode.
+
+Plugin signer-policy admission follows the same fail-closed principle:
+
+- If signer policy for scope is stale beyond max-age and cannot be refreshed from authoritative policy sources, plugin admission must fail closed with `finalStage=ADMISSION`, `finalOutcome=signer_policy_unavailable`, and a bounded `finalReason`.
+- Any degraded override permitting admission while signer policy is unavailable must be explicit, time-bounded, and operator-audited, with automatic expiry back to fail-closed mode.
 
 ## Faction & Reputation System
 
@@ -329,7 +335,13 @@ Additional variables tune the scripting engine:
 | `SCRIPT_EVENT_AUDIT_RETENTION_DAYS` | Number of days to retain script audit records before cleanup | `30` | Stable operator knob |
 | `SCRIPT_EVENT_AUDIT_MAX_ROWS` | Maximum number of rows to keep in the script audit store before truncation | `1000000` | Stable operator knob |
 | `SCRIPT_TEST_MAX_RUNS_PER_MINUTE` | Maximum dry-run/test executions allowed per tenant per minute | `60` | Stable operator knob |
+| `SCRIPT_TEST_MAX_RUNS_PER_MINUTE_PER_PRINCIPAL` | Maximum dry-run/test executions allowed per principal per tenant per minute | `30` | Stable operator knob |
 | `SCRIPT_TEST_MAX_CONCURRENCY` | Maximum concurrent dry-run/test executions per tenant or cluster | `10` | Stable operator knob |
+| `SCRIPT_TIMER_CATCH_UP_MAX_FIRINGS_PER_RESUME` | Maximum synthetic catch-up timer firings admitted per resume window | `200` | Stable operator knob |
+| `SCRIPT_DEAD_LETTER_MAX_ROWS` | Maximum dead-lettered automation work items retained before cleanup | `100000` | Stable operator knob |
+| `SCRIPT_DEAD_LETTER_MAX_AGE_SECONDS` | Maximum age for dead-lettered work items | `604800` | Stable operator knob |
+| `SCRIPT_DEAD_LETTER_CLEANUP_INTERVAL_SECONDS` | Cleanup sweep interval for dead-lettered work items | `300` | Stable operator knob |
+| `SCRIPT_DEAD_LETTER_ALERT_THRESHOLD_ROWS` | Alert threshold for dead-letter store growth | `80000` | Stable operator knob |
 
 Any additional, less common tuning variables should be documented alongside their introduction and clearly marked as advanced or internal. Operational runbooks should treat only **stable operator knobs** as supported surface for routine adjustments; changes to advanced or internal settings should go through code review and coordinated rollout.
 
@@ -337,7 +349,7 @@ Any additional, less common tuning variables should be documented alongside thei
 
 In addition to event-handling and test endpoints, the Automation & Scripting Service exposes control-plane APIs for script patch visibility and plugin lifecycle management. Script patch pin authority remains in Game Session/Logging & Admin; plugin runtime lifecycle authority lives in Automation & Scripting and is orchestrated by Logging & Admin.
 
-- `GetScriptPatchStatus(tenantId, scriptPatchVersion)` – returns the current lifecycle state (`PENDING_VALIDATION`, `ONLOAD_RUNNING`, `READY`, `FAILED`), timestamps, and any last-error details for the given `<tenantId, scriptPatchVersion>`.
+- `GetScriptPatchStatus(tenantId, scriptPatchVersion)` – returns the current lifecycle state (`PENDING_VALIDATION`, `ONLOAD_RUNNING`, `READY`, `FAILED`), `baseVersionId`, `abilitySchemaDigest`, timestamps, and any last-error details for the given `<tenantId, scriptPatchVersion>`.
 - `ListScriptPatchStatuses(tenantId, status?, changedAfter?, changedBefore?)` – lists known script patches and their status for a tenant so operators and tools can see which patches are eligible to be pinned.
 - `ScriptPatchTenantStatusChanged` event – emitted whenever `<tenantId, scriptPatchVersion>` transitions between tenant readiness lifecycle states.
 - `ScriptPatchInstanceRolloutChanged` event – consumed as the authoritative instance rollout history stream produced by Game Session (`PINNED`, `ROLLED_BACK`, `REPINNED`) and projected into read APIs.
@@ -354,7 +366,7 @@ Consumption rules for patch-status events:
 - Use `ScriptPatchInstanceRolloutChanged` for instance rollout progression and rollback history.
 - Read-model ownership for rollout status is Game Session pin mutations projected into query APIs via idempotent, replayable events keyed by `controlPlaneRequestId`.
 
-Game Session and Logging & Admin use script patch visibility APIs and events to decide which `scriptPatchVersion` values may be passed to the runtime. Mutating operations that change the pinned patch for a running game instance are defined on the Game Session control-plane surface (and orchestrated by Logging & Admin) and must follow the API and event contracts in `design/architecture/system-architecture-scripting-control-plane-api.md` (for example `SetPinnedScriptPatchVersion` / `RollbackScriptPatchVersion` and the `ScriptPatchPinChanged` event). The Automation & Scripting Service uses pin-change events for visibility and admission alignment, but it does not become the source of truth for the pin; it enforces that incoming triggers reference patches that are `READY` for the tenant and records lifecycle changes that authoritative control-plane services request.
+Game Session and Logging & Admin use script patch visibility APIs and events to decide which `scriptPatchVersion` values may be passed to the runtime. Mutating operations that change the pinned patch for a running game instance are defined on the Game Session control-plane surface (and orchestrated by Logging & Admin) and must follow the API and event contracts in `design/architecture/system-architecture-scripting-control-plane-api.md` (for example `SetPinnedScriptPatchVersion` / `RollbackScriptPatchVersion` and the `ScriptPatchPinChanged` event). The Automation & Scripting Service uses pin-change events for visibility and admission alignment, but it does not become the source of truth for the pin; it enforces that incoming triggers reference patches that are `READY` for the tenant and records lifecycle changes that authoritative control-plane services request. Pinning must also satisfy base-version cohesion (`patch.baseVersionId == runtimeVersionId` for the instance) to prevent cross-version patch activation.
 
 Rollback orchestration must treat convergence waiting as bounded: if `GetAutomationPinConvergence` + Game Session convergence checks do not match the expected `controlPlaneRequestId` before the configured timeout, rollback enters terminal timeout state (`ROLLBACK_CONVERGENCE_TIMEOUT`) and admission/ticks remain paused until explicit operator action. Timeout transition must emit `ScriptRollbackConvergenceTimedOut` (Game Session producer-of-record) and increment `automation_rollback_convergence_timeout_total{tenantId, gameInstanceId, reason}`.
 Rollback orchestration should be implemented as an explicit durable state machine (`PAUSING`, `REPINNING`, `CANCELING`, `PURGING`, `CONVERGING`, `RESUMING`, `COMPLETED`, terminal `TIMED_OUT`) so partial failures can resume from last durable state instead of restarting or accidentally unpausing.
@@ -427,6 +439,8 @@ In addition to live event handling, the Automation & Scripting Service exposes a
 - By default, dry runs **do not consume ScriptQuotaService windows or tenant automation budgets**, and they must not increment live-traffic error counters. Sandbox failures observed during tests are emitted via dry-run/test-only metric families (for example `automation_script_test_sandbox_failures_total`) so production SLO dashboards do not conflate privileged tooling with live automation reliability.
 - By default, dry runs must not contribute to failure-rate circuit breakers that can disable live scripts (`runtimeStatus=DISABLED_DUE_TO_ERRORS`). If an environment chooses to gate live enablement on dry-run results, that gating must be explicit and isolated (separate breaker or opt-in policy) so privileged tooling cannot accidentally disable production automation.
 - Separate **dry-run budgets** cap how much test traffic a tenant or principal can generate (for example, max runs per minute and max concurrent dry-runs) so test tools cannot overload the automation cluster even though they bypass mainline quotas.
+- Dry-run/test execution must require explicit authorization scope/role (for example `automation.dryrun.execute`) and must persist the calling principal in audit metadata so privileged usage is attributable.
+- Dry-run/test authorization and budget failures must be returned as deterministic application-level outcomes (for example `DRY_RUN_UNAUTHORIZED`, `DRY_RUN_RATE_LIMITED`) rather than transport errors.
 
 This test facility is intended for pre-production validation and privileged diagnostics; it should be exposed only to appropriately authorized principals, protected by additional per-tenant/per-principal rate limits at the API gateway or Logging & Admin layer, and is not a general-purpose bypass for quotas or budgets.
 
@@ -441,6 +455,7 @@ Non-normative metric examples (the authoritative contract is `design/architectur
 
 - `automation_script_triggers_total`, `automation_script_skips_total`, and `automation_script_triggers_dropped_total` for scheduler activity and drops.
 - `automation_script_queue_delay_seconds` and `automation_script_leadership_changes_total` for queue latency and leader stability.
+- `automation_script_timer_catchup_truncated_total` for catch-up firings intentionally truncated by resume-window limits.
 - `automation_script_tenant_budget_seconds{tenantId, tier}` for per-tenant automation budgets.
 - `script_quota_allowed_total`, `script_quota_denied_total`, and `automation_tick_events_enqueued_total` for quota enforcement and tick integration.
 - `automation_script_sandbox_failures_total{tenantId, scriptId, reason}`, `automation_script_errors_total{tenantId, scriptId, reason}`, and `automation_script_runtime_seconds{tenantId, scriptId, eventType}` for sandbox and runtime health.

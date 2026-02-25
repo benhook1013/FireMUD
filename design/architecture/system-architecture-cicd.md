@@ -202,11 +202,18 @@ FireMUD uses a simple promotion flow from pull requests through staging to produ
 - When a release is ready, `release-please` opens a release PR against `main`; after that PR is merged, the release tag (for example `v1.2.3`) is created and images for that tag are built/pushed by the Docker image workflow.
 - Production promotion is performed by updating the production Kustomize overlay (for example `k8s/overlays/prod`) to image digests that have already passed staging validation, via a Git change, merging it, and applying it from a secure operator environment using `kubectl apply -k k8s/overlays/prod` following the deployment runbook.
 - Overlay PRs are validated by [`.github/workflows/validate-kustomize-overlays.yml`](../../.github/workflows/validate-kustomize-overlays.yml), which checks that referenced images exist in GHCR, enforces digest pinning for staging/production overlays, and blocks staging backup schedules unless the explicit marker `k8s/overlays/stage/STAGING_BACKUPS_ENABLED` is present.
+- Overlay PRs run the canonical preflight entrypoint (`dev-tools/deploy/preflight.sh`) in `ci-static` context so policy IDs and report shape match operator pre-apply validation. CI-static mode may mark production attestation policy as `not_applicable` when no production promotion is being executed.
 - Production overlay PRs must include a staging promotion attestation that follows `system-architecture-promotion-attestation.md`. Production PRs are rejected if they reference digests that cannot be tied to a valid attestation artifact.
 - Production overlay PRs must include an in-repo attestation artifact so CI can validate promotion evidence deterministically.
 - Staging apply evidence must include the in-repo deployment record `design/operations/deployments/staging/deployments/<stagingOverlayCommitSha>.json`; production promotion validation fails when this record is missing or digest-mismatched.
 
 Rollbacks are handled by resuming a previously known-good image digest set and re-applying the staging or production manifests with those digests. See the Deployment Runbook for the step-by-step operator flow.
+Before approving a production promotion, deployment evidence must classify rollback mode as either:
+
+- `rollback-compatible` (previous digest set remains safe to re-apply), or
+- `roll-forward-only` (schema or contract change requires forward remediation and/or restore-point recovery rather than old-binary rollback).
+
+Production promotions lacking this explicit rollback-mode classification are non-compliant.
 
 Pre-apply policy checks for staging and production must run through the canonical preflight contract in `system-architecture-deploy-preflight-policy.md`. Static checks run in overlay PR CI, and resolved-manifest/runtime checks run in operator preflight execution. Both use the same policy IDs and evidence shape.
 
@@ -226,6 +233,7 @@ Enforcement workflow contract:
   - Load `design/operations/secret-compliance/<environment>.yaml`.
   - Fail when required records/classes are missing.
   - Fail when credential age exceeds configured maximum age for hard-gated environments.
+  - Fail when `evidenceRef`/`evidenceKey` is missing, the referenced evidence artifact is missing, or the evidence record lacks an immutable artifact identifier (`immutableArtifactId` with digest-qualified identity).
 - Required record classes:
   - `jwt-signing-keys-jwks`
   - `postgres-application-credentials`

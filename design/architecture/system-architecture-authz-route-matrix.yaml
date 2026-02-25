@@ -3,33 +3,143 @@ updated_by: "platform-security+account-service"
 default_classification: tenant_regular
 classifications:
   - public
+  - account_scoped
   - tenant_regular
   - billing_safe_tenant
   - cross_tenant_support_safe
   - cross_tenant_billing_safe
   - cross_tenant_data_bearing
 routes:
+  - service: game-session-service
+    route: LOGIN
+    scope: public
+    classification: public
+  - service: game-session-service
+    route: LOGON
+    scope: public
+    classification: public
+  - service: game-session-service
+    route: WORLDS
+    scope: tenant
+    classification: tenant_regular
+    roles:
+      any_of: [player, moderator, designer, tenantAdmin, platformAdmin]
+  - service: game-session-service
+    route: CHARS
+    scope: tenant
+    classification: tenant_regular
+    roles:
+      any_of: [player, moderator, designer, tenantAdmin, platformAdmin]
+  - service: game-session-service
+    route: PLAY
+    scope: tenant
+    classification: tenant_regular
+    roles:
+      any_of: [player, moderator, designer, tenantAdmin, platformAdmin]
+  - service: game-session-service
+    route: StartSession
+    scope: tenant
+    classification: tenant_regular
+    roles:
+      any_of: [tenantAdmin, platformAdmin]
+  - service: game-session-service
+    route: RestartSession
+    scope: tenant
+    classification: tenant_regular
+    roles:
+      any_of: [tenantAdmin, platformAdmin]
+  - service: game-session-service
+    route: StopSession
+    scope: tenant
+    classification: tenant_regular
+    roles:
+      any_of: [tenantAdmin, platformAdmin]
+  - service: game-session-service
+    route: RefreshRoles
+    scope: tenant
+    classification: tenant_regular
+    roles:
+      any_of: [tenantAdmin, platformAdmin]
+  - service: account-service
+    route: AuthLogin
+    scope: public
+    classification: public
+  - service: account-service
+    route: AuthLogout
+    scope: account
+    classification: account_scoped
+    roles:
+      any_of: [player, moderator, designer, tenantAdmin, platformAdmin, billingAdmin, support]
+  - service: account-service
+    route: AuthLogoutAll
+    scope: account
+    classification: account_scoped
+    roles:
+      any_of: [player, moderator, designer, tenantAdmin, platformAdmin, billingAdmin, support]
+  - service: account-service
+    route: GetProfile
+    scope: account
+    classification: account_scoped
+    subject_binding: caller_account_id_or_platform_admin
+    roles:
+      any_of: [player, moderator, designer, tenantAdmin, platformAdmin, billingAdmin, support]
+  - service: account-service
+    route: UpdateProfile
+    scope: account
+    classification: account_scoped
+    subject_binding: caller_account_id_or_platform_admin
+    roles:
+      any_of: [player, moderator, designer, tenantAdmin, platformAdmin, billingAdmin, support]
+  - service: account-service
+    route: ExportAccount
+    scope: account
+    classification: account_scoped
+    subject_binding: caller_account_id_or_platform_admin
+    roles:
+      any_of: [player, moderator, designer, tenantAdmin, platformAdmin, billingAdmin, support]
+  - service: account-service
+    route: DeleteAccount
+    scope: account
+    classification: account_scoped
+    subject_binding: caller_account_id_or_platform_admin
+    roles:
+      any_of: [player, moderator, designer, tenantAdmin, platformAdmin, billingAdmin, support]
+  - service: account-service
+    route: LinkExternalAccount
+    scope: account
+    classification: account_scoped
+    subject_binding: caller_account_id_or_platform_admin
+    roles:
+      any_of: [player, moderator, designer, tenantAdmin, platformAdmin, billingAdmin, support]
+  - service: account-service
+    route: IssueConnectToken
+    scope: tenant
+    classification: tenant_regular
+    roles:
+      any_of: [player, moderator, designer, tenantAdmin, platformAdmin]
   - service: account-service
     route: GetTenantEntitlementsTenant
-    scope: tenant
-    classification: billing_safe_tenant
-    roles:
-      any_of: [tenantAdmin]
-  - service: account-service
-    route: GetTenantEntitlementsCrossTenant
-    scope: cross_tenant
-    classification: cross_tenant_support_safe
-    roles:
-      any_of: [support, platformAdmin]
-  - service: account-service
-    route: GetSubscriptionTenant
     scope: tenant
     classification: billing_safe_tenant
     response_profile: high_level_only
     roles:
       any_of: [tenantAdmin]
   - service: account-service
-    route: GetSubscriptionCrossTenant
+    route: GetTenantEntitlementsCrossTenantSupportSafe
+    scope: cross_tenant
+    classification: cross_tenant_support_safe
+    response_profile: high_level_only
+    roles:
+      any_of: [support, platformAdmin]
+  - service: account-service
+    route: GetSubscriptionTenantHighLevel
+    scope: tenant
+    classification: billing_safe_tenant
+    response_profile: high_level_only
+    roles:
+      any_of: [tenantAdmin]
+  - service: account-service
+    route: GetSubscriptionCrossTenantSupportSafe
     scope: cross_tenant
     classification: cross_tenant_support_safe
     response_profile: high_level_only
@@ -43,25 +153,33 @@ routes:
     roles:
       any_of: [tenantAdmin]
   - service: account-service
-    route: ListSubscriptionsSupportSafeCrossTenant
+    route: ListSubscriptionsCrossTenantSupportSafe
     scope: cross_tenant
     classification: cross_tenant_support_safe
     response_profile: high_level_only
     roles:
       any_of: [support, platformAdmin]
   - service: account-service
-    route: ListSubscriptionsBillingReportsCrossTenant
+    route: ListSubscriptionsCrossTenantBillingSafeReports
     scope: cross_tenant
     classification: cross_tenant_billing_safe
     response_profile: billing_reporting
     roles:
       any_of: [billingAdmin, platformAdmin]
   - service: account-service
-    route: IssueConnectToken
+    route: GetCallerTenantMembershipTenant
     scope: tenant
-    classification: tenant_regular
+    classification: billing_safe_tenant
+    response_profile: membership_self_only
     roles:
-      any_of: [player, moderator, designer, tenantAdmin, platformAdmin]
+      any_of: [tenantAdmin]
+  - service: account-service
+    route: GetTenantMembershipForAccountCrossTenant
+    scope: cross_tenant
+    classification: cross_tenant_billing_safe
+    response_profile: membership_reporting
+    roles:
+      any_of: [billingAdmin, platformAdmin]
   - service: account-service
     route: BillingArtifactsTenant
     scope: tenant
@@ -74,27 +192,3 @@ routes:
     classification: cross_tenant_billing_safe
     roles:
       any_of: [billingAdmin, platformAdmin]
-  - service: account-service
-    route: GetTenantMembershipTenant
-    scope: tenant
-    classification: billing_safe_tenant
-    roles:
-      any_of: [tenantAdmin]
-  - service: account-service
-    route: GetTenantMembershipCrossTenant
-    scope: cross_tenant
-    classification: cross_tenant_billing_safe
-    roles:
-      any_of: [billingAdmin, platformAdmin]
-  - service: game-session-service
-    route: PLAY
-    scope: tenant
-    classification: tenant_regular
-    roles:
-      any_of: [player, moderator, designer, tenantAdmin, platformAdmin]
-  - service: game-session-service
-    route: StartSession
-    scope: tenant
-    classification: tenant_regular
-    roles:
-      any_of: [tenantAdmin, platformAdmin]

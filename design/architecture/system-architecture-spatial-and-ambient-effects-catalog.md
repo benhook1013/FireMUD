@@ -10,6 +10,7 @@ Effects described here are **not** optional guidance: any new implementation tha
 - Every effect must be scoped by instance identifiers. For room-scoped effects, this is `RoomInstanceRef = (tenantId, gameInstanceId, roomInstanceId)`. See `design/architecture/system-architecture-identifier-glossary.md`.
 - Every participating service must implement a **durable idempotency guard** keyed by `EffectId` so retries become no-ops rather than double-application.
 - The default reconciliation policy is **retry until convergence using the same `EffectId`**. Do not generate compensating deletes inside the tick loop.
+- For cross-service room reads used to render player-visible outcomes (for example `LOOK`), participants must support a caller-supplied read fence token (`asOfTickId`). Canonical scope/comparison semantics are defined in `design/architecture/system-architecture-identifier-glossary.md`. Services return `STALE_READ_FENCE` / `READ_FENCE_UNAVAILABLE` rather than mixing data from different fences.
 
 ## Spatial Effects
 

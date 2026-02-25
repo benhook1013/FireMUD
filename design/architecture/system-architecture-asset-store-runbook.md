@@ -64,7 +64,8 @@ When using a self-hosted MinIO cluster as the asset store:
      launchable in `game_manifest`) are eligible for asset deletion.
    - Retired eligibility must also account for **design-time dependencies**: the version must not be referenced by any game templates. Operators should validate that no normalized `game_template_*_ref` rows in the Game Design Service still reference `(tenantId, versionId)` before deleting the corresponding object-store prefix.
    - Asset deletion eligibility must account for design-history reachability as well as version mappings. Use the Game Design control-plane check `CanDeleteVersionAssets(tenantId, versionId)` that validates no non-Retired `version_asset` references remain, no reachable `revision_asset` / branch references require retained bytes, and no template or launch metadata still points to the version prefix.
-   - Operators must verify the persisted artifact lifecycle row (`version_asset_artifact`) is `TOMBSTONED` before issuing purge actions, and then verify the transition to retained terminal state `PURGED` after bytes are removed. Do not infer lifecycle state solely from object-store contents.
+   - Do not run deletion as a separate check + manual delete sequence. Start purge only through `BeginPurgeVersionAssets(tenantId, versionId, expectedArtifactStateEpoch)` so eligibility re-check and `version_asset_artifact` state transition are atomic and CAS-guarded.
+   - Operators must verify the persisted artifact lifecycle row (`version_asset_artifact`) is `TOMBSTONED` before issuing purge actions. `BeginPurgeVersionAssets` must transition state to `PURGE_IN_PROGRESS` before bytes are removed, and `FinalizePurgeVersionAssets` must transition to retained terminal state `PURGED` after bytes are removed. Do not infer lifecycle state solely from object-store contents.
    - Published assets are discovered via the `version_asset` mapping table in the
      Game Design Service. Operators must never delete individual objects that are
      still referenced by any `version_asset` row for a non-retired version.
@@ -98,7 +99,11 @@ leaves a version incomplete or unusable:
 - State transitions for failed artifacts must follow the asset lifecycle contract:
   - `FAILED -> STAGED` only through documented repair/retry workflow.
   - `FAILED -> TOMBSTONED` when retry is abandoned.
-  - `TOMBSTONED -> PURGED` only after `CanDeleteVersionAssets(tenantId, versionId)` passes.
+  - `TOMBSTONED -> PURGE_IN_PROGRESS` only through `BeginPurgeVersionAssets(tenantId, versionId, expectedArtifactStateEpoch)`.
+  - `PURGE_IN_PROGRESS -> PURGED` only after object deletion succeeds and finalization CAS passes.
+  - `PURGE_IN_PROGRESS -> PURGE_FAILED` when deletion or finalization fails.
+  - `PURGE_FAILED -> PURGE_IN_PROGRESS` only through explicit retry/resume workflow (new purge workflow id).
+  - `PURGE_FAILED -> TOMBSTONED` when operators abandon purge retry.
 - All transitions above are CAS-guarded using the artifact state epoch in `version_asset_artifact`. If a transition fails CAS, reload current state and re-run the approved workflow rather than forcing manual object-store edits.
 - `PURGED` remains a retained terminal metadata row in `version_asset_artifact`; purge removes object-store bytes, not lifecycle metadata. Do not delete the artifact row as part of purge.
 - Preferred recovery is to:

@@ -54,6 +54,7 @@ Administrative tooling (for example via the Game Design Service or Logging & Adm
 - Ensure the `game_manifest` table and any launch manifests are updated when a version is retired so operators cannot accidentally start new instances against it.
 
 Runbooks that remove published assets from the object store must validate that the corresponding version has already reached the **retired** state.
+Asset purge must be initiated through CAS-guarded control-plane operations (`BeginPurgeVersionAssets` and `FinalizePurgeVersionAssets`) so eligibility re-check and artifact-state transitions are atomic; operators must not run purge as a separate check + manual delete sequence.
 
 ### Version State Ownership and CAS Authority
 
@@ -109,7 +110,8 @@ and a `scriptPatchVersion` value such as `v42-script.3`:
 {
   "isScriptOnly": true,
   "baseVersionId": "v42",
-  "versionId": "v42-script.3"
+  "versionId": "v42",
+  "scriptPatchVersion": "v42-script.3"
 }
 ```
 
@@ -127,6 +129,7 @@ reloaded in memory. The Game Session Service records the active
 Patch selection must be explicit and pinned:
 
 - Runtime must never implicitly select “latest READY patch” for an instance. The pinned `scriptPatchVersion` for a running `(tenantId, gameInstanceId)` is the only script patch that may be referenced by gameplay triggers.
+- Pin/rollback operations must enforce base-version cohesion: a patch can be pinned only when `patch.baseVersionId` matches the instance `runtime_version`/`runtimeVersionId`; mismatches must fail deterministically rather than auto-switching the instance base version.
 - Plugin enablement and active `pluginVersionId` selection must also be explicit per `(tenantId, gameInstanceId)`; automation must not implicitly activate “latest” plugin versions for a running instance.
 - Pin/rollback APIs and their required events are specified in `design/architecture/system-architecture-scripting-control-plane-api.md`.
 - Trigger Identity required fields (including `gameInstanceId` and when `regionEpoch` is required) are specified in `design/architecture/system-architecture-scripting-normative-contract-tables.md`.
@@ -198,6 +201,18 @@ a stricter lifecycle than scripts:
 
 For non-script content, there is no cross-version reuse of instance data. A given `gameInstanceId` is always tied to a single `runtime_version`, and all `*_instance` rows for that instance must be derivable from that version’s templates. Migrating a game to a different version is modeled as starting a new game instance with its own `gameInstanceId` (and fresh world creation workflow) rather than reusing existing world instance rows across versions.
 
+Replacement-instance cutover requires an explicit compatibility preflight before admission-pointer swap:
+
+- Game Session Service is the authoritative owner of cutover preflight orchestration and exposes `ValidateInstanceCutoverCompatibility(tenantId, sourceGameInstanceId, targetVersionId)`.
+- The API must return deterministic payload fields at minimum: `{result: COMPATIBLE|INCOMPATIBLE|UNAVAILABLE, reasons[], checkedParticipants[], checkedAt}`.
+- `UNAVAILABLE` (for participant outage or stale dependency state) is fail-closed for cutover.
+- Minimum required checks:
+  - All template identifiers referenced by the target launch path resolve in owning domain services for `(tenantId, targetVersionId)`.
+  - Entity/runtime bootstrap compatibility passes (starter inventory, class/archetype mappings, required item/NPC templates, balance schema compatibility).
+  - World/runtime bootstrap compatibility passes (required region/room templates, generation config revision resolution, required script patch readiness when pinned).
+  - No unresolved `OUT_OF_SYNC` digest state for required publish participants.
+- Pointer swap is forbidden until this preflight reports `COMPATIBLE`; no best-effort fallback defaults are allowed at cutover time.
+
 ## Version Activation & Rollback
 
 The **Game Session Service** controls which published version is active for each live game instance. See [User Journeys – Publish and Start a Game Instance](./user-journeys-creators.md#4-publish-and-start-a-game-instance) for the high level flow.
@@ -240,9 +255,10 @@ Before any operation that changes whether a tenant is actively serving gameplay 
 Version cutover contract under the single-admissible-instance invariant:
 
 1. Prepare the replacement instance as non-admissible (`PREPARING`/draining-safe) and run world creation to completion.
-2. Perform one atomic admission-pointer swap so only one `gameInstanceId` is gameplay-admissible at any instant.
-3. Keep the old instance non-admissible and drain/terminate it through the standard `InstanceTermination` workflow.
-4. If swap fails, keep old instance as sole admissible instance and retry; do not open dual admission.
+2. Run compatibility preflight for source instance -> target version and fail closed on mismatch.
+3. Perform one atomic admission-pointer swap so only one `gameInstanceId` is gameplay-admissible at any instant.
+4. Keep the old instance non-admissible and drain/terminate it through the standard `InstanceTermination` workflow.
+5. If swap fails, keep old instance as sole admissible instance and retry; do not open dual admission.
 
 Admission-pointer contract (required):
 

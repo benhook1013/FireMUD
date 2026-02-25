@@ -31,6 +31,10 @@ on:
         description: 'Expected asset endpoint for validation'
         required: false
         default: ''
+      sanitization_evidence_ref:
+        description: 'Required for staging restores: in-repo sanitization evidence path'
+        required: false
+        default: ''
 
 jobs:
   verify:
@@ -50,7 +54,7 @@ jobs:
           sudo mv velero-$VELERO_VERSION-linux-amd64/velero /usr/local/bin/velero
 
       - name: Verify backups
-        run: dev-tools/verify-backups.sh
+        run: dev-tools/backups/verify-backups.sh
 
       - name: Create restore namespace
         if: ${{ inputs.restore == 'true' }}
@@ -66,7 +70,7 @@ jobs:
           if [ -z "$BACKUP" ]; then
             BACKUP=$(velero backup get -n ${{ inputs.namespace }} --no-headers | awk 'END{print $1}')
           fi
-          dev-tools/restore-cluster.sh "$BACKUP"
+          dev-tools/restores/restore-cluster.sh "$BACKUP"
 
       - name: Validate external credential bindings
         if: ${{ inputs.restore == 'true' }}
@@ -77,5 +81,6 @@ jobs:
           EXPECTED_PG_DUMP_BUCKET: ${{ inputs.expected_pg_dump_bucket }}
           EXPECTED_ASSET_STORE_BUCKET: ${{ inputs.expected_asset_store_bucket }}
           EXPECTED_ASSET_STORE_ENDPOINT: ${{ inputs.expected_asset_store_endpoint }}
+          SANITIZATION_EVIDENCE_REF: ${{ inputs.sanitization_evidence_ref }}
         run: |
           dev-tools/restores/validate-external-credentials.sh "${{ inputs.restore_environment }}"

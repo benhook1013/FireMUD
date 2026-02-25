@@ -214,6 +214,10 @@ When Alertmanager is unavailable but Prometheus is still accessible, Logging & A
   - Recording rules mirroring `LoginSuccessRatioLowGateway` and `LoginSuccessRatioLowTcpProxy`, scoped by `service` and based on `login_requests_total{outcome="success"}` vs `login_requests_total`.
 - **Command p99 latency**
   - Recording rules mirroring `CommandLatencyP99HighGateway` and `CommandLatencyP99HighTcpProxy`, scoped by `service` and based on `command_end_to_end_latency_ms_bucket`.
+- **Entry-path availability**
+  - Recording rules mirroring `EntryPathAvailabilityLowGateway` and `EntryPathAvailabilityLowTcpProxy`, scoped by `service` and `path`, based on `entrypath_connection_attempts_total`.
+- **Chat delivery latency**
+  - Recording rule mirroring `ChatDeliveryLatencyP99High`, based on `chat_delivery_latency_ms_bucket` with per-tenant/channel dimensions preserved.
 
 Logging & Admin should:
 

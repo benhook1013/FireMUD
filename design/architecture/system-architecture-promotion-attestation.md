@@ -21,6 +21,7 @@ Required fields:
 - `smokeEvidence` – list of URLs or artifact IDs for smoke-test results.
 - `generatedAt` – UTC timestamp in ISO-8601 format.
 - `approvedBy` – human approver identity (or approved automation identity plus change ticket).
+- `rollbackMode` – `rollback-compatible` or `roll-forward-only` classification for the promoted digest set.
 
 Optional fields:
 

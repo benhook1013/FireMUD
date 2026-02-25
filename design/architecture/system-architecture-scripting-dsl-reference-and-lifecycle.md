@@ -221,6 +221,13 @@ This ordering is stable across deployments so that the same binding set produces
 
 Failures are isolated per handler by default. If one handler fails (for example, quota denial, sandbox exception, or compilation error), the scheduler records the failure and continues to the next handler unless the failing binding is marked as requiring exclusive handling. Exclusive handling (`requiresExclusiveEvent=true`) short-circuits remaining handlers regardless of whether they are scripts or plugins. Quota checks (`ScriptQuotaService`) remain per handler either way.
 
+Governance requirements for ordering overrides and exclusivity:
+
+- Ordering policy overrides (`PLUGIN` ahead of `SCRIPT`) are operator-controlled policy, not designer-level script metadata.
+- At most one binding per `{tenantId, gameInstanceId, entityId, eventType}` may set `requiresExclusiveEvent=true`; conflicting bindings must be rejected at publish/enable time with deterministic validation errors.
+- Plugin bindings are non-exclusive by default. Granting plugin exclusivity requires explicit operator allowlisting and must be audit-visible.
+- Admission records must include explicit, bounded reasons when exclusivity policy blocks a binding so operators can distinguish policy denial from quota/sandbox failures.
+
 ---
 
 ## Custom and Service-Specific Events
@@ -456,7 +463,7 @@ This section summarizes how a single `onInterval` timer behaves across normal op
   - When leadership changes, the new leader:
     - reads `script-scheduler:{tenantRegionTag}:lastTickId` for each region it owns, interpreted in the context of the current `regionEpoch`,
     - walks forward from `lastTickId` to the current `tickId` using the heartbeat stream for that epoch, and
-    - for each timer entry in the region index `automation:timer:{tenantRegionTag}`, determines which “every N ticks” boundaries were crossed during the gap. Any missed `onInterval` triggers are enqueued at most once before the leader resumes normal scheduling from the latest `(regionEpoch, tickId)`. If a per-script index is used, it is reconciled against the region index as needed; discrepancies are treated as projection bugs and corrected, not as new timers.
+    - for each timer entry in the region index `automation:timer:{tenantRegionTag}`, determines which “every N ticks” boundaries were crossed during the gap. Any missed `onInterval` triggers are enqueued at most once before the leader resumes normal scheduling from the latest `(regionEpoch, tickId)`, capped by `SCRIPT_TIMER_CATCH_UP_MAX_FIRINGS_PER_RESUME` per resume window. Candidates beyond this cap are intentionally truncated (coalesced or dropped) and surfaced via audit/metrics (for example `automation_script_timer_catchup_truncated_total`). If a per-script index is used, it is reconciled against the region index as needed; discrepancies are treated as projection bugs and corrected, not as new timers.
   - Because the authoritative schedule configuration lives in PostgreSQL and Redis holds only coordination state (timer indexes and checkpoints), leader changes do not reset cadences; they only introduce a bounded delay before the new leader catches up.
 
 - **Script reload**
@@ -524,6 +531,7 @@ Common outcome classes include:
 - `validation_error` – static validation on inputs or script configuration failed.
 - `disabled_due_to_errors` – failure-rate circuit breaker opened for the script.
 - `version_unavailable` – trigger referenced a script patch version that failed reload or is unknown.
+- `signer_policy_unavailable` – plugin trigger could not be admitted because signer policy could not be refreshed/verified.
 - `infrastructure_error` – transient infrastructure issues such as gRPC `UNAVAILABLE` or Redis timeouts.
 - `validation_error` with `finalReason=unsafe_component` – script was refused because it depends on a DSL component version marked `UNSAFE`.
 

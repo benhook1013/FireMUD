@@ -8,7 +8,7 @@ Centralized logging and administration tools for the platform. Collects log data
 
 - Aggregate logs from every microservice via Fluent Bit sidecars and expose search APIs.
 - Offer dashboards and search for operators and moderators by embedding Kibana and Grafana views.
-- Enforce moderation actions such as bans via secured APIs
+- Define moderation policy, issue moderation actions, and keep auditable moderation records
 - Record audit trails for feature flag changes and account events.
 - Monitor **coordination and tick health** across tenants/regions and drive automated remediation where safe (for example, pausing ticks or triggering scoped coordination resets based on Redis/DB signals exposed by the Game Session Service).
 
@@ -53,7 +53,7 @@ Logging & Admin does not write to Redis directly. It drives all runtime changes 
 - [Role-based admin UI](./admin-ui.md) for moderators.
 - Saga workflows coordinate moderation tasks across services. See [Transaction Strategies](../../system-architecture-transactions.md).
 - [Moderation policies](./moderation-policies.md) including profanity filters.
-- UI for toggling runtime feature flags. Backend APIs are available. See [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md).
+- UI for requesting runtime feature flag overrides through owning domain control-plane APIs (Game Session enforces runtime behavior). See [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md).
 - Audit trail for account actions and world changes.
 - Transaction logs for purchases and subscription events.
 - Captures failed login attempts and suspicious activity reported by the Game
@@ -111,6 +111,14 @@ grpcurl -plaintext localhost:6565 logging_admin.v1.LoggingAdminService/Ping
 grpcurl -plaintext -d '{"tenant_id":1,"reporter_account_id":1,"target_account_id":2,"type":"BUG","description":"example"}' \
   localhost:6565 logging_admin.v1.ReportService/CreateReport
 ```
+
+### Endpoint Authentication Classes
+
+| Surface | Examples | Required auth path | Notes |
+| --- | --- | --- | --- |
+| Public/infra health | `GET /ping`, `Ping` | Internal network + platform health policy | Not a user-authenticated business operation. |
+| Admin/operator APIs (HTTP) | `/logs`, `/moderation/actions`, `/feature-flags/toggle`, `/reports`, `/sagas*` | JWT middleware (`AuthTokenInterceptor` + route classification) | External tools must enter via Gateway allowlisted routes. |
+| Service-to-service control/ingest (gRPC internal) | Internal lifecycle/event ingestion and trusted backend calls | mTLS caller identity + explicit service authorization checks | Never exposed at public ingress; role claims are required only for user-scoped actions. |
 
 ## Dependencies
 

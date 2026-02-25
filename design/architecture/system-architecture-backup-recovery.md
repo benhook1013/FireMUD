@@ -231,7 +231,7 @@ This behavior is distinct from **failover**:
   services start successfully. A manual workflow
   `.github/workflows/manual-backup-restore.yml` can run these checks on
   demand from the GitHub Actions UI. See [Operational Runbooks](./system-architecture-runbooks.md#recovery) for step-by-step instructions.
-- Shared staging/production operations use the standard `firemud` namespace. `FIREMUD_K8S_NAMESPACE` is an explicit override for throwaway restore drills and non-default restore targets.
+- Each environment boundary (staging, production) normally uses the namespace name `firemud` in its own cluster context. `FIREMUD_K8S_NAMESPACE` is an explicit override for throwaway restore drills and non-default restore targets.
 
 ### Backup Observability and Alerts
 
@@ -279,9 +279,11 @@ Restoring a player-facing environment (`hobby-self-hosted`, `staging`, or `produ
 Post-restore hardening is performed by a dedicated Kubernetes Job (for example `post-restore-secret-hardening`) that coordinates two flows:
 
 1. JWT signing key and JWKS rotation:
-   - Creates or runs the `jwt-rotation` Job described in `system-architecture-security.md#jwt-key--jwks-rotation-workflow`.
-   - Waits for the Job to succeed so a fresh JWT signing key is written to the `jwt-signing-keys` Secret and `jwks.json` is regenerated with updated public keys.
+   - Creates or runs a restore-hardening JWT rotation Job (restore mode) derived from `jwt-rotation` but with compromise-style key cutover semantics.
+   - Restore mode must remove restored keys from active trust material (`jwks.json`) rather than retaining overlap from the snapshot-era keyset.
+   - Waits for the Job to succeed so a fresh JWT signing key is written to the `jwt-signing-keys` Secret and `jwks.json` is regenerated with only uncompromised keys.
    - Verifies that the Account Service is healthy and that services can still validate tokens via the JWKS endpoint.
+   - Advances revocation watermark scope and verifies validator convergence before player traffic reopens.
 
 2. Database credential rotation:
    - Runs a `db-credential-rotation` Job with a dedicated service account (for example `sa-db-rotation`) that:
@@ -307,6 +309,9 @@ Post-restore hardening is performed by a dedicated Kubernetes Job (for example `
    - Before enabling external traffic, run a mandatory external credential validation pass and fail the restore if validation does not pass:
      - `dev-tools/restores/validate-external-credentials.sh <hobby-self-hosted|staging|production>`
      - Provide expected values via environment variables such as `EXPECTED_PG_DUMP_BUCKET`, `EXPECTED_ASSET_STORE_BUCKET`, and `EXPECTED_ASSET_STORE_ENDPOINT`, and optionally `PRODUCTION_PG_DUMP_BUCKET` / `PRODUCTION_ASSET_STORE_BUCKET` when validating staging isolation.
+   - For staging restores sourced from production-origin snapshots, run mandatory data sanitization and record evidence before traffic reopen:
+     - `design/operations/deployments/staging/recovery/<recovery-ref>.json`
+     - Export `SANITIZATION_EVIDENCE_REF` with that in-repo evidence path so `validate-external-credentials.sh staging` can enforce the gate.
 
 The `post-restore-secret-hardening` Job runs after PostgreSQL and core services have been restored and basic health checks pass, but **before** the restored environment is considered player-facing. It uses least-privilege service accounts:
 
@@ -318,8 +323,9 @@ Runbooks should treat this Job (or equivalent operator automation for hobby/self
 1. Restore PostgreSQL and Kubernetes manifests as described above.
 2. Run `post-restore-secret-hardening` in the target namespace and wait for it to complete successfully.
 3. Run `dev-tools/restores/validate-external-credentials.sh <hobby-self-hosted|staging|production>` with environment-specific expected values and ensure it succeeds.
-4. Confirm application health checks, login/session flows, and JWT validation.
-5. Only then route external or player traffic to the restored cluster.
+4. For staging restores from production-origin data, ensure data sanitization evidence exists and is referenced by `SANITIZATION_EVIDENCE_REF`.
+5. Confirm application health checks, login/session flows, and JWT validation.
+6. Only then route external or player traffic to the restored cluster.
 
 For hobby/self-hosted environments that do not use the Kubernetes Job template directly, operators must run an equivalent one-shot restore-hardening automation that performs the same three control groups (JWT/JWKS rotation, DB credential rotation, external credential validation) and writes evidence to `design/operations/deployments/hobby-self-hosted/recovery/<recovery-ref>.json` before reopening player traffic.
 

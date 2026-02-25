@@ -143,6 +143,7 @@ Tier A controls must be measurable, not policy-only. Each player-facing environm
 - Last successful rotation evidence reference.
 
 The secret compliance record must be stored as versioned environment metadata in Git (for example under `design/operations/secret-compliance/<environment>.yaml`) so CI and reporting jobs can detect missing or stale records before promotion.
+Each credential record must also point to immutable rotation evidence in-repo (`evidenceRef` + `evidenceKey`) whose referenced payload includes an `immutableArtifactId` value (for example a job/run identifier that embeds a content digest such as `sha256:...`). Promotion/DR-readiness checks must fail when evidence is missing or cannot be tied to an immutable artifact identifier.
 
 Minimum credential classes to track (canonical record keys shown in parentheses):
 

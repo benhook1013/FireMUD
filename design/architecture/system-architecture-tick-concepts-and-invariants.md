@@ -155,13 +155,20 @@ Two related configuration concepts control how long tick work is allowed to run 
 
 These formulas are implemented once in shared tick/Redis helpers and consumed by Game Session and participating services; individual services must not define their own alternative lock/budget formulas. The defaults are chosen to give generous headroom for GC pauses and hiccups without requiring per-environment tuning; in most deployments, operators primarily adjust `tick_interval_ms`.
 
-At runtime, observed tick durations are compared against lock TTLs using Prometheus-facing series such as `tick_execution_time_ms_p95` and `tick_execution_time_ms_p99` (derived from `tick_execution_time_ms_bucket` recording rules). Ratios like `tick_execution_time_ms_p99 / tick_lock_ttl_ms` drive a simple health model for each `<tenantId, regionId>`:
+At runtime, observed tick durations are compared against lock TTLs using Prometheus-facing series such as `tick_execution_time_ms_p95` and `tick_execution_time_ms_p99` (derived from `tick_execution_time_ms_bucket` recording rules). Ratios like `tick_execution_time_ms_p99 / tick_lock_ttl_ms` drive region health for each `<tenantId, regionId>`.
 
-- **Healthy** – p99 execution time comfortably below the lock TTL.
-- **Degraded** – p99 execution time approaching the TTL; regions may emit warnings and metrics recommending configuration or design changes.
-- **Unsafe** – p99 execution time close to or exceeding the TTL over a sustained window; the scheduler treats this as a configuration or architecture error and may slow or temporarily halt ticks for the affected region until configuration or workload is adjusted.
+### Canonical Region Health States and Threshold Source
 
-Region health transitions (`HEALTHY` → `DEGRADED` → `HALTED`) and the exact thresholds are defined in `system-architecture-redis.md` under Redis availability and safety guarantees. This document captures only the conceptual relationship between tick budgets, TTLs, and region health.
+This table is the single source of truth for region health state names and threshold intent across tick, Redis, and scaling docs:
+
+| State | Meaning | Primary triggers |
+| --- | --- | --- |
+| `RUNNING` | Region is making normal forward progress. | `tick_execution_time_ms_p99 / tick_lock_ttl_ms` remains below the degraded threshold and commit progress is advancing. |
+| `DEGRADED` | Region is still progressing but close to safety limits. | `tick_execution_time_ms_p99 / tick_lock_ttl_ms` is near or above the degraded threshold over a sustained window, or remote/retry backlog exceeds budget. |
+| `STALLED` | Region lease may still be held but progress has stopped. | No successful commits for multiple `tick_interval_ms` windows, repeated failed ticks, or persistent stuck cleanup/ledger signals. |
+| `PAUSED` | Region is intentionally paused by control plane or maintenance flow. | Operator/control-plane pause for reset, migration, or incident mitigation. |
+
+Threshold values and alert windows are defined by this document’s ratio formulas plus the concrete metric thresholds in `system-architecture-redis-operations.md` and enforced through `tick_status{status="RUNNING|DEGRADED|STALLED|PAUSED"}`.
 
 In addition to timing-based health, Game Session tracks **forward progress** for each `<tenantId, regionId>`:
 
@@ -175,7 +182,7 @@ Conceptually:
 - Lease ownership indicates **who** is allowed to coordinate work for a region.
 - Progress signals indicate whether that owner is actually advancing game state.
 
-Downstream behavior for stalled regions (rejecting new commands, marking instances unhealthy, and so on) is described in the failures and operations doc; this section captures only the invariants that distinguish “lease held but stalled” from both healthy and fully halted regions.
+Downstream behavior for stalled regions (rejecting new commands, marking instances unhealthy, and so on) is described in the failures and operations doc; this section captures only the invariants that distinguish “lease held but stalled” from `RUNNING`, `DEGRADED`, and intentionally `PAUSED` regions.
 
 ## Retry and Backoff Invariants
 
@@ -198,10 +205,11 @@ At the configuration level:
 
 Runtime health is also expressed via ratios such as `tick_execution_time_ms_p95` or `tick_execution_time_ms_p99` over `tick_lock_ttl_ms`:
 
-- **Healthy** – p99 execution time well below `tick_lock_ttl_ms` (for example, < 0.5 × `tick_lock_ttl_ms`).
-- **Degraded / Unsafe** – p99 execution time approaching or exceeding `tick_lock_ttl_ms` over a sustained window; affected regions surface warnings and may be slowed or temporarily halted until configuration or workloads are adjusted.
+- `RUNNING` – p99 execution time is well below `tick_lock_ttl_ms` (for example, < 0.5 × `tick_lock_ttl_ms`).
+- `DEGRADED` – p99 execution time is approaching or exceeding `tick_lock_ttl_ms` over a sustained window.
+- `STALLED` – forward progress has stopped even if timing ratios are noisy or unavailable.
 
-The precise thresholds and recommended operator actions are defined in the Redis operations and incident runbook docs; this section records that tick fairness and safety are enforced both through bounded per-tick work and through these timing-based health checks.
+This keeps fairness and safety enforceable through bounded per-tick work and timing-based health checks without introducing alternate state names in other docs.
 
 ## Tick Regions, Global Effects, and Idle Background Ticks
 

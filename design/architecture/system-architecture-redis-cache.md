@@ -218,6 +218,7 @@ Memory and eviction behavior for cache and rate-limit workloads must not comprom
       - `coord_bytes = regions * (locks_per_region * avg_lock_bytes + timers_per_region * avg_timer_bytes + pending_bytes_per_region + session_bytes_per_region)`.
       - Apply a safety factor of at least **2–3×** (`coord_bytes * SAFETY_FACTOR`) to account for spikes, fragmentation, and unforeseen growth.
     - Keep coordination prefixes (`tick:*`, `session:*`, `timer:*`, `retry:*`) under a target fraction of `maxmemory` (for example, <30–40%) and treat sustained growth beyond that as a sizing or design issue.
+    - The canonical threshold source is `system-architecture-redis-operations.md` (Redis SLOs & Budgets); this doc intentionally mirrors that value.
   - Does **not** store large cache payloads or unbounded aggregates; those belong in the Cache/Rate-Limit cluster or in PostgreSQL/object storage. Any exception must:
     - Use a distinct, clearly documented prefix (for example, `coordCache:`).
     - Respect strict per-key size limits and a small aggregate memory budget.

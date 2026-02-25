@@ -39,16 +39,16 @@ To keep authorization consistent, subscription and billing operations map to the
     - `billingAdmin` for billing-focused reporting surfaces.
 
 Implementations must not introduce ad-hoc “owner” or “admin” concepts; they should rely on `tenantAdmin`, `platformAdmin`, and `billingAdmin` from the shared role model and the Tenant Authorization Contract. Support roles (`support`) may read high-level subscription state and derived entitlements for troubleshooting purposes but must not be granted access to detailed billing artifacts (for example, invoices or payment methods) or to any subscription-mutating APIs. These troubleshooting endpoints must be explicitly classified as **support-safe** in the auth middleware contract (`design/architecture/system-architecture-authentication.md#auth-middleware-algorithm-normative`) so support access cannot accidentally expand to billing-safe or data-bearing surfaces.
-For billing-safe tenant routes that intentionally remain reachable during `suspended`/`canceled` periods, services must perform a live membership/role check against authoritative account-tenant membership data (for example `GetTenantMembership(accountId, tenantId)`) before allowing mutations; JWT role claims alone are insufficient for billing-safe mutations.
-`GetTenantMembership` (or protocol-equivalent) responses must include `evaluatedAt` and `membershipVersion`; if membership authority is unavailable, billing-safe mutations fail closed.
+For billing-safe tenant routes that intentionally remain reachable during `suspended`/`canceled` periods, services must perform a live membership/role check against authoritative account-tenant membership data (for example `GetCallerTenantMembership(tenantId)`) before allowing mutations; JWT role claims alone are insufficient for billing-safe mutations.
+Caller-bound membership responses must include `evaluatedAt` and `membershipVersion`; if membership authority is unavailable, billing-safe mutations fail closed.
 
 Current support-safe allowlist in this domain:
 
-- `GetTenantEntitlements(tenantId)`
-- `GetSubscription(tenantId)` with high-level status/plan fields only
-- `ListSubscriptionsSupportSafe` with high-level status/plan fields only
+- `GetTenantEntitlementsCrossTenantSupportSafe(tenantId)`
+- `GetSubscriptionCrossTenantSupportSafe(tenantId)` with high-level status/plan fields only
+- `ListSubscriptionsCrossTenantSupportSafe` with high-level status/plan fields only
 
-The following are explicitly not support-safe: invoice exports, payment method details, Stripe customer metadata, any subscription mutation (`CreateSubscription`, plan change, cancellation), and billing-report variants such as `ListSubscriptionsBillingReports`.
+The following are explicitly not support-safe: invoice exports, payment method details, Stripe customer metadata, any subscription mutation (`CreateSubscription`, plan change, cancellation), and billing-report variants such as `ListSubscriptionsCrossTenantBillingSafeReports`.
 
 All billing/support route classifications in this domain must be registered in [Authorization Route Matrix](../../system-architecture-authz-route-matrix.md).
 
@@ -154,9 +154,9 @@ Downstream services depend on billing events for timely entitlement enforcement,
 - **Periodic refresh** – even when events are flowing, runtime services should refresh cached entitlements on a bounded interval (for example once per minute) so extended event outages do not cause unbounded drift.
 
 - `CreateSubscription` – Create or update a hosting subscription for a `tenantId` and `plan_code`.  
-- `GetSubscription` / `ListSubscriptionsTenantHighLevel` – Query subscription state for one tenant, scoped by tenant authorization.  
-- `ListSubscriptionsSupportSafe` – Cross-tenant support-safe high-level listing for troubleshooting only.  
-- `ListSubscriptionsBillingReports` – Cross-tenant billing-report listing for `billingAdmin`/`platformAdmin` only.  
+- `GetSubscriptionTenantHighLevel` / `ListSubscriptionsTenantHighLevel` – Query subscription state for one tenant, scoped by tenant authorization.  
+- `ListSubscriptionsCrossTenantSupportSafe` – Cross-tenant support-safe high-level listing for troubleshooting only.  
+- `ListSubscriptionsCrossTenantBillingSafeReports` – Cross-tenant billing-report listing for `billingAdmin`/`platformAdmin` only.  
 - `CancelSubscription` – Cancel a subscription at period end or immediately, moving it to `canceled` and emitting events.  
 - Domain events such as `SubscriptionStatusChanged` and `TenantBillingStateChanged` – Consumed by Game Session, world-management, and admin/logging services to adjust availability, quotas, and observability.
 

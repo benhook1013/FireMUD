@@ -166,7 +166,7 @@ Synthetic room-ground containers scoped by `(tenantId, gameInstanceId, roomInsta
 - `QueryInventory` – lists items for an entity with pagination.
 - `ListCharactersByAccount` – returns all characters owned by an account across tenants.
 - `ListRoomEntities` – returns players, NPCs, and visible items present in a room, scoped by `(tenantId, gameInstanceId, roomInstanceId)` (a `RoomInstanceRef`) so room presence and ground items are instance-safe.
-- `GetDraftDesignDigest` – returns publish-gating digest for Draft entity templates keyed by `(tenantId, versionId)`. Minimum response fields are `{tenantId, versionId, appliedCommitId or lastAppliedRevisionId, contentDigest, digestSchemaVersion}`. `contentDigest` must cover only version-scoped entity template/binding rows (for example item/NPC templates, loot mappings, balance curves) and must exclude live runtime entities and audit/history metadata.
+- `GetDraftDesignDigest` – returns publish-gating digest for Draft entity templates using typed scope request `GetDraftDesignDigestRequest { tenantId, scope: oneof { versionId, scriptPatchVersion } }`. Entity Management supports `versionId` scope only and must return `UNSUPPORTED_SCOPE` for `scriptPatchVersion`. Minimum response fields are `{tenantId, scope, appliedCommitId or lastAppliedRevisionId, contentDigest, digestSchemaVersion}`. `contentDigest` must cover only version-scoped entity template/binding rows (for example item/NPC templates, loot mappings, balance curves) and must exclude live runtime entities and audit/history metadata.
 
 ### LOOK entity listing contract
 
@@ -174,26 +174,30 @@ Synthetic room-ground containers scoped by `(tenantId, gameInstanceId, roomInsta
 
 - `tenantId`, `gameInstanceId`, and `roomInstanceId` (a `RoomInstanceRef`) so consumers can unambiguously scope the entity list to a running instance.
 - An `entitySnapshotId` so consumers can cache or invalidate entity lists deterministically.
+- `asOfTickId` (or equivalent monotonic read-fence token) echoing the fence used to materialize this entity list.
 - `entities[]`, each with `entityId`, `displayName`, `entityType` (`PLAYER`, `NPC`, `ITEM`), and optional `role`/`affiliation`.
 - `stateFlags` such as `isHidden`, `isInCombat`, or `isQuestTarget` so Game Logic can mask stealthy entities or highlight objectives.
 - `visionPriority` to help sort players before NPCs and list visible items at the end, keeping `LOOK` render ordering consistent.
 - `reloadHint` (enum) that signals whether the list is stable or dynamic, allowing Game Logic to decorate the `LOOK` output (for example, “Someone just entered from the east.”).
 
-Game Logic treats `entitySnapshotId` as the canonical cache key for LOOK-relevant entity presence for a specific `RoomInstanceRef`. When composing a full LOOK view, Game Logic combines:
+Game Logic treats `entitySnapshotId` as the canonical cache key for LOOK-relevant entity presence for a specific `RoomInstanceRef` at a specific read fence. When composing a full LOOK view, Game Logic combines:
 
 - `worldSnapshotId` from World Management’s `GetRoomSnapshot`, and
 - `entitySnapshotId` from `ListRoomEntities`,
 
-then returns a `lookSnapshotId` (for example `worldSnapshotId + ":" + entitySnapshotId`) alongside the rendered `LookResult` so Game Session can cache the final transcript deterministically.
+then returns a `lookSnapshotId` (for example `worldSnapshotId + ":" + entitySnapshotId + ":" + asOfTickId`) alongside the rendered `LookResult` so Game Session can cache the final transcript deterministically.
 
 Room-entity data is derived from runtime entity state plus authoritative world location. Ground items are discovered by querying items contained by the synthetic room-ground container for the target `RoomInstanceRef`. Characters and NPCs are included when their current location (owned by World Management) matches the target `RoomInstanceRef`:
 
 - Entity Management calls World Management’s `ListRoomOccupants(RoomInstanceRef)` to obtain the authoritative occupant `entityId` set for the room/instance.
 - Entity Management then joins those `entityId` values to its own runtime entity rows to materialize display data.
+- `ListRoomEntities` must accept a caller-supplied read fence token (`asOfTickId`) from World Management’s `GetRoomSnapshot`; when Entity Management cannot serve the same fence it must return `STALE_READ_FENCE` / `READ_FENCE_UNAVAILABLE` instead of returning mixed-tick data.
 
 Entity Management must not maintain a competing “room occupancy index” that can drift from World Management’s location tables. Visibility and filtering rules are applied after aggregation so LOOK output remains player-correct.
 
 Concrete per-effect required writes and reconciliation rules live in `design/architecture/system-architecture-spatial-and-ambient-effects-catalog.md`.
+
+Cross-service retry orchestration is owned by the Game Session Service reconciliation backlog described in [Transaction Strategies](../../system-architecture-transactions.md#reconciliation-owner-of-record-spatialambient-effects). Entity Management must expose participant acknowledgements for each `EffectId`; it is not the owner of cross-service retry scheduling.
 
 Only entities approved by the `EntityVisibilityPolicy` are returned; hidden NPCs, private inventory, or offstage summons are filtered out so `LOOK` always aligns with the player’s perspective. The response deliberately omits detailed stats to keep the text output focused on presence rather than numbers.
 
@@ -294,7 +298,8 @@ Entity Management also exposes **design-time** APIs used by the Game Design Serv
 
 Entity Management must also expose a read-only design-time synchronization surface so the Game Design Service can validate convergence before publish:
 
-- `GetDraftDesignDigest(tenantId, versionId)` returns `appliedCommitId` (or last applied revision), a stable `contentDigest`, and a `digestSchemaVersion` as described in `design/architecture/microservices/game-design-service/world-editing-tools.md`.
+- `GetDraftDesignDigest(GetDraftDesignDigestRequest)` uses request shape `{tenantId, scope: oneof {versionId, scriptPatchVersion}}`. Entity Management supports `versionId` scope only and returns `UNSUPPORTED_SCOPE` otherwise.
+- Response returns `{tenantId, scope, appliedCommitId (or lastAppliedRevisionId), contentDigest, digestSchemaVersion}` as described in `design/architecture/microservices/game-design-service/world-editing-tools.md`.
 
 Digest input manifest requirements (Entity Management):
 

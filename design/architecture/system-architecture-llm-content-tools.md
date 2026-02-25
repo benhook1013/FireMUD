@@ -65,5 +65,5 @@ This model allows the agent to query existing world data and propose coherent co
 - [Automation & Scripting Service](./microservices/automation-scripting-service/README.md)
 - [Procedural Generation](./system-architecture-procedural-generation.md)
 - [Scripting & Automation Framework](./system-architecture-scripting.md)
-- [AI Rules – Global](../project-management/ai-rules-global.md)
+- [AGENTS.md](../../AGENTS.md)
 - [AI Formatting Rules](../project-management/ai-formatting-rules.md)

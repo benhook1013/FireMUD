@@ -95,6 +95,7 @@ Semantics:
 - Idempotent: repeating the same request with the same `controlPlaneRequestId` must return the same result without reapplying.
 - The operation must validate that `targetScriptPatchVersion` is `READY` for the tenant before pinning.
 - If the target patch is not `READY`, the operation must fail deterministically with an application error (for example `errorCode=SCRIPT_PATCH_NOT_READY`) and must not mutate pin state.
+- The operation must also validate base-version cohesion: the target patch's `baseVersionId` must match the game instance's currently pinned `runtimeVersionId`. If they do not match, the operation must fail deterministically with `errorCode=SCRIPT_PATCH_BASE_VERSION_MISMATCH` and must not mutate pin state.
 - On success, Game Session persists the new pin for `(tenantId, gameInstanceId)` and emits `ScriptPatchPinChanged`.
 
 Outputs:
@@ -119,6 +120,7 @@ Semantics:
 
 - Equivalent to `SetPinnedScriptPatchVersion` but semantically indicates rollback; tooling may treat it as higher urgency.
 - Target patch readiness requirements are identical to `SetPinnedScriptPatchVersion`: rollback targets must be `READY` for the tenant or the request fails with a deterministic application error (`SCRIPT_PATCH_NOT_READY`).
+- Base-version cohesion requirements are identical to `SetPinnedScriptPatchVersion`: rollback targets must have `baseVersionId` equal to the instance `runtimeVersionId` or the request fails with `SCRIPT_PATCH_BASE_VERSION_MISMATCH`.
 - On success, emits `ScriptPatchRollbackRequested` (or `ScriptPatchPinChanged` with `changeType=ROLLBACK`).
 
 Outputs: same as `SetPinnedScriptPatchVersion`.
@@ -132,9 +134,8 @@ Rollback protocols require a coordination barrier so gameplay does not execute m
 Inputs:
 
 - `tenantId`
-- Exactly one scope key:
-  - `regionId` (preferred)
-  - `gameInstanceId` (allowed for instance-scoped tooling)
+- `gameInstanceId` (required for rollback-safe orchestration scope)
+- Optional narrower scope: `regionId` (allowed only for targeted operational interventions, not as a substitute for full-instance rollback fencing)
 - `controlPlaneRequestId`
 - `actor`
 - `reason`
@@ -162,7 +163,8 @@ Rollback requires an Automation-side admission barrier in addition to tick pause
 Inputs:
 
 - `tenantId`
-- Optional scope: `gameInstanceId`, `regionId`
+- `gameInstanceId` (required for rollback-safe orchestration scope)
+- Optional narrower scope: `regionId` (allowed only for targeted operational interventions, not as a substitute for full-instance rollback fencing)
 - `mode` (`NORMAL` | `PAUSED_FOR_ROLLBACK`)
 - `controlPlaneRequestId`
 - `actor`
@@ -295,6 +297,8 @@ Outputs:
 - `tenantId`, `scriptPatchVersion`
 - `status` (for example `PENDING_VALIDATION`, `ONLOAD_RUNNING`, `READY`, `FAILED`)
 - `statusReason` (optional)
+- `baseVersionId` (required)
+- `abilitySchemaDigest` (required for compatibility/audit surfaces)
 - `lastChangedAt`
 
 #### `ListScriptPatchStatuses`
@@ -324,6 +328,7 @@ Outputs:
 - `lastChangedAt`
 - `projectionAsOf` (timestamp of projection snapshot used for this read)
 - `projectionLagMs` (non-negative projection staleness estimate)
+- `isProjectionStale` (boolean; `true` when lag breaches published freshness SLO)
 
 Read-model ownership:
 
@@ -340,7 +345,10 @@ Inputs:
 Outputs:
 
 - A list of `GetScriptPatchInstanceRolloutStatus` records.
-- The read model must publish an eventual-consistency SLO (for example P95 projection lag) so operator workflows can distinguish stale read models from failed rollouts.
+- The read model must publish and enforce explicit freshness SLOs:
+  - P95 `projectionLagMs <= 5000`
+  - P99 `projectionLagMs <= 30000`
+- Responses that breach the published SLO must set `isProjectionStale=true` and include a bounded stale reason code in `statusReason` (for example `projection_lag_exceeded`) so operators can distinguish stale read models from failed rollouts.
 
 ### Automation & Scripting: Plugin Lifecycle Management
 
@@ -379,6 +387,10 @@ Semantics:
 
 - Idempotent.
 - Validates that the target bundle is allowed for the environment (signature verified, signer allowed, component policy satisfied).
+- Validates runtime-version compatibility before activation:
+  - `plugin.baseVersionId` must equal the instance `runtimeVersionId`.
+  - `plugin.abilitySchemaDigest` must match the immutable digest recorded for the same base version used by the running instance.
+  - Any mismatch fails deterministically with an application error (for example `PLUGIN_BASE_VERSION_MISMATCH` or `PLUGIN_ABILITY_SCHEMA_MISMATCH`) and must not mutate active plugin state.
 - On success, updates the registry for `(tenantId, gameInstanceId, pluginId)` and emits `PluginVersionActivated` (or `PluginVersionDisabled` as appropriate if this operation also transitions state).
 
 Outputs:
@@ -469,6 +481,36 @@ Outputs:
 - `items[]` (including `outboxWorkItemId`, Trigger Identity, `workItemStatus`, `createdAt`, `updatedAt`, `cancelReason`)
 - `nextPageToken`
 
+### Automation & Scripting: Event Ingress Admission Contract (Normative)
+
+`TriggerScriptEvent` and equivalent ingress RPCs must return a structured admission result so callers can implement retries without inferring behavior from transport errors.
+
+Required response fields:
+
+- `admitted` (`true` when admitted to pipeline; `false` otherwise)
+- `admissionOutcome` (enum)
+- `admissionReason` (bounded code/string)
+- `retryAfterMs` (optional server hint; required for backpressure outcomes where retry is expected)
+
+Required enum values:
+
+- `TRIGGER_ADMISSION_OUTCOME_ADMITTED`
+- `TRIGGER_ADMISSION_OUTCOME_BACKPRESSURE_RELOADING`
+- `TRIGGER_ADMISSION_OUTCOME_BACKPRESSURE_ROLLBACK_PAUSE`
+- `TRIGGER_ADMISSION_OUTCOME_VERSION_UNAVAILABLE`
+- `TRIGGER_ADMISSION_OUTCOME_PIN_STATE_UNAVAILABLE`
+- `TRIGGER_ADMISSION_OUTCOME_QUOTA_DENIED`
+- `TRIGGER_ADMISSION_OUTCOME_SCRIPT_DISABLED`
+- `TRIGGER_ADMISSION_OUTCOME_PLUGIN_DISABLED`
+- `TRIGGER_ADMISSION_OUTCOME_PLUGIN_COMPONENT_BLOCKED`
+- `TRIGGER_ADMISSION_OUTCOME_SIGNER_POLICY_UNAVAILABLE`
+
+Contract rules:
+
+- Backpressure outcomes (`*_BACKPRESSURE_*`) must include bounded `retryAfterMs`.
+- `admissionOutcome` and `admissionReason` must map 1:1 to `script_event_audit.finalOutcome` and `finalReason`.
+- Admission failures are application-level outcomes and must not be surfaced as transport errors.
+
 #### `ReplayDeadLetteredWorkItems`
 
 Inputs:
@@ -485,6 +527,10 @@ Semantics:
 - Idempotent.
 - Transitions selected `DEAD_LETTERED` work items back to replayable state (`PENDING` or equivalent) without re-running DSL evaluation for original triggers.
 - Must enforce bounded batch size per request.
+- Must enforce replay eligibility against current control-plane state before transition:
+  - Work items with `scriptPatchVersion` that is not currently pinned for the scoped instance must be rejected from replay.
+  - Plugin work items whose `(pluginId, pluginVersionId)` do not match currently active plugin state for the scoped instance must be rejected from replay.
+  - Ineligible rows must return deterministic bounded application errors (for example `REPLAY_VERSION_FENCE_MISMATCH`) and must remain `DEAD_LETTERED`.
 
 Outputs:
 
@@ -557,6 +603,10 @@ To keep control-plane behavior predictable, transport and ordering guarantees mu
 - **Partition key (instance-scoped events)**: events scoped to a running instance (for example `ScriptPatchPinChanged`, `ScriptPatchInstanceRolloutChanged`, and plugin lifecycle events) must use `tenantId` + `gameInstanceId` so ordering is stable for that instance.
 - **Partition key (tenant-scoped patch lifecycle events)**: tenant patch readiness events (`ScriptPatchTenantStatusChanged`) must use `tenantId` only.
 - **Ordering**: consumers may assume per-partition order within each event family/scope, but must not assume global order across tenants or instances.
+- **Monotonic sequencing (required)**:
+  - All instance-scoped event families must carry `instanceSequence` (monotonic per `(tenantId, gameInstanceId)`).
+  - Tenant-scoped patch readiness events must carry `tenantSequence` (monotonic per `tenantId`).
+  - Read models must apply events by sequence (not arrival time) and ignore stale or duplicate sequence numbers.
 - **Replay**: new consumers must be able to replay at least N days of control-plane events (or reconstruct state from durable service APIs) so operator UIs can be rebuilt without data loss.
 - **Idempotency**: consumers must treat `controlPlaneRequestId` as the primary idempotency key for operator-driven events and must be safe under at-least-once delivery.
 
@@ -571,6 +621,7 @@ Fields:
 - `previousScriptPatchVersion`
 - `pinnedScriptPatchVersion`
 - `changeType` (`SET` | `ROLLBACK`)
+- `instanceSequence`
 - `controlPlaneRequestId`
 - `actor` and `reason`
 - `occurredAt`
@@ -591,6 +642,7 @@ Fields:
 - `newStatus`
 - `causedBy` (`RUNTIME_VALIDATION` | `SYSTEM` | `OPERATOR`)
 - `controlPlaneRequestId` (optional; required when `causedBy=OPERATOR`)
+- `tenantSequence`
 - `statusReason` (optional)
 - `occurredAt`
 
@@ -610,6 +662,7 @@ Fields:
 - `previousRolloutStatus`
 - `newRolloutStatus` (`PINNED` | `ROLLED_BACK` | `REPINNED`)
 - `causedBy` (`OPERATOR` | `SYSTEM`)
+- `instanceSequence`
 - `controlPlaneRequestId` (required when `causedBy=OPERATOR`)
 - `statusReason` (optional)
 - `occurredAt`
@@ -629,6 +682,7 @@ Fields:
 - `pluginId`
 - `previousPluginVersionId` / `newPluginVersionId` (when applicable)
 - `newState` (`ENABLED` | `DISABLED` | `DRAINING`)
+- `instanceSequence`
 - `controlPlaneRequestId` (if operator-driven)
 - `actor` and `reason` (if operator-driven)
 - `occurredAt`
@@ -655,6 +709,7 @@ Fields:
 - `gameInstanceId`
 - `signerKeyId`
 - `affectedPluginCount`
+- `instanceSequence`
 - `controlPlaneRequestId` (optional when operator-driven rollout change is correlated)
 - `occurredAt`
 
@@ -667,6 +722,7 @@ Fields:
 - `tenantId`
 - `gameInstanceId`
 - `targetScriptPatchVersion`
+- `instanceSequence`
 - `controlPlaneRequestId`
 - `timeoutMs`
 - `reason` (bounded enum/code)
@@ -679,11 +735,14 @@ Fields:
 1. Validate patch is `READY` in Automation & Scripting for the tenant (`GetScriptPatchStatus`).
 2. Call `SetPinnedScriptPatchVersion` in Game Session.
 3. Game Session emits `ScriptPatchPinChanged`.
-4. Automation & Scripting observes the event for visibility (not for authority) and treats the pinned patch as the expected active one for tick handoffs.
-5. Schedulers use a bounded-staleness pin cache for admission and timer firing decisions:
+4. Call `CancelPendingWorkItemsForPatch` for the previous patch in scope so outbox work produced under displaced patch state cannot continue handing off indefinitely.
+5. Call `PurgeQueuedTickCommandsForScriptPatch` for the previous patch (and plugin equivalents when plugin version changes are coupled with the promotion).
+6. Wait for pin-convergence acknowledgments from both Automation & Scripting and Game Session for the requested `controlPlaneRequestId`.
+7. Automation & Scripting observes the committed pin event for visibility (not for authority) and treats the pinned patch as the expected active one for tick handoffs.
+8. Schedulers use a bounded-staleness pin cache for admission and timer firing decisions:
    - If cached pin data is stale beyond the configured max-age, they must refresh from authoritative control-plane APIs/events before admitting new work.
    - If fresh authoritative pin data cannot be obtained, admission must fail closed with `finalStage=ADMISSION`, `finalOutcome=pin_state_unavailable`, and an explicit `finalReason`.
-6. Operators monitor `script_event_audit` and automation metrics; per-event correlation uses `scriptEventId` in audit/logs/traces, not metric labels.
+9. Operators monitor `script_event_audit` and automation metrics; per-event correlation uses `scriptEventId` in audit/logs/traces, not metric labels.
 
 ### Patch Rollback (Operator-Driven, Required)
 
@@ -700,6 +759,12 @@ Fields:
 ### Rollback Orchestration State Machine (Required)
 
 Rollback orchestration must expose and persist a state machine so partial failures are recoverable and retries are deterministic.
+
+Ownership and source-of-truth requirements:
+
+- Game Session is the producer-of-record for rollback orchestration state keyed by `controlPlaneRequestId`.
+- Logging & Admin may expose convenience orchestration APIs, but these must call the Game Session workflow APIs and read back the same canonical workflow state; they must not persist a competing rollback-state machine.
+- Automation & Scripting participates via idempotent step APIs (`SetAutomationAdmissionMode`, cancel/purge hooks, convergence reads) and must not infer orchestration completion from local state alone.
 
 Required states:
 

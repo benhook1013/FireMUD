@@ -27,7 +27,18 @@ When applying scope substitution, use a deterministic mapping source (control-pl
 - **Durable commit/coordination cleanup divergence**
 - **Stuck tick effect ledger entries** (`SCHEDULED` rows that never converge)
 
-Each scenario below assumes that Redis and database metrics are wired according to the Redis and tick operations docs, and that the tick dashboards under `design/observability/grafana` are available.
+Each scenario below assumes Redis/database metrics are wired according to the Redis and tick operations docs. If Grafana/Prometheus/Kibana/Jaeger is degraded, use fallback procedures from `system-architecture-observability-incident-runbook.md` and prioritize authoritative tick controls and service logs.
+
+## Trace Preconditions (For Tick Root Cause)
+
+Tick incidents often benefit from trace-level diagnosis, but mitigation must not block on trace availability.
+
+- Baseline expectation: production-like environments keep non-zero trace sampling (the tracing contract uses ~1% as the common usability baseline for high-volume paths).
+- If `tick_execute` / `tick_apply_effect` traces are too sparse:
+  - First apply temporary service-scoped sampling escalation for affected services and record start/end times.
+  - If collector tail-sampling by `tenantId`/`regionId` is supported, prefer scoped escalation for the impacted region and remove it after triage.
+- If the environment does not satisfy collector capability requirements for scoped escalation, treat it as service-scoped-only.
+- If traces remain unavailable, continue with metrics + logs and proceed with region/tenant reset decisions using runbook thresholds.
 
 ## Stalled Tick Region
 

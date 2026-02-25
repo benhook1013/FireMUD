@@ -48,10 +48,11 @@ Artifact lifecycle state for each exported prefix must be persisted in a dedicat
 - `version_asset_artifact`:
   - `tenant_id`
   - `version_id`
-  - `artifact_state` (`STAGED`, `PUBLISHED`, `FAILED`, `TOMBSTONED`, `PURGED`)
+  - `artifact_state` (`STAGED`, `PUBLISHED`, `FAILED`, `TOMBSTONED`, `PURGE_IN_PROGRESS`, `PURGE_FAILED`, `PURGED`)
   - `state_epoch` (monotonic CAS token)
   - `manifest_hash`
   - `last_workflow_id` (publish/repair workflow identity)
+  - `last_error_code` / `last_error_message` (nullable; set on failed transitions)
   - `updated_at`
 
 `(tenant_id, version_id)` is unique in `version_asset_artifact`. All lifecycle transitions must use compare-and-set on `state_epoch` so concurrent publish/repair/purge workflows cannot race.
@@ -71,6 +72,11 @@ See the [OpenAPI specification](../../../../services/game-design-service/src/mai
 Endpoints for downloading or deleting assets are available.
 gRPC endpoints support asset management operations.
 Listing assets for a tenant is supported.
+Control-plane purge APIs are required:
+
+- `CanDeleteVersionAssets(tenantId, versionId)` – read-only eligibility oracle.
+- `BeginPurgeVersionAssets(tenantId, versionId, expectedArtifactStateEpoch)` – CAS-guarded purge start.
+- `FinalizePurgeVersionAssets(tenantId, versionId, purgeWorkflowId, expectedArtifactStateEpoch)` – CAS-guarded purge completion.
 
 A basic repository (`GameAssetRepository`) and service implementation
 (`GameAssetServiceImpl`) persist uploads using Spring Data JPA.
@@ -96,6 +102,8 @@ Artifact lifecycle states for a `(tenantId, versionId)` prefix are explicit:
 - `PUBLISHED` – publish succeeded and `manifestHash` is committed for the immutable bytes.
 - `FAILED` – publish workflow failed for this version.
 - `TOMBSTONED` – failed or abandoned artifact is quarantined for diagnostics and excluded from activation paths.
+- `PURGE_IN_PROGRESS` – purge workflow has atomically locked this prefix for deletion and is removing object-store bytes.
+- `PURGE_FAILED` – purge workflow encountered a deletion/finalization failure; bytes may be partially deleted and require explicit operator retry/resume workflow.
 
 Allowed transitions:
 
@@ -104,7 +112,11 @@ Allowed transitions:
 - `FAILED -> STAGED` only through an explicit repair/retry workflow.
 - `FAILED -> TOMBSTONED` when operators abandon retry and quarantine bytes.
 - `TOMBSTONED -> STAGED` only via explicit operator-approved restore workflow.
-- `TOMBSTONED -> PURGED` (physical deletion) only after deletion eligibility checks pass; purge is not an implicit publish compensation action.
+- `TOMBSTONED -> PURGE_IN_PROGRESS` only through CAS-guarded `BeginPurgeVersionAssets`.
+- `PURGE_IN_PROGRESS -> PURGED` (physical deletion complete) only after deletion workflow success; purge is not an implicit publish compensation action.
+- `PURGE_IN_PROGRESS -> PURGE_FAILED` when byte deletion or finalization CAS fails.
+- `PURGE_FAILED -> PURGE_IN_PROGRESS` only through explicit retry/resume workflow using a new workflow idempotency key.
+- `PURGE_FAILED -> TOMBSTONED` when retry is abandoned and operators choose to keep diagnostic state.
 
 `PURGED` semantics:
 
@@ -153,6 +165,29 @@ Deletion-eligibility authority:
   - no non-Retired `version_asset` references remain,
   - no reachable `revision_asset` / branch references require retained bytes,
   - no normalized template or launch metadata still references the version prefix.
+
+Race-safe purge workflow:
+
+- Eligibility checks and purge start must not run as a loose "check then delete" pair.
+- Purge must begin through a single CAS-guarded control-plane API, for example:
+  - `BeginPurgeVersionAssets(tenantId, versionId, expectedArtifactStateEpoch)`
+- `BeginPurgeVersionAssets` must atomically:
+  - re-evaluate deletion eligibility (same rules as `CanDeleteVersionAssets`),
+  - transition `version_asset_artifact` from `TOMBSTONED` to `PURGE_IN_PROGRESS` (or equivalent) using `state_epoch` CAS, and
+  - return a `purgeWorkflowId` for the object-store deletion phase.
+- If CAS fails or eligibility no longer holds, the API must fail without deleting objects.
+- Finalization transitions `PURGE_IN_PROGRESS -> PURGED` only after object deletion succeeds and must retain lifecycle metadata row for audit.
+- On deletion/finalization failure, workflow must transition to `PURGE_FAILED` with structured `last_error_code`/`last_error_message`; operators then use retry/resume APIs instead of manual object-store surgery.
+
+## Asset Upload Guardrails
+
+To prevent persistence and performance failures in `game_assets`:
+
+- Maximum single asset size is 25 MiB; oversized uploads must fail with `ASSET_TOO_LARGE`.
+- Per-tenant draft asset quota is 2 GiB of `game_assets.data`; writes beyond quota must fail with `ASSET_QUOTA_EXCEEDED`.
+- Upload/download APIs must support streaming/chunked transfer at the transport layer; services must not require buffering full payloads in memory before persistence.
+- Publish/export workers must process assets in bounded batches (configurable), with backpressure metrics to avoid starving version publish orchestration.
+- Quota and size limits must be configurable per environment but default to the values above when unset.
 
 The database is optimized for design-time editing rather than long-term bulk
 storage. Implementations should treat `game_assets` as:

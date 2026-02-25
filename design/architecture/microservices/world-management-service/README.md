@@ -72,6 +72,8 @@ Movement, drops, pickups, and room presence are cross-service by design:
 
 All spatial effects must carry the target `RoomInstanceRef` and a canonical tick `EffectId`. Both services must implement durable idempotency guards so partial success can be retried safely until convergence. See [Transaction Strategies](../../system-architecture-transactions.md) and [Identifier Glossary](../../system-architecture-identifier-glossary.md).
 
+Cross-service retry orchestration is owned by the Game Session Service reconciliation backlog described in [Transaction Strategies](../../system-architecture-transactions.md#reconciliation-owner-of-record-spatialambient-effects). World Management must expose participant acknowledgements for each `EffectId`; it is not the owner of cross-service retry scheduling.
+
 Ambient world mutations (doors, hazards, weather) follow the same rule: they are applied only via effect-shaped commands carrying `EffectId` + `RoomInstanceRef`. Operators and scripts must not write World Management instance tables directly.
 
 Concrete per-effect required writes and reconciliation rules live in `design/architecture/system-architecture-spatial-and-ambient-effects-catalog.md`.
@@ -157,6 +159,7 @@ Concrete per-effect required writes and reconciliation rules live in `design/arc
   - `character_location` table records the current room for each character, including which instance they are in; item locations and containment are modeled and stored by the Entity Management Service rather than this table.
 - **Runtime configuration and events**:
   - `generation_rule` table stores per-tenant procedural generation parameters used by the [Procedural Generation Rules API](#procedural-generation-rules-api). These rules are mutable tenant defaults owned by World Management, not versioned design artifacts by themselves.
+  - `generation_rule` writes must capture audit provenance (`changedBy`, `changedAt`, `changeReason`, `changeDigest`) and optionally the originating Game Design commit/revision id when a design workflow initiated the change.
   - An optional `generation_rule_override` table may store version-specific overrides keyed by `(tenantId, versionId)` for tenants that require different tuning per version; when present for a given version, overrides are applied instead of the tenant-global defaults when running generators for that version. Overrides may exist only for non-Retired versions and must be kept consistent with the version lifecycle and migration rules described in [Database Migrations](../../system-architecture-database-migrations.md).
   - Published versions must carry a frozen generation config identity (`generationConfigRevision`/hash) derived at publish time; world creation for that `(tenantId, versionId)` must use this frozen identity and fail closed if it is unavailable.
   - `generation_run` (or equivalent) persists deterministic generation artifacts for replay-safe publish/reconciliation (`generationRunId`, `generationRequestId`, `generatorImplementationVersion`, canonical `configSnapshot`, and `outputDigest`).
@@ -171,8 +174,8 @@ Concrete per-effect required writes and reconciliation rules live in `design/arc
 - `GetRoomSnapshot` – returns a minimal, `LOOK`-focused view (room identity, names, descriptions, exit metadata, ambient state) scoped by `RoomInstanceRef`.
 - `ListRoomOccupants` – returns the authoritative typed occupant list (`occupants`) for actors in a room, scoped by `RoomInstanceRef`. The legacy `occupantEntityIds` list is a derived compatibility mirror only.
 - `ApplyRoomAmbientStatePatch` – applies an ambient state patch to the target `RoomInstanceRef`, guarded by `EffectId`.
-- `GetDraftDesignDigest` – returns publish-gating digest for Draft world templates keyed by `(tenantId, versionId)`. Minimum response fields are `{tenantId, versionId, appliedCommitId or lastAppliedRevisionId, contentDigest, digestSchemaVersion}`. `contentDigest` must cover only version-scoped template/binding rows (for example region/zone/room templates and spawn bindings) and must exclude runtime/instance rows and audit metadata.
-- `UpdateWorldState` – deprecated legacy bulk update surface. It is not authoritative for runtime mutations and remains only for backwards compatibility during migration.
+- `GetDraftDesignDigest` – returns publish-gating digest for Draft world templates using a typed scope request. Request shape is `GetDraftDesignDigestRequest { tenantId, scope: oneof { versionId, scriptPatchVersion } }`; World Management supports `versionId` scope only and must return `UNSUPPORTED_SCOPE` for `scriptPatchVersion`. Minimum response fields are `{tenantId, scope, appliedCommitId or lastAppliedRevisionId, contentDigest, digestSchemaVersion}`. `contentDigest` must cover only version-scoped template/binding rows (for example region/zone/room templates and spawn bindings) and must exclude runtime/instance rows and audit metadata.
+- `UpdateWorldState` – legacy bulk update surface scheduled for removal on **June 30, 2026**. Effective immediately, runtime mutation requests on this RPC must return `UNSUPPORTED_OPERATION` and callers must use effect-shaped mutation RPCs (`ApplyRoomAmbientStatePatch` and related effect APIs).
 
 ### Instance termination contract (World ↔ Entity)
 
@@ -191,6 +194,7 @@ World Management owns the lifecycle of `gameInstanceId` rows, but teardown is a 
 
 - `tenantId`, `gameInstanceId`, and `roomInstanceId` (a `RoomInstanceRef`) so the caller can unambiguously scope the snapshot to a running instance.
 - A stable `worldSnapshotId` (monotonic or content-hash) for this room’s LOOK-relevant world data so callers can cache or invalidate snapshots deterministically.
+- `asOfTickId` (or equivalent monotonic room/read fence token) that identifies the tick fence used to materialize this snapshot. This fence token is required for cross-service LOOK composition.
 - A stable `roomName` (plus optional slug) suitable for UI display.
 - `shortDescription` and `longDescription` text; descriptions longer than the `LOOK_MAX_DESCRIPTION_CHARS` config should be truncated with an ellipsis so clients don’t wrap aggressively.
 - `exits`, each annotated with `label` (e.g., `NORTH`), `targetRoomInstanceId` (within the same `gameInstanceId`), and a human-friendly direction string (e.g., “arched passage toward the cavern mouth”). Game Logic renders this list into the `LOOK` exits line.
@@ -203,12 +207,18 @@ Game Logic caches snapshots for the duration of a tick but refreshes them after 
 
 Room snapshots deliberately exclude live entities, items, and inventory contents; those are retrieved from the Entity Management Service using room- and instance-scoped queries when composing `LOOK` results.
 
-Game Logic treats `worldSnapshotId` as the canonical cache key for LOOK-relevant world data for a specific `RoomInstanceRef`. When composing a full LOOK view, Game Logic combines:
+Cross-service LOOK read consistency is fence-based:
+
+- Game Logic must send the same `asOfTickId` fence token from `GetRoomSnapshot` when calling Entity Management `ListRoomEntities`.
+- Entity Management must either answer from the same fence token or return `STALE_READ_FENCE` / `READ_FENCE_UNAVAILABLE`.
+- If fences do not match, Game Logic retries composition instead of returning mixed-state output.
+
+Game Logic treats `worldSnapshotId` as the canonical cache key for LOOK-relevant world data for a specific `RoomInstanceRef` at a specific fence. When composing a full LOOK view, Game Logic combines:
 
 - `worldSnapshotId` from `GetRoomSnapshot`, and
 - `entitySnapshotId` from Entity Management’s `ListRoomEntities`,
 
-then returns a `lookSnapshotId` (for example `worldSnapshotId + ":" + entitySnapshotId`) alongside the rendered `LookResult` so Game Session can cache the final transcript deterministically.
+then returns a `lookSnapshotId` (for example `worldSnapshotId + ":" + entitySnapshotId + ":" + asOfTickId`) alongside the rendered `LookResult` so Game Session can cache the final transcript deterministically without cross-service skew.
 
 The `V10__seed_demo_world.sql` migration seeds the demo rooms referenced by this lifecycle (Candle-lit Antechamber and Crafting Hall of Ember) so integration tests and the LOOK transcripts stay stable. Developers can locate and extend that migration when the sample world needs more exits or environmental trivia.
 
@@ -321,7 +331,7 @@ the [Security Architecture](../../system-architecture-security.md) for details.
 - `GetRoomSnapshot(GetRoomSnapshotRequest) returns (GetRoomSnapshotResponse)` – returns the minimal, LOOK-focused snapshot scoped by `RoomInstanceRef`.
 - `ListRoomOccupants(ListRoomOccupantsRequest) returns (ListRoomOccupantsResponse)` – returns canonical typed occupants for a `RoomInstanceRef`.
 - `ApplyRoomAmbientStatePatch(ApplyRoomAmbientStatePatchRequest) returns (ApplyRoomAmbientStatePatchResponse)` – applies effect-idempotent ambient mutations to a room instance.
-- `UpdateWorldState(UpdateWorldStateRequest) returns (UpdateWorldStateResponse)` – deprecated compatibility API; new runtime behavior must use effect-shaped mutation RPCs.
+- `UpdateWorldState(UpdateWorldStateRequest) returns (UpdateWorldStateResponse)` – removal deadline June 30, 2026. Runtime mutation requests must already be rejected with `UNSUPPORTED_OPERATION`; this endpoint exists only to support migration telemetry and controlled caller cleanup.
 
 Call the `Ping` method with:
 
@@ -347,7 +357,8 @@ World Management also exposes **design-time** APIs used by the Game Design Servi
 
 World Management must also expose a read-only design-time synchronization surface so the Game Design Service can validate convergence before publish:
 
-- `GetDraftDesignDigest(tenantId, versionId)` returns `appliedCommitId` (or last applied revision), a stable `contentDigest`, and a `digestSchemaVersion` as described in `design/architecture/microservices/game-design-service/world-editing-tools.md`.
+- `GetDraftDesignDigest(GetDraftDesignDigestRequest)` uses request shape `{tenantId, scope: oneof {versionId, scriptPatchVersion}}`. World Management supports `versionId` scope only and returns `UNSUPPORTED_SCOPE` otherwise.
+- Response returns `{tenantId, scope, appliedCommitId (or lastAppliedRevisionId), contentDigest, digestSchemaVersion}` as described in `design/architecture/microservices/game-design-service/world-editing-tools.md`.
 
 Digest input manifest requirements (World Management):
 
@@ -387,3 +398,8 @@ variation. Updates are persisted immediately and picked up by the procedural
 generation engine on the next run.
 
 Ownership note: these rules are authored and persisted in World Management. Game Design may invoke generation in design workflows, but it is not the authority for `generation_rule` state.
+
+Audit and publish-gating note:
+
+- Every `generation_rule` update must persist provenance fields (`changedBy`, `changedAt`, `changeReason`, `changeDigest`) so operators can explain draft drift.
+- When live tuning affects a Draft version’s effective generation inputs, the owning version’s `designSyncStatus` must transition to `OUT_OF_SYNC` until publish-gate digests are recomputed and converged.

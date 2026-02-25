@@ -9,7 +9,7 @@ This document provides a high-level view of FireMUD’s system architecture, sho
 The documents linked from this overview describe the target-state design, but the following decisions are treated as **canonical contracts** that other architecture docs must align to.
 
 - **Gateway responsibility model:** Spring Cloud Gateway is the single ingress for HTTP and WebSocket traffic and the central place for routing, coarse route gating, rate limiting, and observability. It is not the platform’s authorization authority: JWT validation and role/tenant authorization are performed by the consuming meta/control services using shared middleware and the Account Service JWKS.
-- **Gameplay sharding scope (edge vs Game Session):** Spring Cloud Gateway does not own a gameplay shard routing plane. `/ws/game/**` (and transitional `/ws/game-legacy/**` where still enabled) route to a stable Game Session service surface; any lease ownership and region sharding are internal to the Game Session layer and its coordination mechanisms. See `design/architecture/decisions/adr-0007-edge-sharding-and-close-taxonomy.md` for the canonical scope decision.
+- **Gameplay sharding scope (edge vs Game Session):** Spring Cloud Gateway does not own a gameplay shard routing plane. `/ws/game/**` routes to a stable Game Session service surface; any lease ownership and region sharding are internal to the Game Session layer and its coordination mechanisms. See `design/architecture/decisions/adr-0007-edge-sharding-and-close-taxonomy.md` for the canonical scope decision.
 - **Multi-cluster gameplay sharding scope:** FireMUD target state assumes single-cluster gameplay execution per deployment, with scale via lease-based in-cluster Game Session rebalancing. Cross-cluster gameplay sharding is out of scope until a dedicated end-to-end design package is accepted. See `design/architecture/decisions/adr-0008-multi-cluster-gameplay-sharding-scope.md`.
 - **Lease moves and reconnect behavior:** The platform favors **close-and-reconnect** over mid-connection migration. The edge contract does not define a distinct “shard handoff” close category; client-visible outcomes remain limited to the standard close taxonomy (for example `backend_unavailable` for sustained gameplay-path failures). If a future design introduces explicit handoff semantics at the edge, it must be defined as a dedicated design update and integrated into the gateway + protocol bridging contracts (see `design/architecture/decisions/adr-0007-edge-sharding-and-close-taxonomy.md`).
 - **Quotas and entitlements source of truth:** Subscription entitlements and plan-driven quota values are owned by the Account Service (for example via `GetTenantEntitlements(tenantId)`). Logging & Admin provides dashboards, audit trails, and operator UX; any operator overrides must be represented as an overlay that is merged into the Account Service entitlement contract so enforcement points consume a single canonical view.
@@ -26,15 +26,15 @@ The documents linked from this overview describe the target-state design, but th
 - **All application-level gameplay and admin traffic is routed through the Spring Cloud Gateway**, ensuring centralized **traffic routing, monitoring, and observability**. Raw Telnet TCP terminates at the Telnet edge proxy and TCP Proxy Service before being bridged to the Gateway over WebSocket. See [Gateway Architecture](./system-architecture-gateway.md) for deployment details and stateless behavior.
   - Ordering and delivery guarantees for the combined Telnet and WebSocket path (FIFO where delivered, at-most-once semantics, and explicit drop conditions) are documented in [Protocol Bridging](./system-architecture-protocol-bridging.md#ordering--delivery-invariants).
   - Backpressure and slow-client behavior across the TCP Proxy and WebSocket layers are described in [Protocol Bridging](./system-architecture-protocol-bridging.md#backpressure--slow-clients).
-   > 🛑 **Gameplay login is fronted by the Game Session Service**, which handles the `LOGIN` command and binds sessions in Redis. It calls the Account Service to verify credentials and obtain JWTs/tokens. The Gateway simply forwards any admin tokens, and JWTs are validated by the admin or logging services themselves; gameplay protocol clients do not present JWTs, while first-party WebSocket clients use a short-lived edge connect token on `/ws/game/**` before `LOGIN`/`PLAY` (with `/ws/game-legacy/**` as migration-only compatibility). See [Authentication & Authorization](./system-architecture-authentication.md#login-and-session-flow) for the full login flow.
+   > 🛑 **Gameplay login is fronted by the Game Session Service**, which handles the `LOGIN` command and binds sessions in Redis. It calls the Account Service to verify credentials and obtain JWTs/tokens. The Gateway simply forwards any admin tokens, and JWTs are validated by the admin or logging services themselves; gameplay protocol clients do not present JWTs, while first-party WebSocket clients use a short-lived edge connect token on `/ws/game/**` before `LOGIN`/`PLAY`. See [Authentication & Authorization](./system-architecture-authentication.md#login-and-session-flow) for the full login flow.
 - **Telnet clients maintain sticky TCP connections only to the TCP Proxy Service**, which buffers **active input** but **discards it across reconnects**
 - **Reconnection logic is handled in layers** to preserve gameplay continuity
-- **All internal service-to-service communication from the Game Session Service onward uses gRPC**, with strict schema enforcement and low latency. All calls are encrypted with **mutual TLS**; see [Security Architecture](./system-architecture-security.md)
+- **Synchronous internal service-to-service communication from the Game Session Service onward uses gRPC**, with strict schema enforcement and low latency. All calls are encrypted with **mutual TLS**; see [Security Architecture](./system-architecture-security.md). Asynchronous cross-service signaling (for example edge disconnect hints and saga/domain events) uses documented event contracts and idempotency keys.
 - **Session state is stored in Redis** to keep services stateless and enable full reconnect recovery
 - **Game definitions and rules are data-driven and editable via tooling without redeploying code**; see the [Game Design Service documentation](./microservices/game-design-service/README.md).
 - **Game Session Service orchestrates live game instances**, handling tick execution and runtime configuration
 - [**Feature flags**](./microservices/game-design-service/feature-flags.md) are defined at design-time in the Game Design Service; Logging & Admin provides the operator UI for runtime toggles, while Game Session owns the runtime override state and enforcement during gameplay.
-- **One active gameplay binding per identity key is enforced** — logging in from another client forcibly transfers control to the new session and terminates the old one. The uniqueness key is mode-dependent (`identity_mode=interim` uses `{tenantId, gameInstanceId, accountId}`; `identity_mode=canonical` uses `{tenantId, gameInstanceId, characterId}`), as defined in [Authentication & Authorization](./system-architecture-authentication.md#gameplay-identity-mode-contract-normative).
+- **One active gameplay binding per identity key is enforced** — logging in from another client forcibly transfers control to the new session and terminates the old one. The canonical uniqueness key is `{tenantId, gameInstanceId, characterId}`, as defined in [Authentication & Authorization](./system-architecture-authentication.md#contract-decisions-normative).
 - **Multi-tenant architecture shares infrastructure across games; per-game resource quotas prevent one tenant from exhausting cluster capacity.**
 - **Admin and operations tooling communicates with Spring Cloud Gateway over an internal gRPC management API** for route and health management; no gameplay traffic flows over this control-plane path.
 
@@ -70,7 +70,7 @@ FireMUD uses two complementary authentication modes that share a common identity
 - **Gameplay sessions (players)**  
   - Players authenticate using the `LOGIN` command handled by the **Game Session Service**.  
   - Game Session delegates credential verification (including 2FA, external identity providers, and lockout rules) to the **Account Service**, which owns all credential and account-security decisions.  
-  - On success, Game Session creates and maintains a Redis-backed gameplay session binding (tenant, character, tick-region context) and enforces one active binding per configured identity key (`identity_mode` contract in Authentication & Authorization). Gameplay traffic is authenticated by this Redis session context rather than by browser-style JWTs sent on each message.
+  - On success, Game Session creates and maintains a Redis-backed gameplay session binding (tenant, character, tick-region context) and enforces one active binding per `{tenantId, gameInstanceId, characterId}`. Gameplay traffic is authenticated by this Redis session context rather than by browser-style JWTs sent on each message.
 
 - **Admin and creator sessions (control plane)**  
   - Admin and creator tools authenticate via HTTP/gRPC using JWTs issued by the **Account Service**, which publishes JWKS and remains the source of truth for token semantics.  
@@ -168,9 +168,19 @@ See [Redis Architecture](./system-architecture-redis.md) and [Redis Usage & Prof
 | MUD Clients → TCP Proxy Service | Raw TCP (Telnet) |
 | TCP Proxy Service → Spring Cloud Gateway | WebSocket (`ws://` in local/dev; `wss://` with mTLS in production) |
 | Spring Cloud Gateway → Game Session Service | WebSocket (`ws://` in-cluster) |
-| Game Session Service → Other Microservices | gRPC (internal) |
+| Game Session Service → Other Microservices | gRPC (internal synchronous RPCs) |
 
-✅ All internal communication from the Game Session Service onward uses **gRPC** with strict schema enforcement.
+✅ Internal synchronous RPC communication from the Game Session Service onward uses **gRPC** with strict schema enforcement.
+
+## Asynchronous and Event Flows
+
+The architecture also relies on explicit asynchronous contracts that are separate from synchronous request/response RPCs:
+
+| Flow | Delivery semantics | Authority and safety rules |
+| --- | --- | --- |
+| TCP Proxy Service → Game Session Service `NotifyDisconnect` | At-least-once best-effort gRPC event sink | Advisory only; dedupe key `{proxyConnectionId, disconnectSequence}`; Redis + gameplay activity remain liveness source of truth. |
+| Account/Domain services → Logging & Admin (audit/moderation/saga events) | Durable domain events/saga-step updates with at-least-once delivery | Event envelopes must carry a stable dedupe identity (for example `{tenantId, producerService, eventType, eventId}`), `occurredAt`, and a schema version; consumers must process idempotently. Logging & Admin is a control-plane consumer; runtime enforcement still occurs in owning domain services. |
+| Game Session Service → Logging & Admin (session lifecycle/coordination health signals) | Streaming metrics/events | Used for operator workflows and automation; does not transfer gameplay state authority away from Game Session. |
 
 ---
 
@@ -181,6 +191,7 @@ See [Redis Architecture](./system-architecture-redis.md) and [Redis Usage & Prof
 - **Redis** is a **non-authoritative coordination buffer** — but **critical** for consistency, ticks, retries, and recovery
 - **Tick regions** are shard-aligned in Redis to preserve atomicity
 - **DMZ services (TCP Proxy Service and Spring Cloud Gateway)** remain stateless with respect to PostgreSQL; they may use **Cache/Rate-Limit Redis** and always emit logs/metrics, but do not own persistent domain tables.
+- Runtime services do **not** directly read or write another service’s PostgreSQL tables; cross-domain access is through owned APIs/contracts.
 
 > 🔗 See [Redis Architecture](./system-architecture-redis.md) for key structure and durability strategies.
 
@@ -212,7 +223,7 @@ This model avoids single-node bottlenecks for ticks or session handling; see [Ti
 
 Game Session Service instances are deployed as a **pool of identical workers**. Ownership of tick work and live gameplay session execution is partitioned by `<tenantId, regionId>` using Coordination Redis leases as described in [Tick System and Runtime Design](./system-architecture-ticks.md).
 
-Per `design/architecture/decisions/adr-0007-edge-sharding-and-close-taxonomy.md`, shard/lease ownership remains internal to the Game Session layer: the edge does not implement lease-aware admission or a client-visible shard handoff signal. `/ws/game/**` is routed to a stable Game Session service surface (with `/ws/game-legacy/**` as temporary compatibility only) and relies on the Game Session coordination model to respect tick ownership invariants.
+Per `design/architecture/decisions/adr-0007-edge-sharding-and-close-taxonomy.md`, shard/lease ownership remains internal to the Game Session layer: the edge does not implement lease-aware admission or a client-visible shard handoff signal. `/ws/game/**` is routed to a stable Game Session service surface and relies on the Game Session coordination model to respect tick ownership invariants.
 
 If a future architecture introduces explicit edge shard routing or client-visible handoff semantics, it must be defined as a dedicated design update (routing-key transport, trust model, reconnection/backoff policy) and then integrated into:
 

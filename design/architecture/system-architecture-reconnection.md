@@ -7,7 +7,7 @@ FireMUD enables seamless gameplay recovery across network interruptions, client 
 ## Implemented Status
 
 - **Session takeover and resume** – Game Session emits `gamesession.session.takeover` and `gamesession.session.resume` counters and rebinds Redis tick/command queues on reconnect/takeover. The active uniqueness key is `{tenantId, gameInstanceId, characterId}`.
-- **Telnet and WebSocket parity** – Both transports share the same authentication and lobby-binding contract: after any disconnect both reconnect, issue `LOGIN`, and then complete lobby selection with `PLAY` before gameplay commands are admitted.
+- **Telnet and WebSocket parity** – Both transports share the same gameplay authentication and lobby-binding contract (`LOGIN` then `PLAY`) after reconnect. First-party WebSocket clients must obtain a fresh connect token before opening `/ws/game/**`.
 - **Remaining work** – Admin-driven forced session transfers remain planned future steps. FireMUD does not attempt to replay or reconstruct lost gameplay commands after long outages or coordination resets; command queues are volatile coordination buffers and commands may be lost outside the bounded tail-loss envelope.
 
 ## Reconnection Layers
@@ -20,8 +20,8 @@ FireMUD enables seamless gameplay recovery across network interruptions, client 
 
 Each layer handles fault tolerance independently.
 Reauthentication is required when a client disconnects, or when server-side auth state expires or is revoked.
-Game Session Service restarts are **visible to clients** on the WebSocket path because Spring Cloud Gateway is a WebSocket proxy: when Game Session restarts and drops upstream gameplay WebSockets, Gateway closes the corresponding gameplay client WebSockets (`/ws/game/**`), and clients reconnect, re-`LOGIN`, and re-`PLAY`. Any in-flight gameplay commands at the moment of the restart may be lost, consistent with the at-most-once edge delivery semantics in [Protocol Bridging](./system-architecture-protocol-bridging.md#ordering--delivery-invariants).
-When Spring Cloud Gateway pods restart, Web clients are disconnected; they must open a new WebSocket and issue `LOGIN` again. Once reconnected, the gateway resumes routing and Game Session uses Redis-backed session state to decide whether to resume or start fresh after the client re-selects gameplay scope with `PLAY`. Telnet clients are also disconnected because the TCP Proxy Service fail-closes Telnet sockets when its WebSocket bridge to Spring Cloud Gateway drops; clients reconnect and re-`LOGIN` and then `PLAY`.
+Game Session Service restarts are **visible to clients** on the WebSocket path because Spring Cloud Gateway is a WebSocket proxy: when Game Session restarts and drops upstream gameplay WebSockets, Gateway closes the corresponding gameplay client WebSockets (`/ws/game/**`), and clients reconnect, request a fresh connect token, re-`LOGIN`, and re-`PLAY`. Any in-flight gameplay commands at the moment of the restart may be lost, consistent with the at-most-once edge delivery semantics in [Protocol Bridging](./system-architecture-protocol-bridging.md#ordering--delivery-invariants).
+When Spring Cloud Gateway pods restart, Web clients are disconnected; they must request a fresh connect token, open a new WebSocket, and issue `LOGIN` again. Once reconnected, the gateway resumes routing and Game Session uses Redis-backed session state to decide whether to resume or start fresh after the client re-selects gameplay scope with `PLAY`. Telnet clients are also disconnected because the TCP Proxy Service fail-closes Telnet sockets when its WebSocket bridge to Spring Cloud Gateway drops; clients reconnect and re-`LOGIN` and then `PLAY`.
 TCP Proxy restarts drop Telnet clients, who must reconnect manually.
 If the Gateway link is unavailable (for example during gateway deploys or outages), the TCP Proxy applies the bridge-availability contract from Gateway/Protocol Bridging, closes with `backend_unavailable` when gameplay admission is unavailable, and clients reconnect using backoff, then reauthenticate with `LOGIN` and re-enter gameplay scope via `PLAY`.
 
@@ -45,7 +45,7 @@ For the **concrete `NotifyDisconnect` message shape and transport behaviour** �
 - Holds no gameplay, auth, or session state
 
 > TCP Proxy restarts drop Telnet connections.
-> Spring Cloud Gateway restarts temporarily disconnect Web clients; clients must reconnect their WebSocket, re-`LOGIN`, and re-`PLAY`, after which Game Session reloads state from Redis if available.
+> Spring Cloud Gateway restarts temporarily disconnect Web clients; clients must request a fresh connect token, reconnect their WebSocket, re-`LOGIN`, and re-`PLAY`, after which Game Session reloads state from Redis if available.
 > Spring Cloud Gateway restarts disconnect Telnet clients because the TCP Proxy enters bridge `unreachable` and closes affected sessions when recovery does not succeed within `TCP_PROXY_GATEWAY_RECONNECT_WINDOW_MS`; clients reconnect and re-`LOGIN`/`PLAY`.
 
 ### Game Session Service
@@ -69,7 +69,7 @@ Clients must send a `LOGIN` command **after any disconnect**, such as:
 - WebSocket loss (Web clients)
 - If two-factor authentication is enabled, include the one-time `otp` value with the `LOGIN` command. See [Account Service – Two-Factor Authentication](./microservices/account-service/README.md#two-factor-authentication).
 
-After `LOGIN` succeeds, clients must re-establish gameplay scope by selecting a world and character via the lobby commands (`WORLDS` / `CHARS` / `PLAY`) as defined in [Tenant Selection for Gameplay](./system-architecture-authentication.md#tenant-selection-for-gameplay-lobby-selection). This `LOGIN` → `PLAY` sequence is mandatory for both Telnet and WebSocket reconnect flows in this multi-tenant platform; gameplay commands are not admitted before `PLAY` except in explicitly documented dev/test bypass modes. Advanced Telnet tools that use a `SESSION <gameInstanceId> <tenantId>` envelope must resend that envelope on the new TCP connection before `LOGIN` if they want those hints applied, but selection still uses `PLAY` and never bypasses authorization/entitlement checks.
+After `LOGIN` succeeds, clients must re-establish gameplay scope by selecting a world and character via the lobby commands (`WORLDS` / `CHARS` / `PLAY`) as defined in [Tenant Selection for Gameplay](./system-architecture-authentication.md#tenant-selection-for-gameplay-lobby-selection). This `LOGIN` → `PLAY` sequence is mandatory for both Telnet and WebSocket reconnect flows in this multi-tenant platform; first-party WebSocket reconnects must also acquire a fresh connect token before the `/ws/game/**` handshake. Gameplay commands are not admitted before `PLAY` except in explicitly documented dev/test bypass modes. Advanced Telnet tools that use a `SESSION <gameInstanceId> <tenantId>` envelope must resend that envelope on the new TCP connection before `LOGIN` if they want those hints applied, but selection still uses `PLAY` and never bypasses authorization/entitlement checks.
 
 Redis-backed session state enables seamless resumption if valid, or fresh login if expired.
 Session entries in Redis expire after a derived `session_expiration_ms` window (`FIREMUD_AUTH_JWT_EXPIRATION_MS + FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS`) as documented in [Environment and Secrets](./infrastructure/environment-and-secrets.md#authentication).
@@ -102,11 +102,11 @@ Legacy `playerId` wording maps one-to-one to `characterId` and is not a separate
 | --- | --- |
 | Client disconnect (TCP/WebSocket) | Requires new `LOGIN` and `PLAY`; may resume via Redis |
 | TCP Proxy Service restart | Telnet clients disconnected; new `LOGIN` and `PLAY` required |
-| Spring Cloud Gateway restart | Web clients disconnected with `1000/logout` (planned drain) or `1011/internal_error` (unplanned crash). Telnet clients are also disconnected because the TCP Proxy bridge enters `unreachable` and closes sessions if recovery does not complete within `TCP_PROXY_GATEWAY_RECONNECT_WINDOW_MS`; clients reconnect and re-`LOGIN`, then re-`PLAY`. |
+| Spring Cloud Gateway restart | Web clients are disconnected; planned drains should emit `1000/logout` (`subreason=gateway_restart`) and graceful unplanned failures may emit `1011/internal_error`, while hard crashes may drop transport without a close frame. Clients treat missing close metadata as `internal_error` retry class and must fetch a fresh connect token before reopening `/ws/game/**`. Telnet clients are also disconnected because the TCP Proxy bridge enters `unreachable` and closes sessions if recovery does not complete within `TCP_PROXY_GATEWAY_RECONNECT_WINDOW_MS`; clients reconnect and re-`LOGIN`, then re-`PLAY`. |
 | Lease move / gameplay shard handoff | Not defined as a distinct edge-visible event in the current edge contract. Any future shard handoff design must define the client-visible signal and reconnection/backoff policy explicitly in the Gateway and Protocol Bridging contracts. |
 | Gateway ↔ Game Session link degraded (short window) | WebSocket connections may stay open when the upstream hop remains established and Game Session is reachable but returning explicit, per-command errors; clients do not reconnect solely due to transient command failures. If the upstream gameplay WebSocket closes, clients reconnect and re-`LOGIN`, then re-`PLAY`. |
 | Gateway ↔ Game Session link degraded (`unreachable` sustained) | Gameplay becomes impossible; WebSocket sessions are closed with `1013` (`backend_unavailable`) and clients should reconnect with backoff as described below. Telnet clients are closed by the TCP Proxy with `backend_unavailable` when the gateway closes the upstream gameplay WebSocket or when the proxy cannot establish or maintain its bridge; clients reconnect and re-`LOGIN`, then re-`PLAY`. |
-| Game Session Service restart | Visible: Gateway closes gameplay WebSocket clients and they reconnect and re-`LOGIN` (subject to at-most-once loss of in-flight commands), then re-`PLAY`. Telnet clients are disconnected because the upstream gameplay WebSocket closes; the proxy closes the Telnet socket and clients reconnect and re-`LOGIN`, then re-`PLAY`. |
+| Game Session Service restart | Visible: Gateway closes gameplay WebSocket clients and they reconnect, fetch a fresh connect token, and re-`LOGIN` (subject to at-most-once loss of in-flight commands), then re-`PLAY`. Telnet clients are disconnected because the upstream gameplay WebSocket closes; the proxy closes the Telnet socket and clients reconnect and re-`LOGIN`, then re-`PLAY`. |
 | Manual re-`LOGIN` from same character | Treated as reconnect; resumes if Redis intact |
 | Redis session expired/missing | Treated as fresh login; gameplay starts anew |
 | New client logs in as same character | Old session terminated; new one resumes control |
@@ -125,7 +125,7 @@ Legacy `playerId` wording maps one-to-one to `characterId` and is not a separate
 
 ## Client Reconnection Behaviour
 
-FireMUD treats reconnection as a **client responsibility**: after any disconnect, clients open a fresh transport (TCP or WebSocket), issue a new `LOGIN`, and complete `PLAY` before gameplay commands. To avoid thundering herds and to keep reconnect storms predictable during incidents, automated or first‑party clients should follow a consistent reconnection policy:
+FireMUD treats reconnection as a **client responsibility**: after any disconnect, clients open a fresh transport (TCP or WebSocket), issue a new `LOGIN`, and complete `PLAY` before gameplay commands. First-party WebSocket clients must fetch a fresh connect token before opening `/ws/game/**`. To avoid thundering herds and to keep reconnect storms predictable during incidents, automated or first‑party clients should follow a consistent reconnection policy:
 
 - **Backoff and jitter**
   - Start with an initial delay of `1–2s` after the first failed reconnect attempt.
@@ -133,12 +133,20 @@ FireMUD treats reconnection as a **client responsibility**: after any disconnect
   - Apply jitter of ±25% to each delay to avoid synchronized reconnect bursts from many clients.
 - **Retry caps**
   - Cap reconnect attempts to a reasonable rate per client (for example, no more than ~6 attempts in the first minute and ~60 attempts per hour).
-  - Client policy handling is split into two explicit classes:
+  - Client policy handling is split into explicit classes:
     - `policy_pressure_retriable` (for example HTTP `429`) – retry with slower backoff and strict caps.
     - `policy_violation_non_retriable` (for example sustained abuse/malformed protocol outcomes) – stop auto-retry or switch to very long backoff and surface corrective action to the user.
+    - `policy_violation_edge_backpressure_retriable` – if wire-visible disconnect metadata explicitly indicates edge backpressure (for example WebSocket close `1008/policy_violation` with `subreason=edge_backpressure`), treat as retriable with backend-unavailable backoff. If that metadata is absent, keep the default non-retriable policy for `policy_violation`.
 - **Scope of reconnection**
   - Telnet clients reconnect by establishing a new TCP connection to the TCP Proxy Service, issuing `LOGIN` (and any optional `SESSION`/MCP negotiation), and then issuing `PLAY` before gameplay commands.
-  - Web clients reconnect by opening a new WebSocket to `/ws/game/**`, issuing `LOGIN`, and then issuing `PLAY`; they must not assume that any prior MCP or `SESSION` state has survived, as described in [Mud Client Protocol (MCP) Support](./system-architecture-mud-client-protocol.md#reconnection--session-recovery).
+  - Web clients reconnect by first obtaining a fresh connect token, opening a new WebSocket to `/ws/game/**`, issuing `LOGIN`, and then issuing `PLAY`; they must not assume that any prior MCP or `SESSION` state has survived, as described in [Mud Client Protocol (MCP) Support](./system-architecture-mud-client-protocol.md#reconnection--session-recovery).
+
+### Abnormal WebSocket Transport Loss
+
+Client implementations must not assume every disconnect includes a close frame and reason token. Planned drains and many graceful failures will carry canonical close codes, but abrupt process/node/network failures can terminate transport before the edge emits a close frame.
+
+- If the connection drops without a usable close code/reason, classify it as `internal_error` for retry/backoff policy purposes.
+- Do not treat missing close metadata as `logout` or `policy_violation`.
 
 ### Gameplay WebSocket route handshake policy (normative)
 
@@ -162,7 +170,7 @@ Client behavior must key on handshake error class first, then HTTP status as a s
 
 For gameplay routes, HTTP `401` is not part of the normal handshake taxonomy because gameplay authentication occurs after WebSocket establishment via `LOGIN`/`PLAY`. If `401` appears in practice, treat it as a misconfiguration signal and investigate gateway policy drift.
 
-First-party clients and tools should implement a unified “edge error → backoff policy” table that maps WebSocket close codes plus handshake error classes (`POLICY_PRESSURE`, `BACKEND_UNAVAILABLE`, `REPLAY_CHECK_UNAVAILABLE`, `POLICY_DENY`, `PROTOCOL_MISMATCH`, `INTERNAL_ERROR`) to concrete backoff behaviour so reconnect storms remain predictable during incidents.
+First-party clients and tools should implement a unified “edge error → backoff policy” table that maps WebSocket close codes (plus abnormal no-close transport loss) and handshake error classes (`POLICY_PRESSURE`, `BACKEND_UNAVAILABLE`, `REPLAY_CHECK_UNAVAILABLE`, `POLICY_DENY`, `PROTOCOL_MISMATCH`, `INTERNAL_ERROR`) to concrete backoff behaviour so reconnect storms remain predictable during incidents. This policy table must be derivable from wire-visible signals alone; operator-only metrics are supplemental for diagnostics, not required for client retry decisions.
 
 For clarity: HTTP `429` is not a hard “never retry” signal in FireMUD. It is a controlled `policy_pressure_retriable` class intended to protect the edge under pressure while still allowing eventual recovery for legitimate clients.
 
@@ -190,7 +198,8 @@ Some failures leave edge connections technically alive while core gameplay servi
 - **Sustained backend unavailability**
   - When `unreachable` remains continuous beyond `firemud.gateway.backendUnavailableGraceMs`, Spring Cloud Gateway closes affected gameplay WebSocket sessions with `1013/backend_unavailable`, signalling clients to apply reconnection/backoff rules.
   - Returning from `unreachable` to normal routing requires hysteresis (consecutive successful upstream connects/forwards) as defined in [Gateway Architecture](./system-architecture-gateway.md#backend-unavailable-grace-window), so one brief success does not flap clients.
-  - Proxy and gateway outage windows must be configured in lockstep: `TCP_PROXY_GATEWAY_RECONNECT_WINDOW_MS` equals `firemud.gateway.backendUnavailableGraceMs`, and `TCP_PROXY_GATEWAY_CIRCUIT_RECOVERY_SUCCESS_COUNT` equals gateway recovery-success threshold `N`.
+  - Proxy and gateway outage windows must be configured in lockstep using explicit keys: `TCP_PROXY_GATEWAY_RECONNECT_WINDOW_MS` equals `firemud.gateway.backendUnavailableGraceMs`, and `TCP_PROXY_GATEWAY_CIRCUIT_RECOVERY_SUCCESS_COUNT` equals `firemud.gateway.backendUnavailableRecoverySuccessCount`.
+  - Edge services must fail fast on invalid local values (`<= 0`), and deployment preflight must fail when the proxy and gateway lockstep values diverge.
   - The TCP Proxy Service enforces equivalent admission outcomes with a bridge-availability circuit breaker: while the breaker is open (continuous gateway gameplay unreachability), new Telnet sockets are rejected quickly with `backend_unavailable` and existing affected sockets are closed with `backend_unavailable` rather than being held in ambiguous half-open states. Recovery from half-open to closed requires `TCP_PROXY_GATEWAY_CIRCUIT_RECOVERY_SUCCESS_COUNT` consecutive successful bridge probes (default `3`) so proxy admission hysteresis stays aligned with gateway recovery criteria.
   - Operators should treat elevated counts of `1013` (`backend_unavailable`) and proxy‑side “backend unavailable” disconnects as indicators of core gameplay outages rather than client misuse, and use the metrics referenced in [Protocol Bridging](./system-architecture-protocol-bridging.md#backpressure--slow-clients) and the Telnet degraded runbook to distinguish these from slow‑client backpressure events.
 
@@ -201,7 +210,7 @@ To avoid ambiguous half-open behavior for already-established Telnet sessions du
 - `healthy` – upstream WebSocket bridge is established; gameplay traffic flows normally.
 - `unreachable` – upstream bridge cannot be established/maintained; per-connection unreachability timer starts.
 - `close_due_to_unreachable` – if unreachability for a connection exceeds `TCP_PROXY_GATEWAY_RECONNECT_WINDOW_MS`, close that Telnet connection with `backend_unavailable`.
-- `close_due_to_edge_backpressure` – if buffered lines exceed `TCP_PROXY_GATEWAY_MAX_BUFFERED_LINES`, close that Telnet connection with `policy_violation` and emit `edge_backpressure` context in structured logs/metrics.
+- `close_due_to_edge_backpressure` – if buffered lines exceed `TCP_PROXY_GATEWAY_MAX_BUFFERED_LINES` while upstream is still reachable, close that Telnet connection with `policy_violation` and emit `edge_backpressure` context in structured logs/metrics.
 - `recovered` – connection may return to `healthy` only after bridge-health recovery criteria are met (`TCP_PROXY_GATEWAY_CIRCUIT_RECOVERY_SUCCESS_COUNT` consecutive successful probes), aligning with admission hysteresis.
 
 This state machine is authoritative for established-session behavior and complements (but does not replace) the proxy-wide open/half-open/closed admission breaker.

@@ -9,6 +9,7 @@ Use this file as the canonical AI instruction source for this repository.
 - Do not manually hard-wrap lines in docs; let lines flow naturally.
 - For code changes, run `./gradlew check` before hand-off.
 - For markdown or design-document changes (especially under `design/`), run `./gradlew linkCheck lintMarkdown` before hand-off.
+- Treat `./gradlew linkCheck lintMarkdown` as mandatory hygiene when editing files: if these checks fail, fix the reported issues before hand-off even when the failures were pre-existing and not introduced by your change.
 
 ## Working Tree Safety
 

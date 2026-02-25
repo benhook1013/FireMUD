@@ -5,6 +5,7 @@ on:
     paths:
       - "k8s/**"
       - "dev-tools/ci/validate-kustomize-overlays.sh"
+      - "dev-tools/deploy/preflight.sh"
       - ".github/workflows/validate-kustomize-overlays.yml"
   workflow_dispatch:
 
@@ -34,4 +35,3 @@ jobs:
 
       - name: ✅ Validate overlays and image availability
         run: dev-tools/ci/validate-kustomize-overlays.sh
-

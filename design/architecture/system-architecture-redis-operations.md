@@ -275,6 +275,8 @@ To make coordination and tick health observable in a consistent way across servi
   - `tick_effects_applied_total{tenantId,regionId}` – cumulative applied effects.
   - `tick_effects_abandoned_total{tenantId,regionId,reason}` – cumulative abandoned effects by reason (for example `RESET_REGION_SCOPED`, `RESET_TENANT_SCOPED`, `RESET_CLUSTER_SCOPED`, `EXPIRED`, `INVALID_TARGET`).
   - `tick_effects_pending_oldest_scheduled_timestamp_seconds{tenantId,regionId}` – helper metric recording the oldest `created_at` timestamp among SCHEDULED ledger rows for each region, used to detect when pending work has exceeded the configured grace window.
+  - `tick_effects_replay_scan_lag_ms{tenantId,regionId}` – replay-controller lag between “oldest replay-eligible `SCHEDULED` row” and latest replay scan for the region.
+  - `tick_effects_replay_batches_total{tenantId,regionId}` – replay-controller batch executions used to verify fairness across regions and detect starvation.
 - **Service-level tick replay metrics**
   - `gamesession_tick_replayed_total{tenantId,regionId}` – count of ticks that were replayed by the Game Session Service for each region (used to monitor how often idempotent recovery paths are exercised).
   - `gamesession_tick_executed_total{tenantId,regionId}` – count of ticks executed by the Game Session Service (denominator for replay ratios).
@@ -392,7 +394,7 @@ The metrics below form the **minimum contract** for Coordination Redis observabi
 | --- | --- | --- | --- | --- |
 | `redis_lua_script_load_failures_total` | ≥1 per shard | ~5m | Core | Mark affected shards degraded, pause ticks until scripts reload; investigate script registry/rollout issues. |
 | `redis_lua_script_missing_for_region_total` | ≥1 per region | Immediate | Core | Stop scheduling ticks for that `<tenantId, regionId>` until every master hosting the region has the script loaded. |
-| `redis_lua_script_runtime_ms_p99` | >2× `tick_interval_ms` | ~3m | Core | Degrade the region, slow tick fan-out, and reject/shed new commands until latency recovers. |
+| `redis_lua_script_runtime_ms_p99` | Sustained high share of lock TTL headroom (for example p99 script runtime > ~0.25 × `tick_lock_ttl_ms`) | ~3m | Core | Treat as an early warning for the canonical health model; degrade only when combined with tick-runtime and progress signals (`tick_execution_time_ms_p99 / tick_lock_ttl_ms`, stalled/cleanup lag), then slow fan-out and shed new commands until latency recovers. |
 | `redis_tick_lock_ttl_exceeded_total` | >5 occurrences per region | ~5m | Core | Treat as a headroom breach; mark the region degraded, review workloads, and consider slowing ticks. |
 | `redis_coordination_oom_errors_total` | ≥1 | ~1m | Core | Critical incident — halt ticks for affected regions, investigate `maxmemory`/payload sizes, and restore headroom before resuming. |
 | `redis_tick_pending_stuck_total` | >0 for a region | ≥2 tick intervals | Core | Halt ticks for that region, inspect tick effect ledger, repair or reset coordination state, then resume. |
@@ -688,17 +690,22 @@ When in doubt, default to the smallest safe `requires_*_reset` scope or introduc
    - Deploy new scripts and services as part of the normal rollout.
    - Rely on existing `NOSCRIPT` handling and Lua preload behavior.
 4. If any script is tagged `requires_*_reset` (and not covered by a live multi-version strategy):
-   - Use the upgrade planner’s reset plan:
-     1. Pause ticks and stop accepting new gameplay commands globally (or for the affected tenants/regions).
-     2. Stop the Coordination Redis instance (or logical deployment) used for ticks and sessions.
-     3. Delete or recreate the volume that holds its AOF.
-     4. Restart Redis with an empty keyspace.
-     5. Run a lightweight health check (scripts load successfully; test ticks can be scheduled).
-     6. Unpause ticks and player traffic.
-   - Optionally, advanced operators may:
-     - Stand up a **new** Coordination Redis instance with an empty AOF.
-     - Point application services at it.
-     - Decommission the old instance after inspection.
+   - Use the upgrade planner’s reset plan at the **smallest required scope**:
+     - `requires_region_reset`:
+       1. Pause ticks/intake for affected `<tenantId, regionId>` only.
+       2. Run region-scoped coordination reset tooling plus tick reset handshake for those regions.
+       3. Verify scripts and smoke ticks for affected regions, then resume scoped traffic.
+     - `requires_tenant_reset`:
+       1. Pause ticks/intake for affected tenant(s).
+       2. Run tenant-scoped reset tooling plus handshake and scoped ledger reconcile.
+       3. Verify and resume tenant traffic.
+     - `requires_cluster_reset`:
+       1. Pause ticks/intake for the deployment scope.
+       2. Stop Coordination Redis instance(s).
+       3. Delete/recreate AOF volume(s) or bring up a fresh deployment.
+       4. Restart Redis with empty coordination keyspace and preload scripts.
+       5. Run cluster-scope handshake and health checks before resuming traffic.
+   - Full deployment AOF wipe is valid only for `requires_cluster_reset` (or explicit operator decision outside compatibility flow with incident sign-off).
 5. Confirm reset safety before resuming:
    - Verify the tick effect ledger reports no `SCHEDULED` rows for the affected `(tenantId, regionId)` pairs.
    - Ensure any in-flight commands are either retried or marked `ABANDONED` at the domain layer.
@@ -723,7 +730,7 @@ The registry, together with its golden compatibility tests in `firemud-common`, 
   - Missing keys are treated as if they never existed.
   - Ticks/retries/timers are re-enqueued from surviving state/PostgreSQL or skipped within the accepted tail-loss envelope.
 - Replay safety is preserved because:
-  - Mutating scripts validate lease tokens, lock tokens, `tickId`, and `generation` before writing.
+  - Mutating scripts validate lease tokens, lock tokens, `tickId`, and `region_epoch` before writing.
   - The tick effect ledger and idempotency guards in PostgreSQL remain the source of truth for “has this effect applied?”
 
 ### Lag envelopes (tie lag to tick interval)

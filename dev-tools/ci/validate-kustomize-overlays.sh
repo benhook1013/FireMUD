@@ -15,6 +15,7 @@ require_cmd() {
 
 require_cmd kubectl
 require_cmd docker
+require_cmd python3
 
 render_overlay() {
   local overlay="$1"
@@ -77,7 +78,20 @@ check_stage_has_no_backup_schedules_unless_enabled() {
   fi
 }
 
+run_preflight_policy_checks() {
+  echo "::group::Run canonical preflight policy checks (ci-static)"
+  FIREMUD_PREFLIGHT_CONTEXT=ci-static \
+    FIREMUD_PREFLIGHT_OUTPUT=/tmp/firemud-preflight-staging.json \
+    "$ROOT_DIR/dev-tools/deploy/preflight.sh" staging
+
+  FIREMUD_PREFLIGHT_CONTEXT=ci-static \
+    FIREMUD_PREFLIGHT_OUTPUT=/tmp/firemud-preflight-production.json \
+    "$ROOT_DIR/dev-tools/deploy/preflight.sh" production
+  echo "::endgroup::"
+}
+
 check_stage_has_no_backup_schedules_unless_enabled
+run_preflight_policy_checks
 check_images_exist "stage" "$STAGE_OVERLAY"
 check_images_exist "prod" "$PROD_OVERLAY"
 

@@ -1,6 +1,7 @@
 # FireMUD JWT Compromise Runbook
 
 This runbook defines the mandatory response flow for suspected compromise of JWT signing key material.
+The same hard-cutover key semantics are also required for player-facing post-restore hardening (`system-architecture-backup-recovery.md#post-restore-secret-hardening`) even when no active compromise is confirmed, because restored snapshots may resurrect stale trust material.
 
 ## Trigger Conditions
 

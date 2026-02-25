@@ -89,6 +89,57 @@ Ambient world mutations (doors, hazards, weather) are treated as spatial effects
 
 Concrete per-effect required writes and reconciliation rules live in `design/architecture/system-architecture-spatial-and-ambient-effects-catalog.md`. Any new effect must add an entry there before it is used by runtime gameplay.
 
+### Reconciliation Owner of Record (Spatial/Ambient Effects)
+
+Cross-service effect convergence has a single owner of record:
+
+- **Game Session Service** owns reconciliation orchestration and backlog durability for spatial/ambient effects.
+- World Management and Entity Management remain owners of their domain writes and idempotency guards, but they do not own cross-service retry scheduling.
+
+Durable backlog contract:
+
+- Game Session persists one row per logical effect in a durable backlog table (for example `effect_reconciliation_backlog`) keyed by `(tenantId, gameInstanceId, effectId)`.
+- Minimum persisted fields:
+  - `effectType`
+  - `targetScope` (`RoomInstanceRef` or region scope)
+  - `expectedParticipants` (for example `WORLD`, `ENTITY`)
+  - `participantAckState` (per participant applied/pending/final-failure)
+  - `firstObservedAt`, `lastAttemptAt`, `attemptCount`, `nextAttemptAt`
+  - `status` (`PENDING`, `CONVERGED`, `DEAD_LETTER`)
+  - `lastErrorCode` / `lastErrorMessage`
+- Inserts and status transitions must be idempotent on `(tenantId, gameInstanceId, effectId)` so duplicate scheduling does not create duplicate backlog rows.
+- Backlog rows must be indexed at minimum by `(status, nextAttemptAt)` and `(tenantId, status, firstObservedAt)` for retry scans and operator triage.
+
+Retry and dead-letter policy:
+
+- Default retry strategy is bounded exponential backoff with jitter and no mutation of `EffectId`.
+- Effects remain `PENDING` until all required participants acknowledge applied/no-op for the same `EffectId`.
+- Effects move to `DEAD_LETTER` only after retry exhaustion or explicit operator action; no destructive compensation is issued from this path.
+- Dead-letter rows remain replayable via explicit operator/API actions; replay must preserve original `EffectId`.
+
+Retention and lifecycle policy:
+
+- `CONVERGED` rows are retained for 24 hours, then deleted by background GC.
+- `DEAD_LETTER` rows are retained for 30 days minimum (or longer by policy) for incident analysis.
+- GC jobs must be idempotent and rate-limited per tenant to avoid write spikes.
+
+Required control-plane interfaces:
+
+- `ListEffectReconciliationBacklog(tenantId, status, olderThan, page)` for diagnostics.
+- `RetryEffectReconciliation(tenantId, gameInstanceId, effectId)` for explicit replay from `DEAD_LETTER` or stuck `PENDING`.
+- `AcknowledgeEffectDeadLetter(tenantId, gameInstanceId, effectId, reason)` for audited operator decisions.
+- Logging & Admin dashboards should consume these APIs; operators should not mutate backlog tables directly.
+
+Operational SLOs and alerts:
+
+- Alert when `PENDING` age exceeds 60 seconds for player-visible effect types (`MOVE`, `DROP`, `PICKUP`, `AMBIENT_PATCH`).
+- Alert when backlog depth per tenant exceeds configured threshold (for example 1,000 pending rows) or dead-letter count is non-zero.
+- Expose metrics at minimum:
+  - `effect_reconciliation_pending_total{effect_type}`
+  - `effect_reconciliation_age_seconds{effect_type}`
+  - `effect_reconciliation_retries_total{effect_type}`
+  - `effect_reconciliation_dead_letter_total{effect_type}`
+
 ### Tick-Adjacent Workflows (Outbox Boundary)
 
 Some player actions conceptually trigger both in-world effects and “business” side effects such as billing, email, or external webhooks. These **tick-adjacent workflows** must still respect the tick replay model:

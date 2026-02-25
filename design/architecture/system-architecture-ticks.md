@@ -217,8 +217,9 @@ Region split/merge operations interact directly with tick idempotency, Redis key
    - Wait for any in-flight `tick:{tenantRegionTag}:pending` work to commit or be recovered to a terminal state.
 2. **Converge durable outcomes**
    - Run the tick effect ledger replay controller/reconcile tooling for the affected scope so any lingering `SCHEDULED` effects converge to `APPLIED` or `ABANDONED` before moving queues or entities.
-3. **Sever the old timeline when semantics require it**
-   - If the operation changes region boundaries or re-homes entities such that “old region” coordination state must not be interpreted as valid for the new mapping, bump `regionEpoch` for the affected `<tenantId, regionId>` pairs as part of the topology change (the same epoch-severing mechanism used by scoped coordination resets).
+3. **Sever the old timeline for any mapping change (required)**
+   - If the operation changes region boundaries or re-homes entities to a different region mapping, bump `regionEpoch` for all affected `<tenantId, regionId>` pairs as part of the topology change (the same epoch-severing mechanism used by scoped coordination resets).
+   - Only topology operations that preserve entity-to-region ownership exactly may skip an epoch bump, and those exceptions must be explicitly documented and audited in the maintenance record.
 4. **Migrate coordination state using shared key builders**
    - Move only reset-tolerant, purely coordination structures (queues, timers, retry metadata) using versioned tooling that uses the shared key builders and Lua Script Registry descriptors.
    - Do not hand-edit `tick:*`, `timer:*`, `retry:*`, or lease/lock keys.

@@ -3,13 +3,13 @@
 set -euo pipefail
 
 usage() {
-  echo "Usage: validate-external-credentials.sh <staging|production>" >&2
+  echo "Usage: validate-external-credentials.sh <hobby-self-hosted|staging|production>" >&2
   exit 1
 }
 
 [ $# -eq 1 ] || usage
 ENVIRONMENT="$1"
-if [[ "$ENVIRONMENT" != "staging" && "$ENVIRONMENT" != "production" ]]; then
+if [[ "$ENVIRONMENT" != "hobby-self-hosted" && "$ENVIRONMENT" != "staging" && "$ENVIRONMENT" != "production" ]]; then
   usage
 fi
 
@@ -58,6 +58,14 @@ if [[ "$ENVIRONMENT" == "staging" ]]; then
   fi
   if [[ -n "${PRODUCTION_ASSET_STORE_BUCKET:-}" && "$ASSET_STORE_BUCKET" == "$PRODUCTION_ASSET_STORE_BUCKET" ]]; then
     echo "Staging must not use the production asset bucket." >&2
+    exit 1
+  fi
+fi
+
+if [[ "$ENVIRONMENT" == "staging" ]]; then
+  check_required_var "SANITIZATION_EVIDENCE_REF"
+  if [[ ! "$SANITIZATION_EVIDENCE_REF" =~ ^design/operations/deployments/staging/recovery/ ]]; then
+    echo "SANITIZATION_EVIDENCE_REF must point to a staged recovery record under design/operations/deployments/staging/recovery/." >&2
     exit 1
   fi
 fi

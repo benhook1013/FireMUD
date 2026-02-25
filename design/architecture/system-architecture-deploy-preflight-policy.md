@@ -13,6 +13,9 @@ This document defines the authoritative preflight policy gate for staging and pr
 - Command: `./dev-tools/deploy/preflight.sh <staging|production|hobby-self-hosted>`
 - Input: target environment and resolved overlay/manifests for that environment.
 - Output: non-zero exit code on failure and a machine-readable report artifact (for example JSON).
+- Context:
+  - `operator` (default): required checks are blocking for real applies.
+  - `ci-static`: uses the same policy IDs/report schema but may mark runtime-only checks (for example production attestation when not in a production promotion flow) as `not_applicable`.
 
 `hobby-self-hosted` deployments may use different packaging/manifests, but they must evaluate the same player-facing policy IDs that apply to their environment class and produce the same evidence shape.
 

@@ -4,7 +4,8 @@ This section tracks planning materials, AI rules, and other documents used to or
 
 Key files include:
 
-- [**ai-rules-global.md**](./ai-rules-global.md) and [**ai-rules-local.md**](./ai-rules-local.md) – Coding and documentation guidelines.
+- [**AGENTS.md**](../../AGENTS.md) – Repository-wide AI coding and documentation guidelines.
+- [**ai-formatting-rules.md**](./ai-formatting-rules.md) – Project-management folder formatting guidance.
 - [**core-requirements.md**](./core-requirements.md) – High-level feature requirements.
 - [**task-list.md**](./task-list.md) – Active development tasks and backlog.
 - [**task-list-manual-checks.md**](./task-list-manual-checks.md) – Manual verification steps for developer tooling.

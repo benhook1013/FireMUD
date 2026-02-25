@@ -3,6 +3,7 @@
 This directory stores environment deployment evidence used by architecture contracts.
 
 - `staging/deployments/<overlayCommitSha>.json`: staging apply records used by production promotion attestation validation.
+- `staging/recovery/<recovery-ref>.json`: staging post-restore sanitization evidence required before reopening traffic when restoring production-origin data.
 - `<environment>/preflight/<deployment-ref>.json`: preflight policy reports.
 - `<environment>/preflight/<deployment-ref>.waiver.json`: break-glass waiver records for a single deployment event.
 - `hobby-self-hosted/deployments/<deployment-ref>.json`: hobby deploy evidence records.

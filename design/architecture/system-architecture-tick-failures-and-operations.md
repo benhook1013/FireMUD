@@ -134,8 +134,15 @@ Responsibility for driving ledger rows to a terminal outcome lies with the Game 
   - Periodically scans for `SCHEDULED` rows that have exceeded the configured grace window for a given `(tenantId, regionId, region_epoch, tickId)`.
   - Replays eligible effects using the same idempotent handlers the tick pipeline uses, marking rows `APPLIED` when domain state confirms success.
   - Marks rows `ABANDONED` with a precise reason when replay is no longer safe or meaningful (for example, entities removed, sessions expired, or region/tenant/cluster resets that bumped `region_epoch`).
+  - Enforces bounded fairness across active scopes so replay does not starve smaller tenants/regions behind one hot backlog:
+    - Scans and replays in bounded batches per `<tenantId, regionId>`.
+    - Uses round-robin (or weighted-fair) scheduling across regions rather than draining one region completely before touching others.
+    - Emits `tick_effects_replay_scan_lag_ms{tenantId,regionId}` and `tick_effects_replay_batches_total{tenantId,regionId}` so starvation is visible.
 - The controller also runs on service startup for each region to converge any lingering `SCHEDULED` rows before normal tick processing resumes.
 - For incident handling, the same replay logic is exposed via coordination tooling (for example, an admin CLI or maintenance API) so operators can explicitly drive convergence for a selected `(tenantId, regionId)` or `region_epoch` when guided by runbooks in the Redis operations docs.
+- Convergence SLO contract (required):
+  - `SCHEDULED` rows should converge to terminal `APPLIED`/`ABANDONED` within the configured replay SLO window.
+  - If oldest `SCHEDULED` age exceeds the window for a region, the region is escalated to `DEGRADED`/`STALLED` and incident runbooks require scoped remediation.
 
 Common scenarios and invariants:
 
@@ -362,6 +369,8 @@ Operationally:
 
 - Timeouts waiting for remote results are treated as equivalent to a failed remote leg; origin-ledger entries for those coordinating effects converge to `ABANDONED` with a timeout reason and a corresponding `PARTIAL` or `FAILED` high-level outcome.
 - Explicit `ABANDONED` outcomes from a target region (for example, entity no longer valid, region reset, or unrecoverable domain error) are treated the same way at the origin.
+- Late remote results are handled by the required lifecycle in `system-architecture-tick-execution-flows.md`:
+  - Once origin has reached timeout-abandoned terminal state, late replies are either explicitly ignored (`LATE_RESULT_IGNORED`) or reconciled by a documented feature-specific compensation flow (`LATE_RESULT_RECONCILED`), never silently merged.
 - Compensation beyond simple local corrections (for example refunding currency, undoing non-idempotent external side effects) must be orchestrated via saga/outbox flows outside the tick loop, not by attempting cross-region rollback inside tick execution.
 
 ### Cross-Region Follow-Ups and Region-Epoch Changes
@@ -399,6 +408,7 @@ Cross-region follow-ups are durable PostgreSQL records owned by Game Session (or
   - Follow-ups must never silently “carry over” to a new epoch:
     - When `target_region_epoch` changes, old-epoch follow-ups converge to terminal outcomes (typically `ABANDONED` with a reset/topology reason) unless explicit maintenance tooling re-schedules them into the new epoch.
 - **Topology changes**
+  - Mapping-changing split/merge operations must bump `region_epoch` for affected source/target regions before follow-up draining resumes (see required topology protocol in `system-architecture-ticks.md`).
   - If region split/merge changes which region owns the target entity, topology-change tooling must either:
     - Rewrite the follow-up to the new `(target_region_id, target_region_epoch)` with an explicit audit trail, or
     - Mark it `ABANDONED` with a topology-change reason when replaying it under the new mapping is not valid.

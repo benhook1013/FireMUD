@@ -78,16 +78,16 @@ Every gRPC service registers the `LoggingInterceptor`, `MetricsInterceptor`, and
 
 ## Error Handling
 
-- Map application-level failures to appropriate gRPC status codes (`INVALID_ARGUMENT`, `NOT_FOUND`, etc.).
+- For internal FireMUD RPCs, return application-level failures in the response `ErrorDetail` field (for example `INVALID_ARGUMENT`, `NOT_FOUND` codes in the shared error catalog) while keeping the gRPC transport status `OK`.
 - Use a shared `ErrorDetail` message (e.g., `shared/errors.proto`) when returning rich error info.
 - Prefer returning structured errors over using gRPC metadata for application faults.
-- All RPCs that can fail should include an `ErrorDetail` field in the response instead of invoking `onError()`. Wrap response observers or use an interceptor to log warnings, increment a `grpc.app_error` metric, and tag tracing spans. `onError()` is reserved for transport-level or infrastructure failures.
+- All RPCs that can fail should include an `ErrorDetail` field in the response instead of invoking `onError()`. Wrap response observers or use an interceptor to log warnings, increment a `grpc.app_error` metric, and tag tracing spans. `onError()` is reserved for transport-level or infrastructure failures only.
 - Metric contract:
   - The Micrometer meter name is `grpc.app_error`; the Prometheus-exported name is `grpc_app_error_total`.
   - Required labels: `service` (from `spring.application.name`) and a bounded `code` taken from the shared error catalog.
     - The `service` label may be attached explicitly per counter increment, or injected globally via a Micrometer `commonTags("service", spring.application.name)` configuration from the shared `firemud-common` auto-configuration.
   - Forbidden labels: per-request identifiers such as `traceId`, `spanId`, `playerId`, or `sessionId`; those identifiers belong only in logs and spans, not in metric label sets.
-  See [AI Project Rules](../project-management/ai-rules-local.md) for required logging and metrics interceptors.
+  See [AGENTS.md](../../AGENTS.md) for required logging and metrics interceptor conventions.
 
 Example implementation:
 

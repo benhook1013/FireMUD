@@ -43,10 +43,10 @@ Application state is handled by **Redux Toolkit**, with **RTK Query** used for d
 Frontend flows are split between **player gameplay sessions** and **admin/creator tools** so that gameplay auth remains simple while control-plane operations use JWTs:
 
 - **Player UI (gameplay)**  
-  - Players authenticate to the platform by issuing the `LOGIN` command over the WebSocket gameplay channel, as described in [Authentication & Authorization](./system-architecture-authentication.md#login-and-session-flow).  
+  - First-party clients must obtain a short-lived connect token (`POST /auth/connect-token`) before opening `/ws/game/**`, then authenticate to gameplay by issuing the `LOGIN` command over the WebSocket channel, as described in [Authentication & Authorization](./system-architecture-authentication.md#login-and-session-flow).  
   - The React client does not store or expose internal JWTs; instead it maintains a WebSocket connection to the Game Session Service through the Gateway, and the Game Session Service binds that socket to a gameplay session in Redis.  
   - After login, the client participates in an explicit **lobby world-selection** step by issuing `WORLDS` / `CHARS <world>` and then `PLAY <world> [character]` as described in [Tenant Selection for Gameplay](./system-architecture-authentication.md#tenant-selection-for-gameplay-lobby-selection). The Game Session Service resolves the selected world/character into internal identifiers (`tenantId`, `gameInstanceId`, `characterId`), enforces tenant authorization and entitlements, and then binds the socket to a gameplay session in Redis.  
-  - On page reload or connectivity loss, the client reconnects the WebSocket and replays the login and tenant-selection flow as needed; the Game Session Service uses Redis gameplay session bindings and auth token sessions to restore gameplay state when allowed by server-side TTLs and revocation rules.
+  - On page reload or connectivity loss, the client requests a fresh connect token, reconnects the WebSocket, then replays the `LOGIN` and tenant-selection flow; the Game Session Service uses Redis gameplay session bindings and auth token sessions to restore gameplay state when allowed by server-side TTLs and revocation rules.
 
 - **Admin and creator UIs**  
   - Admin/creator interfaces authenticate through the Account Service (for example, via `/auth/login` exposed behind the Gateway). Successful login issues a short-lived JWT for control-plane APIs that represents a **control-plane browser session** for the current account.  

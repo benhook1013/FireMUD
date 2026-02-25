@@ -59,6 +59,9 @@ Dry-run executions are privileged and must not destabilize production:
 - Dry-runs must not contribute to failure-rate circuit breakers that can disable live scripts by default; if dry-run failures are used for safety gating, they must be isolated (separate breaker or explicitly opt-in per environment/tenant).
 - Dry-runs must use an idempotency/audit namespace that is distinct from live traffic (for example, include `isDryRun=true` in Trigger Identity) so test calls cannot dedupe, suppress, or overwrite live trigger records.
 - Dry-run/test APIs should default to server-generated `scriptEventId` values to avoid cross-client collision and namespace drift. If a caller-supplied `scriptEventId` is accepted, the service must validate namespace rules and reject collisions with a deterministic application error.
+- Dry-run/test ingress must enforce explicit authorization scopes/roles (for example `automation.dryrun.execute`) and must record principal identity in audit fields for privileged use.
+- Dry-run/test ingress must apply deterministic principal and tenant rate-limit outcomes (for example `DRY_RUN_RATE_LIMITED`) as application-level errors rather than transport failures.
+- If dry-run authorization context is missing or invalid, the call must fail with deterministic application error (for example `DRY_RUN_UNAUTHORIZED`) and must not execute DSL evaluation.
 
 ### 7) Reload Backpressure Contract
 
@@ -90,6 +93,7 @@ Plugins are executed by the same runtime engine as scripts and must not rely on 
   - Control-plane event `ScriptRollbackConvergenceTimedOut` produced by Game Session as producer-of-record.
   - Metric `automation_rollback_convergence_timeout_total{tenantId, gameInstanceId, reason}`.
   - Audit-visible admission outcome `rollback_convergence_timeout` for affected scope while pause remains active.
+- Rollback-safe pause scope is instance-level: control-plane pause, admission pause, convergence checks, and resume operations must all target the same `(tenantId, gameInstanceId)` scope. Region-only pause operations are operational tools and must not be used as the only barrier for rollback orchestration.
 
 ### 10) Instance Rollout Read Model Ownership
 
@@ -109,6 +113,13 @@ Plugins are executed by the same runtime engine as scripts and must not rely on 
   - scoped at least to `(tenantId, gameInstanceId)`,
   - authorized and audited with `controlPlaneRequestId`, `actor`, and `reason`,
   - automatically reverted to fail-closed behavior at TTL expiry.
+
+### 12) Dead-Letter Replay Version-Fence Safety
+
+- `ReplayDeadLetteredWorkItems` must validate work-item versions against current control-plane state before transition from dead-letter to replayable:
+  - `scriptPatchVersion` must match currently pinned patch for the scoped instance.
+  - Plugin work items must match currently active `(pluginId, pluginVersionId)` for the scoped instance.
+- Ineligible work items must remain dead-lettered and return deterministic application-level mismatch errors; replay must not be best-effort for version-fenced mismatches.
 
 ## Related Documents
 

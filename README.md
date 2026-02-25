@@ -174,7 +174,7 @@ Before contributing, we recommend reviewing the following key documents:
 
 ### Additional Guidelines
 
-See the [Contributing Guidelines](./CONTRIBUTING.md) for branching strategy, testing requirements, and coding standards. Our AI coding conventions are documented in [Local Rules](design/project-management/ai-rules-local.md) and [Global Rules](design/project-management/ai-rules-global.md).
+See the [Contributing Guidelines](./CONTRIBUTING.md) for branching strategy, testing requirements, and coding standards. Our AI coding conventions are documented in [AGENTS.md](./AGENTS.md).
 The CI pipeline runs `./gradlew check`, which compiles and tests all modules while also running Spotless, Checkstyle, SpotBugs, Hadolint, and coverage reporting.
 
 ---

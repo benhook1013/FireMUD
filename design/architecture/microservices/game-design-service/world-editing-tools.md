@@ -46,6 +46,14 @@ revisions until domain services report a matching draft digest for that scope. E
 - `contentDigest` (a stable hash of the service’s Draft template graph relevant to publishing)
 - `digestSchemaVersion` so hash semantics can evolve without ambiguity
 
+`designSyncStatus` must also transition to `OUT_OF_SYNC` when mutable generation defaults (`generation_rule`) change in a way that affects the effective Draft generation inputs for a target version, even if no new commit was created yet.
+
+Canonical digest RPC contract:
+
+- Request: `GetDraftDesignDigestRequest { tenantId, scope: oneof { versionId, scriptPatchVersion } }`
+- Response: `GetDraftDesignDigestResponse { tenantId, scope, appliedCommitId or lastAppliedRevisionId, contentDigest, digestSchemaVersion }`
+- Services that do not support a scope (for example `scriptPatchVersion` for World/Entity) must return `UNSUPPORTED_SCOPE`; they must not silently reinterpret scope fields.
+
 Game Design also computes a control-plane digest over normalized publish-critical metadata (for example `game_template_*_ref` and `version_asset`) and validates it in the same `designSyncStatus` gate using a dedicated read-only API (`GetDesignControlPlaneDigest`).
 
 Digest semantics must be explicitly stable and testable:
@@ -74,6 +82,12 @@ Participant selection is explicit by publish type and must follow the matrix in 
 
 - Full `PublishVersion`: World Management, Entity Management, Game Logic, and Automation & Scripting must each pass `GetDraftDesignDigest`, and Game Design must pass `GetDesignControlPlaneDigest`.
 - `PublishScriptPatchVersion`: Automation & Scripting must pass `GetDraftDesignDigest` for the patch graph and Game Design must pass `GetDesignControlPlaneDigest` for patch metadata/wiring; world/entity/game-logic template digests are not re-gated for that publish operation.
+
+Routing contract for typed digest scopes:
+
+- Full publish orchestration must issue digest requests with `scope.versionId` only to participants in the full-publish matrix.
+- Script-only publish orchestration must issue digest requests with `scope.scriptPatchVersion` only to participants in the script-patch matrix.
+- `UNSUPPORTED_SCOPE` is tolerated only for services outside the active participant set; for required participants it is a publish-blocking error.
 
 Versions
 must be `IN_SYNC` before they can be published.

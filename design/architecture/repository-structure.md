@@ -1,18 +1,16 @@
 # Repository Structure
 
 This repository uses a hierarchical Gradle layout. All microservices and the shared `common-library` live under a top-level `services/` folder to keep the root tidy. The React UI resides in `web-client/` and various infrastructure manifests sit under `k8s/`. Additional build tooling and documentation live at the root.
-Hidden configuration files used by the CI pipeline and generated build output directories are included for completeness.
+Hidden configuration files used by the CI pipeline are included for completeness.
 
-Note: the tree below intentionally includes some **local-only, ignored directories** (for example `build/` and `node_modules/`) for orientation. These are not committed to the repository and may not exist on a fresh clone until you build/install dependencies.
+The tree below describes the canonical committed layout. Local caches and generated output are listed separately in a dedicated local-workspace section.
 
 The tree and summary below follow a Windows Explorer style sort: directories appear before files, and items within each group are alphabetized.
 
 ```text
 root
 ├── .github/
-├── .gradle/
 ├── .vscode/
-├── build/
 ├── buildSrc/
 ├── charts/
 ├── config/
@@ -21,7 +19,6 @@ root
 ├── docker/
 ├── gradle/
 ├── k8s/
-├── node_modules/
 ├── protos/
 ├── services/
 │   ├── account-service/
@@ -65,9 +62,7 @@ root
 ## Directory summary
 
 - `.github/` – GitHub Actions workflows and issue templates.
-- `.gradle/` – Local Gradle cache (ignored by source control).
 - `.vscode/` – Recommended workspace settings for VS Code.
-- `build/` – Generated Gradle build outputs (ignored by source control).
 - `buildSrc/` – Shared Gradle convention plugins and build logic applied across modules.
 - `charts/` – Umbrella Helm chart for deploying all services together.
 - `config/` – Checkstyle, ESLint, git hooks, Hadolint, lychee link checker, Markdownlint, OpenAPI generator, protobuf (Buf), Redis, release automation, security scans, SpotBugs, and TypeScript configs.
@@ -76,7 +71,6 @@ root
 - `docker/` – Base Dockerfiles and Docker Compose stack for local development.
 - `gradle/` – Gradle version catalog, build conventions, and wrapper binaries.
 - `k8s/` – Kubernetes manifests, per-service Helm charts, monitoring configs, network policies, and sample Terraform modules for local and production clusters.
-- `node_modules/` – Installed JavaScript dependencies for the `web-client` and tooling (ignored by source control).
 - `protos/` – Versioned gRPC definitions for every service, organized by service and version as described in the [gRPC API Style & Versioning Guidelines](./system-architecture-grpc.md).
 - `services/` – Spring Boot microservices plus the shared `common-library` Gradle module, including Flyway database migration scripts under `services/<service>/src/main/resources/db/migration/`.
 - `web-client/` – React web application.
@@ -106,3 +100,11 @@ root
 
 - [System Architecture Overview](./system-architecture-overview.md)
 - [Microservices Overview](./microservices/README.md)
+
+## Local workspace examples
+
+These paths are commonly present in developer workspaces but are ignored by source control and are not part of the canonical repository layout:
+
+- `.gradle/` – Local Gradle cache.
+- `build/` – Generated Gradle outputs.
+- `node_modules/` – Installed JavaScript dependencies.

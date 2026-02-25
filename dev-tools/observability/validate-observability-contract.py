@@ -429,6 +429,94 @@ def _validate_doc_semantics() -> list[Finding]:
     return findings
 
 
+def _validate_reference_prometheus_rules(path: Path) -> list[Finding]:
+    findings: list[Finding] = []
+    text = _read_text(path)
+    alerts_seen: set[str] = set()
+
+    for rule_lines in _split_alert_rules(text):
+        first_line = rule_lines[0] if rule_lines else ""
+        match = re.match(r"^\s*-\s*alert:\s*(\S+)", first_line)
+        if not match:
+            continue
+        alert_name = match.group(1).strip()
+        alerts_seen.add(alert_name)
+
+        labels = _parse_labels(rule_lines)
+        missing = sorted(REQUIRED_ALERT_LABELS - labels.keys())
+        if missing:
+            findings.append(Finding(path=path, message=f"{alert_name} is missing required labels: {', '.join(missing)}"))
+            continue
+
+        severity = labels.get("severity", "")
+        if severity not in ALLOWED_SEVERITIES:
+            findings.append(Finding(path=path, message=f"{alert_name} has invalid severity={severity!r}; expected one of {sorted(ALLOWED_SEVERITIES)}"))
+
+        service_label = labels.get("service", "")
+        if service_label in DISALLOWED_ALERT_SERVICE_LABELS:
+            findings.append(
+                Finding(
+                    path=path,
+                    message=(
+                        f"{alert_name} uses ad-hoc service label {service_label!r}; use runtime identity labels "
+                        "(for example spring-cloud-gateway, game-session-service, tcp-proxy-service)"
+                    ),
+                )
+            )
+
+        expr = _parse_expr(rule_lines)
+        if expr:
+            ms_issue = _check_ms_thresholds(expr)
+            if ms_issue:
+                findings.append(Finding(path=path, message=f"{alert_name}: {ms_issue}"))
+
+            grpc_scope_issue = _check_grpc_app_error_scoping(expr)
+            if grpc_scope_issue:
+                findings.append(Finding(path=path, message=f"{alert_name}: {grpc_scope_issue}"))
+
+            dotted_metric_issue = _check_dotted_metric_tokens(expr)
+            if dotted_metric_issue:
+                findings.append(Finding(path=path, message=f"{alert_name}: {dotted_metric_issue}"))
+
+        if alert_name.startswith("Redis") and labels.get("owner") != "infra":
+            findings.append(Finding(path=path, message=f"{alert_name} must use owner=infra for Redis/coordination incidents"))
+        if alert_name.startswith("Backup") and labels.get("owner") != "infra":
+            findings.append(Finding(path=path, message=f"{alert_name} must use owner=infra for backup incidents"))
+        if alert_name.startswith("Tick") and alert_name not in {"TickExecutionUnsafeRatio", "TickEffectLedgerBacklog", "TickCleanupLagHigh"}:
+            findings.append(Finding(path=path, message=f"unexpected tick alert name {alert_name!r} in reference rules; update validator contract if intentional"))
+
+    required_alerts = {
+        "RedisCoordinationTailLossSLOBreached",
+        "TickExecutionUnsafeRatio",
+        "BackupPipelineNoRecentBackup",
+        "BackupPipelineNoRecentVerification",
+        "BackupTickPauseTooLongScoped",
+        "BackupTicksPausedTooLong",
+        "LoginSuccessRatioLowGateway",
+        "LoginSuccessRatioLowTcpProxy",
+        "CommandLatencyP99HighGateway",
+        "CommandLatencyP99HighTcpProxy",
+        "EntryPathAvailabilityLowGateway",
+        "EntryPathAvailabilityLowTcpProxy",
+        "ChatDeliveryLatencyP99High",
+    }
+    missing_required = sorted(required_alerts - alerts_seen)
+    if missing_required:
+        findings.append(
+            Finding(
+                path=path,
+                message=f"reference rules are missing required alerts: {', '.join(missing_required)}",
+            )
+        )
+
+    if "LoginSuccessRatioLow" in alerts_seen:
+        findings.append(Finding(path=path, message="reference rules must not include legacy LoginSuccessRatioLow; use split ingress alerts"))
+    if "CommandLatencyP99High" in alerts_seen:
+        findings.append(Finding(path=path, message="reference rules must not include legacy CommandLatencyP99High; use split ingress alerts"))
+
+    return findings
+
+
 def main() -> int:
     findings: list[Finding] = []
 
@@ -438,6 +526,7 @@ def main() -> int:
     findings.extend(_validate_grafana_dashboards(grafana_dir))
     findings.extend(_validate_kibana_saved_objects(REPO_ROOT / "design" / "observability" / "kibana"))
     findings.extend(_validate_doc_semantics())
+    findings.extend(_validate_reference_prometheus_rules(REPO_ROOT / "k8s" / "monitoring" / "prometheus-rules-firemud.yaml"))
 
     if not findings:
         print("Observability contract validation: OK")

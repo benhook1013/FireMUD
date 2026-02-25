@@ -71,6 +71,12 @@ Operations requirements for this workflow:
 
 Rotation keeps `previous.key` in JWKS for a configurable overlap window so existing tokens continue to validate. A follow-up pruning step (either part of the same Job or a separate Job) drops keys whose timestamps fall outside this window. Metrics and logs record the last successful rotation time and any failures so operators can monitor the process.
 
+Restore-hardening exception:
+
+- When rotating keys during post-restore hardening for a player-facing environment, use restore-mode cutover semantics instead of overlap semantics.
+- Restore mode must publish only uncompromised keys in JWKS, advance revocation watermarks, and require validator-convergence evidence before traffic reopen.
+- This avoids re-trusting snapshot-era keys resurrected by restore.
+
 ### JWT Key Compromise Response
 
 When a JWT signing key is suspected to be compromised, operators follow a more aggressive rotation and cleanup flow than the normal `jwt-rotation` run:

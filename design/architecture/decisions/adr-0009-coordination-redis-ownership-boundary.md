@@ -16,7 +16,9 @@ Coordination Redis ownership is explicit and narrow:
 
 - Game Session Service owns gameplay coordination keyspace and schema (for example `tick:*`, `timer:*`, `retry:*`, `session:game:*`, and lease-related prefixes).
 - Account Service owns authentication allowlist/session-auth prefixes (`session:auth:*`) and their lifecycle semantics.
-- Automation & Scripting Service owns the `automation:*` coordination keyspace and scripts for automation scheduling/execution.
+- Automation & Scripting Service owns automation coordination and cache families with an explicit split:
+  - Coordination Redis: `automation:tick:*` keyspace and scripts for automation scheduling/execution that participate in tick timelines.
+  - Cache/Rate-Limit Redis: `automation:queue:*` and `automation:quota:*` best-effort buffers/counters.
 - Non-owner services may participate only through approved shared helpers and documented prefixes/contracts.
 
 Non-owner services must not:

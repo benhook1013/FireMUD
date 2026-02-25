@@ -191,6 +191,11 @@ The following rules align generators with the core runtime and tooling:
 
 Generation parameters can be tuned at runtime through the [Procedural Generation Rules API](./microservices/world-management-service/README.md#procedural-generation-rules-api). Administrators may adjust room density or terrain variation without redeploying the service. `generation_rule` rows are owned by World Management and represent mutable tenant defaults for Draft authoring and future unpublished runs.
 
+Operational provenance requirement for `generation_rule` updates:
+
+- Each update must persist audit fields (`changedBy`, `changedAt`, `changeReason`, `changeDigest`) and, when applicable, originating Game Design commit/revision identifiers.
+- If a `generation_rule` change alters effective Draft generation inputs for a publish target, design synchronization must mark that target `OUT_OF_SYNC` until digest reconciliation re-establishes convergence.
+
 For activation/runtime determinism, publish must freeze a generation config identity per version:
 
 - On `PublishVersion`, the system records a `generationConfigRevision`/hash for that `(tenantId, versionId)` (from `generation_rule_override` when present, otherwise from tenant defaults).

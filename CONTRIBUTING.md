@@ -24,7 +24,7 @@ Once your environment is running you can create a feature branch and submit a PR
 
 ## Code Style Summary
 
-- Follow the patterns in [ai-rules-local.md](design/project-management/ai-rules-local.md). The `.windsurfrules` file in the repository root simply points to this document for IDE integration.
+- Follow the patterns in [AGENTS.md](./AGENTS.md). The `.windsurfrules` file in the repository root should reference this document for IDE integration.
 - Use four spaces for indentation and avoid trailing whitespace.
 - Favor immutable data structures, clear method names, and concise classes.
 - Backend code targets Java 21+ with Spring Boot 3.x; frontend code follows standard React/TypeScript conventions.

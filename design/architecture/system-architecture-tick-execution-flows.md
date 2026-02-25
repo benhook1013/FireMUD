@@ -55,6 +55,36 @@ Within a region’s tick, each command proceeds through several phases:
 
 Every phase must be idempotent with respect to `(region_epoch, tickId)` and effect identity so replays after failure do not double-apply effects.
 
+### Command Ingress Acknowledgement Contract (Required)
+
+Because enqueueing uses reset-tolerant Redis coordination queues, command acceptance must distinguish between **ingress receipt** and **durable gameplay outcome**:
+
+- Every accepted command receives a stable `commandId` generated client-side or by Game Session and returned to the caller.
+- Ingress acknowledgements use explicit levels:
+  - `ACCEPTED_VOLATILE` (default for gameplay commands): command is accepted into coordination flow but may still be lost within tail-loss/reset envelopes before staging.
+  - `ACCEPTED_DURABLE` (exceptional, feature-specific): command intent is durably recorded outside Redis before acknowledgement and can be re-driven after coordination loss.
+- For `ACCEPTED_VOLATILE`, clients and upstream services must treat acknowledgement as “accepted for processing, not guaranteed to execute” and reconcile via command outcome events/status APIs.
+- Re-submission rules:
+  - Re-sends with the same `commandId` must deduplicate at ingress and not create duplicate logical actions.
+  - Re-sends with a new `commandId` are treated as new commands.
+- Features that require “accepted means never silently lost” semantics must explicitly adopt `ACCEPTED_DURABLE` with a durable intake record and replay story documented in their design.
+
+#### Ingress Deduplication Store (Required)
+
+To make the re-submission contract enforceable across failover and scoped coordination resets, ingress deduplication must use a durable record outside Redis coordination queues:
+
+- Game Session persists a dedupe record keyed by `(tenantId, gameInstanceId, commandId)` in PostgreSQL.
+- Minimum fields:
+  - `ack_level` (`ACCEPTED_VOLATILE` or `ACCEPTED_DURABLE`)
+  - `ingress_status` (`RECEIVED`, `ENQUEUED`, `TERMINAL`)
+  - `first_seen_at`, `last_seen_at`
+  - `last_outcome_code` (nullable until terminal outcome)
+- Required behavior:
+  - Re-send with same `(tenantId, gameInstanceId, commandId)` returns the prior acknowledgement and must not enqueue a second logical command.
+  - Region/tenant/cluster coordination resets do not delete this dedupe record; they only affect volatile queue state.
+  - Retention is TTL-based at the SQL layer and must outlive expected client retry windows.
+- `ACCEPTED_VOLATILE` remains volatile for execution semantics: the dedupe record guarantees no duplicate logical enqueue for the same `commandId`, not guaranteed eventual execution.
+
 ## Tick Execution Flow
 
 At each tick for a `<tenantId, regionId>`, the executor:
@@ -69,11 +99,37 @@ At each tick for a `<tenantId, regionId>`, the executor:
      - Primary: policy-defined priority (low-cardinality).
      - Then: stable enqueue/due ordering based only on persisted fields (for example `due_tick_id`, `enqueue_seq`, or `created_at` captured into Redis/PostgreSQL at enqueue time).
      - Tie-breakers (must be deterministic): `entityId`, then `commandId`/`effectKey`.
+   - Each work item type (queued command, timer, retry, remote follow-up) must expose the same canonical ordering tuple so the sort is reproducible across retries and failover:
+     - `(priority, due_tick_id_or_due_ms_normalized, enqueue_seq, source_kind, entityId, commandId_or_effectKey)`
+   - New work sources are not allowed to define custom tie-breakers; they must map into this canonical tuple.
 3. Stages effects:
    - Under the region lease and entity locks, calls Lua scripts to write intended effects into `tick:{tenantRegionTag}:pending`.
 4. Applies and commits:
    - Invokes domain services to apply effects under idempotent rules.
    - Runs a final Lua commit/cleanup script to reconcile Redis state, clear `pending`, and release locks.
+
+### Canonical Work Ordering Tuple (Normative Mapping)
+
+Every selected work item must provide the tuple
+`(priority, due_tick_id_or_due_ms_normalized, enqueue_seq, source_kind, entityId, commandId_or_effectKey)`.
+
+- `priority`:
+  - Integer where lower values win; allowed values are from a small global enum shared by all work sources.
+- `due_tick_id_or_due_ms_normalized`:
+  - Tick-based items (`queued command`, `retry`, `remote follow-up`) use `due_tick_id`.
+  - Timer items use `floor(due_ms / tick_interval_ms)` for the target region at selection time.
+  - Lower normalized value wins.
+- `enqueue_seq`:
+  - Monotonic per region source stream; assigned at ingress/scheduling time and persisted with the item.
+  - Lower value wins.
+- `source_kind`:
+  - Fixed, low-cardinality tie-break enum (`command`, `retry`, `timer`, `remote_followup`), sorted lexicographically by canonical enum order.
+- `entityId`:
+  - Stable deterministic tie-breaker after source ordering.
+- `commandId_or_effectKey`:
+  - Final deterministic tie-breaker; value must be stable across replay and failover.
+
+No source-specific tie-break fields are allowed beyond this tuple. If a new work source cannot be mapped without adding fields, the design must update this section first.
 
 ### Commit Point and Replay Semantics (Conceptual)
 
@@ -157,6 +213,24 @@ Cross-region flows participate in the same coordination timeline and reset rules
 - By default, cross-region commands are **best-effort and eventually consistent**, not globally atomic across regions:
   - Each leg still satisfies the “no double-apply” and APPLIED/ABANDONED convergence invariants.
   - Features that require stronger “all-or-nothing across regions” behavior must document that requirement explicitly and provide their own higher-level coordination on top of these primitives.
+
+### Cross-Region Leg Lifecycle and Late-Result Policy (Required)
+
+To avoid ambiguity around timeouts and late replies, every cross-region command with origin/target legs uses a shared lifecycle:
+
+1. `PENDING_REMOTE` – origin leg has created durable follow-up(s) and is waiting for target outcome until a defined deadline.
+2. `REMOTE_APPLIED` – target reported terminal success for the leg.
+3. `REMOTE_ABANDONED` – target reported terminal failure (`ABANDONED`) for the leg.
+4. `REMOTE_TIMEOUT_ABANDONED` – origin reached deadline without terminal remote result and marked the leg `ABANDONED`.
+5. `LATE_RESULT_IGNORED` or `LATE_RESULT_RECONCILED` – terminal policy when a remote success/failure arrives after timeout.
+
+Required policy defaults:
+
+- Deadlines are tick-based and recorded durably with the origin coordinating effect (`remote_deadline_tick_id`), not inferred from wall-clock timers.
+- If origin has already reached `REMOTE_TIMEOUT_ABANDONED`, any later remote result must not silently mutate prior terminal state:
+  - Default: record `LATE_RESULT_IGNORED` for observability and keep origin terminal state unchanged.
+  - Feature-specific override: `LATE_RESULT_RECONCILED` is allowed only if the feature documents an explicit reconciliation/compensation flow.
+- For `LATE_RESULT_RECONCILED`, compensation and external side effects must use outbox/saga mechanisms outside the tick loop.
 
 ## Tick Chaining and Reentrant Effect Control
 

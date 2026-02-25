@@ -94,7 +94,8 @@ resolved during authentication.
 - `RequestPasswordReset` – initiate a password reset email.
 - `CompletePasswordReset` – update the password using a token.
 - `LinkExternalAccount` – attach a Google, Discord, or Steam ID.
-- `GetTenantMembership` – return authoritative account-tenant membership and roles for billing-safe mutation checks.
+- `GetCallerTenantMembership` – return authoritative caller-bound account-tenant membership and roles for billing-safe mutation checks.
+- `GetTenantMembershipForAccount` – cross-tenant membership lookup for billing/reporting workflows (`billingAdmin`/`platformAdmin` only).
 - `RequestEmailVerification` – send a verification email.
 - `VerifyEmail` – confirm an email verification token.
 - `CreatePaymentIntent` – initiate a Stripe payment.
@@ -124,8 +125,26 @@ resolved during authentication.
 | `POST` | `/accounts/{accountId}/external` | Link external account |
 | `GET` | `/profiles/{accountId}` | Retrieve profile information |
 | `PUT` | `/profiles/{accountId}` | Update profile information |
-| `GET` | `/tenants/{tenantId}/memberships/{accountId}` | Authoritative live membership and roles for billing-safe mutation guards |
+| `GET` | `/tenants/{tenantId}/memberships/me` | Authoritative caller-bound membership and roles for billing-safe mutation guards |
+| `GET` | `/tenants/{tenantId}/memberships/{accountId}` | Cross-tenant membership lookup for billing/reporting roles (`billingAdmin`/`platformAdmin`) |
 | `GET` | `/.well-known/jwks.json` | JWKS for verifying issued JWTs |
+
+### Endpoint Authentication Classes
+
+| Surface | Examples | Required auth path | Notes |
+| --- | --- | --- | --- |
+| Public auth/bootstrap | `/auth/login`, `/auth/request-password-reset`, `/auth/complete-password-reset`, `/auth/request-email-verification`, `/auth/verify-email`, `/auth/recover-username`, `/.well-known/jwks.json` | No pre-existing user JWT; endpoint-specific validation and abuse controls | Intended for initial auth/bootstrap flows. |
+| Authenticated account control-plane APIs | `/auth/logout`, `/auth/logout-all`, `/profiles/*`, `/accounts/*/export`, `/tenants/{tenantId}/memberships/me`, `/tenants/{tenantId}/memberships/{accountId}` | JWT middleware (`AuthTokenInterceptor` + route classification) | Must enforce route class, subject-binding rules, and tenant/global role checks. |
+| Internal service gRPC | `Authenticate`, `GetCallerTenantMembership`, `GetTenantMembershipForAccount`, payment and profile gRPC APIs | mTLS caller identity plus method-level auth policy | Internal service surfaces are not edge-exposed directly. |
+
+### Subject-Binding Rules (Normative)
+
+- `GET /profiles/{accountId}`, `PUT /profiles/{accountId}`, `GET /accounts/{accountId}/export`, `DELETE /accounts/{accountId}`, and `POST /accounts/{accountId}/external` are **subject-bound** routes:
+  - Default rule: `path accountId` must equal authenticated `accountId` from JWT (`sub`/`accountId` claim).
+  - Exception: cross-account access is allowed only for explicitly authorized global roles (`platformAdmin`, and `support` only where route classification permits support-safe read access).
+  - On mismatch without eligible role, return canonical authorization failure (`AUTH_FORBIDDEN_SUBJECT_MISMATCH` or service-equivalent).
+- `GET /tenants/{tenantId}/memberships/me` must ignore any caller-supplied account identifier and always bind subject from authenticated caller context.
+- `GET /tenants/{tenantId}/memberships/{accountId}` is cross-subject by design and is restricted to `billingAdmin`/`platformAdmin`; every call must be audit-logged with caller identity and target `{tenantId, accountId}`.
 
 ## Dependencies
 
@@ -241,7 +260,8 @@ The Account Service is the sole writer for auth revocation watermark keys (`sess
 
 Billing-safe mutation authority contract:
 
-- The Account Service provides an authoritative membership API for live billing-safe checks: `GetTenantMembership(accountId, tenantId)` (REST equivalent `GET /tenants/{tenantId}/memberships/{accountId}`).
+- The Account Service provides an authoritative membership API for live billing-safe checks: `GetCallerTenantMembership(tenantId)` (REST equivalent `GET /tenants/{tenantId}/memberships/me`), where subject account is bound from caller auth context.
+- Cross-tenant membership reads use a separate API: `GetTenantMembershipForAccount(tenantId, accountId)` (REST equivalent `GET /tenants/{tenantId}/memberships/{accountId}`), restricted to `billingAdmin`/`platformAdmin`.
 - Responses include `evaluatedAt` and `membershipVersion` so callers can verify freshness and detect stale reads.
 - If authoritative membership data is unavailable, callers must fail closed for billing-safe mutations rather than relying on JWT claims alone.
 
@@ -323,7 +343,8 @@ Canonical non-login authorization/entitlement errors:
 - `POST /auth/logout-all` – revoke all active tokens for the authenticated account by setting `session:auth:revoked_after:account:<accountId>` to now and emitting an audit event. This operation is idempotent.
   - The account watermark is the immediate revocation authority. Existing `session:auth:tenant:*` and `session:auth:global:*` keys for the account may be removed asynchronously by bounded background cleanup and are not required for immediate correctness.
 - `GET /.well-known/jwks.json` – JWKS for verifying issued JWT tokens.
-- `GET /tenants/{tenantId}/memberships/{accountId}` – authoritative live membership/role lookup used by billing-safe mutation guards.
+- `GET /tenants/{tenantId}/memberships/me` – authoritative caller-bound membership/role lookup used by billing-safe mutation guards.
+- `GET /tenants/{tenantId}/memberships/{accountId}` – cross-tenant membership lookup restricted to billing/reporting roles.
 - `GET /tenants/{tenantId}/entitlements` – authoritative runtime entitlement snapshot including `evaluatedAt`, `entitlementVersion`, and `tenantBillingSequence`.
 - `POST /auth/request-email-verification` – send a verification email for the account.
 - `POST /auth/verify-email` – confirm the verification token.
@@ -357,7 +378,8 @@ curl -X POST http://localhost:8080/auth/login \
 - `CompletePasswordReset(CompletePasswordResetRequest) returns (CompletePasswordResetResponse)` – reset the password using a token.
 - `LinkExternalAccount(LinkExternalAccountRequest) returns (LinkExternalAccountResponse)` – attach a third-party account.
 - `IssueConnectToken(IssueConnectTokenRequest) returns (IssueConnectTokenResponse)` – issue short-lived gameplay connect token for `/ws/game/**` handshake policy.
-- `GetTenantMembership(GetTenantMembershipRequest) returns (GetTenantMembershipResponse)` – authoritative account-tenant membership/role lookup for billing-safe mutation guards.
+- `GetCallerTenantMembership(GetCallerTenantMembershipRequest) returns (GetCallerTenantMembershipResponse)` – authoritative caller-bound account-tenant membership/role lookup for billing-safe mutation guards.
+- `GetTenantMembershipForAccount(GetTenantMembershipForAccountRequest) returns (GetTenantMembershipForAccountResponse)` – cross-tenant membership lookup for billing/reporting roles.
 - `GetTenantEntitlements(GetTenantEntitlementsRequest) returns (GetTenantEntitlementsResponse)` – authoritative runtime entitlement snapshot including freshness/sequence fields.
 - `RequestEmailVerification(RequestEmailVerificationRequest) returns (RequestEmailVerificationResponse)` – send a verification email for the account.
 - `VerifyEmail(VerifyEmailRequest) returns (VerifyEmailResponse)` – confirm the email token.

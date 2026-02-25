@@ -105,13 +105,25 @@ FireMUD standardizes a small, explicit role set so tenant authorization and cros
 
 Services must not introduce ad-hoc roles without updating this model and the Tenant Authorization Contract. Where finer-grained behavior is required, services should prefer additional capabilities/flags derived from these core roles rather than inventing new top-level roles.
 
+### Global Role to Route-Class Matrix (Normative)
+
+Global roles must not be interpreted as broad tenant access shortcuts. Authorization must use the route classification model, with the following mandatory limits:
+
+| Global role | Allowed route classifications | Explicitly disallowed |
+| --- | --- | --- |
+| `platformAdmin` | `tenant_regular`, `billing_safe_tenant`, `cross_tenant_support_safe`, `cross_tenant_billing_safe`, `cross_tenant_data_bearing` | *(none)* |
+| `billingAdmin` | `billing_safe_tenant`, `cross_tenant_billing_safe` | `tenant_regular`, `cross_tenant_data_bearing`, gameplay admission/switching |
+| `support` | `cross_tenant_support_safe` | `tenant_regular`, `billing_safe_tenant` mutations, `cross_tenant_billing_safe`, `cross_tenant_data_bearing`, gameplay admission/switching |
+
+Tenant-scoped gameplay/design/runtime actions (`tenant_regular`) require tenant-scoped roles from `scopedRoles[tenantId]` or `platformAdmin`. `billingAdmin` and `support` must never gain gameplay/design authority by virtue of being global roles.
+
 ### Tenant Authorization Contract
 
 All meta/control services (Account, Game Design, Logging & Admin, and similar HTTP/gRPC APIs) must enforce a consistent tenant-authorization contract:
 
 - Each incoming request is authenticated to a single `accountId` using a JWT validated against the Account Service JWKS.
 - The effective tenant set for the request is derived from the token:
-  - For tenant-scoped operations, the service computes the set of `tenantId` values present in `scopedRoles` combined with any tenant IDs implied by `globalRoles` (for example, `platformAdmin` may be permitted to act on all tenants; `billingAdmin` may act only on billing-safe surfaces for all tenants).
+  - For tenant-scoped operations, the service computes the set of `tenantId` values from `scopedRoles` plus explicit global-role allowances from the route-class matrix above (for example `platformAdmin` may act on all tenants for `tenant_regular`; `billingAdmin` may act on all tenants only for billing-safe classes).
   - For cross-tenant operations, the service must explicitly check that the caller has a `globalRole` that authorizes cross-tenant access for the specific API category (for example, only `platformAdmin` for gameplay- or data-bearing operations, `billingAdmin` or `platformAdmin` for billing-safe control-plane operations, and `support` or `platformAdmin` only for explicitly designated support-safe troubleshooting surfaces). Tenant-scoped roles must never implicitly grant cross-tenant privileges.
 - If an API accepts a `tenantId` (path, query parameter, or body field), the service must validate that:
   - `tenantId` is in the effective tenant set for tenant-scoped calls, or
@@ -135,20 +147,22 @@ Any HTTP/gRPC route that depends on identity, roles, or tenant scoping must be p
 | Route classification | Required allowlist entries | Required role checks | Tenant watermark applied? | Tenant validation rules |
 | --- | --- | --- | --- | --- |
 | Public | *(none)* | *(none)* | No | *(none)* |
-| Tenant-scoped (regular) | `session:auth:account:<accountId>:<tokenHash>` + `session:auth:tenant:<tenantId>:<tokenHash>` | Require a tenant role in `scopedRoles[tenantId]` that authorizes the operation (for example `tenantAdmin`, `designer`, `moderator`, `player`) | Yes | `tenantId` must be in the effective tenant set derived from `scopedRoles` (or explicitly allowed by `globalRoles` when applicable); enforce DB query scoping by `tenantId` |
-| Billing-safe (tenant-scoped) | `session:auth:account:<accountId>:<tokenHash>` | Require `tenantAdmin` for the tenant, or a global billing role (`billingAdmin`/`platformAdmin`) | No | `tenantId` must be validated against the caller’s effective tenant set (or permitted by global billing roles), and services must perform a live membership/role check against authoritative account-tenant membership data (for example `GetTenantMembership(accountId, tenantId)`) before allowing billing-safe mutations; this route must remain reachable even when the tenant is `suspended`/`canceled` for gameplay |
+| Tenant-scoped (regular) | `session:auth:account:<accountId>:<tokenHash>` + `session:auth:tenant:<tenantId>:<tokenHash>` | Require a tenant role in `scopedRoles[tenantId]` that authorizes the operation (for example `tenantAdmin`, `designer`, `moderator`, `player`) or `platformAdmin` | Yes | `tenantId` must be in `scopedRoles` for tenant-role callers; `platformAdmin` may target any tenant. `billingAdmin` and `support` must be rejected for `tenant_regular`. Enforce DB query scoping by `tenantId`. |
+| Billing-safe (tenant-scoped) | `session:auth:account:<accountId>:<tokenHash>` | Require `tenantAdmin` for the tenant, or a global billing role (`billingAdmin`/`platformAdmin`) | No | `tenantId` must be validated against the caller’s effective tenant set (or permitted by global billing roles), and services must perform a live membership/role check against authoritative account-tenant membership data (for example `GetCallerTenantMembership(tenantId)`) before allowing billing-safe mutations; this route must remain reachable even when the tenant is `suspended`/`canceled` for gameplay |
 | Cross-tenant (support-safe) | `session:auth:account:<accountId>:<tokenHash>` + `session:auth:global:<accountId>:<tokenHash>` | Require `support` or `platformAdmin` | No | Tenant parameters are allowed only because the caller holds a cross-tenant support role; responses must be limited to high-level, troubleshooting-safe data (for example derived entitlements and subscription status, not invoices/payment methods); log/audit the target tenant |
 | Cross-tenant (billing-safe) | `session:auth:account:<accountId>:<tokenHash>` + `session:auth:global:<accountId>:<tokenHash>` | Require `billingAdmin` or `platformAdmin` | No | Tenant parameters are allowed only because the caller holds a global billing role; log/audit the target tenant |
 | Cross-tenant (data-bearing) | `session:auth:account:<accountId>:<tokenHash>` + `session:auth:global:<accountId>:<tokenHash>` | Require `platformAdmin` | Yes when operation targets tenant-scoped data | Tenant parameters are allowed only because the caller holds `platformAdmin`; log/audit the target tenant |
 
-Protected routes that are absent from the route matrix must be treated as `tenant_regular` until explicitly classified and approved.
+Protected routes that are absent from the route matrix must fail CI and deployment policy checks. Runtime middleware must still default-deny such routes as `tenant_regular` semantics (watermark applies) if misconfiguration reaches execution.
 
 Billing-safe mutation membership contract (normative):
 
-- Billing-safe tenant mutations must perform an authoritative, live membership/role check via Account Service API (`GetTenantMembership(accountId, tenantId)` or protocol-equivalent) before mutation.
+- Billing-safe tenant mutations must perform an authoritative, live membership/role check via Account Service API (`GetCallerTenantMembership(tenantId)` or protocol-equivalent) before mutation.
 - JWT role claims are sufficient for routing and preliminary checks but are not sufficient alone for billing-safe mutations.
 - If membership authority is unavailable, billing-safe mutations fail closed with canonical error `MEMBERSHIP_AUTH_UNAVAILABLE`; read-only billing-safe surfaces may return a retriable unavailable response using the same code.
-- `GetTenantMembership` responses must include `evaluatedAt` and `membershipVersion` fields so callers can audit freshness and detect stale reads.
+- Tenant-scoped membership checks use `GetCallerTenantMembership(tenantId)` and must bind the subject to the authenticated caller (`accountId` from token); clients must not provide an arbitrary target `accountId` on this path.
+- Cross-tenant membership checks for billing/reporting use a separate admin API (`GetTenantMembershipForAccount(tenantId, accountId)` or equivalent) restricted to `billingAdmin`/`platformAdmin`.
+- Membership responses must include `evaluatedAt` and `membershipVersion` fields so callers can audit freshness and detect stale reads.
 
 1. **Entitlement gating** – For gameplay admission and non-billing-safe operational control-plane routes (instance start/stop, gameplay-affecting changes), services must consult `GetTenantEntitlements(tenantId)` and deny requests when the tenant is not available for gameplay (for example `suspended`/`canceled`). Billing-safe and support-safe routes must not be blocked solely due to tenant unavailability for gameplay.
 2. **Entitlement freshness SLA** – Admission-critical flows (`PLAY`, new gameplay session admission, instance start/restart/rollback) must use an entitlement snapshot that is no older than 15 seconds. If no fresh snapshot is available (for example event lag, cache miss, or Account Service uncertainty), the flow fails closed with canonical error `ENTITLEMENT_UNAVAILABLE` (text protocol: `ERROR ENTITLEMENT_UNAVAILABLE`) rather than admitting based on stale entitlement cache data.
@@ -158,9 +172,9 @@ Billing-safe mutation membership contract (normative):
 
 Support-safe routes are an explicit allowlist and must not be inferred broadly from role names. The current support-safe allowlist is:
 
-- `GetTenantEntitlementsCrossTenant(tenantId)` returning high-level entitlement status only
-- `GetSubscriptionCrossTenant(tenantId)` returning high-level status and plan metadata only
-- `ListSubscriptionsSupportSafeCrossTenant` returning high-level status and plan metadata only
+- `GetTenantEntitlementsCrossTenantSupportSafe(tenantId)` returning high-level entitlement status only
+- `GetSubscriptionCrossTenantSupportSafe(tenantId)` returning high-level status and plan metadata only
+- `ListSubscriptionsCrossTenantSupportSafe` returning high-level status and plan metadata only
 
 Support-safe endpoints must exclude invoice line items, payment method details, and subscription mutation APIs.
 
@@ -202,6 +216,24 @@ For first-party WebSocket clients, the control plane issues a short-lived connec
 - Error mapping: invalid/expired/replayed/missing token where required maps to HTTP `403` at handshake.
 
 The connect token is not a gameplay authorization grant and does not replace the canonical `LOGIN` + lobby selection (`WORLDS`/`CHARS`/`PLAY`) flow.
+
+#### Gateway-to-Game Session connect context (normative)
+
+Gateway verification of `X-Firemud-Connect-Token` must not be translated into trust of raw forwarded headers. For first-party `/ws/game/**` handshakes, Gateway must attach a short-lived signed connect context that Game Session verifies before applying connect-token scope checks.
+
+- Gateway-issued context fields (minimum): `accountId`, `tenantId`, `gameInstanceId`, `connectTokenJti`, `verifiedAt`, `expiresAt`, `gatewayRequestId`.
+- Transport: single signed compact payload header (for example `X-Firemud-Connect-Context`) plus `kid` metadata if not embedded in payload.
+- Signature: asymmetric gateway signing key set; Game Session validates signature and `kid` against Gateway verification keys.
+- TTL: <= 30 seconds from `verifiedAt`; Game Session rejects stale/expired contexts.
+- Replay guard: Game Session tracks `{gatewayIssuer, connectTokenJti}` for context TTL and rejects duplicates.
+- Failure mode: if signed context is missing/invalid for a first-party handshake that required connect-token verification, Game Session must fail admission with `CONNECT_CONTEXT_INVALID` before `PLAY`.
+- Key-management operational contract:
+  - Gateway is the sole signer for connect-context payloads and must expose a verification-key set with stable issuer identity and bounded-key cardinality.
+  - Rotation must support overlap: old and new `kid` values remain verifiable for a bounded overlap window so rolling deploys do not break in-flight reconnects.
+  - Game Session maintains a bounded TTL cache of Gateway verification keys and must refresh on unknown `kid`; if no valid verification keys are available, fail closed with `CONNECT_CONTEXT_INVALID`.
+  - Observability must expose bounded failure reasons (`unknown_kid`, `signature_invalid`, `context_expired`, `replay_detected`, `verification_keys_unavailable`) so operators can distinguish key-rollout issues from client misuse.
+
+`CONNECT_SCOPE_MISMATCH` must be computed from this verified context, not from raw `X-Tenant-Id`/`X-Game-Instance-Id` headers.
 
 #### First-party WebSocket admission sequence (normative)
 

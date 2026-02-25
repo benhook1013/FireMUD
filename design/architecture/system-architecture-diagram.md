@@ -54,6 +54,7 @@ flowchart TD
     ExtLB -- wss/HTTP (public ingress) --> Gateway
     TCPProxy -- wss (mTLS, internal-only listener) --> Gateway
     Gateway -- ws (in-cluster) --> Session
+    TCPProxy -. NotifyDisconnect gRPC (at-least-once, advisory) .-> Session
 
     Admin -- gRPC mgmt (infra) --> Gateway
     Admin -- admin APIs (via Gateway allowlist) --> Gateway
@@ -71,14 +72,23 @@ flowchart TD
     Session -- gRPC --> Script
     Session -- gRPC --> Social
     Session -- gRPC --> Logging
+    Session -. lifecycle and coordination signals .-> Logging
+    Account -. audit and account-domain events .-> Logging
 
-    InternalServices --> DB
+    Account --> DB
+    Session --> DB
+    World --> DB
+    Entity --> DB
+    Design --> DB
+    Social --> DB
+    Logging --> DB
     Session -- owner writes --> CoordRedis
     Account -- auth-owner writes --> CoordRedis
     Entity -- shared-helper participation --> CoordRedis
     Script -- automation-owner writes --> CoordRedis
     TCPProxy --> CacheRedis
     Gateway --> CacheRedis
+    World --> CacheRedis
     Entity --> CacheRedis
     Script --> CacheRedis
     Social --> CacheRedis
@@ -116,7 +126,7 @@ All services run as Docker containers inside a shared Kubernetes cluster. They r
 
 Note on gateway listener surfaces: the gateway has a public ingress surface (typically behind an external load balancer) and an internal-only WebSocket mTLS listener used by the TCP Proxy Service. The diagram shows both flows terminating at the same gateway component; see [Gateway Architecture](./system-architecture-gateway.md) for the surface-level expectations.
 
-Gameplay WebSocket route policy is split: `/ws/game/**` is the canonical token-enforced route in player-facing environments, while `/ws/game-legacy/**` is migration-only compatibility and slated for removal from player-facing environments by December 31, 2026.
+Gameplay WebSocket route policy is canonicalized on `/ws/game/**` for player-facing gameplay admission.
 
 Admin and creator API exposure is intentionally allowlisted: external tools call domain admin APIs only through Gateway-routed routes for owning services (for example Logging & Admin, Account, Game Session, Social & Groups, and Game Design). Internal service-to-service gRPC remains direct and does not traverse Gateway.
 
@@ -140,7 +150,7 @@ The diagram covers every microservice in the repository:
 
 Only the **TCP Proxy Service** and **Spring Cloud Gateway** are reachable from the internet. They operate in the network DMZ while the remaining microservices run on the internal network. Admin and creator tools always connect to **Logging & Admin Service and other domain services via the Gateway**; Logging & Admin is not exposed directly at the edge. See [Security Architecture](./system-architecture-security.md#network-security--boundary-design) and [System Architecture Overview](./system-architecture-overview.md#admin-entry-points-and-control-plane) for details.
 
-All internal communication from the **Game Session Service** to downstream microservices uses **gRPC** for high performance and strict schema enforcement. Stateful domain microservices persist data in PostgreSQL and use Redis for transient state; DMZ components such as the TCP Proxy Service and Spring Cloud Gateway remain stateless with respect to PostgreSQL but use Redis for rate limiting and caches. All services emit metrics to Prometheus and send structured logs to Elasticsearch.
+All internal synchronous communication from the **Game Session Service** to downstream microservices uses **gRPC** for high performance and strict schema enforcement. Asynchronous signaling flows (for example, `NotifyDisconnect`, lifecycle metrics/events, and audit/saga event streams) are documented separately and use explicit idempotency/ownership contracts. Stateful domain microservices persist data in PostgreSQL and use Redis for transient state; DMZ components such as the TCP Proxy Service and Spring Cloud Gateway remain stateless with respect to PostgreSQL but use Redis for rate limiting and caches. All services emit metrics to Prometheus and send structured logs to Elasticsearch.
 
 Coordination Redis arrows in this diagram follow ownership boundaries from ADR 0009: Game Session owns gameplay coordination prefixes (for example `session:game:*`, `coord:*`, and `tick:*`), Account owns `session:auth:*`, Automation & Scripting owns `automation:*`, and non-owner services (for example Entity) participate only through approved shared-helper contracts rather than ad hoc key ownership.
 
@@ -149,7 +159,7 @@ Coordination Redis arrows in this diagram follow ownership boundaries from ADR 0
 Databases and caches shared across all services capture authoritative world state, runtime entities, and observability-ready analytics:
 
 - **PostgreSQL** – Primary persistent store for world topology, entities, characters, items, and transactional metadata (tenant-scoped tables include `tenantId` so data never mixes across games).
-- Not every service writes to PostgreSQL: some services are fully stateless with respect to persistence (for example, Game Logic), and others may be read-heavy. The diagram’s DB arrows indicate “uses the shared datastore layer” rather than “owns tables”.
+- Not every service writes to PostgreSQL: some services are fully stateless with respect to persistence (for example, Game Logic), and others may be read-heavy. The diagram’s DB arrows indicate shared infrastructure only, not cross-service table ownership; services must not directly read or mutate another service’s runtime tables.
 - **Coordination Redis** – Volatile session and tick coordination state; Lua scripts enforce atomic command execution and reconnect recovery while TTLs keep the data transient. In production this runs as a dedicated cluster so cache and rate-limit spikes cannot interfere with gameplay coordination.
 - **Cache/Rate-Limit Redis** – Best-effort caches, quotas, and rate limiting; this runs as a separate cluster in production and is safe to evict or scale independently of Coordination Redis.
 - **Elasticsearch** – Stores structured logs emitted by every service (via Fluent Bit); the Logging & Admin Service reads directly from it for dashboards and audits.
@@ -176,6 +186,15 @@ The diagram also illustrates the monitoring stack shared by every service:
 - **Kibana** – Queries and visualizes Elasticsearch logs and exposes an API that the Logging & Admin Service uses for embedding.
 
 See [Logging & Monitoring](./system-architecture-logging-monitoring.md) for deployment details.
+
+## Asynchronous Flows
+
+The mermaid graph includes representative async/event edges that are architecture-relevant:
+
+- TCP Proxy Service emits `NotifyDisconnect` to Game Session as a best-effort, at-least-once advisory signal keyed by `{proxyConnectionId, disconnectSequence}`.
+- Game Session emits lifecycle and coordination health signals consumed by Logging & Admin for operator workflows.
+- Account emits audit/account-domain events consumed by Logging & Admin using idempotent event identifiers (for example `{tenantId, eventType, eventId}`) so retries are replay-safe and deduplicable.
+- Logging & Admin is a control-plane sink for these async flows and does not take ownership of runtime enforcement decisions from domain services.
 
 ## Related Documentation
 

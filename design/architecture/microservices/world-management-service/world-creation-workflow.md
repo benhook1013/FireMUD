@@ -6,6 +6,7 @@ World creation is a long-running process that prepares the initial world state f
   [Multi-Tenancy](../../system-architecture-multi-tenancy.md).
 - `versionId` – identifies the published world/template data to use, as described in
   [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md).
+- `generationConfigRevision` – the frozen generation-config identity recorded at publish for the target `(tenantId, versionId)`; activation must fail if this identity cannot be resolved.
 - `gameInstanceId` – identifies the specific running world instance recorded in
   the Game Session Service.
 
@@ -14,7 +15,10 @@ The implementation uses the published world topology for the chosen `tenantId` a
 - Reads only **template/topology** rows keyed by `(tenantId, versionId)` (for example `region_template`, `room_template`, or authored generation metadata); and
 - Writes only **instance** rows keyed by `(tenantId, gameInstanceId)` (for example `region_instance`, `room_instance`, `world_event`) plus optional **declarative population bindings** (for example spawn rules owned by World Management) rather than directly creating live entities.
 
-Activation requests should also carry the expected version-state epoch (for example `expectedVersionStateEpoch`) from Game Session so the workflow can fail fast if the target version was retired or changed mid-flight.
+Activation requests must carry both:
+
+- `expectedVersionStateEpoch` from Game Session so the workflow can fail fast if the target version was retired or changed mid-flight.
+- `expectedGenerationConfigRevision` so pre-activation generation steps can prove they used the frozen publish identity rather than mutable tenant defaults.
 
 It never mutates template rows for Published versions; any structural changes to the world layout must occur through design-time workflows on Draft versions before publishing a new `versionId`. More broadly, world creation is allowed to invoke procedural generators only in **runtime/instance** mode as described in [Procedural Generation](../../system-architecture-procedural-generation.md); any attempt to write template rows from this Saga, even for non-Published versions, must be rejected by World Management validation. All template edits must flow through Game Design Service design-time APIs.
 
@@ -37,14 +41,14 @@ Initial NPC and item presence is modeled declaratively:
 
 1. **Create Starter Region Instance** – uses the published world topology for the chosen `tenantId` and `version_id` and inserts initial regions or instances using the local shard configuration (`WORLD_LOCAL_SHARD_ID`). Default `SimpleDungeonGenerator` parameters populate the initial "Starter Region" as instance records associated with `gameInstanceId`; the underlying template graph remains unchanged.
 2. **Schedule Initial Events** – inserts world events such as an initial weather state so `WorldEventService` can apply them after the world starts.
-3. **Generate Terrain & Register Population Rules** – optional stages that create terrain chunks and register default spawn templates or population rules for expansive worlds.
-4. **Activate Instance** – acquires the per-instance lifecycle fence, re-validates `expectedVersionStateEpoch`, and performs the one-way transition from `PREPARING` to `ACTIVE` after all required pre-activation writes succeed.
+3. **Generate Terrain & Register Population Rules** – optional stages that create terrain chunks and register default spawn templates or population rules for expansive worlds. These stages must persist the `generationConfigRevision` actually used on each `generation_run` and fail if it differs from `expectedGenerationConfigRevision`.
+4. **Activate Instance** – acquires the per-instance lifecycle fence, re-validates `expectedVersionStateEpoch`, verifies that all generation runs for this workflow resolved to `expectedGenerationConfigRevision`, and performs the one-way transition from `PREPARING` to `ACTIVE` after all required pre-activation writes succeed.
 
 ### Saga Step Idempotency
 
 World creation steps write durable instance rows and must be safely retryable. Each externally retryable step must implement a durable idempotency guard keyed by a stable business idempotency key plus step identity, at minimum:
 
-- `(tenantId, gameInstanceId, worldCreationRequestId, stepName)`
+- `(tenantId, gameInstanceId, worldCreationRequestId, stepName, expectedGenerationConfigRevision)`
 
 For generation stages, the idempotency key must additionally include `generationRequestId` so retries across different `sagaInstanceId` values converge on one logical result.
 
@@ -64,10 +68,13 @@ This guard must be enforced in the same local transaction as the step’s durabl
 ```java
 SagaBuilder builder = new SagaBuilder("createWorld");
 builder
-    .step("createStarterRegion", () -> createStarterRegionInstance(tenantId, versionId, gameInstanceId))
+    .step("createStarterRegion", () -> createStarterRegionInstance(
+        tenantId, versionId, gameInstanceId, worldCreationRequestId, expectedGenerationConfigRevision))
     .step("scheduleEvents", () -> scheduleInitialEvents(tenantId, gameInstanceId))
-    .step("registerPopulationRules", () -> registerPopulationRules(tenantId, versionId, gameInstanceId))
-    .step("activateInstance", () -> activateInstance(tenantId, gameInstanceId));
+    .step("registerPopulationRules", () -> registerPopulationRules(
+        tenantId, versionId, gameInstanceId, generationRequestId, expectedGenerationConfigRevision))
+    .step("activateInstance", () -> activateInstance(
+        tenantId, gameInstanceId, expectedVersionStateEpoch, expectedGenerationConfigRevision));
 sagaRunner.run(builder.build());
 ```
 

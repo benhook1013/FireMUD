@@ -12,13 +12,14 @@ Document conflict resolution order is defined in `design/architecture/system-arc
 
 ## `script_event_audit` (Required Fields)
 
-Each admitted trigger must write (or update) a single audit record keyed by the trigger identity described in `design/architecture/system-architecture-scripting-contracts.md#4-scripteventid-identity-and-at-most-once-dedupe`.
+Each observed trigger (admitted or rejected at admission) must write (or update) a single audit record keyed by the trigger identity described in `design/architecture/system-architecture-scripting-contracts.md#4-scripteventid-identity-and-at-most-once-dedupe`.
 
 Write behavior requirements:
 
 - Storage must enforce uniqueness for full Trigger Identity so retries and duplicate deliveries update one logical record.
 - Audit writers must be idempotent and stage-monotonic; `finalStage` must never move backwards.
 - Conflicting concurrent writes for the same Trigger Identity must converge on a single row with deterministic precedence (higher stage wins).
+- Admission rejections and backpressure outcomes (for example `quota_denied`, `skipped_reloading`, `skipped_rollback_pause`) must still produce the row for that Trigger Identity with `finalStage=ADMISSION`.
 
 Audit records must include at least:
 
@@ -92,6 +93,7 @@ In particular:
 - Use `version_unavailable` (never `skipped_version_unavailable`).
 - Encode specific cause in `finalReason` (for example `onload_failed`, `plugin_version_failed`, `script_patch_missing`).
 - Use `pin_state_unavailable` when admission fails closed because bounded-staleness pin data cannot be refreshed.
+- Use `signer_policy_unavailable` when plugin admission fails closed because signer policy cannot be refreshed/verified from authoritative policy sources.
 - Use `script_disabled` for operator disable/drain admission skips (never `skipped_disabled`).
 - Use `rollback_convergence_timeout` when rollback pause remains active after convergence timeout terminal state.
 
@@ -124,9 +126,9 @@ When `policyViolations` is present, `decision` values and final outcomes must al
 The normative metric-family catalog lives in `design/architecture/system-architecture-scripting-normative-contract-tables.md#table-4-metrics-label-matrix`. This section describes observability behavior and grouping expectations for those families.
 
 - Trigger admission and drops
-  - `automation_script_triggers_total{tenantId, scriptId, pluginId, pluginVersionId, eventType, outcome}`
-  - `automation_script_skips_total{tenantId, scriptId, pluginId, reason}`
-  - `automation_script_triggers_dropped_total{tenantId, scriptId, pluginId, reason}`
+  - `automation_script_triggers_total{tenantId, scriptId, pluginId, pluginVersionId, eventType, outcome, priorityTag}`
+  - `automation_script_skips_total{tenantId, scriptId, pluginId, reason, priorityTag}`
+  - `automation_script_triggers_dropped_total{tenantId, scriptId, pluginId, reason, priorityTag}`
 - Quotas and budgets
   - `script_quota_allowed_total{tenantId, scriptId}`
   - `script_quota_denied_total{tenantId, scriptId, reason}`
@@ -137,6 +139,7 @@ The normative metric-family catalog lives in `design/architecture/system-archite
   - `automation_tick_plugin_version_fence_dropped_total{tenantId, pluginId, pluginVersionId, reason}`
   - `automation_script_queue_delay_seconds{tenantId, scriptId}`
   - `automation_queue_orphaned_entries_total{tenantId}` (when applicable)
+  - `automation_script_timer_catchup_truncated_total{tenantId, scriptId, eventType, reason}`
 - Sandbox and runtime health
   - `automation_script_sandbox_failures_total{tenantId, scriptId, pluginId, reason}`
   - `automation_script_errors_total{tenantId, scriptId, pluginId, reason}`
@@ -154,6 +157,10 @@ Label rules:
 
 - `scriptEventId` is forbidden as a metric label.
 - If `tenantId` labeling becomes too high-cardinality in practice, it must be moved behind aggregation (for example per-tier or sampled) rather than introducing ad-hoc per-event labels.
+
+Metric semantics:
+
+- `automation_script_triggers_total` counts all observed triggers (admitted and non-admitted), tagged with canonical final stage-aware outcomes.
 
 Dry-run/test traffic must not increment live-traffic counters such as `automation_script_sandbox_failures_total` or `automation_script_errors_total`. Live dashboards and SLOs must remain interpretable without privileged tooling skewing error rates.
 

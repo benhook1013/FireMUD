@@ -168,7 +168,7 @@ These keys capture:
 - Socket binding metadata and transport details.
 - Active `playerId` / `tenantId` context.
 - Server-side auth token identity used for backend calls on behalf of this session (for example `authTokenHash` and `authTokenIssuedAt`), so resume and mid-session revocation checks can be performed without exposing JWTs to gameplay clients.
-- Tick-region participation and queued commands.
+- Tick-region participation metadata (for example active region bindings and reconnect context). Per-entity command queues remain under `tick:{tenantRegionTag}:queue:<entityId>` and are reset-tolerant coordination state, not durable session payload.
 - Session-local coordination metadata (for example reconnect state, transport-level pacing, and other per-connection ephemeral fields).
 
 Gameplay timers and cooldowns (combat cooldowns, regen ticks, delayed effects) are not “session state”: they are region/entity gameplay state and must be driven by the tick timer system and/or authoritative domain state so they continue to progress correctly in idle regions and across reconnects.

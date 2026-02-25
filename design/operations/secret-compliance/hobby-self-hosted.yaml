@@ -7,28 +7,32 @@
       "maxAgeDays": 30,
       "lastRotationAt": "2026-02-05T00:00:00Z",
       "alertRuleId": "hobby.jwt.rotation.age",
-      "evidenceRef": "notes/hobby-rotation-2026-02-05"
+      "evidenceRef": "design/operations/secret-compliance/evidence/hobby-self-hosted-2026-02-25.json",
+      "evidenceKey": "jwt-signing-keys-jwks"
     },
     "postgres-application-credentials": {
       "owner": "operator",
       "maxAgeDays": 45,
       "lastRotationAt": "2026-02-01T00:00:00Z",
       "alertRuleId": "hobby.postgres.credentials.age",
-      "evidenceRef": "notes/hobby-db-rotation-2026-02-01"
+      "evidenceRef": "design/operations/secret-compliance/evidence/hobby-self-hosted-2026-02-25.json",
+      "evidenceKey": "postgres-application-credentials"
     },
     "backup-object-store-credentials": {
       "owner": "operator",
       "maxAgeDays": 60,
       "lastRotationAt": "2026-01-22T00:00:00Z",
       "alertRuleId": "hobby.backup.objectstore.age",
-      "evidenceRef": "notes/hobby-backup-creds-2026-01-22"
+      "evidenceRef": "design/operations/secret-compliance/evidence/hobby-self-hosted-2026-02-25.json",
+      "evidenceKey": "backup-object-store-credentials"
     },
     "operator-credentials": {
       "owner": "operator",
       "maxAgeDays": 90,
       "lastRotationAt": "2026-01-01T00:00:00Z",
       "alertRuleId": "hobby.operator.credentials.age",
-      "evidenceRef": "notes/hobby-operator-credentials-2026-01-01"
+      "evidenceRef": "design/operations/secret-compliance/evidence/hobby-self-hosted-2026-02-25.json",
+      "evidenceKey": "operator-credentials"
     }
   }
 }

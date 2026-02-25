@@ -276,7 +276,7 @@ Bulk key-walking is reserved for **offline maintenance tooling**, not tick execu
     - Invoke the script once with a given key/value setup and record the resulting keyspace.
     - Invoke it again with the **same** `KEYS`/`ARGV` and assert that:
       - Return values indicate replay/no-op where appropriate.
-      - The Redis keyspace is unchanged by the second invocation (modulo allowed derived counters or metrics).
+      - The Redis keyspace is unchanged by the second invocation for all outcomes documented as non-mutating (including no TTL refreshes, counters, or other Redis writes).
   - For scripts that enqueue items, tests also cover the “replay after partial success” case: pre-populate keys to simulate a partially completed first run, then re-invoke the script and confirm it **does not** add duplicate entries or regress state.
 
 New tick-related scripts are expected to adopt these patterns (or motivated variants) and include tests that prove re-invocation safety before they are accepted.
