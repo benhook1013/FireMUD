@@ -38,6 +38,18 @@ To avoid breaking active development while still reaching strict governance, mat
 
 During Phase 2, the allowlist of legacy warning-only gaps must be version-controlled and reduced over time; adding new entries to that allowlist requires security-owner approval and an expiration date.
 
+### Critical-Domain Override (Effective Immediately)
+
+Regardless of phase timeline above, the following domains are **full-fail now** in CI:
+
+- Authentication/session admission routes (`LOGIN`/`PLAY` surfaces and equivalents).
+- Billing-safe and support-safe routes.
+- Subscription mutation and entitlement routes.
+
+For these domains, protected routes missing from the YAML matrix must fail CI immediately (including legacy routes), and warning-only backlogs are not permitted.
+
+CI should generate candidate inventories from OpenAPI/proto definitions and compare them against the YAML matrix so protected-route drift is detected automatically.
+
 ## Classification Rules
 
 | Classification | Required allowlist | Tenant watermark applied? | Notes |
@@ -56,6 +68,7 @@ During Phase 2, the allowlist of legacy warning-only gaps must be version-contro
 | Account Service | `GetTenantEntitlements(tenantId)` | `cross_tenant_support_safe` | `support` or `platformAdmin` (cross-tenant); tenant-local access via tenant roles |
 | Account Service | `GetSubscription(tenantId)` high-level shape | `cross_tenant_support_safe` | `support` or `platformAdmin` (cross-tenant); tenant-local access via tenant roles |
 | Account Service | `ListSubscriptions` high-level shape | `cross_tenant_support_safe` | `support` or `platformAdmin` (cross-tenant); tenant-local access via tenant roles |
+| Account Service | `GetTenantMembership(accountId, tenantId)` | `billing_safe_tenant` or `cross_tenant_billing_safe` | `tenantAdmin` for tenant routes; `billingAdmin`/`platformAdmin` for cross-tenant routes |
 | Account Service | invoice/payment method APIs | `billing_safe_tenant` or `cross_tenant_billing_safe` | `tenantAdmin` for tenant routes; `billingAdmin`/`platformAdmin` for cross-tenant routes |
 | Game Session Service | gameplay admission (`PLAY`, instance start/restart/stop control-plane routes) | `tenant_regular` | Tenant role required; entitlement-gated |
 

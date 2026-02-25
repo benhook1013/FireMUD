@@ -348,6 +348,13 @@ World Management must also expose a read-only design-time synchronization surfac
 
 - `GetDraftDesignDigest(tenantId, versionId)` returns `appliedCommitId` (or last applied revision), a stable `contentDigest`, and a `digestSchemaVersion` as described in `design/architecture/microservices/game-design-service/world-editing-tools.md`.
 
+Digest input manifest requirements (World Management):
+
+- Included objects: version-scoped topology/binding rows for `(tenantId, versionId)` (for example `region_template`, `zone_template`, `room_template`, spawn/population binding tables, and any version-scoped generation artifacts used for publish).
+- Excluded objects: runtime/instance tables keyed by `gameInstanceId`, audit/history tables, and non-semantic write-time metadata fields (`created_at`, `updated_at`).
+- Canonicalization: deterministic table ordering, primary-key ordering within table, and stable field encoding.
+- `digestSchemaVersion` must be incremented when included/excluded object sets or canonicalization rules change.
+
 ### World Events
 
 World events are persisted in the `world_event` table and processed periodically by `WorldEventService`.

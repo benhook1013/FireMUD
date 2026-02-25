@@ -8,6 +8,7 @@ This document defines the backup schedule and disaster recovery procedures for F
 - **local-dev / ci-preview / dev-demo-cluster**: disposable or ad hoc backup posture unless explicitly upgraded.
 
 Staging is treated as **disposable by default**: it does not run the production backup CronJobs unless operators explicitly install staging-specific schedules. Operators may temporarily restore staging from production backups for disaster recovery rehearsals or investigations; when doing so, staging must follow the same post-restore secret hardening flow before it is considered player-facing again (see [Post-Restore Secret Hardening](#post-restore-secret-hardening)).
+`hobby-self-hosted` restores that return an environment to player-facing status must also execute the same core hardening controls (JWT/JWKS rotation, DB credential rotation, and external credential validation) before reopening traffic.
 
 ---
 
@@ -309,14 +310,14 @@ Post-restore hardening is performed by a dedicated Kubernetes Job (for example `
 
 The `post-restore-secret-hardening` Job runs after PostgreSQL and core services have been restored and basic health checks pass, but **before** the restored environment is considered player-facing. It uses least-privilege service accounts:
 
-- JWT rotation service accounts can only read/update the `jwt-signing-keys` Secret, the JWKS ConfigMap/Secret, and, optionally, the Account Service Deployment.
+- JWT rotation service accounts can only read/update the `jwt-signing-keys` Secret, the `jwt-jwks` Secret for player-facing environments (`hobby-self-hosted`, staging, production), and, optionally, the Account Service Deployment. Non-player-facing environments may use a JWKS ConfigMap.
 - Database rotation service accounts can only read/update the PostgreSQL credential Secrets and, optionally, restart the Deployments/StatefulSets that use them.
 
-Runbooks should treat this Job as a mandatory step in any production or staging disaster recovery:
+Runbooks should treat this Job (or equivalent operator automation for hobby/self-hosted) as a mandatory step in any player-facing disaster recovery:
 
 1. Restore PostgreSQL and Kubernetes manifests as described above.
 2. Run `post-restore-secret-hardening` in the target namespace and wait for it to complete successfully.
-3. Run `dev-tools/restores/validate-external-credentials.sh <staging|production>` with environment-specific expected values and ensure it succeeds.
+3. Run `dev-tools/restores/validate-external-credentials.sh <hobby-self-hosted|staging|production>` with environment-specific expected values and ensure it succeeds.
 4. Confirm application health checks, login/session flows, and JWT validation.
 5. Only then route external or player traffic to the restored cluster.
 

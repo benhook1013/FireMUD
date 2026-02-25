@@ -30,11 +30,12 @@ Checkmarks in this table indicate **participation** in a workflow. Rows prefixed
 | Reconnection handling (resume gameplay) | | | | ✔ | | | | | | | |
 | Command queuing and dispatch | | | | ✔ | | | | | | | |
 | Session state storage (volatile, Redis gameplay bindings) | | | | ✔ | | | | | | | |
-| Authoritative owner: Coordination Redis gameplay keyspace (`session:game:*`, `tick:*`, `timer:*`, `retry:*`, `tick-executor-lease:*`) | | | | ✔ | | | | | | | |
-| Authoritative owner: Coordination Redis auth keyspace (`session:auth:*`) | | ✔ | | | | | | | | | |
+| Authoritative owner: Coordination Redis gameplay sessions (`session:game:*`) | | | | ✔ | | | | | | | |
+| Authoritative owner: Coordination Redis gameplay coordination keys (`tick:*`, `timer:*`, `retry:*`, `tick-executor-lease:*`) | | | | ✔ | | | | | | | |
+| Authoritative owner: Coordination Redis auth sessions (`session:auth:*`) | | | ✔ | | | | | | | | |
 | Authoritative owner: Coordination Redis automation keyspace (`automation:*`) | | | | | | | ✔ | | | | |
 | Tick-region lease ownership and executor coordination (`<tenantId, regionId>`) | | | | ✔ | | | | | | | |
-| Gameplay WebSocket route definition and routing (`/ws/game/**`) | | | | | | | | | | | ✔ |
+| Gameplay WebSocket route definition and routing (`/ws/game/**` canonical; `/ws/game-legacy/**` transitional compatibility route) | | | | | | | | | | | ✔ |
 | Game version activation at runtime | | | | ✔ | | | | | | | |
 | Authoritative owner: `versionStateEpoch` CAS enforcement | ✔ | | | | | | | | | | |
 | Version-state CAS APIs ownership/invocation for activation/rollback (`versionStateEpoch`) | ✔ | | | ✔ | | | | | ✔ | | |

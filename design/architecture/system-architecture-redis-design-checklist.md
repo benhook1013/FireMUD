@@ -57,7 +57,7 @@ Only after these workflow steps are accounted for should a change be considered 
 
 ## Coordination Prefix Checklist
 
-Use this when adding or changing coordination prefixes (for example `tick:*`, `timer:*`, `retry:*`, `session:*`, `tick-executor-lease:*`).
+Use this when adding or changing coordination prefixes (for example `tick:*`, `timer:*`, `retry:*`, `session:game:*`, `session:auth:*`, `tick-executor-lease:*`).
 
 ### Role and Scope
 
@@ -80,7 +80,7 @@ Use this when adding or changing coordination prefixes (for example `tick:*`, `t
 
 - [ ] The design explicitly states:
   - [ ] Whether the prefix is **reset‑tolerant**, **reset‑sensitive**, or **reset‑forbidden**.
-  - [ ] How losing up to **1–2 seconds** of entries per region affects gameplay.
+  - [ ] How losing up to `tail_loss_budget_ms = max(2000, 2 * tick_interval_ms)` of entries per region affects gameplay.
   - [ ] Whether tail‑loss is acceptable for all flows that depend on this prefix.
 - [ ] The design defines a hard growth bound for the prefix and how it is enforced (`TTL`, `MAXLEN`, max cardinality, or equivalent), including default values for new deployments.
 - [ ] Flows that are **not** tail‑loss compatible (for example, real‑money or cross‑tenant transfers) use durable domain mechanisms and do not rely solely on Redis.

@@ -1,6 +1,6 @@
 # FireMUD Tick Incident Runbook
 
-This runbook describes operator actions for **tick-related incidents**, including stalled regions, replay storms, and stuck tick effect ledger entries.
+This runbook describes operator actions for **tick-related incidents**, including stalled regions, replay storms, durable commit/coordination cleanup divergence, and stuck tick effect ledger entries.
 
 For the detailed tick design, see:
 

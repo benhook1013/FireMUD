@@ -155,6 +155,12 @@ Minimum credential classes to track:
 
 If a required compliance record is missing or stale, the environment is treated as non-compliant for promotion and DR-readiness reporting.
 
+Promotion gating policy:
+
+- `production`: non-compliant secret records are a hard block for promotion.
+- `staging`: non-compliant records are warnings through **June 30, 2026** and become a hard promotion gate on **July 1, 2026**.
+- `hobby-self-hosted`: operators must validate records before opening player-facing traffic.
+
 ---
 
 ## Configuration vs Secrets

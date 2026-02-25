@@ -48,6 +48,17 @@ the Game Design and Game Session services; this service simply reads the
 already-published, versioned rule data for the active `runtime_version` and
 does not participate directly in the publish Saga.
 
+### Digest Input Manifest Requirements
+
+For full-version publish gating, this service is still a required digest participant even though it does not orchestrate Saga steps. It must expose `GetDraftDesignDigest(tenantId, versionId)` and publish a service-local digest input manifest with:
+
+- Included objects (for example version-scoped rule/config tables this service owns that affect runtime command behavior).
+- Excluded objects (for example runtime queues/caches, telemetry tables, and other non-launchability data).
+- Canonicalization rules (stable ordering, normalization, and null/default handling before hashing).
+- `digestSchemaVersion` bump criteria (any include/exclude/canonicalization change requires an explicit schema bump and replay/re-record workflow).
+
+Publish gating must fail closed if this service cannot attest a digest under its documented manifest for the reported `digestSchemaVersion`.
+
 ### Redis Role and Prefixes
 
 - **Coordination Redis**

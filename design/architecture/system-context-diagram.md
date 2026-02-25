@@ -63,12 +63,15 @@ This document gives a high-level view of how FireMUD's clients, gateways, intern
 
       Spring Cloud Gateway ---------------------> Logging & Admin Service (admin APIs)
       Spring Cloud Gateway ---------------------> Account Service (admin APIs)
-      Spring Cloud Gateway ---------------------> Game Session Service (admin APIs)
+      Spring Cloud Gateway ---------------------> Game Session Service (gameplay route group: `/ws/game/**` canonical, `/ws/game-legacy/**` transitional)
+      Spring Cloud Gateway ---------------------> Game Session Service (control-plane/admin APIs)
       Spring Cloud Gateway ---------------------> Social & Groups Service (admin APIs)
       Spring Cloud Gateway ---------------------> Game Design Service (admin APIs)
 ```
 
 Admin and operations tools connect to Spring Cloud Gateway over an internal gRPC management API for route configuration and health checks; this **infrastructure control-plane API** is separate from player-facing HTTP and WebSocket traffic. Admin and creator UIs call domain-level admin APIs (for example, moderation actions, feature-flag toggles, and dashboards) over HTTP(S) via the Gateway, which routes those requests to the owning domain services (for example, Game Session, Account, Social & Groups, Logging & Admin) following the Service Responsibility Matrix. External admin and creator tools do not call Logging & Admin Service directly; they always go through the Gateway so routing, coarse route protections, and rate limiting are applied consistently, while JWT validation and fine-grained authorization are performed by the consuming services. Internal service-to-service calls (including gRPC) do not traverse the Gateway.
+
+Auth contracts by route group are explicit: gameplay WebSocket routes (`/ws/game/**` and transitional `/ws/game-legacy/**`) follow the connect-token plus `LOGIN`/`PLAY` flow in [Authentication & Authorization](./system-architecture-authentication.md#websocket-connect-token-contract-wsgame) and [Reconnection Strategy](./system-architecture-reconnection.md#gameplay-websocket-route-handshake-policy-normative), while control-plane/admin APIs follow JWT middleware and route classification in [Authentication & Authorization](./system-architecture-authentication.md#auth-middleware-algorithm-normative) and [Authorization Route Matrix](./system-architecture-authz-route-matrix.md).
 
 For production-like control-plane constraints (including dynamic route override dev/test scope), see the canonical [Gateway Management Plane Capability Matrix](./system-architecture-overview.md#gateway-management-plane-capability-matrix-canonical).
 

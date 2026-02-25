@@ -18,3 +18,4 @@ For a conceptual overview of the observability stack (Prometheus, Elasticsearch,
 - For prod-like environments, install the reference Prometheus recording rules and alerts from `k8s/monitoring/prometheus-rules-firemud.yaml` (or an overlay derived from it) so fallback conditions and SLO panels have stable, shared recording rules.
 - In nightly/staging-gated observability smoke, validate rule presence through Prometheus rules API checks, not only by inspecting dashboards.
 - Validate changes locally with `python3 dev-tools/observability/validate-observability-contract.py` and keep CI green.
+- When contract validation fails, resolve the mismatch by aligning docs/snippets/dashboards with the normative architecture contracts; do not weaken validator rules unless the contract itself is intentionally changed.

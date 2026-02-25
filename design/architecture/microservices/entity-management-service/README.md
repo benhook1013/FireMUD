@@ -296,6 +296,13 @@ Entity Management must also expose a read-only design-time synchronization surfa
 
 - `GetDraftDesignDigest(tenantId, versionId)` returns `appliedCommitId` (or last applied revision), a stable `contentDigest`, and a `digestSchemaVersion` as described in `design/architecture/microservices/game-design-service/world-editing-tools.md`.
 
+Digest input manifest requirements (Entity Management):
+
+- Included objects: version-scoped entity/binding rows for `(tenantId, versionId)` (for example item/NPC/equipment templates, loot/balance mappings, and other publish-scoped template relations).
+- Excluded objects: live runtime entity/inventory/container rows, room-ground runtime containment, audit/history tables, and non-semantic write-time metadata fields (`created_at`, `updated_at`).
+- Canonicalization: deterministic table ordering, primary-key ordering within table, and stable field encoding.
+- `digestSchemaVersion` must be incremented when included/excluded object sets or canonicalization rules change.
+
 ### Tick Locking
 
 This service participates in tick processing by acquiring Redis locks before mutating entity state. The `TickLockService` uses the `tick:{tenantRegionTag}:lock:<entityId>` key described in the [Redis Architecture](../../system-architecture-redis.md) document so that lock keys share a hash tag with tick queues and pending state. Lock TTLs come from the **shared tick/Redis helpers** that implement the canonical formulas defined in [Tick Concepts & Invariants](../../system-architecture-tick-concepts-and-invariants.md#tick-budget-ttls-and-region-health-conceptual):

@@ -10,7 +10,7 @@ This document defines the canonical attestation artifact used to promote image d
 
 ## Artifact Format
 
-The attestation is a JSON document committed with the production overlay change or uploaded as a referenced CI artifact.
+The attestation is a JSON document committed in-repo with the production overlay change so overlay PR validation is deterministic.
 
 Required fields:
 
@@ -29,16 +29,18 @@ Optional fields:
 
 ## Validation Rules
 
-- Production overlay PRs must include or reference exactly one attestation artifact.
+- Production overlay PRs must include exactly one in-repo attestation artifact.
 - Every production overlay digest must match the digest in `serviceDigests`.
 - `environment` must be `staging`.
 - `stagingOverlayCommitSha` must exist in Git history and correspond to a successful staging deployment record.
 - Attestation schema must validate against the current `attestationVersion`.
 - If any check fails, production promotion is blocked.
 
+External-only attestation storage is not allowed for production promotions because it prevents deterministic PR validation.
+
 ## Storage and Retention
 
-- Keep the attestation with the production promotion evidence (PR body, attachment, or committed file).
+- Keep the attestation in the repository with the production promotion evidence and reference it from the PR body.
 - Retain attestation artifacts for at least as long as release/rollback audit history is retained.
 - Rollback PRs should reference the original attestation used for the digest set being restored.
 

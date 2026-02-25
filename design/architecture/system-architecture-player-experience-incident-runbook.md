@@ -54,7 +54,7 @@ Each scenario assumes that the Player Experience, Redis & Coordination Health, a
      - If a recent migration or deployment is suspected, consider rollback and run smoke tests.
 5. **Verify recovery**
    - Confirm the login success SLI panel returns to acceptable levels.
-   - Ensure `LoginSuccessRatioLow` clears and player reports subside.
+   - Ensure `LoginSuccessRatioLowGateway` and/or `LoginSuccessRatioLowTcpProxy` clear (as applicable) and player reports subside.
    - Use the `player-incident-drilldown.json` Kibana saved search to spot-check representative player logs by `playerId`, `tenantId`, and `traceId` to confirm that errors have returned to normal levels.
 
 ## Command Latency Above SLO

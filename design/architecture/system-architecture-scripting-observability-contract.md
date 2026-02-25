@@ -1,6 +1,6 @@
 # FireMUD Scripting & Automation: Observability Contract
 
-This document defines the **authoritative** observability contract for scripting and automation: what is recorded in `script_event_audit`, what is emitted as metrics, and which identifiers may be used for correlation.
+This document defines the observability contract for scripting and automation: what is recorded in `script_event_audit`, what is emitted as metrics, and which identifiers may be used for correlation.
 
 Document conflict resolution order is defined in `design/architecture/system-architecture-scripting-normative-contract-tables.md#document-precedence-normative`. This document is authoritative for observability details not fully enumerated in the normative tables.
 
@@ -86,6 +86,8 @@ In particular:
 - Use `version_unavailable` (never `skipped_version_unavailable`).
 - Encode specific cause in `finalReason` (for example `onload_failed`, `plugin_version_failed`, `script_patch_missing`).
 - Use `pin_state_unavailable` when admission fails closed because bounded-staleness pin data cannot be refreshed.
+- Use `script_disabled` for operator disable/drain admission skips (never `skipped_disabled`).
+- Use `rollback_convergence_timeout` when rollback pause remains active after convergence timeout terminal state.
 
 ### `policyViolations` Schema (Required When Present)
 
@@ -113,7 +115,7 @@ When `policyViolations` is present, `decision` values and final outcomes must al
 
 ## Metrics (Authoritative Names and Label Rules)
 
-The following metric families are the supported contract for automation/scripting operations:
+The normative metric-family catalog lives in `design/architecture/system-architecture-scripting-normative-contract-tables.md#table-4-metrics-label-matrix`. This section describes observability behavior and grouping expectations for those families.
 
 - Trigger admission and drops
   - `automation_script_triggers_total{tenantId, scriptId, pluginId, pluginVersionId, eventType, outcome}`
@@ -139,6 +141,8 @@ The following metric families are the supported contract for automation/scriptin
   - `automation_script_test_sandbox_failures_total{tenantId, scriptId, pluginId, eventType, reason}`
 - Plugin policy
   - `automation_plugin_policy_violations_total{tenantId, pluginId, pluginVersionId, componentId, reason}`
+- Rollback convergence timeout
+  - `automation_rollback_convergence_timeout_total{tenantId, gameInstanceId, reason}`
 
 Label rules:
 

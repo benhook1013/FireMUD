@@ -42,9 +42,11 @@ Initial NPC and item presence is modeled declaratively:
 
 ### Saga Step Idempotency
 
-World creation steps write durable instance rows and must be safely retryable. Each step must implement a durable idempotency guard keyed by at minimum:
+World creation steps write durable instance rows and must be safely retryable. Each externally retryable step must implement a durable idempotency guard keyed by a stable business idempotency key plus step identity, at minimum:
 
-- `(tenantId, gameInstanceId, sagaInstanceId, stepName)`
+- `(tenantId, gameInstanceId, worldCreationRequestId, stepName)`
+
+For generation stages, the idempotency key must additionally include `generationRequestId` so retries across different `sagaInstanceId` values converge on one logical result.
 
 On a retry of the same saga instance:
 
@@ -79,6 +81,7 @@ See [Transaction Strategies](../../system-architecture-transactions.md) for back
 
 Instance expiry and operator-driven shutdown must use an explicit cross-service termination workflow rather than independent cleanup jobs.
 
+- Game Session must first mark the target instance non-admissible/draining before World starts termination.
 - World Management starts an `InstanceTermination` Saga and marks the instance `TERMINATING`.
 - Entity Management runs an idempotent cleanup step keyed by `(tenantId, gameInstanceId, sagaInstanceId, stepName)` that removes synthetic room-ground containers and containment rows scoped to the terminating instance.
 - World Management finalizes world-side cleanup and marks the instance `TERMINATED` only after Entity Management confirms cleanup completion.

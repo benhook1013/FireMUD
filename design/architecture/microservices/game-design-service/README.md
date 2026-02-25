@@ -53,6 +53,9 @@ The Game Design Service owns the **authoring** view of script patches, while the
   - That a patch is published but still **pending runtime validation**.
   - Whether `onLoad` initialization has succeeded or failed for each tenant.
   - When a patch has been rolled back or repinned for a specific game instance.
+  - Event-family responsibilities are explicit:
+    - `ScriptPatchTenantStatusChanged` drives readiness gates and publish validation status.
+    - `ScriptPatchInstanceRolloutChanged` drives instance rollout history and rollback audit timeline.
 
 In the design UI:
 
@@ -233,6 +236,10 @@ Detailed request and response schemas are defined in the
 - `PublishVersion(PublishVersionRequest) returns (PublishVersionResponse)` – publishes a frozen version.
 - `PublishScriptPatchVersion(PublishScriptPatchVersionRequest) returns (PublishScriptPatchVersionResponse)` – publishes a script-only patch version.
 - `ListVersions(ListVersionsRequest) returns (ListVersionsResponse)` – lists available versions.
+- `GetVersionState(GetVersionStateRequest) returns (GetVersionStateResponse)` – reads authoritative version lifecycle state and CAS epoch.
+- `CompareAndSetVersionState(CompareAndSetVersionStateRequest) returns (CompareAndSetVersionStateResponse)` – performs CAS-guarded lifecycle transitions.
+- `GetDesignControlPlaneDigest(GetDesignControlPlaneDigestRequest) returns (GetDesignControlPlaneDigestResponse)` – returns normalized metadata digest used by publish gates.
+- `CanDeleteVersionAssets(CanDeleteVersionAssetsRequest) returns (CanDeleteVersionAssetsResponse)` – validates whether version-scoped assets are purge-eligible.
 
 ```bash
 grpcurl -plaintext localhost:6565 game_design.v1.GameDesignService/Ping

@@ -192,18 +192,25 @@ Alert owner mapping guidelines:
 - Tick behavior and gameplay-flow correctness alerts (for example replay storms, ledger backlogs, unsafe tick runtime ratios): `owner="gameplay"`.
 - Observability stack availability/routing alerts (Prometheus, Alertmanager, Elasticsearch, Jaeger, Grafana): `owner="platform"`.
 
+Player SLO owner mapping (normative):
+
+- Login success ratio alerts (`LoginSuccessRatioLowGateway`, `LoginSuccessRatioLowTcpProxy`): `owner="platform"` (ingress/auth availability domain).
+- Entry-path availability alerts (`EntryPathAvailabilityLowGateway`, `EntryPathAvailabilityLowTcpProxy`): `owner="platform"` (edge connectivity domain).
+- Command latency alerts (`CommandLatencyP99HighGateway`, `CommandLatencyP99HighTcpProxy`): `owner="gameplay"` (in-session runtime performance domain).
+- Chat delivery latency alerts (`ChatDeliveryLatencyP99High`): `owner="gameplay"` (player-facing runtime behavior domain).
+
 ### Alert Fallback Recording Rules
 
 When Alertmanager is unavailable but Prometheus is still accessible, Logging & Admin may present a limited view of critical conditions based on recording rules evaluated directly in Prometheus. To keep behavior predictable, only a small set of fallback signals is supported:
 
 - **Redis coordination tail-loss SLO breaches**
-  - Recording rule based on `redis_coordination_tail_loss_ms{tenantId,regionId}` that classifies regions as inside or outside the 1–2 second envelope.
+  - Recording rule based on `redis_coordination_tail_loss_ms{tenantId,regionId}` that classifies regions as inside or outside the canonical envelope (`tail_loss_budget_ms = max(2000, 2 * tick_interval_ms)`).
 - **Tick execution safety ratios**
   - Recording rule that exposes `tick_execution_time_ms_p99 / tick_lock_ttl_ms` per region, using the recording rules defined in the Redis operations metrics catalog.
 - **Login success ratio**
-  - Recording rule mirroring the `LoginSuccessRatioLow` alert condition, based on `login_requests_total{outcome="success"}` vs `login_requests_total`.
+  - Recording rules mirroring `LoginSuccessRatioLowGateway` and `LoginSuccessRatioLowTcpProxy`, scoped by `service` and based on `login_requests_total{outcome="success"}` vs `login_requests_total`.
 - **Command p99 latency**
-  - Recording rule mirroring the `CommandLatencyP99High` alert condition, based on `command_end_to_end_latency_ms_bucket`.
+  - Recording rules mirroring `CommandLatencyP99HighGateway` and `CommandLatencyP99HighTcpProxy`, scoped by `service` and based on `command_end_to_end_latency_ms_bucket`.
 
 Logging & Admin should:
 

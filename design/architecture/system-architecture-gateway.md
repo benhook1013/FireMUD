@@ -143,7 +143,9 @@ At a configuration level, Spring Cloud Gateway defines WebSocket routes in `appl
 
 ### Gameplay WebSocket Route
 
-- **Canonical route path** – `/ws/game/**` is the canonical gameplay WebSocket entry point for both native WebSocket clients and Telnet clients bridged via the TCP Proxy Service.
+- **Canonical route path** – `/ws/game/**` is the canonical gameplay WebSocket entry point for first-party gameplay clients and Telnet clients bridged via the TCP Proxy Service.
+- **Legacy compatibility route** – `/ws/game-legacy/**` is a transitional compatibility surface for legacy or third-party clients that cannot yet present the gameplay connect token. It is intentionally constrained (stricter edge limits and reduced admission guarantees) and must not become the steady-state entry point.
+- **Sunset policy** – `/ws/game-legacy/**` is temporary and must be removed from player-facing environments by **December 31, 2026**. After that date, `/ws/game/**` is the only supported public gameplay route.
 - **Telnet bridge usage** – The TCP Proxy Service connects to Spring Cloud Gateway using the `GATEWAY_WS_URL` environment variable, which by default points at `ws://spring-cloud-gateway:8080/ws/game`. In production deployments this value must be set to a `wss://.../ws/game` URL that targets the Gateway’s internal-only WebSocket mTLS listener (for example `wss://spring-cloud-gateway-mtls:8443/ws/game`) so the proxy–gateway hop uses mTLS as described in [Security Architecture](./system-architecture-security.md#tls-termination-for-gateway). Do not rely on the `ws://` default in player-facing environments. Exact `SESSION` envelope semantics and header propagation rules are defined in the TCP Proxy design’s **Telnet Session Envelope & Event Metrics** section; this document intentionally summarizes only the routing side.
 - **Required headers** – Spring Cloud Gateway preserves or sets:
   - `X-Client-IP` with the originating client address. For web clients this is derived from the external load balancer’s forwarded headers. For Telnet clients this is derived by the gateway from `X-Proxy-Client-IP` after authenticating the TCP Proxy identity (see [Header Trust Model](#header-trust-model)).
@@ -179,7 +181,7 @@ For gameplay WebSocket sessions, FireMUD standardises a small set of close codes
 
 Gateway and Game Session implementations must always map platform‑initiated closures into one of these categories. Game Session indicates categories through its upstream behaviour (for example how it closes or errors its side of the connection), while Gateway is responsible for translating those signals into the client‑facing close codes/reasons above and logging the mapped category and contributing metrics (for example `gateway.websocket.closes{reason=...}` and `gamesession.connection.closed{reason=...}`) so operations teams can distinguish idle timeouts, policy enforcement, backend outages, and internal errors.
 
-In addition to the bounded top-level reason taxonomy, implementations must emit a bounded close `subreason` for client policy tuning and operations correlation without creating new top-level categories. Supported values are `user_logout`, `takeover`, `gateway_restart`, `admin_termination`, and `none`. The `subreason` field must be present in structured logs and close metrics and must remain low-cardinality.
+In addition to the bounded top-level reason taxonomy, implementations must emit a bounded close `subreason` for client policy tuning and operations correlation without creating new top-level categories. Supported values are `user_logout`, `takeover`, `gateway_restart`, `admin_termination`, `edge_backpressure`, and `none`. The `subreason` field must be present in structured logs and close metrics and must remain low-cardinality.
 
 Wire compatibility for `subreason` is explicit:
 
@@ -193,7 +195,7 @@ To keep behaviour consistent and avoid double-closing sessions, ownership of the
 
 - `logout` (`1000`) – Game Session owns explicit gameplay logouts and admin‑initiated session ends; Gateway may also use `1000` for graceful shutdown of its own listener when draining connections, but should not reinterpret Game Session’s logout decisions.
 - `idle_timeout` (`1001`) – The layer that observes the idle condition first closes the connection: Game Session for application‑level idle (for example no gameplay traffic from a client that is otherwise reachable), or Gateway/WebSocket container for network‑level idle (no frames or pongs within the configured idle window). Other layers treat the close as a peer shutdown and do not wrap it in a second close reason.
-- `policy_violation` (`1008`) – The layer that detects the violation closes with `policy_violation`. Gateway uses this for HTTP or WebSocket protocol abuse (for example frame shape violations on `/ws/game/**`); Game Session uses it for gameplay/content‑level abuse (for example sustained command‑rate or scripting violations); the TCP Proxy maps Telnet‑side `policy_violation` disconnects into this category via the Telnet reason taxonomy in [Protocol Bridging](./system-architecture-protocol-bridging.md#telnet-disconnect-reasons).
+- `policy_violation` (`1008`) – The layer that detects the violation closes with `policy_violation`. Gateway uses this for HTTP or WebSocket protocol abuse (for example frame shape violations on `/ws/game/**`) and network-level slow-client/backpressure enforcement (subreason `edge_backpressure`); Game Session uses it for gameplay/content‑level abuse (for example sustained command‑rate or scripting violations); the TCP Proxy maps Telnet‑side `policy_violation` disconnects into this category via the Telnet reason taxonomy in [Protocol Bridging](./system-architecture-protocol-bridging.md#telnet-disconnect-reasons).
 - `internal_error` (`1011`) – Any layer that encounters an unexpected server‑side error (not clearly attributable to the client and not covered by `backend_unavailable`) closes with `internal_error` and logs the underlying failure. Other layers treat it as a generic peer failure and avoid emitting a second, conflicting close reason for the same session.
 - `backend_unavailable` (`1013`) – Gateway owns closing WebSocket sessions when core gameplay backends are continuously unavailable beyond the configured grace window. Game Session surfaces its own health via metrics and health checks; Gateway uses that information plus its own upstream connectivity failures to decide when to send `1013/backend_unavailable` as described in [Reconnection Strategy](./system-architecture-reconnection.md#backend-unavailable-scenarios). Telnet clients see the corresponding `backend_unavailable` Telnet reason from the TCP Proxy.
 
@@ -258,13 +260,13 @@ This pattern ensures all real-time gameplay is unified through WebSocket on the 
 
 Spring Cloud Gateway provides centralized management of client traffic, offering:
 
-- JWTs presented on admin or REST endpoints are validated by the consuming service. Gameplay clients do not provide tokens.
+- JWTs presented on admin or REST endpoints are validated by the consuming service. Gameplay protocol clients do not provide JWTs; first-party WebSocket clients may provide a short-lived connect token for handshake-time edge policy as described below.
 - Cross-cutting filters (e.g., rate limiting, logging, CORS)
 
 > **Redis topology guidance:** Coordination Redis and Cache/Rate‑Limit Redis are
 > always deployed as **separate Redis instances** (for example, two containers
 > on a single dev machine or distinct pods/clusters in Kubernetes). Sharing a
-> single Redis instance for both roles is considered an unsupported experiment.
+> single Redis instance for both roles is allowed only for explicitly documented, truly ephemeral CI/preview topologies and must not be used for non-ephemeral or player-facing environments.
 > For any player-facing environment, configure the Gateway to use the dedicated
 > **Cache/Rate‑Limit Redis deployment** so rate limiting and cache activity cannot
 > interfere with tick/session coordination. See
@@ -283,10 +285,13 @@ Spring Cloud Gateway and the TCP Proxy Service share responsibility for protecti
 ### Tenant-Aware Edge Connect Token (Gameplay Handshake)
 
 Tenant-aware edge limiting on `/ws/game/**` depends on a short-lived server-minted connect token presented at WebSocket handshake time.
+This section is the canonical source of truth for connect-token enforcement modes and handshake outcomes; other docs should reference this section rather than redefining mode behavior.
 
 - **Issuer and audience**
   - Issued only by the account/authentication control-plane after account authentication and tenant entitlement checks.
+  - Issuance is performed via the control-plane connect-token API (for example `POST /auth/connect-token`); gateway must not mint connect tokens.
   - Audience is the gateway gameplay route (`/ws/game/**`) and must not be accepted on unrelated routes.
+  - Gateway validates signatures against the issuer's published verification key set with explicit `kid` selection and overlap handling during rotation.
 - **Transport location**
   - Sent in a dedicated handshake header (`X-Firemud-Connect-Token`) on `/ws/game/**`.
   - Gateway must not accept connect tokens from query parameters in player-facing environments.
@@ -300,11 +305,24 @@ Tenant-aware edge limiting on `/ws/game/**` depends on a short-lived server-mint
   - Token TTL must be short (target: <= 30s).
   - Gateway must reject expired tokens and tokens whose `jti` has already been observed within the replay window.
   - Replay cache entries must expire automatically at `exp + small_skew`.
+  - Replay cache ownership is Gateway-only; downstream services do not participate in connect-token replay checks.
+  - Replay checks must be backed by shared Cache/Rate-Limit Redis (not per-pod memory) so `jti` replay decisions are consistent across horizontally scaled gateway pods.
+  - Replay cache keys use `gateway:connect-token:replay:<jti>` and bounded cardinality with deterministic eviction (`oldest-expiry-first`).
+  - On replay-cache capacity pressure, gateway must emit overload metrics and continue fail-closed behavior for uncertain replay outcomes.
+  - Replay-cache outage behavior:
+    - Player-facing environments (`/ws/game/**` in `enforce` mode): fail closed (`503` for replay-check unavailable).
+    - Non-player-facing dev/preview environments: fail-open is allowed only when explicitly configured for local iteration and must emit drift metrics.
 - **Validation outcomes**
   - Invalid/expired/replayed token is rejected with HTTP `403` whenever connect-token validation is enabled for the route.
   - Missing token behavior is controlled by the explicit enforcement mode contract below.
   - Rate-limit exhaustion remains HTTP `429`.
   - Backend-unavailable remains HTTP `503`.
+- **Route split contract**
+  - `/ws/game/**` is token-enforced in all player-facing environments; missing or invalid token is always `403`.
+  - `/ws/game-legacy/**` is the only route where tokenless compatibility admission is allowed during migration.
+  - `/ws/game-legacy/**` must run with stricter connection/rate guardrails than `/ws/game/**` and must emit dedicated migration counters so removal progress is measurable.
+  - `/ws/game-legacy/**` must not be used by the TCP Proxy default bridge target in player-facing environments.
+  - Legacy-route governance requires an explicit owner, dated burn-down tracking, and a hard-disable control that turns the route off after sunset unless an incident override is intentionally enabled.
 - **Enforcement modes (normative)**
   - Gateway connect-token behavior is configured per environment as one of three explicit modes:
 
@@ -314,7 +332,7 @@ Tenant-aware edge limiting on `/ws/game/**` depends on a short-lived server-mint
 | `observe` | Allow handshake; apply tenant-opaque edge limits and emit drift metrics/logs | Reject with `403` | Short-lived staging validation windows |
 | `enforce` | Reject with `403` | Reject with `403` | All player-facing environments |
 
-- `enforce` is required for production and any other player-facing environment.
+- `enforce` is required for production and any other player-facing environment for `/ws/game/**`.
 - `observe` and `disabled` are non-production-only modes and must not be used as steady-state policy in player-facing stacks.
 - In `observe` mode, gateway must emit low-cardinality metrics that count missing-token handshakes so compatibility debt is visible and burn-down can be tracked.
 
@@ -322,7 +340,7 @@ This token is an edge admission/rate-limiting hint only. It does not replace `LO
 
 - **Keying strategy**
   - Gateway rate limiting is primarily **per-client IP** with optional route-level differentiation. The default `RequestRateLimiter` configuration uses the Cache/Rate‑Limit Redis deployment and derives keys from the client IP (as seen by the gateway after load balancer and TCP Proxy headers) and route ID, keeping key cardinality modest while still following the canonical `ratelimit:<tenantId>:<bucket>:<timeWindow>` key pattern from [Redis Cache & Rate Limiting](./system-architecture-redis-cache.md#rate-limit-bucket-design). For the gateway itself, `tenantId` is a synthetic, edge-scope identifier (for example `gateway-edge`), and `bucket` incorporates the client IP and route identifier via a stable hash.
-  - Tenant-aware edge rate limiting for gameplay uses the connect-token contract above. In `enforce` mode, gameplay handshakes without a connect token are rejected (`403`). In `observe` or `disabled` modes, handshakes may proceed with tenant-opaque IP/connection limiting while Game Session enforces tenant-aware quotas after `LOGIN` binds the session.
+  - Tenant-aware edge rate limiting for gameplay uses the connect-token contract above. `/ws/game/**` in player-facing environments must reject gameplay handshakes without a connect token (`403`). `/ws/game-legacy/**` may proceed without a token only during migration windows and with stricter tenant-opaque IP/connection limiting while Game Session enforces tenant-aware quotas after `LOGIN` binds the session.
   - Game Session Service enforces **per-session and per-command** limits (for example, commands per tick region) using Redis coordination keys. See [Reconnection Strategy](./system-architecture-reconnection.md) and [Redis Architecture](./system-architecture-redis.md) for session/tick-level controls.
 - **WebSocket vs HTTP semantics**
   - Spring Cloud Gateway’s Redis-backed `RequestRateLimiter` is applied to **connection establishment and discrete HTTP requests**, not to every WebSocket frame. This prevents Telnet and WebSocket gameplay traffic from being throttled as if each frame were a separate HTTP call.
@@ -379,6 +397,9 @@ The lifecycle expectations for these overrides must be explicit so operators und
 - **Safety bounds:** dynamic overrides must not allow bypassing management-plane isolation (internal-only surfaces) or weakening header trust rules. Overrides are limited to route targets/predicates/filters and must not enable new public exposure of management endpoints.
 - **Player-facing fail-fast guard:** in player-facing environments, gateway startup must fail if dynamic route mutation is enabled while shared persistence, multi-pod convergence, and route-change auditing are not enabled.
   - Recommended control flags: `firemud.gateway.dynamic-routes.enabled` and `firemud.gateway.dynamic-routes.allow-player-facing`; startup should fail when both evaluate true without the required control-plane capabilities above.
+- **Readiness predicates:** startup/readiness checks must expose explicit booleans `dynamic_routes.persistence_ready`, `dynamic_routes.convergence_ready`, and `dynamic_routes.audit_ready`.
+  - If any predicate is false while both `firemud.gateway.dynamic-routes.enabled=true` and `firemud.gateway.dynamic-routes.allow-player-facing=true`, gateway startup must fail hard before serving traffic.
+  - Gateway health must expose an aggregate `dynamic_routes_ready` state so operators can verify enforcement from health endpoints and dashboards.
 
 If the implementation cannot meet these lifecycle rules yet, the Gateway documentation should include an “Implemented Status” note that explicitly scopes dynamic route APIs to dev/test only.
 

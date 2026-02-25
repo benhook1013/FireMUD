@@ -9,7 +9,7 @@ For high-level CI/CD architecture, see `design/architecture/system-architecture-
 - CI pipeline has produced immutable image digests for each service to deploy.
 - Database migrations have been validated (see `design/architecture/system-architecture-database-migrations.md`).
 - Redis, PostgreSQL, and core infrastructure components (Gateway, TCP Proxy, Observability stack) are healthy.
-- The operator has `kubectl` access and a kubeconfig for the target Kubernetes cluster (staging or production) from a secure admin workstation or bastion host.
+- The operator has `kubectl` access and a kubeconfig for the target Kubernetes cluster (staging, production, or hobby-self-hosted) from a secure admin workstation or bastion host.
 
 ## Standard Deployment Flow
 
@@ -23,7 +23,7 @@ For high-level CI/CD architecture, see `design/architecture/system-architecture-
    - Validate the target overlay before apply and fail fast on policy violations.
    - Evaluate policy IDs from `design/architecture/system-architecture-deploy-preflight-policy.md` (for example `PREFLIGHT-DIGEST-001`, `PREFLIGHT-SECRETS-001`, `PREFLIGHT-JWT-001`, `PREFLIGHT-JWKS-001`, `PREFLIGHT-BRIDGE-001`, `PREFLIGHT-REDIS-001`, and `PREFLIGHT-PROMOTION-001` for production).
    - Treat preflight as blocking. Do not run `kubectl apply` until all checks pass.
-   - Use the canonical entrypoint: `./dev-tools/deploy/preflight.sh <staging|production>`.
+   - Use the canonical entrypoint: `./dev-tools/deploy/preflight.sh <staging|production|hobby-self-hosted>`.
    - Preflight policy IDs and report format are defined in `design/architecture/system-architecture-deploy-preflight-policy.md`. Attach the generated preflight report artifact to deployment evidence.
 4. **Update the Environment Overlay (Git-Tracked)**
    - Update the image digests in the environment-specific Kustomize overlay for the target environment (for example `k8s/overlays/stage` or `k8s/overlays/prod`) via a Git change.
@@ -76,5 +76,6 @@ If a deployment causes instability:
 | --- | --- | --- |
 | **Staging** | Ensure CI is green → run preflight policy checks (digest pinning + secret contract) → open/merge PR that updates image digests in `k8s/overlays/stage` → apply overlay: `kubectl apply -k k8s/overlays/stage` → monitor rollout and run smoke tests | Open/merge PR that reverts `k8s/overlays/stage` to the last known-good digest set → re-apply overlay → monitor rollout |
 | **Production** | Merge the `release-please` release PR to `main` and confirm the release tag (for example `v1.2.3`) exists → ensure CI and security scans are green → verify staging attestation for the exact digest set → run preflight policy checks → open/merge PR that updates `k8s/overlays/prod` to the approved digests → apply overlay: `kubectl apply -k k8s/overlays/prod` → monitor rollout and run smoke tests | Open/merge PR that reverts `k8s/overlays/prod` to the last known-good digest set → re-apply overlay → monitor rollout; follow database migration downgrade guidance when schema changes are involved |
+| **Hobby / Self-Hosted** | Resolve target manifests/charts → run operator preflight (`./dev-tools/deploy/preflight.sh hobby-self-hosted`) and capture report → apply manifests/charts from operator environment → monitor rollout and run smoke tests → record deployment evidence (`manifestRef`/`chartVersion`, preflight report, rollback reference) | Re-apply previously known-good manifest/chart reference and confirm health; if schema changed, follow migration compatibility guidance |
 
 Overlay PRs should include a clear deployment intent payload: target environment, service image digests, source commit/tag, rollback digest set, and (for production) a staging attestation reference. Attestation schema and validation requirements are defined in `design/architecture/system-architecture-promotion-attestation.md`. CI validates overlay images via [`.github/workflows/validate-kustomize-overlays.yml`](../../.github/workflows/validate-kustomize-overlays.yml) before merge.

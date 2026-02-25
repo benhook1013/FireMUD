@@ -6,7 +6,7 @@ It is intended as the main reference for operators, SREs, and platform engineers
 
 Companion docs:
 
-- `design/architecture/system-architecture-scripting-dsl-and-lifecycle.md` – terminology, DSL semantics, event lifecycle, determinism.
+- `design/architecture/system-architecture-scripting-dsl-reference-and-lifecycle.md` – terminology, DSL semantics, event lifecycle, determinism.
 - `design/architecture/system-architecture-scripting-examples-and-patterns.md` – worked examples (for example, `onEnterRegion`, periodic patrol).
 - `design/architecture/system-architecture-scripting.md` – high-level hub and TL;DR flow.
 
@@ -272,6 +272,7 @@ At a high level:
 
 - **Infrastructure-level failures**
   - `finalOutcome=infrastructure_error` (with a `finalStage` that reflects where it failed) – transport or infrastructure problems (for example, Redis timeouts, gRPC `UNAVAILABLE`); counted separately from sandbox errors, may trigger retries at lower layers using idempotency keys, and contribute to infra-focused alerts.
+  - `finalStage=ADMISSION`, `finalOutcome=rollback_convergence_timeout` – rollback convergence timeout terminal state is active for scope and admission remains paused; increments `automation_rollback_convergence_timeout_total{tenantId, gameInstanceId, reason}`.
 
 The failure-rate circuit breaker primarily considers **sandbox_error** and other logical script failures when deciding to transition a script into `runtimeStatus=DISABLED_DUE_TO_ERRORS`. Quota denials and purely infrastructure-level errors do not, by themselves, trigger disables, although they should still be visible in metrics and dashboards.
 
@@ -350,17 +351,17 @@ Operators can disable or throttle scripts to respond to failures or abuse:
 - **Disable now (hard stop)**:
   - Mark a script as disabled via the Game Design or Logging & Admin tools.
   - The Automation & Scripting Service flips `runtimeStatus=DISABLED` in script metadata.
-  - The scheduler stops accepting **new triggers** for that script immediately (recording `script_event_audit.finalStage=ADMISSION`, `finalOutcome=skipped_disabled`, and a suitable `finalReason`, such as `admin_hard_disable`), but does not preempt in-flight runs; they are allowed to complete under existing quotas.
+  - The scheduler stops accepting **new triggers** for that script immediately (recording `script_event_audit.finalStage=ADMISSION`, `finalOutcome=script_disabled`, and a suitable `finalReason`, such as `admin_hard_disable`), but does not preempt in-flight runs; they are allowed to complete under existing quotas.
 
 - **Soft-disable after current run**:
   - For scripts that should drain gracefully, administrators can set `runtimeStatus=DISABLE_AFTER_DRAIN`.
   - The scheduler continues to run any currently queued triggers up to a small grace window, then transitions the script to `DISABLED` once its active and queued counts reach zero.
-  - Subsequent triggers are skipped and logged with `finalStage=ADMISSION`, `finalOutcome=skipped_disabled`, and a `finalReason` that reflects the drain behavior.
+  - Subsequent triggers are skipped and logged with `finalStage=ADMISSION`, `finalOutcome=script_disabled`, and a `finalReason` that reflects the drain behavior.
 
 - **Throttling**:
   - Throttling is modeled as a temporary adjustment of per-script and per-tenant budgets rather than a separate toggle.
   - Operators can reduce `SCRIPT_QUOTA_LIMIT`, increase `intervalTicks`, or change `priorityTag` to `background`; the scheduler immediately applies the new configuration when evaluating triggers.
-  - In addition, the failure-rate circuit breaker may place a script into `runtimeStatus=DISABLED_DUE_TO_ERRORS`, which behaves like a hard disable until an administrator explicitly clears the status; these transitions are captured in `script_event_audit` using canonical `finalOutcome` values (for example `disabled_due_to_errors`, `tenant_budget_exceeded`) paired with specific `finalReason` strings.
+  - In addition, the failure-rate circuit breaker may place a script into `runtimeStatus=DISABLED_DUE_TO_ERRORS`, which behaves like a hard disable until an administrator explicitly clears the status; these transitions are captured in `script_event_audit` using canonical `finalOutcome` values (for example `disabled_due_to_errors`, `script_disabled`, `tenant_budget_exceeded`) paired with specific `finalReason` strings.
 
 All disable/enable and throttle actions are **idempotent** and recorded with the acting principal (where available) via the `actorPrincipal` field, so operators can trace when and why a script stopped executing.
 
@@ -474,6 +475,7 @@ Operator actions:
 1. Identify the affected scripts and patch
    - Use `script_event_audit` filtered by `tenantId`, `scriptPatchVersion`, and `scriptId` to confirm which handlers are failing.
    - Correlate with automation metrics such as `automation_script_sandbox_failures_total`, `automation_script_errors_total`, and `automation_script_triggers_dropped_total` to determine scope and severity.
+   - Use `ScriptPatchTenantStatusChanged` for tenant readiness gates and `ScriptPatchInstanceRolloutChanged` for instance rollout history; do not infer one from the other.
 2. Contain impact at the script level
    - Use the normal disable/throttle flows in this document to set offending scripts to `runtimeStatus=DISABLED` or a drain state while you triage (for example, `DISABLE_AFTER_DRAIN`).
 3. Roll back the active script patch if necessary

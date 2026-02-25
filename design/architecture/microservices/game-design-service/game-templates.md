@@ -56,9 +56,9 @@ Normalized reference storage is only safe if it is operationally enforced:
   - `BACKFILLING` – reference rows are being derived and validated; templates may exist that are not yet safe for runtime dependency checks.
   - `VALIDATED` – backfill completed and consistency checks passed for all templates in scope.
   - `ENFORCED` – runtime and control-plane reads for dependency/retirement checks use normalized tables as the sole source of truth.
-  - Instance creation must be blocked for tenants/versions still in `BACKFILLING`.
+  - Instance creation must be blocked for tenants still in `BACKFILLING`.
   - Once in `ENFORCED`, dependency checks must not fall back to best-effort JSON parsing.
-  - Phase scope must be explicit and persisted (default: per `tenantId`; optional stricter scope per `(tenantId, versionId)` for phased rollouts). Tooling must not infer phase from partial row counts.
+  - Phase scope is explicit and persisted per `tenantId`. Tooling must not infer phase from partial row counts.
   - Phase must be stored in a durable control-plane row (for example `template_reference_phase`) with a monotonic epoch for CAS-safe transitions (`BACKFILLING -> VALIDATED -> ENFORCED`).
   - A read API such as `GetTemplateReferencePhase(tenantId)` must expose the persisted phase to Game Session and retirement tooling.
 

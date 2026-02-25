@@ -169,7 +169,7 @@ When coordination state appears incorrect or unhealthy, operators and designers 
      - Cleaning up a small number of malformed entries in a pending set after a known bug.
    - Rules:
      - Repairs must use the shared key builders and Lua registry helpers.
-     - Break‑glass direct mutations to coordination prefixes (`tick:*`, `timer:*`, `retry:*`, `remote:*`, `session:*`, `tick-executor-lease:*`) require a follow‑up scoped reset for the affected region/tenant and must be recorded as an incident.
+    - Break‑glass direct mutations to coordination prefixes (`tick:*`, `timer:*`, `retry:*`, `remote:*`, `session:game:*`, `session:auth:*`, `tick-executor-lease:*`) require a follow‑up scoped reset for the affected region/tenant and must be recorded as an incident.
 
 3. **Otherwise, reset at the smallest safe scope**
    - Choose **Reset** when:
@@ -237,7 +237,7 @@ Expected impact:
 
 Symptoms:
 
-- An operator used `redis-cli` or a raw script to mutate `tick:*`, `timer:*`, `retry:*`, `remote:*`, `session:*`, or `tick-executor-lease:*`.
+- An operator used `redis-cli` or a raw script to mutate `tick:*`, `timer:*`, `retry:*`, `remote:*`, `session:game:*`, `session:auth:*`, or `tick-executor-lease:*`.
 
 Recommended actions:
 
@@ -263,7 +263,7 @@ Recommended actions:
 
 Expected impact:
 
-- All coordination state is reset; ticks and sessions restart from a clean slate.
+- All coordination state is reset; ticks restart from a clean slate, and tenant/cluster scope resets invalidate `session:game:*` and `session:auth:*` bindings.
 - Domain data (PostgreSQL) remains authoritative.
 
 ---
@@ -273,12 +273,12 @@ Expected impact:
 Coordination resets interact with tail‑loss and replay in predictable ways:
 
 - A **reset** is effectively a deliberate, large tail‑loss event for the chosen scope:
-  - Instead of losing ~1–2 seconds of state, the system discards **all** coordination state for that scope.
+  - Instead of losing up to `tail_loss_budget_ms = max(2000, 2 * tick_interval_ms)` of state, the system discards **all** coordination state for that scope.
   - This is only safe when:
     - All critical outcomes are recorded durably in PostgreSQL or another authoritative store.
     - Double‑apply is prevented via idempotency guards (for example, effect IDs, transaction IDs).
 
-- A **repair** attempts to keep tail‑loss within the normal envelope:
+- A **repair** attempts to keep tail‑loss within the normal envelope (`tail_loss_budget_ms = max(2000, 2 * tick_interval_ms)` as defined in `system-architecture-redis-operations.md`):
   - Local mutations correct a small number of keys while preserving the rest of the coordination log.
   - This is inherently higher risk than a full reset and should be used sparingly.
 

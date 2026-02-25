@@ -202,10 +202,28 @@ FireMUD uses a simple promotion flow from pull requests through staging to produ
 - Production promotion is performed by updating the production Kustomize overlay (for example `k8s/overlays/prod`) to image digests that have already passed staging validation, via a Git change, merging it, and applying it from a secure operator environment using `kubectl apply -k k8s/overlays/prod` following the deployment runbook.
 - Overlay PRs are validated by [`.github/workflows/validate-kustomize-overlays.yml`](../../.github/workflows/validate-kustomize-overlays.yml), which checks that referenced images exist in GHCR, enforces digest pinning for staging/production overlays, and blocks staging backup schedules unless the explicit marker `k8s/overlays/stage/STAGING_BACKUPS_ENABLED` is present.
 - Production overlay PRs must include a staging promotion attestation that follows `system-architecture-promotion-attestation.md`. Production PRs are rejected if they reference digests that cannot be tied to a valid attestation artifact.
+- Production overlay PRs must include an in-repo attestation artifact so CI can validate promotion evidence deterministically.
 
 Rollbacks are handled by resuming a previously known-good image digest set and re-applying the staging or production manifests with those digests. See the Deployment Runbook for the step-by-step operator flow.
 
 Pre-apply policy checks for staging and production must run through the canonical preflight contract in `system-architecture-deploy-preflight-policy.md`. Static checks run in overlay PR CI, and resolved-manifest/runtime checks run in operator preflight execution. Both use the same policy IDs and evidence shape.
+
+## Secret Compliance Gate
+
+Promotion and DR-readiness reporting depend on environment secret-compliance records described in `infrastructure/environment-and-secrets-overview.md`.
+
+- `production`: missing or stale secret-compliance records are a hard CI gate for promotion.
+- `staging`: missing or stale records emit warnings until **June 30, 2026**, and become a hard CI gate for staging promotions on **July 1, 2026**.
+- `hobby-self-hosted`: operator tooling should validate records before opening traffic, but GitHub CI gating may be unavailable.
+
+Enforcement workflow contract:
+
+- CI check name: `validate-secret-compliance`.
+- Expected implementation location: `.github/workflows/validate-secret-compliance.yml`.
+- Required validator behavior:
+  - Load `design/operations/secret-compliance/<environment>.yaml`.
+  - Fail when required records/classes are missing.
+  - Fail when credential age exceeds configured maximum age for hard-gated environments.
 
 ---
 

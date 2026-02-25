@@ -8,9 +8,9 @@ An OpenAPI specification for these REST endpoints lives in `services/spring-clou
 
 ## Implementation Status
 
-- **Dynamic route management (REST/gRPC):** Implemented via `GatewayController` (`/routes` REST API) and the `GatewayManagementService` gRPC API for upsert/remove operations. These APIs apply **in-memory overrides** on top of the baseline routes loaded from configuration; config files remain the canonical source of truth and dynamic changes revert on restart unless persisted by a higher-level tool. **Current scope:** dev/test only until shared persistence, multi-pod convergence, and full route-change auditing are implemented. Player-facing environments must fail startup when dynamic route mutation is enabled without those controls (for example `firemud.gateway.dynamic-routes.enabled=true` with `firemud.gateway.dynamic-routes.allow-player-facing=true`).
+- **Dynamic route management (REST/gRPC):** Implemented via `GatewayController` (`/routes` REST API) and the `GatewayManagementService` gRPC API for upsert/remove operations. These APIs apply **in-memory overrides** on top of the baseline routes loaded from configuration; config files remain the canonical source of truth and dynamic changes revert on restart unless persisted by a higher-level tool. **Current scope:** dev/test only until shared persistence, multi-pod convergence, and full route-change auditing are implemented. Player-facing environments must fail startup when dynamic route mutation is enabled without those controls (for example `firemud.gateway.dynamic-routes.enabled=true` with `firemud.gateway.dynamic-routes.allow-player-facing=true`) and must expose explicit readiness predicates (`dynamic_routes.persistence_ready`, `dynamic_routes.convergence_ready`, `dynamic_routes.audit_ready`, plus aggregate `dynamic_routes_ready`) so control-plane safety is observable.
 - **Rate limiting and Redis wiring:** Implemented using Spring Cloud Gateway’s `RequestRateLimiter` filter backed by the Cache/Rate‑Limit Redis profile configured in `application.yml` for `dev` and `prod` profiles.
-- **Telnet WebSocket bridge expectations:** Target-state behavior is through the `/ws/game/**` route in Spring Cloud Gateway and the TCP Proxy Service’s WebSocket bridge (`GATEWAY_WS_URL`), matching the behavior described in reconnection and protocol-bridging docs. Current rollout status is tracked in the TCP Proxy Service design’s **Cross-Path Compatibility Matrix (Current Rollout)** and **Implementation Status** sections.
+- **Telnet WebSocket bridge expectations:** Target-state behavior is through the `/ws/game/**` route in Spring Cloud Gateway and the TCP Proxy Service’s WebSocket bridge (`GATEWAY_WS_URL`), matching the behavior described in reconnection and protocol-bridging docs. Current rollout status is tracked in the TCP Proxy Service design’s **Cross-Path Compatibility Matrix (Current Rollout)** and **Implementation Status** sections. Transitional non-mTLS proxy hops are dev/ephemeral-compatibility only and must be fail-closed in player-facing staging/production environments.
 - **WebSocket close/handshake observability contract:** Gateway Architecture requires `gateway.websocket.closes`, `gateway.websocket.handshake.rejected`, and `gateway.websocket.slow_client_closes`. Treat this as a required parity checklist for implementation and operations sign-off in each environment.
 
 ### Responsibilities
@@ -64,7 +64,8 @@ services so Docker Compose environments work out of the box.
 
 ### Key Routes
 
-- `/ws/game/**` → Game Session Service (WebSocket gameplay endpoint for both native WebSocket clients and Telnet clients bridged via the TCP Proxy Service).
+- `/ws/game/**` → Game Session Service (canonical WebSocket gameplay endpoint for first-party clients and Telnet clients bridged via the TCP Proxy Service; connect-token enforced in player-facing environments).
+- `/ws/game-legacy/**` → Game Session Service (transitional compatibility endpoint for legacy/third-party clients that cannot yet provide connect tokens; must run with stricter edge guardrails and is scheduled for removal from player-facing environments by December 31, 2026).
 - `/api/admin/**` → Logging & Admin Service (tokens are verified by the service).
 - `/api/design/**` → Game Design Service for content management.
 - `/api/account/**` → Account Service for user profiles.
@@ -74,7 +75,7 @@ services so Docker Compose environments work out of the box.
 - `/api/social/**` → Social Groups Service.
 - `/api/world/**` → World Management Service.
 
-Telnet clients send every line through the TCP Proxy Service, which bridges the commands onto the gateway’s `/ws/game/**` route. Because of that shared pipeline, Telnet and WebSocket sessions share the same admission and reconnection flow once connected: both use `LOGIN` followed by `PLAY` before gameplay commands, while the Telnet path may additionally provide optional `SESSION`-derived headers as described in the TCP Proxy Service design’s **Telnet Session Envelope & Event Metrics** section.
+Telnet clients send every line through the TCP Proxy Service, which bridges the commands onto the gateway’s `/ws/game/**` route. Because of that shared pipeline, Telnet and WebSocket sessions share the same admission and reconnection flow once connected: both use `LOGIN` followed by `PLAY` before gameplay commands, while the Telnet path may additionally provide optional `SESSION`-derived headers as described in the TCP Proxy Service design’s **Telnet Session Envelope & Event Metrics** section. `/ws/game-legacy/**` exists only for direct legacy WebSocket compatibility flows and is not part of the Telnet bridge target-state.
 
 ## Dependencies
 

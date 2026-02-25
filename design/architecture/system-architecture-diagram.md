@@ -116,6 +116,8 @@ All services run as Docker containers inside a shared Kubernetes cluster. They r
 
 Note on gateway listener surfaces: the gateway has a public ingress surface (typically behind an external load balancer) and an internal-only WebSocket mTLS listener used by the TCP Proxy Service. The diagram shows both flows terminating at the same gateway component; see [Gateway Architecture](./system-architecture-gateway.md) for the surface-level expectations.
 
+Gameplay WebSocket route policy is split: `/ws/game/**` is the canonical token-enforced route in player-facing environments, while `/ws/game-legacy/**` is migration-only compatibility and slated for removal from player-facing environments by December 31, 2026.
+
 Admin and creator API exposure is intentionally allowlisted: external tools call domain admin APIs only through Gateway-routed routes for owning services (for example Logging & Admin, Account, Game Session, Social & Groups, and Game Design). Internal service-to-service gRPC remains direct and does not traverse Gateway.
 
 For Gateway control-plane behavior in production-like environments (including the dynamic-route override dev/test scope), see the canonical [Gateway Management Plane Capability Matrix](./system-architecture-overview.md#gateway-management-plane-capability-matrix-canonical).

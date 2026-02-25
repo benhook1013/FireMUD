@@ -83,6 +83,27 @@ When a JWT signing key is suspected to be compromised, operators follow a more a
 - Monitor authentication and authorization metrics/logs (failed validations, unexpected 401/403 patterns) to confirm new-key adoption and incident stabilization.
 
 Normal rotations use the overlap-preserving `jwt-rotation` path without session invalidation. Compromise rotations must use hard cutover semantics and be tracked in incident records, including affected tenants, replaced key IDs, invalidation scope, and validation-convergence evidence.
+Compromise-mode rotation is a mandatory runbook-driven process and must include explicit evidence (rotated key IDs, invalidation scope, and validator-convergence checks) before reopening player-facing traffic.
+
+### SessionAttestation Key Lifecycle
+
+Gameplay `SessionAttestation` signing keys are managed independently from JWT signing keys:
+
+- **Issuer and publication**
+  - Game Session signs attestations and publishes verification keys as a versioned key set containing explicit `kid` values.
+  - Verification keys are exposed through one authoritative discovery interface (JWKS-like endpoint or gRPC equivalent) owned by Game Session control-plane.
+  - Gameplay services cache this key set with a bounded max-age and must fail closed if an attestation references an unknown `kid`.
+- **Rotation**
+  - Rotation keeps old and new keys overlapped for at least `2 x max_attestation_ttl` so in-flight attestations remain verifiable.
+  - After overlap, retired keys are removed from the published set.
+- **Replay-defense storage**
+  - Replay guards for attestation `jti`/nonce values use a bounded shared store (Coordination Redis or equivalent) with TTL set to `expiresAt + bounded_skew`.
+  - Replay storage must declare capacity quotas per trust domain and deterministic eviction policy (`oldest-expiry-first` or equivalent).
+  - Services emit overload metrics when replay-store capacity limits are reached.
+- **Compromise response**
+  - On suspected compromise, rotate attestation keys immediately, remove compromised keys from the published set, and force revalidation on downstream gameplay services.
+  - Incident records must capture rotated `kid` values, invalidation scope, and post-rotation convergence checks.
+  - Consumers that encounter unknown `kid` must perform one forced key refresh and a single validation retry before failing closed.
 
 ---
 

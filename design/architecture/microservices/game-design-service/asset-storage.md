@@ -106,6 +106,11 @@ Allowed transitions:
 - `TOMBSTONED -> STAGED` only via explicit operator-approved restore workflow.
 - `TOMBSTONED -> PURGED` (physical deletion) only after deletion eligibility checks pass; purge is not an implicit publish compensation action.
 
+`PURGED` semantics:
+
+- `PURGED` is a retained terminal metadata state in `version_asset_artifact`; the row is not deleted during purge.
+- Physical object-store bytes may be deleted, but lifecycle/audit metadata (`artifact_state`, `state_epoch`, `manifest_hash`, `last_workflow_id`, `updated_at`) remains queryable for forensics and race-safe runbook checks.
+
 Transition enforcement contract:
 
 - Every transition is persisted by updating `version_asset_artifact` with CAS on `state_epoch`.

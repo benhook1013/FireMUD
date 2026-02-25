@@ -45,7 +45,8 @@ This document does not define the designer-facing DSL, sandbox internals, or per
 - **Automation & Scripting Service (runtime + patch lifecycle)**
   - Evaluates triggers, persists script work items durably, and hands off to Game Session.
   - Tracks per-tenant patch lifecycle state (`READY` / `FAILED`) and enforces admission rules (“only `READY` is runnable”).
-  - Emits patch lifecycle and rollout events (`ScriptPatchTenantStatusChanged`, `ScriptPatchInstanceRolloutChanged`) when state changes.
+  - Emits tenant patch readiness lifecycle events (`ScriptPatchTenantStatusChanged`) when readiness state changes.
+  - Consumes Game Session pin events to project rollout history read models.
 
 - **Game Session Service (gameplay + tick control plane)**
   - Owns the pinned `scriptPatchVersion` for each `(tenantId, gameInstanceId)`.
@@ -294,6 +295,13 @@ Outputs:
 - `rolloutStatus` (for example `PINNED`, `ROLLED_BACK`, `REPINNED`)
 - `statusReason` (optional)
 - `lastChangedAt`
+- `projectionAsOf` (timestamp of projection snapshot used for this read)
+- `projectionLagMs` (non-negative projection staleness estimate)
+
+Read-model ownership:
+
+- The authoritative source for rollout transitions is Game Session pin mutations and committed `ScriptPatchPinChanged` events.
+- If Automation & Scripting serves this API, it does so as a projection that is replayable from control-plane events and keyed by `(tenantId, gameInstanceId, scriptPatchVersion, controlPlaneRequestId)` for idempotent updates.
 
 #### `ListScriptPatchInstanceRollouts`
 
@@ -305,6 +313,7 @@ Inputs:
 Outputs:
 
 - A list of `GetScriptPatchInstanceRolloutStatus` records.
+- The read model must publish an eventual-consistency SLO (for example P95 projection lag) so operator workflows can distinguish stale read models from failed rollouts.
 
 ### Automation & Scripting: Plugin Lifecycle Management
 
@@ -324,7 +333,7 @@ Outputs:
 - `activePluginVersionId` (nullable)
 - `pendingPluginVersionId` (nullable)
 - `pluginState` (`ENABLED`, `DISABLED`, `DRAINING`, `RELOADING`, `FAILED`)
-- `statusReason` (optional)
+- `statusReason` (optional; required for security/policy-driven disablement such as `signer_revoked`)
 - `lastChangedAt`
 
 #### `SetPluginActiveVersion`
@@ -494,7 +503,11 @@ Fields:
 - `statusReason` (optional)
 - `occurredAt`
 
-### `ScriptPatchInstanceRolloutChanged` (Game Session or Automation & Scripting → Event Bus)
+Operator consumption rule:
+
+- Use this event family for tenant patch readiness gates (`READY` / `FAILED`) and publish validation UX.
+
+### `ScriptPatchInstanceRolloutChanged` (Game Session → Event Bus)
 
 Emitted whenever instance rollout history changes for a patch.
 
@@ -510,6 +523,10 @@ Fields:
 - `statusReason` (optional)
 - `occurredAt`
 
+Operator consumption rule:
+
+- Use this event family for instance rollout history, rollback audit trails, and per-instance pin progression.
+
 ### `PluginVersionActivated` / `PluginVersionDisabled` (Automation & Scripting → Event Bus)
 
 Emitted when operator actions change plugin active versions or disablement state.
@@ -523,6 +540,20 @@ Fields:
 - `newState` (`ENABLED` | `DISABLED` | `DRAINING`)
 - `controlPlaneRequestId` (if operator-driven)
 - `actor` and `reason` (if operator-driven)
+- `occurredAt`
+
+### `ScriptRollbackConvergenceTimedOut` (Game Session → Event Bus)
+
+Emitted when rollback orchestration reaches terminal state `ROLLBACK_CONVERGENCE_TIMEOUT` before both convergence APIs acknowledge the expected `controlPlaneRequestId`. Logging & Admin may initiate orchestration, but Game Session is the mandatory producer-of-record for this event.
+
+Fields:
+
+- `tenantId`
+- `gameInstanceId`
+- `targetScriptPatchVersion`
+- `controlPlaneRequestId`
+- `timeoutMs`
+- `reason` (bounded enum/code)
 - `occurredAt`
 
 ## Rollout and Rollback Protocols
@@ -555,7 +586,8 @@ Convergence timeout semantics (required):
 - Rollback orchestration must apply a bounded convergence timeout (for example `ROLLBACK_CONVERGENCE_TIMEOUT_MS`) for step 7.
 - If timeout is reached before both convergence APIs report the expected `controlPlaneRequestId`, the rollback enters terminal state `ROLLBACK_CONVERGENCE_TIMEOUT`.
 - In `ROLLBACK_CONVERGENCE_TIMEOUT`, Automation admission remains paused for scope safety and ticks remain paused until an operator explicitly issues resume/abort actions.
-- The system must emit an operator-visible terminal event (for example `ScriptRollbackConvergenceTimedOut`) and increment a dedicated timeout metric.
+- The system must emit terminal event `ScriptRollbackConvergenceTimedOut` and increment `automation_rollback_convergence_timeout_total{tenantId, gameInstanceId, reason}`.
+- While timeout terminal state remains active, ingress admissions in scope must record `script_event_audit.finalStage=ADMISSION`, `finalOutcome=rollback_convergence_timeout`, and a bounded `finalReason`.
 
 Notes:
 

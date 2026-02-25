@@ -9,24 +9,29 @@ This document describes how the Automation & Scripting Service enforces script s
 
 ## Implementation Status
 
-This document describes the **target-state architecture** for script sandboxing and resource limits. Some aspects may be partially implemented or stubbed out in the current codebase. Together with `design/architecture/system-architecture-scripting-dsl-reference-and-lifecycle.md`, it is the canonical specification for sandbox semantics; the high-level hub in `design/architecture/system-architecture-scripting.md` summarizes behavior and should defer to this document when there is any conflict.
+This document describes the **target-state architecture** for script sandboxing and resource limits. Together with `design/architecture/system-architecture-scripting-dsl-reference-and-lifecycle.md`, it is the canonical specification for sandbox semantics; the high-level hub in `design/architecture/system-architecture-scripting.md` summarizes behavior and should defer to this document when there is any conflict.
 
 For the latest progress and implementation notes, see:
 
 - `design/project-management/task-list-automation-scripting-service.md`
 - `design/architecture/system-architecture-scripting.md#sandboxing--security`
 
-The table below captures the intended behavior and current implementation status of key sandbox features. Keep this matrix up to date as engine work lands so downstream docs and services can rely on it.
+Implementation-progress tracking policy:
 
-| Feature | Description | Status | Notes |
-| --- | --- | --- | --- |
-| Per-run wall-clock timeout | Abort a script run that exceeds its allocated wall-clock budget and record `finalStage=DSL_EVAL` with `finalOutcome=sandbox_error` and `finalReason=cpu_budget_exceeded`. | Implemented / evolving | Core timeout behavior exists; budgets may be tuned as `AUTOMATION_TICK_BUDGET_MS` and related knobs evolve. |
-| Iteration / loop guards | Enforce per-run iteration limits so even bounded loops cannot hot-loop indefinitely. | Implemented | Backed by loop-safety analysis and runtime iteration counters; see DSL reference for graph rules. |
-| Soft memory guards | Approximate tracking of script-local data sizes and early abort with `finalOutcome=sandbox_error` and `finalReason=memory_budget_exceeded` before JVM OOM. | Partial | Model and outcomes are defined here; enforcement thresholds and telemetry are still being tuned. |
-| Outcome taxonomy | Canonical stage-aware audit outcomes (`finalStage` + `finalOutcome` / `finalReason`) written to `script_event_audit`. | Implemented | Must remain consistent with `design/architecture/system-architecture-scripting-observability-contract.md` and `design/architecture/system-architecture-scripting-normative-contract-tables.md`. |
-| Failure-rate circuit breaker integration | Use live-traffic sandbox failures to transition scripts into `runtimeStatus=DISABLED_DUE_TO_ERRORS`. | Implemented / evolving | Core wiring is present; thresholds and disable policies are adjusted over time. Dry-run/test executions must be isolated so privileged tooling cannot disable live scripts by default. |
-| Test / dry-run parity | Dry-run executions share the same sandbox limits as live runs while being tracked separately for quotas and metrics. | Partial | Engine behavior is shared; additional dry-run–specific budgets and metrics are being added in the Automation & Scripting Service README and quotas docs. |
-| Plugin sandbox reuse | Plugins run in the same sandbox engine with component allowlists and stricter quotas. | Partial | Core reuse exists; plugin-specific component policy and observability are being expanded in the modding and quotas docs. |
+- Keep implementation-progress status in the task list, not in this normative design doc.
+- If this doc includes a status note for an incident or rollout reason, it must include `verifiedDate`, `verifiedBy`, and `verifiedCommit`.
+
+The table below captures the required sandbox behavior contract (target-state semantics), independent of current rollout phase.
+
+| Feature | Contract requirement |
+| --- | --- |
+| Per-run wall-clock timeout | Abort a script run that exceeds its allocated wall-clock budget and record `finalStage=DSL_EVAL` with `finalOutcome=sandbox_error` and `finalReason=cpu_budget_exceeded`. |
+| Iteration / loop guards | Enforce per-run iteration limits so even bounded loops cannot hot-loop indefinitely. |
+| Soft memory guards | Approximate tracking of script-local data sizes and early abort with `finalOutcome=sandbox_error` and `finalReason=memory_budget_exceeded` before JVM OOM. |
+| Outcome taxonomy | Use canonical stage-aware audit outcomes (`finalStage` + `finalOutcome` / `finalReason`) in `script_event_audit` consistent with the observability and normative contract docs. |
+| Failure-rate circuit breaker integration | Use live-traffic sandbox failures to transition scripts into `runtimeStatus=DISABLED_DUE_TO_ERRORS`, with dry-run/test isolation by default. |
+| Test / dry-run parity | Dry-run executions share the same sandbox limits as live runs while remaining isolated for quotas, budgets, and metrics. |
+| Plugin sandbox reuse | Plugins run in the same sandbox engine with component allowlists and stricter quotas where policy requires. |
 
 ---
 

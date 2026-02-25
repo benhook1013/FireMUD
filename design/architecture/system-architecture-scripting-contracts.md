@@ -42,6 +42,8 @@ To make script patch rollback meaningful:
 
 Callers must reuse the same `scriptEventId` on retries for live ingress. For dry-run/test ingress, server-generated IDs are preferred by default; if caller-supplied IDs are accepted, they must be collision-validated in the dry-run namespace.
 
+Ingress ownership is endpoint-specific and must follow the matrix in `design/architecture/system-architecture-scripting-normative-contract-tables.md#table-1a-event-ingress-scripteventid-ownership-matrix`.
+
 ### 5) Metrics Cardinality Guardrails
 
 - `scriptEventId` is for logs, traces, and `script_event_audit` queries.
@@ -70,9 +72,29 @@ Plugins are executed by the same runtime engine as scripts and must not rely on 
 - Plugin enablement and active `pluginVersionId` selection are explicit per `(tenantId, gameInstanceId, pluginId)` and are controlled by operator control-plane APIs (typically via Logging & Admin driving Automation & Scripting registry APIs).
 - Plugin triggers must follow the same Trigger Identity rules, including `gameInstanceId` and (for gameplay/runtime triggers) `regionEpoch`. For plugin triggers, `pluginId` and `pluginVersionId` are required identity fields as defined in `design/architecture/system-architecture-scripting-normative-contract-tables.md`.
 - Script work items and tick commands produced by plugins must carry `pluginId` and `pluginVersionId` in addition to `scriptPatchVersion`.
-- On execution, Game Session must enforce a **plugin version fence** analogous to the script patch fence:
+  - On execution, Game Session must enforce a **plugin version fence** analogous to the script patch fence:
   - If a command’s embedded `pluginVersionId` does not match the instance’s currently active plugin version for that `pluginId`, Game Session must not execute it.
-  - Rejection must be recorded with enough identifiers for diagnosis, and the rejected queue entry must be removed or moved to a bounded dead-letter store so mismatches cannot accumulate unboundedly.
+    - Rejection must be recorded with enough identifiers for diagnosis, and the rejected queue entry must be removed or moved to a bounded dead-letter store so mismatches cannot accumulate unboundedly.
+
+### 9) Rollback Convergence Timeout Contract
+
+- Rollback orchestration must enforce bounded convergence waiting across Automation and Game Session pin-convergence APIs.
+- If convergence is not observed before timeout, rollback enters terminal state `ROLLBACK_CONVERGENCE_TIMEOUT`.
+- In that state, admission and ticks remain paused until an explicit operator action resumes or aborts rollback.
+- The terminal condition must emit:
+  - Control-plane event `ScriptRollbackConvergenceTimedOut` produced by Game Session as producer-of-record.
+  - Metric `automation_rollback_convergence_timeout_total{tenantId, gameInstanceId, reason}`.
+  - Audit-visible admission outcome `rollback_convergence_timeout` for affected scope while pause remains active.
+
+### 10) Instance Rollout Read Model Ownership
+
+- The authoritative writer for `<tenantId, gameInstanceId, scriptPatchVersion>` rollout history is Game Session control-plane writes (`SetPinnedScriptPatchVersion`, `RollbackScriptPatchVersion`) and their committed events.
+- Automation & Scripting may project this history for query/read APIs, but projections must be idempotent and replayable from durable control-plane events.
+- Read-model records must be keyed by `(tenantId, gameInstanceId, scriptPatchVersion, controlPlaneRequestId)` so retries do not fork history.
+- The projection contract must define:
+  - Producer of record (`ScriptPatchPinChanged` events).
+  - Replay source and retention window.
+  - Eventual-consistency SLO for `GetScriptPatchInstanceRolloutStatus` / `ListScriptPatchInstanceRollouts`.
 
 ## Related Documents
 

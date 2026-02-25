@@ -70,6 +70,17 @@ Redis and tick contracts described in
 [System Architecture: Scripting & Automation](../../system-architecture-scripting.md)
 and [Tick System and Runtime Design](../../system-architecture-ticks.md).
 
+### Digest Input Manifest Requirements
+
+This service is a required digest participant for full publishes and script-patch publishes. It must expose `GetDraftDesignDigest(tenantId, versionId or scriptPatchVersion scope)` and maintain a service-local digest input manifest with:
+
+- Included objects (for example version/patch-scoped script graphs, bindings, and publish-critical metadata that affect runtime execution for the scoped publish type).
+- Excluded objects (for example runtime queues, audit/event logs, quota counters, and other non-launchability operational state).
+- Canonicalization rules (stable ordering, normalized serialization, and deterministic default/null handling before hashing).
+- `digestSchemaVersion` bump criteria (any include/exclude/canonicalization change requires an explicit schema bump and digest migration/re-record workflow).
+
+Publish gating must fail closed when this service cannot attest a digest under its documented manifest for the reported `digestSchemaVersion`.
+
 ### Redis Role and Prefixes
 
 - **Coordination Redis participation**
@@ -199,7 +210,7 @@ This behavior ensures that a script patch either becomes the new active version 
 - **Event ingress RPCs** – domain services such as the Game Session Service and Game Logic Service call event-ingress methods (for example, `TriggerScriptEvent` or a batch equivalent defined in `automation_scripting_service.proto`) to deliver script events. These RPCs carry:
   - `tenantId`, `gameInstanceId`, `regionId`, and `entityId` for the target context.
   - `regionEpoch` for gameplay/runtime triggers and scheduler triggers so Trigger Identity is fenced across scoped coordination resets (see the normative Trigger Identity table in `design/architecture/system-architecture-scripting-normative-contract-tables.md`).
-  - `scriptEventId` as a stable, caller-supplied identifier for the trigger.
+  - `scriptEventId` as an idempotency identifier following endpoint ownership rules.
   - `isDryRun` so live and dry-run/test traffic are always in separate idempotency namespaces.
   - `eventType` and versioning metadata such as `scriptPatchVersion`.
   - An envelope for the event payload, including any domain-specific fields.
@@ -207,7 +218,13 @@ This behavior ensures that a script patch either becomes the new active version 
 
 ### Idempotency & Retries
 
-For live event ingress, the Automation & Scripting Service relies on upstream callers (typically the Game Session Service) to generate **stable `scriptEventId` values** for each trigger. For dry-run/test endpoints, the service should generate `scriptEventId` values server-side by default. These identifiers serve as the canonical idempotency keys for event ingress:
+`scriptEventId` ownership is endpoint-specific:
+
+- Live external ingress (`TriggerScriptEvent`): caller must supply `scriptEventId` and reuse it on retries.
+- Scheduler/timer ingress (`onInterval`, `onTimerExpire`): scheduler generates deterministic `scriptEventId` from due-point identity.
+- Dry-run/test ingress: service generates by default; caller-supplied IDs are optional and must pass dry-run namespace collision validation.
+
+These identifiers serve as the canonical idempotency keys for event ingress:
 
 - Any RPC that accepts `scriptEventId` as part of its request (for example, `TriggerScriptEvent` and timer-driven internal scheduling) is **idempotent with respect to Trigger Identity**:
   - For entity-scoped external events, the idempotency key is at least `<tenantId, gameInstanceId, regionId, regionEpoch, entityId, scriptId, eventType, scriptPatchVersion, scriptEventId, isDryRun>` for gameplay/runtime triggers.
@@ -321,15 +338,21 @@ In addition to event-handling and test endpoints, the Automation & Scripting Ser
 - `GetScriptPatchStatus(tenantId, scriptPatchVersion)` – returns the current lifecycle state (`PENDING_VALIDATION`, `ONLOAD_RUNNING`, `READY`, `FAILED`), timestamps, and any last-error details for the given `<tenantId, scriptPatchVersion>`.
 - `ListScriptPatchStatuses(tenantId, status?, changedAfter?, changedBefore?)` – lists known script patches and their status for a tenant so operators and tools can see which patches are eligible to be pinned.
 - `ScriptPatchTenantStatusChanged` event – emitted whenever `<tenantId, scriptPatchVersion>` transitions between tenant readiness lifecycle states.
-- `ScriptPatchInstanceRolloutChanged` event – emitted whenever `<tenantId, gameInstanceId, scriptPatchVersion>` rollout history changes (`PINNED`, `ROLLED_BACK`, `REPINNED`).
+- `ScriptPatchInstanceRolloutChanged` event – consumed as the authoritative instance rollout history stream produced by Game Session (`PINNED`, `ROLLED_BACK`, `REPINNED`) and projected into read APIs.
 - `GetScriptPatchInstanceRolloutStatus(tenantId, gameInstanceId, scriptPatchVersion)` and `ListScriptPatchInstanceRollouts(...)` – read APIs for instance-scoped rollout history and UI/operator correlation.
 - `GetAutomationPinConvergence(tenantId, gameInstanceId)` – reports the latest pinned patch observation (`observedPinnedScriptPatchVersion`, `lastObservedControlPlaneRequestId`, `observedAt`) used by admission/scheduler logic so rollback orchestration can gate resume on convergence.
 - `GetPluginStatus(tenantId, gameInstanceId, pluginId)` – returns plugin runtime state (`ENABLED`, `DISABLED`, `DRAINING`, `RELOADING`, `FAILED`) and active/pending version IDs.
 - `SetPluginActiveVersion`, `DisablePlugin`, and `DrainPlugin` – idempotent plugin lifecycle operations used by Logging & Admin to promote, disable, or drain plugin versions per `<tenantId, gameInstanceId, pluginId>`.
 
+Consumption rules for patch-status events:
+
+- Use `ScriptPatchTenantStatusChanged` for tenant readiness gates (`READY` / `FAILED`) and publish-validation UX.
+- Use `ScriptPatchInstanceRolloutChanged` for instance rollout progression and rollback history.
+- Read-model ownership for rollout status is Game Session pin mutations projected into query APIs via idempotent, replayable events keyed by `controlPlaneRequestId`.
+
 Game Session and Logging & Admin use script patch visibility APIs and events to decide which `scriptPatchVersion` values may be passed to the runtime. Mutating operations that change the pinned patch for a running game instance are defined on the Game Session control-plane surface (and orchestrated by Logging & Admin) and must follow the API and event contracts in `design/architecture/system-architecture-scripting-control-plane-api.md` (for example `SetPinnedScriptPatchVersion` / `RollbackScriptPatchVersion` and the `ScriptPatchPinChanged` event). The Automation & Scripting Service uses pin-change events for visibility and admission alignment, but it does not become the source of truth for the pin; it enforces that incoming triggers reference patches that are `READY` for the tenant and records lifecycle changes that authoritative control-plane services request.
 
-Rollback orchestration must treat convergence waiting as bounded: if `GetAutomationPinConvergence` + Game Session convergence checks do not match the expected `controlPlaneRequestId` before the configured timeout, rollback enters terminal timeout state and admission/ticks remain paused until explicit operator action.
+Rollback orchestration must treat convergence waiting as bounded: if `GetAutomationPinConvergence` + Game Session convergence checks do not match the expected `controlPlaneRequestId` before the configured timeout, rollback enters terminal timeout state (`ROLLBACK_CONVERGENCE_TIMEOUT`) and admission/ticks remain paused until explicit operator action. Timeout transition must emit `ScriptRollbackConvergenceTimedOut` (Game Session producer-of-record) and increment `automation_rollback_convergence_timeout_total{tenantId, gameInstanceId, reason}`.
 
 ## Proto Files
 

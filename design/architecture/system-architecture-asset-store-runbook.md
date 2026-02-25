@@ -63,11 +63,8 @@ When using a self-hosted MinIO cluster as the asset store:
      `version_id` as `runtime_version`, and the version is no longer listed as
      launchable in `game_manifest`) are eligible for asset deletion.
    - Retired eligibility must also account for **design-time dependencies**: the version must not be referenced by any game templates. Operators should validate that no normalized `game_template_*_ref` rows in the Game Design Service still reference `(tenantId, versionId)` before deleting the corresponding object-store prefix.
-   - Asset deletion eligibility must account for design-history reachability as well as version mappings. Use the Game Design control-plane check `CanDeleteVersionAssets(tenantId, versionId)` that validates:
-     - no non-Retired `version_asset` references remain,
-     - no reachable `revision_asset` / branch references require retained bytes,
-     - no template or launch metadata still points to the version prefix.
-   - Operators must verify the persisted artifact lifecycle row (`version_asset_artifact`) is in a deletable terminal state (`TOMBSTONED` or retired-path equivalent) before issuing purge actions. Do not infer lifecycle state solely from object-store contents.
+   - Asset deletion eligibility must account for design-history reachability as well as version mappings. Use the Game Design control-plane check `CanDeleteVersionAssets(tenantId, versionId)` that validates no non-Retired `version_asset` references remain, no reachable `revision_asset` / branch references require retained bytes, and no template or launch metadata still points to the version prefix.
+   - Operators must verify the persisted artifact lifecycle row (`version_asset_artifact`) is `TOMBSTONED` before issuing purge actions, and then verify the transition to retained terminal state `PURGED` after bytes are removed. Do not infer lifecycle state solely from object-store contents.
    - Published assets are discovered via the `version_asset` mapping table in the
      Game Design Service. Operators must never delete individual objects that are
      still referenced by any `version_asset` row for a non-retired version.
@@ -77,13 +74,7 @@ When using a self-hosted MinIO cluster as the asset store:
      from the authoritative `version_asset` mappings rather than attempting manual
      repair.
    - Because Published/Active versions are immutable, rerunning `ExportAssets` for a Published/Active version must produce bit-for-bit identical bytes. If a rerun would change outputs, treat it as a process bug or data corruption incident rather than “fixing” the published version in place.
-   - Prefer invoking a higher-level admin workflow (for example a
-     `RetireVersion` operation in the Game Design or
-     Logging & Admin Service) that:
-       - Verifies the version is eligible for retirement.
-       - Updates manifests and internal metadata to mark it as retired.
-       - Deletes the corresponding `<tenant>/<version>/` prefix from the object
-         store.
+   - Prefer invoking a higher-level admin workflow (for example a `RetireVersion` operation in the Game Design or Logging & Admin Service) that verifies retirement eligibility, updates manifests/internal metadata to retired state, and deletes the corresponding `<tenant>/<version>/` prefix from the object store.
 
    Directly deleting a prefix with `mc rm` should be treated as a last-resort
    manual fix and only performed after verifying that:
@@ -109,6 +100,7 @@ leaves a version incomplete or unusable:
   - `FAILED -> TOMBSTONED` when retry is abandoned.
   - `TOMBSTONED -> PURGED` only after `CanDeleteVersionAssets(tenantId, versionId)` passes.
 - All transitions above are CAS-guarded using the artifact state epoch in `version_asset_artifact`. If a transition fails CAS, reload current state and re-run the approved workflow rather than forcing manual object-store edits.
+- `PURGED` remains a retained terminal metadata row in `version_asset_artifact`; purge removes object-store bytes, not lifecycle metadata. Do not delete the artifact row as part of purge.
 - Preferred recovery is to:
   - Investigate and fix the underlying issue (for example missing assets or
     permission errors).

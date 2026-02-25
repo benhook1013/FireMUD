@@ -347,6 +347,62 @@ def _validate_doc_semantics() -> list[Finding]:
                 if 'command_end_to_end_latency_ms_bucket{service="tcp-proxy-service"' not in compact_expr:
                     findings.append(Finding(path=core_alerts, message="CommandLatencyP99HighTcpProxy must scope expr to service=\"tcp-proxy-service\""))
 
+    player_runbook = REPO_ROOT / "design" / "architecture" / "system-architecture-player-experience-incident-runbook.md"
+    player_runbook_text = _read_text(player_runbook)
+    if re.search(r"`LoginSuccessRatioLow`(?![A-Za-z])", player_runbook_text):
+        findings.append(
+            Finding(
+                path=player_runbook,
+                message=(
+                    "player experience runbook still references legacy `LoginSuccessRatioLow`; "
+                    "use split alert names `LoginSuccessRatioLowGateway`/`LoginSuccessRatioLowTcpProxy`"
+                ),
+            )
+        )
+    if re.search(r"`CommandLatencyP99High`(?![A-Za-z])", player_runbook_text):
+        findings.append(
+            Finding(
+                path=player_runbook,
+                message=(
+                    "player experience runbook still references legacy `CommandLatencyP99High`; "
+                    "use split alert names `CommandLatencyP99HighGateway`/`CommandLatencyP99HighTcpProxy`"
+                ),
+            )
+        )
+
+    logging_doc = REPO_ROOT / "design" / "architecture" / "system-architecture-logging-monitoring.md"
+    logging_text = _read_text(logging_doc)
+    if "mirroring the `LoginSuccessRatioLow` alert condition" in logging_text:
+        findings.append(
+            Finding(
+                path=logging_doc,
+                message=(
+                    "fallback recording-rule section references legacy LoginSuccessRatioLow; "
+                    "it must mirror split ingress alerts (Gateway/TCP Proxy)"
+                ),
+            )
+        )
+    if "mirroring the `CommandLatencyP99High` alert condition" in logging_text:
+        findings.append(
+            Finding(
+                path=logging_doc,
+                message=(
+                    "fallback recording-rule section references legacy CommandLatencyP99High; "
+                    "it must mirror split ingress alerts (Gateway/TCP Proxy)"
+                ),
+            )
+        )
+
+    player_dashboard = REPO_ROOT / "design" / "observability" / "grafana" / "player-experience.json"
+    player_dashboard_text = _read_text(player_dashboard)
+    if "Telnet/WebSocket Path Availability (1d SLO)" not in player_dashboard_text:
+        findings.append(
+            Finding(
+                path=player_dashboard,
+                message="player SLO dashboard must include a dedicated 1d entry-path availability panel",
+            )
+        )
+
     return findings
 
 

@@ -43,7 +43,7 @@ Cross-document rules:
 - Player-facing classes (`hobby-self-hosted`, `staging`, `production`) must treat JWT secret files (`FIREMUD_AUTH_JWT_SECRET_PATH`) and TCP Proxy `GATEWAY_WS_URL` listener alignment as required preflight invariants.
 - Classes documented as disposable (`ci-preview`, default `staging`) must not be used as evidence for backup/SLO guarantees unless their controls are explicitly upgraded.
 - Staging and production deployments must run the canonical preflight policy gate defined in `system-architecture-deploy-preflight-policy.md`; production promotions must satisfy the attestation contract in `system-architecture-promotion-attestation.md`.
-- `hobby-self-hosted` deployments are also player-facing and must run equivalent checks for player-facing invariants (JWT file-path contract, JWKS resource contract, Redis role split, and `GATEWAY_WS_URL` alignment) before opening traffic, even when not using the staging/production Kustomize overlay workflow.
+- `hobby-self-hosted` deployments are also player-facing and must run equivalent checks for player-facing invariants (JWT file-path contract, JWKS resource contract, Redis role split, and `GATEWAY_WS_URL` alignment) before opening traffic, even when not using the staging/production Kustomize overlay workflow. In this class, operator preflight is mandatory while overlay PR CI checks are optional/recommended.
 
 ---
 

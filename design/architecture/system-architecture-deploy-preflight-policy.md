@@ -10,7 +10,7 @@ This document defines the authoritative preflight policy gate for staging and pr
 
 ## Authoritative Entrypoint
 
-- Command: `./dev-tools/deploy/preflight.sh <staging|production>`
+- Command: `./dev-tools/deploy/preflight.sh <staging|production|hobby-self-hosted>`
 - Input: target environment and resolved overlay/manifests for that environment.
 - Output: non-zero exit code on failure and a machine-readable report artifact (for example JSON).
 
@@ -20,13 +20,22 @@ This document defines the authoritative preflight policy gate for staging and pr
 
 - Overlay PR CI (`validate-kustomize-overlays.yml`) enforces static checks: digest pinning, image existence, attestation schema/digest matching, and repository policy markers.
 - Operator pre-apply execution (`preflight.sh`) enforces resolved-manifest and target-environment checks: required secret/key contracts, JWT/JWKS contracts, Redis role split, and bridge alignment.
-- Deployment apply is blocked unless both CI and operator preflight pass (or an explicit break-glass waiver is recorded).
+- Deployment apply is blocked unless required checks for the target class pass (or an explicit break-glass waiver is recorded).
+
+## Environment Applicability
+
+| Environment class | Overlay PR CI required | Operator preflight required | Notes |
+| --- | --- | --- | --- |
+| `staging` | Yes | Yes | Both gates mandatory before apply. |
+| `production` | Yes | Yes | Both gates mandatory before apply. |
+| `hobby-self-hosted` | Optional (recommended) | Yes | Operator preflight is mandatory; CI may be unavailable in single-operator setups. |
 
 ## Required Policy Checks
 
-Each run must evaluate these policy IDs:
+Every run must emit one result per policy ID below, with status `pass`, `fail`, or `not_applicable` (with reason):
 
 - `PREFLIGHT-DIGEST-001` – all staging/production workload images are immutable digests (`image@sha256:...`).
+- `PREFLIGHT-DIGEST-002` – hobby/self-hosted workload manifests are digest-pinned where the operator packaging format supports digest references.
 - `PREFLIGHT-SECRETS-001` – required Secrets and keys exist for the target environment.
 - `PREFLIGHT-JWT-001` – player-facing environments use `FIREMUD_AUTH_JWT_SECRET_PATH` and do not rely on inline-only JWT secrets.
 - `PREFLIGHT-JWKS-001` – JWKS resource type matches environment policy (`jwt-jwks` Secret for player-facing environments; ConfigMap only for explicitly non-player-facing/test environments).
@@ -34,12 +43,20 @@ Each run must evaluate these policy IDs:
 - `PREFLIGHT-REDIS-001` – player-facing environments resolve distinct Coordination vs Cache Redis endpoints.
 - `PREFLIGHT-PROMOTION-001` – production promotions reference a valid staging attestation with matching digests.
 
+Policy applicability:
+
+- `PREFLIGHT-PROMOTION-001` is required for `production` and `not_applicable` for `staging` and `hobby-self-hosted`.
+- `PREFLIGHT-DIGEST-001` is required for any flow using Kustomize overlays (`staging`, `production`) and `not_applicable` for `hobby-self-hosted`.
+- `PREFLIGHT-DIGEST-002` is recommended/advisory for `hobby-self-hosted` and `not_applicable` for `staging`/`production`.
+
 ## Evidence Contract
 
 The report artifact must include:
 
 - `environment`
-- `overlayCommitSha`
+- `deploymentRef` object with one of:
+  - `overlayCommitSha` for overlay-driven deployments (`staging`, `production`), or
+  - `manifestRef` / `chartVersion` for hobby/self-hosted deployments.
 - `checkResults[]` with `policyId`, `status`, `message`
 - `startedAt` and `completedAt` timestamps
 - `toolVersion`

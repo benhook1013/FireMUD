@@ -43,7 +43,7 @@ This section covers recovery scenarios at a high level; detailed, per-topic runb
 
 ### Tick Incident Scenarios
 
-- For stalled regions, replay storms, or stuck tick effect ledger entries, see:
+- For stalled regions, replay storms, durable commit/coordination cleanup divergence, or stuck tick effect ledger entries, see:
   - `design/architecture/system-architecture-tick-incident-runbook.md`
 
 ### Player Experience Incidents

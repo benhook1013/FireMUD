@@ -17,6 +17,7 @@ When documents disagree, resolve conflicts in this order:
 ## Table of Contents
 
 - [Table 1: Trigger Identity (Required Fields)](#table-1-trigger-identity-required-fields)
+- [Table 1A: Event Ingress `scriptEventId` Ownership Matrix](#table-1a-event-ingress-scripteventid-ownership-matrix)
 - [Table 2: `script_event_audit` Stages and Outcomes](#table-2-script_event_audit-stages-and-outcomes)
 - [Table 3: Timer Semantics Matrix](#table-3-timer-semantics-matrix)
 - [Table 4: Metrics Label Matrix](#table-4-metrics-label-matrix)
@@ -64,6 +65,16 @@ Notes:
 - Dry-run/test ingress must use a namespace separate from live ingress (`isDryRun=true`) regardless of whether `scriptEventId` is caller-generated or server-generated.
 - Downstream service calls made from scripts must propagate an idempotency token derived from Trigger Identity plus tick context when applicable (for example `tickId`), following `design/architecture/system-architecture-transactions.md`.
 
+## Table 1A: Event Ingress `scriptEventId` Ownership Matrix
+
+The ingress endpoint determines who owns `scriptEventId` generation and retry behavior. Implementations must reject requests that violate these ownership rules.
+
+| Ingress surface | `scriptEventId` owner | Required behavior |
+| --- | --- | --- |
+| Live external ingress (`TriggerScriptEvent`) | Caller | Caller must supply `scriptEventId` and must reuse it across retries for the same trigger identity. Missing ID is a deterministic validation error. |
+| Scheduler/timer internal ingress (`onInterval`, `onTimerExpire`) | Automation scheduler | Scheduler must generate deterministic IDs from due-point identity (`dueTickId` and/or `dueAt`) plus required Trigger Identity fields. |
+| Dry-run/test ingress (`RunScriptDryRun` or equivalent) | Service/test harness by default | Service generates `scriptEventId` by default. If caller-supplied IDs are accepted, service must validate dry-run namespace and reject collisions deterministically. |
+
 ## Table 2: `script_event_audit` Stages and Outcomes
 
 `script_event_audit` must be stage-aware so operators can distinguish “rejected before evaluation” from “evaluated but not handed off” and from “accepted into tick queues”.
@@ -90,6 +101,10 @@ Notes:
 
 Use a single canonical outcome taxonomy across docs, protos, metrics, and dashboards. Aliases are not allowed in new writes.
 
+Taxonomy governance rule:
+
+- Keep `finalOutcome` intentionally small and stable; add a new canonical value only when operator behavior, routing, or alert semantics materially change. Use `finalReason` for finer-grained diagnosis.
+
 | Canonical value | Stage | Notes |
 | --- | --- | --- |
 | `success` | `TICK_HANDOFF` | Commands accepted into tick queues. |
@@ -101,10 +116,12 @@ Use a single canonical outcome taxonomy across docs, protos, metrics, and dashbo
 | `pin_state_unavailable` | `ADMISSION` | Bounded-staleness pin cache could not be refreshed from an authoritative source; admission fails closed. |
 | `plugin_component_blocked` | `ADMISSION` | Plugin rejected by component policy. |
 | `plugin_disabled` | `ADMISSION` | Plugin disabled or draining state. |
+| `script_disabled` | `ADMISSION` | Script disabled or draining due to operator action. |
 | `sandbox_error` | `DSL_EVAL` | Runtime or guard failure; reason required. |
 | `validation_error` | `DSL_EVAL` | Static/semantic validation failure before effect persistence. |
 | `infrastructure_error` | Any non-success stage | Transport/storage/runtime infrastructure failure. |
 | `disabled_due_to_errors` | `ADMISSION` | Script disabled by failure-rate policy. |
+| `rollback_convergence_timeout` | `ADMISSION` | Admission remains paused because rollback convergence timeout is active for scope. |
 
 Deprecated aliases:
 
@@ -138,7 +155,7 @@ The matrix below defines what the scheduler does when a firing becomes due under
 
 ## Table 4: Metrics Label Matrix
 
-This table defines the authoritative label sets for scripting metrics. Metric names and label rules must also follow `design/architecture/system-architecture-scripting-observability-contract.md`.
+This table defines the authoritative metric-family catalog and label sets for scripting metrics. Metric names and label rules must also follow `design/architecture/system-architecture-scripting-observability-contract.md`.
 
 General rules:
 
@@ -158,4 +175,17 @@ General rules:
 | `automation_script_runtime_seconds` | `tenantId`, `scriptId`, `eventType`, optional `pluginId` | `scriptEventId` | Runtime is sandbox eval time (not tick execution time). |
 | `automation_script_sandbox_failures_total` | `tenantId`, `scriptId`, `reason`, optional `pluginId` | `scriptEventId` |  |
 | `automation_script_test_runs_total` | `tenantId`, `scriptId`, `eventType`, `result`, optional `pluginId` | `scriptEventId` | Must be separate from live-traffic counters. |
+| `automation_script_test_runtime_seconds` | `tenantId`, `scriptId`, `eventType`, optional `pluginId` | `scriptEventId` | Dry-run/test runtime latency; must remain separate from live runtime histograms. |
 | `automation_script_test_sandbox_failures_total` | `tenantId`, `scriptId`, `eventType`, `reason`, optional `pluginId` | `scriptEventId` | Dry-run/test-only sandbox failures; must not increment live sandbox failure counters. |
+| `automation_rollback_convergence_timeout_total` | `tenantId`, `gameInstanceId`, `reason` | `scriptEventId` | Incremented when rollback orchestration reaches timeout terminal state before convergence acknowledgment. |
+
+## Documentation Drift Guardrails
+
+To keep contracts consistent across docs:
+
+- `design/` markdown validation in CI must include a scripting-contract lint pass (for example `./gradlew lintMarkdown` invoking `dev-tools/docs/lint-scripting-contracts.sh`) that fails on:
+  - Deprecated aliases in normative fields (for example `skipped_disabled`, `skipped_version_unavailable`).
+  - Conflicting ownership language for ingress identity fields (for example `scriptEventId`).
+  - Multiple documents claiming incompatible “authoritative/source-of-truth” ownership for the same contract surface.
+- The scripting platform maintainers own these lint rules under CODEOWNERS and must update them when canonical contracts change.
+- Docs that define non-normative examples must link back to this table for outcome and label names instead of redefining names locally.

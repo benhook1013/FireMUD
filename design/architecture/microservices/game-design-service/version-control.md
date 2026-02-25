@@ -94,6 +94,7 @@ Rules:
 - The publish request type determines the participant set; do not infer participants dynamically from transient service availability.
 - A service outside the matrix for the current publish type may be validated separately, but must not block digest gating for that publish type.
 - Changes to this matrix require an explicit doc + migration update in both `version-control.md` and `world-editing-tools.md`.
+- Every service listed in this matrix must maintain a service-local digest input manifest documenting included/excluded objects, canonicalization, and `digestSchemaVersion` bump criteria. Publish gating should fail closed when a participant cannot attest a digest under its documented manifest for the reported schema version.
 
 ### Digest Schema Migration
 
@@ -141,13 +142,13 @@ opaque JSON blobs or service-specific payloads.
 Script-only fixes are tracked as `scriptPatchVersion` values attached to a `baseVersionId`. Together, `(versionId, scriptPatchVersion)` define the effective script bundle for a game:
 
 - The Game Session Service records the `scriptPatchVersion` that is currently pinned for each `gameInstanceId` and includes it in the context for every tick effect and script trigger.
-- The Automation & Scripting Service owns the runtime lifecycle (`PENDING_VALIDATION`, `READY`, `FAILED`, `ROLLED_BACK`) of each `<tenantId, scriptPatchVersion>` as described in `system-architecture-scripting-dsl-reference-and-lifecycle.md`. A patch may only be pinned for an instance once Automation & Scripting has marked it `READY` for that tenant.
+- The Automation & Scripting Service owns the tenant readiness lifecycle (`PENDING_VALIDATION`, `ONLOAD_RUNNING`, `READY`, `FAILED`) of each `<tenantId, scriptPatchVersion>` as described in `system-architecture-scripting-dsl-reference-and-lifecycle.md`. A patch may only be pinned for an instance once Automation & Scripting has marked it `READY` for that tenant.
 - Runtime services load and cache scripts based on the `(versionId, scriptPatchVersion)` that Game Session supplies for each effect; Automation & Scripting must not silently substitute a different patch if the supplied one is unknown or `FAILED`—such triggers are rejected and surfaced in audit logs and metrics.
 
 Rollouts and rollbacks:
 
 - Rolling out a new script patch for a game consists of publishing the patch in Game Design Service, allowing Automation & Scripting Service to validate and mark it `READY`, and then having Game Session update the pinned `scriptPatchVersion` for one or more `gameInstanceId` values. Existing effects remain tied to the `(versionId, scriptPatchVersion)` pair recorded when they were applied; future effects observe the new patch.
-- Rolling back a script patch means pinning an earlier `scriptPatchVersion` for the same `baseVersionId` on the affected instances. Historical records for prior effects remain associated with the `(versionId, scriptPatchVersion)` values that were in effect at the time, even after instances start using a different patch level.
+- Rolling back a script patch means pinning an earlier `scriptPatchVersion` for the same `baseVersionId` on the affected instances. This is an instance rollout/control-plane action, not a tenant lifecycle state transition. Historical records for prior effects remain associated with the `(versionId, scriptPatchVersion)` values that were in effect at the time, even after instances start using a different patch level.
 
 Game Design Service owns the history and metadata for script revisions and patch versions; Automation & Scripting Service owns runtime readiness and execution; Game Session Service owns which `scriptPatchVersion` is pinned per instance and must record that choice alongside each effect for determinism and auditability.
 

@@ -38,8 +38,7 @@ Logging & Admin is the operator-facing control plane for:
 Logging & Admin does not write to Redis directly. It drives all runtime changes through documented service APIs and records audit trails so operators can explain why automation behavior changed.
 
 - gRPC connections to this service require mTLS. JWT validation is required for admin or user-facing endpoints; internal gameplay and system calls are authenticated solely via mTLS.
-- The security model relies solely on JWT roles; there is no additional
-  network-layer isolation for admin endpoints.
+- The security model uses JWT roles plus network-layer isolation: admin endpoints are reachable only through Gateway/internal management surfaces and namespace/network-policy controls, not direct public exposure.
 - Moderation data and log indices include a `tenantId` field so administrators
   only see information for the games they manage. Cross-tenant queries are
   rejected per the [Multi-Tenancy](../../system-architecture-multi-tenancy.md)
@@ -76,8 +75,11 @@ Logging & Admin does not write to Redis directly. It drives all runtime changes 
 
 - Operators review flagged logs through the web UI.
 - Actions such as bans or warnings are issued via secured API calls.
-- Events are forwarded to the Account Service for enforcement and stored for
-  compliance purposes.
+- Enforcement follows the ban taxonomy:
+  - `account_security_ban` events are applied by Account Service.
+  - `gameplay_ban` events are enforced by Game Session Service.
+  - `chat_mute` and `chat_ban` events are enforced by Social & Groups Service.
+  All moderation actions are audit-recorded for compliance.
 
 ### REST & gRPC Endpoints
 
@@ -146,8 +148,9 @@ Additional variables specific to this service:
 
 | Variable | Purpose | Default |
 | -------- | ------- | ------- |
-| `FIREMUD_AUTH_JWT_SECRET` | HMAC signing key for JWT validation | *(none)* |
-| `FIREMUD_AUTH_JWT_SECRET_PATH` | Path to a file containing the JWT secret | *(none)* |
+| `FIREMUD_AUTH_JWKS_URI` | JWKS endpoint used for JWT validation (canonical) | *(none)* |
+| `FIREMUD_AUTH_JWT_SECRET` | Legacy HMAC JWT validation secret (transitional only; not for player-facing environments) | *(none)* |
+| `FIREMUD_AUTH_JWT_SECRET_PATH` | Legacy file path for HMAC JWT validation secret (transitional only; not for player-facing environments) | *(none)* |
 | `FIREMUD_AUTH_JWT_EXPIRATION_MS` | Lifetime of issued JWTs in milliseconds | `3600000` |
 | `FIREMUD_SERVICES_ACCOUNT_SERVICE` | gRPC endpoint (host:port) for the Account Service | *(none)* |
 | `FIREMUD_SERVICES_GAME_SESSION_SERVICE` | gRPC endpoint (host:port) for the Game Session Service | *(none)* |

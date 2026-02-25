@@ -49,7 +49,7 @@ Public login APIs exist for administrators and account portals, but gameplay cli
     - `session:auth:account:<accountId>:<tokenHash>` – baseline allowlist entry for a JWT, consulted for control-plane session validity and immediate revocation.
     - `session:auth:tenant:<tenantId>:<tokenHash>` – tenant-scoped Account/JWT bindings for internal auth, consulted when authorizing tenant-specific operations.
     - `session:auth:global:<accountId>:<tokenHash>` – cross-tenant Account/JWT bindings for internal auth, consulted when authorizing cross-tenant or platform-wide operations based on `globalRoles`.
-  - These keys live on Coordination Redis so that auth/session bindings share the same AOF and reset semantics as gameplay sessions. They are short-lived but **reset-sensitive**: coordination resets that drop `session:*` force re-authentication and token re-issuance for affected account, tenant, and global scopes.
+  - These keys live on Coordination Redis so that auth/session bindings share the same AOF and reset semantics as gameplay sessions. They are short-lived but **reset-sensitive**: coordination resets that drop `session:auth:*` force re-authentication and token re-issuance for affected account, tenant, and global scopes.
 - **Cache/Rate-Limit Redis**
   - The Account Service does not maintain its own Cache/Rate-Limit Redis prefixes today; any future caches for account or profile lookups must use Cache/Rate-Limit Redis and the key naming/TTL/versioning rules in [Redis Cache & Rate Limiting](../../system-architecture-redis-cache.md), not Coordination Redis.
   - When introducing new Redis usage here, follow the [Redis Design Checklist](../../system-architecture-redis-design-checklist.md) so auth/session keys, roles, and observability remain consistent with the global design.
@@ -95,6 +95,7 @@ resolved during authentication.
 - `RequestPasswordReset` – initiate a password reset email.
 - `CompletePasswordReset` – update the password using a token.
 - `LinkExternalAccount` – attach a Google, Discord, or Steam ID.
+- `GetTenantMembership` – return authoritative account-tenant membership and roles for billing-safe mutation checks.
 - `RequestEmailVerification` – send a verification email.
 - `VerifyEmail` – confirm an email verification token.
 - `CreatePaymentIntent` – initiate a Stripe payment.
@@ -124,6 +125,7 @@ resolved during authentication.
 | `POST` | `/accounts/{accountId}/external` | Link external account |
 | `GET` | `/profiles/{accountId}` | Retrieve profile information |
 | `PUT` | `/profiles/{accountId}` | Update profile information |
+| `GET` | `/tenants/{tenantId}/memberships/{accountId}` | Authoritative live membership and roles for billing-safe mutation guards |
 | `GET` | `/.well-known/jwks.json` | JWKS for verifying issued JWTs |
 
 ## Dependencies
@@ -152,7 +154,7 @@ and [Redis connection](../../infrastructure/environment-and-secrets.md#redis-con
 variables.
 TLS certificates are supplied via [`FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, `FIREMUD_GRPC_CA_CERT_PATH`](../../infrastructure/environment-and-secrets.md#grpc-tls-certificates). Peer services can be discovered using variables prefixed `FIREMUD_SERVICES_`.
 The OpenTelemetry collector endpoint can be overridden via `OTEL_ENDPOINT` (see [Environment Variables & Secrets Management](../../infrastructure/environment-and-secrets.md)).
-JWT signing keys use `FIREMUD_AUTH_JWT_SECRET` or `FIREMUD_AUTH_JWT_SECRET_PATH`. Server-side session TTL is derived from JWT lifetime using `FIREMUD_AUTH_JWT_EXPIRATION_MS` plus `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS`.
+JWT signing key material is configured with `FIREMUD_AUTH_JWT_SECRET` or `FIREMUD_AUTH_JWT_SECRET_PATH`; player-facing environments must use `FIREMUD_AUTH_JWT_SECRET_PATH` mounted from Kubernetes Secrets. Service verification must follow the asymmetric JWKS model from [Authentication & Authorization](../../system-architecture-authentication.md#jwt-verification-model-normative). Server-side session TTL is derived from JWT lifetime using `FIREMUD_AUTH_JWT_EXPIRATION_MS` plus `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS`.
 
 Additional variables configure outbound email delivery:
 
@@ -167,8 +169,8 @@ Additional variables configure outbound email delivery:
 | `FIREMUD_MAIL_RESET_URL` | Public URL for password reset links | `http://localhost:8080/reset-password?token=%s` |
 | `FIREMUD_PAYMENT_STRIPE_API_KEY` | Stripe API key used for payments | *(none)* |
 | `FIREMUD_PAYMENT_PLATFORM_FEE_PERCENT` | Platform fee percentage applied to transactions | `0` |
-| `FIREMUD_AUTH_JWT_SECRET` | HMAC signing key for JWTs | *(none)* |
-| `FIREMUD_AUTH_JWT_SECRET_PATH` | Path to a file containing the JWT secret | *(none)* |
+| `FIREMUD_AUTH_JWT_SECRET` | Inline JWT signing key material for local/dev or explicitly ephemeral stacks only (legacy compatibility; not for player-facing environments) | *(none)* |
+| `FIREMUD_AUTH_JWT_SECRET_PATH` | Path to a file containing JWT signing key material (required for player-facing environments; mounted from `jwt-signing-keys`) | *(none)* |
 | `FIREMUD_AUTH_JWT_EXPIRATION_MS` | Lifetime of issued JWTs in milliseconds | `3600000` |
 | `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS` | Extra time added to the JWT lifetime when deriving server-side session TTL | `300000` |
 | `FIREMUD_AUTH_REQUIRE_2FA_FOR_PLAINTEXT_TCP` | Controls whether plaintext Telnet logins are restricted to 2FA-enabled, explicitly opted-in accounts (see Environment & Secrets – Authentication) | `true` |
@@ -238,6 +240,12 @@ Browser JWTs and Service JWTs share the same claim schema (`iss`, `sub`, `jti`, 
 
 The Account Service is the sole writer for auth revocation watermark keys (`session:auth:revoked_after:account:*`, `session:auth:revoked_after:tenant:*`). Other services request revocation via events or APIs and must not write watermark keys directly.
 
+Billing-safe mutation authority contract:
+
+- The Account Service provides an authoritative membership API for live billing-safe checks: `GetTenantMembership(accountId, tenantId)` (REST equivalent `GET /tenants/{tenantId}/memberships/{accountId}`).
+- Responses include `evaluatedAt` and `membershipVersion` so callers can verify freshness and detect stale reads.
+- If authoritative membership data is unavailable, callers must fail closed for billing-safe mutations rather than relying on JWT claims alone.
+
 ### Two-Factor Authentication
 
 Two-factor authentication is optional and applies only when a `two_factor_secret` is configured on an account. This is typically enabled for administrator or moderator accounts. When present, the `/auth/login` endpoint requires an `otp` field. Codes are validated using the Base32 secret as outlined in the [Security Architecture](../../system-architecture-security.md).
@@ -252,7 +260,7 @@ may authenticate via the raw TCP Telnet port. The account model includes a boole
 - As a checkbox in the web portal account settings (default: unchecked, with a clear explanation of the risks of plaintext Telnet), and
 - As an option in the Telnet account setup flow (default: off, with matching wording).
 
-Accounts that do not meet these conditions must use the TLS Telnet port or the web client instead; the `/auth/login` response returns a dedicated error code so the Game Session Service can present a clear message to the player.
+Accounts that do not meet these conditions must use the TLS Telnet port or the web client instead; the `Authenticate` gRPC response returns a dedicated error code so the Game Session Service can present a clear message to the player. `/auth/login` remains a browser/control-plane endpoint.
 
 ### Login error codes
 
@@ -301,6 +309,7 @@ The Game Session Service translates these codes into the text-protocol `ERROR <C
 - `POST /auth/logout-all` – revoke all active tokens for the authenticated account by setting `session:auth:revoked_after:account:<accountId>` to now and emitting an audit event. This operation is idempotent.
   - The account watermark is the immediate revocation authority. Existing `session:auth:tenant:*` and `session:auth:global:*` keys for the account may be removed asynchronously by bounded background cleanup and are not required for immediate correctness.
 - `GET /.well-known/jwks.json` – JWKS for verifying issued JWT tokens.
+- `GET /tenants/{tenantId}/memberships/{accountId}` – authoritative live membership/role lookup used by billing-safe mutation guards.
 - `POST /auth/request-email-verification` – send a verification email for the account.
 - `POST /auth/verify-email` – confirm the verification token.
 
@@ -332,6 +341,7 @@ curl -X POST http://localhost:8080/auth/login \
 - `RequestPasswordReset(RequestPasswordResetRequest) returns (RequestPasswordResetResponse)` – send a reset token.
 - `CompletePasswordReset(CompletePasswordResetRequest) returns (CompletePasswordResetResponse)` – reset the password using a token.
 - `LinkExternalAccount(LinkExternalAccountRequest) returns (LinkExternalAccountResponse)` – attach a third-party account.
+- `GetTenantMembership(GetTenantMembershipRequest) returns (GetTenantMembershipResponse)` – authoritative account-tenant membership/role lookup for billing-safe mutation guards.
 - `RequestEmailVerification(RequestEmailVerificationRequest) returns (RequestEmailVerificationResponse)` – send a verification email for the account.
 - `VerifyEmail(VerifyEmailRequest) returns (VerifyEmailResponse)` – confirm the email token.
 - `CreatePaymentIntent(CreatePaymentIntentRequest) returns (CreatePaymentIntentResponse)` – initiate a payment.

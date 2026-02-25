@@ -346,7 +346,7 @@ Automation & Scripting exposes this lifecycle to other services via:
 
 - A read-only API such as `GetScriptPatchStatus(tenantId, scriptPatchVersion)` that returns the current state and relevant timestamps.
 - Tenant readiness events (`ScriptPatchTenantStatusChanged`) emitted when `<tenantId, scriptPatchVersion>` transitions between readiness states.
-- Instance rollout events (`ScriptPatchInstanceRolloutChanged`) emitted when `<tenantId, gameInstanceId, scriptPatchVersion>` rollout history changes (for example `PINNED` / `ROLLED_BACK` / `REPINNED`).
+- Instance rollout events (`ScriptPatchInstanceRolloutChanged`) consumed from Game Session pin-change control-plane events and projected into read APIs when `<tenantId, gameInstanceId, scriptPatchVersion>` rollout history changes (for example `PINNED` / `ROLLED_BACK` / `REPINNED`).
 
 When a trigger arrives at the Automation & Scripting Service:
 
@@ -518,7 +518,7 @@ Common outcome classes include:
 - `disabled_due_to_errors` – failure-rate circuit breaker opened for the script.
 - `version_unavailable` – trigger referenced a script patch version that failed reload or is unknown.
 - `infrastructure_error` – transient infrastructure issues such as gRPC `UNAVAILABLE` or Redis timeouts.
-- `disabled_unsafe_component` – script was refused because it depends on a DSL component version marked `UNSAFE`.
+- `validation_error` with `finalReason=unsafe_component` – script was refused because it depends on a DSL component version marked `UNSAFE`.
 
 Outcome taxonomy must distinguish “DSL evaluated” from “commands were accepted into the tick system”. Do not record `success` for a trigger if the resulting commands were not accepted into the tick queues.
 

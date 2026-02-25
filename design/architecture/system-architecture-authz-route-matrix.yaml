@@ -35,6 +35,12 @@ routes:
     classification: billing_safe_tenant
     roles:
       any_of: [tenantAdmin, billingAdmin, platformAdmin]
+  - service: account-service
+    route: GetTenantMembership
+    scope: tenant_or_cross_tenant
+    classification: billing_safe_tenant
+    roles:
+      any_of: [tenantAdmin, billingAdmin, platformAdmin]
   - service: game-session-service
     route: PLAY
     scope: tenant

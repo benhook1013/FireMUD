@@ -162,8 +162,8 @@ Tooling in the Game Design and Logging & Admin services should surface these rel
 
 Normalized-template dependency checks require explicit phase enforcement:
 
-- Game Design exposes persisted cutover state via `GetTemplateReferencePhase(tenantId)` (or stricter scoped equivalent) with values `BACKFILLING`, `VALIDATED`, `ENFORCED`.
-- Game Session and retirement tooling must block dependency-sensitive operations unless the relevant scope is `ENFORCED`.
+- Game Design exposes persisted cutover state via `GetTemplateReferencePhase(tenantId)` with values `BACKFILLING`, `VALIDATED`, `ENFORCED`.
+- Game Session and retirement tooling must block dependency-sensitive operations unless the tenant phase is `ENFORCED`.
 - Once `ENFORCED`, control-plane checks must not fall back to JSON parsing for dependency resolution.
 
 ### Schema Migrations vs Design Data
@@ -180,10 +180,12 @@ a stricter lifecycle than scripts:
 - Changes to these templates are always delivered via new versions (`version_id`)
   published by the Game Design Service. Domain services never apply in-place edits
   to template rows for Published or Active versions.
-- Switching the `runtime_version` for a game instance is a controlled **restart**
-  operation managed by the Game Session Service. Instances do not hot-swap
-  non-script templates mid-session; operators select a new version and restart the
-  instance so all services reload consistent data for the new `runtime_version`.
+- Switching non-script content to a different `runtime_version` is a controlled
+  **replacement-instance** operation managed by the Game Session Service.
+  Instances do not hot-swap non-script templates mid-session; operators prepare
+  a new `gameInstanceId` on the target version, perform an admission-pointer
+  swap, then drain/terminate the old instance so all services use consistent
+  data for each instance’s pinned version.
 - Template identifiers and their semantics are stable within each version; a given
   template ID must not be repurposed to point at a different conceptual entity
   while any non-Retired version references it.
@@ -202,7 +204,7 @@ The **Game Session Service** controls which published version is active for each
 - When starting a game, it reads the desired `version_id` from a manifest or launch request and stores this value as `runtime_version` in the `game_instances` table.
 - The available versions a tenant can launch are listed in the `game_manifest`
   table managed by the Game Session Service.
-- Only one version is active per game instance. If an issue occurs, administrators can instruct the service to roll back by selecting a previous `version_id` and restarting the instance.
+- Only one version is active per game instance. If an issue occurs, administrators can instruct the service to roll back by preparing a replacement instance on a previous `version_id`, atomically swapping admission, and terminating the old instance.
 - All runtime services read their data using the active `runtime_version`, ensuring consistent rules during play.
 
 Activation and rollback must be guarded by a version-state compare-and-set token (for example `versionStateEpoch`) to avoid races with retirement or state transitions:
@@ -224,14 +226,34 @@ Termination requires ordered handoff across runtime and domain owners:
 
 If any step after step 1 fails, admission remains closed and the same termination workflow identity must retry until convergence.
 
-Before any operation that changes whether a tenant is actively serving gameplay for a given instance (for example, starting a new instance, restarting an instance with a different `runtime_version`, or rolling back to a previous version), the Game Session Service must consult the runtime entitlement contract:
+Before any operation that changes whether a tenant is actively serving gameplay for a given instance (for example, starting a new instance, cutting over admission to a replacement instance with a different `runtime_version`, or rolling back to a previous version), the Game Session Service must consult the runtime entitlement contract:
 
 - Call `GetTenantEntitlements(tenantId)` in the Account Service and enforce that:
   - The tenant is currently **available for gameplay** under its subscription and billing state (for example, not `suspended` or `canceled`).  
   - The requested instance count and configuration remain within plan-derived quotas (for example, maximum concurrent instances for the tenant).
 - If entitlements indicate that the tenant is unavailable for gameplay or that quotas would be exceeded, the operation fails with a clear, tenant-scoped error and no instance-level changes are applied.
-- Entitlement snapshots used by these admission/control operations must be no older than 15 seconds. If a fresh snapshot cannot be obtained (for example due to event lag or Account Service uncertainty), operations fail closed with a retriable infrastructure/availability error.
-- Until a dedicated player-facing instance-selection protocol exists, runtime operations must preserve the single gameplay-admissible instance invariant (`gameInstanceId="primary"`). If operational workflows temporarily create additional running instances, gameplay admission remains blocked for those extra instances and player admission must never implicitly choose among them.
+- Entitlement snapshots used by these admission/control operations must be no older than 15 seconds. If a fresh snapshot cannot be obtained (for example due to event lag or Account Service uncertainty), operations fail closed with canonical error `ENTITLEMENT_UNAVAILABLE` (or protocol-mapped equivalent).
+- Entitlement snapshots must include `evaluatedAt`, `entitlementVersion`, and `tenantBillingSequence`; runtime operations must reject stale time/sequence data and reconcile via fresh `GetTenantEntitlements(tenantId)` reads.
+- Until a dedicated player-facing instance-selection protocol exists, runtime operations must preserve the single gameplay-admissible instance invariant (`gameInstanceId="primary"`). If operational workflows temporarily create additional running instances, gameplay admission remains blocked for those extra instances and player admission must fail with `MULTIPLE_INSTANCES_NOT_SUPPORTED` (or protocol-mapped equivalent) rather than implicitly choosing among them.
+
+Version cutover contract under the single-admissible-instance invariant:
+
+1. Prepare the replacement instance as non-admissible (`PREPARING`/draining-safe) and run world creation to completion.
+2. Perform one atomic admission-pointer swap so only one `gameInstanceId` is gameplay-admissible at any instant.
+3. Keep the old instance non-admissible and drain/terminate it through the standard `InstanceTermination` workflow.
+4. If swap fails, keep old instance as sole admissible instance and retry; do not open dual admission.
+
+Admission-pointer contract (required):
+
+- Each tenant has exactly one authoritative admission pointer record (for example `tenant_runtime_admission_pointer`) containing:
+  - `tenantId`,
+  - `admissibleGameInstanceId`,
+  - `pointerVersion` (monotonic CAS version),
+  - `updatedAt`,
+  - `updatedBy` / change reason for audit.
+- Admission (`PLAY`) and runtime control-plane operations must read this pointer as the source of truth for gameplay-admissible instance selection.
+- Pointer updates use compare-and-set semantics on `pointerVersion`; failed CAS must not admit or expose dual-admissible state.
+- If pointer state is unavailable or ambiguous, admission fails closed with `MULTIPLE_INSTANCES_NOT_SUPPORTED` (or protocol-mapped equivalent) until reconciled.
 
 When entitlements transition to hard-cutoff states (`suspended` or `canceled`) after an instance is already running, runtime behavior is deterministic:
 
@@ -239,7 +261,7 @@ When entitlements transition to hard-cutoff states (`suspended` or `canceled`) a
 - Existing player gameplay sessions are revoked immediately.
 - Running instances enter a bounded non-admissible drain phase (target: 5 minutes maximum) for cleanup, then stop.
 
-Activation, rollback, and restart operations remain blocked until `GetTenantEntitlements(tenantId)` returns gameplay-available status again.
+Activation, rollback, and cutover operations remain blocked until `GetTenantEntitlements(tenantId)` returns gameplay-available status again.
 
 Because rollback relies on being able to reactivate previously published `version_id` values, schema migrations must be coordinated with versioned data. See the **Version-Aware Migration Guidelines** in [Database Migrations](./system-architecture-database-migrations.md) for constraints on dropping or reshaping columns that are still used by any published version.
 
