@@ -287,6 +287,11 @@ After `LOGIN` succeeds, clients must issue `PLAY <world> [character]` before any
 
 For first-party `/ws/game/**` sessions, `PLAY` scope checks (`tenantId`, `gameInstanceId`) must use the gateway-signed connect context (`X-Firemud-Connect-Context`) validated by Game Session, not raw forwarded headers. Missing/invalid/expired/replayed context where connect-token validation was required must fail admission with `CONNECT_CONTEXT_INVALID`. Mismatched validated scope fails with `CONNECT_SCOPE_MISMATCH`.
 
+Canonical first-party `PLAY` scope errors on `/ws/game/**`:
+
+- `CONNECT_CONTEXT_INVALID` - required gateway-signed connect context is missing or failed validation (signature, expiry, replay, or key verification).
+- `CONNECT_SCOPE_MISMATCH` - validated connect context does not match requested `{tenantId, gameInstanceId}` scope.
+
 If a gameplay session already exists for the selected `{tenantId, gameInstanceId, characterId}` and is still resumable (TTL and server-side auth state are valid), `PLAY` resumes it and rebinds the new socket to the existing session. If no resumable session exists, `PLAY` creates a new gameplay session binding. This model allows the same account to have multiple characters in multiple worlds, but requires an explicit `PLAY` selection after every reconnect so the platform never guesses which tenant/character to resume.
 
 If a client attempts gameplay commands before selecting a world, the service returns `ERROR WORLD_NOT_SELECTED Use WORLDS/PLAY first` (or the equivalent canonical code) so clients can recover deterministically.

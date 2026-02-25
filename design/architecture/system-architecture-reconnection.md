@@ -150,7 +150,7 @@ Client implementations must not assume every disconnect includes a close frame a
 
 ### Gameplay WebSocket route handshake policy (normative)
 
-`/ws/game/**` is the only gameplay route. Missing/invalid/expired/replayed connect tokens are rejected with HTTP `403` for non-proxy clients. TCP Proxy bridge requests are admitted without a connect token only when proxy mTLS identity and trust checks pass.
+`/ws/game/**` is the only gameplay route. Non-proxy clients with missing/invalid/expired/replayed connect-token state are rejected with HTTP `403` and handshake class `CONNECT_TOKEN_REJECTED`. Trust-boundary denials (for example internal-listener/mTLS policy mismatch) are rejected with HTTP `403` and handshake class `POLICY_DENY`. TCP Proxy bridge requests are admitted without a connect token only when proxy mTLS identity and trust checks pass.
 
 ### HTTP Handshake Failures on `/ws/game/**`
 
@@ -164,13 +164,14 @@ Client behavior must key on handshake error class first, then HTTP status as a s
 | `429` | `POLICY_PRESSURE` | Edge rate or connection policy boundary reached | Classify as `policy_pressure_retriable`: retry with slower exponential backoff (start `5s`, cap `120s`, ±25% jitter) and strict retry caps; do not fast-loop. |
 | `503` | `BACKEND_UNAVAILABLE` | Gateway currently considers gameplay backend unavailable | Treat as `1013/backend_unavailable`; use exponential backoff with jitter and retry caps. |
 | `503` | `REPLAY_CHECK_UNAVAILABLE` | Gateway cannot validate connect-token replay state and fail-closes | Retry with bounded exponential backoff (start `10s`, cap `60s`, ±25% jitter) and surface temporary edge-auth-unavailable context (not backend-outage messaging). |
-| `403` | `POLICY_DENY` | Handshake denied by gateway policy/trust boundary (for example internal-only listener, mTLS identity, security policy mismatch, missing token on `/ws/game/**`, or invalid/expired/replayed connect token) | Treat as non-retriable until configuration/permissions change; surface as actionable operator/user error. |
+| `403` | `CONNECT_TOKEN_REJECTED` | Connect-token state invalid for gameplay handshake (missing, expired, replayed, malformed, or failed signature/claim checks) | Acquire a fresh connect token and retry with bounded exponential backoff (start `2s`, cap `30s`, ±25% jitter); if repeated after fresh-token refresh, surface login/session-recovery action to the user. |
+| `403` | `POLICY_DENY` | Handshake denied by gateway policy/trust boundary (for example internal-only listener, mTLS identity, security policy mismatch) | Treat as non-retriable until configuration/permissions change; surface as actionable operator/user error. |
 | `426` | `PROTOCOL_MISMATCH` | Protocol upgrade requirement not met | Retry only after client transport/protocol correction (for example proper WebSocket upgrade/TLS endpoint). |
 | Other `5xx` | `INTERNAL_ERROR` | Unexpected gateway/infra failure | Treat as `internal_error`; use exponential backoff with jitter. |
 
 For gameplay routes, HTTP `401` is not part of the normal handshake taxonomy because gameplay authentication occurs after WebSocket establishment via `LOGIN`/`PLAY`. If `401` appears in practice, treat it as a misconfiguration signal and investigate gateway policy drift.
 
-First-party clients and tools should implement a unified “edge error → backoff policy” table that maps WebSocket close codes (plus abnormal no-close transport loss) and handshake error classes (`POLICY_PRESSURE`, `BACKEND_UNAVAILABLE`, `REPLAY_CHECK_UNAVAILABLE`, `POLICY_DENY`, `PROTOCOL_MISMATCH`, `INTERNAL_ERROR`) to concrete backoff behaviour so reconnect storms remain predictable during incidents. This policy table must be derivable from wire-visible signals alone; operator-only metrics are supplemental for diagnostics, not required for client retry decisions.
+First-party clients and tools should implement a unified “edge error → backoff policy” table that maps WebSocket close codes (plus abnormal no-close transport loss) and handshake error classes (`POLICY_PRESSURE`, `BACKEND_UNAVAILABLE`, `REPLAY_CHECK_UNAVAILABLE`, `CONNECT_TOKEN_REJECTED`, `POLICY_DENY`, `PROTOCOL_MISMATCH`, `INTERNAL_ERROR`) to concrete backoff behaviour so reconnect storms remain predictable during incidents. This policy table must be derivable from wire-visible signals alone; operator-only metrics are supplemental for diagnostics, not required for client retry decisions.
 
 For clarity: HTTP `429` is not a hard “never retry” signal in FireMUD. It is a controlled `policy_pressure_retriable` class intended to protect the edge under pressure while still allowing eventual recovery for legitimate clients.
 

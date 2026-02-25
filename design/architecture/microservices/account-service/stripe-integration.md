@@ -63,7 +63,7 @@ Stripe integration must preserve tenant isolation while allowing platform-level 
 - Internal queries always filter billing records by both `accountId` and `tenantId` when operating on tenant-specific subscriptions or transactions. Cross-tenant reports are restricted to roles with appropriate `globalRoles` as defined in the shared role model:
   - `platformAdmin` for full cross-tenant reporting, and
   - `billingAdmin` for billing-focused reporting surfaces.
-  These rules are enforced by the Tenant Authorization Contract.  
+  Cross-tenant support troubleshooting is exposed only through explicitly support-safe variants (`cross_tenant_support_safe`) with high-level redacted fields. These rules are enforced by the Tenant Authorization Contract.  
 - Stripe API keys, webhook secrets, and any PCI-relevant configuration remain confined to the Account Service. Other services never communicate with Stripe directly.
 
 ## Service APIs
@@ -73,7 +73,7 @@ The Account Service exposes gRPC and REST endpoints for initiating and inspectin
 - `CreatePaymentIntent` – Initiate a one-time payment or donation and return the client-facing Stripe Payment Intent details.  
 - `RefundPayment` – Issue a refund for an existing `payment_transaction` and update its status.  
 - `CreateSubscription` – Start or update a recurring hosting subscription for a specific `tenantId` and `plan_code`.  
-- Subscription and transaction query APIs – Allow authorized roles to view their billing history, constrained by tenant and account authorization. Per-tenant billing history is visible to the `tenantAdmin` for that `tenantId` and to global `platformAdmin` and `billingAdmin` roles as defined in the shared role model.
+- Subscription and transaction query APIs – Must be split into explicit tenant-scoped billing-safe, cross-tenant support-safe, and cross-tenant billing-safe variants (no mixed-mode endpoint behavior). Per-tenant caller-bound billing history is visible to `tenantAdmin`; global `platformAdmin`/`billingAdmin` access uses cross-tenant billing-safe variants only.
 
 All endpoints are protected by JWT-based auth, and tenant-scoped operations must validate that the caller is allowed to act on the specified `tenantId` using the Tenant Authorization Contract from [Authentication & Authorization](../../system-architecture-authentication.md#tenant-authorization-contract).
 

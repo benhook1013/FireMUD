@@ -31,8 +31,8 @@ To keep authorization consistent, subscription and billing operations map to the
 
 - **Per-tenant operations** (for example, create/update/cancel subscription for a given `tenantId`, view billing history for that tenant):
   - Allowed for:
-    - `tenantAdmin` for that `tenantId`, and
-    - Global `platformAdmin` and `billingAdmin` roles.
+    - `tenantAdmin` for that `tenantId` on caller-bound tenant variants (`billing_safe_tenant`).
+  - Global roles (`platformAdmin`, `billingAdmin`) must use explicitly cross-tenant billing-safe route variants (`cross_tenant_billing_safe`) rather than caller-bound tenant variants.
 - **Cross-tenant billing reports and analytics** (for example, billing-focused multi-tenant reports and revenue dashboards):
   - Allowed only for global roles:
     - `platformAdmin` for full reporting, and
@@ -160,7 +160,7 @@ Downstream services depend on billing events for timely entitlement enforcement,
 - `CancelSubscription` – Cancel a subscription at period end or immediately, moving it to `canceled` and emitting events.  
 - Domain events such as `SubscriptionStatusChanged` and `TenantBillingStateChanged` – Consumed by Game Session, world-management, and admin/logging services to adjust availability, quotas, and observability.
 
-All APIs are secured using JWT-based auth and the Tenant Authorization Contract. Callers must be authorized for the `tenantId` they are querying or modifying. Cross-tenant subscription data access is restricted to the global roles defined above for cross-tenant billing reports (typically `platformAdmin` and `billingAdmin`).
+All APIs are secured using JWT-based auth and the Tenant Authorization Contract. Callers must be authorized for the `tenantId` they are querying or modifying. Cross-tenant subscription data access is split by explicit route class: support-safe views are restricted to `support`/`platformAdmin`, while billing-report views are restricted to `billingAdmin`/`platformAdmin`.
 
 For related context, see:
 

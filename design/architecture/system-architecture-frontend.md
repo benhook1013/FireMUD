@@ -62,11 +62,13 @@ All new frontend features that interact with protected APIs should reuse the sha
 - `MEMBERSHIP_AUTH_UNAVAILABLE` – Keep the user logged in, surface a retriable billing-authorization availability message, and block billing-safe mutations until live membership authority recovers.
 - `ENTITLEMENT_UNAVAILABLE` – Keep the current auth state, show a retriable availability banner, and apply bounded retry/backoff rather than logging the user out.
 - `ADMISSION_POINTER_UNAVAILABLE` – Keep the current auth state, show a retriable gameplay-admission unavailable message, and retry lobby admission with bounded backoff.
+- `CONNECT_CONTEXT_INVALID` – Keep the current auth state, force gameplay reconnect flow (`connect-token` refresh + new socket + `LOGIN`), and block `PLAY` retries on the current socket.
+- `CONNECT_SCOPE_MISMATCH` – Keep the current auth state, prompt world/session re-selection, request a fresh connect token for the intended `{tenantId, gameInstanceId}`, and retry on a new socket.
 
-For gameplay WebSocket handshake failures on `/ws/game/**`, first-party clients must also differentiate HTTP `403` causes:
+For gameplay WebSocket handshake failures on `/ws/game/**`, first-party clients must also differentiate HTTP `403` handshake classes:
 
-- Connect-token missing/expired/replayed in enforced environments: prompt a fresh gameplay handshake token acquisition and retry with bounded backoff.
-- Trust-boundary/policy denial (for example mTLS/internal-listener mismatch): treat as non-retriable until configuration is corrected and surface an actionable error.
+- `CONNECT_TOKEN_REJECTED`: prompt a fresh gameplay handshake token acquisition and retry with bounded backoff.
+- `POLICY_DENY`: treat as non-retriable until configuration is corrected and surface an actionable error.
 
 ## API Usage Patterns
 
