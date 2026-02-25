@@ -64,7 +64,7 @@ services so Docker Compose environments work out of the box.
 
 ### Key Routes
 
-- `/ws/game/**` → Game Session Service (canonical WebSocket gameplay endpoint for first-party clients and Telnet clients bridged via the TCP Proxy Service; connect-token enforced in player-facing environments).
+- `/ws/game/**` → Game Session Service (canonical WebSocket gameplay endpoint for first-party clients and Telnet clients bridged via the TCP Proxy Service; connect-token enforced for non-proxy clients, with trusted TCP Proxy bridge admission based on mTLS identity + header-trust checks).
 - `/api/admin/**` → Logging & Admin Service (tokens are verified by the service).
 - `/api/design/**` → Game Design Service for content management.
 - `/api/account/**` → Account Service for user profiles.

@@ -711,7 +711,7 @@ The full variable list is (treat this table as the canonical source of defaults 
 | `TCP_PROXY_MAX_MALFORMED_ENVELOPES` | Maximum malformed `SESSION` envelopes per connection before hard close (see **Telnet Session Envelope & Event Metrics** for how this counter is applied) | `5` |
 | `TCP_PROXY_NOTIFY_DISCONNECT_MAX_RETRY_MS` | Maximum total time after Telnet socket close during which the proxy retries failed `NotifyDisconnect` calls before giving up | `5000` |
 | `TCP_PROXY_GATEWAY_RECONNECT_WINDOW_MS` | Maximum time to retry bridge recovery before closing with `backend_unavailable` (applies to initial bridge establishment and established-session `unreachable` state) | `5000` |
-| `TCP_PROXY_GATEWAY_CIRCUIT_OPEN_MS` | Continuous upstream-unreachable duration required to open the bridge-availability circuit breaker and fast-reject new Telnet admissions with `backend_unavailable` | `3000` |
+| `TCP_PROXY_GATEWAY_CIRCUIT_OPEN_MS` | Continuous upstream-unreachable duration required to open the bridge-availability circuit breaker and fast-reject new Telnet admissions with `backend_unavailable`; set equal to `firemud.gateway.backendUnavailableGraceMs` | `5000` |
 | `TCP_PROXY_GATEWAY_CIRCUIT_HALF_OPEN_MAX_PROBES` | Maximum concurrent bridge probe attempts while the circuit breaker is half-open before returning to open on failure | `3` |
 | `TCP_PROXY_GATEWAY_CIRCUIT_RECOVERY_SUCCESS_COUNT` | Consecutive successful half-open bridge probes required before returning to closed admission | `3` |
 | `TCP_PROXY_GATEWAY_MAX_BUFFERED_LINES` | Maximum buffered Telnet lines waiting to be forwarded to the gateway due to upstream backpressure; if this ceiling is exceeded the proxy closes the Telnet connection with `policy_violation` and emits `edge_backpressure` context in logs/metrics rather than silently dropping gameplay commands | `64` |
@@ -827,7 +827,7 @@ The Proxy → Gateway WebSocket bridge retry budget and input buffer depth (`TCP
 
 Bridge-availability circuit-breaker settings should also be tuned explicitly:
 
-- `TCP_PROXY_GATEWAY_CIRCUIT_OPEN_MS` (recommended default `3000`) controls how long upstream gameplay unreachability must persist before the breaker opens and new Telnet admissions are fast-rejected as `backend_unavailable`.
+- `TCP_PROXY_GATEWAY_CIRCUIT_OPEN_MS` (recommended default `5000`) controls how long upstream gameplay unreachability must persist before the breaker opens and new Telnet admissions are fast-rejected as `backend_unavailable`. Keep this equal to `firemud.gateway.backendUnavailableGraceMs`.
 - `TCP_PROXY_GATEWAY_CIRCUIT_HALF_OPEN_MAX_PROBES` (recommended default `3`) controls how many concurrent bridge probe attempts are allowed while half-open.
 - `TCP_PROXY_GATEWAY_CIRCUIT_RECOVERY_SUCCESS_COUNT` (default `3`) controls how many consecutive successful half-open probe bridge establishments are required before returning to closed admission.
 

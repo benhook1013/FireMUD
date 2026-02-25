@@ -376,7 +376,7 @@ Tokens that omit required claims, have malformed claim types, or present an unex
 JWT verification model (normative):
 
 - Services validate JWTs using Account Service JWKS (asymmetric verification). Shared HMAC verification keys in downstream services are legacy-only compatibility and must not be required in player-facing environments.
-- Any legacy HMAC-based validator configuration must be explicitly marked transitional and removed after migration. Target removal date: October 1, 2026.
+- HMAC-only JWT verification is not part of the canonical contract and must not be enabled in shared or player-facing environments.
 - Player-facing environments must fail startup if asymmetric JWKS verification is not configured or if HMAC-only verification is enabled.
 - HMAC verification mode is allowed only for local/dev and explicitly ephemeral CI environments.
 
