@@ -10,9 +10,9 @@ buildscript {
         mavenCentral()
     }
     dependencies {
-        classpath("com.fasterxml.jackson.core:jackson-databind:2.21.0")
-        classpath("org.flywaydb:flyway-database-postgresql:12.0.0")
-        classpath("org.postgresql:postgresql:42.7.9")
+        classpath("com.fasterxml.jackson.core:jackson-databind:2.21.1")
+        classpath("org.flywaydb:flyway-database-postgresql:12.0.2")
+        classpath("org.postgresql:postgresql:42.7.10")
     }
 }
 
@@ -105,7 +105,7 @@ subprojects {
         implementation(libs.findLibrary("grpc-stub").get())
         implementation("javax.annotation:javax.annotation-api:1.3.2")
         testImplementation(libs.findLibrary("spring-boot-starter-test").get())
-        testRuntimeOnly("org.junit.platform:junit-platform-launcher:6.0.2")
+        testRuntimeOnly("org.junit.platform:junit-platform-launcher:6.0.3")
     }
 
     spotless {

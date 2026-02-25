@@ -32,8 +32,8 @@ spring-boot-starter-websocket = { module = "org.springframework.boot:spring-boot
 spring-boot-starter-webflux = { module = "org.springframework.boot:spring-boot-starter-webflux", version.ref = "spring-boot" }
 spring-boot-configuration-processor = { module = "org.springframework.boot:spring-boot-configuration-processor", version.ref = "spring-boot" }
 
-flyway-core = { module = "org.flywaydb:flyway-core", version = "12.0.0" }
-flyway-database-postgresql = { module = "org.flywaydb:flyway-database-postgresql", version = "12.0.0" }
+flyway-core = { module = "org.flywaydb:flyway-core", version = "12.0.2" }
+flyway-database-postgresql = { module = "org.flywaydb:flyway-database-postgresql", version = "12.0.2" }
 
 mapstruct = { module = "org.mapstruct:mapstruct", version = "1.6.3" }
 mapstruct-processor = { module = "org.mapstruct:mapstruct-processor", version = "1.6.3" }
@@ -49,12 +49,12 @@ protoc-gen-grpc-java = { module = "io.grpc:protoc-gen-grpc-java", version = "1.7
 protobuf-java = { module = "com.google.protobuf:protobuf-java", version = "4.33.5" }
 protoc = { module = "com.google.protobuf:protoc", version = "4.33.5" }
 
-opentelemetry-api = { module = "io.opentelemetry:opentelemetry-api", version = "1.58.0" }
-opentelemetry-sdk = { module = "io.opentelemetry:opentelemetry-sdk", version = "1.58.0" }
-opentelemetry-exporter-otlp = { module = "io.opentelemetry:opentelemetry-exporter-otlp", version = "1.58.0" }
+opentelemetry-api = { module = "io.opentelemetry:opentelemetry-api", version = "1.59.0" }
+opentelemetry-sdk = { module = "io.opentelemetry:opentelemetry-sdk", version = "1.59.0" }
+opentelemetry-exporter-otlp = { module = "io.opentelemetry:opentelemetry-exporter-otlp", version = "1.59.0" }
 
-micrometer-core = { module = "io.micrometer:micrometer-core", version = "1.16.2" }
-micrometer-registry-prometheus = { module = "io.micrometer:micrometer-registry-prometheus", version = "1.16.2" }
+micrometer-core = { module = "io.micrometer:micrometer-core", version = "1.16.3" }
+micrometer-registry-prometheus = { module = "io.micrometer:micrometer-registry-prometheus", version = "1.16.3" }
 
 jjwt-api = { module = "io.jsonwebtoken:jjwt-api", version = "0.13.0" }
 jjwt-impl = { module = "io.jsonwebtoken:jjwt-impl", version = "0.13.0" }
@@ -62,8 +62,8 @@ jjwt-jackson = { module = "io.jsonwebtoken:jjwt-jackson", version = "0.13.0" }
 argon2 = { module = "de.mkammerer:argon2-jvm", version = "2.12" }
 
 grpc-spring-boot-starter = { module = "io.github.lognet:grpc-spring-boot-starter", version = "5.2.0" }
-postgresql = { module = "org.postgresql:postgresql", version = "42.7.9" }
-aws-sdk-s3 = { module = "software.amazon.awssdk:s3", version = "2.41.23" }
+postgresql = { module = "org.postgresql:postgresql", version = "42.7.10" }
+aws-sdk-s3 = { module = "software.amazon.awssdk:s3", version = "2.42.0" }
 h2 = { module = "com.h2database:h2", version = "2.4.240" }
 
 # Keep Springdoc on 2.x until we migrate to Spring Boot 4.x. Springdoc 3.x depends on Spring Boot 4.x artifacts,

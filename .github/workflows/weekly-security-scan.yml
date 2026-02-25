@@ -36,7 +36,7 @@ jobs:
           restore-keys: trivy-db-${{ runner.os }}-
 
       - name: 🛡️ Trivy container and dependency scan
-        uses: aquasecurity/trivy-action@0.33.1
+        uses: aquasecurity/trivy-action@0.34.1
         with:
           image-ref: ghcr.io/benhook1013/${{ matrix.service }}:latest
           format: 'table'
