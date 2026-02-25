@@ -14,6 +14,12 @@ Document conflict resolution order is defined in `design/architecture/system-arc
 
 Each admitted trigger must write (or update) a single audit record keyed by the trigger identity described in `design/architecture/system-architecture-scripting-contracts.md#4-scripteventid-identity-and-at-most-once-dedupe`.
 
+Write behavior requirements:
+
+- Storage must enforce uniqueness for full Trigger Identity so retries and duplicate deliveries update one logical record.
+- Audit writers must be idempotent and stage-monotonic; `finalStage` must never move backwards.
+- Conflicting concurrent writes for the same Trigger Identity must converge on a single row with deterministic precedence (higher stage wins).
+
 Audit records must include at least:
 
 - Identity and versioning

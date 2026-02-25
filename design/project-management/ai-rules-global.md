@@ -14,6 +14,7 @@
 - [10. Testing & Observability](#10-testing--observability)
 - [11. Tooling Available to AI](#11-tooling-available-to-ai)
 - [12. Parallel AI Sessions & Dirty Worktrees](#12-parallel-ai-sessions--dirty-worktrees)
+- [13. Project Stage Override](#13-project-stage-override)
 
 ---
 
@@ -123,3 +124,8 @@ For quick reference in day-to-day work, most edits will rely on:
 - Do not revert, clean up, or reformat unrelated files.
 - If a file required for your task is already modified, read the current on-disk version and make targeted edits that preserve existing in-progress changes.
 - If overlapping edits make intent unclear or risky, ask the human for direction before proceeding.
+
+## 13. Project Stage Override
+
+- If a repository declares an **Initial Development Mode** in local AI rules, prioritize direct simplification and replacement over backward-compatibility patterns.
+- Migration-phase recommendations (deprecation plans, phased cutovers, dual-read/write paths, compatibility shims) are out of scope unless explicitly requested by a human.

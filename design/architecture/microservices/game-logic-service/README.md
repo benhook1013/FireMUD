@@ -59,6 +59,8 @@ For full-version publish gating, this service is still a required digest partici
 
 Publish gating must fail closed if this service cannot attest a digest under its documented manifest for the reported `digestSchemaVersion`.
 
+Role classification: Game Logic is a **digest-gate participant** for full publishes, not a **saga-step participant**, unless future publish workflows add explicit finalize/compensation steps owned by this service.
+
 ### Redis Role and Prefixes
 
 - **Coordination Redis**

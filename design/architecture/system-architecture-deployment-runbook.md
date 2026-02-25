@@ -11,7 +11,7 @@ For high-level CI/CD architecture, see `design/architecture/system-architecture-
 - Redis, PostgreSQL, and core infrastructure components (Gateway, TCP Proxy, Observability stack) are healthy.
 - The operator has `kubectl` access and a kubeconfig for the target Kubernetes cluster (staging, production, or hobby-self-hosted) from a secure admin workstation or bastion host.
 
-## Standard Deployment Flow
+## Overlay Deployment Flow (Staging and Production)
 
 1. **Review Release Notes**
    - Confirm which services and schema changes are included.
@@ -24,7 +24,7 @@ For high-level CI/CD architecture, see `design/architecture/system-architecture-
    - Evaluate policy IDs from `design/architecture/system-architecture-deploy-preflight-policy.md` (for example `PREFLIGHT-DIGEST-001`, `PREFLIGHT-SECRETS-001`, `PREFLIGHT-JWT-001`, `PREFLIGHT-JWKS-001`, `PREFLIGHT-BRIDGE-001`, `PREFLIGHT-REDIS-001`, and `PREFLIGHT-PROMOTION-001` for production).
    - Treat preflight as blocking. Do not run `kubectl apply` until all checks pass.
    - Use the canonical entrypoint: `./dev-tools/deploy/preflight.sh <staging|production|hobby-self-hosted>`.
-   - Preflight policy IDs and report format are defined in `design/architecture/system-architecture-deploy-preflight-policy.md`. Attach the generated preflight report artifact to deployment evidence.
+   - Store the preflight report artifact under `design/operations/deployments/<environment>/preflight/<deployment-ref>.json` with optional waiver record `.../<deployment-ref>.waiver.json` as defined in `design/architecture/system-architecture-deploy-preflight-policy.md`.
 4. **Update the Environment Overlay (Git-Tracked)**
    - Update the image digests in the environment-specific Kustomize overlay for the target environment (for example `k8s/overlays/stage` or `k8s/overlays/prod`) via a Git change.
    - Use a pull request for the overlay change so promotion and rollback remain auditable (the merged commit is the source of truth for what is intended to be running in that environment).
@@ -45,6 +45,25 @@ For high-level CI/CD architecture, see `design/architecture/system-architecture-
 7. **Post-Deployment Checks**
    - Run smoke tests and login/session checks as described in `design/developer-workflows/login-session-smoke-tests.md`.
    - Confirm that the game session tick loop is running and that players can connect via both Web client and Telnet.
+
+## Hobby Manifest/Chart Deployment Flow (Hobby / Self-Hosted)
+
+1. **Resolve Deployment Inputs**
+   - Select the exact `manifestRef` or `chartVersion` to deploy.
+   - Define rollback target (`previousManifestRef` or `previousChartVersion`) before apply.
+2. **Run Operator Preflight**
+   - Run `./dev-tools/deploy/preflight.sh hobby-self-hosted`.
+   - Treat required preflight checks as blocking for player-facing traffic.
+   - Store preflight report and optional waiver artifacts using the same evidence path contract: `design/operations/deployments/hobby-self-hosted/preflight/<deployment-ref>.json` and `.../<deployment-ref>.waiver.json`.
+3. **Apply Manifests/Charts**
+   - Apply from a secure operator environment using the chosen manifest/chart input.
+   - Record the applied `manifestRef`/`chartVersion`, timestamp, and operator identity in deployment evidence.
+4. **Monitor Rollout and Run Smoke Checks**
+   - Verify pod readiness/liveness, secrets loading, and Redis/PostgreSQL connectivity.
+   - Run login/session smoke checks and confirm player connectivity paths.
+5. **Record Deployment Evidence**
+   - Record deployment evidence at `design/operations/deployments/hobby-self-hosted/deployments/<deployment-ref>.json`.
+   - Include: deployment input reference, preflight report path, smoke evidence references, and rollback reference.
 
 ## Canary or Phased Rollouts
 

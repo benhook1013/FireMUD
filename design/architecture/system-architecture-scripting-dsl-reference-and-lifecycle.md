@@ -154,6 +154,7 @@ The pointer/index format must be forward-compatible (versioned envelope) so it c
 
 - **Handling retries and duplicates**
   - The Automation & Scripting Service treats script execution as **at-most-once per Trigger Identity**, as defined in the uniqueness scope above. If it receives a duplicate delivery for the same Trigger Identity—for example, because the caller retried a gRPC call—it does **not** re-run the DSL graph for that trigger. Instead it consults existing `script_event_audit` state and treats the duplicate as a replay of an already completed or skipped trigger.
+  - Duplicate delivery handling must preserve a single `script_event_audit` row per Trigger Identity with monotonic stage progression; retries update existing state and must not create parallel audit rows.
   - Downstream services and replay tools rely on stable idempotency tokens derived from Trigger Identity plus tick context when applicable (for example including `tickId` and `regionEpoch`). Commands produced by scripts must carry enough metadata to correlate retries with the original trigger without introducing new high-cardinality metric labels.
 
 ---
@@ -208,11 +209,17 @@ See the Automation & Scripting Service README and service protos for the full, u
 
 ## Event Fan-Out and Handler Ordering
 
-An entity may have **multiple scripts bound to the same event** (for example, two `onSpawn` handlers that set patrol routes and apply buffs). The Game Design Service stores these bindings as an ordered list per `{entityId, eventType}`.
+An entity may have **multiple handlers bound to the same event**, including both core scripts and plugin handlers. The Game Design and plugin registries store these bindings as ordered lists per `{entityId, eventType}`.
 
-When an event fires, the Automation & Scripting Service evaluates bound handlers in a **deterministic order** sorted by `(orderIndex ASC, scriptId ASC)`. This ordering is stable across deployments so that the same set of scripts produces the same sequence of commands for a given event.
+When an event fires, the Automation & Scripting Service evaluates bound handlers in a **single deterministic order** sorted by:
 
-Failures are **isolated per script** by default. If one handler fails (for example, quota denial, sandbox exception, or compilation error), the scheduler records the failure and continues to the next handler unless the binding is explicitly marked as requiring exclusive handling. Designers can opt into **exclusive handling** on a per-binding basis (for example, `requiresExclusiveEvent=true`) so that a terminal outcome for one handler short-circuits remaining handlers for that event. Quota checks (`ScriptQuotaService`) remain **per script** either way.
+1. `orderIndex ASC`
+2. `handlerType ASC` (`SCRIPT` before `PLUGIN` unless policy overrides are explicitly configured and documented)
+3. `handlerId ASC` (`scriptId` or `pluginId`)
+
+This ordering is stable across deployments so that the same binding set produces the same command sequence for a given event.
+
+Failures are isolated per handler by default. If one handler fails (for example, quota denial, sandbox exception, or compilation error), the scheduler records the failure and continues to the next handler unless the failing binding is marked as requiring exclusive handling. Exclusive handling (`requiresExclusiveEvent=true`) short-circuits remaining handlers regardless of whether they are scripts or plugins. Quota checks (`ScriptQuotaService`) remain per handler either way.
 
 ---
 
@@ -492,7 +499,7 @@ for the current leadership and sharding model.
   - updates bindings and metadata, and
   - transitions scripts through reload states (for example, `reloadState=RELOADING`) to avoid partial visibility.
 - During reloads, triggers are **paused or skipped** while in-flight runs drain under existing concurrency settings:
-  - New triggers for the affected tenant are not admitted; attempts to schedule additional runs receive explicit backpressure outcomes (`skipped_reloading` during reload, `skipped_rollback_pause` during rollback pause). For low-rate external events, callers may retry with the same `scriptEventId` using a bounded backoff policy; audit records must remain keyed by Trigger Identity and must not multiply rows per retry.
+  - New triggers for the affected tenant are not admitted; attempts to schedule additional runs receive explicit backpressure outcomes (`skipped_reloading` during reload, `skipped_rollback_pause` during rollback pause). For low-rate external events, callers may retry with the same `scriptEventId` using bounded backoff (`maxAttempts`, `maxElapsedMs`, jitter) and should honor server retry hints such as `retryAfterMs`; audit records must remain keyed by Trigger Identity and must not multiply rows per retry.
   - In-flight runs remain bounded by each script’s configured `maxConcurrent` and `concurrencyPolicy` (for example, `queue_until_free`); any short per-script waiting queues are allowed to drain, but no new entries are added while `reloadState=RELOADING`.
   - Pending timer-based triggers that became due during reload remain in the scheduler’s timer indexes and resume after reload with recalculated `nextTick` / `nextRunAt` so cadences remain coherent.
 - On success, the new `scriptPatchVersion` becomes active for future triggers; on failure:

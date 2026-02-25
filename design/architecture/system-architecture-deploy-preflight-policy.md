@@ -63,6 +63,18 @@ The report artifact must include:
 
 CI and manual operator runs must produce the same report shape so audit tooling can compare them.
 
+### Evidence Storage and Retention
+
+- Preflight report artifacts are stored in-repo under:
+  - `design/operations/deployments/<environment>/preflight/<deployment-ref>.json`
+- Break-glass waivers are stored beside the report artifact as:
+  - `design/operations/deployments/<environment>/preflight/<deployment-ref>.waiver.json`
+- `deployment-ref` is:
+  - `<overlayCommitSha>` for overlay-driven staging/production deployments, or
+  - a normalized manifest/chart reference token for hobby/self-hosted deployments.
+- Retention requirement: keep preflight reports and waivers for at least as long as release/rollback audit history is retained.
+- Waiver records must include: approver identity, incident/change ticket, scope (policy IDs waived), expiration (deployment event only), and timestamp.
+
 ## Failure Handling
 
 - Any failed required check blocks deployment.

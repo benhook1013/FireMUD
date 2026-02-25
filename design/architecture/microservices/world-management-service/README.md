@@ -156,8 +156,9 @@ Concrete per-effect required writes and reconciliation rules live in `design/arc
   - `world_instance_lifecycle_lock` (or equivalent fenced token) enforces single-writer lifecycle transitions per `(tenantId, gameInstanceId)` so activation and termination workflows cannot commit concurrently.
   - `character_location` table records the current room for each character, including which instance they are in; item locations and containment are modeled and stored by the Entity Management Service rather than this table.
 - **Runtime configuration and events**:
-  - `generation_rule` table stores per-tenant procedural generation parameters used by the [Procedural Generation Rules API](#procedural-generation-rules-api). These rules are runtime configuration defaults, not versioned design data; each generation run snapshots the effective rule set (including `schemaVersion`) alongside the affected template or instance records so that the inputs for that run remain reconstructable even if live rules are later updated.
+  - `generation_rule` table stores per-tenant procedural generation parameters used by the [Procedural Generation Rules API](#procedural-generation-rules-api). These rules are mutable tenant defaults owned by World Management, not versioned design artifacts by themselves.
   - An optional `generation_rule_override` table may store version-specific overrides keyed by `(tenantId, versionId)` for tenants that require different tuning per version; when present for a given version, overrides are applied instead of the tenant-global defaults when running generators for that version. Overrides may exist only for non-Retired versions and must be kept consistent with the version lifecycle and migration rules described in [Database Migrations](../../system-architecture-database-migrations.md).
+  - Published versions must carry a frozen generation config identity (`generationConfigRevision`/hash) derived at publish time; world creation for that `(tenantId, versionId)` must use this frozen identity and fail closed if it is unavailable.
   - `generation_run` (or equivalent) persists deterministic generation artifacts for replay-safe publish/reconciliation (`generationRunId`, `generationRequestId`, `generatorImplementationVersion`, canonical `configSnapshot`, and `outputDigest`).
   - `world_event` table stores timed changes such as weather updates.
   - `region_instance.weather` (or equivalent) records the current weather state for live regions; template rows may include default weather or climate metadata but are not updated during gameplay.
@@ -235,7 +236,7 @@ The `V10__seed_demo_world.sql` migration seeds the demo rooms referenced by this
 ## Dependencies
 
 - **Internal:**
-  - Game Design Service supplies generation rules and versioned world data.
+  - Game Design Service supplies versioned world design inputs and orchestrates Draft template writes/publish flows; procedural generation rules are owned by World Management.
   - Game Session Service queries rooms and receives world event updates.
   - Automation & Scripting Service reacts to scheduled world changes.
 - **External:** PostgreSQL for world data, Redis for transient active state.
@@ -384,3 +385,5 @@ Rules are stored in the `generation_rule` table and managed over REST:
 These endpoints allow live tuning of parameters such as room density or terrain
 variation. Updates are persisted immediately and picked up by the procedural
 generation engine on the next run.
+
+Ownership note: these rules are authored and persisted in World Management. Game Design may invoke generation in design workflows, but it is not the authority for `generation_rule` state.

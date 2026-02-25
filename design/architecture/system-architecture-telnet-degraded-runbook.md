@@ -101,6 +101,7 @@ The TCP Proxy Service and WebSocket path enforce backpressure rather than silent
 When inspecting Telnet-side disconnects, prefer reasoning in terms of the standard Telnet disconnect reasons defined in [Protocol Bridging](./system-architecture-protocol-bridging.md#telnet-disconnect-reasons) rather than ad-hoc message strings. In particular:
 
 - Treat `policy_violation` closes as `policy_violation_non_retriable` by default (stop auto-retry or use very long backoff); they usually indicate client behaviour that must change (scripts, bots, abusive traffic) rather than platform outages.
+- Treat trust-boundary handshake failures (for example `tcpproxy.gateway.handshake.failures{reason="cert_validation"}` or policy deny outcomes) as `policy_violation`, not `backend_unavailable`; fix certificate/identity/configuration before retrying.
 - Treat `backend_unavailable` closes as indicators of core gameplay outages or edge-to-gateway bridge failures, comparable to WebSocket `1013` (`backend_unavailable`) from the gateway, and prioritise checking Game Session, Redis, and Gateway health before tuning Telnet limits.
 - Treat `policy_violation` with `edge_backpressure` context (from structured logs/metrics such as `tcpproxy.telnet.discarded{reason="gateway_buffer_full"}`) as edge buffer-pressure enforcement, not as backend outage.
 - Treat `idle_timeout` and `logout` as expected lifecycle noise rather than indicators of incidents unless volumes spike unexpectedly.

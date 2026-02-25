@@ -39,6 +39,7 @@ The Game Design Service’s publish workflows are responsible for enforcing thes
 
 - During `PublishVersion`, it verifies that all ability identifiers referenced by scripts and plugins targeting a given `(tenantId, versionId)` exist and are compatible with the ability schema for that version.
 - During `PublishScriptPatchVersion` and plugin bundle publication/enablement, it must re-validate that the patch/plugin remains compatible with the pinned `baseVersionId` (the underlying published game version) and its ability schema. Script-only and plugin-only patches must not introduce new dependencies that require a new `versionId`.
+- Compatibility checks must be bound to an immutable `abilitySchemaDigest` associated with `baseVersionId`. Patch/plugin validation must use that digest snapshot, and the same digest must be recorded in publish metadata so validation cannot drift due to mutable schema reads.
 
 If mismatches are detected, Game Design marks the publish/enable attempt as failed in its design-time status model (for example `PUBLISH_FAILED_DESIGN`) and does **not** hand the corresponding patch/plugin version to the Automation & Scripting Service. As a result, no `<tenantId, scriptPatchVersion>` lifecycle row is created and the patch never enters `PENDING_VALIDATION` / `ONLOAD_RUNNING` / `READY` on the runtime side; runtime handlers therefore never execute against missing or incompatible abilities.
 

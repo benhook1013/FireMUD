@@ -41,6 +41,18 @@ External-only attestation storage is not allowed for production promotions becau
 ## Storage and Retention
 
 - Keep the attestation in the repository with the production promotion evidence and reference it from the PR body.
+- Staging deployment records are stored in-repo at `design/operations/deployments/staging/deployments/<stagingOverlayCommitSha>.json`.
+- The staging deployment record is the canonical evidence source for `stagingOverlayCommitSha` validation and must contain at minimum:
+  - `environment` (`staging`)
+  - `overlayCommitSha`
+  - `appliedAt`
+  - `appliedBy`
+  - `serviceDigests` map
+  - `preflightReportPath`
+  - `smokeEvidence` list
+- Producer contract:
+  - Operators create/update the deployment record as part of staging apply in the deployment runbook flow.
+  - CI promotion validation must fail if the referenced deployment record is missing, malformed, or digest-mismatched.
 - Retain attestation artifacts for at least as long as release/rollback audit history is retained.
 - Rollback PRs should reference the original attestation used for the digest set being restored.
 

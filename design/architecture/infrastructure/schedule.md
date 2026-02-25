@@ -41,3 +41,8 @@ By default, staging is treated as **disposable** and does not run the production
 - Documented post-restore secret-hardening steps before reopening player traffic.
 
 Operators may choose tighter cadence or longer retention, but not lower than this baseline. Tooling can be local scripts, CronJobs, or managed services as long as the minimum baseline is met and recorded in deployment notes.
+
+Required evidence record:
+
+- `design/operations/deployments/hobby-self-hosted/backup-compliance.yaml` must be updated after backup cadence changes, successful restore drills, or retention-policy changes.
+- Player-traffic reopen after a hobby restore requires this record to show baseline compliance (`>=1` backup/24h, `>=7` retained daily restore points, `>=1` restore drill/30d).

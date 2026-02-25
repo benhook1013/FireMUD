@@ -93,7 +93,8 @@ Inputs:
 Semantics:
 
 - Idempotent: repeating the same request with the same `controlPlaneRequestId` must return the same result without reapplying.
-- The operation must validate that `targetScriptPatchVersion` is allowed to be pinned (typically by consulting Automation & Scripting patch lifecycle state: `READY` only).
+- The operation must validate that `targetScriptPatchVersion` is `READY` for the tenant before pinning.
+- If the target patch is not `READY`, the operation must fail deterministically with an application error (for example `errorCode=SCRIPT_PATCH_NOT_READY`) and must not mutate pin state.
 - On success, Game Session persists the new pin for `(tenantId, gameInstanceId)` and emits `ScriptPatchPinChanged`.
 
 Outputs:
@@ -101,6 +102,7 @@ Outputs:
 - `previousScriptPatchVersion`
 - `pinnedScriptPatchVersion` (the new value)
 - `controlPlaneRequestId`
+- `errorCode` (optional on failure; required for deterministic business failures such as `SCRIPT_PATCH_NOT_READY`)
 
 #### `RollbackScriptPatchVersion`
 
@@ -116,6 +118,7 @@ Inputs:
 Semantics:
 
 - Equivalent to `SetPinnedScriptPatchVersion` but semantically indicates rollback; tooling may treat it as higher urgency.
+- Target patch readiness requirements are identical to `SetPinnedScriptPatchVersion`: rollback targets must be `READY` for the tenant or the request fails with a deterministic application error (`SCRIPT_PATCH_NOT_READY`).
 - On success, emits `ScriptPatchRollbackRequested` (or `ScriptPatchPinChanged` with `changeType=ROLLBACK`).
 
 Outputs: same as `SetPinnedScriptPatchVersion`.
@@ -212,6 +215,30 @@ Semantics:
 
 - Read-only.
 - Reports the latest pin observation used by tick command intake and execution-time version fences.
+
+### Signer Policy Convergence (Required)
+
+Signer-policy enforcement for plugins must be observable the same way pin convergence is observable.
+
+#### `GetSignerPolicyConvergence`
+
+Inputs:
+
+- Optional scope: `tenantId`, `gameInstanceId`
+
+Outputs:
+
+- `serviceName`
+- `serviceInstanceId` (optional for aggregated views)
+- `observedSignerPolicyVersion`
+- `observedAt`
+- `refreshLagMs`
+- `enforcementMode` (`REPORT_ONLY` | `ENFORCING`)
+
+Semantics:
+
+- Read-only.
+- Used by operator tooling to confirm signer allowlist/revocation policy has propagated before declaring revocation complete.
 
 ### Game Session: Purge Queued Tick Commands (Rollback Support)
 
@@ -420,6 +447,70 @@ Outputs:
 
 - `canceledCount` (best-effort count; may be approximate for large batches)
 
+### Automation & Scripting: Outbox and Dead-Letter Operations (Required)
+
+These APIs provide deterministic operator hooks for stuck/canceled work so control-plane rollback and recovery do not depend on ad-hoc database access.
+
+#### `ListOutboxWorkItems`
+
+Inputs:
+
+- `tenantId`
+- Optional filters: `gameInstanceId`, `regionId`, `scriptPatchVersion`, `pluginId`, `pluginVersionId`, `workItemStatus`, `createdAfter`, `createdBefore`
+- Pagination: `pageSize`, `pageToken`
+
+Semantics:
+
+- Read-only.
+- Must support bounded pagination and stable sort order so large tenants can be inspected without full scans.
+
+Outputs:
+
+- `items[]` (including `outboxWorkItemId`, Trigger Identity, `workItemStatus`, `createdAt`, `updatedAt`, `cancelReason`)
+- `nextPageToken`
+
+#### `ReplayDeadLetteredWorkItems`
+
+Inputs:
+
+- `tenantId`
+- Optional scope: `gameInstanceId`, `regionId`
+- Selector: explicit `outboxWorkItemIds[]` or bounded filter (`scriptPatchVersion`, `pluginVersionId`, `createdAfter`, `createdBefore`)
+- `controlPlaneRequestId`
+- `actor`
+- `reason`
+
+Semantics:
+
+- Idempotent.
+- Transitions selected `DEAD_LETTERED` work items back to replayable state (`PENDING` or equivalent) without re-running DSL evaluation for original triggers.
+- Must enforce bounded batch size per request.
+
+Outputs:
+
+- `replayedCount` (best-effort count; may be approximate for large batches)
+
+#### `PurgeOutboxWorkItems`
+
+Inputs:
+
+- `tenantId`
+- Optional scope: `gameInstanceId`, `regionId`
+- Selector: explicit `outboxWorkItemIds[]` or bounded filter (`workItemStatus`, `scriptPatchVersion`, `pluginVersionId`, `createdBefore`)
+- `controlPlaneRequestId`
+- `actor`
+- `reason`
+
+Semantics:
+
+- Idempotent.
+- Permanently removes selected outbox rows or marks them purged in bounded batches.
+- Must emit operator-auditable records for every purge request.
+
+Outputs:
+
+- `purgedCount` (best-effort count; may be approximate for large batches)
+
 #### `CancelPendingWorkItemsForPluginVersion`
 
 Inputs:
@@ -542,6 +633,31 @@ Fields:
 - `actor` and `reason` (if operator-driven)
 - `occurredAt`
 
+### `SignerPolicyVersionObserved` (Automation & Scripting → Event Bus)
+
+Emitted when Automation & Scripting observes or refreshes plugin signer policy for a scope.
+
+Fields:
+
+- `tenantId` (nullable for global policy snapshots)
+- `serviceInstanceId`
+- `observedSignerPolicyVersion`
+- `observedAt`
+- `policySource` (for example `signed_config_artifact`)
+
+### `SignerRevocationApplied` (Automation & Scripting → Event Bus)
+
+Emitted when signer revocation enforcement transitions one or more plugins to disabled state.
+
+Fields:
+
+- `tenantId`
+- `gameInstanceId`
+- `signerKeyId`
+- `affectedPluginCount`
+- `controlPlaneRequestId` (optional when operator-driven rollout change is correlated)
+- `occurredAt`
+
 ### `ScriptRollbackConvergenceTimedOut` (Game Session → Event Bus)
 
 Emitted when rollback orchestration reaches terminal state `ROLLBACK_CONVERGENCE_TIMEOUT` before both convergence APIs acknowledge the expected `controlPlaneRequestId`. Logging & Admin may initiate orchestration, but Game Session is the mandatory producer-of-record for this event.
@@ -581,6 +697,23 @@ Fields:
 8. Call `SetAutomationAdmissionMode(..., mode=NORMAL)` once convergence and cleanup complete.
 9. Resume ticks with `ResumeTicks`.
 
+### Rollback Orchestration State Machine (Required)
+
+Rollback orchestration must expose and persist a state machine so partial failures are recoverable and retries are deterministic.
+
+Required states:
+
+- `PAUSING` -> `REPINNING` -> `CANCELING` -> `PURGING` -> `CONVERGING` -> `RESUMING` -> `COMPLETED`
+- Terminal failure state: `TIMED_OUT`
+
+State rules:
+
+- Each transition must be idempotent and keyed by `controlPlaneRequestId`.
+- Re-running a request in the same state must return current state, not restart from scratch.
+- Failures in `CANCELING` or `PURGING` must not auto-resume admission or ticks.
+- Operator retries must continue from the last durable state.
+- `TIMED_OUT` keeps admission and ticks paused until explicit operator action.
+
 Convergence timeout semantics (required):
 
 - Rollback orchestration must apply a bounded convergence timeout (for example `ROLLBACK_CONVERGENCE_TIMEOUT_MS`) for step 7.
@@ -588,6 +721,15 @@ Convergence timeout semantics (required):
 - In `ROLLBACK_CONVERGENCE_TIMEOUT`, Automation admission remains paused for scope safety and ticks remain paused until an operator explicitly issues resume/abort actions.
 - The system must emit terminal event `ScriptRollbackConvergenceTimedOut` and increment `automation_rollback_convergence_timeout_total{tenantId, gameInstanceId, reason}`.
 - While timeout terminal state remains active, ingress admissions in scope must record `script_event_audit.finalStage=ADMISSION`, `finalOutcome=rollback_convergence_timeout`, and a bounded `finalReason`.
+
+### Pin-State Degraded Operations Policy (Required)
+
+`pin_state_unavailable` is fail-closed by default. Any override mode must be explicit and tightly constrained:
+
+- Override must be activated by an authenticated operator action with `controlPlaneRequestId`, `actor`, `reason`, and a bounded TTL.
+- Override scope must be explicit (`tenantId` + `gameInstanceId` minimum).
+- Override must emit control-plane audit/event records so post-incident reconciliation can prove exactly when fail-closed behavior was bypassed.
+- On TTL expiry, fail-closed behavior (`pin_state_unavailable`) must resume automatically.
 
 Notes:
 

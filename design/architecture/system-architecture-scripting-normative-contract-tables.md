@@ -88,6 +88,16 @@ The ingress endpoint determines who owns `scriptEventId` generation and retry be
 | `WORK_ITEM_PERSIST` | Durable persistence of the resulting work item (outbox). | No |
 | `TICK_HANDOFF` | Handoff to Game Session and acceptance into tick queues. | Yes |
 
+### Required Audit Write Semantics (Normative)
+
+`script_event_audit` writes must be deterministic under retries and concurrent updates:
+
+- There must be at most one row per full Trigger Identity (Table 1 + plugin/timer required fields where applicable).
+- Implementations must enforce uniqueness at storage level (composite unique key over Trigger Identity).
+- Retries and duplicate deliveries must update the existing row instead of inserting a new one.
+- Stage progression must be monotonic (`ADMISSION` <= `DSL_EVAL` <= `WORK_ITEM_PERSIST` <= `TICK_HANDOFF`); writers must not regress `finalStage`.
+- On conflicting updates, the higher stage wins; if stages are equal, preserve the first terminal non-success outcome unless a later write provides a strictly higher-fidelity reason for the same stage.
+
 ### Required Outcome Rules (Normative)
 
 | Stage | Required rule |
@@ -136,6 +146,10 @@ If Game Session rejects a queued command because its embedded `scriptPatchVersio
 - Emit an operator-visible metric for version-fence drops:
   - `automation_tick_version_fence_dropped_total{tenantId, scriptId, reason}` for script patch mismatches (for example `reason="script_patch_mismatch"`).
   - `automation_tick_plugin_version_fence_dropped_total{tenantId, pluginId, pluginVersionId, reason}` for plugin version mismatches (for example `reason="plugin_version_mismatch"`).
+- Dead-letter retention for rejected queue entries must be bounded and explicit:
+  - `maxAge` and `maxRows` must be documented per environment.
+  - Cleanup cadence must be documented and alert-backed.
+  - Breaching thresholds must emit operator-visible alerts.
 
 ## Table 3: Timer Semantics Matrix
 

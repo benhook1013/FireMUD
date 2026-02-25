@@ -12,6 +12,11 @@ Every protected route must be listed here with:
 
 Services must enforce these classifications through shared middleware annotations/interceptors and CI policy checks. Routes that are protected but missing from this matrix are considered an architectural violation.
 
+## Implemented Status
+
+- Target state: every protected route is listed and CI fails for missing/unknown classifications.
+- Current rollout is phase-driven (see Enforcement Rollout Phases below). During Phase 2, pre-existing legacy gaps may remain warning-only via an explicit, expiring allowlist. This is transitional governance only and does not change the target-state contract.
+
 ## Governance (Required)
 
 - **Owner**: Platform Security + Account Service maintainers jointly own this matrix.
@@ -50,6 +55,12 @@ For these domains, protected routes missing from the YAML matrix must fail CI im
 
 CI should generate candidate inventories from OpenAPI/proto definitions and compare them against the YAML matrix so protected-route drift is detected automatically.
 
+Critical-domain inventory artifacts (required):
+
+- CI must persist generated candidate inventories for auth/session and billing/support domains (OpenAPI + proto derived) under version control (for example `design/architecture/authz-inventory/*.json`).
+- Full-fail assertions in critical domains are valid only when these generated inventories are present and compared against the YAML matrix in the same run.
+- Inventory generation must distinguish tenant-scoped and cross-tenant route variants explicitly; mixed-scope APIs must not be represented as a single ambiguous route key.
+
 ## Classification Rules
 
 | Classification | Required allowlist | Tenant watermark applied? | Notes |
@@ -65,11 +76,18 @@ CI should generate candidate inventories from OpenAPI/proto definitions and comp
 
 | Service | Route | Classification | Required roles/capability |
 | --- | --- | --- | --- |
-| Account Service | `GetTenantEntitlements(tenantId)` | `cross_tenant_support_safe` | `support` or `platformAdmin` (cross-tenant); tenant-local access via tenant roles |
-| Account Service | `GetSubscription(tenantId)` high-level shape | `cross_tenant_support_safe` | `support` or `platformAdmin` (cross-tenant); tenant-local access via tenant roles |
-| Account Service | `ListSubscriptions` high-level shape | `cross_tenant_support_safe` | `support` or `platformAdmin` (cross-tenant); tenant-local access via tenant roles |
-| Account Service | `GetTenantMembership(accountId, tenantId)` | `billing_safe_tenant` or `cross_tenant_billing_safe` | `tenantAdmin` for tenant routes; `billingAdmin`/`platformAdmin` for cross-tenant routes |
-| Account Service | invoice/payment method APIs | `billing_safe_tenant` or `cross_tenant_billing_safe` | `tenantAdmin` for tenant routes; `billingAdmin`/`platformAdmin` for cross-tenant routes |
+| Account Service | `GetTenantEntitlements(tenantId)` tenant-scoped variant | `billing_safe_tenant` | `tenantAdmin` (tenant-scoped) |
+| Account Service | `GetTenantEntitlements(tenantId)` cross-tenant variant | `cross_tenant_support_safe` | `support`/`platformAdmin` |
+| Account Service | `GetSubscription(tenantId)` tenant-scoped high-level variant | `billing_safe_tenant` | `tenantAdmin` (tenant-scoped) |
+| Account Service | `GetSubscription(tenantId)` cross-tenant high-level variant | `cross_tenant_support_safe` | `support`/`platformAdmin` |
+| Account Service | `ListSubscriptions` tenant-scoped high-level variant | `billing_safe_tenant` | `tenantAdmin` (tenant-scoped) |
+| Account Service | `ListSubscriptions` support-safe cross-tenant high-level variant | `cross_tenant_support_safe` | `support`/`platformAdmin` |
+| Account Service | `ListSubscriptions` billing-reports cross-tenant variant | `cross_tenant_billing_safe` | `billingAdmin`/`platformAdmin` |
+| Account Service | `IssueConnectToken` | `tenant_regular` | Tenant-scoped role required; entitlement-gated |
+| Account Service | `GetTenantMembership(accountId, tenantId)` tenant-scoped variant | `billing_safe_tenant` | `tenantAdmin` (tenant-scoped) |
+| Account Service | `GetTenantMembership(accountId, tenantId)` cross-tenant variant | `cross_tenant_billing_safe` | `billingAdmin`/`platformAdmin` |
+| Account Service | invoice/payment method APIs tenant-scoped variant | `billing_safe_tenant` | `tenantAdmin` (tenant-scoped) |
+| Account Service | invoice/payment method APIs cross-tenant variant | `cross_tenant_billing_safe` | `billingAdmin`/`platformAdmin` |
 | Game Session Service | gameplay admission (`PLAY`, instance start/restart/stop control-plane routes) | `tenant_regular` | Tenant role required; entitlement-gated |
 
 The matrix should be expanded as service API surfaces evolve. Service docs may include local excerpts, but this file is the canonical list used by governance checks.

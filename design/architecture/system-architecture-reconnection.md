@@ -6,8 +6,8 @@ FireMUD enables seamless gameplay recovery across network interruptions, client 
 
 ## Implemented Status
 
-- **Session takeover and resume** – Game Session emits `gamesession.session.takeover` and `gamesession.session.resume` counters and rebinds Redis tick/command queues on reconnect/takeover. The active uniqueness key is controlled by platform `identity_mode` (`interim` uses `{tenantId, gameInstanceId, accountId}`; `canonical` uses `{tenantId, gameInstanceId, characterId}`).
-- **Telnet and WebSocket parity** – Target-state parity is that both transports share the same **authentication and lobby-binding contract**: after any disconnect both reconnect, issue `LOGIN`, and then complete lobby selection with `PLAY` before gameplay commands are admitted. Current rollout status per capability is tracked in the TCP Proxy design’s **Cross-Path Compatibility Matrix (Current Rollout)** and is the canonical source for any temporary gaps.
+- **Session takeover and resume** – Game Session emits `gamesession.session.takeover` and `gamesession.session.resume` counters and rebinds Redis tick/command queues on reconnect/takeover. The active uniqueness key is `{tenantId, gameInstanceId, characterId}`.
+- **Telnet and WebSocket parity** – Both transports share the same authentication and lobby-binding contract: after any disconnect both reconnect, issue `LOGIN`, and then complete lobby selection with `PLAY` before gameplay commands are admitted.
 - **Remaining work** – Admin-driven forced session transfers remain planned future steps. FireMUD does not attempt to replay or reconstruct lost gameplay commands after long outages or coordination resets; command queues are volatile coordination buffers and commands may be lost outside the bounded tail-loss envelope.
 
 ## Reconnection Layers
@@ -19,8 +19,8 @@ FireMUD enables seamless gameplay recovery across network interruptions, client 
 | **Game Session Service** | Restores session from Redis; rebinds socket, region, and timers when the edge connection remains healthy |
 
 Each layer handles fault tolerance independently.
-**Only client connection loss requires reauthentication.**
-Game Session Service restarts are **visible to clients** on the WebSocket path because Spring Cloud Gateway is a WebSocket proxy: when Game Session restarts and drops upstream gameplay WebSockets, Gateway closes the corresponding gameplay client WebSockets (`/ws/game/**` and any transitional `/ws/game-legacy/**` sessions), and clients reconnect, re-`LOGIN`, and re-`PLAY`. Any in-flight gameplay commands at the moment of the restart may be lost, consistent with the at-most-once edge delivery semantics in [Protocol Bridging](./system-architecture-protocol-bridging.md#ordering--delivery-invariants).
+Reauthentication is required when a client disconnects, or when server-side auth state expires or is revoked.
+Game Session Service restarts are **visible to clients** on the WebSocket path because Spring Cloud Gateway is a WebSocket proxy: when Game Session restarts and drops upstream gameplay WebSockets, Gateway closes the corresponding gameplay client WebSockets (`/ws/game/**`), and clients reconnect, re-`LOGIN`, and re-`PLAY`. Any in-flight gameplay commands at the moment of the restart may be lost, consistent with the at-most-once edge delivery semantics in [Protocol Bridging](./system-architecture-protocol-bridging.md#ordering--delivery-invariants).
 When Spring Cloud Gateway pods restart, Web clients are disconnected; they must open a new WebSocket and issue `LOGIN` again. Once reconnected, the gateway resumes routing and Game Session uses Redis-backed session state to decide whether to resume or start fresh after the client re-selects gameplay scope with `PLAY`. Telnet clients are also disconnected because the TCP Proxy Service fail-closes Telnet sockets when its WebSocket bridge to Spring Cloud Gateway drops; clients reconnect and re-`LOGIN` and then `PLAY`.
 TCP Proxy restarts drop Telnet clients, who must reconnect manually.
 If the Gateway link is unavailable (for example during gateway deploys or outages), the TCP Proxy applies the bridge-availability contract from Gateway/Protocol Bridging, closes with `backend_unavailable` when gameplay admission is unavailable, and clients reconnect using backoff, then reauthenticate with `LOGIN` and re-enter gameplay scope via `PLAY`.
@@ -86,16 +86,7 @@ Gameplay resumes cleanly when a session is resumed — whether due to reconnect 
 
 > 🔄 For full takeover behavior, including forced logins from a different client and Redis socket rebinding, see [Authentication & Authorization](./system-architecture-authentication.md#multi-client-behavior-and-session-takeover).
 
-At most one active gameplay binding is supported per active uniqueness key at any point in time:
-
-- Interim phase (before character-selection cutover): `{tenantId, gameInstanceId, accountId}`.
-- Canonical phase (after cutover): `{tenantId, gameInstanceId, characterId}`.
-
-Uniqueness mode governance is centralized:
-
-- Services must not infer mode independently.
-- One platform-wide `identity_mode` (`interim`, optional migration `dual_read`, `canonical`) is active per environment.
-- Promotion/rollback follows the cutover runbook in [Authentication & Authorization](./system-architecture-authentication.md#gameplay-identity-mode-contract-normative).
+At most one active gameplay binding is supported per uniqueness key `{tenantId, gameInstanceId, characterId}` at any point in time.
 
 Legacy `playerId` wording maps one-to-one to `characterId` and is not a separate identity domain. When a new client successfully issues `LOGIN` for an identity that is already bound to another connection (whether Telnet or WebSocket), Game Session treats this as a **takeover**:
 
@@ -147,36 +138,31 @@ FireMUD treats reconnection as a **client responsibility**: after any disconnect
     - `policy_violation_non_retriable` (for example sustained abuse/malformed protocol outcomes) – stop auto-retry or switch to very long backoff and surface corrective action to the user.
 - **Scope of reconnection**
   - Telnet clients reconnect by establishing a new TCP connection to the TCP Proxy Service, issuing `LOGIN` (and any optional `SESSION`/MCP negotiation), and then issuing `PLAY` before gameplay commands.
-  - Web clients reconnect by opening a new WebSocket to the canonical gameplay route `/ws/game/**` (or transitional `/ws/game-legacy/**` when explicitly configured for migration), issuing `LOGIN`, and then issuing `PLAY`; they must not assume that any prior MCP or `SESSION` state has survived, as described in [Mud Client Protocol (MCP) Support](./system-architecture-mud-client-protocol.md#reconnection--session-recovery).
+  - Web clients reconnect by opening a new WebSocket to `/ws/game/**`, issuing `LOGIN`, and then issuing `PLAY`; they must not assume that any prior MCP or `SESSION` state has survived, as described in [Mud Client Protocol (MCP) Support](./system-architecture-mud-client-protocol.md#reconnection--session-recovery).
 
 ### Gameplay WebSocket route handshake policy (normative)
 
-Reconnection and handshake policy differs by route:
+`/ws/game/**` is the only gameplay route. Missing/invalid/expired/replayed connect tokens are rejected with HTTP `403` for non-proxy clients. TCP Proxy bridge requests are admitted without a connect token only when proxy mTLS identity and trust checks pass.
 
-| Route | Missing connect token | Invalid/expired/replayed connect token | Intended usage |
-| --- | --- | --- | --- |
-| `/ws/game/**` | HTTP `403` in player-facing environments | HTTP `403` | Canonical route for first-party gameplay clients |
-| `/ws/game-legacy/**` | Allowed during migration only, with stricter edge guardrails | HTTP `403` when token validation is active for the route | Legacy/third-party compatibility path only; sunset December 31, 2026 |
-
-Both routes still require successful in-band `LOGIN` and `PLAY` after upgrade.
-
-### HTTP Handshake Failures on gameplay routes (`/ws/game/**`, `/ws/game-legacy/**`)
+### HTTP Handshake Failures on `/ws/game/**`
 
 When Web clients attempt to establish or re-establish WebSocket connections and receive HTTP errors instead of a successful upgrade, they must interpret those signals consistently with the close-code taxonomy:
 
 This table is the canonical client-policy matrix for gameplay-route handshake failures; gateway and client documentation must reference this mapping rather than redefining retry semantics independently.
+Client behavior must key on handshake error class first, then HTTP status as a secondary signal.
 
-| HTTP status | Meaning on gameplay routes | Client policy |
-| --- | --- | --- |
-| `429` | Edge rate or connection policy boundary reached | Classify as `policy_pressure_retriable`: retry with slower exponential backoff (start `5s`, cap `120s`, ±25% jitter) and strict retry caps; do not fast-loop. |
-| `503` | Gateway currently considers gameplay backend unavailable | Treat as `1013/backend_unavailable`; use exponential backoff with jitter and retry caps. |
-| `403` | Handshake denied by gateway policy/trust boundary (for example internal-only listener, mTLS identity, security policy mismatch, or missing token on `/ws/game/**`, or invalid/expired/replayed connect token) | Treat as non-retriable until configuration/permissions change; surface as actionable operator/user error. |
-| `426` | Protocol upgrade requirement not met | Retry only after client transport/protocol correction (for example proper WebSocket upgrade/TLS endpoint). |
-| Other `5xx` | Unexpected gateway/infra failure | Treat as `internal_error`; use exponential backoff with jitter. |
+| HTTP status | Handshake error class | Meaning on gameplay routes | Client policy |
+| --- | --- | --- | --- |
+| `429` | `POLICY_PRESSURE` | Edge rate or connection policy boundary reached | Classify as `policy_pressure_retriable`: retry with slower exponential backoff (start `5s`, cap `120s`, ±25% jitter) and strict retry caps; do not fast-loop. |
+| `503` | `BACKEND_UNAVAILABLE` | Gateway currently considers gameplay backend unavailable | Treat as `1013/backend_unavailable`; use exponential backoff with jitter and retry caps. |
+| `503` | `REPLAY_CHECK_UNAVAILABLE` | Gateway cannot validate connect-token replay state and fail-closes | Retry with bounded exponential backoff (start `10s`, cap `60s`, ±25% jitter) and surface temporary edge-auth-unavailable context (not backend-outage messaging). |
+| `403` | `POLICY_DENY` | Handshake denied by gateway policy/trust boundary (for example internal-only listener, mTLS identity, security policy mismatch, missing token on `/ws/game/**`, or invalid/expired/replayed connect token) | Treat as non-retriable until configuration/permissions change; surface as actionable operator/user error. |
+| `426` | `PROTOCOL_MISMATCH` | Protocol upgrade requirement not met | Retry only after client transport/protocol correction (for example proper WebSocket upgrade/TLS endpoint). |
+| Other `5xx` | `INTERNAL_ERROR` | Unexpected gateway/infra failure | Treat as `internal_error`; use exponential backoff with jitter. |
 
 For gameplay routes, HTTP `401` is not part of the normal handshake taxonomy because gameplay authentication occurs after WebSocket establishment via `LOGIN`/`PLAY`. If `401` appears in practice, treat it as a misconfiguration signal and investigate gateway policy drift.
 
-First-party clients and tools should implement a unified “edge error → backoff policy” table that maps both WebSocket close codes and HTTP handshake errors on gameplay routes to concrete backoff behaviour so reconnect storms remain predictable during incidents.
+First-party clients and tools should implement a unified “edge error → backoff policy” table that maps WebSocket close codes plus handshake error classes (`POLICY_PRESSURE`, `BACKEND_UNAVAILABLE`, `REPLAY_CHECK_UNAVAILABLE`, `POLICY_DENY`, `PROTOCOL_MISMATCH`, `INTERNAL_ERROR`) to concrete backoff behaviour so reconnect storms remain predictable during incidents.
 
 For clarity: HTTP `429` is not a hard “never retry” signal in FireMUD. It is a controlled `policy_pressure_retriable` class intended to protect the edge under pressure while still allowing eventual recovery for legitimate clients.
 
@@ -200,10 +186,11 @@ Some failures leave edge connections technically alive while core gameplay servi
   - Telnet clients follow an equivalent outcome through the proxy bridge: while the bridge remains healthy, connections stay open and command failures remain explicit backend responses.
 - **`unreachable` state**
   - When Gateway cannot establish or maintain the upstream gameplay WebSocket, it enters `unreachable` and starts the `firemud.gateway.backendUnavailableGraceMs` timer.
-  - During this state, new gameplay-route handshakes (`/ws/game/**` and `/ws/game-legacy/**`) are rejected with HTTP `503`. If an established session attempts to send gameplay traffic while upstream is unreachable, Gateway immediately closes with `1013/backend_unavailable` rather than buffering or silently dropping commands.
+  - During this state, new gameplay-route handshakes (`/ws/game/**`) are rejected with HTTP `503`. If an established session attempts to send gameplay traffic while upstream is unreachable, Gateway immediately closes with `1013/backend_unavailable` rather than buffering or silently dropping commands.
 - **Sustained backend unavailability**
   - When `unreachable` remains continuous beyond `firemud.gateway.backendUnavailableGraceMs`, Spring Cloud Gateway closes affected gameplay WebSocket sessions with `1013/backend_unavailable`, signalling clients to apply reconnection/backoff rules.
   - Returning from `unreachable` to normal routing requires hysteresis (consecutive successful upstream connects/forwards) as defined in [Gateway Architecture](./system-architecture-gateway.md#backend-unavailable-grace-window), so one brief success does not flap clients.
+  - Proxy and gateway outage windows must be configured in lockstep: `TCP_PROXY_GATEWAY_RECONNECT_WINDOW_MS` equals `firemud.gateway.backendUnavailableGraceMs`, and `TCP_PROXY_GATEWAY_CIRCUIT_RECOVERY_SUCCESS_COUNT` equals gateway recovery-success threshold `N`.
   - The TCP Proxy Service enforces equivalent admission outcomes with a bridge-availability circuit breaker: while the breaker is open (continuous gateway gameplay unreachability), new Telnet sockets are rejected quickly with `backend_unavailable` and existing affected sockets are closed with `backend_unavailable` rather than being held in ambiguous half-open states. Recovery from half-open to closed requires `TCP_PROXY_GATEWAY_CIRCUIT_RECOVERY_SUCCESS_COUNT` consecutive successful bridge probes (default `3`) so proxy admission hysteresis stays aligned with gateway recovery criteria.
   - Operators should treat elevated counts of `1013` (`backend_unavailable`) and proxy‑side “backend unavailable” disconnects as indicators of core gameplay outages rather than client misuse, and use the metrics referenced in [Protocol Bridging](./system-architecture-protocol-bridging.md#backpressure--slow-clients) and the Telnet degraded runbook to distinguish these from slow‑client backpressure events.
 
@@ -226,7 +213,7 @@ The TCP Proxy Service emits `NotifyDisconnect` events to the Game Session Servic
 - **At-least-once, advisory delivery** – Transport for `NotifyDisconnect` is intentionally at-least-once: events may be delivered more than once or arrive late relative to the underlying TCP close. Game Session treats this stream as a best-effort hint about Telnet liveness, not as the source of truth; Redis session state and gameplay activity remain authoritative.
 - **Idempotency key** – Every event carries an idempotency key derived from `{proxyConnectionId, disconnectSequence}`. Game Session persists the latest processed `disconnectSequence` per `proxyConnectionId` and must treat older or duplicate events for the same pair as no-ops so proxy-side retries remain simple and safe.
 - **Idempotency record retention** – Game Session retains the latest processed sequence record per `proxyConnectionId` for at least `session_expiration_ms + TCP_PROXY_NOTIFY_DISCONNECT_MAX_RETRY_MS` so delayed retries and reconnect races remain deduplicated. These records then expire via TTL-based cleanup.
-- **Capacity and eviction guardrails** – Consumer implementations must enforce a bounded maximum cardinality for active dedupe records (for example per tenant and per process shard). If the cap is hit during disconnect floods, eviction policy must be deterministic (`oldest-expiry-first` or equivalent) and must emit explicit overload metrics/logs (for example `gamesession.notifydisconnect.dedupe.capacity_reached`) so operators can distinguish flood pressure from logic bugs.
+- **Capacity and eviction guardrails** – Consumer implementations must enforce a bounded maximum cardinality for active dedupe records (for example per tenant and per process shard). If the cap is hit during disconnect floods, eviction policy is deterministic `oldest-expiry-first`, and implementations must emit explicit overload metrics/logs (for example `gamesession.notifydisconnect.dedupe.capacity_reached`) so operators can distinguish flood pressure from logic bugs.
 - **Retry window** – The proxy retries failed `NotifyDisconnect` calls for a short, bounded window after Telnet socket close (see the TCP Proxy Service design’s **Service Interactions** section and the `TCP_PROXY_NOTIFY_DISCONNECT_MAX_RETRY_MS` configuration for exact timing). After this window, the proxy stops retrying and relies on Game Session’s own liveness detection and Redis timeouts to reconcile any missing hints.
 - **Complement to edge delivery guarantees** – `NotifyDisconnect` complements, but does not change, the at-most-once edge delivery model for gameplay commands described in [Protocol Bridging](./system-architecture-protocol-bridging.md#ordering--delivery-invariants). Late or duplicate disconnect hints must never cause healthy, newly bound sessions to be torn down; consumers always key decisions off the idempotency key and current Redis state.
 

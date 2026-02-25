@@ -24,8 +24,10 @@ These capabilities are available in the current implementation.
    versions; once a version is Published, its item templates are immutable and
    new balance changes must flow through a new Draft and publish cycle. For live
    games this means non-script balance adjustments are deployed by publishing a
-   new version and restarting game instances against the new `runtime_version`,
-   not by editing templates for an Active version in place.
+   new version and performing replacement-instance cutover (prepare new
+   `gameInstanceId`, swap admission pointer, then drain/terminate old instance)
+   against the new `runtime_version`, not by editing templates for an Active
+   version in place.
 
 Cross-service references to item and equipment templates follow the normalized invariants described in `world-editing-tools.md`:
 

@@ -369,6 +369,29 @@ def _validate_doc_semantics() -> list[Finding]:
                 ),
             )
         )
+    if "Telnet and WebSocket path availability below SLO" not in player_runbook_text:
+        findings.append(
+            Finding(
+                path=player_runbook,
+                message=(
+                    "player experience runbook incident types must explicitly include "
+                    "Telnet/WebSocket path availability below SLO"
+                ),
+            )
+        )
+
+    runbook_index = REPO_ROOT / "design" / "architecture" / "system-architecture-runbooks.md"
+    runbook_index_text = _read_text(runbook_index)
+    if not re.search(r"Player Experience Incidents[\s\S]*Telnet/WebSocket path availability", runbook_index_text):
+        findings.append(
+            Finding(
+                path=runbook_index,
+                message=(
+                    "runbook index Player Experience section must explicitly mention "
+                    "Telnet/WebSocket path availability incidents"
+                ),
+            )
+        )
 
     logging_doc = REPO_ROOT / "design" / "architecture" / "system-architecture-logging-monitoring.md"
     logging_text = _read_text(logging_doc)

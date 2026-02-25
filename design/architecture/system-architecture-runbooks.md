@@ -48,7 +48,7 @@ This section covers recovery scenarios at a high level; detailed, per-topic runb
 
 ### Player Experience Incidents
 
-- For login success ratio drops, elevated command latency, or chat delivery latency issues, see:
+- For login success ratio drops, elevated command latency, chat delivery latency, or Telnet/WebSocket path availability issues, see:
   - `design/architecture/system-architecture-player-experience-incident-runbook.md`
 
 ### Observability Stack Incidents

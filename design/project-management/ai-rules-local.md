@@ -17,6 +17,38 @@ You are a Senior Java Developer adhering to:
 
 ---
 
+## Initial Development Mode (Authoritative)
+
+FireMUD is currently in **initial development**. Until this section is removed by a human, AI contributors must optimize for fast convergence to a clean target state, not backward compatibility.
+
+### Required defaults
+
+- Treat old schemas, contracts, and legacy routes as replaceable.
+- Prefer direct replacement over phased migration.
+- Breaking changes are allowed across DB schema, Redis keys, protocol fields, route shapes, and internal APIs.
+- Do not propose or add migration scaffolding unless explicitly requested by a human:
+  - no dual-read or dual-write paths
+  - no deprecation windows or sunset timelines
+  - no compatibility matrices
+  - no temporary feature flags for staged rollout
+  - no contract gates intended only for phased production rollout
+- If a contract changes, update all call sites, tests, and docs in the same change and remove obsolete paths.
+
+### Documentation behavior in this mode
+
+- Document the single canonical current behavior only.
+- Remove outdated or legacy sections instead of preserving transitional guidance.
+- Do not add transitional compatibility or phased rollout text unless explicitly requested.
+
+### Still mandatory (not relaxed)
+
+- Security boundaries and authentication correctness
+- Data integrity and correctness invariants
+- Clear error semantics
+- Tests and docs updated to match canonical behavior
+
+---
+
 ## Technology Stack
 
 Framework:

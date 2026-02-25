@@ -28,8 +28,7 @@ Public login APIs exist for administrators and account portals, but gameplay cli
 - Ban and recovery events are logged to the Logging & Admin Service for auditability.
 - Account-to-character relationships allow players to own characters across multiple games.
 - The core `account` record represents a **global platform account** identified by `accountId`. Tables that represent per-game state or billing attach to tenants via a `tenantId` column so the same platform account can join multiple games without data leakage. Every tenant-scoped query enforces this filter as described in the [Multi-Tenancy](../../system-architecture-multi-tenancy.md) design.
-- Provides a JWKS endpoint for other services to validate tokens. Keys are rotated
-  via cert-manager as described in the [Security Architecture](../../system-architecture-security.md).
+- Provides a JWKS endpoint for other services to validate tokens. JWT signing keys and JWKS documents are rotated by dedicated Kubernetes Jobs (cert-manager rotates TLS certificates), as described in the [Security Architecture](../../system-architecture-security.md).
 - All service-to-service communication is protected by mutual TLS.
 - Gameplay client authentication is initiated via the `LOGIN` command flow described in
   [Authentication & Authorization](../../system-architecture-authentication.md); gameplay clients never see JWTs. The Game Session Service calls the internal `Authenticate` gRPC method (mTLS-protected) to verify credentials and obtain Service JWTs, while `/auth/login` remains a browser/control-plane endpoint.
@@ -246,6 +245,15 @@ Billing-safe mutation authority contract:
 - Responses include `evaluatedAt` and `membershipVersion` so callers can verify freshness and detect stale reads.
 - If authoritative membership data is unavailable, callers must fail closed for billing-safe mutations rather than relying on JWT claims alone.
 
+Entitlement producer contract:
+
+- `GetTenantEntitlements(tenantId)` is the authoritative producer for admission-critical entitlement snapshots.
+- Responses must include:
+  - `evaluatedAt` (UTC RFC3339 timestamp),
+  - `entitlementVersion` (monotonic per-tenant version string/integer),
+  - `tenantBillingSequence` (monotonic `uint64` scoped to `tenantId`).
+- `tenantBillingSequence` must be monotonic for each tenant and must advance whenever billing-state transitions can affect availability/quotas.
+
 ### Two-Factor Authentication
 
 Two-factor authentication is optional and applies only when a `two_factor_secret` is configured on an account. This is typically enabled for administrator or moderator accounts. When present, the `/auth/login` endpoint requires an `otp` field. Codes are validated using the Base32 secret as outlined in the [Security Architecture](../../system-architecture-security.md).
@@ -274,6 +282,11 @@ Both the `/auth/login` REST endpoint and the gRPC `Authenticate` method return s
 - `AUTH_UPSTREAM_FAILURE` - infrastructure/grpc failures before authentication could complete
 
 The Game Session Service translates these codes into the text-protocol `ERROR <CODE>` responses (`ERROR INVALID_CREDENTIALS`, `ERROR OTP_REQUIRED`, etc.) so Telnet and WebSocket clients always see consistent login error semantics even when human-facing messages evolve.
+
+Canonical non-login authorization/entitlement errors:
+
+- `MEMBERSHIP_AUTH_UNAVAILABLE` - authoritative membership/role lookup is unavailable for a billing-safe mutation; callers must fail closed.
+- `ENTITLEMENT_UNAVAILABLE` - authoritative entitlement snapshot could not be produced at required freshness/sequence guarantees.
 
 ## REST & gRPC Endpoints
 
@@ -305,11 +318,13 @@ The Game Session Service translates these codes into the text-protocol `ERROR <C
   ```
 
   Error responses use the standard `shared.v1.ErrorDetail` structure and `AuthenticationErrorCodes` as described below.
+- `POST /auth/connect-token` – issue a short-lived gameplay connect token for one `{tenantId, gameInstanceId}` target for first-party WebSocket handshake policy on `/ws/game/**`.
 - `POST /auth/logout` – revoke only the currently presented token. The service computes `tokenHash` from `Authorization: Bearer <token>`, deletes associated `session:auth:*:<tokenHash>` allowlist entries, and emits an audit event.
 - `POST /auth/logout-all` – revoke all active tokens for the authenticated account by setting `session:auth:revoked_after:account:<accountId>` to now and emitting an audit event. This operation is idempotent.
   - The account watermark is the immediate revocation authority. Existing `session:auth:tenant:*` and `session:auth:global:*` keys for the account may be removed asynchronously by bounded background cleanup and are not required for immediate correctness.
 - `GET /.well-known/jwks.json` – JWKS for verifying issued JWT tokens.
 - `GET /tenants/{tenantId}/memberships/{accountId}` – authoritative live membership/role lookup used by billing-safe mutation guards.
+- `GET /tenants/{tenantId}/entitlements` – authoritative runtime entitlement snapshot including `evaluatedAt`, `entitlementVersion`, and `tenantBillingSequence`.
 - `POST /auth/request-email-verification` – send a verification email for the account.
 - `POST /auth/verify-email` – confirm the verification token.
 
@@ -341,7 +356,9 @@ curl -X POST http://localhost:8080/auth/login \
 - `RequestPasswordReset(RequestPasswordResetRequest) returns (RequestPasswordResetResponse)` – send a reset token.
 - `CompletePasswordReset(CompletePasswordResetRequest) returns (CompletePasswordResetResponse)` – reset the password using a token.
 - `LinkExternalAccount(LinkExternalAccountRequest) returns (LinkExternalAccountResponse)` – attach a third-party account.
+- `IssueConnectToken(IssueConnectTokenRequest) returns (IssueConnectTokenResponse)` – issue short-lived gameplay connect token for `/ws/game/**` handshake policy.
 - `GetTenantMembership(GetTenantMembershipRequest) returns (GetTenantMembershipResponse)` – authoritative account-tenant membership/role lookup for billing-safe mutation guards.
+- `GetTenantEntitlements(GetTenantEntitlementsRequest) returns (GetTenantEntitlementsResponse)` – authoritative runtime entitlement snapshot including freshness/sequence fields.
 - `RequestEmailVerification(RequestEmailVerificationRequest) returns (RequestEmailVerificationResponse)` – send a verification email for the account.
 - `VerifyEmail(VerifyEmailRequest) returns (VerifyEmailResponse)` – confirm the email token.
 - `CreatePaymentIntent(CreatePaymentIntentRequest) returns (CreatePaymentIntentResponse)` – initiate a payment.

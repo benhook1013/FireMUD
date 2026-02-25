@@ -8,7 +8,7 @@ Kubernetes Secrets has been selected as the platform's unified secret storage so
 
 ## Token Issuance & Secret Storage
 
-- The **Account Service** signs JWTs used for internal gRPC authorization.
+- The **Account Service** signs JWTs for both control-plane browser/API sessions (`/auth/login` profile) and internal service authorization (Service JWT profile).
 - Signing keys are stored as **Kubernetes Secrets** and rotated by dedicated Kubernetes Jobs. See [JWT Key & JWKS Rotation Workflow](#jwt-key--jwks-rotation-workflow) for details.
 - In player-facing environments, signing keys must be mounted from files and consumed via `FIREMUD_AUTH_JWT_SECRET_PATH`; inline-only JWT secret configuration is restricted to local/dev or explicitly ephemeral stacks.
 - Keys are **never committed** to the repository and can be rotated without redeploying other services.
@@ -77,13 +77,14 @@ When a JWT signing key is suspected to be compromised, operators follow a more a
 
 - Immediately run compromise-mode key rotation to generate a new signing keypair and update `jwt-signing-keys`.
 - Regenerate `jwt-jwks` with **only uncompromised keys**. Do not retain compromised keys in overlap slots (`previous.key`) during compromise response.
-- Invalidate active sessions for affected scope by running scoped (or global, if needed) Redis session cleanup so reconnects require a fresh `LOGIN`.
+- Invalidate active sessions for affected scope by advancing revocation watermarks (`session:auth:revoked_after:*`) via Account Service authority, then perform bounded indexed cleanup as background hygiene so reconnects require a fresh `LOGIN`.
 - Restart or force reload JWT validators where needed, then verify validator cache convergence by checking that no service is accepting tokens signed by the compromised `kid`.
 - Optionally tighten `FIREMUD_AUTH_JWT_EXPIRATION_MS` for a short containment window after cutover to reduce exposure from any residual stale clients.
 - Monitor authentication and authorization metrics/logs (failed validations, unexpected 401/403 patterns) to confirm new-key adoption and incident stabilization.
 
 Normal rotations use the overlap-preserving `jwt-rotation` path without session invalidation. Compromise rotations must use hard cutover semantics and be tracked in incident records, including affected tenants, replaced key IDs, invalidation scope, and validation-convergence evidence.
 Compromise-mode rotation is a mandatory runbook-driven process and must include explicit evidence (rotated key IDs, invalidation scope, and validator-convergence checks) before reopening player-facing traffic.
+Compromise response must not rely on wildcard key scans/deletes in hot paths; revocation correctness comes from watermark checks, with cleanup performed by bounded background workflows.
 
 ### SessionAttestation Key Lifecycle
 

@@ -274,7 +274,7 @@ These signals allow operators to treat backup and verification health as first-c
 
 ## Post-Restore Secret Hardening
 
-Restoring a production or staging cluster from backup recreates Kubernetes Secrets and ConfigMaps as they existed at the time of the snapshot. To avoid bringing back stale or compromised credentials, operators must rotate critical secrets immediately after a restore.
+Restoring a player-facing environment (`hobby-self-hosted`, `staging`, or `production`) from backup recreates Kubernetes Secrets and ConfigMaps as they existed at the time of the snapshot. To avoid bringing back stale or compromised credentials, operators must rotate critical secrets immediately after a restore.
 
 Post-restore hardening is performed by a dedicated Kubernetes Job (for example `post-restore-secret-hardening`) that coordinates two flows:
 
@@ -305,7 +305,7 @@ Post-restore hardening is performed by a dedicated Kubernetes Job (for example `
      - Operator access: operator-only client certificates and any kube credentials used by operator tooling.
    - If these credentials are rotated out-of-band (for example via the cloud provider console), record the required re-bind/re-issue steps in the relevant runbooks so the restore procedure remains repeatable.
    - Before enabling external traffic, run a mandatory external credential validation pass and fail the restore if validation does not pass:
-     - `dev-tools/restores/validate-external-credentials.sh <staging|production>`
+     - `dev-tools/restores/validate-external-credentials.sh <hobby-self-hosted|staging|production>`
      - Provide expected values via environment variables such as `EXPECTED_PG_DUMP_BUCKET`, `EXPECTED_ASSET_STORE_BUCKET`, and `EXPECTED_ASSET_STORE_ENDPOINT`, and optionally `PRODUCTION_PG_DUMP_BUCKET` / `PRODUCTION_ASSET_STORE_BUCKET` when validating staging isolation.
 
 The `post-restore-secret-hardening` Job runs after PostgreSQL and core services have been restored and basic health checks pass, but **before** the restored environment is considered player-facing. It uses least-privilege service accounts:
@@ -320,6 +320,8 @@ Runbooks should treat this Job (or equivalent operator automation for hobby/self
 3. Run `dev-tools/restores/validate-external-credentials.sh <hobby-self-hosted|staging|production>` with environment-specific expected values and ensure it succeeds.
 4. Confirm application health checks, login/session flows, and JWT validation.
 5. Only then route external or player traffic to the restored cluster.
+
+For hobby/self-hosted environments that do not use the Kubernetes Job template directly, operators must run an equivalent one-shot restore-hardening automation that performs the same three control groups (JWT/JWKS rotation, DB credential rotation, external credential validation) and writes evidence to `design/operations/deployments/hobby-self-hosted/recovery/<recovery-ref>.json` before reopening player traffic.
 
 ---
 
@@ -339,6 +341,18 @@ Recommended flow:
 5. If issues appear, revert to the previous known-good password and Secret value and repeat the rotation later with additional diagnostics.
 
 No CronJob is defined for automatic DB credential rotation; any such cadence should be explicitly chosen based on compliance requirements and operational experience.
+
+## Hobby Backup Compliance Evidence
+
+`hobby-self-hosted` environments must maintain a versioned backup-compliance record at `design/operations/deployments/hobby-self-hosted/backup-compliance.yaml` with:
+
+- `lastSuccessfulBackupAt`
+- `lastRestoreDrillAt`
+- `retentionDailyPoints`
+- `backupTooling`
+- `evidenceRefs[]`
+
+Restore hardening for hobby/self-hosted must fail closed for player-traffic reopen if this record is missing, stale, or below baseline (`>=1` backup/24h, `>=7` daily retention points, `>=1` restore drill/30d).
 
 ---
 

@@ -31,6 +31,7 @@ To make script patch rollback meaningful:
 - On execution, Game Session must enforce a **version fence**:
   - If a command’s `scriptPatchVersion` does not match the game instance’s currently pinned `scriptPatchVersion`, Game Session must not execute it.
   - Rejection must be recorded with enough identifiers (`tenantId`, `gameInstanceId`/`regionId`, `entityId`, `scriptId`, `scriptEventId`, `scriptPatchVersion`) for operators to diagnose why work was dropped.
+  - Rejected entries must be removed or moved to a bounded dead-letter store with explicit `maxAge`/`maxRows` and alert-backed cleanup cadence.
 - Operational rollback must include a drain/purge step for any queued automation work items and staging entries that cannot satisfy the version fence.
 
 ### 4) `scriptEventId` Identity and At-Most-Once Dedupe
@@ -62,7 +63,11 @@ Dry-run executions are privileged and must not destabilize production:
 ### 7) Reload Backpressure Contract
 
 - During `reloadState=RELOADING`, the Automation & Scripting Service must return an explicit application-level backpressure outcome (not a silent drop).
-- For low-rate external events, callers may retry with the same `scriptEventId` using a bounded exponential backoff and jitter.
+- For low-rate external events, callers may retry with the same `scriptEventId` using bounded exponential backoff and jitter:
+  - `maxAttempts` must be finite and documented per client.
+  - `maxElapsedMs` must be finite and documented per client.
+  - Jitter must be non-zero to avoid synchronized retry storms.
+- Backpressure responses must include a server hint (`retryAfterMs`) so callers can align retries with expected reload/rollback progress.
 - For timer-derived scheduler events, best-effort timer semantics apply; triggers not admitted during reload are not backfilled unless explicitly covered by a bounded catch-up rule.
 
 ### 8) Plugin Version Fencing and Control-Plane Scope
@@ -74,7 +79,7 @@ Plugins are executed by the same runtime engine as scripts and must not rely on 
 - Script work items and tick commands produced by plugins must carry `pluginId` and `pluginVersionId` in addition to `scriptPatchVersion`.
   - On execution, Game Session must enforce a **plugin version fence** analogous to the script patch fence:
   - If a command’s embedded `pluginVersionId` does not match the instance’s currently active plugin version for that `pluginId`, Game Session must not execute it.
-    - Rejection must be recorded with enough identifiers for diagnosis, and the rejected queue entry must be removed or moved to a bounded dead-letter store so mismatches cannot accumulate unboundedly.
+    - Rejection must be recorded with enough identifiers for diagnosis, and the rejected queue entry must be removed or moved to a bounded dead-letter store with explicit `maxAge`/`maxRows` and alert-backed cleanup cadence.
 
 ### 9) Rollback Convergence Timeout Contract
 
@@ -95,6 +100,15 @@ Plugins are executed by the same runtime engine as scripts and must not rely on 
   - Producer of record (`ScriptPatchPinChanged` events).
   - Replay source and retention window.
   - Eventual-consistency SLO for `GetScriptPatchInstanceRolloutStatus` / `ListScriptPatchInstanceRollouts`.
+
+### 11) Pin-State Degraded Override Governance
+
+- Admission decisions must fail closed with `pin_state_unavailable` when bounded-staleness pin refresh cannot reach an authoritative source.
+- Any degraded override that allows admission while authoritative pin state is unavailable must be:
+  - explicit and time-bounded,
+  - scoped at least to `(tenantId, gameInstanceId)`,
+  - authorized and audited with `controlPlaneRequestId`, `actor`, and `reason`,
+  - automatically reverted to fail-closed behavior at TTL expiry.
 
 ## Related Documents
 

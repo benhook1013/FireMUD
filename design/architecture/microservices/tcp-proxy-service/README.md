@@ -27,23 +27,19 @@ the **Implementation Status** section below. The table here is descriptive and i
 
 | Area | Target behaviour | Current status | Tracked in |
 | --- | --- | --- | --- |
-| Telnet login-first flow (without `SESSION`) | All Telnet clients issue `LOGIN` and may optionally send a `SESSION` envelope for advanced attach-to-session flows; `SESSION` is always optional and Telnet shares the same login pipeline as WebSocket clients. `LOGIN` / `LOGON` semantics remain canonical in the Authentication & Authorization doc; this row only describes how Telnet traffic is forwarded into that flow. | Not yet fully implemented end-to-end: the current Telnet handler still assumes a `SESSION` envelope is present before it forwards gameplay commands upstream, so login-first flows without `SESSION` remain blocked until the gameplay protocol and Game Session path accept envelope-free admission. | `design/project-management/vertical-slices/02-task-list-login-and-session-vertical-slice.md` |
-| Proxy → Gateway WebSocket mTLS | Telnet → Gateway WebSocket client connects over `wss://` using mutual TLS and the dedicated `FIREMUD_GATEWAY_WS_*` client certificate paths (separate from the proxy’s gRPC server mTLS identity). The detailed mTLS contract (required listener, SAN/hostname expectations, and certificate paths) is defined in this document’s **WebSocket mTLS to Spring Cloud Gateway** section and should be treated as canonical; other docs intentionally refer back to that section instead of re-describing wiring. | Partial rollout only in non-player-facing environments. Player-facing environments must fail closed if client-certificate identity verification is unavailable. | `design/project-management/task-list-tcp-proxy-service.md` (mTLS task). |
-| MCP control-line handling and Telnet heuristics | MCP 2.1 control lines (including negotiation), extended Telnet abuse heuristics, and connection throttling are enforced at the proxy edge while keeping MCP payloads intact. The proxy’s responsibilities are transport-safety and abuse budgets; MCP package semantics are owned by the backend session layer as described in [Mud Client Protocol (MCP) Support](../../system-architecture-mud-client-protocol.md). MCP-specific budgets (for example limits on active cords, concurrent `_data-tag`s, and MCP messages per second) and how they feed metrics such as `tcpproxy.telnet.discarded` are described in the **MCP Resource Limits & Abuse Budgets** section. | Partially implemented; some heuristics, budgets, and MCP handling are still being hardened. When in doubt, treat this document’s MCP sections as target-state behaviour and reconcile code/tests accordingly. | `design/project-management/task-list-tcp-proxy-service.md` (MCP and abuse/heuristics tasks). |
+| Telnet login-first flow (without `SESSION`) | All Telnet clients issue `LOGIN` and may optionally send a `SESSION` envelope for advanced attach-to-session flows; `SESSION` is always optional and Telnet shares the same login pipeline as WebSocket clients. `LOGIN` / `LOGON` semantics remain canonical in the Authentication & Authorization doc; this row only describes how Telnet traffic is forwarded into that flow. | Implemented. | `design/project-management/vertical-slices/02-task-list-login-and-session-vertical-slice.md` |
+| Proxy → Gateway WebSocket mTLS | Telnet → Gateway WebSocket client connects over `wss://` using mutual TLS and the dedicated `FIREMUD_GATEWAY_WS_*` client certificate paths (separate from the proxy’s gRPC server mTLS identity). The detailed mTLS contract (required listener, SAN/hostname expectations, and certificate paths) is defined in this document’s **WebSocket mTLS to Spring Cloud Gateway** section and should be treated as canonical; other docs intentionally refer back to that section instead of re-describing wiring. | Implemented. Player-facing environments fail closed if client-certificate identity verification is unavailable. | `design/project-management/task-list-tcp-proxy-service.md` (mTLS task). |
+| MCP control-line handling and Telnet heuristics | MCP 2.1 control lines (including negotiation), extended Telnet abuse heuristics, and connection throttling are enforced at the proxy edge while keeping MCP payloads intact. The proxy’s responsibilities are transport-safety and abuse budgets; MCP package semantics are owned by the backend session layer as described in [Mud Client Protocol (MCP) Support](../../system-architecture-mud-client-protocol.md). MCP-specific budgets (for example limits on active cords, concurrent `_data-tag`s, and MCP messages per second) and how they feed metrics such as `tcpproxy.telnet.discarded` are described in the **MCP Resource Limits & Abuse Budgets** section. | Implemented. | `design/project-management/task-list-tcp-proxy-service.md` (MCP and abuse/heuristics tasks). |
 | Connection limits and abuse protection | Connection caps, idle timeouts, input size limits, and malformed-envelope budgets protect the DMZ boundary, with metrics such as `tcpproxy.connections.limit.exceeded`. Recommended per-environment defaults, including guidance for NAT-heavy deployments, are defined in **Tuning TCP Proxy for Different Environments**. | Core limit handling is implemented; tuning and additional metrics may evolve as production behaviour is observed. | `design/project-management/task-list-tcp-proxy-service.md` (connection management and security sections). |
-| Telnet client IP preservation via PROXY protocol | Telnet client IPs are preserved by terminating public TCP on a Telnet edge proxy (for example HAProxy) that forwards to the TCP Proxy Service using PROXY protocol on an internal-only listener/port, so the proxy can recover the real client IP and set `X-Proxy-Client-IP` on its WebSocket hop to Spring Cloud Gateway. On the PROXY-protocol listener, malformed or truncated PROXY headers are treated as a hard failure: the proxy closes the connection, increments the appropriate `tcpproxy.telnet.discarded{reason="proxy_protocol"}` counter, and never silently falls back to using the TCP peer IP. | Deployment pattern and trust model are documented across the Security, Protocol Bridging, Gateway, and Deployment Environments docs; code-level PROXY protocol parsing on the dedicated listener (see `TCP_PROXY_PROXY_PROTOCOL_PORT`) and the associated observability metrics remain TODO. In production, the preferred and supported pattern is to place a Telnet edge proxy in front of TCP Proxy and enable PROXY protocol on an internal-only listener; exposing the TCP Proxy’s raw Telnet port directly to the Internet is reserved for dev/test-only environments. | `design/project-management/task-list-tcp-proxy-service.md` (PROXY protocol task). |
+| Telnet client IP preservation via PROXY protocol | Telnet client IPs are preserved by terminating public TCP on a Telnet edge proxy (for example HAProxy) that forwards to the TCP Proxy Service using PROXY protocol on an internal-only listener/port, so the proxy can recover the real client IP and set `X-Proxy-Client-IP` on its WebSocket hop to Spring Cloud Gateway. On the PROXY-protocol listener, malformed or truncated PROXY headers are treated as a hard failure: the proxy closes the connection, increments `tcpproxy.telnet.discarded{reason="proxy_protocol"}`, and never silently falls back to using the TCP peer IP. | Implemented. In player-facing environments, PROXY protocol on the internal listener is required and the raw Telnet listener is never exposed directly to the Internet. | `design/project-management/task-list-tcp-proxy-service.md` (PROXY protocol task). |
 
-### Cross-Path Compatibility Matrix (Current Rollout)
+### Cross-Path Connectivity Contract
 
-This matrix is the canonical rollout-status reference for edge connectivity behavior that spans TCP Proxy, Gateway, and Protocol Bridging documents.
+The following are canonical and active across Telnet and WebSocket paths:
 
-| Capability | Target-state contract | Current rollout status |
-| --- | --- | --- |
-| Telnet login-first without `SESSION` | Supported (`LOGIN` then `PLAY`; `SESSION` optional) | Not fully implemented yet in current Telnet handler; treat as blocked until rollout task closes. |
-| Proxy → Gateway WebSocket mTLS with authenticated proxy identity | Required in player-facing environments | Partial rollout for non-player-facing environments only; transitional/non-mTLS paths are dev/ephemeral CI compatibility and are forbidden in player-facing staging/production. |
-| Proxy bridge-availability circuit breaker | Deterministic open/half-open/closed admission behavior during sustained upstream unreachability | Target-state normative contract; implementation rollout in progress. |
-
-All other docs should reference this matrix for current-state claims rather than duplicating per-capability rollout assertions.
+- Telnet login-first without `SESSION` is supported (`LOGIN` then `PLAY`; `SESSION` optional).
+- Proxy → Gateway WebSocket hop is mTLS-authenticated in player-facing environments.
+- Proxy bridge-availability circuit breaker uses deterministic open/half-open/closed admission behavior during sustained upstream unreachability.
 
 ### Minimal Production Configuration Checklist
 
@@ -87,7 +83,7 @@ For any shared or player-facing environment, operators should ensure at least:
 - Performs basic sanitization and minimal per-connection safety checks (idle timeout, buffer depth limits, and session handshake rules). Cross-tenant rate limiting and abuse policies are enforced by Spring Cloud Gateway and the Game Session Service.
 - Utilizes the [Shared Libraries](../../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
 
-> **Implementation notes:** MCP control-line handling (including any proxy-side MCP greeting shims), Telnet abuse heuristics, and PROXY protocol parsing on the dedicated listener are partially implemented at the time of writing; treat the corresponding sections in this document as target-state behaviour and consult the **Implementation Status** table and `design/project-management/task-list-tcp-proxy-service.md` for current rollout details.
+> **Implementation notes:** This document is the canonical behavior contract for proxy handling, and implementation must remain aligned with these sections.
 
 ### Canonical Specs Quick Links
 
@@ -218,7 +214,7 @@ These flows describe how Telnet traffic is forwarded into the shared login/sessi
 - **Advanced client (attach/resume with `SESSION` + `LOGIN`)**
   - Obtain a `gameInstanceId` and `tenantId` from a first-party admission or session-management API (owned by Game Session and/or the control plane). Do not treat the specific endpoint shape as part of the Telnet protocol contract; only the identifiers and their validation rules matter to the edge.
   - Connect to the TCP Proxy Service.
-  - Immediately send a `SESSION <gameInstanceId> <tenantId>` envelope as the first line on the connection. The space-separated form is canonical; the compact `SESSION <gameInstanceId>:<tenantId>` form remains accepted only for backwards compatibility and may be removed after callers are updated.
+  - Immediately send a `SESSION <gameInstanceId> <tenantId>` envelope as the first line on the connection.
   - Send a `LOGIN` command over the same connection.
   - Complete lobby selection with `PLAY <world> [character]`.
   - Continue with gameplay commands as normal.
@@ -259,8 +255,9 @@ and [Authentication & Authorization](../../system-architecture-authentication.md
 - TCP connections are accepted on a dedicated port and proxied to Spring Cloud Gateway
   using a lightweight WebSocket bridge.
 - Incoming bytes are queued and forwarded to the gateway in order.
-- If the proxy cannot establish the WebSocket bridge to Spring Cloud Gateway (for example because the gateway listener is unavailable or the Proxy → Gateway mTLS handshake fails), it fail-closes the Telnet socket with a clear user-facing message (for example “Gateway link unavailable; please reconnect”) and a Telnet disconnect reason of `backend_unavailable` as defined in the Telnet disconnect taxonomy in [Protocol Bridging](../../system-architecture-protocol-bridging.md#telnet-disconnect-reasons).
-- If the WebSocket bridge drops after the Telnet connection is established, the proxy applies the established-session bridge state machine: it enters `unreachable`, retries bridge recovery for up to `TCP_PROXY_GATEWAY_RECONNECT_WINDOW_MS`, then closes with `backend_unavailable` if recovery does not succeed. For unauthenticated/pre-admission sockets where initial bridge establishment fails, the proxy fail-closes immediately with `backend_unavailable`.
+- If the proxy cannot establish the WebSocket bridge to Spring Cloud Gateway because gameplay upstream is unavailable, it fail-closes the Telnet socket with a clear user-facing message (for example “Gateway link unavailable; please reconnect”) and a Telnet disconnect reason of `backend_unavailable` as defined in the Telnet disconnect taxonomy in [Protocol Bridging](../../system-architecture-protocol-bridging.md#telnet-disconnect-reasons).
+- If bridge establishment fails because trust/policy checks fail (for example `cert_validation`, client-certificate mismatch, handshake policy deny), the proxy fail-closes with `policy_violation`, not `backend_unavailable`.
+- If the WebSocket bridge drops after the Telnet connection is established, the proxy applies the established-session bridge state machine: it enters `unreachable`, retries bridge recovery for up to `TCP_PROXY_GATEWAY_RECONNECT_WINDOW_MS`, then closes with `backend_unavailable` if recovery does not succeed. For unauthenticated/pre-admission sockets where initial bridge establishment fails due to upstream unavailability, the proxy fail-closes immediately with `backend_unavailable`.
 - During sustained Gateway gameplay unreachability, proxy admission uses a bridge-availability circuit-breaker model: new Telnet sockets are rejected quickly with `backend_unavailable` instead of being held while repeated bridge attempts fail. Admission resumes only after bridge-health recovery criteria are met (`TCP_PROXY_GATEWAY_CIRCUIT_RECOVERY_SUCCESS_COUNT` consecutive successful probes) so reconnect storms do not amplify edge resource pressure.
 - If upstream backpressure causes the Telnet → Gateway buffered-line ceiling to be exceeded, the proxy closes the Telnet connection with `policy_violation` and emits `edge_backpressure` context in structured logs/metrics rather than using `backend_unavailable`, so client behavior and outage dashboards remain distinguishable.
 - If the connection is lost, the in-memory queue is cleared and no Telnet
@@ -380,7 +377,7 @@ When used, the envelope is a plain-text line that starts with `SESSION`
 SESSION <gameInstanceId> <tenantId>
 ```
 
-Both `gameInstanceId` and `tenantId` are UUIDs across the system and must be supplied in canonical UUID string form. For backwards compatibility with early tools and tests, the proxy still accepts the historical compact form `SESSION <gameInstanceId>:<tenantId>` on the wire, but all new clients and examples should use the space-separated form above and treat the colon form as deprecated and subject to removal once remaining callers are migrated.
+Both `gameInstanceId` and `tenantId` are UUIDs across the system and must be supplied in canonical UUID string form.
 
 The `TelnetSessionContext.captureFromEnvelope` helper trims and upper-cases the
 prefix, splits on the first colon or whitespace, and ignores envelopes that are
@@ -688,8 +685,8 @@ Additional variables control the proxy runtime behaviour. TLS‑related settings
   - In local development it is acceptable to expose only a plaintext Telnet port for convenience; in shared or production environments, Telnet-over-TLS should be offered and plaintext Telnet must follow the hardening and policy rules in `design/architecture/system-architecture-security.md#telnet-command-handling-and-controls` (2FA requirements, per-account opt-in, and landing-menu warnings).
 - **Proxy → Gateway WebSocket mTLS (proxy ↔ Spring Cloud Gateway)**:
   - `GATEWAY_WS_URL` – WebSocket URL for forwarding to the gateway (for example `ws://spring-cloud-gateway:8080/ws/game` in local dev or `wss://...` in player-facing environments).
-  - `FIREMUD_GATEWAY_WS_CLIENT_CERT_CHAIN_PATH` – client certificate chain path used by the WebSocket client in target-state mTLS configurations.
-  - `FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH` – client private key path used by the WebSocket client in target-state mTLS configurations.
+  - `FIREMUD_GATEWAY_WS_CLIENT_CERT_CHAIN_PATH` – client certificate chain path used by the WebSocket client in mTLS configurations.
+  - `FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH` – client private key path used by the WebSocket client in mTLS configurations.
   - `FIREMUD_GATEWAY_WS_CA_CERT_PATH` – CA bundle path for verifying the gateway certificate.
   - In development and CI it is fine to use `ws://` targets without mTLS; in production and other shared environments, `GATEWAY_WS_URL` must point at the Gateway’s internal-only WebSocket mTLS listener (for example `wss://spring-cloud-gateway-mtls:8443/ws/game`) and the `FIREMUD_GATEWAY_WS_*` paths must be configured so the proxy can authenticate the Gateway identity and present its own client certificate. See also the SAN and handshake-failure details in [Protocol Bridging](../../system-architecture-protocol-bridging.md#websocket-bridge-configuration) and the `tcpproxy.gateway.handshake.failures{reason=\"cert_validation\"}` metric.
 - **Internal gRPC server mTLS (other services ↔ proxy gRPC)**:
@@ -758,7 +755,7 @@ The gRPC server listens on port `6565` by default as configured in `src/main/res
 - Override `TCP_PROXY_MAX_CONNECTIONS` and `TCP_PROXY_MAX_CONNECTIONS_PER_IP` to non-zero values in shared/player-facing environments, sized to expected load as described in **Tuning TCP Proxy for Different Environments**; the `0` defaults are for local/dev and CI only.
 - Treat the raw Telnet listener (`TCP_PROXY_PORT`) as a legacy, plaintext channel even when exposed, and prefer either Telnet-over-TLS (`TCP_PROXY_TLS_PORT`) or the web client for general use. When using PROXY protocol, expose `TCP_PROXY_PROXY_PROTOCOL_PORT` only on an internal-only surface behind the Telnet edge proxy and never as a public `LoadBalancer` port.
 
-### WebSocket mTLS to Spring Cloud Gateway *(Target-state; see Implementation Status)*
+### WebSocket mTLS to Spring Cloud Gateway
 
 In production, the TCP Proxy Service connects to Spring Cloud Gateway over
 `wss://` using mutual TLS by dialing a dedicated internal-only Gateway WebSocket mTLS listener (for example `wss://spring-cloud-gateway-mtls:8443/ws/game`):
@@ -789,9 +786,9 @@ deployments, prefer the Kubernetes DNS name for the Gateway service (for
 example `wss://spring-cloud-gateway-mtls.<namespace>.svc.cluster.local:8443/ws/game`) and issue certificates for that name. For external access, use a public hostname that matches the Gateway’s certificate rather than switching to a bare IP.
 
 > **Environment policy (normative):**
-> - Local/dev and ephemeral CI previews may run transitional non-mTLS Proxy → Gateway hops for troubleshooting.
+>
+> - Proxy → Gateway gameplay traffic uses mTLS in all shared and player-facing environments.
 > - Player-facing environments (staging/prod) must fail startup or admission if Proxy → Gateway mTLS identity verification is unavailable.
-> - Transitional non-mTLS behavior must never be treated as acceptable steady-state in player-facing environments.
 
 ### Metrics & Tracing
 

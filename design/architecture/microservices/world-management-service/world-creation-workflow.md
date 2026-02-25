@@ -83,7 +83,7 @@ Instance expiry and operator-driven shutdown must use an explicit cross-service 
 
 - Game Session must first mark the target instance non-admissible/draining before World starts termination.
 - World Management starts an `InstanceTermination` Saga and marks the instance `TERMINATING`.
-- Entity Management runs an idempotent cleanup step keyed by `(tenantId, gameInstanceId, sagaInstanceId, stepName)` that removes synthetic room-ground containers and containment rows scoped to the terminating instance.
+- Entity Management runs an idempotent cleanup step keyed by `(tenantId, gameInstanceId, terminationRequestId, stepName)` (with `sagaInstanceId` as execution trace only) that removes synthetic room-ground containers and containment rows scoped to the terminating instance.
 - World Management finalizes world-side cleanup and marks the instance `TERMINATED` only after Entity Management confirms cleanup completion.
 
 `expires_at` jobs must enqueue this termination workflow; they must not hard-delete world rows for a `gameInstanceId` before cross-service cleanup convergence is confirmed.

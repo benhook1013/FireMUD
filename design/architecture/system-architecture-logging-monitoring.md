@@ -106,7 +106,10 @@ Environment and service docs that introduce new player-facing flows should:
 - Reuse these SLIs where possible (for example by tagging `command_end_to_end_latency_ms` with a new `command` label), or
 - Add new SLIs to this section so that operators have a single, authoritative list of player-centric targets.
 
-Grafana dashboards under `design/observability/grafana` include a dedicated “Player Experience” dashboard that surfaces these SLIs for each environment and links back to the relevant runbooks when SLOs are breached.
+Grafana dashboards under `design/observability/grafana` include:
+
+- `player-experience.json` – canonical SLO compliance dashboard for player SLIs.
+- `player-experience-drilldown.json` – incident drilldown dashboard for per-outcome and per-command/channel investigation after an SLO breach.
 
 ### Player Experience Metrics Catalog (Contract)
 

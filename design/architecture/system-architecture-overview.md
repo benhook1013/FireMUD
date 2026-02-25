@@ -34,7 +34,7 @@ The documents linked from this overview describe the target-state design, but th
 - **Game definitions and rules are data-driven and editable via tooling without redeploying code**; see the [Game Design Service documentation](./microservices/game-design-service/README.md).
 - **Game Session Service orchestrates live game instances**, handling tick execution and runtime configuration
 - [**Feature flags**](./microservices/game-design-service/feature-flags.md) are defined at design-time in the Game Design Service; Logging & Admin provides the operator UI for runtime toggles, while Game Session owns the runtime override state and enforcement during gameplay.
-- **One session per character is enforced** — logging in from another client forcibly transfers control to the new session and terminates the old one
+- **One active gameplay binding per identity key is enforced** — logging in from another client forcibly transfers control to the new session and terminates the old one. The uniqueness key is mode-dependent (`identity_mode=interim` uses `{tenantId, gameInstanceId, accountId}`; `identity_mode=canonical` uses `{tenantId, gameInstanceId, characterId}`), as defined in [Authentication & Authorization](./system-architecture-authentication.md#gameplay-identity-mode-contract-normative).
 - **Multi-tenant architecture shares infrastructure across games; per-game resource quotas prevent one tenant from exhausting cluster capacity.**
 - **Admin and operations tooling communicates with Spring Cloud Gateway over an internal gRPC management API** for route and health management; no gameplay traffic flows over this control-plane path.
 
@@ -70,7 +70,7 @@ FireMUD uses two complementary authentication modes that share a common identity
 - **Gameplay sessions (players)**  
   - Players authenticate using the `LOGIN` command handled by the **Game Session Service**.  
   - Game Session delegates credential verification (including 2FA, external identity providers, and lockout rules) to the **Account Service**, which owns all credential and account-security decisions.  
-  - On success, Game Session creates and maintains a Redis-backed gameplay session binding (tenant, character, tick-region context) and enforces “one session per character”. Gameplay traffic is authenticated by this Redis session context rather than by browser-style JWTs sent on each message.
+  - On success, Game Session creates and maintains a Redis-backed gameplay session binding (tenant, character, tick-region context) and enforces one active binding per configured identity key (`identity_mode` contract in Authentication & Authorization). Gameplay traffic is authenticated by this Redis session context rather than by browser-style JWTs sent on each message.
 
 - **Admin and creator sessions (control plane)**  
   - Admin and creator tools authenticate via HTTP/gRPC using JWTs issued by the **Account Service**, which publishes JWKS and remains the source of truth for token semantics.  

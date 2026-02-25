@@ -167,7 +167,7 @@ them. In practice this means:
 
 - An asset row is eligible for purge only if:
   - it is not referenced by any `version_asset` row where the associated version
-    is in the Published, Active, or Retired states, and
+    is in a non-Retired state (Draft, Published, Active, or Failed), and
   - it is not reachable from any open revision, branch, or Draft version via
     the normalized history reference tables (for example `revision_asset`)
     described in

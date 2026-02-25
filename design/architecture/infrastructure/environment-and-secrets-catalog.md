@@ -46,7 +46,7 @@ Services connect to the shared PostgreSQL database using the following variables
 | `FIREMUD_POSTGRES_USER` | Username | `firemud` |
 | `FIREMUD_POSTGRES_PASSWORD` | Password | `firemud` |
 
-These defaults exist only to make local development and ephemeral stacks easy to bootstrap. Any non-ephemeral Kubernetes environment (`SPRING_PROFILES_ACTIVE=prod` in staging/production) must supply real, per-environment credentials via Kubernetes Secrets and must not run with `.env.sample`-style defaults.
+These defaults exist only to make local development and ephemeral stacks easy to bootstrap. Any non-ephemeral player-facing Kubernetes environment (`SPRING_PROFILES_ACTIVE=prod` in hobby-self-hosted/staging/production) must supply real, per-environment credentials via Kubernetes Secrets and must not run with `.env.sample`-style defaults.
 
 In production, these variables are normally sourced from a Secret such as `postgres-credentials`. Higher-privilege credentials (for example in a `postgres-admin-credentials` Secret) are used by Kubernetes Jobs like `db-credential-rotation` to rotate application passwords as described in `system-architecture-backup-recovery.md#post-restore-secret-hardening` and `system-architecture-backup-recovery.md#planned-db-credential-rotation`. Routine rotation uses explicit operator runbooks rather than an automatic schedule.
 

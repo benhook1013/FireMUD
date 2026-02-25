@@ -7,7 +7,7 @@ Authentication is performed via plaintext `LOGIN` commands for gameplay protocol
 ## Implemented Status
 
 - Prompt-based `LOGIN` flows (username then password prompts) are part of the target protocol design; until they are fully implemented across transports, clients should use `LOGIN <username> <password> [otp]` / `LOGON ...`.
-- Character selection is part of the target design; until it ships, the platform binds gameplay sessions to a default character identity derived from the authenticated account and treats the `playerId` field as an abstract character identifier for forward compatibility.
+- Character selection and gameplay takeover semantics are canonicalized on `{tenantId, gameInstanceId, characterId}`; `playerId` is an alias only.
 - `/sessions/{sessionId}/refresh-roles` exists as an operational hook; until full role-refresh token regeneration is wired end-to-end, implementations may expose a placeholder response while still performing automatic refresh on role updates.
 
 ## Contract Decisions (Normative)
@@ -17,7 +17,6 @@ The following contract decisions are mandatory and resolve cross-document ambigu
 - **Revocation writer authority** – The Account Service is the sole writer of `session:auth:revoked_after:*` watermarks. Other services must publish billing/security events and must not write these watermark keys directly.
 - **Tenant watermark scope** – `session:auth:revoked_after:tenant:<tenantId>` applies to tenant-scoped regular and gameplay-affecting operations. It does not block explicitly classified billing-safe or support-safe routes.
 - **Gameplay session identity key** – Session uniqueness and takeover scope are keyed by `{tenantId, gameInstanceId, characterId}`. Legacy `playerId` fields are aliases only and must map one-to-one to `characterId`.
-- **Interim identity key before character-selection GA** – Until explicit character selection is fully implemented in production flows, takeover uniqueness is keyed by `{tenantId, gameInstanceId, accountId}` and `characterId` resolves to a deterministic per-account default identity in that tenant. Implementations must not allow multiple concurrent gameplay bindings for the same `{tenantId, gameInstanceId, accountId}` during this interim phase.
 - **JWT claim contract** – Services must validate a strict JWT claim profile (required claims and audience per token profile), not only signature plus ad-hoc fields.
 - **Internal delegation boundary** – Gameplay services must validate a Game Session-issued `SessionAttestation` on internal calls; mTLS-only trust is insufficient for end-user identity delegation.
 - **Route classification governance** – Protected routes must be classified in the shared route matrix document and enforced through middleware annotations/interceptors; behavior must not rely on per-service ad-hoc interpretation.
@@ -148,7 +147,7 @@ Billing-safe mutation membership contract (normative):
 
 - Billing-safe tenant mutations must perform an authoritative, live membership/role check via Account Service API (`GetTenantMembership(accountId, tenantId)` or protocol-equivalent) before mutation.
 - JWT role claims are sufficient for routing and preliminary checks but are not sufficient alone for billing-safe mutations.
-- If membership authority is unavailable, billing-safe mutations fail closed with a canonical authorization-unavailable error; read-only billing-safe surfaces may return a retriable unavailable response.
+- If membership authority is unavailable, billing-safe mutations fail closed with canonical error `MEMBERSHIP_AUTH_UNAVAILABLE`; read-only billing-safe surfaces may return a retriable unavailable response using the same code.
 - `GetTenantMembership` responses must include `evaluatedAt` and `membershipVersion` fields so callers can audit freshness and detect stale reads.
 
 1. **Entitlement gating** – For gameplay admission and non-billing-safe operational control-plane routes (instance start/stop, gameplay-affecting changes), services must consult `GetTenantEntitlements(tenantId)` and deny requests when the tenant is not available for gameplay (for example `suspended`/`canceled`). Billing-safe and support-safe routes must not be blocked solely due to tenant unavailability for gameplay.
@@ -159,9 +158,9 @@ Billing-safe mutation membership contract (normative):
 
 Support-safe routes are an explicit allowlist and must not be inferred broadly from role names. The current support-safe allowlist is:
 
-- `GetTenantEntitlements(tenantId)`
-- `GetSubscription(tenantId)` returning high-level status and plan metadata only
-- `ListSubscriptions` returning high-level status and plan metadata only
+- `GetTenantEntitlementsCrossTenant(tenantId)` returning high-level entitlement status only
+- `GetSubscriptionCrossTenant(tenantId)` returning high-level status and plan metadata only
+- `ListSubscriptionsSupportSafeCrossTenant` returning high-level status and plan metadata only
 
 Support-safe endpoints must exclude invoice line items, payment method details, and subscription mutation APIs.
 
@@ -197,17 +196,10 @@ For first-party WebSocket clients, the control plane issues a short-lived connec
   - Replay TTL: `exp + bounded_skew` (recommended 30 seconds).
   - Capacity policy: bounded cardinality with deterministic eviction (`oldest-expiry-first`) and overload metrics when capacity limits are reached.
 - Enforcement:
-  - Enforcement modes (`disabled`, `observe`, `enforce`) and missing-token behavior are defined canonically in [Gateway Architecture](./system-architecture-gateway.md#tenant-aware-edge-connect-token-gameplay-handshake).
-  - Player-facing production requires `enforce` mode on `/ws/game/**`.
-  - Tokenless compatibility is allowed only on `/ws/game-legacy/**` during migration and is never allowed on `/ws/game/**` in player-facing environments.
+  - `/ws/game/**` is the only gameplay WebSocket route.
+  - Non-proxy gameplay clients must present a valid connect token; missing/invalid/expired/replayed tokens are rejected with HTTP `403`.
+  - TCP Proxy bridge traffic is admitted without a connect token only when the gateway authenticates the proxy identity over the internal mTLS listener and header-trust checks pass.
 - Error mapping: invalid/expired/replayed/missing token where required maps to HTTP `403` at handshake.
-
-Enforcement matrix (normative):
-
-| Client class | Local/dev | Ephemeral CI/preview | Player-facing staging/production |
-| --- | --- | --- | --- |
-| First-party WebSocket clients | `disabled` or `observe` | `observe` (or `enforce` for preflight validation) | `enforce` |
-| Legacy/third-party protocol clients | Compatibility path allowed (`/ws/game-legacy/**`) | Compatibility path allowed (`/ws/game-legacy/**`) | Compatibility path allowed only on `/ws/game-legacy/**` with stricter edge guardrails, migration telemetry, and dated sunset (December 31, 2026); `/ws/game/**` remains `enforce` |
 
 The connect token is not a gameplay authorization grant and does not replace the canonical `LOGIN` + lobby selection (`WORLDS`/`CHARS`/`PLAY`) flow.
 
@@ -223,8 +215,8 @@ To remove ambiguity between connect-token admission and `LOGIN`, first-party web
 Normative constraints:
 
 - First-party clients must not treat successful handshake as gameplay authentication; gameplay remains unauthenticated until `LOGIN` succeeds.
-- `/ws/game/**` requires a valid connect token in player-facing environments and must reject missing tokens with `403`.
-- `/ws/game-legacy/**` remains compatibility-only for legacy/third-party clients during migration and is not a valid steady-state route for first-party clients.
+- `/ws/game/**` requires a valid connect token for non-proxy clients and rejects missing tokens with `403`.
+- For first-party clients on `/ws/game/**`, the `PLAY` selection must match the connect-token scope `{tenantId, gameInstanceId}`. Scope mismatch is rejected with canonical error `CONNECT_SCOPE_MISMATCH`; clients must request a fresh connect token for the intended target and reconnect.
 
 ### Mapping to the Account Service
 
@@ -264,6 +256,7 @@ The `PLAY` flow:
 - Consults the runtime entitlement contract `GetTenantEntitlements(tenantId)` to confirm that the tenant is currently available for gameplay (for example, subscription state is not `suspended` or `canceled` and hard quotas are not violated).
 - Resolves `[character]` to a canonical `characterId` scoped to `{accountId, tenantId}`. Until character selection ships, the service may bind to a default character identity derived from `accountId`, but the binding model must still treat `characterId` as a distinct identifier for forward compatibility.
 - Records a `gameInstanceId` in the binding. In the current architecture, gameplay lobby flow is single-instance-per-tenant and always binds to `"primary"` after entitlement checks.
+  - First-party `/ws/game/**` contract: if a validated connect token is present, resolved `tenantId` and `gameInstanceId` must match token claims. On mismatch, reject admission with `CONNECT_SCOPE_MISMATCH` and do not bind session scope.
   - Normative rule: until an explicit instance-selection lobby protocol is introduced, exactly one gameplay-admissible instance per tenant is supported (`"primary"`). If multiple running instances exist operationally, admission must fail closed with a dedicated error instead of implicitly choosing an instance.
   - Runtime control-plane and admission flows use the tenant admission-pointer contract from [Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md#version-cutover-contract-under-the-single-admissible-instance-invariant) as the source of truth for which instance is admissible.
   - Introducing multi-instance player selection requires a dedicated lobby protocol update; `PLAY <world> [character]` must not silently select among multiple live instances.
@@ -276,7 +269,9 @@ The `PLAY` flow:
 - `WORLD_ACCESS_DENIED` – the authenticated account is not authorized for the tenant under `scopedRoles` / `globalRoles`.
 - `TENANT_BILLING_BLOCKED` – the tenant is `suspended` or `canceled` and is not available for gameplay admission.
 - `TENANT_QUOTA_EXCEEDED` – entitlements allow gameplay but quota caps (for example maximum active sessions) would be exceeded.
+- `CONNECT_SCOPE_MISMATCH` – first-party `/ws/game/**` reconnect/admission attempted `PLAY` scope that does not match the connect-token `{tenantId, gameInstanceId}`.
 - `MULTIPLE_INSTANCES_NOT_SUPPORTED` – multiple running instances exist for the tenant but the lobby protocol has no instance-selection step; admission is denied until a single gameplay-admissible instance remains.
+- `ADMISSION_POINTER_UNAVAILABLE` – gameplay-admissible instance pointer state is unavailable/ambiguous; admission is denied until pointer reconciliation succeeds.
 - `CHARACTER_NOT_FOUND` / `CHARACTER_ACCESS_DENIED` – character selection is requested but the character cannot be found or is not owned by the account (reserved for when character selection ships).
 - Any subsequent attempt to switch tenants or characters for a socket must go through the same tenant-selection flow so that role checks and entitlements are re-evaluated; there is no implicit cross-tenant switching based solely on the initial `LOGIN`.
 
@@ -284,32 +279,7 @@ Clients re-authenticate **only after disconnecting** (TCP or WebSocket loss) or 
 
 In the target design, `playerId` represents a **character-level identity** within a tenant. All Redis key formats and Game Session Service APIs must treat `playerId` as an abstract character identifier so sessions bind sockets to characters rather than raw accounts. Canonical takeover and resume identity is `{tenantId, gameInstanceId, characterId}`; docs or APIs that still mention `{accountId, playerId}` are legacy wording only.
 
-### Character-Selection Cutover Contract (Required)
-
-Migration from interim takeover identity `{tenantId, gameInstanceId, accountId}` to canonical `{tenantId, gameInstanceId, characterId}` requires an explicit cutover decision. Before enabling canonical behavior in player-facing environments:
-
-1. Character selection is enabled for all supported transports.
-2. Data migration guarantees one-to-one mapping from interim default identities to explicit `characterId` records.
-3. Reconnection and takeover tests pass for both interim and canonical keys during overlap.
-4. Release notes include a dated rollout and rollback procedure.
-
-Until this checklist is complete, implementations must continue enforcing the interim uniqueness key.
-
-### Gameplay Identity Mode Contract (Normative)
-
-To prevent mixed uniqueness semantics across services, gameplay identity mode is a single platform-wide control:
-
-- `identity_mode=interim` – uniqueness key is `{tenantId, gameInstanceId, accountId}`.
-- `identity_mode=dual_read` – reads accept both keys for migration verification; writes remain interim key.
-- `identity_mode=canonical` – uniqueness key is `{tenantId, gameInstanceId, characterId}` only.
-
-Rules:
-
-- Exactly one `identity_mode` is active per environment at any time; services must not infer mode independently.
-- Promotion order is strict: `interim -> dual_read -> canonical`.
-- Rollback from `canonical` requires explicit operator action and a documented rollback runbook entry.
-- Player-facing environments must not run mixed per-service modes.
-- Admission and reconnect tests must assert the active mode on every release.
+Gameplay identity is single-mode and canonical: uniqueness key `{tenantId, gameInstanceId, characterId}`.
 
 > 🔗 For session resumption and reconnect edge cases, see [Reconnection Strategy](./system-architecture-reconnection.md)
 
@@ -317,7 +287,7 @@ Rules:
 
 ## Multi-Client Behavior and Session Takeover
 
-Each gameplay identity can only be controlled by one session at a time. During the interim pre-character-selection phase this means one session per `{tenantId, gameInstanceId, accountId}`; after character selection is fully enabled it means one session per `{tenantId, gameInstanceId, characterId}`.
+Each gameplay identity can only be controlled by one session at a time, keyed by `{tenantId, gameInstanceId, characterId}`.
 
 If a new login is received for the same active uniqueness key:
 
@@ -329,7 +299,7 @@ This enables:
 
 - Clean device handoff
 - Forced logins (e.g., "kick and take over")
-- Seamless resumption without gameplay loss
+- Session continuity with at-most-once edge delivery semantics (in-flight command loss at disconnect boundaries remains possible)
 
 > 🔒 All session rebinding is enforced by the Game Session Service using Redis locks.
 > 🔗 See [Redis Session Keys](./system-architecture-redis.md#session-keys-and-gameplay-binding)
@@ -525,7 +495,7 @@ FireMUD uses distinct lifetimes and invariants for each session type:
   - Lifetime: Absolute TTL derived from `FIREMUD_AUTH_JWT_EXPIRATION_MS + FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS`. Entries are not extended by client activity; when they expire, new tokens must be issued. Coordination Redis resets that drop `session:auth:*` entries force re-authentication for the affected scopes.
 
 - **Gameplay session bindings**  
-  - Keys: tenant-scoped session keys described in [Redis Architecture](./system-architecture-redis.md#session-keys-and-gameplay-binding), storing `accountId`, `tenantId`, `characterId` (or a temporary `playerId` alias while migration is incomplete), and tick-region context.  
+  - Keys: tenant-scoped session keys described in [Redis Architecture](./system-architecture-redis.md#session-keys-and-gameplay-binding), storing `accountId`, `tenantId`, `characterId` (with `playerId` as alias only), and tick-region context.  
   - Purpose: Bind a connected socket (or reconnect token) to a character in a specific tenant, enforce “one session per character”, and support reconnect flows.  
   - Lifetime: Sliding TTL refreshed while the player remains active. When the TTL elapses, the session is considered abandoned and is eligible for cleanup.
 
@@ -611,6 +581,8 @@ Control-plane UIs must treat certain auth failures as hard logout conditions and
   - `AUTH_TOKEN_EXPIRED` – The presented JWT is no longer valid because its cryptographic lifetime has ended. Frontends must clear any in-memory token, redirect to login, and display a “Session expired” message.
   - `AUTH_SESSION_REVOKED` – The JWT’s auth token sessions have been revoked due to a security event (for example, password reset, account ban, or “logout all devices”). Frontends must clear in-memory token state, redirect to login, and indicate that the session was ended for security reasons.
   - `TENANT_BILLING_BLOCKED` – The operation is blocked because the tenant’s billing state (for example, `suspended` or `canceled`) does not allow the requested action. Frontends must keep the user logged in but surface a billing-specific banner or UI state for that tenant and disable gameplay/instance management actions while still allowing the billing-safe control-plane surface (for example, updating payment details or exporting data).
+  - `MEMBERSHIP_AUTH_UNAVAILABLE` – Billing-safe mutation authorization could not be established from live membership authority. Frontends keep auth state, show retriable availability feedback, and block billing-safe mutations until authority recovers.
+  - `ADMISSION_POINTER_UNAVAILABLE` – Gameplay admission pointer state is unavailable/ambiguous. Frontends keep auth state and retry admission with bounded backoff instead of logging out.
 - Closing a browser tab or window does **not** automatically revoke auth token sessions; users must call explicit logout (or an operator must use “logout all devices”) to revoke server-side allowlist entries before TTL expiry. On shared devices, UIs must encourage explicit logout from admin/creator sections.
 
 ---

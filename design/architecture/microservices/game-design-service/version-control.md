@@ -61,7 +61,7 @@ services as the source of truth for the current Draft template graphs:
 - A periodic reconciler in the Game Design Service replays the canonical
   revision set into domain services until their Draft templates converge on the
   expected state. Convergence is validated using a domain-owned digest contract:
-  each participating domain service exposes a read-only `GetDraftDesignDigest(tenantId, versionId)` API returning `appliedCommitId` (or `lastAppliedRevisionId`) plus a stable `contentDigest` and `digestSchemaVersion`. The reconciler updates `designSyncStatus` back to `IN_SYNC` once all participating services report digests matching the commit being published.
+  each participating domain service exposes a read-only `GetDraftDesignDigest` API with typed scope (`oneof {versionId, scriptPatchVersion}`) returning `appliedCommitId` (or `lastAppliedRevisionId`) plus a stable `contentDigest` and `digestSchemaVersion`. The reconciler updates `designSyncStatus` back to `IN_SYNC` once all participating services report digests matching the commit being published.
 - The `PublishVersion` workflow must verify that `designSyncStatus == IN_SYNC`
   before starting the publish Saga. Versions that are out of sync cannot be
   published until reconciliation succeeds.
@@ -92,6 +92,10 @@ Publish workflows must use an explicit participant matrix so digest gating is de
 Rules:
 
 - The publish request type determines the participant set; do not infer participants dynamically from transient service availability.
+- Participant roles are explicit per publish type:
+  - `saga-step participant`: executes durable finalize/validation work inside the publish Saga.
+  - `digest-gate participant`: supplies digest attestation used to block/allow publish but does not necessarily execute a Saga step.
+  For full publishes, Game Logic is digest-gate only unless/until it owns explicit publish-time finalize steps.
 - A service outside the matrix for the current publish type may be validated separately, but must not block digest gating for that publish type.
 - Changes to this matrix require an explicit doc + migration update in both `version-control.md` and `world-editing-tools.md`.
 - Every service listed in this matrix must maintain a service-local digest input manifest documenting included/excluded objects, canonicalization, and `digestSchemaVersion` bump criteria. Publish gating should fail closed when a participant cannot attest a digest under its documented manifest for the reported schema version.

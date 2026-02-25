@@ -169,8 +169,10 @@ The canonical `script_event_audit` schema includes:
   - Timestamps and duration fields.
   - Optional actor principal for administrative actions (disable/enable/throttle).
   - `isDryRun` – boolean flag indicating whether this execution was a non-committing dry-run/test (`true`) or live traffic (`false`).
+  - Optional dead-letter linkage (`deadLetterId` or equivalent) when work transitions to bounded dead-letter stores during version-fence drops or outbox failure handling.
 
 Retention and sizing are governed by environment variables described below and in the Automation & Scripting Service README; in particular, `SCRIPT_EVENT_AUDIT_RETENTION_DAYS` and `SCRIPT_EVENT_AUDIT_MAX_ROWS` control how long audit rows are retained and how large the table is allowed to grow (current defaults are 30 days and 1,000,000 rows, but the README remains the authoritative source).
+Dead-letter stores used for rejected queue entries or non-progressing outbox work must also define explicit `maxAge`, `maxRows`, cleanup cadence, and alert thresholds; unbounded dead-letter growth is not an acceptable operational mode.
 
 Metrics such as:
 
@@ -455,6 +457,14 @@ At a minimum, rollback consists of:
    - Game Session must reject any queued tick commands whose embedded `scriptPatchVersion` does not match the instance’s currently pinned version, and record the rejection so operators can diagnose rollback impact.
 4. **Resume in order**
    - Return Automation & Scripting admission to normal only after cancel/purge completes, then resume ticks.
+
+Rollback orchestration should be modeled as a durable state machine (`PAUSING`, `REPINNING`, `CANCELING`, `PURGING`, `CONVERGING`, `RESUMING`, `COMPLETED`, terminal `TIMED_OUT`) keyed by `controlPlaneRequestId` so partial failures can be resumed deterministically.
+
+Operationally, use control-plane APIs rather than direct data-store edits for pending and dead-lettered work:
+
+- `ListOutboxWorkItems` for scoped inspection.
+- `ReplayDeadLetteredWorkItems` for bounded replay of recoverable items.
+- `PurgeOutboxWorkItems` for auditable cleanup of terminally invalid/stale items.
 
 These requirements are summarized in `design/architecture/system-architecture-scripting-contracts.md#3-version-fencing-rollback-safety`.
 

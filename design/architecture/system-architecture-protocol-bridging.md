@@ -4,8 +4,6 @@ This document describes how FireMUD supports **both modern and traditional MUD c
 
 This design is the **canonical specification** for gameplay command flows through the edge: it defines ordering and delivery guarantees, backpressure and slow-client behaviour, Telnet and WebSocket reconnection and buffering rules, and the Telnet disconnect reason taxonomy. Service-specific designs such as the TCP Proxy Service README describe implementation details and configuration but must remain consistent with the invariants in this document.
 
-Current rollout deltas between Telnet and WebSocket paths (for example mTLS or login-path parity during rollout) are tracked in the TCP Proxy Service design's **Cross-Path Compatibility Matrix (Current Rollout)** section and must be kept aligned with this document's target-state invariants.
-
 ---
 
 ## Bridging Overview
@@ -14,7 +12,7 @@ FireMUD enables real-time interaction through two types of client connections:
 
 | Client Type | Protocol | Entry Point |
 | --- | --- | --- |
-| Web-based clients | WebSocket | Spring Cloud Gateway (`/ws/game/**` canonical, `/ws/game-legacy/**` transitional compatibility only) |
+| Web-based clients | WebSocket | Spring Cloud Gateway (`/ws/game/**`) |
 | Traditional MUD clients | TCP (Telnet) | TCP Proxy Service (custom) |
 
 Despite their differences, both protocols are normalized into the same internal architecture using a **WebSocket-based session layer**.
@@ -26,7 +24,7 @@ Despite their differences, both protocols are normalized into the same internal 
 - Used by browser-based MUD clients or modern tools.
 - Connections are initiated using the WebSocket protocol.
 - Routed through the [Spring Cloud Gateway](./microservices/spring-cloud-gateway/README.md), which supports WebSocket proxying.
-- Canonical player-facing endpoint is `/ws/game/**` (token-enforced in player-facing environments). `/ws/game-legacy/**` exists only as a transitional compatibility route and is scheduled for removal from player-facing environments by December 31, 2026.
+- Canonical player-facing endpoint is `/ws/game/**` (token-enforced for non-proxy clients; trusted TCP Proxy bridge is authenticated by mTLS identity).
 - Forwarded to the [Game Session Service](./microservices/game-session-service/README.md), which maintains the gameplay session.
 - When Spring Cloud Gateway or Game Session pods restart, **clients reconnect their WebSocket connections**, re-run `LOGIN`/`PLAY`, and Game Session uses Redis-backed session state to resume gameplay where possible as described in [Reconnection Strategy](./system-architecture-reconnection.md). The gateway does not maintain hidden, long‑lived WebSocket tunnels across its own restarts; it simply resumes routing once clients re‑establish connections.
 
@@ -37,18 +35,10 @@ Despite their differences, both protocols are normalized into the same internal 
 
 ### Gameplay WebSocket route contract (normative)
 
-To keep flow docs aligned with Gateway and Authentication, route behavior is explicitly split:
-
-| Route | Connect-token requirement | Intended clients | Status |
-| --- | --- | --- | --- |
-| `/ws/game/**` | Required in player-facing environments (missing/invalid token -> HTTP `403`) | First-party gameplay clients and TCP Proxy bridge | Canonical gameplay route |
-| `/ws/game-legacy/**` | Optional compatibility path with stricter edge guardrails | Legacy/third-party clients during migration only | Transitional; remove from player-facing environments by December 31, 2026 |
-
-Flow impact:
-
-- Both routes still require in-band `LOGIN` and `PLAY` before gameplay commands.
-- Connect token admission affects only handshake policy; it never replaces `LOGIN`/`PLAY`.
-- TCP Proxy default bridge target remains `/ws/game/**`; proxy routing to `/ws/game-legacy/**` is migration-only and must be explicitly configured and monitored.
+- `/ws/game/**` is the only gameplay WebSocket route.
+- Non-proxy gameplay clients must present a valid connect token; missing/invalid token returns HTTP `403`.
+- TCP Proxy bridge traffic is admitted without connect token only when the gateway authenticates the proxy identity over the internal mTLS listener and header-trust checks pass.
+- All clients still require in-band `LOGIN` and `PLAY` before gameplay commands.
 
 ---
 
@@ -73,7 +63,7 @@ The combined TCP Proxy → Spring Cloud Gateway → Game Session path preserves 
 - **At-most-once delivery with bounded loss (gameplay commands)** – The edge protocol path for gameplay commands is **at most once**: once a command on a given connection is dropped by any edge layer (for example due to buffer ceilings or abuse limits), it is not retried or replayed by that layer. “Bounded” here means that potential loss is limited to the commands still resident in that layer’s per-connection buffers at the time of failure; there is no implicit replay across disconnects. Higher-level retries and replay semantics live entirely in Game Session and domain services; see [Transactions & Idempotency](./system-architecture-transactions.md) for the canonical idempotency model.
 - **At-least-once delivery (edge event sinks)** – Internal gRPC event sinks associated with the edge (for example the TCP Proxy’s `NotifyDisconnect` stream into Game Session) are intentionally **at-least-once** and must be consumed idempotently with respect to their idempotency keys, as described in [gRPC API Style & Versioning](./system-architecture-grpc.md#event-and-streaming-semantics). These streams are advisory hints that complement, but do not change, the at‑most‑once guarantees for client gameplay commands.
 - **Explicit drop conditions (edge layers)** – Commands or lines may be dropped under clearly defined conditions, including:
-  - TCP Proxy upstream-bridge failures: if the TCP Proxy cannot establish the Proxy → Gateway WebSocket bridge within its bounded retry budget, it closes the Telnet connection with a clear, player-visible message and a Telnet disconnect reason of `backend_unavailable`. For established sessions where the bridge drops, the proxy applies its bridge recovery window/state machine before closing with `backend_unavailable` if recovery fails. If upstream backpressure causes the proxy’s Telnet → Gateway input buffer ceiling to be exceeded, it closes the connection with `policy_violation` and records `edge_backpressure` context in logs/metrics rather than silently discarding gameplay commands. See the TCP Proxy Service design’s **Data Flow** and environment-variable sections for the precise knobs and defaults.
+  - TCP Proxy upstream-bridge failures: if the TCP Proxy cannot establish the Proxy → Gateway WebSocket bridge within its bounded retry budget because upstream gameplay is unavailable, it closes the Telnet connection with `backend_unavailable`. If handshake trust checks fail (for example mTLS certificate validation or policy deny), it closes with `policy_violation` instead. For established sessions where the bridge drops, the proxy applies its bridge recovery window/state machine before closing with the mapped reason if recovery fails. If upstream backpressure causes the proxy’s Telnet → Gateway input buffer ceiling to be exceeded, it closes the connection with `policy_violation` and records `edge_backpressure` context in logs/metrics rather than silently discarding gameplay commands. See the TCP Proxy Service design’s **Data Flow** and environment-variable sections for the precise knobs and defaults.
   - MCP-specific budgets (for example control-line rate and `_data-tag` continuation limits) that discard excess MCP control lines while keeping the connection open, as described in [Mud Client Protocol (MCP) Support](./system-architecture-mud-client-protocol.md);
   - Abuse and safety limits in the TCP Proxy Service (oversize lines, malformed envelopes) where the proxy either discards input or closes the connection;
   - Client-side disconnects or network loss (TCP/WebSocket) where the edge cannot reliably determine whether the last few bytes were delivered to the client.
@@ -104,7 +94,7 @@ Telnet clients receive final disconnect messages from the TCP Proxy Service when
 
 - `logout` – explicit, clean shutdown (user-initiated logout, takeover completion, admin-initiated session end, or planned edge drain); maps to WebSocket `1000` with reason `logout` and the corresponding bounded `subreason` defined in Gateway Architecture.
 - `idle_timeout` – idle-connection timeout where no traffic has been observed within the configured idle window; maps to WebSocket `1001` with reason `idle_timeout`.
-- `policy_violation` – client behaviour that violates platform policies (for example sustained command-rate abuse, malformed envelopes, repeated MCP negotiation failures, or intentionally abusive traffic); maps to WebSocket `1008` with reason `policy_violation`.
+- `policy_violation` – client behaviour that violates platform policies (for example sustained command-rate abuse, malformed envelopes, repeated MCP negotiation failures, intentionally abusive traffic, or edge trust/policy handshake failures such as proxy mTLS certificate validation mismatch); maps to WebSocket `1008` with reason `policy_violation`.
 - `backend_unavailable` – gameplay backend services (Game Session or critical dependencies) are unavailable or overloaded beyond well-defined grace windows on the WebSocket and Telnet paths. On the WebSocket side, Spring Cloud Gateway emits `1013/backend_unavailable` when its backend unavailable timer exceeds `firemud.gateway.backendUnavailableGraceMs` as described in [Gateway Architecture](./system-architecture-gateway.md#backend-unavailable-grace-window). On the Telnet side, the TCP Proxy emits `backend_unavailable` when its bridge-availability state determines gameplay admission is unavailable (including sustained inability to establish or maintain Proxy → Gateway gameplay connectivity) and does not keep ambiguous half-open gameplay sessions. Edge buffer-pressure closes are explicitly excluded and map to `policy_violation` with `edge_backpressure` context.
 - `internal_error` – unexpected server-side failures not attributable to client behaviour and not clearly backend unavailable; maps to WebSocket `1011` with reason `internal_error`.
 
@@ -147,7 +137,7 @@ Backpressure and slow-client handling are split across layers so that the platfo
 - **WebSocket clients (Gateway / WebSocket container)**
   - Spring Cloud Gateway (or its underlying WebSocket container) is responsible for **network-level slow-client detection** on `/ws/game/**`. When a WebSocket client is slow to read and outbound send buffers for that connection fill or repeatedly time out, the gateway closes the WebSocket connection rather than silently discarding frames.
   - Gateway-side slow-client closures should use the standard close codes from [Gateway Architecture](./system-architecture-gateway.md#websocket-liveness-and-idle-timeouts) and must map to `1008/policy_violation` (with a bounded subreason such as `edge_backpressure`) rather than `1013/backend_unavailable`. Gateway metrics such as `gateway.websocket.slow_client_closes` and route-level close-reason counters allow operators to distinguish network-level backpressure from backend outages.
-  - Spring Cloud Gateway’s Redis-backed rate limiting focuses on **connection establishment and HTTP requests**, not individual WebSocket frames, as described in [Gateway Architecture](./system-architecture-gateway.md#rate-limiting--abuse-protection). Once a WebSocket is established to `/ws/game/**` or `/ws/game-legacy/**`, ongoing gameplay messages traverse the connection without additional gateway-level frame-by-frame throttling.
+  - Spring Cloud Gateway’s Redis-backed rate limiting focuses on **connection establishment and HTTP requests**, not individual WebSocket frames, as described in [Gateway Architecture](./system-architecture-gateway.md#rate-limiting--abuse-protection). Once a WebSocket is established to `/ws/game/**`, ongoing gameplay messages traverse the connection without additional gateway-level frame-by-frame throttling.
 - **WebSocket clients (Game Session Service)**
   - Game Session provides **domain-level backpressure**. For gameplay WebSocket sessions, it applies a per-session outbound queue limit and send-timeout budget on its side of the connection. If either is exceeded (for example because a client has stopped reading or a downstream hop between Game Session and the gateway is persistently slow), Game Session closes the session with an explicit close reason instead of allowing the queue to grow without bound or dropping frames while pretending the connection is healthy.
   - For inbound overload (for example, a misbehaving client sending commands far beyond expected rates), Game Session either rejects excess commands with visible error messages or terminates the session after sustained abuse; it does not accept and then silently discard gameplay input. Domain-level backpressure and abuse closures are surfaced via metrics such as `gamesession.connection.closed{reason="backpressure"|"rate_limit"}` and command‑level error counters.
@@ -164,7 +154,7 @@ During severe load or partial outages, each layer in the TCP Proxy → Gateway �
   - Game Session and its Redis dependencies expose health and saturation metrics (for example queue depth, tick latency, and error rates). When these cross defined thresholds, Game Session prioritises preserving existing sessions and regions while rejecting new logins or high-cost commands, surfacing clear error responses rather than allowing unbounded growth in queues or CPU usage.
   - Region-level degradation and command throttling are considered core policy decisions and are described in more detail in the tick and Redis architecture docs; edge components treat these errors as backend-level signals rather than attempting to work around them.
 - **Gateway next (connection creation and route-level limits)**
-  - Spring Cloud Gateway protects the core by tightening rate limits on new HTTP and WebSocket connections and, when necessary, preferring to fail new handshake attempts with HTTP 429/503 (as described in [Gateway Architecture](./system-architecture-gateway.md#rate-limiting--abuse-protection)) over tearing down large numbers of existing gameplay sessions. When core gameplay backends remain unavailable beyond `firemud.gateway.backendUnavailableGraceMs`, Gateway then closes existing gameplay WebSocket sessions with `1013/backend_unavailable` and rejects further `/ws/game/**` and `/ws/game-legacy/**` handshakes with HTTP 503, per the grace-window semantics in [Gateway Architecture](./system-architecture-gateway.md#backend-unavailable-grace-window) and the reconnection rules in [Reconnection Strategy](./system-architecture-reconnection.md#backend-unavailable-scenarios).
+  - Spring Cloud Gateway protects the core by tightening rate limits on new HTTP and WebSocket connections and, when necessary, preferring to fail new handshake attempts with HTTP 429/503 (as described in [Gateway Architecture](./system-architecture-gateway.md#rate-limiting--abuse-protection)) over tearing down large numbers of existing gameplay sessions. When core gameplay backends remain unavailable beyond `firemud.gateway.backendUnavailableGraceMs`, Gateway then closes existing gameplay WebSocket sessions with `1013/backend_unavailable` and rejects further `/ws/game/**` handshakes with HTTP 503, per the grace-window semantics in [Gateway Architecture](./system-architecture-gateway.md#backend-unavailable-grace-window) and the reconnection rules in [Reconnection Strategy](./system-architecture-reconnection.md#backend-unavailable-scenarios).
 - **TCP Proxy as outer edge (DMZ safety rails)**
   - The TCP Proxy Service remains the first line of defence against obvious floods and abusive Telnet patterns via `TCP_PROXY_MAX_CONNECTIONS`, `TCP_PROXY_MAX_CONNECTIONS_PER_IP`, idle timeouts, and buffer depth limits, backed by metrics such as `tcpproxy.connections.limit.exceeded` and `tcpproxy.telnet.discarded`.
   - In healthy but busy conditions, these limits are tuned so that normal player behaviour is primarily shaped by Gateway and Game Session policies rather than frequent proxy disconnects. Under clear Telnet-specific abuse (for example, a small set of IPs consuming most connections), operators first adjust proxy-side caps or block misbehaving sources rather than relaxing gateway or Game Session limits.
@@ -192,7 +182,7 @@ When PROXY protocol is enabled, the TCP Proxy Service derives the real client IP
 ### Bridging to the backend
 
 - Normalizes the connection by proxying Telnet traffic through a WebSocket tunnel.
-- Creates a WebSocket connection to Spring Cloud Gateway on behalf of the TCP client. In production this hop uses `wss://` with mutual TLS as described in [Security Architecture](./system-architecture-security.md#tls-termination-for-gateway); the detailed mTLS contract (required listener, SAN/hostname expectations, and certificate paths) lives in the TCP Proxy Service design’s **WebSocket mTLS to Spring Cloud Gateway** section, which should be treated as canonical for certificate wiring and rollout details.
+- Creates a WebSocket connection to Spring Cloud Gateway on behalf of the TCP client. In production this hop uses `wss://` with mutual TLS as described in [Security Architecture](./system-architecture-security.md#tls-termination-for-gateway); the detailed mTLS contract (required listener, SAN/hostname expectations, and certificate paths) lives in the TCP Proxy Service design’s **WebSocket mTLS to Spring Cloud Gateway** section, which should be treated as canonical for certificate wiring details.
 - Forwards client identity to the backend using a gateway canonicalization model. The TCP Proxy Service supplies `X-Proxy-Client-IP` (derived from PROXY protocol when a Telnet edge proxy is enabled, or best-effort from the TCP peer address otherwise) and Spring Cloud Gateway sets the canonical `X-Client-IP` header after authenticating the TCP Proxy identity. Spring Cloud Gateway strips any `X-Client-IP`, `X-Game-Instance-Id`, `X-Tenant-Id`, and `X-Proxy-*` headers arriving directly from public clients, and only promotes proxy-supplied inputs when the connection is known to have traversed the TCP Proxy → Gateway path; this trust is enforced by the mTLS identity on the TCP Proxy → Gateway hop. Downstream services treat `X-Client-IP` as authoritative only because the gateway produced it.
 - Proxies I/O between the TCP client and Spring Cloud Gateway.
 

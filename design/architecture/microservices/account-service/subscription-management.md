@@ -33,7 +33,7 @@ To keep authorization consistent, subscription and billing operations map to the
   - Allowed for:
     - `tenantAdmin` for that `tenantId`, and
     - Global `platformAdmin` and `billingAdmin` roles.
-- **Cross-tenant billing reports and analytics** (for example, listing subscriptions across many tenants, platform-wide billing dashboards):
+- **Cross-tenant billing reports and analytics** (for example, billing-focused multi-tenant reports and revenue dashboards):
   - Allowed only for global roles:
     - `platformAdmin` for full reporting, and
     - `billingAdmin` for billing-focused reporting surfaces.
@@ -46,9 +46,9 @@ Current support-safe allowlist in this domain:
 
 - `GetTenantEntitlements(tenantId)`
 - `GetSubscription(tenantId)` with high-level status/plan fields only
-- `ListSubscriptions` with high-level status/plan fields only
+- `ListSubscriptionsSupportSafe` with high-level status/plan fields only
 
-The following are explicitly not support-safe: invoice exports, payment method details, Stripe customer metadata, and any subscription mutation (`CreateSubscription`, plan change, cancellation).
+The following are explicitly not support-safe: invoice exports, payment method details, Stripe customer metadata, any subscription mutation (`CreateSubscription`, plan change, cancellation), and billing-report variants such as `ListSubscriptionsBillingReports`.
 
 All billing/support route classifications in this domain must be registered in [Authorization Route Matrix](../../system-architecture-authz-route-matrix.md).
 
@@ -154,7 +154,9 @@ Downstream services depend on billing events for timely entitlement enforcement,
 - **Periodic refresh** – even when events are flowing, runtime services should refresh cached entitlements on a bounded interval (for example once per minute) so extended event outages do not cause unbounded drift.
 
 - `CreateSubscription` – Create or update a hosting subscription for a `tenantId` and `plan_code`.  
-- `GetSubscription` / `ListSubscriptions` – Query subscription state for a tenant, scoped by the caller’s authorization.  
+- `GetSubscription` / `ListSubscriptionsTenantHighLevel` – Query subscription state for one tenant, scoped by tenant authorization.  
+- `ListSubscriptionsSupportSafe` – Cross-tenant support-safe high-level listing for troubleshooting only.  
+- `ListSubscriptionsBillingReports` – Cross-tenant billing-report listing for `billingAdmin`/`platformAdmin` only.  
 - `CancelSubscription` – Cancel a subscription at period end or immediately, moving it to `canceled` and emitting events.  
 - Domain events such as `SubscriptionStatusChanged` and `TenantBillingStateChanged` – Consumed by Game Session, world-management, and admin/logging services to adjust availability, quotas, and observability.
 

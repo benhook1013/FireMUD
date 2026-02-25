@@ -169,7 +169,7 @@ When coordination state appears incorrect or unhealthy, operators and designers 
      - Cleaning up a small number of malformed entries in a pending set after a known bug.
    - Rules:
      - Repairs must use the shared key builders and Lua registry helpers.
-    - Break‑glass direct mutations to coordination prefixes (`tick:*`, `timer:*`, `retry:*`, `remote:*`, `session:game:*`, `session:auth:*`, `tick-executor-lease:*`) require a follow‑up scoped reset for the affected region/tenant and must be recorded as an incident.
+     - Break‑glass direct mutations to coordination prefixes (`tick:*`, `timer:*`, `retry:*`, `remote:*`, `session:game:*`, `session:auth:*`, `tick-executor-lease:*`) require a follow‑up scoped reset for the affected region/tenant and must be recorded as an incident.
 
 3. **Otherwise, reset at the smallest safe scope**
    - Choose **Reset** when:

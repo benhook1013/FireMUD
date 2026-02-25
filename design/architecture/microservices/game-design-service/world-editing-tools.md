@@ -39,9 +39,9 @@ When domain templates for a `(tenantId, versionId)` are temporarily out of sync
 with the revision set recorded in the Game Design Service (for example due to
 transient failures when calling design APIs), the version’s `designSyncStatus`
 is marked `OUT_OF_SYNC` and a reconciliation process replays the canonical
-revisions until domain services report a matching draft digest for that version. Each participating domain service exposes a read-only `GetDraftDesignDigest(tenantId, versionId)` API that returns at minimum:
+revisions until domain services report a matching draft digest for that scope. Each participating domain service exposes a read-only `GetDraftDesignDigest` API with a typed scope selector (`oneof {versionId, scriptPatchVersion}`) and returns at minimum:
 
-- `tenantId`, `versionId`
+- `tenantId`, and exactly one scope key (`versionId` or `scriptPatchVersion`)
 - `appliedCommitId` (or `lastAppliedRevisionId` if the service applies at revision granularity)
 - `contentDigest` (a stable hash of the service’s Draft template graph relevant to publishing)
 - `digestSchemaVersion` so hash semantics can evolve without ambiguity
@@ -50,7 +50,7 @@ Game Design also computes a control-plane digest over normalized publish-critica
 
 Digest semantics must be explicitly stable and testable:
 
-- `contentDigest` covers all version-scoped **template** and **binding** rows that participate in publish for the service’s domain for that `(tenantId, versionId)`. It must not include runtime/instance rows keyed by `gameInstanceId`, and it must not include audit/history tables.
+- `contentDigest` covers all publish-scoped **template** and **binding** rows that participate in publish for the service’s reported scope (`(tenantId, versionId)` or `<tenantId, scriptPatchVersion>`). It must not include runtime/instance rows keyed by `gameInstanceId`, and it must not include audit/history tables.
 - The digest input must be generated from a canonical, deterministic representation (for example, a stable JSON/Protobuf export) with:
   - Stable ordering (table/type ordering, then primary key ordering),
   - Stable field selection and encoding, and

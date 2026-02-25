@@ -144,14 +144,14 @@ Tier A controls must be measurable, not policy-only. Each player-facing environm
 
 The secret compliance record must be stored as versioned environment metadata in Git (for example under `design/operations/secret-compliance/<environment>.yaml`) so CI and reporting jobs can detect missing or stale records before promotion.
 
-Minimum credential classes to track:
+Minimum credential classes to track (canonical record keys shown in parentheses):
 
 | Credential Class | Required Evidence |
 | --- | --- |
-| JWT signing keys / JWKS | Last rotation timestamp, key IDs, rotation job outcome |
-| PostgreSQL application credentials | Last rotation timestamp, rollout restart completion evidence |
-| Backup/object-store credentials | Validation of expected bucket/endpoint and non-production isolation |
-| Operator credentials | Last issuance/rotation timestamp and revocation traceability |
+| JWT signing keys / JWKS (`jwt-signing-keys-jwks`) | Last rotation timestamp, key IDs, rotation job outcome |
+| PostgreSQL application credentials (`postgres-application-credentials`) | Last rotation timestamp, rollout restart completion evidence |
+| Backup/object-store credentials (`backup-object-store-credentials`) | Validation of expected bucket/endpoint and non-production isolation |
+| Operator credentials (`operator-credentials`) | Last issuance/rotation timestamp and revocation traceability |
 
 If a required compliance record is missing or stale, the environment is treated as non-compliant for promotion and DR-readiness reporting.
 

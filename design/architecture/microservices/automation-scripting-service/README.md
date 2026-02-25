@@ -72,7 +72,7 @@ and [Tick System and Runtime Design](../../system-architecture-ticks.md).
 
 ### Digest Input Manifest Requirements
 
-This service is a required digest participant for full publishes and script-patch publishes. It must expose `GetDraftDesignDigest(tenantId, versionId or scriptPatchVersion scope)` and maintain a service-local digest input manifest with:
+This service is a required digest participant for full publishes and script-patch publishes. It must expose `GetDraftDesignDigest` with a typed scope selector (`oneof {versionId, scriptPatchVersion}`) and maintain a service-local digest input manifest with:
 
 - Included objects (for example version/patch-scoped script graphs, bindings, and publish-critical metadata that affect runtime execution for the scoped publish type).
 - Excluded objects (for example runtime queues, audit/event logs, quota counters, and other non-launchability operational state).
@@ -254,7 +254,8 @@ During operator rollback pause (`PAUSED_FOR_ROLLBACK`), ingress must return an e
 - `script_event_audit.finalOutcome=skipped_rollback_pause`
 - `script_event_audit.finalReason=rollback_pause`
 
-- For low-rate external events, callers may retry with the same `scriptEventId` using a bounded exponential backoff and jitter.
+- For low-rate external events, callers may retry with the same `scriptEventId` using bounded exponential backoff and jitter with explicit limits (`maxAttempts`, `maxElapsedMs`) and non-zero jitter.
+- Backpressure responses should include `retryAfterMs` so clients can avoid thundering-herd retries during reload.
 - For timer-derived scheduler events, best-effort timer semantics apply; triggers not admitted during reload are not backfilled unless explicitly covered by a bounded catch-up rule.
 
 See `design/architecture/system-architecture-scripting-contracts.md#7-reload-backpressure-contract`.
@@ -267,6 +268,7 @@ Admission and scheduler decisions must use a bounded-staleness view of pinned sc
 - If pin data for a scope is stale beyond max-age, the service must refresh from authoritative control-plane APIs/events before admitting new work.
 - If fresh authoritative pin data cannot be obtained, admission must fail closed with an explicit non-success outcome and audit visibility rather than speculatively running with stale pin state.
 - The canonical failure contract for this case is `finalStage=ADMISSION`, `finalOutcome=pin_state_unavailable`, and a bounded `finalReason` (for example `pin_cache_stale_source_unreachable`).
+- Any override of this fail-closed behavior must be explicit, time-bounded, and operator-audited (`controlPlaneRequestId`, actor, reason, scope), and must auto-expire back to fail-closed mode.
 
 ## Faction & Reputation System
 
@@ -341,8 +343,10 @@ In addition to event-handling and test endpoints, the Automation & Scripting Ser
 - `ScriptPatchInstanceRolloutChanged` event – consumed as the authoritative instance rollout history stream produced by Game Session (`PINNED`, `ROLLED_BACK`, `REPINNED`) and projected into read APIs.
 - `GetScriptPatchInstanceRolloutStatus(tenantId, gameInstanceId, scriptPatchVersion)` and `ListScriptPatchInstanceRollouts(...)` – read APIs for instance-scoped rollout history and UI/operator correlation.
 - `GetAutomationPinConvergence(tenantId, gameInstanceId)` – reports the latest pinned patch observation (`observedPinnedScriptPatchVersion`, `lastObservedControlPlaneRequestId`, `observedAt`) used by admission/scheduler logic so rollback orchestration can gate resume on convergence.
+- `GetSignerPolicyConvergence(...)` – reports observed signer-policy version, refresh lag, and enforcement mode so plugin revocation rollouts can be verified end-to-end.
 - `GetPluginStatus(tenantId, gameInstanceId, pluginId)` – returns plugin runtime state (`ENABLED`, `DISABLED`, `DRAINING`, `RELOADING`, `FAILED`) and active/pending version IDs.
 - `SetPluginActiveVersion`, `DisablePlugin`, and `DrainPlugin` – idempotent plugin lifecycle operations used by Logging & Admin to promote, disable, or drain plugin versions per `<tenantId, gameInstanceId, pluginId>`.
+- `SignerPolicyVersionObserved` / `SignerRevocationApplied` events – operator-facing signer-policy propagation and revocation-enforcement events used to prove key-revocation convergence timing.
 
 Consumption rules for patch-status events:
 
@@ -353,6 +357,7 @@ Consumption rules for patch-status events:
 Game Session and Logging & Admin use script patch visibility APIs and events to decide which `scriptPatchVersion` values may be passed to the runtime. Mutating operations that change the pinned patch for a running game instance are defined on the Game Session control-plane surface (and orchestrated by Logging & Admin) and must follow the API and event contracts in `design/architecture/system-architecture-scripting-control-plane-api.md` (for example `SetPinnedScriptPatchVersion` / `RollbackScriptPatchVersion` and the `ScriptPatchPinChanged` event). The Automation & Scripting Service uses pin-change events for visibility and admission alignment, but it does not become the source of truth for the pin; it enforces that incoming triggers reference patches that are `READY` for the tenant and records lifecycle changes that authoritative control-plane services request.
 
 Rollback orchestration must treat convergence waiting as bounded: if `GetAutomationPinConvergence` + Game Session convergence checks do not match the expected `controlPlaneRequestId` before the configured timeout, rollback enters terminal timeout state (`ROLLBACK_CONVERGENCE_TIMEOUT`) and admission/ticks remain paused until explicit operator action. Timeout transition must emit `ScriptRollbackConvergenceTimedOut` (Game Session producer-of-record) and increment `automation_rollback_convergence_timeout_total{tenantId, gameInstanceId, reason}`.
+Rollback orchestration should be implemented as an explicit durable state machine (`PAUSING`, `REPINNING`, `CANCELING`, `PURGING`, `CONVERGING`, `RESUMING`, `COMPLETED`, terminal `TIMED_OUT`) so partial failures can resume from last durable state instead of restarting or accidentally unpausing.
 
 ## Proto Files
 

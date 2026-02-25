@@ -189,15 +189,22 @@ The following rules align generators with the core runtime and tooling:
 8. **Editor Overlays** – Generators emit coordinates and optional map layers so the Game Editor can display a preview or dry-run JSON output.
 9. **Pluggable Interface** – Generators implement the `Generator` interface and are discovered via the `GeneratorRegistry` in the World Management Service. Discovery uses Spring bean scanning, and additional generators may be provided by shared libraries or service-local modules.
 
-Generation parameters can be tuned at runtime through the [Procedural Generation Rules API](./microservices/world-management-service/README.md#procedural-generation-rules-api). Administrators may adjust room density or terrain variation without redeploying the service. These rules are treated as **per-tenant runtime configuration** that influence **future** runs, but each individual generation run persists an **immutable snapshot** of the configuration it actually used:
+Generation parameters can be tuned at runtime through the [Procedural Generation Rules API](./microservices/world-management-service/README.md#procedural-generation-rules-api). Administrators may adjust room density or terrain variation without redeploying the service. `generation_rule` rows are owned by World Management and represent mutable tenant defaults for Draft authoring and future unpublished runs.
 
-- `generation_rule` rows are keyed by `tenantId` and updated in place via REST; they represent the *current* default tuning for a tenant rather than a versioned design artifact.
+For activation/runtime determinism, publish must freeze a generation config identity per version:
+
+- On `PublishVersion`, the system records a `generationConfigRevision`/hash for that `(tenantId, versionId)` (from `generation_rule_override` when present, otherwise from tenant defaults).
+- World creation for a published version must resolve and use the frozen generation config identity; if it cannot be resolved, activation fails closed.
+- Editing tenant defaults after publish must not change generation inputs for already published versions unless a new version is published (or an explicit version-scoped override migration is executed and republished).
+
+Each individual generation run persists an **immutable snapshot** of the configuration it actually used:
+
 - World creation and runtime generation calls snapshot the effective parameters
   they use (including generator type, seed, and a serialized config blob
   carrying an explicit `schemaVersion`) alongside the generated regions and
   rooms so that operators can later reconstruct the inputs used for a particular
   world or instance, even if live rules have changed since then.
-- For shards that require stricter determinism (for example competitive or audited worlds), callers may additionally persist a reference from instance metadata to the specific `generation_rule` revision that was snapshotted so it is clear which tenant-level rule state was in effect when a run was executed.
+- Instance metadata must include the frozen `generationConfigRevision`/hash used for the run so rollback/debug tooling can verify deterministic inputs.
 - Installations that need different tuning per version can enable an optional **override** table (for example `generation_rule_override`) keyed by `(tenantId, versionId)`. When an override exists for a given version, world-creation and runtime generation calls for that version must use the override plus snapshotting rules above; otherwise they fall back to the tenant-global `generation_rule` row. Overrides are treated as version-scoped configuration and must follow the same lifecycle as other versioned data: overrides may exist only for non-Retired versions and must be removed or migrated before destructive generator schema changes that affect their semantics. The Version-Aware Migration Checklist in `system-architecture-database-migrations.md` applies equally to override rows.
 
 When the shape of generator configuration evolves, schema changes must follow the version-aware migration rules in `system-architecture-database-migrations.md`. New fields should be added under a new `schemaVersion`, and World Management and related services must continue to understand existing non-Retired `schemaVersion` values until the corresponding versions have been retired or explicitly migrated.

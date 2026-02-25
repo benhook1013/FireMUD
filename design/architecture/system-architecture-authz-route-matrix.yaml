@@ -10,37 +10,82 @@ classifications:
   - cross_tenant_data_bearing
 routes:
   - service: account-service
-    route: GetTenantEntitlements
+    route: GetTenantEntitlementsTenant
     scope: tenant
+    classification: billing_safe_tenant
+    roles:
+      any_of: [tenantAdmin]
+  - service: account-service
+    route: GetTenantEntitlementsCrossTenant
+    scope: cross_tenant
     classification: cross_tenant_support_safe
     roles:
-      any_of: [support, platformAdmin, tenantAdmin]
+      any_of: [support, platformAdmin]
   - service: account-service
-    route: GetSubscription
+    route: GetSubscriptionTenant
     scope: tenant
+    classification: billing_safe_tenant
+    response_profile: high_level_only
+    roles:
+      any_of: [tenantAdmin]
+  - service: account-service
+    route: GetSubscriptionCrossTenant
+    scope: cross_tenant
     classification: cross_tenant_support_safe
     response_profile: high_level_only
     roles:
-      any_of: [support, platformAdmin, tenantAdmin]
+      any_of: [support, platformAdmin]
   - service: account-service
-    route: ListSubscriptions
-    scope: tenant_or_cross_tenant
+    route: ListSubscriptionsTenantHighLevel
+    scope: tenant
+    classification: billing_safe_tenant
+    response_profile: high_level_only
+    roles:
+      any_of: [tenantAdmin]
+  - service: account-service
+    route: ListSubscriptionsSupportSafeCrossTenant
+    scope: cross_tenant
     classification: cross_tenant_support_safe
     response_profile: high_level_only
     roles:
-      any_of: [support, platformAdmin, tenantAdmin]
+      any_of: [support, platformAdmin]
   - service: account-service
-    route: BillingArtifacts
-    scope: tenant_or_cross_tenant
+    route: ListSubscriptionsBillingReportsCrossTenant
+    scope: cross_tenant
+    classification: cross_tenant_billing_safe
+    response_profile: billing_reporting
+    roles:
+      any_of: [billingAdmin, platformAdmin]
+  - service: account-service
+    route: IssueConnectToken
+    scope: tenant
+    classification: tenant_regular
+    roles:
+      any_of: [player, moderator, designer, tenantAdmin, platformAdmin]
+  - service: account-service
+    route: BillingArtifactsTenant
+    scope: tenant
     classification: billing_safe_tenant
     roles:
-      any_of: [tenantAdmin, billingAdmin, platformAdmin]
+      any_of: [tenantAdmin]
   - service: account-service
-    route: GetTenantMembership
-    scope: tenant_or_cross_tenant
+    route: BillingArtifactsCrossTenant
+    scope: cross_tenant
+    classification: cross_tenant_billing_safe
+    roles:
+      any_of: [billingAdmin, platformAdmin]
+  - service: account-service
+    route: GetTenantMembershipTenant
+    scope: tenant
     classification: billing_safe_tenant
     roles:
-      any_of: [tenantAdmin, billingAdmin, platformAdmin]
+      any_of: [tenantAdmin]
+  - service: account-service
+    route: GetTenantMembershipCrossTenant
+    scope: cross_tenant
+    classification: cross_tenant_billing_safe
+    roles:
+      any_of: [billingAdmin, platformAdmin]
   - service: game-session-service
     route: PLAY
     scope: tenant

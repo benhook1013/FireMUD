@@ -79,7 +79,7 @@ When using a self-hosted MinIO cluster as the asset store:
    Directly deleting a prefix with `mc rm` should be treated as a last-resort
    manual fix and only performed after verifying that:
 
-   - No game instances can be started or restarted against this `version_id`.
+   - No game instances can be started or admitted/cut over against this `version_id`.
    - The Game Design and Game Session services have already marked the version
      as retired.
 
