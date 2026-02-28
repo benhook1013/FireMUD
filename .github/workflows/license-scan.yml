@@ -53,7 +53,7 @@ jobs:
           fail-on: policy-violation
 
       - name: Upload ORT results
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: ort-result-${{ github.sha }}
           path: ${{ steps.ort.outputs.results-path }}
