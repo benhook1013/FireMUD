@@ -38,4 +38,4 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: ✅ Validate overlays and image availability
-        run: dev-tools/ci/validate-kustomize-overlays.sh
+        run: bash dev-tools/ci/validate-kustomize-overlays.sh
