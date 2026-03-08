@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "lint": "eslint .",
+    "lint": "node ./node_modules/eslint/bin/eslint.js .",
     "preview": "vite preview",
     "format": "prettier --check \"src/**/*.{ts,tsx}\"",
     "format:fix": "prettier --write \"src/**/*.{ts,tsx}\"",

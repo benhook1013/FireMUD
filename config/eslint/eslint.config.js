@@ -6,6 +6,7 @@ const globals = require('globals')
 const reactHooks = require('eslint-plugin-react-hooks')
 const reactRefresh = require('eslint-plugin-react-refresh')
 const tseslint = require('typescript-eslint')
+const reactRefreshPlugin = reactRefresh.default ?? reactRefresh
 
 export default tseslint.config([
   { ignores: ['dist'] },
@@ -15,7 +16,7 @@ export default tseslint.config([
       js.configs.recommended,
       tseslint.configs.recommended,
       reactHooks.configs.flat['recommended-latest'],
-      reactRefresh.configs.vite,
+      reactRefreshPlugin.configs.recommended,
     ],
     languageOptions: {
       ecmaVersion: 2020,
