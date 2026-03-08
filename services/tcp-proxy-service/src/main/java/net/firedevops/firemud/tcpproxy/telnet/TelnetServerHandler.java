@@ -67,10 +67,10 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   private final TelnetSessionContext sessionContext = new TelnetSessionContext();
   private final String proxyConnectionId = UUID.randomUUID().toString();
   private final AtomicLong disconnectSequence = new AtomicLong();
+  private final AtomicInteger reconnectAttempts = new AtomicInteger();
   private volatile ChannelHandlerContext context;
   private volatile boolean closing;
   private volatile boolean reconnecting;
-  private volatile int reconnectAttempts;
   private volatile ScheduledFuture<?> heartbeatFuture;
   private volatile ScheduledFuture<?> idleFuture;
   private volatile long lastActivityNanos;
@@ -568,8 +568,8 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
 
   private long backoffDelayMillis() {
     long baseDelay = INITIAL_RECONNECT_DELAY.toMillis();
-    long delay = baseDelay * (1L << Math.min(reconnectAttempts, 10));
-    reconnectAttempts++;
+    int attempts = reconnectAttempts.getAndIncrement();
+    long delay = baseDelay * (1L << Math.min(attempts, 10));
     return Math.min(delay, MAX_RECONNECT_DELAY.toMillis());
   }
 
@@ -731,7 +731,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
         connectedOnce = true;
         setWebSocket(webSocket, wasConnected);
         webSocket.request(1);
-        reconnectAttempts = 0;
+        reconnectAttempts.set(0);
         logger.info("WebSocket connected to {}", gatewayWsUrl);
       }
 

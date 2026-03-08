@@ -10,6 +10,7 @@ dependencies {
     annotationProcessor(libs.mapstruct.processor)
     annotationProcessor(libs.lombok)
     annotationProcessor(libs.lombok.mapstruct.binding)
+    compileOnly("com.github.spotbugs:spotbugs-annotations:4.9.8")
     compileOnly(libs.lombok)
     implementation(libs.mapstruct)
     implementation(libs.spring.boot.starter)

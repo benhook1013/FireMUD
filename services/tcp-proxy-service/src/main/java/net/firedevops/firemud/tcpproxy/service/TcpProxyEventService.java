@@ -1,5 +1,6 @@
 package net.firedevops.firemud.tcpproxy.service;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
@@ -23,6 +24,9 @@ public class TcpProxyEventService {
   private final Counter connectCounter;
   private final Counter disconnectCounter;
 
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "MeterRegistry is a shared Spring singleton used to record proxy metrics")
   public TcpProxyEventService(TcpProxyEventClient client, MeterRegistry meterRegistry) {
     this.client = client;
     this.meterRegistry = meterRegistry;
