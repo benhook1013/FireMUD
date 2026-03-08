@@ -7,8 +7,8 @@ import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
-import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelFutureListener;
+import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.SimpleChannelInboundHandler;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -649,8 +649,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
                   failure);
               Status.Code status = Status.fromThrowable(failure).getCode();
               meterRegistry
-                  .counter(
-                      "tcpproxy.disconnect.notify.transport_failure", "status", status.name())
+                  .counter("tcpproxy.disconnect.notify.transport_failure", "status", status.name())
                   .increment();
               return null;
             });

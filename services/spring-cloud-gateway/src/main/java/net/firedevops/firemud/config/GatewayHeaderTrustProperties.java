@@ -64,7 +64,8 @@ public class GatewayHeaderTrustProperties {
     }
 
     public void setTrustedClientCertDnsSans(List<String> trustedClientCertDnsSans) {
-      this.trustedClientCertDnsSans = trustedClientCertDnsSans == null ? new ArrayList<>() : trustedClientCertDnsSans;
+      this.trustedClientCertDnsSans =
+          trustedClientCertDnsSans == null ? new ArrayList<>() : trustedClientCertDnsSans;
     }
 
     public List<String> getTrustedClientCertUriSans() {
@@ -72,14 +73,16 @@ public class GatewayHeaderTrustProperties {
     }
 
     public void setTrustedClientCertUriSans(List<String> trustedClientCertUriSans) {
-      this.trustedClientCertUriSans = trustedClientCertUriSans == null ? new ArrayList<>() : trustedClientCertUriSans;
+      this.trustedClientCertUriSans =
+          trustedClientCertUriSans == null ? new ArrayList<>() : trustedClientCertUriSans;
     }
 
     public boolean isAllowInsecureHeadersFromTrustedCidrs() {
       return allowInsecureHeadersFromTrustedCidrs;
     }
 
-    public void setAllowInsecureHeadersFromTrustedCidrs(boolean allowInsecureHeadersFromTrustedCidrs) {
+    public void setAllowInsecureHeadersFromTrustedCidrs(
+        boolean allowInsecureHeadersFromTrustedCidrs) {
       this.allowInsecureHeadersFromTrustedCidrs = allowInsecureHeadersFromTrustedCidrs;
     }
 
@@ -88,7 +91,8 @@ public class GatewayHeaderTrustProperties {
     }
 
     public void setInsecureTrustedCidrs(List<String> insecureTrustedCidrs) {
-      this.insecureTrustedCidrs = insecureTrustedCidrs == null ? new ArrayList<>() : insecureTrustedCidrs;
+      this.insecureTrustedCidrs =
+          insecureTrustedCidrs == null ? new ArrayList<>() : insecureTrustedCidrs;
     }
   }
 }

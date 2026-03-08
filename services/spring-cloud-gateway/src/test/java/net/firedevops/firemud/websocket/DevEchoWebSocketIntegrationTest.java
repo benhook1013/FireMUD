@@ -104,7 +104,9 @@ class DevEchoWebSocketIntegrationTest {
             .then(replySink.asMono())
             .timeout(Duration.ofSeconds(5));
 
-    StepVerifier.create(response).expectNextMatches(ip -> "127.0.0.1".equals(ip) || "::1".equals(ip)).verifyComplete();
+    StepVerifier.create(response)
+        .expectNextMatches(ip -> "127.0.0.1".equals(ip) || "::1".equals(ip))
+        .verifyComplete();
   }
 
   @TestConfiguration

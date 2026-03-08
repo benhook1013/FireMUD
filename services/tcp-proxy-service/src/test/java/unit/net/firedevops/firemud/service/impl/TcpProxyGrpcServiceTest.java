@@ -86,7 +86,6 @@ class TcpProxyGrpcServiceTest {
     assertEquals("OK", ref.get().getError().getCode());
   }
 
-
   @Test
   void notifyDisconnectReturnsInternalOnFailure() {
     PingService pingService = Mockito.mock(PingService.class);
@@ -199,7 +198,6 @@ class TcpProxyGrpcServiceTest {
     Mockito.verify(eventService).notifyDisconnect("sess-123", "tenant-xyz", "conn-1", 1L);
   }
 
-
   @Test
   void notifyDisconnectFillsMissingErrorFields() {
     PingService pingService = Mockito.mock(PingService.class);
@@ -241,5 +239,4 @@ class TcpProxyGrpcServiceTest {
     assertEquals("UNKNOWN", ref.get().getError().getCode());
     assertTrue(StringUtils.hasText(ref.get().getError().getMessage()));
   }
-
 }

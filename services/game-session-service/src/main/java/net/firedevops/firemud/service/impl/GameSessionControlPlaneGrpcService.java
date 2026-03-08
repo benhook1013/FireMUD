@@ -19,9 +19,9 @@ import net.firedevops.firemud.gamesession.v1.SetPinnedScriptPatchVersionResponse
 import net.firedevops.firemud.repository.GameInstanceRepository;
 import net.firedevops.firemud.service.TickService;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
+import org.lognet.springboot.grpc.GRpcService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.lognet.springboot.grpc.GRpcService;
 
 @GRpcService
 public final class GameSessionControlPlaneGrpcService
@@ -96,7 +96,9 @@ public final class GameSessionControlPlaneGrpcService
                       ? 0
                       : instance.getScriptPatchPinnedAt().toEpochMilli())
               .setPinnedBy(
-                  instance.getScriptPatchPinnedBy() == null ? "" : instance.getScriptPatchPinnedBy())
+                  instance.getScriptPatchPinnedBy() == null
+                      ? ""
+                      : instance.getScriptPatchPinnedBy())
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();

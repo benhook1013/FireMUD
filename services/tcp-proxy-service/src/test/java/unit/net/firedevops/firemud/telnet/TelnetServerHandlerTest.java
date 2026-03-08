@@ -34,7 +34,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.cache.LookCacheService;
-import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.tcpproxy.service.TcpProxyEventService;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -131,7 +130,9 @@ class TelnetServerHandlerTest {
     SimpleMeterRegistry registry = new SimpleMeterRegistry();
     TelnetServerHandler handler =
         newHandler(
-            registry, false, (url, ip, proxyConnectionId, session, tenant, listener) -> new CompletableFuture<>());
+            registry,
+            false,
+            (url, ip, proxyConnectionId, session, tenant, listener) -> new CompletableFuture<>());
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     Channel channel = mock(Channel.class);
     when(ctx.channel()).thenReturn(channel);
@@ -158,7 +159,9 @@ class TelnetServerHandlerTest {
     SimpleMeterRegistry registry = new SimpleMeterRegistry();
     TelnetServerHandler handler =
         newHandler(
-            registry, false, (url, ip, proxyConnectionId, session, tenant, listener) -> new CompletableFuture<>());
+            registry,
+            false,
+            (url, ip, proxyConnectionId, session, tenant, listener) -> new CompletableFuture<>());
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     Channel channel = mock(Channel.class);
     when(ctx.channel()).thenReturn(channel);
@@ -177,7 +180,9 @@ class TelnetServerHandlerTest {
     SimpleMeterRegistry registry = new SimpleMeterRegistry();
     TelnetServerHandler handler =
         newHandler(
-            registry, false, (url, ip, proxyConnectionId, session, tenant, listener) -> new CompletableFuture<>());
+            registry,
+            false,
+            (url, ip, proxyConnectionId, session, tenant, listener) -> new CompletableFuture<>());
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     Channel channel = mock(Channel.class);
     DefaultEventExecutor executor = new DefaultEventExecutor();
@@ -204,7 +209,9 @@ class TelnetServerHandlerTest {
     SimpleMeterRegistry registry = new SimpleMeterRegistry();
     TelnetServerHandler handler =
         newHandler(
-            registry, false, (url, ip, proxyConnectionId, session, tenant, listener) -> new CompletableFuture<>());
+            registry,
+            false,
+            (url, ip, proxyConnectionId, session, tenant, listener) -> new CompletableFuture<>());
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     Channel channel = mock(Channel.class);
     DefaultEventExecutor executor = new DefaultEventExecutor();
@@ -232,7 +239,9 @@ class TelnetServerHandlerTest {
     SimpleMeterRegistry registry = new SimpleMeterRegistry();
     TelnetServerHandler handler =
         newHandler(
-            registry, false, (url, ip, proxyConnectionId, session, tenant, listener) -> new CompletableFuture<>());
+            registry,
+            false,
+            (url, ip, proxyConnectionId, session, tenant, listener) -> new CompletableFuture<>());
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     Channel channel = mock(Channel.class);
     DefaultEventExecutor executor = new DefaultEventExecutor();
@@ -534,15 +543,15 @@ class TelnetServerHandlerTest {
             false,
             () -> {},
             () -> {},
-        registry.counter("test"),
-        registry.counter("discarded"),
-        false,
-        registry,
-        connector,
-        Mockito.mock(TcpProxyEventService.class),
-        new AtomicInteger(),
-        lookCacheService,
-        0);
+            registry.counter("test"),
+            registry.counter("discarded"),
+            false,
+            registry,
+            connector,
+            Mockito.mock(TcpProxyEventService.class),
+            new AtomicInteger(),
+            lookCacheService,
+            0);
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     Channel channel = mock(Channel.class);
     DefaultEventExecutor executor = new DefaultEventExecutor();
@@ -568,15 +577,15 @@ class TelnetServerHandlerTest {
             false,
             () -> {},
             () -> {},
-        registry.counter("test"),
-        registry.counter("discarded"),
-        false,
-        registry,
-        connector,
-        Mockito.mock(TcpProxyEventService.class),
-        new AtomicInteger(),
-        lookCacheService,
-        0);
+            registry.counter("test"),
+            registry.counter("discarded"),
+            false,
+            registry,
+            connector,
+            Mockito.mock(TcpProxyEventService.class),
+            new AtomicInteger(),
+            lookCacheService,
+            0);
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     Channel channel = mock(Channel.class);
     DefaultEventExecutor executor = new DefaultEventExecutor();
@@ -662,7 +671,6 @@ class TelnetServerHandlerTest {
     executor.shutdownGracefully();
   }
 
-
   @Test
   void gatewayDisconnectFailClosesTelnet() {
     SimpleMeterRegistry registry = new SimpleMeterRegistry();
@@ -730,7 +738,6 @@ class TelnetServerHandlerTest {
     verify(ctx).writeAndFlush(startsWith("DISCONNECT backend_unavailable "));
     verify(future).addListener(any());
   }
-
 
   @Test
   void structuredEventsIncludeConnectionDuration() {

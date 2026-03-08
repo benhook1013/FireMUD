@@ -12,8 +12,8 @@ import java.util.Locale;
 import java.util.Objects;
 import net.firedevops.firemud.config.GatewayHeaderTrustProperties;
 import org.springframework.core.Ordered;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.server.reactive.SslInfo;
 import org.springframework.stereotype.Component;
 import org.springframework.web.server.ServerWebExchange;
@@ -24,8 +24,9 @@ import reactor.core.publisher.Mono;
 /**
  * Canonicalizes and de-spoofs gateway-owned identity headers.
  *
- * <p>Target-state invariants are documented in {@code design/architecture/system-architecture-gateway.md}
- * (Header Trust Model). This filter is the gateway enforcement point for those invariants.
+ * <p>Target-state invariants are documented in {@code
+ * design/architecture/system-architecture-gateway.md} (Header Trust Model). This filter is the
+ * gateway enforcement point for those invariants.
  */
 @Component
 public class HeaderTrustFilter implements WebFilter, Ordered {
@@ -52,11 +53,14 @@ public class HeaderTrustFilter implements WebFilter, Ordered {
     this.properties = Objects.requireNonNull(properties);
     this.trustedForwardedProxies =
         new CidrSet(properties.getForwardedClientIp().getTrustedProxyCidrs());
-    this.insecureTrustedTcpProxyCidrs = new CidrSet(properties.getTcpProxy().getInsecureTrustedCidrs());
+    this.insecureTrustedTcpProxyCidrs =
+        new CidrSet(properties.getTcpProxy().getInsecureTrustedCidrs());
     this.trustedTcpProxyFingerprints =
         normalizeFingerprints(properties.getTcpProxy().getTrustedClientCertFingerprintsSha256());
-    this.trustedTcpProxyDnsSans = normalizeStrings(properties.getTcpProxy().getTrustedClientCertDnsSans());
-    this.trustedTcpProxyUriSans = normalizeStrings(properties.getTcpProxy().getTrustedClientCertUriSans());
+    this.trustedTcpProxyDnsSans =
+        normalizeStrings(properties.getTcpProxy().getTrustedClientCertDnsSans());
+    this.trustedTcpProxyUriSans =
+        normalizeStrings(properties.getTcpProxy().getTrustedClientCertUriSans());
   }
 
   @Override
@@ -67,7 +71,9 @@ public class HeaderTrustFilter implements WebFilter, Ordered {
     InetAddress remoteAddress = remoteInetAddress(exchange);
     boolean trustedTcpProxy = isTrustedTcpProxy(exchange, remoteAddress);
 
-    if (isSessionRoute && !trustedTcpProxy && presentsProxyHeaders(exchange.getRequest().getHeaders())) {
+    if (isSessionRoute
+        && !trustedTcpProxy
+        && presentsProxyHeaders(exchange.getRequest().getHeaders())) {
       exchange.getResponse().setStatusCode(HttpStatus.FORBIDDEN);
       return exchange.getResponse().setComplete();
     }
@@ -79,7 +85,9 @@ public class HeaderTrustFilter implements WebFilter, Ordered {
             : deriveClientIpFromForwardedHeaders(exchange.getRequest().getHeaders(), remoteAddress);
 
     String incomingProxyConnectionId =
-        trustedTcpProxy ? exchange.getRequest().getHeaders().getFirst(HDR_PROXY_CONNECTION_ID) : null;
+        trustedTcpProxy
+            ? exchange.getRequest().getHeaders().getFirst(HDR_PROXY_CONNECTION_ID)
+            : null;
     String incomingProxyGameInstanceId =
         trustedTcpProxy && isSessionRoute
             ? exchange.getRequest().getHeaders().getFirst(HDR_PROXY_GAME_INSTANCE_ID)
@@ -103,7 +111,8 @@ public class HeaderTrustFilter implements WebFilter, Ordered {
                           }
 
                           if (trustedTcpProxy) {
-                            if (incomingProxyConnectionId != null && !incomingProxyConnectionId.isBlank()) {
+                            if (incomingProxyConnectionId != null
+                                && !incomingProxyConnectionId.isBlank()) {
                               headers.set(HDR_PROXY_CONNECTION_ID, incomingProxyConnectionId);
                             }
                             if (incomingProxyGameInstanceId != null
@@ -142,7 +151,8 @@ public class HeaderTrustFilter implements WebFilter, Ordered {
     headers.remove(HDR_PROXY_TENANT_ID);
   }
 
-  private String deriveClientIpFromForwardedHeaders(HttpHeaders headers, InetAddress remoteAddress) {
+  private String deriveClientIpFromForwardedHeaders(
+      HttpHeaders headers, InetAddress remoteAddress) {
     if (remoteAddress != null && trustedForwardedProxies.contains(remoteAddress)) {
       String forwarded = parseForwardedFor(headers.getFirst("Forwarded"));
       String normalized = normalizeIpLiteral(forwarded);

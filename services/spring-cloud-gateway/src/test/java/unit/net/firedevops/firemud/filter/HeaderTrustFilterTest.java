@@ -26,9 +26,11 @@ class HeaderTrustFilterTest {
             .remoteAddress(new InetSocketAddress("1.2.3.4", 0))
             .build();
 
-    ServerWebExchange mutatedExchange = filterThroughChain(filter, MockServerWebExchange.from(request));
+    ServerWebExchange mutatedExchange =
+        filterThroughChain(filter, MockServerWebExchange.from(request));
 
-    assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Client-IP")).isEqualTo("1.2.3.4");
+    assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Client-IP"))
+        .isEqualTo("1.2.3.4");
   }
 
   @Test
@@ -43,9 +45,11 @@ class HeaderTrustFilterTest {
             .remoteAddress(new InetSocketAddress("1.2.3.4", 0))
             .build();
 
-    ServerWebExchange mutatedExchange = filterThroughChain(filter, MockServerWebExchange.from(request));
+    ServerWebExchange mutatedExchange =
+        filterThroughChain(filter, MockServerWebExchange.from(request));
 
-    assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Client-IP")).isEqualTo("198.51.100.7");
+    assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Client-IP"))
+        .isEqualTo("198.51.100.7");
   }
 
   @Test
@@ -60,9 +64,11 @@ class HeaderTrustFilterTest {
             .remoteAddress(new InetSocketAddress("1.2.3.4", 0))
             .build();
 
-    ServerWebExchange mutatedExchange = filterThroughChain(filter, MockServerWebExchange.from(request));
+    ServerWebExchange mutatedExchange =
+        filterThroughChain(filter, MockServerWebExchange.from(request));
 
-    assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Client-IP")).isEqualTo("1.2.3.4");
+    assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Client-IP"))
+        .isEqualTo("1.2.3.4");
   }
 
   @Test
@@ -81,14 +87,19 @@ class HeaderTrustFilterTest {
             .header("X-Proxy-Tenant-Id", "7")
             .build();
 
-    ServerWebExchange mutatedExchange = filterThroughChain(filter, MockServerWebExchange.from(request));
+    ServerWebExchange mutatedExchange =
+        filterThroughChain(filter, MockServerWebExchange.from(request));
 
-    assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Client-IP")).isEqualTo("203.0.113.99");
-    assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Proxy-Connection-Id")).isEqualTo("conn-123");
-    assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Game-Instance-Id")).isEqualTo("42");
+    assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Client-IP"))
+        .isEqualTo("203.0.113.99");
+    assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Proxy-Connection-Id"))
+        .isEqualTo("conn-123");
+    assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Game-Instance-Id"))
+        .isEqualTo("42");
     assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Session-Id")).isEqualTo("42");
     assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Tenant-Id")).isEqualTo("7");
-    assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Proxy-Game-Instance-Id")).isNull();
+    assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Proxy-Game-Instance-Id"))
+        .isNull();
     assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Proxy-Tenant-Id")).isNull();
   }
 
@@ -109,9 +120,11 @@ class HeaderTrustFilterTest {
             .header("X-Proxy-Tenant-Id", "7")
             .build();
 
-    ServerWebExchange mutatedExchange = filterThroughChain(filter, MockServerWebExchange.from(request));
+    ServerWebExchange mutatedExchange =
+        filterThroughChain(filter, MockServerWebExchange.from(request));
 
-    assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Game-Instance-Id")).isEqualTo("42");
+    assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Game-Instance-Id"))
+        .isEqualTo("42");
     assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Session-Id")).isNull();
   }
 
@@ -154,13 +167,15 @@ class HeaderTrustFilterTest {
             .header("X-Proxy-Tenant-Id", "7")
             .build();
 
-    ServerWebExchange mutatedExchange = filterThroughChain(filter, MockServerWebExchange.from(request));
+    ServerWebExchange mutatedExchange =
+        filterThroughChain(filter, MockServerWebExchange.from(request));
 
     assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Game-Instance-Id")).isNull();
     assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Tenant-Id")).isNull();
   }
 
-  private ServerWebExchange filterThroughChain(HeaderTrustFilter filter, ServerWebExchange exchange) {
+  private ServerWebExchange filterThroughChain(
+      HeaderTrustFilter filter, ServerWebExchange exchange) {
     AtomicReference<ServerWebExchange> ref = new AtomicReference<>();
     WebFilterChain chain =
         e -> {

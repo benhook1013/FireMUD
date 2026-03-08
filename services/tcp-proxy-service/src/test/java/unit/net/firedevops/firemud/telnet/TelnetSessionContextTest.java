@@ -67,7 +67,8 @@ class TelnetSessionContextTest {
     ILoggingEvent event = events.get(0);
     assertEquals(Level.INFO, event.getLevel());
     assertEquals(
-        "Captured Telnet gameInstance colon-sess for tenant tenant-beta", event.getFormattedMessage());
+        "Captured Telnet gameInstance colon-sess for tenant tenant-beta",
+        event.getFormattedMessage());
   }
 
   @Test

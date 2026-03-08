@@ -14,7 +14,8 @@ import org.lognet.springboot.grpc.GRpcService;
 
 @GRpcService
 public final class AutomationScriptingControlPlaneGrpcService
-    extends AutomationScriptingControlPlaneServiceGrpc.AutomationScriptingControlPlaneServiceImplBase {
+    extends AutomationScriptingControlPlaneServiceGrpc
+        .AutomationScriptingControlPlaneServiceImplBase {
 
   private static ErrorDetail notImplemented(String method) {
     return ErrorDetail.newBuilder()
@@ -29,7 +30,9 @@ public final class AutomationScriptingControlPlaneGrpcService
       GetScriptPatchStatusRequest request,
       StreamObserver<GetScriptPatchStatusResponse> responseObserver) {
     GetScriptPatchStatusResponse response =
-        GetScriptPatchStatusResponse.newBuilder().setError(notImplemented("GetScriptPatchStatus")).build();
+        GetScriptPatchStatusResponse.newBuilder()
+            .setError(notImplemented("GetScriptPatchStatus"))
+            .build();
     responseObserver.onNext(response);
     responseObserver.onCompleted();
   }
@@ -60,4 +63,3 @@ public final class AutomationScriptingControlPlaneGrpcService
     responseObserver.onCompleted();
   }
 }
-

@@ -65,7 +65,8 @@ public class TcpProxyEventService {
       String gameInstanceId, String tenantId, String proxyConnectionId, long disconnectSequence) {
     if (!StringUtils.hasText(proxyConnectionId) || disconnectSequence <= 0) {
       return NotifyDisconnectResponse.newBuilder()
-          .setError(error("INVALID_ARGUMENT", "proxyConnectionId and disconnectSequence are required"))
+          .setError(
+              error("INVALID_ARGUMENT", "proxyConnectionId and disconnectSequence are required"))
           .build();
     }
     try {

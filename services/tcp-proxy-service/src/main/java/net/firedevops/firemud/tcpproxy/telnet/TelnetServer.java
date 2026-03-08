@@ -7,8 +7,8 @@ import io.micrometer.core.instrument.MeterRegistry;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelHandlerContext;
-import io.netty.channel.ChannelInitializer;
 import io.netty.channel.ChannelInboundHandlerAdapter;
+import io.netty.channel.ChannelInitializer;
 import io.netty.channel.EventLoopGroup;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.SocketChannel;
@@ -268,7 +268,8 @@ public final class TelnetServer {
     }
     if (maxConnectionsPerIp > 0) {
       java.util.concurrent.atomic.AtomicInteger perIpCount =
-          connectionsByIp.computeIfAbsent(ipKey, key -> new java.util.concurrent.atomic.AtomicInteger());
+          connectionsByIp.computeIfAbsent(
+              ipKey, key -> new java.util.concurrent.atomic.AtomicInteger());
       int ipTotal = perIpCount.incrementAndGet();
       if (ipTotal > maxConnectionsPerIp) {
         perIpCount.decrementAndGet();

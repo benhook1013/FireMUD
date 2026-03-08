@@ -73,7 +73,8 @@ public final class TcpProxyServiceImpl extends TcpProxyServiceGrpc.TcpProxyServi
   }
 
   private ErrorDetail handleNotifyDisconnect(NotifyDisconnectRequest request) {
-    if (StringUtils.hasText(request.getProxyConnectionId()) && request.getDisconnectSequence() > 0) {
+    if (StringUtils.hasText(request.getProxyConnectionId())
+        && request.getDisconnectSequence() > 0) {
       if (!disconnectDeduplicator.shouldProcess(
           request.getProxyConnectionId(), request.getDisconnectSequence())) {
         return ok("Duplicate disconnect ignored");
@@ -87,8 +88,7 @@ public final class TcpProxyServiceImpl extends TcpProxyServiceGrpc.TcpProxyServi
     if (!StringUtils.hasText(gameInstanceIdText) || !StringUtils.hasText(request.getTenantId())) {
       return ok("Disconnect recorded (no SESSION envelope)");
     }
-    SessionValidationResult validation =
-        validateSession(gameInstanceIdText, request.getTenantId());
+    SessionValidationResult validation = validateSession(gameInstanceIdText, request.getTenantId());
     if (validation.hasError()) {
       return validation.errorDetail();
     }
