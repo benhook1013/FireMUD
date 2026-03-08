@@ -17,5 +17,5 @@ resources:
   - spring-cloud-gateway.yaml
   - tcp-proxy-service.yaml
   - world-management-service.yaml
-  - ../network-policies/internal-services.yaml
-  - ../network-policies/internal-services-egress.yaml
+  - internal-services-network-policy.yaml
+  - internal-services-egress-network-policy.yaml
