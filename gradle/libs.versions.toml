@@ -49,9 +49,9 @@ protoc-gen-grpc-java = { module = "io.grpc:protoc-gen-grpc-java", version = "1.7
 protobuf-java = { module = "com.google.protobuf:protobuf-java", version = "4.34.0" }
 protoc = { module = "com.google.protobuf:protoc", version = "4.34.0" }
 
-opentelemetry-api = { module = "io.opentelemetry:opentelemetry-api", version = "1.59.0" }
-opentelemetry-sdk = { module = "io.opentelemetry:opentelemetry-sdk", version = "1.59.0" }
-opentelemetry-exporter-otlp = { module = "io.opentelemetry:opentelemetry-exporter-otlp", version = "1.59.0" }
+opentelemetry-api = { module = "io.opentelemetry:opentelemetry-api", version = "1.60.1" }
+opentelemetry-sdk = { module = "io.opentelemetry:opentelemetry-sdk", version = "1.60.1" }
+opentelemetry-exporter-otlp = { module = "io.opentelemetry:opentelemetry-exporter-otlp", version = "1.60.1" }
 
 micrometer-core = { module = "io.micrometer:micrometer-core", version = "1.16.3" }
 micrometer-registry-prometheus = { module = "io.micrometer:micrometer-registry-prometheus", version = "1.16.3" }
