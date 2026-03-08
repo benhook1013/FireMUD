@@ -90,7 +90,7 @@ run_preflight_policy_checks() {
   echo "::group::Run canonical preflight policy checks (ci-static)"
   FIREMUD_PREFLIGHT_CONTEXT=ci-static \
     FIREMUD_PREFLIGHT_OUTPUT=/tmp/firemud-preflight-staging.json \
-    "$ROOT_DIR/dev-tools/deploy/preflight.sh" staging
+    bash "$ROOT_DIR/dev-tools/deploy/preflight.sh" staging
 
   local promotion_attestation=""
   local backup_readiness=""
@@ -140,11 +140,11 @@ PY
       FIREMUD_PREFLIGHT_OUTPUT=/tmp/firemud-preflight-production.json \
       FIREMUD_PROMOTION_ATTESTATION="$promotion_attestation" \
       FIREMUD_BACKUP_READINESS_EVIDENCE="$backup_readiness" \
-      "$ROOT_DIR/dev-tools/deploy/preflight.sh" production
+      bash "$ROOT_DIR/dev-tools/deploy/preflight.sh" production
   else
     FIREMUD_PREFLIGHT_CONTEXT=ci-static \
       FIREMUD_PREFLIGHT_OUTPUT=/tmp/firemud-preflight-production.json \
-      "$ROOT_DIR/dev-tools/deploy/preflight.sh" production
+      bash "$ROOT_DIR/dev-tools/deploy/preflight.sh" production
   fi
   echo "::endgroup::"
 }
