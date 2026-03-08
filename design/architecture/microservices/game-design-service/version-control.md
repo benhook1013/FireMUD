@@ -65,6 +65,9 @@ services as the source of truth for the current Draft template graphs:
 - The `PublishVersion` workflow must verify that `designSyncStatus == IN_SYNC`
   before starting the publish Saga. Versions that are out of sync cannot be
   published until reconciliation succeeds.
+- Reconciliation does not authorize silently broken drafts:
+  - commits introducing unresolved cross-service references must move the version into explicit invalid state (`UNRESOLVED_REFERENCE` or equivalent) rather than leaving it as a normal Draft;
+  - replay workers may retry delivery, but they must not invent identifier rewrites or downgrade hard validation failures into generic `OUT_OF_SYNC`.
 
 In addition to domain-service digests, publish safety requires a Game Design control-plane digest:
 
@@ -73,6 +76,15 @@ In addition to domain-service digests, publish safety requires a Game Design con
 - Control-plane digest mismatch is treated exactly like a domain digest mismatch (`OUT_OF_SYNC`, publish blocked).
 - The control-plane digest surface should be exposed through a read-only API (for example `GetDesignControlPlaneDigest`) so publish tooling uses a uniform participant contract.
 - `GetDesignControlPlaneDigest` should return at minimum `{tenantId, versionId or scriptPatchVersion scope, appliedCommitId, contentDigest, digestSchemaVersion}` so publish gates compare like-for-like payloads across all participants.
+- After all digest gates and asset export succeed, Game Design must persist a single immutable `published_release_bundle` attestation for `(tenantId, versionId)` that captures the final participant digests plus `manifestHash` and `generationConfigRevision`.
+- Game Design must expose the attestation through `GetPublishedReleaseBundle(tenantId, versionId)` with deterministic response fields at minimum:
+  - `tenantId`, `versionId`, `commitId`, `publishWorkflowId`, `publishedAt`
+  - `participantDigests[] { serviceName, appliedCommitId, contentDigest, digestSchemaVersion }`
+  - `manifestHash`, `manifestSchemaVersion`
+  - `generationConfigRevision`
+  - attestation schema/version fields for future evolution
+  - Error semantics: `NOT_FOUND` means not publish-complete; `SCHEMA_VERSION_UNSUPPORTED` means fail closed until callers support the attestation schema.
+  - Cache semantics: publish gates, activation, cutover preflight, and repair must read fresh attestation state rather than reusing stale cached payloads.
 
 Digest comparison rules:
 
@@ -108,6 +120,7 @@ Rules:
   - `UNSUPPORTED_SCOPE` from an in-scope required participant is a hard gate failure.
 - Changes to this matrix require an explicit doc + migration update in both `version-control.md` and `world-editing-tools.md`.
 - Every service listed in this matrix must maintain a service-local digest input manifest documenting included/excluded objects, canonicalization, and `digestSchemaVersion` bump criteria. Publish gating should fail closed when a participant cannot attest a digest under its documented manifest for the reported schema version.
+- Full publish additionally requires that the final immutable release attestation row be written successfully; a version is not publish-complete until `published_release_bundle` exists for the target `(tenantId, versionId)`.
 
 ### Digest Schema Migration
 

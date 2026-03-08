@@ -48,7 +48,7 @@ Refunds call Stripe’s `Refund` API and update the `payment_transaction` `statu
 
 Subscription creation, lifecycle, and entitlements are covered in more detail in the [Subscription Management Design](./subscription-management.md). At a high level:
 
-1. A creator chooses a hosting plan for a tenant in the admin UI; the UI calls `CreateSubscription` with `accountId`, `tenantId`, and `plan_code`.  
+1. A creator chooses a hosting plan for a tenant in the admin UI; the caller-bound tenant variant of `CreateSubscription` derives actor identity from auth context and accepts `tenantId` plus `plan_code` only. Cross-tenant billing/admin workflows use separate admin variants when acting on another account or tenant.  
 2. The Account Service ensures a Stripe customer exists for the account, then creates or updates a Stripe `subscription` using the configured Stripe product/price for `plan_code`.  
 3. An internal `subscription` row is created or updated with `status` based on the Stripe subscription’s state and linked to the Stripe `subscription` ID.  
 4. Stripe webhooks (`invoice.payment_succeeded`, `invoice.payment_failed`, `customer.subscription.updated`, `customer.subscription.deleted`) drive subsequent state transitions and keep the internal `subscription` table in sync.  
@@ -59,7 +59,9 @@ Subscription creation, lifecycle, and entitlements are covered in more detail in
 Stripe integration must preserve tenant isolation while allowing platform-level reporting:
 
 - Each hosted game (`tenantId`) that requires billing has exactly one primary subscription record linking `accountId` and `tenantId`.  
-- Stripe customer IDs are per-account, not per-tenant, to reduce duplication; per-tenant subscriptions are differentiated by products/prices and metadata.  
+- Stripe customer IDs are per-account, not per-tenant, to reduce duplication; per-tenant subscriptions are differentiated by products/prices and metadata. This makes payment instruments an **account-owned shared resource** even when a caller is operating through a tenant-scoped billing-safe surface.  
+- Tenant-scoped billing-safe APIs that mutate payment methods must therefore disclose that the change can affect other tenants owned by the same platform account, and audit records must capture the full set of affected tenant subscriptions derivable at mutation time.  
+- If a future product requirement needs tenant-isolated payment instruments, the platform must move to tenant-scoped billing customers rather than treating the current shared-customer model as implicitly tenant-safe.  
 - Internal queries always filter billing records by both `accountId` and `tenantId` when operating on tenant-specific subscriptions or transactions. Cross-tenant reports are restricted to roles with appropriate `globalRoles` as defined in the shared role model:
   - `platformAdmin` for full cross-tenant reporting, and
   - `billingAdmin` for billing-focused reporting surfaces.

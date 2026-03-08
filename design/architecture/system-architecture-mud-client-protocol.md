@@ -27,6 +27,21 @@ MCP negotiation in FireMUD is role-specific:
 
 In both modes, FireMUD and MCP-capable clients agree on the highest overlapping version and use the client-supplied `authentication-key` for all subsequent MCP messages. If no overlap exists, MCP cannot be used and the connection must fall back to plain text or close.
 
+Greeting ownership must be singular per connection. A connection may be in exactly one of these MCP greeting modes:
+
+- `backend_greets` – Game Session emits the initial MCP greeting and the proxy forwards it transparently.
+- `proxy_shim_greets` – the proxy shim emits the initial MCP greeting only because backend greeting is disabled for that environment/connection.
+
+These modes are mutually exclusive. Implementations must not allow both the proxy shim and backend to emit server greetings on the same connection, and rollout flags must make the chosen mode explicit so clients never receive duplicate `#$#mcp version: ...` greetings.
+
+If configuration drift would cause both greeting paths to fire, producers must fail closed on the duplicate-greeting path rather than sending two server greetings on one connection. This is a rollout/configuration bug, not a valid protocol variant:
+
+- the duplicate greeting must be suppressed before it reaches the client whenever detection is possible,
+- the owning component must emit a bounded misconfiguration signal such as `mcp_greeting_mode_conflict`,
+- and operators should treat any client-visible duplicate greeting as an incident requiring rollback or feature-flag correction.
+
+Clients should not be expected to recover from duplicate server greetings beyond falling back to plain-text behavior or disconnecting cleanly; the server side owns preventing this condition.
+
 On the Telnet path, the TCP Proxy Service may still be in its `SESSION` envelope capture window when clients begin MCP negotiation. `SESSION` envelopes are consumed by the proxy; MCP control lines are forwarded upstream and do not close the envelope window. Clients that want to use both `SESSION` and MCP should send `SESSION` first, then start MCP negotiation (and then proceed to `LOGIN`) so the proxy can include any captured session hints in the Proxy → Gateway WebSocket handshake.
 
 Each endpoint then advertises its capabilities using `mcp-negotiate-can package: <name> min-version: <x> max-version: <y>` messages and finishes with `mcp-negotiate-end`. FireMUD uses version 2.0 of the `mcp-negotiate` package, so the package must be advertised explicitly and `mcp-negotiate-end` terminates negotiation. A package is considered active only after both sides have sent `mcp-negotiate-can` for it and both have sent `mcp-negotiate-end`. Implementations may defer using a package until receipt of the other side’s `mcp-negotiate-end`. Unknown packages are ignored so legacy clients remain unaffected.

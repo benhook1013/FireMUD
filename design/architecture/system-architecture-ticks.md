@@ -105,12 +105,16 @@ In addition to the gRPC heartbeat, the Game Session Service exposes a **tick eve
 
 This event stream is an observer/wakeup hint used for reconnection timer replay hints and other out-of-band reporting. “Every N ticks” scheduling correctness comes from the committed heartbeat/RegionStatus timeline plus durable PostgreSQL schedules; tick events may reduce latency by prompting quicker work discovery, but missing or duplicated events must not change which schedules eventually fire.
 
-Durable automation schedules and quotas live in PostgreSQL (see the scripting DSL and Automation & Scripting service docs); Redis structures such as `tick-events:{tenantRegionTag}` and `script-scheduler:{tenantRegionTag}:lastTickId` are coordination hints only. Losing or resetting those keys must not change which automation jobs are eventually executed, only when they are next discovered.
+Durable automation schedules, quotas, and trigger-instance de-duplication live in PostgreSQL (see the scripting DSL and Automation & Scripting service docs); Redis structures such as `tick-events:{tenantRegionTag}` and `script-scheduler:{tenantRegionTag}:lastTickId` are coordination hints only. Losing or resetting those keys must not change which automation jobs are eventually executed, only when they are next discovered.
 
 Automation & Scripting Service instances typically:
 
 - Establish long-lived gRPC streams to `StreamTickHeartbeats` for the tenants/regions they own.
-- Maintain per-region scheduler state in Redis (for example `script-scheduler:{tenantRegionTag}:lastTickId`) so they can compute which “every N ticks” boundaries have elapsed and enqueue `onInterval` and other tick-derived triggers under the same tick timeline.
+- Maintain per-region scheduler state in Redis (for example `script-scheduler:{tenantRegionTag}:lastTickId`) only as a checkpoint/hint.
+- Claim or insert a durable PostgreSQL trigger-instance/outbox row keyed by an **instance-aware** uniqueness projection before enqueueing any `onInterval` or other tick-derived trigger so duplicate heartbeat consumers or failover cannot create duplicate logical gameplay actions.
+  - At minimum this uniqueness projection must include either:
+    - a globally unique `scheduleId`, or
+    - `gameInstanceId` together with the other trigger-identity fields (for example `regionEpoch`, `dueTickId`, and `triggerKind`).
 
 ### Bootstrap vs Stream (Authoritative Timeline Source)
 
@@ -122,8 +126,10 @@ For any consumer or operator that needs to locate “where a region is” on the
 - Minimum `RegionStatus` contract (required for consumers and admission control):
   - Timeline: `regionEpoch`, `lastCommittedTickId`, and an `updatedAt`/`lastCommitTimestamp`.
   - Health: a bounded `status`/`health` value (for example `RUNNING`, `DEGRADED`, `PAUSED`, `STALLED`).
-  - Backlog indicators (optional but recommended): retry depth and remote follow-up lag/backlog so origin-side admission control can shed load without relying on Redis hints.
-  - Update rule: `lastCommittedTickId` advances only after a tick is committed; it is monotonic within an epoch and resets only when `regionEpoch` is bumped by a scoped reset or explicit timeline-severing maintenance. In steady state it advances by exactly `+1` per committed tick; any “fast-forward” is allowed only via explicit, audited maintenance tooling and must never regress within an epoch.
+  - Backlog indicators:
+    - Minimum required when cross-region gameplay, replay-driven admission control, or backlog-based shedding is enabled: retry depth and remote follow-up lag/backlog so origin-side admission control can shed load without relying on Redis hints.
+    - Optional only for deployments/features that do not use backlog-aware admission or cross-region shedding; such profiles must document that reduced contract explicitly rather than assuming the main control-plane surface can omit these fields silently.
+  - Update rule: `lastCommittedTickId` advances only after a tick is committed; it is monotonic within an epoch and resets only when `regionEpoch` is bumped by a scoped reset or explicit timeline-severing maintenance. In steady state it advances by exactly `+1` per committed tick. Direct “fast-forward” of `lastCommittedTickId` within a live epoch is forbidden because follow-up eligibility, remote deadlines, and automation schedules derive from the committed timeline.
   - Epoch-start sentinel: on a newly created epoch, `lastCommittedTickId = -1` (default), so the first committable tick in that epoch is `tickId=0`.
 - **Follow** via streaming heartbeats:
   - After bootstrapping, consumers attach to `StreamTickHeartbeats` and treat the combination of the bootstrap status and the live heartbeat as the authoritative progression of the timeline.
@@ -320,13 +326,15 @@ Automation & Scripting uses the tick heartbeat plus durable PostgreSQL schedules
 
 - For each scheduled script or automation job, PostgreSQL stores at least:
   - `(tenantId, regionId, region_epoch, scriptId, next_due_tickId)` and the interval in ticks.
+- Before enqueueing any trigger derived from a due boundary, the scheduler must first claim or insert a durable trigger-instance row keyed by an **instance-aware** uniqueness projection. Duplicate schedulers that race on the same heartbeat boundary must observe the same durable row and must not enqueue a second logical trigger.
+  - If `scheduleId` is not globally unique across game instances, the uniqueness projection must include `gameInstanceId`.
 - On startup or after a reset:
   - The scheduler fetches current `(region_epoch, tickId)` for each `<tenantId, regionId>` from `GetRegionTickStatus` and the corresponding `next_due_tickId` from PostgreSQL.
   - If `next_due_tickId <= currentTickId`, the scheduler may fire at most one **catch-up trigger** per script (for example “you missed one interval while down”) and then advances `next_due_tickId` by whole intervals until it is strictly greater than `currentTickId`.
   - Very old missed intervals are not replayed one-by-one; the system guarantees that **future intervals fire correctly** and, at most, a bounded catch-up occurs after downtime.
 - After recovery, the scheduler:
   - Tracks progression purely from the heartbeat stream and updates `next_due_tickId` in PostgreSQL as intervals elapse.
-  - Uses Redis coordination keys such as `script-scheduler:{tenantRegionTag}:lastTickId` as hints/checkpoints only; losing them affects when work is next discovered, not which durably-configured schedules eventually execute.
+  - Uses Redis coordination keys such as `script-scheduler:{tenantRegionTag}:lastTickId` as hints/checkpoints only; losing them affects when work is next discovered, not which durably-configured schedules eventually execute, because durable trigger-instance uniqueness remains the de-duplication boundary.
 
 Details of timer key shapes and scaling strategies live in `system-architecture-tick-concepts-and-invariants.md` and `system-architecture-scripting-dsl-and-lifecycle.md`.
 
@@ -337,8 +345,9 @@ Details of timer key shapes and scaling strategies live in `system-architecture-
 On executor crash or failover, a new worker:
 
 - Acquires the region lease.
-- Inspects staged tick metadata and timers.
-- Replays or resumes work based only on persisted state (`tick:{tenantRegionTag}:pending`, `retry:{tenantRegionTag}`, and domain idempotency tables).
+- Reads the durable tick-batch, tick effect ledger, follow-up tables, and `RegionStatus` rows that define the authoritative recovery baseline for the affected `(tenantId, regionId, region_epoch)`.
+- Inspects any surviving Redis coordination state (`tick:{tenantRegionTag}:pending`, `retry:{tenantRegionTag}`, timers, leases) only as optional hints that may accelerate or narrow replay scope.
+- Replays or resumes work from the durable PostgreSQL record of staged or claimed work plus domain idempotency tables; Redis coordination state must not be treated as the sole persisted recovery basis.
 
 See `system-architecture-tick-failures-and-operations.md` for the full crash-recovery algorithm and failure modes.
 

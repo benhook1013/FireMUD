@@ -105,6 +105,7 @@ Trace-driven triage is optional but often decisive for command-latency incidents
 3. **Inspect downstream domains**
    - For commands dominating latency:
      - Use Jaeger and service-specific dashboards to identify slow spans (e.g., `entity_apply_damage`, `room_resolve_look`).
+     - Use stage-split command latency metrics (`command_latency_stage_ms_bucket`) first to determine whether the regression is in `edge_queue`, `dispatch`, `tick_wait`, or `domain_commit` before relying on trace sampling.
      - Verify database query performance and indexes for those paths.
 4. **Mitigate**
    - Scale the Game Session Service and/or hot downstream services where indicated.
@@ -195,7 +196,8 @@ Trace-driven triage is optional but often decisive for command-latency incidents
      - Scale or roll back Gateway/TCP Proxy if a recent change correlates with the incident.
      - Validate downstream dependencies (Redis/Postgres) and tick health for player-facing regions.
 3. **Verify recovery**
-   - Confirm availability returns above SLO for affected `{tenantId,path}` combinations and the dominant failure outcomes subside.
+   - Confirm the short-window detection view recovers quickly for affected `{tenantId,path}` combinations and the dominant failure outcomes subside.
+   - Confirm the 1-day compliance view trends back toward SLO after the acute incident is resolved.
 4. **Degraded-mode branch (if observability backends are unavailable)**
    - If Grafana is down: query Prometheus directly for `entrypath_connection_attempts_total` success/total ratios by `{tenantId,path}` and dominant `outcome`.
    - If Kibana is down: use Gateway/TCP Proxy logs directly to classify failures (`limit_exceeded`, `protocol_error`, `upstream_unreachable`, `auth_failed`).

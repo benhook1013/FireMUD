@@ -4,6 +4,8 @@ default_classification: tenant_regular
 classifications:
   - public
   - account_scoped
+  - player_bootstrap_tenant
+  - pre_tenant_discovery
   - tenant_regular
   - billing_safe_tenant
   - cross_tenant_support_safe
@@ -20,8 +22,8 @@ routes:
     classification: public
   - service: game-session-service
     route: WORLDS
-    scope: tenant
-    classification: tenant_regular
+    scope: account
+    classification: pre_tenant_discovery
     roles:
       any_of: [player, moderator, designer, tenantAdmin, platformAdmin]
   - service: game-session-service
@@ -62,6 +64,10 @@ routes:
       any_of: [tenantAdmin, platformAdmin]
   - service: account-service
     route: AuthLogin
+    scope: public
+    classification: public
+  - service: account-service
+    route: PlayerBootstrapLogin
     scope: public
     classification: public
   - service: account-service
@@ -114,9 +120,18 @@ routes:
   - service: account-service
     route: IssueConnectToken
     scope: tenant
-    classification: tenant_regular
+    classification: player_bootstrap_tenant
+    auth_path: player_bootstrap
     roles:
       any_of: [player, moderator, designer, tenantAdmin, platformAdmin]
+  - service: account-service
+    route: GetTenantEntitlementsForRuntime
+    scope: tenant
+    classification: tenant_regular
+    auth_path: internal_service
+    response_profile: runtime_admission
+    allowed_callers:
+      any_of: [game-session-service, logging-admin-service, platform-runtime]
   - service: account-service
     route: GetTenantEntitlementsTenant
     scope: tenant

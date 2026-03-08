@@ -39,16 +39,28 @@ For high-level CI/CD architecture, see `design/architecture/system-architecture-
        - Preferred: annotate the namespace with the overlay SHA:
          - `kubectl annotate namespace <namespace> firemud.io/overlay-sha=<git-sha> --overwrite`
        - Alternative: create/update a dedicated ConfigMap (for example `firemud-deploy-info`) that stores `overlay_sha` and `applied_at` as data keys.
-6. **Monitor Rollout**
+6. **Verify Live State**
+   - Confirm the apply was executed from the exact merged overlay commit used for preflight and review.
+   - Capture the live workload state after rollout:
+     - actual running image digests for updated Deployments/StatefulSets,
+     - the namespace overlay SHA annotation (or `firemud-deploy-info` equivalent),
+     - rollout completion timestamps,
+     - referenced secret/config resource versions required by the release,
+     - smoke-test evidence references.
+   - Store this verification in the deployment record so promotion evidence reflects what is actually running, not only what was intended.
+   - Mark `deployStatus=pass` only after the live-state verification and smoke checks both succeed.
+7. **Monitor Rollout**
    - Watch deployment rollout status for each updated service.
    - Verify pod readiness and liveness probes are passing.
    - Check logs for startup errors, especially around database connectivity, Redis connectivity, and secrets loading.
-7. **Post-Deployment Checks**
+8. **Post-Deployment Checks**
    - Run smoke tests and login/session checks as described in `design/developer-workflows/login-session-smoke-tests.md`.
    - Confirm that the game session tick loop is running and that players can connect via both Web client and Telnet.
-8. **Record Rollback Classification**
+9. **Record Rollback Classification**
    - Mark the deployment evidence as `rollback-compatible` when previous digests are safe to re-apply.
    - Mark as `roll-forward-only` when schema/contract changes make old-binary rollback unsafe; include the forward-remediation or restore-point path.
+   - For `roll-forward-only` production releases, attach the fresh backup-readiness evidence record from `design/operations/deployments/production/backup-readiness/<deployment-ref>.json`.
+   - Ensure the backup-readiness record is explicitly bound to the production attestation path and promoted digest set before attach.
 
 ## Hobby Manifest/Chart Deployment Flow (Hobby / Self-Hosted)
 
@@ -67,7 +79,7 @@ For high-level CI/CD architecture, see `design/architecture/system-architecture-
    - Run login/session smoke checks and confirm player connectivity paths.
 5. **Record Deployment Evidence**
    - Record deployment evidence at `design/operations/deployments/hobby-self-hosted/deployments/<deployment-ref>.json`.
-   - Include: deployment input reference, preflight report path, smoke evidence references, and rollback reference.
+   - Include: deployment input reference, preflight report path, live-state verification summary, smoke evidence references, and rollback reference.
 
 ## Canary or Phased Rollouts
 
@@ -99,8 +111,8 @@ If a deployment causes instability:
 
 | Environment | Deploy Steps | Rollback Steps |
 | --- | --- | --- |
-| **Staging** | Ensure CI is green → run preflight policy checks (digest pinning + secret contract) → open/merge PR that updates image digests in `k8s/overlays/stage` → apply overlay: `kubectl apply -k k8s/overlays/stage` → monitor rollout and run smoke tests | Open/merge PR that reverts `k8s/overlays/stage` to the last known-good digest set → re-apply overlay → monitor rollout |
-| **Production** | Merge the `release-please` release PR to `main` and confirm the release tag (for example `v1.2.3`) exists → ensure CI and security scans are green → verify staging attestation for the exact digest set → run preflight policy checks → open/merge PR that updates `k8s/overlays/prod` to the approved digests → apply overlay: `kubectl apply -k k8s/overlays/prod` → monitor rollout and run smoke tests | Open/merge PR that reverts `k8s/overlays/prod` to the last known-good digest set → re-apply overlay → monitor rollout; follow database migration downgrade guidance when schema changes are involved |
-| **Hobby / Self-Hosted** | Resolve target manifests/charts → run operator preflight (`./dev-tools/deploy/preflight.sh hobby-self-hosted`) and capture report → apply manifests/charts from operator environment → monitor rollout and run smoke tests → record deployment evidence (`manifestRef`/`chartVersion`, preflight report, rollback reference) | Re-apply previously known-good manifest/chart reference and confirm health; if schema changed, follow migration compatibility guidance |
+| **Staging** | Ensure CI is green → run preflight policy checks (digest pinning + secret contract) → open/merge PR that updates image digests in `k8s/overlays/stage` → apply overlay: `kubectl apply -k k8s/overlays/stage` → verify live state matches the merged overlay → monitor rollout and run smoke tests | Open/merge PR that reverts `k8s/overlays/stage` to the last known-good digest set → re-apply overlay → verify live state → monitor rollout |
+| **Production** | Merge the `release-please` release PR to `main` and confirm the release tag (for example `v1.2.3`) exists → ensure CI and security scans are green → verify staging attestation for the exact digest set → run preflight policy checks → for `roll-forward-only` releases attach fresh backup-readiness evidence → open/merge PR that updates `k8s/overlays/prod` to the approved digests → apply overlay: `kubectl apply -k k8s/overlays/prod` → verify live state matches the merged overlay → monitor rollout and run smoke tests | Open/merge PR that reverts `k8s/overlays/prod` to the last known-good digest set → re-apply overlay → verify live state → monitor rollout; follow database migration downgrade guidance when schema changes are involved |
+| **Hobby / Self-Hosted** | Resolve target manifests/charts → run operator preflight (`./dev-tools/deploy/preflight.sh hobby-self-hosted`) and capture report → apply manifests/charts from operator environment → verify live state → monitor rollout and run smoke tests → record deployment evidence (`manifestRef`/`chartVersion`, preflight report, rollback reference) | Re-apply previously known-good manifest/chart reference and confirm health; if schema changed, follow migration compatibility guidance |
 
-Overlay PRs should include a clear deployment intent payload: target environment, service image digests, source commit/tag, rollback digest set (or explicit `roll-forward-only` marker), and (for production) a staging attestation reference. Attestation schema and validation requirements are defined in `design/architecture/system-architecture-promotion-attestation.md`. CI validates overlay images and preflight policy contracts via [`.github/workflows/validate-kustomize-overlays.yml`](../../.github/workflows/validate-kustomize-overlays.yml) before merge.
+Overlay PRs should include a clear deployment intent payload: target environment, service image digests, source commit/tag, rollback digest set (or explicit `roll-forward-only` marker), and (for production) an attestation reference under `design/operations/deployments/production/attestations/`. Attestation schema and validation requirements are defined in `design/architecture/system-architecture-promotion-attestation.md`. CI validates overlay images and preflight policy contracts via [`.github/workflows/validate-kustomize-overlays.yml`](../../.github/workflows/validate-kustomize-overlays.yml) before merge.

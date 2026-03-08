@@ -77,6 +77,16 @@ Restore-hardening exception:
 - Restore mode must publish only uncompromised keys in JWKS, advance revocation watermarks, and require validator-convergence evidence before traffic reopen.
 - This avoids re-trusting snapshot-era keys resurrected by restore.
 
+Post-restore certificate policy:
+
+- A restore of a player-facing environment is treated as a **trust-boundary reset** for leaf identities.
+- Post-restore hardening must reissue:
+  - workload mTLS certificates used for service-to-service gRPC,
+  - TCP Proxy → Gateway WebSocket mTLS client/server certificates,
+  - operator client certificates used for internal control-plane access.
+- The default restore flow does **not** rotate the cluster CA or cert-manager issuer root automatically; CA rotation is a separate incident-response path reserved for suspected CA compromise or trust-root loss.
+- Traffic must not reopen until validators and peers have converged on the reissued leaf identities.
+
 ### JWT Key Compromise Response
 
 When a JWT signing key is suspected to be compromised, operators follow a more aggressive rotation and cleanup flow than the normal `jwt-rotation` run:

@@ -107,6 +107,7 @@ These ownership boundaries are normative per `design/architecture/decisions/adr-
 - **Moderation policy propagation** – Logging & Admin owns gameplay/chat moderation policy definition and audit trail; Game Session and Social & Groups enforce policy using versioned policy snapshots/events with bounded cache staleness and explicit invalidation semantics.
 - **Ban taxonomy** – Account owns account-security bans and revocation watermark writes; Logging & Admin owns gameplay/chat moderation ban policy definitions; Game Session and Social & Groups are enforcement owners for gameplay and chat scopes respectively.
 - **Admin/creator API allowlist policy** – Gateway owns the edge-route allowlist policy; domain services own only the API contracts behind allowlisted routes.
+- **Edge exposure default** – Unless a service is explicitly marked as participating in edge-routable domain APIs, its APIs are internal-only and reached through service-to-service contracts, not directly from external tools via Gateway.
 
 ## Related Documentation
 

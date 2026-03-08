@@ -96,6 +96,10 @@ resolved during authentication.
 - `LinkExternalAccount` – attach a Google, Discord, or Steam ID.
 - `GetCallerTenantMembership` – return authoritative caller-bound account-tenant membership and roles for billing-safe mutation checks.
 - `GetTenantMembershipForAccount` – cross-tenant membership lookup for billing/reporting workflows (`billingAdmin`/`platformAdmin` only).
+- `GetTenantMembershipForRuntime` – authoritative internal membership read for gameplay admission, reconnect/resume, and membership-gap reconciliation.
+- `GetTenantEntitlementsForRuntime` – internal runtime/admission entitlement snapshot for Game Session and other gameplay-affecting services.
+- `GetTenantEntitlementsTenant` – caller-bound tenant-admin entitlement view for billing-safe control-plane UX.
+- `GetTenantEntitlementsCrossTenantSupportSafe` – cross-tenant support-safe entitlement view with redacted, high-level fields only.
 - `RequestEmailVerification` – send a verification email.
 - `VerifyEmail` – confirm an email verification token.
 - `CreatePaymentIntent` – initiate a Stripe payment.
@@ -123,10 +127,15 @@ resolved during authentication.
 | `GET` | `/accounts/{accountId}/export` | Export account data |
 | `DELETE` | `/accounts/{accountId}` | Delete an account |
 | `POST` | `/accounts/{accountId}/external` | Link external account |
+| `POST` | `/auth/player-bootstrap` | Authenticate a first-party player UI and return a short-lived `player-bootstrap` token for gameplay bootstrap only |
 | `GET` | `/profiles/{accountId}` | Retrieve profile information |
 | `PUT` | `/profiles/{accountId}` | Update profile information |
 | `GET` | `/tenants/{tenantId}/memberships/me` | Authoritative caller-bound membership and roles for billing-safe mutation guards |
 | `GET` | `/tenants/{tenantId}/memberships/{accountId}` | Cross-tenant membership lookup for billing/reporting roles (`billingAdmin`/`platformAdmin`) |
+| `POST` | `/auth/connect-token` | Issue a short-lived gameplay connect token for one `{tenantId, gameInstanceId}` target using caller-bound player bootstrap identity |
+| `GET` | `/internal/runtime/tenants/{tenantId}/entitlements` | Internal runtime/admission entitlement snapshot for gameplay-affecting services |
+| `GET` | `/tenants/{tenantId}/entitlements/me` | Caller-bound tenant-admin entitlement view for billing-safe UX |
+| `GET` | `/support/tenants/{tenantId}/entitlements` | Cross-tenant support-safe entitlement view with redacted fields |
 | `GET` | `/.well-known/jwks.json` | JWKS for verifying issued JWTs |
 
 ### Endpoint Authentication Classes
@@ -134,8 +143,10 @@ resolved during authentication.
 | Surface | Examples | Required auth path | Notes |
 | --- | --- | --- | --- |
 | Public auth/bootstrap | `/auth/login`, `/auth/request-password-reset`, `/auth/complete-password-reset`, `/auth/request-email-verification`, `/auth/verify-email`, `/auth/recover-username`, `/.well-known/jwks.json` | No pre-existing user JWT; endpoint-specific validation and abuse controls | Intended for initial auth/bootstrap flows. |
+| Player bootstrap issuance | `/auth/player-bootstrap` | First-party player credentials or external-login bootstrap | Issues the `player-bootstrap` token profile only; must not return a control-plane Browser JWT. |
+| Player bootstrap | `/auth/connect-token` | Short-lived, memory-only `player-bootstrap` token in `Authorization: Bearer ...` | Caller identity is derived from bootstrap auth context; endpoint must not accept arbitrary `accountId`. |
 | Authenticated account control-plane APIs | `/auth/logout`, `/auth/logout-all`, `/profiles/*`, `/accounts/*/export`, `/tenants/{tenantId}/memberships/me`, `/tenants/{tenantId}/memberships/{accountId}` | JWT middleware (`AuthTokenInterceptor` + route classification) | Must enforce route class, subject-binding rules, and tenant/global role checks. |
-| Internal service gRPC | `Authenticate`, `GetCallerTenantMembership`, `GetTenantMembershipForAccount`, payment and profile gRPC APIs | mTLS caller identity plus method-level auth policy | Internal service surfaces are not edge-exposed directly. |
+| Internal service gRPC | `Authenticate`, `GetCallerTenantMembership`, `GetTenantMembershipForAccount`, `GetTenantEntitlementsForRuntime`, payment and profile gRPC APIs | mTLS caller identity plus method-level auth policy | Internal service surfaces are not edge-exposed directly. |
 
 ### Subject-Binding Rules (Normative)
 
@@ -265,18 +276,33 @@ See [Environment & Secrets](../../infrastructure/environment-and-secrets.md#auth
 
 Browser JWTs and Service JWTs share the same claim schema (`iss`, `sub`, `jti`, `accountId`, `aud`, `iat`, `nbf`, `exp`, optional `globalRoles`, optional `scopedRoles`) but differ in their intended audiences and issuance flows as described in the Authentication & Authorization design. New endpoints must document which profile they issue or accept and validate the expected audience before trusting a token.
 
+The `player-bootstrap` token profile is distinct from both Browser JWTs and Service JWTs:
+
+- Audience is `player-bootstrap`.
+- It is issued only by `POST /auth/player-bootstrap` / `IssuePlayerBootstrapToken`.
+- It is stored in memory only by first-party gameplay UIs and is accepted only on gameplay-bootstrap surfaces such as `POST /auth/connect-token`.
+- It is backed by `session:auth:account:<accountId>:<tokenHash>` so account-level logout/revocation semantics remain consistent.
+- `POST /auth/logout` and `POST /auth/logout-all` must accept this profile so first-party gameplay UIs can explicitly revoke bootstrap capability on sign-out rather than waiting for expiry.
+
 The Account Service is the sole writer for auth revocation watermark keys (`session:auth:revoked_after:account:*`, `session:auth:revoked_after:tenant:*`). Other services request revocation via events or APIs and must not write watermark keys directly.
 
 Billing-safe mutation authority contract:
 
 - The Account Service provides an authoritative membership API for live billing-safe checks: `GetCallerTenantMembership(tenantId)` (REST equivalent `GET /tenants/{tenantId}/memberships/me`), where subject account is bound from caller auth context.
 - Cross-tenant membership reads use a separate API: `GetTenantMembershipForAccount(tenantId, accountId)` (REST equivalent `GET /tenants/{tenantId}/memberships/{accountId}`), restricted to `billingAdmin`/`platformAdmin`.
+- The Account Service provides a separate internal membership API for gameplay/runtime callers: `GetTenantMembershipForRuntime(accountId, tenantId)` (or protocol-equivalent). Game Session must use this API for `PLAY`, reconnect/resume validation, and membership-gap reconciliation rather than reusing billing-safe caller-bound routes.
 - Responses include `evaluatedAt` and `membershipVersion` so callers can verify freshness and detect stale reads.
 - If authoritative membership data is unavailable, callers must fail closed for billing-safe mutations rather than relying on JWT claims alone.
 
+Membership-change producer contract:
+
+- The Account Service emits membership-change events with `eventId`, `accountId`, `tenantId`, `membershipVersion`, changed roles, and a flag indicating whether gameplay admission remains allowed.
+- `membershipVersion` is monotonic per `{accountId, tenantId}` and must advance on any membership or role change that can affect gameplay admission or caller-bound tenant authority.
+- Consumers treat duplicate/older versions as no-ops and reconcile gaps with authoritative membership reads.
+
 Entitlement producer contract:
 
-- `GetTenantEntitlements(tenantId)` is the authoritative producer for admission-critical entitlement snapshots.
+- `GetTenantEntitlementsForRuntime(tenantId)` is the authoritative producer for admission-critical entitlement snapshots.
 - Responses must include:
   - `evaluatedAt` (UTC RFC3339 timestamp),
   - `entitlementVersion` (monotonic per-tenant version string/integer),
@@ -347,14 +373,17 @@ Canonical non-login authorization/entitlement errors:
   ```
 
   Error responses use the standard `shared.v1.ErrorDetail` structure and `AuthenticationErrorCodes` as described below.
-- `POST /auth/connect-token` – issue a short-lived gameplay connect token for one `{tenantId, gameInstanceId}` target for first-party WebSocket handshake policy on `/ws/game/**`.
+- `POST /auth/player-bootstrap` – authenticate a first-party player UI and return a short-lived `player-bootstrap` token profile for gameplay bootstrap only. This endpoint must issue a dedicated audience (`aud=player-bootstrap`), back the token with `session:auth:account:<accountId>:<tokenHash>`, and must not return a control-plane Browser JWT.
+- `POST /auth/connect-token` – issue a short-lived gameplay connect token for one `{tenantId, gameInstanceId}` target for first-party WebSocket handshake policy on `/ws/game/**`. This endpoint is caller-bound to the authenticated player bootstrap identity, must not accept arbitrary `accountId`, and is not a general control-plane Browser JWT endpoint.
 - `POST /auth/logout` – revoke only the currently presented token. The service computes `tokenHash` from `Authorization: Bearer <token>`, deletes associated `session:auth:*:<tokenHash>` allowlist entries, and emits an audit event.
 - `POST /auth/logout-all` – revoke all active tokens for the authenticated account by setting `session:auth:revoked_after:account:<accountId>` to now and emitting an audit event. This operation is idempotent.
   - The account watermark is the immediate revocation authority. Existing `session:auth:tenant:*` and `session:auth:global:*` keys for the account may be removed asynchronously by bounded background cleanup and are not required for immediate correctness.
 - `GET /.well-known/jwks.json` – JWKS for verifying issued JWT tokens.
 - `GET /tenants/{tenantId}/memberships/me` – authoritative caller-bound membership/role lookup used by billing-safe mutation guards.
 - `GET /tenants/{tenantId}/memberships/{accountId}` – cross-tenant membership lookup restricted to billing/reporting roles.
-- `GET /tenants/{tenantId}/entitlements` – authoritative runtime entitlement snapshot including `evaluatedAt`, `entitlementVersion`, and `tenantBillingSequence`.
+- `GET /internal/runtime/tenants/{tenantId}/entitlements` – authoritative runtime entitlement snapshot including `evaluatedAt`, `entitlementVersion`, and `tenantBillingSequence`, restricted to internal gameplay-affecting callers.
+- `GET /tenants/{tenantId}/entitlements/me` – caller-bound tenant-admin entitlement view for billing-safe UX.
+- `GET /support/tenants/{tenantId}/entitlements` – cross-tenant support-safe entitlement view returning redacted, high-level fields only.
 - `POST /auth/request-email-verification` – send a verification email for the account.
 - `POST /auth/verify-email` – confirm the verification token.
 
@@ -386,14 +415,18 @@ curl -X POST http://localhost:8080/auth/login \
 - `RequestPasswordReset(RequestPasswordResetRequest) returns (RequestPasswordResetResponse)` – send a reset token.
 - `CompletePasswordReset(CompletePasswordResetRequest) returns (CompletePasswordResetResponse)` – reset the password using a token.
 - `LinkExternalAccount(LinkExternalAccountRequest) returns (LinkExternalAccountResponse)` – attach a third-party account.
+- `IssuePlayerBootstrapToken(IssuePlayerBootstrapTokenRequest) returns (IssuePlayerBootstrapTokenResponse)` – authenticate a first-party player UI and issue the short-lived `player-bootstrap` token profile used only for gameplay bootstrap.
 - `IssueConnectToken(IssueConnectTokenRequest) returns (IssueConnectTokenResponse)` – issue short-lived gameplay connect token for `/ws/game/**` handshake policy.
 - `GetCallerTenantMembership(GetCallerTenantMembershipRequest) returns (GetCallerTenantMembershipResponse)` – authoritative caller-bound account-tenant membership/role lookup for billing-safe mutation guards.
 - `GetTenantMembershipForAccount(GetTenantMembershipForAccountRequest) returns (GetTenantMembershipForAccountResponse)` – cross-tenant membership lookup for billing/reporting roles.
-- `GetTenantEntitlements(GetTenantEntitlementsRequest) returns (GetTenantEntitlementsResponse)` – authoritative runtime entitlement snapshot including freshness/sequence fields.
+- `GetTenantMembershipForRuntime(GetTenantMembershipForRuntimeRequest) returns (GetTenantMembershipForRuntimeResponse)` – authoritative internal membership read for gameplay admission, reconnect/resume, and membership-gap reconciliation.
+- `GetTenantEntitlementsForRuntime(GetTenantEntitlementsForRuntimeRequest) returns (GetTenantEntitlementsForRuntimeResponse)` – authoritative runtime entitlement snapshot including freshness/sequence fields.
+- `GetTenantEntitlementsTenant(GetTenantEntitlementsTenantRequest) returns (GetTenantEntitlementsTenantResponse)` – caller-bound tenant-admin entitlement view for billing-safe UX.
+- `GetTenantEntitlementsCrossTenantSupportSafe(GetTenantEntitlementsCrossTenantSupportSafeRequest) returns (GetTenantEntitlementsCrossTenantSupportSafeResponse)` – cross-tenant support-safe entitlement view with redacted fields.
 - `RequestEmailVerification(RequestEmailVerificationRequest) returns (RequestEmailVerificationResponse)` – send a verification email for the account.
 - `VerifyEmail(VerifyEmailRequest) returns (VerifyEmailResponse)` – confirm the email token.
 - `CreatePaymentIntent(CreatePaymentIntentRequest) returns (CreatePaymentIntentResponse)` – initiate a payment.
-- `CreateSubscription(CreateSubscriptionRequest) returns (CreateSubscriptionResponse)` – start a recurring subscription.
+- `CreateSubscription(CreateSubscriptionRequest) returns (CreateSubscriptionResponse)` – start a recurring subscription. Caller-bound tenant variants must derive actor identity from auth context rather than a client-supplied `accountId`.
 - `CreateDonation(CreateDonationRequest) returns (CreateDonationResponse)` – create a donation payment.
 - `RefundPayment(RefundPaymentRequest) returns (RefundPaymentResponse)` – refund a payment.
 - `GetBalance(GetBalanceRequest) returns (GetBalanceResponse)` – retrieve a virtual currency balance.

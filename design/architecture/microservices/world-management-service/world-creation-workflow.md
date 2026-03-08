@@ -10,10 +10,10 @@ World creation is a long-running process that prepares the initial world state f
 - `gameInstanceId` – identifies the specific running world instance recorded in
   the Game Session Service.
 
-The implementation uses the published world topology for the chosen `tenantId` and `version_id`, inserts a starter region instance, schedules initial events, and can generate terrain chunks and register default population rules for expansive worlds. Throughout the workflow, the Saga:
+The implementation uses the published world topology for the chosen `tenantId` and `version_id`, inserts a starter region instance, schedules initial events, and can generate terrain chunks and materialize instance-scoped population schedules for expansive worlds. Throughout the workflow, the Saga:
 
 - Reads only **template/topology** rows keyed by `(tenantId, versionId)` (for example `region_template`, `room_template`, or authored generation metadata); and
-- Writes only **instance** rows keyed by `(tenantId, gameInstanceId)` (for example `region_instance`, `room_instance`, `world_event`) plus optional **declarative population bindings** (for example spawn rules owned by World Management) rather than directly creating live entities.
+- Writes only **instance** rows keyed by `(tenantId, gameInstanceId)` (for example `region_instance`, `room_instance`, `world_event`) plus optional **instance-scoped population schedules/materializations** derived from already-published spawn bindings, rather than directly creating live entities.
 
 Activation requests must carry both:
 
@@ -34,14 +34,15 @@ Transitions are one-way for a given `gameInstanceId` once terminal states are re
 
 Initial NPC and item presence is modeled declaratively:
 
-- World-creation stages may register spawn templates or population bindings owned by the **World Management Service** that describe which entity templates (owned by Entity Management) can appear where. These bindings live in World Management tables (for example `world_spawn_template` or equivalent) and reference entity templates by stable identifiers keyed by `(tenantId, versionId)`.
+- Version-scoped spawn templates and population bindings are design-time data owned by the **World Management Service** and published under `(tenantId, versionId)`. They describe which entity templates (owned by Entity Management) may appear where.
+- World-creation stages may materialize only instance-scoped spawn schedules derived from those published bindings for the target `(tenantId, gameInstanceId)`. They must not create new version-scoped bindings during activation.
 - Creation of live entities and inventories remains the responsibility of Entity Management and Automation & Scripting workflows, typically driven at runtime via ticks or separate non-gameplay Sagas, and is not performed directly by this world-creation Saga.
 
 ## Steps
 
 1. **Create Starter Region Instance** – uses the published world topology for the chosen `tenantId` and `version_id` and inserts initial regions or instances using the local shard configuration (`WORLD_LOCAL_SHARD_ID`). Default `SimpleDungeonGenerator` parameters populate the initial "Starter Region" as instance records associated with `gameInstanceId`; the underlying template graph remains unchanged.
 2. **Schedule Initial Events** – inserts world events such as an initial weather state so `WorldEventService` can apply them after the world starts.
-3. **Generate Terrain & Register Population Rules** – optional stages that create terrain chunks and register default spawn templates or population rules for expansive worlds. These stages must persist the `generationConfigRevision` actually used on each `generation_run` and fail if it differs from `expectedGenerationConfigRevision`.
+3. **Generate Terrain & Materialize Population Schedules** – optional stages that create terrain chunks and materialize instance-scoped spawn schedules for expansive worlds from already-published bindings. These stages must persist the `generationConfigRevision` actually used on each `generation_run` and fail if it differs from `expectedGenerationConfigRevision`.
 4. **Activate Instance** – acquires the per-instance lifecycle fence, re-validates `expectedVersionStateEpoch`, verifies that all generation runs for this workflow resolved to `expectedGenerationConfigRevision`, and performs the one-way transition from `PREPARING` to `ACTIVE` after all required pre-activation writes succeed.
 
 ### Saga Step Idempotency
@@ -71,7 +72,7 @@ builder
     .step("createStarterRegion", () -> createStarterRegionInstance(
         tenantId, versionId, gameInstanceId, worldCreationRequestId, expectedGenerationConfigRevision))
     .step("scheduleEvents", () -> scheduleInitialEvents(tenantId, gameInstanceId))
-    .step("registerPopulationRules", () -> registerPopulationRules(
+    .step("materializePopulationSchedules", () -> materializePopulationSchedules(
         tenantId, versionId, gameInstanceId, generationRequestId, expectedGenerationConfigRevision))
     .step("activateInstance", () -> activateInstance(
         tenantId, gameInstanceId, expectedVersionStateEpoch, expectedGenerationConfigRevision));
@@ -128,3 +129,5 @@ game instance has a self-consistent view of templates and instance data for its
 chosen version.
 
 Short-lived, runtime-generated dungeons or similar instanced content are treated as ephemeral and exist only for the lifetime of a specific `gameInstanceId`. Long-lived overworld-style instance layouts that must survive restarts remain bound to the original `(tenantId, runtime_version, gameInstanceId)` tuple; upgrading to a new `runtime_version` always uses a new `gameInstanceId` and reruns world creation rather than attempting to migrate or reuse prior instance layouts.
+
+For clarity, activation-time code paths must not use method or table names implying creation of new version-scoped rules, templates, or bindings. Any operation named `register*Rule`, `create*Binding`, or equivalent is design-time unless the target rows are explicitly instance-scoped.

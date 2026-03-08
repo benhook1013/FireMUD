@@ -35,7 +35,7 @@ Tick-driven, cross-service mutations are at-least-once and must be idempotent.
 Cross-service read composition (for example `LOOK` world + entity joins) must use a shared fence token to prevent mixed-tick snapshots:
 
 - `asOfTickId` – canonical read-fence token emitted by the authoritative source read (typically World Management snapshot APIs), then propagated unchanged to downstream participant reads.
-- Scope: `asOfTickId` is valid only within `(tenantId, gameInstanceId, regionId)` scope and must not be compared across scopes.
+- Scope: `asOfTickId` is valid only within `(tenantId, gameInstanceId, roomInstanceId)` scope for room-composition APIs such as `LOOK`, and must not be compared across scopes.
 - Monotonicity: values must be non-decreasing for a given scope as observed by a caller.
 - Comparison contract:
   - Downstream services must either serve data materialized at the same `asOfTickId`, or
@@ -48,6 +48,6 @@ Long-running, cross-service workflows (publish, world creation) use sagas and mu
 
 - `sagaInstanceId` – identifies a specific saga execution.
 - `sagaStepName` – stable step name within the saga definition.
-- `SagaStepGuardKey` – a durable step idempotency key stored by the owning service, typically `(tenantId, sagaInstanceId, sagaStepName)` plus workflow-specific scope such as `gameInstanceId`.
+- `SagaStepGuardKey` – a durable step idempotency key stored by the owning service, built from business identity plus `sagaStepName` and workflow-specific scope (for example `(tenantId, gameInstanceId, worldCreationRequestId, sagaStepName)`); `sagaInstanceId` is execution-trace metadata and must not be the sole dedupe key.
 
 See `design/architecture/system-architecture-ticks.md` and `design/architecture/system-architecture-transactions.md` for the full effect identity contract and replay semantics.

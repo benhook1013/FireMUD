@@ -73,6 +73,7 @@ When designing scripts, it helps to think in terms of a few core ideas:
     - `onLoad` is a **gate**: if it fails for a tenant (for example, misconfiguration or sandbox errors), the new patch will **not** go live there and the previous patch continues to run instead.
     - You fix `onLoad` failures by correcting the script or configuration and publishing a new patch; there is no automatic retry for logical failures.
     - Tooling in the Game Design and Logging & Admin services surfaces `onLoad` status per tenant (for example, `READY` vs `FAILED`), and runtime failures appear in `script_event_audit`. See the reference doc for the full `onLoad` lifecycle semantics and the quotas/operations doc for where to inspect audit records.
+    - `onLoad` is only for **replaceable shared initialization** such as warming caches or preparing lookups. It is not a safe place to create durable gameplay state that would need to be undone during rollback, because the current architecture does not define an `onUnload` cleanup hook.
 
 - **Conditions and actions**
   - **Condition nodes** check world state or inputs, then branch via labeled outputs such as `onTrue` / `onFalse` or `onBelowThreshold` / `onAboveThreshold`.

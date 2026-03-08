@@ -68,7 +68,7 @@ To make traces consistently useful across services and runbooks, FireMUD uses a 
   - `gamesession_remote_followup_enqueue` – span for enqueuing cross-region follow-ups, tagged with origin and target `regionId`, `tenantId`, and a coarse `followup_type`.
   - `gamesession_remote_followup_drain` – span for draining remote follow-ups in the target region, tagged similarly and correlated with tick execution spans.
 - **Backup and pause/resume flows**
-  - `backup_pause_ticks` – span for pausing ticks before `pg_dump`, tagged with `tenantId` scope (for example `all` or specific tenants) and a `reason`.
+  - `backup_pause_ticks` – span for pausing ticks before `pg_dump`, tagged with `scope_type`, `tenantId`, `regionId` when bounded, `alias_scope_used` when the request still uses `game_instance_id`, and a `reason`.
   - `backup_pg_dump_snapshot` – span measuring the logical backup operation itself.
   - `backup_resume_ticks` – span for resuming ticks after the snapshot, tagged consistently with `backup_pause_ticks`.
 

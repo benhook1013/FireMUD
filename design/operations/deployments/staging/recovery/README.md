@@ -13,5 +13,13 @@ Required fields:
 - `sanitizedBy`
 - `controlsApplied` (list of redaction/anonymization controls)
 - `validationEvidence` (checks proving sanitized state before reopening traffic)
+- `certificateReissuanceEvidence`
+- `jwtRestoreHardeningEvidence`
+- `databaseCredentialRotationEvidence`
+- `externalCredentialValidation` with records for:
+  - `backup-storage`
+  - `asset-storage`
+  - `outbound-comms`
+  - `operator-credentials`
 
 `dev-tools/restores/validate-external-credentials.sh staging` requires `SANITIZATION_EVIDENCE_REF` to point to one of these records.

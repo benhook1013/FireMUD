@@ -53,9 +53,17 @@ Key steps:
 
 ## Scaling PostgreSQL
 
-- Use read replicas for read-heavy workloads where supported by the design.
+- Treat PostgreSQL as a primary scaling boundary for the tick system, not only as a backing store:
+  - Tick execution writes tick-batch rows, effect-ledger rows, region status updates, remote follow-up claims, and reconciliation backlog state.
+  - Replay and recovery add their own write/read pressure through replay scans, backlog retries, and operator-driven reconcile flows.
+- Use read replicas for read-heavy workloads where supported by the design, but do not assume replicas solve tick-path pressure; the primary write path must be sized for peak tick and replay throughput.
 - Increase instance size or provisioned IOPS as necessary, following database operations runbooks.
 - Monitor Slow Query logs and apply schema/index optimizations as needed.
+- Partition and retention strategy must be explicit for high-churn tick tables:
+  - tick effect ledger / tick-batch tables
+  - cross-region follow-up tables
+  - effect reconciliation backlog tables
+- Capacity reviews should include vacuum/GC behavior, partition counts, oldest-pending row age, and write-latency SLOs for these tables.
 
 ## Verification
 
@@ -106,6 +114,15 @@ Baseline guardrails are only a starting point. Before materially increasing regi
   - `p99_region_tick_ms` from `tick_execution_time_ms_p99`.
   - `p99_remote_drain_ms` from remote follow-up lag/drain metrics.
   - `p99_replay_overhead_ms` from replay-controller and tick replay metrics.
+- PostgreSQL capacity inputs are required alongside the pod cost model. Load tests and environment docs should record at minimum:
+  - tick-batch and effect-ledger inserts/updates per second
+  - remote follow-up claim/update QPS
+  - replay-controller scan/update QPS
+  - effect-reconciliation backlog retry QPS
+  - p95/p99 write latency for the primary tick-path tables
+  - retention horizon, partitioning scheme, and vacuum/GC cadence for high-churn tables
+
+Scaling decisions must not rely only on Redis tail-loss and pod density signals. If ledger age, replay scan lag, follow-up claim latency, or backlog-table bloat is rising, treat PostgreSQL as the bottleneck and scale or redesign there before increasing tick concurrency.
 
 Scaling plans should include this calibration so “add replicas” and “increase regions per pod” decisions are tied to measured tick and coordination cost, not only static guardrail numbers.
 

@@ -257,6 +257,7 @@ To make coordination and tick health observable in a consistent way across servi
   - `redis_coordination_used_memory_bytes{role="coordination"}` – memory used by Coordination Redis.
   - `redis_coordination_keys_total{role="coordination",prefix}` – approximate key counts per coordination prefix family (for example `tick`, `timer`, `retry`, `session`, `tick-executor-lease`).
 - **Tick execution**
+  - `tick_interval_ms{tenantId,regionId}` – effective tick cadence for each active region. This is a required companion metric for any environment that evaluates dynamic tail-loss or pause-budget rules derived from `tick_interval_ms`.
   - `tick_execution_time_ms_bucket{tenantId,regionId,le}` – histogram of tick execution time per `<tenantId, regionId>`.
   - Recording rules derived from this histogram should expose:
     - `tick_execution_time_ms_p95{tenantId,regionId}` – p95 tick execution time.

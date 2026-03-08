@@ -46,7 +46,7 @@ revisions until domain services report a matching draft digest for that scope. E
 - `contentDigest` (a stable hash of the service’s Draft template graph relevant to publishing)
 - `digestSchemaVersion` so hash semantics can evolve without ambiguity
 
-`designSyncStatus` must also transition to `OUT_OF_SYNC` when mutable generation defaults (`generation_rule`) change in a way that affects the effective Draft generation inputs for a target version, even if no new commit was created yet.
+`designSyncStatus` must transition to `OUT_OF_SYNC` whenever publish-affecting generation inputs for a target version change. Such inputs must be changed through Game Design-controlled Draft workflows and committed like any other design asset; mutable World Management operational defaults are not allowed to alter the effective Draft graph for a version.
 
 Canonical digest RPC contract:
 
@@ -74,6 +74,13 @@ Each participating domain service must publish a service-local **digest input ma
 
 Publish gating should be treated as invalid if a service cannot provide a digest payload consistent with its documented manifest for the active `digestSchemaVersion`.
 
+Publish completion must also persist an immutable release attestation in Game Design:
+
+- After all required digest participants pass and asset export has produced the final `manifestHash`, Game Design writes `published_release_bundle(tenantId, versionId, commitId, publishWorkflowId, participantDigests..., manifestHash, generationConfigRevision, publishedAt)`.
+- This row is the canonical record proving what was actually published.
+- Activation, repair, and rollback-preflight workflows must validate against this attestation instead of reconstructing release state from multiple service-local sources.
+- Game Design must expose this attestation through a read-only API such as `GetPublishedReleaseBundle(tenantId, versionId)` so runtime and operator workflows never depend on direct table access.
+
 When digest semantics evolve, the system must follow the explicit “Digest Schema Migration” workflow described in `design/architecture/microservices/game-design-service/version-control.md` so publish gating never compares incompatible hashes.
 
 The Game Design Service reconciler records the per-service digest it observed for a given `commitId` when that commit was last applied successfully, and later compares current digests against those recorded values. Publish-time validation must require that all participating services report `appliedCommitId == commitId` and `contentDigest` equal to the recorded digest for that commit.
@@ -83,6 +90,14 @@ Participant selection is explicit by publish type and must follow the matrix in 
 - Full `PublishVersion`: World Management, Entity Management, Game Logic, and Automation & Scripting must each pass `GetDraftDesignDigest`, and Game Design must pass `GetDesignControlPlaneDigest`.
 - `PublishScriptPatchVersion`: Automation & Scripting must pass `GetDraftDesignDigest` for the patch graph and Game Design must pass `GetDesignControlPlaneDigest` for patch metadata/wiring; world/entity/game-logic template digests are not re-gated for that publish operation.
 
+For end-to-end persistence review, every publish-gate participant must document:
+
+- the version-scoped data it persists;
+- the digest manifest that attests that data;
+- whether it is a digest-only participant or also a saga-step participant during full publish.
+
+Publish tooling must fail closed if a required participant lacks this documented persistence contract.
+
 Routing contract for typed digest scopes:
 
 - Full publish orchestration must issue digest requests with `scope.versionId` only to participants in the full-publish matrix.
@@ -91,6 +106,17 @@ Routing contract for typed digest scopes:
 
 Versions
 must be `IN_SYNC` before they can be published.
+
+## Draft Reference Validation
+
+Eventually consistent design application is not permission to persist unresolved cross-service references as healthy Draft data.
+
+- A draft write that introduces references to missing or schema-incompatible world/entity/script objects must be recorded as `UNRESOLVED_REFERENCE` or equivalent invalid-draft state, not as a normal in-sync Draft.
+- Designers must see the unresolved dependency set explicitly (referenced identifier, owning service, failing constraint, last validation time).
+- Publish is blocked for any version with unresolved references, even if replay/reconciliation later succeeds for unrelated services.
+- Reconciliation may retry delivery of valid revisions, but it must not silently normalize or auto-rewrite broken identifiers.
+
+Where synchronous reference validation is available, Game Design should reject the commit before it becomes durable. Where synchronous validation is temporarily unavailable, the version must still enter an explicit invalid state rather than a generic Draft state.
 
 ## Cross-Service Reference Invariants
 

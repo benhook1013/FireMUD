@@ -73,7 +73,7 @@ This model underpins both authentication and authorization:
   **no tenant-specific infrastructure** or dedicated clusters.
 - Game Session Service instances scale horizontally based on overall load.
 - Per-game resource quotas ensure one tenant cannot exhaust cluster capacity.
-  Quota thresholds are configured per tenant, derived from the active subscription plan and entitlements returned by `GetTenantEntitlements(tenantId)` in the Account Service. Metrics expose current usage so operators can track `active_sessions`, quota denials, and the impact of billing state on availability (for example, `suspended` or `canceled` tenants cannot start new instances or admit new player sessions even if raw capacity is available).
+  Quota thresholds are configured per tenant, derived from the active subscription plan and entitlements returned by `GetTenantEntitlementsForRuntime(tenantId)` in the Account Service. Metrics expose current usage so operators can track `active_sessions`, quota denials, and the impact of billing state on availability (for example, `suspended` or `canceled` tenants cannot start new instances or admit new player sessions even if raw capacity is available).
 
 ### Quota Enforcement Responsibilities
 

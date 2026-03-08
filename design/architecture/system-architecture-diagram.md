@@ -16,7 +16,8 @@ flowchart TD
     end
 
     subgraph InternalServices["Internal Services"]
-        Session[Game Session Service]
+        SessionFE[Game Session Service - Session Front-End]
+        SessionExec[Game Session Service - Lease Owner / Executor]
         Account[Account Service]
         World[World Management Service]
         Entity[Entity Management Service]
@@ -53,36 +54,38 @@ flowchart TD
     Web -- wss/HTTP --> ExtLB
     ExtLB -- wss/HTTP (public ingress) --> Gateway
     TCPProxy -- wss (mTLS, internal-only listener) --> Gateway
-    Gateway -- ws (in-cluster) --> Session
-    TCPProxy -. NotifyDisconnect gRPC (at-least-once, advisory) .-> Session
+    Gateway -- ws (in-cluster) --> SessionFE
+    TCPProxy -. NotifyDisconnect gRPC (at-least-once, advisory) .-> SessionFE
 
     Admin -- gRPC mgmt (infra) --> Gateway
     Admin -- admin APIs (via Gateway allowlist) --> Gateway
     Gateway -- routed admin API --> Logging
     Gateway -- routed admin API --> Account
-    Gateway -- routed admin API --> Session
+    Gateway -- routed admin API --> SessionFE
     Gateway -- routed admin API --> Social
     Gateway -- routed admin API --> Design
 
-    Session -- gRPC --> Account
-    Session -- gRPC --> World
-    Session -- gRPC --> Entity
-    Session -- gRPC --> Logic
-    Session -- gRPC --> Design
-    Session -- gRPC --> Script
-    Session -- gRPC --> Social
-    Session -- gRPC --> Logging
-    Session -. lifecycle and coordination signals .-> Logging
+    SessionFE -- internal gRPC (fenced forwarding) --> SessionExec
+    SessionFE -- gRPC --> Account
+    SessionExec -- gRPC --> World
+    SessionExec -- gRPC --> Entity
+    SessionExec -- gRPC --> Logic
+    SessionExec -- gRPC --> Design
+    SessionExec -- gRPC --> Script
+    SessionExec -- gRPC --> Social
+    SessionExec -- gRPC --> Logging
+    SessionExec -. lifecycle and coordination signals .-> Logging
     Account -. audit and account-domain events .-> Logging
 
     Account --> DB
-    Session --> DB
+    SessionFE --> DB
+    SessionExec --> DB
     World --> DB
     Entity --> DB
     Design --> DB
     Social --> DB
     Logging --> DB
-    Session -- owner writes --> CoordRedis
+    SessionExec -- owner writes --> CoordRedis
     Account -- auth-owner writes --> CoordRedis
     Entity -- shared-helper participation --> CoordRedis
     Script -- automation-owner writes --> CoordRedis
@@ -129,6 +132,8 @@ Note on gateway listener surfaces: the gateway has a public ingress surface (typ
 Gameplay WebSocket route policy is canonicalized on `/ws/game/**` for player-facing gameplay admission.
 
 Admin and creator API exposure is intentionally allowlisted: external tools call domain admin APIs only through Gateway-routed routes for owning services (for example Logging & Admin, Account, Game Session, Social & Groups, and Game Design). Internal service-to-service gRPC remains direct and does not traverse Gateway.
+
+Within the Game Session layer, the stable `/ws/game/**` edge surface maps to a session front-end pod plus lease-owner execution model: the connected pod owns socket I/O, while region-scoped tick execution remains fenced to the current `<tenantId, regionId>` lease owner and may be reached through internal gRPC forwarding. The separate nodes in the diagram represent runtime roles, not separate products or independently exposed edge surfaces. See [System Architecture Overview](./system-architecture-overview.md#session-sharding--routing).
 
 For Gateway control-plane behavior in production-like environments (including the dynamic-route override dev/test scope), see the canonical [Gateway Management Plane Capability Matrix](./system-architecture-overview.md#gateway-management-plane-capability-matrix-canonical).
 
@@ -195,6 +200,8 @@ The mermaid graph includes representative async/event edges that are architectur
 - Game Session emits lifecycle and coordination health signals consumed by Logging & Admin for operator workflows.
 - Account emits audit/account-domain events consumed by Logging & Admin using idempotent event identifiers (for example `{tenantId, eventType, eventId}`) so retries are replay-safe and deduplicable.
 - Logging & Admin is a control-plane sink for these async flows and does not take ownership of runtime enforcement decisions from domain services.
+
+Durable business events and saga updates in this architecture are implemented using service-local transactional outbox patterns plus background consumers, not an implicit shared event bus; see [Transaction Strategies](./system-architecture-transactions.md#tick-adjacent-workflows-outbox-boundary).
 
 ## Related Documentation
 

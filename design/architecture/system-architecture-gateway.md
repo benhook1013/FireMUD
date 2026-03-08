@@ -73,6 +73,7 @@ For any connection that arrives from the public player/admin ingress, Spring Clo
 - `X-Client-IP`
 - `X-Game-Instance-Id`, `X-Tenant-Id`
 - `X-Proxy-Client-IP`, `X-Proxy-Connection-Id`, `X-Proxy-Game-Instance-Id`, `X-Proxy-Tenant-Id`
+- `X-Firemud-Connect-Context`, `X-Firemud-Connection-Mode`, and any other `X-Firemud-*` gameplay-admission headers
 
 ### TCP Proxy → Gateway Authentication
 
@@ -103,7 +104,11 @@ After applying strip/authentication rules, the gateway sets or forwards the down
 - `X-Proxy-Connection-Id` – forwarded only when the upstream hop is authenticated as the TCP Proxy Service so downstream services can correlate lifecycle signals.
 - `X-Game-Instance-Id` / `X-Tenant-Id` – forwarded only when the upstream hop is authenticated as the TCP Proxy Service and the corresponding `X-Proxy-Game-Instance-Id` / `X-Proxy-Tenant-Id` inputs were provided. These remain advisory admission hints; the Game Session Service validates any game-instance/tenant claims against Redis, entitlements, and authenticated session state.
 - `X-Firemud-Connect-Context` – for first-party `/ws/game/**` handshakes that pass connect-token validation, gateway emits a short-lived signed context payload containing verified connect scope (`accountId`, `tenantId`, `gameInstanceId`, `connectTokenJti`, `verifiedAt`, `expiresAt`, `gatewayRequestId`). Game Session must validate signature, expiry, and replay before using this context.
+- `X-Firemud-Connection-Mode` – gateway-owned marker identifying the gameplay admission path. Supported values are `first_party_web` and `trusted_tcp_proxy`. Game Session must treat this header as meaningful only when produced by the gateway after trust/canonicalization filters run, and must reject `/ws/game/**` admissions that present neither supported mode.
 - `X-Session-Id` is not part of the canonical header contract and must not be emitted or consumed for gameplay/session binding decisions.
+
+Gateway must overwrite any inbound values for these gateway-owned `X-Firemud-*` gameplay-admission headers; they are never forwarded from external callers verbatim and are meaningful downstream only when re-issued by the gateway after successful handshake validation.
+Game Session must treat `X-Proxy-Connection-Id` as authoritative only when `X-Firemud-Connection-Mode=trusted_tcp_proxy`. On all other gameplay paths, gateway must drop or overwrite `X-Proxy-Connection-Id`, and downstream services must ignore it if present.
 
 `X-Game-Instance-Id` and `X-Tenant-Id` are not authentication material and must never be treated as reconnect tokens or proof of session ownership. They exist to carry the TCP Proxy Service’s optional Telnet `SESSION <gameInstanceId> <tenantId>` envelope context into the gameplay WebSocket handshake for advanced tools:
 
@@ -146,6 +151,12 @@ At a configuration level, Spring Cloud Gateway defines WebSocket routes in `appl
 Gateway is the gameplay admission surface for `/ws/game/**`, but it is not the owner of shard leases, shard mapping, or gameplay sharding policy. `/ws/game/**` routes to a stable Game Session service endpoint, and any sharding/lease moves are handled within the Game Session layer and its coordination mechanisms.
 
 The edge contract does not define a distinct client-visible “shard handoff” close category. If a future architecture introduces explicit lease-aware routing or handoff semantics at the edge, it must be defined as a dedicated design update and integrated into the close-code and reconnection contracts described in this document and [Protocol Bridging](./system-architecture-protocol-bridging.md).
+
+While shard routing stays internal to Game Session, the internal session front-end → lease-owner forwarding leg inherits the same user-visible safety constraints as the edge session:
+
+- it must preserve per-connection FIFO for gameplay commands,
+- it must apply bounded buffering/backpressure rather than unbounded queues,
+- and if that forwarding path fails in a way that makes gameplay impossible, Game Session is responsible for surfacing the failure upstream so Gateway can emit the canonical client-visible close or error.
 
 ### WebSocket Liveness and Idle Timeouts
 
@@ -199,7 +210,11 @@ Gateway is the authoritative translation point for client-visible WebSocket clos
 
 Precedence when multiple failures are observed in the same interval is: `policy_violation` > `backend_unavailable` > `internal_error` > `idle_timeout` > `logout`, except that explicit user/admin logout always remains `logout`.
 
-For `1000/logout`, producers must attach the most specific supported `subreason` (`user_logout`, `takeover`, `gateway_restart`, `admin_termination`) when known, else `none`.
+For `1000/logout`, producers must attach the most specific supported `subreason` (`user_logout`, `takeover`, `gateway_restart`, `admin_termination`) when known, else `none`. When a graceful Gateway drain terminates the upstream gameplay WebSocket used by the TCP Proxy bridge, the proxy must preserve this as the Telnet-side `logout` category rather than collapsing it into `backend_unavailable`; detailed Telnet translation rules live in [Protocol Bridging](./system-architecture-protocol-bridging.md#telnet-disconnect-reasons).
+
+For the internal authenticated TCP Proxy bridge path, graceful drain attribution is stricter than the public-client best-effort wire rule: Gateway must emit a machine-parseable bridge-drain signal that the proxy can rely on to classify the shutdown as `logout/gateway_restart`. The canonical encoding is a WebSocket close with `1000/logout;subreason=gateway_restart` on the bridge itself.
+
+If the bridge transport fails before that close can be sent, producers must not substitute an ad hoc alternate signal. The outcome is treated as an unattributed bridge failure and the proxy follows the normal `unreachable` / recovery-window rules. Both sides must emit a bounded structured field such as `bridge_shutdown_class=planned_drain|unattributed_failure` in logs/metrics so operators can distinguish deliberate drain from outage and can detect when a planned drain degraded into an unattributed transport loss.
 
 ### Backend-Unavailable Grace Window
 
@@ -317,14 +332,21 @@ This token is an edge admission/rate-limiting hint only. It does not replace `LO
   - Context payload must include at least: `accountId`, `tenantId`, `gameInstanceId`, `connectTokenJti`, `verifiedAt`, `expiresAt`, `gatewayRequestId`.
   - Game Session validates signature (`kid` aware), expiry bounds, and replay (`{issuer, connectTokenJti}`) before using scope for `CONNECT_SCOPE_MISMATCH` enforcement.
   - Missing/invalid/expired context on first-party handshakes that required connect-token validation must be rejected by Game Session admission with canonical error `CONNECT_CONTEXT_INVALID` before `PLAY` (no scope fallback to raw headers).
+  - Gateway must also emit `X-Firemud-Connection-Mode: first_party_web` for these handshakes.
   - Key ownership and rotation contract:
     - Gateway signs context with a dedicated asymmetric key set identified by stable issuer and `kid`.
     - Game Session trusts keys from a gateway verification-key source and must support overlap during rotation (old and new `kid` concurrently valid for a bounded window).
     - Verification-key fetch/cache policy must be explicit (bounded cache TTL, refresh-on-miss for unknown `kid`, fail-closed if no valid key set is available).
     - Metrics/logs must distinguish signer/verification failures with bounded reasons (for example `unknown_kid`, `signature_invalid`, `context_expired`, `replay_detected`, `verification_keys_unavailable`) so incidents are triageable without high-cardinality labels.
 
+- **Trusted proxy handoff (Gateway -> Game Session)**
+  - For authenticated TCP Proxy bridge handshakes, Gateway must emit `X-Firemud-Connection-Mode: trusted_tcp_proxy`.
+  - Game Session must treat this mode as the only valid bypass of the first-party connect-context requirement.
+  - Trusted proxy sessions must not rely on the absence of `X-Firemud-Connect-Context` as an implicit discriminator; the positive `trusted_tcp_proxy` mode marker is required so admission remains fail-closed and unambiguous.
+
 - **Keying strategy**
   - Gateway rate limiting is primarily **per-client IP** with optional route-level differentiation. The default `RequestRateLimiter` configuration uses the Cache/Rate‑Limit Redis deployment and derives keys from the client IP (as seen by the gateway after load balancer and TCP Proxy headers) and route ID, keeping key cardinality modest while still following the canonical `ratelimit:<tenantId>:<bucket>:<timeWindow>` key pattern from [Redis Cache & Rate Limiting](./system-architecture-redis-cache.md#rate-limit-bucket-design). For the gateway itself, `tenantId` is a synthetic, edge-scope identifier (for example `gateway-edge`), and `bucket` incorporates the client IP and route identifier via a stable hash.
+  - Filter ordering is normative: gateway header trust and client-IP canonicalization must run before gameplay admission checks, handshake classification, and any rate-limit key derivation. For trusted TCP Proxy bridge requests, the rate-limit key must use the canonicalized client IP derived from authenticated `X-Proxy-Client-IP`, not the proxy pod/node source IP. If authenticated client-IP promotion fails, the handshake must fail closed as `POLICY_DENY` rather than falling back to the proxy hop address in player-facing environments.
   - Tenant-aware edge rate limiting for gameplay uses the connect-token contract above. `/ws/game/**` rejects gameplay handshakes without a connect token (`403`) unless the request is the authenticated TCP Proxy bridge exception described above.
   - Game Session Service enforces **per-session and per-command** limits (for example, commands per tick region) using Redis coordination keys. See [Reconnection Strategy](./system-architecture-reconnection.md) and [Redis Architecture](./system-architecture-redis.md) for session/tick-level controls.
 - **WebSocket vs HTTP semantics**
@@ -340,9 +362,11 @@ This token is an edge admission/rate-limiting hint only. It does not replace `LO
     - `POLICY_PRESSURE`
     - `BACKEND_UNAVAILABLE`
     - `REPLAY_CHECK_UNAVAILABLE`
+    - `CONNECT_TOKEN_REJECTED`
     - `POLICY_DENY`
     - `PROTOCOL_MISMATCH`
     - `INTERNAL_ERROR`
+  - `CONNECT_TOKEN_REJECTED` is mandatory for missing, expired, replayed, malformed, or signature-invalid gameplay connect tokens. `POLICY_DENY` is reserved for trust-boundary and route-policy denials after token parsing is no longer the deciding factor.
   - Reconnection/client policy must key on handshake error class first and HTTP status second.
 - **Edge vs core responsibilities**
   - The **TCP Proxy Service** enforces **connection-level and per-socket safety** for Telnet clients: idle timeouts, per-IP connection caps, buffer depth limits, and basic abuse heuristics. It relies on Spring Cloud Gateway and Game Session Service for cross-tenant and content-aware rate limiting.

@@ -158,10 +158,11 @@ Concrete per-effect required writes and reconciliation rules live in `design/arc
   - `world_instance_lifecycle_lock` (or equivalent fenced token) enforces single-writer lifecycle transitions per `(tenantId, gameInstanceId)` so activation and termination workflows cannot commit concurrently.
   - `character_location` table records the current room for each character, including which instance they are in; item locations and containment are modeled and stored by the Entity Management Service rather than this table.
 - **Runtime configuration and events**:
-  - `generation_rule` table stores per-tenant procedural generation parameters used by the [Procedural Generation Rules API](#procedural-generation-rules-api). These rules are mutable tenant defaults owned by World Management, not versioned design artifacts by themselves.
-  - `generation_rule` writes must capture audit provenance (`changedBy`, `changedAt`, `changeReason`, `changeDigest`) and optionally the originating Game Design commit/revision id when a design workflow initiated the change.
-  - An optional `generation_rule_override` table may store version-specific overrides keyed by `(tenantId, versionId)` for tenants that require different tuning per version; when present for a given version, overrides are applied instead of the tenant-global defaults when running generators for that version. Overrides may exist only for non-Retired versions and must be kept consistent with the version lifecycle and migration rules described in [Database Migrations](../../system-architecture-database-migrations.md).
-  - Published versions must carry a frozen generation config identity (`generationConfigRevision`/hash) derived at publish time; world creation for that `(tenantId, versionId)` must use this frozen identity and fail closed if it is unavailable.
+  - `generation_rule_template` (or equivalent version-scoped table) stores publish-affecting procedural generation inputs keyed by `(tenantId, versionId)` for Draft/Published design data. These rows are versioned design artifacts even though they live in the World Management schema.
+  - World Management may also maintain a separate tenant-scoped `generation_runtime_default` table for operational-only runtime knobs that do not affect publishable template output. These defaults must never be consulted when deriving a published version’s `generationConfigRevision`.
+  - Writes to publish-affecting generation inputs must flow only through Game Design-controlled design APIs for Draft versions and must capture provenance (`changedBy`, `changedAt`, `changeReason`, `changeDigest`, originating `commitId`/`revisionId`).
+  - Installations that require per-version tuning use the version-scoped design rows above rather than ad hoc mutable overrides. If legacy override tables exist, they must be documented as transitional readers only and must not remain the canonical authoring path.
+  - Published versions must carry a frozen generation config identity (`generationConfigRevision`/hash) derived from the version-scoped design inputs committed at publish time; world creation for that `(tenantId, versionId)` must use this frozen identity and fail closed if it is unavailable.
   - `generation_run` (or equivalent) persists deterministic generation artifacts for replay-safe publish/reconciliation (`generationRunId`, `generationRequestId`, `generatorImplementationVersion`, canonical `configSnapshot`, and `outputDigest`).
   - `world_event` table stores timed changes such as weather updates.
   - `region_instance.weather` (or equivalent) records the current weather state for live regions; template rows may include default weather or climate metadata but are not updated during gameplay.
@@ -175,6 +176,7 @@ Concrete per-effect required writes and reconciliation rules live in `design/arc
 - `ListRoomOccupants` – returns the authoritative typed occupant list (`occupants`) for actors in a room, scoped by `RoomInstanceRef`. The legacy `occupantEntityIds` list is a derived compatibility mirror only.
 - `ApplyRoomAmbientStatePatch` – applies an ambient state patch to the target `RoomInstanceRef`, guarded by `EffectId`.
 - `GetDraftDesignDigest` – returns publish-gating digest for Draft world templates using a typed scope request. Request shape is `GetDraftDesignDigestRequest { tenantId, scope: oneof { versionId, scriptPatchVersion } }`; World Management supports `versionId` scope only and must return `UNSUPPORTED_SCOPE` for `scriptPatchVersion`. Minimum response fields are `{tenantId, scope, appliedCommitId or lastAppliedRevisionId, contentDigest, digestSchemaVersion}`. `contentDigest` must cover only version-scoped template/binding rows (for example region/zone/room templates and spawn bindings) and must exclude runtime/instance rows and audit metadata.
+- `ValidateWorldUpgradeMappings` – validates world-owned durable references and approved remap sets for replacement-instance cutover to a target `(tenantId, versionId)`.
 - `UpdateWorldState` – legacy bulk update surface scheduled for removal on **June 30, 2026**. Effective immediately, runtime mutation requests on this RPC must return `UNSUPPORTED_OPERATION` and callers must use effect-shaped mutation RPCs (`ApplyRoomAmbientStatePatch` and related effect APIs).
 
 ### Instance termination contract (World ↔ Entity)
@@ -187,6 +189,40 @@ World Management owns the lifecycle of `gameInstanceId` rows, but teardown is a 
 - Scheduled expiry jobs must enqueue this Saga and must not directly delete world rows for a still-unconfirmed termination.
 - Lifecycle fencing is mandatory: termination acquires the same per-instance lifecycle fence used by activation. If activation and termination race, termination is authoritative unless admission has already opened (`ACTIVE` committed).
 - Game Session finalizes runtime `game_instances` termination only after World reports `TERMINATED`.
+
+### Digest Input Manifest
+
+World Management is a required publish-gate participant and must maintain a stable digest manifest for `GetDraftDesignDigest(versionId)`:
+
+- Included objects:
+  - version-scoped topology tables such as `region_template`, `zone_template`, `room_template`, `terrain_template`, `room_exit_template`, and equivalent normalized topology relations keyed by `(tenantId, versionId)`;
+  - version-scoped declarative spawn and population binding tables that define where entity templates may appear;
+  - version-scoped generation design inputs such as `generation_rule_template` that affect published topology output.
+- Excluded objects:
+  - all runtime/instance tables keyed by `gameInstanceId`;
+  - `generation_run` rows created for runtime instances;
+  - audit/provenance columns such as `created_at`, `updated_at`, `changedAt`, workflow ids, and applied-revision ledgers when those values do not affect semantics.
+- Canonicalization rules:
+  - serialize included objects in stable table order, then primary-key order within each table;
+  - include only semantic fields and normalized identifiers;
+  - use deterministic encoding for maps/JSON payloads.
+- `digestSchemaVersion` must increment whenever included tables, field-selection rules, or canonical serialization semantics change.
+
+Publish gating must fail closed if World Management cannot attest a digest consistent with this manifest.
+
+### Instance-Scoped Population Schedule Contract
+
+Runtime population materialization must be documented separately from published spawn bindings:
+
+- Version-scoped spawn bindings are publish-time design data and are the only population records included in `GetDraftDesignDigest`.
+- Instance-scoped population schedules/materializations are runtime rows keyed by `(tenantId, gameInstanceId, scheduleId or roomInstanceId, sourceBindingId)` derived from published bindings during world creation or runtime instancing.
+- These runtime schedule rows must record provenance back to the published binding and, when relevant, the `generationRunId` that materialized them.
+- Runtime schedules are not part of publish digests and must be recreated or restored only through runtime workflows, never by mutating version-scoped bindings.
+- Runtime schedule lifecycle is fixed:
+  - active schedule rows are durable for the life of the instance and survive normal restarts of that same `(tenantId, gameInstanceId)`;
+  - `InstanceTermination` hard-deletes schedule rows for the terminating instance after any bounded diagnostic export has completed;
+  - optional diagnostics for failed activation or failed termination must live in separate bounded-retention diagnostic tables or exports, not by retaining active schedule rows indefinitely.
+- World Management must expose the owning runtime table names and cleanup ordering for these schedules in implementation docs so termination, backup, and replay tooling use the same lifecycle.
 
 ### LOOK snapshot contract
 
@@ -385,21 +421,24 @@ World creation for a new game instance runs as a Saga using the helper utilities
 - [System Architecture Diagram](../../system-architecture-diagram.md)
 - [System Context Diagram](../../system-context-diagram.md)
 
-## Procedural Generation Rules API
+## Procedural Generation Control APIs
 
-Administrators can tweak procedural generation without redeploying the service.
-Rules are stored in the `generation_rule` table and managed over REST:
+Procedural-generation control surfaces are split by ownership and persistence scope:
 
-- `POST /generation/rules` – create or update a rule for a tenant
-- `GET /generation/rules?tenantId=...` – list rules for a tenant
+- **Design-time generation-input APIs** are owned by Game Design workflows and mutate version-scoped generation design rows in World Management only for Draft versions.
+- **Operational runtime-default APIs** are owned by World Management and mutate only tenant-scoped `generation_runtime_default` rows that are explicitly excluded from publish inputs and draft digests.
 
-These endpoints allow live tuning of parameters such as room density or terrain
-variation. Updates are persisted immediately and picked up by the procedural
-generation engine on the next run.
+Operational runtime-default API:
 
-Ownership note: these rules are authored and persisted in World Management. Game Design may invoke generation in design workflows, but it is not the authority for `generation_rule` state.
+- `POST /generation/runtime-defaults` – create or update runtime-only defaults for a tenant
+- `GET /generation/runtime-defaults?tenantId=...` – list runtime-only defaults for a tenant
+
+These endpoints are limited to live operational tuning for future runtime-only generation runs. They must not mutate `generation_rule_template`, any other version-scoped design rows, or any input that contributes to `generationConfigRevision`.
+
+Ownership note: publish-affecting generation inputs are stored in World Management but are authored only through Game Design-controlled design workflows. World Management remains the schema owner and runtime executor, not the independent authority for publishable generation history.
 
 Audit and publish-gating note:
 
-- Every `generation_rule` update must persist provenance fields (`changedBy`, `changedAt`, `changeReason`, `changeDigest`) so operators can explain draft drift.
-- When live tuning affects a Draft version’s effective generation inputs, the owning version’s `designSyncStatus` must transition to `OUT_OF_SYNC` until publish-gate digests are recomputed and converged.
+- Every publish-affecting generation-input update must persist provenance fields (`changedBy`, `changedAt`, `changeReason`, `changeDigest`, source `commitId`/`revisionId`) so operators can explain draft drift.
+- When draft generation inputs change for a version, that version’s `designSyncStatus` must transition to `OUT_OF_SYNC` until publish-gate digests are recomputed and converged.
+- Operational runtime-default changes must never mutate or reinterpret already-published generation inputs and must never be read by publish, activation, or draft-digest workflows.

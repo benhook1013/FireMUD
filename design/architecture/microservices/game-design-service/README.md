@@ -101,13 +101,20 @@ Compatibility contract requirement:
 - `game_templates` table stores predefined configuration templates for new games.
 - [`runtime_flag` table](feature-flags.md) manages feature flag definitions and
   corresponding APIs expose these records.
-- `game_assets` table stores uploaded binary files such as icons or sound effects.
+- `game_assets` table stores asset metadata for uploaded binary files such as icons or sound effects; canonical bytes live in object storage referenced by this metadata.
 
 Design-time tables (such as `revision`, `version`, `game_templates`,
-`runtime_flag`, and `game_assets`) are the source of truth for world and entity
-history. Domain services (World Management, Entity Management, etc.) store the
-versioned templates they consume at runtime, but commit and revision history
-remains anchored in the Game Design Service.
+`runtime_flag`, asset metadata tables, and release-attestation tables) are the
+source of truth for world and entity history. Domain services (World Management,
+Entity Management, etc.) store the versioned templates they consume at runtime,
+but commit and revision history remains anchored in the Game Design Service.
+
+The Game Design Service must also persist an immutable `published_release_bundle`
+record per `(tenantId, versionId)` after publish gates and asset export succeed.
+This record is the canonical release attestation consumed by activation,
+rollback-preflight, and repair tooling. It contains the publish workflow
+identity, target `commitId`, required participant digests, `manifestHash`, and
+`generationConfigRevision` for that release.
 
 ### Design Workflow
 
@@ -127,6 +134,7 @@ remains anchored in the Game Design Service.
   game instance.
 - `GetVersionState` / `CompareAndSetVersionState` – authoritative control-plane version lifecycle reads and CAS transitions.
 - `GetDesignControlPlaneDigest` – digest surface for publish gating over normalized metadata.
+- `GetPublishedReleaseBundle` – authoritative read surface for immutable release attestation used by activation, cutover preflight, and repair workflows.
 - `CanDeleteVersionAssets` – deletion-eligibility oracle for version-scoped asset prefixes.
 
 ## Dependencies
@@ -135,7 +143,7 @@ remains anchored in the Game Design Service.
   - World Management Service for map data.
   - Automation & Scripting Service for scripts.
   - Logging & Admin Service records publishing audits.
-- **External:** PostgreSQL for storing design assets.
+- **External:** PostgreSQL for design metadata and object storage for asset bytes.
 
 > See [**Gateway Architecture**](../../system-architecture-gateway.md),
 [**Deployment Environments**](../../infrastructure/deployment-environments.md),
@@ -226,7 +234,7 @@ Default ports: REST on `8080`, gRPC on `6565`.
 #### REST
 
 - `GET /ping` – basic health check returning `"pong"`.
-- `POST /assets` – upload a binary asset for a tenant.
+- `POST /assets` – upload a binary asset for a tenant; the service streams bytes to object storage and persists asset metadata in PostgreSQL.
 - `POST /templates` – create a new game template.
 - `GET /templates` – list templates for a tenant.
 
@@ -247,6 +255,7 @@ Detailed request and response schemas are defined in the
 - `GetVersionState(GetVersionStateRequest) returns (GetVersionStateResponse)` – reads authoritative version lifecycle state and CAS epoch.
 - `CompareAndSetVersionState(CompareAndSetVersionStateRequest) returns (CompareAndSetVersionStateResponse)` – performs CAS-guarded lifecycle transitions.
 - `GetDesignControlPlaneDigest(GetDesignControlPlaneDigestRequest) returns (GetDesignControlPlaneDigestResponse)` – returns normalized metadata digest used by publish gates.
+- `GetPublishedReleaseBundle(GetPublishedReleaseBundleRequest) returns (GetPublishedReleaseBundleResponse)` – returns the immutable `(tenantId, versionId)` release attestation including participant digests, `manifestHash`, and `generationConfigRevision`.
 - `CanDeleteVersionAssets(CanDeleteVersionAssetsRequest) returns (CanDeleteVersionAssetsResponse)` – validates whether version-scoped assets are purge-eligible.
 - `BeginPurgeVersionAssets(BeginPurgeVersionAssetsRequest) returns (BeginPurgeVersionAssetsResponse)` – CAS-guarded purge start that atomically re-checks deletion eligibility and transitions `version_asset_artifact` into purge-in-progress state.
 - `FinalizePurgeVersionAssets(FinalizePurgeVersionAssetsRequest) returns (FinalizePurgeVersionAssetsResponse)` – CAS-guarded purge completion that transitions purge-in-progress artifacts to `PURGED` after byte-deletion confirmation.

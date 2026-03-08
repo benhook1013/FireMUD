@@ -30,6 +30,7 @@ Orchestrates live game sessions, including tick execution, player input validati
 - For gameplay-domain gRPC calls made on behalf of a player, includes a signed `SessionAttestation` (as defined in Authentication & Authorization) and rotates it on bounded TTL; downstream gameplay services must reject calls missing valid attestation even when mTLS is present.
 - Communicates game lifecycle changes to other services via gRPC so they can react to games starting or ending.
 - Provides a single point of truth for current tick and world time.
+- Implements the gameplay layer’s **session front-end + lease-owner execution** model: connected sockets bind to a stable session front-end pod, while region-scoped tick execution remains fenced to the current `<tenantId, regionId>` lease owner. Session front-ends may forward work to lease owners over internal gRPC, but only lease owners may mutate region-scoped coordination state.
 - Ensures atomic command execution using Redis Lua scripts for all multi-key operations; the service does not rely on Redis `MULTI`/`EXEC` for consistency. Tick-related multi-key operations (locks, pending state, queues, timers, retry metadata) are performed exclusively via the shared Lua scripts described in [Redis Architecture](../../system-architecture-redis.md#atomicity-and-concurrency-control); ad-hoc multi-key sequences against tick keys are not allowed outside these scripts.
 - Treats Redis **Coordination** and **Cache/Rate-Limit** roles as separate concerns:
   - All tick, lock, timer, retry, and session coordination keys live on Coordination Redis and are accessed only via the Lua Script Registry and shared key builders.
@@ -157,6 +158,29 @@ The Game Session Service acts as the **authoritative tick executor** for each `<
   [Redis Architecture – Operational SLOs & Alert Thresholds](../../system-architecture-redis.md#operational-slos--alert-thresholds)
   so operators and implementations share a single set of “red lines” for
   coordination health.
+
+### Session Front-End and Lease-Owner Routing
+
+Game Session deliberately separates **socket ownership** from **region execution ownership**:
+
+- The pod holding a player's WebSocket or proxied Telnet bridge is the **session front-end** for that gameplay session.
+- Region-scoped command execution belongs to the current **lease owner** for the target `<tenantId, regionId>`.
+- Session front-ends may authenticate, normalize input, manage connection-local state, and stream results to the client.
+- Session front-ends must not directly stage or commit tick-owned Redis mutations for regions they do not lease.
+- When a command or follow-up targets a region owned by another pod, the session front-end forwards the request over internal gRPC to the lease owner and returns the resulting output to the client.
+
+This model keeps `/ws/game/**` stable at the edge while allowing ordinary in-cluster lease rebalancing without forcing reconnects solely because a region moved.
+
+#### Forwarding contract
+
+The internal front-end to lease-owner path is a fenced gameplay contract, not a best-effort proxy hop:
+
+- Forwarded requests include `tenantId`, `gameInstanceId`, `sessionId`, `characterId`, target `regionId`, command/action identifier, and a monotonic per-session sequencing token.
+- Forwarded requests include the current region lease/epoch fence. Lease owners reject stale or missing fences with an application-level stale-lease response rather than silently executing.
+- The session front-end preserves per-connection FIFO when emitting forwarded work. Cross-connection ordering remains undefined during takeovers as described in the reconnection and protocol-bridging docs.
+- If the lease owner rejects a stale fence before execution, the front-end refreshes ownership and may retry the request once against the new lease owner when the request is still valid.
+- If forwarding fails after the executor may already have started, the front-end must treat the result as ambiguous and use the normal structured command-failure or reconnect path; it must not re-issue potentially mutating work without an idempotency guarantee.
+- All forwarded execution attempts and stale-lease rejections must emit dedicated metrics and traces so operators can distinguish edge socket health from region-executor health.
 
 ### gRPC APIs
 
@@ -292,7 +316,7 @@ Canonical first-party `PLAY` scope errors on `/ws/game/**`:
 - `CONNECT_CONTEXT_INVALID` - required gateway-signed connect context is missing or failed validation (signature, expiry, replay, or key verification).
 - `CONNECT_SCOPE_MISMATCH` - validated connect context does not match requested `{tenantId, gameInstanceId}` scope.
 
-If a gameplay session already exists for the selected `{tenantId, gameInstanceId, characterId}` and is still resumable (TTL and server-side auth state are valid), `PLAY` resumes it and rebinds the new socket to the existing session. If no resumable session exists, `PLAY` creates a new gameplay session binding. This model allows the same account to have multiple characters in multiple worlds, but requires an explicit `PLAY` selection after every reconnect so the platform never guesses which tenant/character to resume.
+If a gameplay session already exists for the selected `{tenantId, gameInstanceId, characterId}` and is still resumable (TTL, current membership authority, and current revocation state are valid), `PLAY` resumes it and rebinds the new socket to the existing session. On successful resume, Game Session must also rebind the session to a fresh backend token for subsequent internal calls rather than depending on the previous token to remain valid. If no resumable session exists, `PLAY` creates a new gameplay session binding. This model allows the same account to have multiple characters in multiple worlds, but requires an explicit `PLAY` selection after every reconnect so the platform never guesses which tenant/character to resume.
 
 If a client attempts gameplay commands before selecting a world, the service returns `ERROR WORLD_NOT_SELECTED Use WORLDS/PLAY first` (or the equivalent canonical code) so clients can recover deterministically.
 
@@ -560,10 +584,11 @@ Game startup and shutdown are coordinated using the shared `Saga` helpers from `
 
 Session state needed for reconnect recovery is stored under `session:game:<tenantId>:<gameInstanceId>:<sessionId>`. These **per-session** keys (including any session-scoped command queues or metadata) are removed when the corresponding session stops or expires.
 
-Gameplay session bindings must include the server-side auth token identity used for backend calls on behalf of the session (for example `authTokenHash` and `authTokenIssuedAt`) so resume logic can validate:
+Gameplay session bindings must include the server-side auth token identity used for backend calls on behalf of the session (for example `authTokenHash` and `authTokenIssuedAt`) plus authoritative membership freshness metadata (for example `membershipVersion`) so resume logic can validate current identity, current membership authority, and current revocation state before rebinding to a fresh backend token:
 
-- Allowlist presence (`session:auth:account:*` and `session:auth:tenant:*`), and
-- Bulk revocation watermarks (`session:auth:revoked_after:*`)
+- Current caller identity matches the stored gameplay binding subject,
+- Membership authority still allows gameplay admission for the tenant, and
+- Bulk revocation watermarks (`session:auth:revoked_after:*`) do not block the account or tenant
 
 as defined in `design/architecture/system-architecture-authentication.md#session-and-identity-management`.
 

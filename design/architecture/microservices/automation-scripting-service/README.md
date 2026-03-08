@@ -49,10 +49,11 @@ An OpenAPI specification for the REST endpoints is available at `src/main/resour
   runtime registry. See [Hot Reload & Failure Handling](#hot-reload--failure-handling)
   for how `activePatchVersion`, `pendingPatchVersion`, and `reloadState` are
   managed.
+- Runtime execution is instance-aware even when patch readiness is tenant-scoped: a tenant-level `READY` patch is only eligible for pinning, while admission, timer scheduling, rollback pause, and plugin activation are evaluated per `<tenantId, gameInstanceId>`.
+  Runtime patch state therefore cannot rely on one mutable tenant-wide `activePatchVersion`; implementations must track `activePatchVersion`, `pendingPatchVersion`, and `reloadState` per instance or per explicit pin cohort.
 - Direct script upload/update APIs (for example `UpdateScript`) are limited to bootstrap/dev tooling and must not be used as a production runtime publish path. Production patch rollout uses the Game Design–driven publish Saga and `NotifyScriptVersionUpdate` lifecycle (`PENDING_VALIDATION` -> `ONLOAD_RUNNING` -> `READY`/`FAILED`) so all runtime gating, audit, and rollback contracts are preserved.
 - Each game's scripts live in tables keyed by `tenantId`, ensuring automation for
-  one game cannot access another's data. Redis queues also include the tenant
-  prefix; see [Multi-Tenancy](../../system-architecture-multi-tenancy.md).
+  one game cannot access another's data. Derived Redis coordination/index keys must preserve runtime instance isolation as well, not just tenant isolation; see [Multi-Tenancy](../../system-architecture-multi-tenancy.md).
 - Utilizes the [Shared Libraries](../../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
 
 ### Saga Participation
@@ -84,10 +85,10 @@ Publish gating must fail closed when this service cannot attest a digest under i
 ### Redis Role and Prefixes
 
 - **Coordination Redis participation**
-  - Uses automation-specific coordination prefixes owned by the Game Session Service’s Lua registry, such as `automation:tick:{tenantScriptTag}:lock`, `automation:tick:{tenantScriptTag}:queue`, and `automation:tick:{tenantScriptTag}:pending`, as described in [Redis Architecture](../../system-architecture-redis.md#key-format-examples) and [Redis Lua Patterns](../../system-architecture-redis-lua-patterns.md).
-  - Automation scripts are registered as **single-hash-slot** Lua scripts that operate only on `automation:tick:{tenantScriptTag}:*` keys; they never mix `automation:*` and `tick:*` prefixes in a single script invocation to avoid `CROSSSLOT` issues in Redis Cluster.
+  - Uses automation-specific coordination prefixes owned by the Game Session Service’s Lua registry, such as `automation:tick:{tenantInstanceScriptTag}:lock`, `automation:tick:{tenantInstanceScriptTag}:queue`, and `automation:tick:{tenantInstanceScriptTag}:pending`, as described in [Redis Architecture](../../system-architecture-redis.md#key-format-examples) and [Redis Lua Patterns](../../system-architecture-redis-lua-patterns.md).
+  - Automation scripts are registered as **single-hash-slot** Lua scripts that operate only on `automation:tick:{tenantInstanceScriptTag}:*` keys; they never mix `automation:*` and `tick:*` prefixes in a single script invocation to avoid `CROSSSLOT` issues in Redis Cluster.
 - **Cache/Rate-Limit Redis usage**
-  - Stores script quota counters and similar best-effort aggregates in **Cache/Rate-Limit Redis** using prefixes such as `automation:quota:<tenantId>:<scriptId>` and `automation:queue:<tenantId>:*`, following the cache key naming and isolation rules in [Redis Cache & Rate Limiting](../../system-architecture-redis-cache.md).
+  - Stores script quota counters and similar best-effort aggregates in **Cache/Rate-Limit Redis** using prefixes such as `automation:quota:<tenantId>:<scriptId>` and `automation:queue:{tenantInstanceTag}:*`, following the cache key naming and isolation rules in [Redis Cache & Rate Limiting](../../system-architecture-redis-cache.md).
   - Treats these keys as transient operational data; PostgreSQL remains authoritative for script definitions and long-lived automation state. Quota and queue-oriented prefixes are treated as **best-effort TTL-only caches** unless explicitly documented as strongly validated caches with versioned payloads and stricter invalidation semantics.
 
 The central reset policies and cache behavior for these prefixes are defined in:
@@ -99,10 +100,10 @@ Ownership and durability expectations for Automation & Scripting–related prefi
 
 | Prefix | Redis role | Durability / reset tolerance |
 | --- | --- | --- |
-| `automation:tick:{tenantScriptTag}:lock` | Coordination | Reset-tolerant; locks are volatile coordination state and can be dropped and reacquired after a coordination reset. |
-| `automation:tick:{tenantScriptTag}:queue` | Coordination | Reset-tolerant; in-flight automation tick queues are rebuilt from PostgreSQL and fresh events. Dropping these keys may cause some automation work to be skipped within the accepted tail-loss envelope. |
-| `automation:tick:{tenantScriptTag}:pending` | Coordination | Reset-tolerant; staged automation effects are coordinated with the main tick system and are replayed or discarded according to the same idempotency rules as tick `pending` entries. |
-| `automation:queue:<tenantId>:*` | Cache/Rate-Limit | Reset-tolerant, best-effort cache/queue of automation work item *indexes*. Loss is acceptable because admitted work items are persisted durably in PostgreSQL (outbox) and can be re-driven; this prefix is not an authoritative log. |
+| `automation:tick:{tenantInstanceScriptTag}:lock` | Coordination | Reset-tolerant; locks are volatile coordination state and can be dropped and reacquired after a coordination reset. |
+| `automation:tick:{tenantInstanceScriptTag}:queue` | Coordination | Reset-tolerant; in-flight automation tick queues are rebuilt from PostgreSQL and fresh events. Dropping these keys may cause some automation work to be skipped within the accepted tail-loss envelope. |
+| `automation:tick:{tenantInstanceScriptTag}:pending` | Coordination | Reset-tolerant; staged automation effects are coordinated with the main tick system and are replayed or discarded according to the same idempotency rules as tick `pending` entries. |
+| `automation:queue:{tenantInstanceTag}:*` | Cache/Rate-Limit | Reset-tolerant, best-effort cache/queue of automation work item *indexes*. Loss is acceptable because admitted work items are persisted durably in PostgreSQL (outbox) and can be re-driven; this prefix is not an authoritative log. |
 | `automation:quota:<tenantId>:<scriptId>` | Cache/Rate-Limit | Reset-tolerant, best-effort quota counters. Dropping these keys temporarily resets budgets but does not affect script correctness or long-term state. |
 
 Any new Automation & Scripting–specific prefixes must be added to this table and to the central Redis key catalogs, with a clear statement of which Redis role they use and whether they are reset-tolerant, reset-sensitive, or reset-forbidden.
@@ -134,11 +135,11 @@ Stage names and required audit fields (`finalStage`, `finalOutcome`, `finalReaso
 
 - Automation Lua scripts must never perform multi-key operations that span both `automation:*` and `tick:*` keys in a single invocation:
   - **Allowed examples**
-    - A script that touches only `automation:tick:{tenantScriptTag}:queue` and `automation:tick:{tenantScriptTag}:pending` for a single `<tenantId>` + `<scriptId>`.
-    - A script that touches only `automation:queue:<tenantId>:*` keys for a single tenant.
+    - A script that touches only `automation:tick:{tenantInstanceScriptTag}:queue` and `automation:tick:{tenantInstanceScriptTag}:pending` for a single `<tenantId>` + `<gameInstanceId>` + `<scriptId>`.
+    - A script that touches only `automation:queue:{tenantInstanceTag}:*` keys for a single runtime scope.
   - **Disallowed examples**
-    - A script that reads or writes both `automation:tick:{tenantScriptTag}:*` and `tick:{tenantRegionTag}:*` keys in one `EVALSHA` call.
-    - A script that mixes `automation:tick:{tenantScriptTag}:*` with `automation:tick:{otherTenantScriptTag}:*` keys.
+    - A script that reads or writes both `automation:tick:{tenantInstanceScriptTag}:*` and `tick:{tenantRegionTag}:*` keys in one `EVALSHA` call.
+    - A script that mixes `automation:tick:{tenantInstanceScriptTag}:*` with `automation:tick:{otherTenantInstanceScriptTag}:*` keys.
 - Automation work is staged under `automation:tick:*` and `automation:queue:*` and then handed off to Game Session via gRPC; only Game Session scripts mutate `tick:*` prefixes. This keeps automation scripts shard-local and avoids `CROSSSLOT` errors in Redis Cluster.
 - Any change to automation Redis usage or Lua scripts must follow the [Redis Design Checklist](../../system-architecture-redis-design-checklist.md) and the automation slotting rules above.
 
@@ -166,11 +167,11 @@ interaction.
 
 - `script` table holds the compiled component definitions and version metadata.
 - `npc_memory` table stores persistent state for NPC behaviors.
-- `automation:queue` keys in Redis buffer **work-item indexes/pointers** after a script runs and its work item is persisted durably (outbox). Each entry includes enough identity to locate the durable work item (for example an outbox ID) and must not be treated as an authoritative log of commands. The normative outbox and pointer contract is defined in `design/architecture/system-architecture-scripting-dsl-reference-and-lifecycle.md#work-item-outbox-contract-normative`.
+- `automation:queue` keys in Redis buffer **work-item indexes/pointers** after a script runs and its work item is persisted durably (outbox). Each entry includes enough identity to locate the durable work item (for example an outbox ID) and must not be treated as an authoritative log of commands. These indexes must be instance-aware (for example `automation:queue:{tenantInstanceTag}:<entityId>`), not just tenant-aware. The normative outbox and pointer contract is defined in `design/architecture/system-architecture-scripting-dsl-reference-and-lifecycle.md#work-item-outbox-contract-normative`.
 - Internal automation tick staging uses a dedicated namespace:
-  - `automation:tick:{tenantScriptTag}:queue` – per-script queue of work items being staged into tick-compatible commands.
-  - `automation:tick:{tenantScriptTag}:pending` – per-script pending list of work items currently being applied.
-  - `automation:tick:{tenantScriptTag}:lock` – per-script lock ensuring only one automation tick for a `<tenantId>` + `<scriptId>` pair runs at a time.
+  - `automation:tick:{tenantInstanceScriptTag}:queue` – per-instance, per-script queue of work items being staged into tick-compatible commands.
+  - `automation:tick:{tenantInstanceScriptTag}:pending` – per-instance, per-script pending list of work items currently being applied.
+  - `automation:tick:{tenantInstanceScriptTag}:lock` – per-instance, per-script lock ensuring only one automation tick for a `<tenantId>` + `<gameInstanceId>` + `<scriptId>` scope runs at a time.
   These keys are separate from the game tick keys (`tick:{tenantRegionTag}:...`) used by the Game Session Service and are only touched by the Automation & Scripting Service’s own Lua scripts. Script ticks never acquire `tick:{tenantRegionTag}:lock:<entityId>`; they stage commands for later execution by the Game Session Service’s tick loop.
 - Queue activity must be surfaced through the canonical observability contract metric families (for example `automation_tick_events_enqueued_total`, `automation_script_queue_delay_seconds`, `automation_queue_orphaned_entries_total`) rather than introducing a parallel unsupported metric surface.
 - The staging Lua script processes only a limited number of events each tick
@@ -185,20 +186,21 @@ interaction.
 - Scripts reside in the Automation & Scripting Service database and are versioned along with other game data as described in the design service versioning process.
 - Events from the Game Session Service and other domain services trigger script execution via gRPC. For each admitted trigger, the service executes the relevant sandboxed DSL handler **synchronously**, producing domain commands instead of mutating game state directly.
 - The sandboxed engine limits CPU time and memory for each script to prevent runaway behavior.
-- After a handler runs, the resulting script work item is persisted durably (outbox) and then indexed into `automation:queue:<tenantId>:<entityId>` for the affected entity. `ScriptTickService` drains these indexes, stages under `automation:tick:{tenantScriptTag}:*`, and hands off commands to Game Session for tick enqueue.
+- After a handler runs, the resulting script work item is persisted durably (outbox) and then indexed into `automation:queue:{tenantInstanceTag}:<entityId>` for the affected entity. `ScriptTickService` drains these indexes, stages under `automation:tick:{tenantInstanceScriptTag}:*`, and hands off commands to Game Session for tick enqueue.
+  Before persistence, explicit output budgets must cap the number of commands and serialized work-item size emitted by a single run so one admitted trigger cannot create an unbounded backlog.
   Script ticks never hold the game tick locks (`tick:{tenantRegionTag}:lock:<entityId>`); they only batch and stage automation work before handing it to the Game Session Service, which applies commands under its own tick and locking model. See [Tick System and Runtime Design](../../system-architecture-ticks.md) for how queued commands are processed once they enter the per-entity tick queues.
 
 ### Hot Reload & Failure Handling
 
-Script definitions are updated via `NotifyScriptVersionUpdate` from the Game Design Service. For each `<tenantId, scriptPatchVersion>`:
+Script definitions are updated via `NotifyScriptVersionUpdate` from the Game Design Service. For each runtime scope carrying a newly published `scriptPatchVersion`:
 
-- The service tracks the currently executing version as `activePatchVersion` and treats the incoming one as `pendingPatchVersion`, with a simple `reloadState` (`IDLE`, `RELOADING`, `FAILED`) mirroring [Hot Reload & Resume Behavior](../../system-architecture-scripting.md#hot-reload--resume-behavior).
-- On `NotifyScriptVersionUpdate`, leaders set `pendingPatchVersion` and `reloadState=RELOADING` while keeping `activePatchVersion` unchanged. Scheduling is paused for that tenant: in-flight executions complete under the existing patch, but **new triggers are not admitted** while reload is in progress.
-- Leaders coordinate with `ScriptVersionService` to load and validate the pending scripts and execute any `onLoad` initialization handlers required for the new patch. If this process succeeds on the current leaders responsible for that tenant, they atomically switch `activePatchVersion` to the new value, clear `pendingPatchVersion`, set `reloadState=IDLE`, and resume scheduling.
+- The service tracks the currently executing version as `activePatchVersion` and treats the incoming one as `pendingPatchVersion`, with a simple `reloadState` (`IDLE`, `RELOADING`, `FAILED`) mirroring [Hot Reload & Resume Behavior](../../system-architecture-scripting.md#hot-reload--resume-behavior). These fields are runtime-scope state, not tenant-global mutable state.
+- On `NotifyScriptVersionUpdate`, leaders set `pendingPatchVersion` and `reloadState=RELOADING` while keeping `activePatchVersion` unchanged. Scheduling is paused for the affected runtime scope: in-flight executions complete under the existing patch, but **new triggers are not admitted** for the affected `<tenantId, gameInstanceId>` while reload is in progress.
+- Leaders coordinate with `ScriptVersionService` to load and validate the pending scripts and execute any `onLoad` initialization handlers required for the new patch. If this process succeeds on the current leaders responsible for that runtime scope, they atomically switch `activePatchVersion` to the new value, clear `pendingPatchVersion`, set `reloadState=IDLE`, and resume scheduling.
 - If reload or validation fails, the new patch never becomes active. The service keeps `activePatchVersion` on the prior patch, marks the pending patch as failed and `reloadState=FAILED`, discards any partially loaded state, and resumes scheduling using the last known good configuration. A failure result is reported back to the Game Design Service so the publish can be investigated or retried.
 - Triggers pinned to a failed or unknown `scriptPatchVersion` are rejected explicitly. The service records an audit entry with `finalStage=ADMISSION` and a non-success `finalOutcome` (for example, `finalOutcome=version_unavailable` or `finalOutcome=skipped_reloading`) and increments a drop metric such as `automation_script_triggers_dropped_total{reason=\"version_unavailable\"}` or `automation_script_triggers_dropped_total{reason=\"reloading\"}` instead of silently falling back to the previous patch or allowing unbounded queuing during reload.
 
-This behavior ensures that a script patch either becomes the new active version for that tenant or fails cleanly without affecting live automation behavior.
+This behavior ensures that a script patch either becomes the new active version for the targeted runtime scope or fails cleanly without affecting unrelated live automation behavior.
 
 ### gRPC APIs
 
@@ -215,13 +217,14 @@ This behavior ensures that a script patch either becomes the new active version 
   - `eventType` and versioning metadata such as `scriptPatchVersion`.
   - An envelope for the event payload, including any domain-specific fields.
   Event ingress RPCs are **idempotent** with respect to Trigger Identity (including `scriptEventId`) and the script that handles the event: repeated calls with the same Trigger Identity must not cause the DSL body to run twice. The Automation & Scripting Service implements this in accordance with the `scriptEventId` lifecycle and deduplication rules described in `design/architecture/system-architecture-scripting-dsl-reference-and-lifecycle.md#scripteventid-lifecycle-and-deduplication`.
+  Custom/service-specific events must additionally be validated against a canonical event registry so only authorized producer services can emit a given `eventType` and schema version.
 
 ### Idempotency & Retries
 
 `scriptEventId` ownership is endpoint-specific:
 
 - Live external ingress (`TriggerScriptEvent`): caller must supply `scriptEventId` and reuse it on retries.
-- Scheduler/timer ingress (`onInterval`, `onTimerExpire`): scheduler generates deterministic `scriptEventId` from due-point identity.
+- Scheduler/timer ingress (`onInterval`, `onTimerExpire`): scheduler generates deterministic `scriptEventId` from due-point identity, including `gameInstanceId`.
 - Dry-run/test ingress: service generates by default; caller-supplied IDs are optional and must pass dry-run namespace collision validation.
 
 These identifiers serve as the canonical idempotency keys for event ingress:
@@ -439,6 +442,7 @@ In addition to live event handling, the Automation & Scripting Service exposes a
 - By default, dry runs **do not consume ScriptQuotaService windows or tenant automation budgets**, and they must not increment live-traffic error counters. Sandbox failures observed during tests are emitted via dry-run/test-only metric families (for example `automation_script_test_sandbox_failures_total`) so production SLO dashboards do not conflate privileged tooling with live automation reliability.
 - By default, dry runs must not contribute to failure-rate circuit breakers that can disable live scripts (`runtimeStatus=DISABLED_DUE_TO_ERRORS`). If an environment chooses to gate live enablement on dry-run results, that gating must be explicit and isolated (separate breaker or opt-in policy) so privileged tooling cannot accidentally disable production automation.
 - Separate **dry-run budgets** cap how much test traffic a tenant or principal can generate (for example, max runs per minute and max concurrent dry-runs) so test tools cannot overload the automation cluster even though they bypass mainline quotas.
+- Dry-run/test work must execute on isolated capacity (for example a separate worker pool, reserved worker share, or equivalent scheduler partition) so privileged tooling cannot consume the last available live automation workers.
 - Dry-run/test execution must require explicit authorization scope/role (for example `automation.dryrun.execute`) and must persist the calling principal in audit metadata so privileged usage is attributable.
 - Dry-run/test authorization and budget failures must be returned as deterministic application-level outcomes (for example `DRY_RUN_UNAUTHORIZED`, `DRY_RUN_RATE_LIMITED`) rather than transport errors.
 

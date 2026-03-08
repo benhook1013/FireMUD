@@ -1,8 +1,9 @@
 # Asset Storage Setup
 
 Game assets such as icons or sound files are uploaded through the Game Design
-Service at design time. They are stored in the service database while being
-edited. When a version is published, the service uploads these assets to
+Service at design time. Draft and published asset bytes live in object storage;
+the Game Design database stores only metadata, hashes, references, and
+lifecycle state for those objects. When a version is published, the service uploads or promotes these assets to
 tenant- and version-scoped object storage (e.g., S3, MinIO, or a CDN) and
 generates a `manifest.json` that maps asset keys to public URLs. A manifest is
 produced for every published version, even if no assets are present. The manifest is
@@ -17,13 +18,15 @@ Logical world and entity templates (regions, rooms, items, NPCs, loot tables, sc
 
 ## Table Structure
 
-The `game_assets` table stores the raw binary data for design-time uploads. Columns include:
+The `game_assets` table stores metadata for design-time uploads. Columns include:
 
 - `id` – primary key
 - `tenant_id` – identifies the owning game as a GUID string stored in `VARCHAR(36)`
 - `file_name` – original file name
 - `content_type` – MIME type
-- `data` – binary blob
+- `storage_key` – object-store key for the canonical draft asset bytes
+- `content_hash` – immutable content digest of the uploaded bytes
+- `size_bytes` – stored object size
 - `created_at` – upload timestamp
 
 To associate assets with specific published versions while still allowing reuse across
@@ -57,9 +60,6 @@ Artifact lifecycle state for each exported prefix must be persisted in a dedicat
 
 `(tenant_id, version_id)` is unique in `version_asset_artifact`. All lifecycle transitions must use compare-and-set on `state_epoch` so concurrent publish/repair/purge workflows cannot race.
 
-The `data` column uses PostgreSQL `BYTEA` type to store the file contents.
-When returned by the REST API this byte array is Base64 encoded by default so the JSON response remains text based.
-
 An index named `idx_game_assets_tenant` speeds up queries scoped to a tenant.
 Additional indexes may support common design-time queries (for example by
 `tenant_id` and upload timestamps) but are not required for runtime because
@@ -67,7 +67,7 @@ published assets are served from object storage.
 
 ## API
 
-Assets are uploaded via `POST /assets` using a `multipart/form-data` request and the saved record, including the binary `data` field, is returned as a `GameAssetDto`.
+Assets are uploaded via `POST /assets` using a `multipart/form-data` request. The service streams bytes directly to object storage, then persists the metadata row and returns a `GameAssetDto` containing metadata and stable download information rather than echoing raw bytes from PostgreSQL.
 See the [OpenAPI specification](../../../../services/game-design-service/src/main/resources/openapi.yaml) for request details.
 Endpoints for downloading or deleting assets are available.
 gRPC endpoints support asset management operations.
@@ -81,11 +81,20 @@ Control-plane purge APIs are required:
 A basic repository (`GameAssetRepository`) and service implementation
 (`GameAssetServiceImpl`) persist uploads using Spring Data JPA.
 
-At publish time, assets are exported from the database to object storage and
+At publish time, assets are exported from Game Design metadata plus the
+referenced object-store draft keys into version-scoped published prefixes in
+object storage and
 referenced in the generated `manifest.json`. Runtime clients load branding and
 theme resources directly from the CDN using this manifest; the Game Design
 Service is not involved. See [Game Design Service Architecture](README.md) for
 how these assets fit into published versions.
+
+The `published_release_bundle` attestation must reference the final asset state
+for the version by including `manifestHash` (and optionally per-asset
+`contentHash` values) exposed through Game Design’s `GetPublishedReleaseBundle`
+API. Activation, cutover preflight, and repair tooling must consume the API
+instead of reconstructing asset state from `version_asset_artifact` and version
+metadata separately.
 
 ### Interaction with Script-Only Patches
 
@@ -133,7 +142,7 @@ Transition enforcement contract:
   - Selects assets by joining `version_asset` to `game_assets` for the target
     `(tenantId, versionId)`; assets not referenced via `version_asset` are **never**
     exported for that version.
-  - Uploads the selected assets from `game_assets` to a deterministic prefix such as
+  - Copies or promotes the selected objects referenced by `game_assets.storage_key` into a deterministic published prefix such as
     `<tenantId>/<versionId>/` in object storage.
   - Writes or overwrites the version-scoped `manifest.json` in the same prefix.
   - Updates version metadata with the manifest location.
@@ -147,8 +156,8 @@ Transition enforcement contract:
   - `version_asset` rows for `(tenantId, versionId)` must be treated as immutable mappings.
   - Referenced `game_assets` binaries must not be modified in place; replacing bytes requires a new `game_assets` row and (for Draft versions only) an updated mapping.
   - Retrying `ExportAssets` for a Published/Active version must be bit-for-bit identical (the overwrite is a retry mechanism, not a mutation mechanism).
-  - Version metadata must record a `manifestHash` (and optionally per-asset `contentHash` values) so operators and CI can detect drift between database mappings and object-store contents.
-  - If `manifestHash` verification fails for a Published/Active version, treat it as a data corruption or process bug incident. Do not “fix” the version in place; repair requires republishing a new `versionId` or executing an operator-approved recovery workflow that re-derives the exact bytes from the authoritative database mappings.
+  - Version metadata and/or the immutable `published_release_bundle` attestation must record `manifestHash` (and optionally per-asset `contentHash` values) so operators and CI can detect drift between metadata mappings and object-store contents.
+  - If `manifestHash` verification fails for a Published/Active version, treat it as a data corruption or process bug incident. Do not “fix” the version in place by changing attested content; the only allowed repair is an exact-bytes rebuild that reproduces the existing `published_release_bundle` attestation. If that is impossible, recovery requires publishing a new `versionId`.
 - If any downstream publish step fails, the Saga must:
   - mark the version as **Failed** in the Game Design Service so it cannot be activated, and
   - transition the asset artifact to `TOMBSTONED` instead of silently deleting bytes.
@@ -157,6 +166,12 @@ Transition enforcement contract:
   [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md)
   and require an explicit repair or retry action before they can transition
   back to Draft or Published.
+
+Exact-bytes repair rule:
+
+- Repair of a Published/Active version must begin by reading `GetPublishedReleaseBundle(tenantId, versionId)`.
+- The repair workflow may only regenerate object-store bytes that hash to the existing attested `manifestHash` (and optional per-asset hashes if recorded).
+- If regenerated bytes would change the attestation payload, the workflow must fail closed and require a new `versionId` rather than mutating the published release in place.
 
 Deletion-eligibility authority:
 
@@ -181,26 +196,25 @@ Race-safe purge workflow:
 
 ## Asset Upload Guardrails
 
-To prevent persistence and performance failures in `game_assets`:
+To prevent persistence and performance failures in asset workflows:
 
 - Maximum single asset size is 25 MiB; oversized uploads must fail with `ASSET_TOO_LARGE`.
-- Per-tenant draft asset quota is 2 GiB of `game_assets.data`; writes beyond quota must fail with `ASSET_QUOTA_EXCEEDED`.
+- Per-tenant draft asset quota is 2 GiB of referenced draft object bytes; writes beyond quota must fail with `ASSET_QUOTA_EXCEEDED`.
 - Upload/download APIs must support streaming/chunked transfer at the transport layer; services must not require buffering full payloads in memory before persistence.
 - Publish/export workers must process assets in bounded batches (configurable), with backpressure metrics to avoid starving version publish orchestration.
 - Quota and size limits must be configurable per environment but default to the values above when unset.
 
-The database is optimized for design-time editing rather than long-term bulk
+The database is optimized for design-time metadata rather than bulk binary
 storage. Implementations should treat `game_assets` as:
 
-- The canonical store for **draft** and in-progress assets.
-- A short- to medium-term cache for recently published assets needed for design
-  history and branch workflows.
+- The canonical metadata store for **draft** and in-progress assets.
+- A metadata index for published assets needed for design history and branch workflows.
 
 A background maintenance job (or admin workflow) may mark unused asset rows as
 `obsolete` once no open revisions, branches, or published versions reference
 them. In practice this means:
 
-- An asset row is eligible for purge only if:
+- An asset metadata row is eligible for purge only if:
   - it is not referenced by any `version_asset` row where the associated version
     is in a non-Retired state (Draft, Published, Active, or Failed), and
   - it is not reachable from any open revision, branch, or Draft version via
@@ -210,8 +224,7 @@ them. In practice this means:
 - Assets referenced by non-Retired versions must never be deleted, and their
   binary contents must not be modified in place.
 
-Once these conditions are met, a maintenance process can purge the asset row to
-control database size. The exact retention
+Once these conditions are met, a maintenance process can purge the asset metadata row and corresponding unreferenced draft object bytes. The exact retention
 policy (for example “keep assets referenced by the last N versions per tenant”)
 is configurable but should be documented alongside operational runbooks.
 

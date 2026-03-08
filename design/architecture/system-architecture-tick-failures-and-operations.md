@@ -27,9 +27,9 @@ When implementing new failure-handling flows or adding operational procedures, e
 
 ## Crash Recovery and Replay
 
-Tick recovery is driven by Redis coordination state plus domain-level idempotency rules:
+Tick recovery is driven by durable PostgreSQL tick state plus domain-level idempotency rules, with Redis acting only as a volatile coordination layer:
 
-- On executor crash or failover, a new worker acquires the region lease, inspects `tick:{tenantRegionTag}:pending`, `retry:{tenantRegionTag}`, and timers, and replays or resumes work based only on persisted state.
+- On executor crash or failover, a new worker acquires the region lease, re-establishes the authoritative recovery baseline from the durable tick-batch, tick effect ledger, follow-up tables, and `RegionStatus`, then inspects any surviving `tick:{tenantRegionTag}:pending`, `retry:{tenantRegionTag}`, and timer keys only as optional coordination hints while replay converges from durable state.
 - Redis is treated as a volatile coordination layer with **at-least-once** semantics; network retries, executor failover, and AOF replay can all cause the same logical effect to be attempted more than once.
 - Domain services rely on `(region_epoch, tickId)` and effect guards to ensure that replays do not double-apply logical effects even when Redis state is partially lost.
 
@@ -55,12 +55,19 @@ Crash-window behavior:
 
 To make replays observable and bounded, Game Session maintains a **tick effect ledger** in PostgreSQL. Conceptually, the ledger captures the same coordination timeline described in the Redis and tick architecture docs:
 
-- Every tick effect that can be staged in `tick:{tenantRegionTag}:pending` or in retry/timer queues is mirrored into a Game Session–owned ledger table (for example `tick_effects`) with columns such as:
+- Every tick effect that has been durably claimed or staged for execution (for example, rows associated with a tick batch, replay-eligible retry work, or durable follow-up records) is mirrored into a Game Session–owned ledger table (for example `tick_effects`) with columns such as:
   - `tenant_id`, `region_id`, `region_epoch`, `tick_id`
+  - `tick_batch_id`
   - `effect_key` (stable, human-readable descriptor passed through from staging)
   - `command_id`
   - `status` ∈ {`SCHEDULED`, `APPLIED`, `ABANDONED`}
   - `reason` / `outcome`
+  - `created_at`, `updated_at`
+- Each `(tenantId, regionId, region_epoch, tickId)` also has a durable tick-batch record owned by Game Session that stores at minimum:
+  - `tick_batch_id`
+  - `expected_effect_count`
+  - `status`
+  - optional `pending_digest` or equivalent integrity field
   - `created_at`, `updated_at`
 - For any `(tenant_id, region_id, region_epoch, tick_id, effect_key)` there must eventually be **exactly one terminal state**:
   - `status = APPLIED` – effect successfully committed to domain state.
@@ -87,6 +94,13 @@ Replay of a tick is driven from ledger state:
   - Marks effects `ABANDONED` with a precise reason when replay determines they are no longer valid (expired session, entity gone, descheduled tick, and so on).
   - Marks effects `APPLIED` and skips domain calls when it determines the effect has already been applied idempotently.
 - Every Lua script that stages effects is required to include the `effect_key` used in the ledger so Redis `pending` entries can always be correlated with ledger rows; staging scripts that cannot be tied back to a ledger identity are rejected.
+- Recovery rules for Redis/SQL mismatch are explicit:
+  - durable tick-batch + `SCHEDULED` ledger rows exist, Redis `pending` missing:
+    - replay proceeds from PostgreSQL and may re-stage Redis as needed.
+  - Redis `pending` exists without a durable tick-batch:
+    - treat the Redis entry as orphaned coordination state, clear it, alert, and do not commit work from it.
+  - durable tick-batch and Redis `pending` disagree on expected effect count or digest:
+    - mark the batch inconsistent, pause the region, and require reconcile tooling before resuming normal ticks.
 
 ### EffectId, Ledger Rows, and Guard Keys
 
@@ -125,6 +139,11 @@ Alerts fire when:
 These metrics complement the Redis- and lock-level health metrics described in the Redis architecture and operations docs.
 
 Operators diagnosing stalled regions, replay storms, or ledger backlogs should use these metrics in combination with the Tick Health & Ledger dashboard exported under `design/observability/grafana/tick-health-ledger.json` and the incident flows described in `system-architecture-tick-incident-runbook.md`.
+
+Replay fairness is part of the operational contract, not just an implementation detail:
+
+- Dashboards and alerts should show regions where `tick_effects_pending_total > 0` but `tick_effects_replay_batches_total` is not increasing over the same interval.
+- Sustained `tick_effects_replay_scan_lag_ms` growth for a subset of regions should be treated as replay-controller starvation, even if a hot region is still making progress.
 
 ### Ledger Replay Controller
 
@@ -221,7 +240,11 @@ Domain services must treat the **region-scoped tick timeline** `(region_epoch, t
 Two patterns are used:
 
 - **Per-aggregate last-tick state**
-  - Aggregates that are updated at most once per tick (for example, a character’s core stats row or a room’s dynamic state row) maintain a shadow tick-state record such as `entity_tick_state` keyed by the aggregate identifier.
+  - This pattern is allowed only for aggregates that are provably updated at most once per tick within a region epoch.
+  - It is a narrow exception, not the default for gameplay-visible mutations.
+  - Typical safe uses are once-per-tick watermark-style updates or aggregates whose design guarantees a single logical writer/effect per tick.
+  - Aggregates that may receive multiple legitimate effects in one tick must not use this pattern.
+  - A shadow tick-state record such as `entity_tick_state` is keyed by the aggregate identifier.
   - The shadow state stores at minimum:
     - `last_region_epoch`
     - `last_tick_id`
@@ -231,7 +254,8 @@ Two patterns are used:
     - If `(last_region_epoch, last_tick_id) >= (currentRegionEpoch, currentTickId)`, the update is treated as a replay or out-of-order attempt and becomes a no-op (or, in strict modes, a validation-only check).
     - If `(last_region_epoch, last_tick_id) < (currentRegionEpoch, currentTickId)`, the handler applies the change and updates `(last_region_epoch, last_tick_id) = (currentRegionEpoch, currentTickId)` in the same transaction as the domain mutation.
 - **Operation-level effect guard**
-  - Operations that may touch multiple aggregates or legitimately apply multiple distinct effects to the same aggregate in a single tick (for example trades, AoE damage, or multi-target buffs) use a small guard table such as `tick_effect_guard` keyed by:
+  - This is the default pattern for gameplay-visible mutations.
+  - Operations that may touch multiple aggregates or legitimately apply multiple distinct effects to the same aggregate in a single tick (for example trades, combat damage, healing, AoE damage, room occupancy changes, drops/pickups, or multi-target buffs) use a small guard table such as `tick_effect_guard` keyed by:
     - `tenant_id`
     - `region_id`
     - `region_epoch`
@@ -245,11 +269,11 @@ Two patterns are used:
 
 Examples:
 
-- **Single-entity damage (per-aggregate last-tick state)**
-  - `ApplyDamage` in Entity Management receives `(tenantId, regionId, regionEpoch, tickId, entityId, damageAmount)`.
-  - It reads `entity_tick_state` for `entityId` and compares `last_tick_id` to `tickId`.
-  - If `(last_region_epoch, last_tick_id) >= (regionEpoch, tickId)`, the handler treats the request as a replay/out-of-order and returns without changing HP.
-  - If `(last_region_epoch, last_tick_id) < (regionEpoch, tickId)`, it subtracts `damageAmount` and updates `(last_region_epoch, last_tick_id) = (regionEpoch, tickId)` in `entity_tick_state` in the same transaction.
+- **Once-per-tick aggregate watermark (per-aggregate last-tick state)**
+  - `AdvanceRegionAuraWatermark` receives `(tenantId, regionId, regionEpoch, tickId, aggregateId)`.
+  - The design guarantees this aggregate is advanced at most once per tick.
+  - It reads the shadow tick state for `aggregateId` and applies the update only when `(last_region_epoch, last_tick_id) < (regionEpoch, tickId)`.
+  - If `(last_region_epoch, last_tick_id) >= (regionEpoch, tickId)`, the handler treats the request as a replay/out-of-order and returns without changing state.
 - **Trade between two entities (operation-level effect guard)**
   - `TradeItem` receives `(tenantId, regionId, regionEpoch, tickId, fromEntityId, toEntityId, itemId)`.
   - It computes `effectKey = "trade:" + fromEntityId + ":" + toEntityId + ":" + itemId`.
@@ -261,6 +285,7 @@ Examples:
 Operationally:
 
 - Every tick-driven write path must use either the per-aggregate `last_tick_id` pattern or the operation-level guard pattern.
+- The default review assumption is that a gameplay-visible mutation requires an effect guard unless the design explicitly proves “at most one logical effect per aggregate per tick”.
 - Domain handlers treat Redis locks and leases as opaque; they never read `tick:{tenantRegionTag}:lock:<entityId>` or `tick-executor-lease:{tenantRegionTag}` directly.
 - Operations that cannot be made idempotent or compensatable at the domain layer—for example payments, emails, or webhooks into third-party systems—must not be executed directly inside tick-driven handlers. Those flows must use the saga/outbox patterns in `system-architecture-transactions.md` so they can tolerate retries and partial failures independently of tick replay.
 

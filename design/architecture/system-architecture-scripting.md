@@ -25,7 +25,7 @@ This section is a high-level snapshot. For the current implementation ledger and
 - **Implemented and evolving**
   - Script publish lifecycle integrates Game Design publish workflows with Automation runtime reload and readiness gating (`PENDING_VALIDATION` -> `ONLOAD_RUNNING` -> `READY`/`FAILED`).
   - World generation and PvE behavior libraries continue to expand; feature-level progress is tracked in service task lists rather than this hub.
-  - Scheduler leadership leases and per-region tick-stream consumption for `script-leader:{<tenantId>}` are implemented; sharding/indexing and long-term retention jobs continue to evolve (see **Scheduler Leadership & Coordination** in `design/architecture/system-architecture-scripting-dsl-reference-and-lifecycle.md` and the Automation & Scripting Service README for current behavior).
+  - Scheduler leadership leases and per-region tick-stream consumption are implemented; sharding/indexing and long-term retention jobs continue to evolve (see **Scheduler Leadership & Coordination** in `design/architecture/system-architecture-scripting-dsl-reference-and-lifecycle.md` and the Automation & Scripting Service README for current behavior).
 
 Operators looking for **runtime knobs and environment variables** should now primarily consult `design/architecture/system-architecture-scripting-quotas-and-operations.md` and the Automation & Scripting Service README (`design/architecture/microservices/automation-scripting-service/README.md#environment-variables`), which are the authoritative sources for current settings and defaults.
 
@@ -38,9 +38,9 @@ The table below summarizes high-level implementation status categories; verify c
 | Area | Status | Notes |
 | --- | --- | --- |
 | Script runtime & DSL | Implemented | Sandbox execution, core Automation & Scripting Service, and visual DSL editor are in active use, including basic quotas. |
-| Automation queues & script ticks | Implemented | `automation:queue:<tenantId>:<entityId>` and `automation:tick:{tenantScriptTag}:...` staging are implemented; script work items flow into tick commands as described under [TL;DR Flow](#tldr-flow). |
+| Automation queues & script ticks | Implemented | Instance-aware automation queue indexes (for example `automation:queue:{tenantInstanceTag}:<entityId>`) and `automation:tick:{tenantInstanceScriptTag}:...` staging are implemented; script work items flow into tick commands as described under [TL;DR Flow](#tldr-flow). |
 | Integration with tick commands | Implemented | Script-generated tick commands are enqueued into the same per-entity tick queues used by Game Session, and participate in the normal lock/idempotency model. |
-| Scheduler leadership & timers | Implemented / evolving | Per-tenant `script-leader:{<tenantId>}` leases and heartbeat-driven interval scheduling are implemented; sharded leases, `automation:timer:{tenantRegionTag}` indexing, and long-term audit-retention jobs are tracked in the Automation & Scripting Service README and task list. |
+| Scheduler leadership & timers | Implemented / evolving | Scheduler leases and heartbeat-driven interval scheduling are implemented; region-scoped Redis timer/checkpoint coordination (for example `automation:timer:{tenantRegionTag}`) with instance-aware stored identities, and long-term audit-retention jobs are tracked in the Automation & Scripting Service README and task list. |
 | Quotas & fairness | Implemented / evolving | Per-script quotas (`ScriptQuotaService`) and basic fairness rules are implemented; multi-level budgets and advanced throttling controls continue to evolve. |
 | Audit & metrics | Implemented / evolving | `script_event_audit` and core automation metrics exist; retention policies and additional dashboards are being refined. |
 
@@ -102,8 +102,8 @@ At a high level, a script (or plugin) must pass through several stages before it
    - When designers publish a new script patch, the Game Design Service drives a Saga that compiles the editor graph into the runtime DSL representation and persists it in the Automation & Scripting Service schema.
    - The Automation & Scripting Service revalidates the compiled graph (for example, type checks, guard-node presence in loops, supported component versions) and will reject or mark the patch as `FAILED` if compilation or validation fails.
 
-3. **`onLoad` initialization (Automation & Scripting Service, per tenant)**
-   - For each `<tenantId, scriptPatchVersion>`, the Automation & Scripting Service runs any configured `onLoad` handlers after static validation succeeds but **before** the patch is marked `READY` for that tenant.
+3. **`onLoad` initialization (Automation & Scripting Service, per tenant patch)**
+   - For each `<tenantId, scriptPatchVersion>`, the Automation & Scripting Service runs any configured `onLoad` handlers after static validation succeeds but **before** the patch is marked `READY` for that tenant. `READY` only means the patch is eligible for pinning; runtime admission, timers, reload pause, and rollback remain instance-scoped.
    - `onLoad` is a **mandatory gate**: if it fails with a logical or sandbox-level error, the patch is marked `FAILED` for that tenant, the previous `activePatchVersion` remains in use, and events referencing the failed patch are rejected with outcomes such as `version_unavailable`. Only transient infrastructure errors are retried a bounded number of times, and even those retries must remain idempotent.
 
 4. **Version pinning (Game Session Service)**
@@ -118,7 +118,8 @@ At a high level, a script (or plugin) must pass through several stages before it
    - Runtime guard violations are recorded as `sandbox_error` outcomes with specific reasons (for example, `cpu_budget_exceeded`, `memory_budget_exceeded`) and feed into failure-rate circuit breakers.
 
 7. **Command staging and tick execution**
-   - Successful runs produce commands that are staged into `automation:queue:<tenantId>:<entityId>`, processed by `ScriptTickService`, and then handed off to the Game Session Service for enqueue into tick queues, where they follow the standard tick idempotency and replay semantics.
+   - Successful runs produce commands that are staged into `automation:queue:{tenantInstanceTag}:<entityId>`, processed by `ScriptTickService` under `automation:tick:{tenantInstanceScriptTag}:...`, and then handed off to the Game Session Service for enqueue into tick queues, where they follow the standard tick idempotency and replay semantics.
+   - Before persistence/handoff, explicit output ceilings cap the number of emitted commands and the serialized work-item size so one admitted trigger cannot create an unbounded backlog.
 
 All stages emit metrics and audit records (especially `script_event_audit`) so designers and operators can see where a script failed to progress. The quotas and operations document (`design/architecture/system-architecture-scripting-quotas-and-operations.md`) is the primary reference for interpreting these outcomes in production.
 
@@ -146,8 +147,8 @@ At a high level, scripting follows this pipeline:
 1. **Event fires** – Game Session or another service emits a standard or custom event for an entity.
 2. **Bindings & quotas** – The Automation & Scripting Service looks up bound handlers for that `<tenantId, eventType>` and applies per-script and per-tenant limits via `ScriptQuotaService`.
 3. **Sandboxed DSL execution** – Allowed handlers run in the sandboxed DSL runtime, reading world state via gRPC and producing domain commands rather than mutating state directly.
-4. **Automation queue staging** – After sandbox execution, the resulting **script work items** (domain commands plus metadata) are indexed into Redis-backed automation queues under keys such as `automation:queue:<tenantId>:<entityId>`, along with `scriptEventId`, `scriptId`, and version metadata. These queues are best-effort derived coordination indexes whose loss/reset is acceptable, because admitted work items are persisted durably (outbox) and the indexes can be rebuilt; loss/reset must still be observable. Region-scoped tick keys remain the responsibility of the Game Session Service.
-5. **Script ticks & handoff** – `ScriptTickService` drains automation work items from `automation:queue:<tenantId>:<entityId>` entries, batches automation events into `automation:tick:{tenantScriptTag}:...` staging with quotas and budgets, and then hands the resulting **domain commands** to the Game Session Service over internal gRPC so Game Session can enqueue them into per-entity tick queues using its own Redis Lua registry and tick invariants.
+4. **Automation queue staging** – After sandbox execution, the resulting **script work items** (domain commands plus metadata) are indexed into Redis-backed automation queues under keys such as `automation:queue:{tenantInstanceTag}:<entityId>`, along with `scriptEventId`, `scriptId`, `gameInstanceId`, and version metadata. These queues are best-effort derived coordination indexes whose loss/reset is acceptable, because admitted work items are persisted durably (outbox) and the indexes can be rebuilt; loss/reset must still be observable. Region-scoped tick keys remain the responsibility of the Game Session Service.
+5. **Script ticks & handoff** – `ScriptTickService` drains automation work items from `automation:queue:{tenantInstanceTag}:<entityId>` entries, batches automation events into `automation:tick:{tenantInstanceScriptTag}:...` staging with quotas and budgets, and then hands the resulting **domain commands** to the Game Session Service over internal gRPC so Game Session can enqueue them into per-entity tick queues using its own Redis Lua registry and tick invariants.
 6. **Game tick execution** – The Game Session Service consumes at most one command per entity per tick from the combined player-and-automation queues and applies effects under the normal lock and replay rules.
 
 ```mermaid
@@ -162,8 +163,8 @@ sequenceDiagram
     GameSession-->>Scripting: Script trigger (event + metadata)
     Scripting->>Scripting: Run sandboxed DSL handler
     Scripting->>Scripting: Persist work item (outbox)
-    Scripting->>Redis: Index work-item pointer to automation:queue:<tenantId>:<entityId>
-    Scripting->>Redis: ScriptTickService stages automation:tick:{tenantScriptTag}:*
+    Scripting->>Redis: Index work-item pointer to automation:queue:{tenantInstanceTag}:<entityId>
+    Scripting->>Redis: ScriptTickService stages automation:tick:{tenantInstanceScriptTag}:*
     Scripting->>GameSession: Enqueue automation commands (internal gRPC)
     GameSession->>Redis: Append into tick:{tenantRegionTag}:queue:<entityId> (Lua)
     GameSession->>Redis: Read per-entity tick queue on tick

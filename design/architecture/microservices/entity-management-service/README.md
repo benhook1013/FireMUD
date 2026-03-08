@@ -168,6 +168,25 @@ Synthetic room-ground containers scoped by `(tenantId, gameInstanceId, roomInsta
 - `ListRoomEntities` – returns players, NPCs, and visible items present in a room, scoped by `(tenantId, gameInstanceId, roomInstanceId)` (a `RoomInstanceRef`) so room presence and ground items are instance-safe.
 - `GetDraftDesignDigest` – returns publish-gating digest for Draft entity templates using typed scope request `GetDraftDesignDigestRequest { tenantId, scope: oneof { versionId, scriptPatchVersion } }`. Entity Management supports `versionId` scope only and must return `UNSUPPORTED_SCOPE` for `scriptPatchVersion`. Minimum response fields are `{tenantId, scope, appliedCommitId or lastAppliedRevisionId, contentDigest, digestSchemaVersion}`. `contentDigest` must cover only version-scoped entity template/binding rows (for example item/NPC templates, loot mappings, balance curves) and must exclude live runtime entities and audit/history metadata.
 
+### Digest Input Manifest
+
+Entity Management is a required publish-gate participant and must maintain a stable digest manifest for `GetDraftDesignDigest(versionId)`:
+
+- Included objects:
+  - version-scoped entity-template tables such as item, NPC, equipment, loot-table, and balance-curve definitions keyed by `(tenantId, versionId)`;
+  - normalized template-binding rows that affect published entity semantics, such as loot mappings or equipment/archetype constraints.
+- Excluded objects:
+  - all live runtime entities, inventories, containers, room-ground containers, and any rows keyed by `gameInstanceId` or `entityId`;
+  - audit/history/provenance tables and non-semantic timestamps;
+  - applied-revision ledgers when those rows do not affect entity semantics.
+- Canonicalization rules:
+  - serialize included relations in stable table order, then primary-key order;
+  - include only semantic fields plus stable identifiers referenced cross-service;
+  - normalize encoded structured fields before hashing.
+- `digestSchemaVersion` must increment whenever included objects, semantic field selection, or serialization semantics change.
+
+Publish gating must fail closed if Entity Management cannot attest a digest consistent with this manifest.
+
 ### LOOK entity listing contract
 
 `ListRoomEntities` is the dedicated endpoint for `LOOK` to discover which characters, items, and NPCs occupy a room. The response includes:
@@ -189,9 +208,9 @@ then returns a `lookSnapshotId` (for example `worldSnapshotId + ":" + entitySnap
 
 Room-entity data is derived from runtime entity state plus authoritative world location. Ground items are discovered by querying items contained by the synthetic room-ground container for the target `RoomInstanceRef`. Characters and NPCs are included when their current location (owned by World Management) matches the target `RoomInstanceRef`:
 
-- Entity Management calls World Management’s `ListRoomOccupants(RoomInstanceRef)` to obtain the authoritative occupant `entityId` set for the room/instance.
-- Entity Management then joins those `entityId` values to its own runtime entity rows to materialize display data.
-- `ListRoomEntities` must accept a caller-supplied read fence token (`asOfTickId`) from World Management’s `GetRoomSnapshot`; when Entity Management cannot serve the same fence it must return `STALE_READ_FENCE` / `READ_FENCE_UNAVAILABLE` instead of returning mixed-tick data.
+- The caller obtains the authoritative occupant `entityId` set and read fence from World Management before invoking `ListRoomEntities`.
+- `ListRoomEntities` joins those caller-supplied occupant `entityId` values to its own runtime entity rows to materialize display data plus room-ground inventory state owned by Entity Management.
+- `ListRoomEntities` must accept caller-supplied occupancy references together with the World Management read fence token (`asOfTickId`); when Entity Management cannot serve the same fence it must return `STALE_READ_FENCE` / `READ_FENCE_UNAVAILABLE` instead of returning mixed-tick data.
 
 Entity Management must not maintain a competing “room occupancy index” that can drift from World Management’s location tables. Visibility and filtering rules are applied after aggregation so LOOK output remains player-correct.
 

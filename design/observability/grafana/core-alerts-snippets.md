@@ -8,7 +8,7 @@ Example alert for Coordination Redis tail-loss SLO breaches:
 
 ```yaml
 - alert: RedisCoordinationTailLossSLOBreached
-  expr: redis_coordination_tail_loss_ms > 2000
+  expr: redis_coordination_tail_loss_slo_breached > 0
   for: 5m
   labels:
     service: redis-coordination
@@ -20,7 +20,10 @@ Example alert for Coordination Redis tail-loss SLO breaches:
     description: Tail-loss exceeds the 1–2s envelope for one or more regions. See the Redis incident runbook for reset guidance.
 ```
 
-This assumes that `redis_coordination_tail_loss_ms` is a per-`tenantId`/`regionId` gauge or recording rule derived from the raw tail-loss metrics described in `system-architecture-redis-operations.md`.
+This assumes that the canonical recording rules expose:
+
+- `redis_coordination_tail_loss_budget_ms{tenantId,regionId}` – dynamic budget computed as `max(2000, 2 * tick_interval_ms)`.
+- `redis_coordination_tail_loss_slo_breached{tenantId,regionId}` – derived breach indicator based on the dynamic budget.
 
 Example alerts for additional Coordination Redis core red lines from the Redis metrics contract:
 
@@ -144,6 +147,30 @@ Example alert for stuck `SCHEDULED` rows in the tick effect ledger:
   annotations:
     summary: Tick durable commit and coordination cleanup are diverging
     description: Cleanup lag from durable commit to coordination-cleared is elevated for one or more regions; investigate replay pressure and coordination cleanup behavior.
+
+- alert: TickReplayFairnessStarved
+  expr: tick_effects_pending_total > 0 and increase(tick_effects_replay_batches_total[15m]) == 0
+  for: 15m
+  labels:
+    service: game-session-service
+    severity: P1
+    owner: gameplay
+    runbook: design/architecture/system-architecture-tick-incident-runbook.md#stuck-tick-effect-ledger-entries
+  annotations:
+    summary: Tick replay controller is not servicing pending regions fairly
+    description: One or more regions still have pending ledger work, but replay batches are not being executed for those regions. Investigate replay-controller fairness and starvation.
+
+- alert: TickReplayScanLagHigh
+  expr: tick_effects_replay_scan_lag_ms > 300000
+  for: 15m
+  labels:
+    service: game-session-service
+    severity: P1
+    owner: gameplay
+    runbook: design/architecture/system-architecture-tick-incident-runbook.md#stuck-tick-effect-ledger-entries
+  annotations:
+    summary: Tick replay scan lag indicates controller starvation
+    description: Replay scan lag is growing for one or more regions even though the replay controller remains active elsewhere.
 ```
 
 This assumes a helper metric such as `tick_effects_pending_oldest_scheduled_timestamp_seconds` that tracks the oldest `SCHEDULED` entry per region.
@@ -154,7 +181,7 @@ Example alerts for missed backups and verification runs:
 
 ```yaml
 - alert: BackupPipelineNoRecentBackup
-  expr: time() - backup_last_success_timestamp_seconds > 90 * 60
+  expr: backup_pipeline_recent_backup_slo_breached > 0
   for: 5m
   labels:
     service: postgres-backup
@@ -166,7 +193,7 @@ Example alerts for missed backups and verification runs:
     description: No successful pg_dump backup has been recorded in the last 90 minutes. Investigate backup Jobs and storage endpoints.
 
 - alert: BackupPipelineNoRecentVerification
-  expr: time() - backup_verify_last_success_timestamp_seconds > 24 * 60 * 60
+  expr: backup_pipeline_recent_verification_slo_breached > 0
   for: 30m
   labels:
     service: postgres-backup
@@ -178,7 +205,7 @@ Example alerts for missed backups and verification runs:
     description: No successful backup verification run has been recorded in the last 24 hours. Investigate the verify-backups CronJob and storage configuration.
 
 - alert: BackupTickPauseTooLongScoped
-  expr: max by (scope) (backup_tick_pause_duration_seconds) > 30
+  expr: backup_tick_pause_duration_budget_breached > 0
   for: 5m
   labels:
     service: postgres-backup
@@ -189,9 +216,21 @@ Example alerts for missed backups and verification runs:
     summary: Tick pause window too long during scoped backup
     description: One or more backup scopes have exceeded the pause-duration budget. Investigate pause/resume controls and scope-specific backlog growth.
 
+- alert: BackupTickPauseWaitTooLongScoped
+  expr: backup_tick_pause_wait_budget_breached > 0
+  for: 5m
+  labels:
+    service: postgres-backup
+    severity: P1
+    owner: infra
+    runbook: design/architecture/system-architecture-backup-recovery.md#backup-verification-restoration-testing
+  annotations:
+    summary: Tick pause wait exceeded budget during scoped backup
+    description: One or more backup scopes are taking too long to reach PAUSED. Investigate in-flight tick drain time and pause control health.
+
 - alert: BackupTicksPausedTooLong
-  expr: backup_ticks_paused == 1
-  for: 2m
+  expr: backup_ticks_paused_budget_breached > 0
+  for: 5m
   labels:
     service: postgres-backup
     severity: P1
@@ -200,7 +239,32 @@ Example alerts for missed backups and verification runs:
   annotations:
     summary: Backup scope remains paused unexpectedly
     description: A backup scope has remained in paused state beyond the expected window. Check pause/resume API calls and backup job completion state.
+
+- alert: BackupPauseAliasScopeStillUsed
+  expr: increase(backup_pause_scope_alias_requests_total[24h]) > 0
+  for: 0m
+  labels:
+    service: postgres-backup
+    severity: P2
+    owner: infra
+    runbook: design/architecture/system-architecture-backup-recovery.md#tick-pause-scope-migration-plan-normative
+  annotations:
+    summary: Backup controls still use alias scope
+    description: One or more backup pause/resume requests still relied on game_instance_id alias scope during the last 24 hours. Migrate automation to canonical region scope.
 ```
+
+This assumes backup tooling emits scoped budget gauges directly:
+
+- `backup_tick_pause_wait_budget_seconds{scope_type,tenantId?,regionId?}`
+- `backup_tick_pause_duration_budget_seconds{scope_type,tenantId?,regionId?}`
+
+and that Prometheus exposes derived fallback recordings:
+
+- `backup_pipeline_recent_backup_slo_breached`
+- `backup_pipeline_recent_verification_slo_breached`
+- `backup_tick_pause_wait_budget_breached{scope_type,tenantId?,regionId?}`
+- `backup_tick_pause_duration_budget_breached{scope_type,tenantId?,regionId?}`
+- `backup_ticks_paused_budget_breached{scope_type,tenantId?,regionId?}`
 
 Environment-specific rulesets may tune thresholds, severities, and label values, but should preserve the `owner` and `runbook` annotations so alerts always point back to the relevant documentation.
 
@@ -292,6 +356,23 @@ These example rules enforce the player-centric SLOs defined in the Logging & Mon
 
 - alert: EntryPathAvailabilityLowGateway
   expr: (
+    sum by (tenantId, path) (increase(entrypath_connection_attempts_total{service="spring-cloud-gateway", outcome="success"}[5m]))
+      /
+    sum by (tenantId, path) (increase(entrypath_connection_attempts_total{service="spring-cloud-gateway"}[5m]))
+  ) < 0.995
+  for: 10m
+  labels:
+    service: spring-cloud-gateway
+    component: entrypath
+    severity: P0
+    owner: platform
+    runbook: design/architecture/system-architecture-player-experience-incident-runbook.md#telnet-and-websocket-path-availability-below-slo
+  annotations:
+    summary: Gateway entry-path availability degraded
+    description: One or more tenants have acute connection failures on a gateway-owned entry path. Use the short-window view for incident response and the 1-day view for compliance.
+
+- alert: EntryPathAvailabilityLowGatewayCompliance
+  expr: (
     sum by (tenantId, path) (increase(entrypath_connection_attempts_total{service="spring-cloud-gateway", outcome="success"}[1d]))
       /
     sum by (tenantId, path) (increase(entrypath_connection_attempts_total{service="spring-cloud-gateway"}[1d]))
@@ -300,14 +381,31 @@ These example rules enforce the player-centric SLOs defined in the Logging & Mon
   labels:
     service: spring-cloud-gateway
     component: entrypath
+    severity: P2
+    owner: platform
+    runbook: design/architecture/system-architecture-player-experience-incident-runbook.md#telnet-and-websocket-path-availability-below-slo
+  annotations:
+    summary: Gateway entry-path availability below 1-day SLO
+    description: One or more tenants have sustained connection failures on a gateway-owned entry path over the compliance window. Inspect entrypath_connection_attempts_total and follow the player experience runbook.
+
+- alert: EntryPathAvailabilityLowTcpProxy
+  expr: (
+    sum by (tenantId, path) (increase(entrypath_connection_attempts_total{service="tcp-proxy-service", outcome="success"}[5m]))
+      /
+    sum by (tenantId, path) (increase(entrypath_connection_attempts_total{service="tcp-proxy-service"}[5m]))
+  ) < 0.995
+  for: 10m
+  labels:
+    service: tcp-proxy-service
+    component: entrypath
     severity: P0
     owner: platform
     runbook: design/architecture/system-architecture-player-experience-incident-runbook.md#telnet-and-websocket-path-availability-below-slo
   annotations:
-    summary: Gateway entry-path availability below SLO
-    description: One or more tenants have sustained connection failures on a gateway-owned entry path. Inspect entrypath_connection_attempts_total and follow the player experience runbook.
+    summary: TCP Proxy entry-path availability degraded
+    description: One or more tenants have acute connection failures on TCP Proxy entry paths. Use the short-window view for incident response and the 1-day view for compliance.
 
-- alert: EntryPathAvailabilityLowTcpProxy
+- alert: EntryPathAvailabilityLowTcpProxyCompliance
   expr: (
     sum by (tenantId, path) (increase(entrypath_connection_attempts_total{service="tcp-proxy-service", outcome="success"}[1d]))
       /
@@ -317,13 +415,165 @@ These example rules enforce the player-centric SLOs defined in the Logging & Mon
   labels:
     service: tcp-proxy-service
     component: entrypath
-    severity: P0
+    severity: P2
     owner: platform
     runbook: design/architecture/system-architecture-player-experience-incident-runbook.md#telnet-and-websocket-path-availability-below-slo
   annotations:
-    summary: TCP Proxy entry-path availability below SLO
-    description: One or more tenants have sustained connection failures on TCP Proxy entry paths. Inspect entrypath_connection_attempts_total and follow the player experience runbook.
+    summary: TCP Proxy entry-path availability below 1-day SLO
+    description: One or more tenants have sustained connection failures on TCP Proxy entry paths over the compliance window. Inspect entrypath_connection_attempts_total and follow the player experience runbook.
 ```
+
+## Observability Stack Health
+
+Example alerts for the observability stack itself:
+
+```yaml
+- alert: AlertmanagerNotificationsFailing
+  expr: rate(alertmanager_notifications_failed_total[5m]) > 0
+  for: 10m
+  labels:
+    service: alertmanager
+    severity: P1
+    owner: platform
+    runbook: design/architecture/system-architecture-observability-incident-runbook.md#alertmanager-down-or-not-routing
+  annotations:
+    summary: Alertmanager notifications are failing
+    description: Alertmanager is evaluating alerts but cannot deliver notifications reliably.
+
+- alert: AlertmanagerConfigReloadFailed
+  expr: alertmanager_config_last_reload_successful == 0
+  for: 5m
+  labels:
+    service: alertmanager
+    severity: P1
+    owner: platform
+    runbook: design/architecture/system-architecture-observability-incident-runbook.md#alertmanager-down-or-not-routing
+  annotations:
+    summary: Alertmanager configuration reload failed
+    description: Alertmanager is running with stale or invalid routing configuration.
+
+- alert: PrometheusRuleEvaluationsFailing
+  expr: increase(prometheus_rule_evaluation_failures_total[5m]) > 0
+  for: 10m
+  labels:
+    service: prometheus
+    severity: P1
+    owner: platform
+    runbook: design/architecture/system-architecture-observability-incident-runbook.md#prometheus-down-or-stale
+  annotations:
+    summary: Prometheus rule evaluations are failing
+    description: Prometheus cannot evaluate one or more rules; alerting and fallback recordings may be stale.
+
+- alert: OTelCollectorExportFailures
+  expr: rate(otelcol_exporter_send_failed_spans[5m]) > 0
+  for: 10m
+  labels:
+    service: otel-collector
+    severity: P1
+    owner: platform
+    runbook: design/architecture/system-architecture-observability-incident-runbook.md#jaeger-opentelemetry-collector-down
+  annotations:
+    summary: OpenTelemetry Collector is failing to export spans
+    description: Distributed tracing data is being dropped before it reaches Jaeger or the configured backend.
+
+- alert: PrometheusServiceDiscoveryFailures
+  expr: increase(prometheus_sd_refresh_failures_total[5m]) > 0
+  for: 10m
+  labels:
+    service: prometheus
+    severity: P1
+    owner: platform
+    runbook: design/architecture/system-architecture-observability-incident-runbook.md#prometheus-down-or-stale
+  annotations:
+    summary: Prometheus service discovery or scrape refresh is failing
+    description: Prometheus cannot refresh one or more scrape target pools, so metrics may go stale without the server being fully down.
+
+- alert: ElasticsearchClusterHealthRed
+  expr: elasticsearch_cluster_health_status{color="red"} == 1
+  for: 10m
+  labels:
+    service: elasticsearch
+    severity: P1
+    owner: platform
+    runbook: design/architecture/system-architecture-observability-incident-runbook.md#elasticsearchkibana-down-or-indexing-stalled
+  annotations:
+    summary: Elasticsearch cluster health is red
+    description: Elasticsearch cluster health is red, which can break log ingest, search, and Kibana-backed incident triage.
+
+- alert: ElasticsearchIndexingFailuresHigh
+  expr: rate(elasticsearch_indices_indexing_index_failed_total[5m]) > 0
+  for: 10m
+  labels:
+    service: elasticsearch
+    severity: P1
+    owner: platform
+    runbook: design/architecture/system-architecture-observability-incident-runbook.md#elasticsearchkibana-down-or-indexing-stalled
+  annotations:
+    summary: Elasticsearch indexing failures detected
+    description: Elasticsearch is failing to index a non-zero stream of documents, so recent logs may be missing or incomplete.
+
+- alert: JaegerQueryUnavailable
+  expr: up{job="jaeger-query"} == 0
+  for: 10m
+  labels:
+    service: jaeger
+    severity: P1
+    owner: platform
+    runbook: design/architecture/system-architecture-observability-incident-runbook.md#jaeger-opentelemetry-collector-down
+  annotations:
+    summary: Jaeger query service unavailable
+    description: Jaeger query is unavailable, so operators cannot search or inspect traces even if spans are still being ingested.
+
+- alert: JaegerStorageFailuresHigh
+  expr: increase(jaeger_collector_spans_dropped_total[5m]) > 0
+  for: 10m
+  labels:
+    service: jaeger
+    severity: P1
+    owner: platform
+    runbook: design/architecture/system-architecture-observability-incident-runbook.md#jaeger-opentelemetry-collector-down
+  annotations:
+    summary: Jaeger is dropping spans
+    description: Jaeger storage or collector paths are dropping spans, so trace data is incomplete even when services still export successfully.
+
+- alert: FluentBitOutputErrorsHigh
+  expr: rate(fluentbit_output_errors_total[5m]) > 0
+  for: 10m
+  labels:
+    service: fluent-bit
+    severity: P1
+    owner: platform
+    runbook: design/architecture/system-architecture-observability-incident-runbook.md#elasticsearchkibana-down-or-indexing-stalled
+  annotations:
+    summary: Fluent Bit output errors detected
+    description: Log shipping is failing or backpressured; Kibana may lose recent log visibility.
+
+- alert: GrafanaDatasourceUnavailable
+  expr: grafana_datasource_up == 0
+  for: 10m
+  labels:
+    service: grafana
+    severity: P1
+    owner: platform
+    runbook: design/architecture/system-architecture-observability-incident-runbook.md#grafana-down
+  annotations:
+    summary: Grafana datasource unavailable
+    description: Grafana cannot query one or more configured datasources, so dashboards may render incomplete or misleading incident views.
+
+- alert: GrafanaServiceUnavailable
+  expr: up{job="grafana"} == 0
+  for: 10m
+  labels:
+    service: grafana
+    severity: P1
+    owner: platform
+    runbook: design/architecture/system-architecture-observability-incident-runbook.md#grafana-down
+  annotations:
+    summary: Grafana service unavailable
+    description: Grafana itself is unreachable, so dashboard-based triage is unavailable even if Prometheus and other backends are healthy.
+```
+
+Environment overlays may replace metric expressions for Elasticsearch, Grafana, or Jaeger service-health checks based on the exporters they deploy, but they should preserve the alert names, ownership, and runbook routing.
 
 ## Observability Smoke Test (Non-Production)
 

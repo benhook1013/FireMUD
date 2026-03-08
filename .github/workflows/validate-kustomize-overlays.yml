@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - "k8s/**"
+      - "design/operations/deployments/production/attestations/**"
+      - "design/operations/deployments/production/backup-readiness/**"
       - "dev-tools/ci/validate-kustomize-overlays.sh"
       - "dev-tools/deploy/preflight.sh"
       - ".github/workflows/validate-kustomize-overlays.yml"
@@ -19,6 +21,8 @@ jobs:
     steps:
       - name: ⬇️ Checkout Code
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: 🧰 Set up kubectl
         uses: azure/setup-kubectl@v4

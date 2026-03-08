@@ -50,6 +50,12 @@ Audit records must include at least:
 
 Outcome fields must be sufficient to distinguish “DSL evaluated successfully” from “commands were accepted into the tick system”. Do not collapse these into a single `success` signal.
 
+For output-budget failures, writers must use bounded canonical `finalReason` values rather than free-form strings. Minimum required reasons:
+
+- `command_count_exceeded`
+- `per_entity_command_limit_exceeded`
+- `work_item_size_exceeded`
+
 Dry-run/test executions must use a separate idempotency namespace from live traffic. A dry-run record must never dedupe or overwrite a live trigger with the same `scriptEventId`.
 
 ### Stage Model (Required)
@@ -96,6 +102,7 @@ In particular:
 - Use `signer_policy_unavailable` when plugin admission fails closed because signer policy cannot be refreshed/verified from authoritative policy sources.
 - Use `script_disabled` for operator disable/drain admission skips (never `skipped_disabled`).
 - Use `rollback_convergence_timeout` when rollback pause remains active after convergence timeout terminal state.
+- Output-budget failures may be represented by different `finalOutcome` values depending on the last attempted stage, but they must use one of the bounded canonical `finalReason` values above and must never be collapsed into an unstructured catch-all.
 
 ### `policyViolations` Schema (Required When Present)
 
@@ -143,6 +150,7 @@ The normative metric-family catalog lives in `design/architecture/system-archite
 - Sandbox and runtime health
   - `automation_script_sandbox_failures_total{tenantId, scriptId, pluginId, reason}`
   - `automation_script_errors_total{tenantId, scriptId, pluginId, reason}`
+  - `automation_script_output_budget_exceeded_total{tenantId, scriptId, pluginId, reason}`
   - `automation_script_runtime_seconds{tenantId, scriptId, pluginId, eventType}`
 - Dry-run/test traffic (separate from live)
   - `automation_script_test_runs_total{tenantId, scriptId, pluginId, eventType, result}`

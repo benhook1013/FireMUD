@@ -10,8 +10,17 @@ Required fields:
 - `overlayCommitSha`
 - `appliedAt`
 - `appliedBy`
+- `deployStatus` (`pass`)
+- `smokeStatus` (`pass`)
 - `serviceDigests`
 - `preflightReportPath`
+- `liveStateEvidence`
+  - `status` (`pass`)
+  - `observedOverlaySha`
+  - `observedDigests`
+- `secretComplianceSnapshotAt`
+- `secretComplianceStatus`
+- `secretComplianceEvidenceRef`
 - `smokeEvidence`
 
 Production promotion attestation validation depends on these records.

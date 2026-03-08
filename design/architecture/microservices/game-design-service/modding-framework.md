@@ -74,7 +74,7 @@ Logging & Admin must also surface signer-policy propagation status and revocatio
 4. A registry tracks which plugins are active for each game instance and exposes toggle APIs via the Logging & Admin Service.
 5. Plugins can subscribe to events such as `onEnterRoom` or `onItemUse` to inject custom behavior.
 6. Execution metrics and error logs are forwarded to the Logging & Admin Service for monitoring.
-7. Plugin bundles are versioned along with other design assets and distributed when a new game version is published.
+7. Plugin bundles are versioned as design assets but are independently publishable and operator-activatable against an already published compatible base game version; a new full game-version publish is not required unless the plugin depends on changed base-version assets.
 
 ## Sandbox Capabilities & Quotas
 

@@ -102,8 +102,13 @@ In addition to functional, load, and security tests, FireMUD treats observabilit
   - After a small synthetic workload in CI (for example a short end-to-end smoke test that exercises login and a few commands), assert that:
     - `grpc_app_error_total` metrics are exported with bounded `code` labels taken from the shared error catalog and a stable `service` label derived from `spring.application.name`.
     - At least one tick-related metric such as `tick_execution_time_ms_bucket` or `tick_execution_time_ms_p95` appears for a synthetic region in environments where ticks run.
+    - Where player command SLO instrumentation is enabled, `command_latency_stage_ms_bucket` appears with the bounded `stage` enum from the Logging & Monitoring contract (`edge_queue`, `dispatch`, `tick_wait`, `domain_commit`) so latency triage does not silently regress to “traces only”.
+    - Where dynamic tail-loss or pause-budget rules are enabled, `tick_interval_ms` is exposed for that synthetic region so cadence-derived recordings can evaluate consistently.
     - `tick_effect_outcome_total` is emitted for at least one synthetic tick effect, with `outcome` values limited to the documented set (for example `first_apply`, `replay_ok`, `guard_error`).
+    - If replay-controller instrumentation is present, `tick_effects_replay_scan_lag_ms` and `tick_effects_replay_batches_total` appear for the synthetic region.
     - Where Redis coordination is enabled, a basic tail-loss or coordination metric such as `redis_coordination_tail_loss_ms` is exposed, even if its value is near zero in CI.
+    - Where coordinated backups are enabled, backup pause metrics expose both observed values and budget gauges (`backup_tick_pause_wait_seconds`, `backup_tick_pause_wait_budget_seconds`, `backup_tick_pause_duration_seconds`, `backup_tick_pause_duration_budget_seconds`).
+    - Where alias-scope pause/resume is still supported, `backup_pause_scope_alias_requests_total` is exported.
   - These checks should confirm that metrics follow the cardinality guardrails defined in the Logging & Monitoring doc (for example, no `traceId` or `playerId` labels).
 - **Alert wiring smoke tests**
   - Define one or more **test-only** alert rules (for example `ObservabilitySmokeTestAlert`) in non-production Alertmanager configurations with `alert_class="test"` and notifications routed only to low-noise channels or logging sinks, not to paging integrations.
@@ -117,6 +122,11 @@ In addition to functional, load, and security tests, FireMUD treats observabilit
     - Verifies the presence of at least one `tick_execute` span in environments where ticks are enabled.
     - Verifies the presence of at least one TCP edge incident span (`tcpproxy_notify_disconnect` or `tcpproxy_connection`) in environments that expose the Telnet path.
     - Verifies the presence of at least one backup coordination span (`backup_pause_ticks` and `backup_resume_ticks`) in environments that run coordinated backup workflows.
+    - For coordinated backup workflows, verifies the required backup-scope attributes on those spans:
+      - `scope_type` is present.
+      - `tenantId` is present when the request is tenant- or region-scoped.
+      - `regionId` is present for canonical region-scoped requests.
+      - `alias_scope_used=true` is present when the workflow intentionally exercises legacy `game_instance_id` alias scope.
   - These checks may be skipped in environments without tracing backends but should be treated as required in pipelines that advertise tracing support, so span regressions are caught before production.
 
 - **Structured log-field contract checks**
@@ -140,6 +150,8 @@ To keep PR feedback fast while still preventing “it only breaks in staging” 
   - Tracing smoke: run a login + representative command flow and verify at least one `gamesession_handle_command` span (and one `tick_execute` span where ticks run) is present in the trace backend. In environments that expose Telnet and coordinated backups, also verify at least one `tcpproxy_notify_disconnect`/`tcpproxy_connection` span and one `backup_pause_ticks` + `backup_resume_ticks` pair.
   - Structured log contract smoke: verify sampled logs from critical paths contain required structured fields (`service`, `traceId`, `correlationId`, plus contextual `tenantId`/`regionId`/`playerId`).
   - Prometheus rules conformance smoke: query the Prometheus rules API and verify the required fallback/recording rules are loaded (tail-loss fallback, tick safety ratio recording, login success ratio recording, command p99 latency recording, entry-path availability recording, and chat delivery latency recording).
+    - This includes the canonical dynamic tail-loss pair (`redis_coordination_tail_loss_budget_ms`, `redis_coordination_tail_loss_slo_breached`) and both short-window and 1-day entry-path availability recordings.
+    - This also includes backup fallback signals (`backup_pipeline_recent_backup_slo_breached`, `backup_pipeline_recent_verification_slo_breached`, `backup_tick_pause_wait_budget_breached`, `backup_tick_pause_duration_budget_breached`, `backup_ticks_paused_budget_breached`) and the observability alert group (`firemud.alerts.observability`) so new platform-health alerts cannot drift out of the shared ruleset silently.
 
 This split ensures that contract drift is caught on every change, while backend-dependent checks run only where Alertmanager/Jaeger are actually available.
 

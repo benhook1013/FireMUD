@@ -482,7 +482,13 @@ def _validate_reference_prometheus_rules(path: Path) -> list[Finding]:
             findings.append(Finding(path=path, message=f"{alert_name} must use owner=infra for Redis/coordination incidents"))
         if alert_name.startswith("Backup") and labels.get("owner") != "infra":
             findings.append(Finding(path=path, message=f"{alert_name} must use owner=infra for backup incidents"))
-        if alert_name.startswith("Tick") and alert_name not in {"TickExecutionUnsafeRatio", "TickEffectLedgerBacklog", "TickCleanupLagHigh"}:
+        if alert_name.startswith("Tick") and alert_name not in {
+            "TickExecutionUnsafeRatio",
+            "TickEffectLedgerBacklog",
+            "TickCleanupLagHigh",
+            "TickReplayFairnessStarved",
+            "TickReplayScanLagHigh",
+        }:
             findings.append(Finding(path=path, message=f"unexpected tick alert name {alert_name!r} in reference rules; update validator contract if intentional"))
 
     required_alerts = {
@@ -491,14 +497,32 @@ def _validate_reference_prometheus_rules(path: Path) -> list[Finding]:
         "BackupPipelineNoRecentBackup",
         "BackupPipelineNoRecentVerification",
         "BackupTickPauseTooLongScoped",
+        "BackupTickPauseWaitTooLongScoped",
         "BackupTicksPausedTooLong",
+        "BackupPauseAliasScopeStillUsed",
         "LoginSuccessRatioLowGateway",
         "LoginSuccessRatioLowTcpProxy",
         "CommandLatencyP99HighGateway",
         "CommandLatencyP99HighTcpProxy",
         "EntryPathAvailabilityLowGateway",
         "EntryPathAvailabilityLowTcpProxy",
+        "EntryPathAvailabilityLowGatewayCompliance",
+        "EntryPathAvailabilityLowTcpProxyCompliance",
         "ChatDeliveryLatencyP99High",
+        "TickReplayFairnessStarved",
+        "TickReplayScanLagHigh",
+        "AlertmanagerNotificationsFailing",
+        "AlertmanagerConfigReloadFailed",
+        "PrometheusRuleEvaluationsFailing",
+        "PrometheusServiceDiscoveryFailures",
+        "ElasticsearchClusterHealthRed",
+        "ElasticsearchIndexingFailuresHigh",
+        "OTelCollectorExportFailures",
+        "JaegerQueryUnavailable",
+        "JaegerStorageFailuresHigh",
+        "FluentBitOutputErrorsHigh",
+        "GrafanaDatasourceUnavailable",
+        "GrafanaServiceUnavailable",
     }
     missing_required = sorted(required_alerts - alerts_seen)
     if missing_required:

@@ -162,6 +162,10 @@ Promotion gating policy:
 - `staging`: non-compliant records are warnings through **June 30, 2026** and become a hard promotion gate on **July 1, 2026**.
 - `hobby-self-hosted`: operators must validate records before opening player-facing traffic.
 
+Promotion-evidence exception:
+
+- Even before **July 1, 2026**, a staging deployment record that will be referenced by a production promotion attestation must show `secretComplianceStatus=pass` at deployment time and include a `secretComplianceEvidenceRef`. A warning-only staging deployment may still exist for playtesting, but it is not eligible to produce production promotion evidence.
+
 ---
 
 ## Configuration vs Secrets

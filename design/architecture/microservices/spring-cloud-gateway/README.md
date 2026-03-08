@@ -29,6 +29,7 @@ An OpenAPI specification for these REST endpoints lives in `services/spring-clou
 - Gateway restarts disconnect gameplay WebSocket clients; non-proxy WebSocket clients reconnect by first obtaining a fresh connect token, opening a new `/ws/game/**` WebSocket, issuing `LOGIN`, and then re-binding gameplay scope with `PLAY` as described in [Reconnection Strategy](../../system-architecture-reconnection.md). Telnet clients are also disconnected because the TCP Proxy Service fail-closes Telnet sockets when its WebSocket bridge to Spring Cloud Gateway drops; clients reconnect and re-`LOGIN`/`PLAY`.
 - Applies rate limiting and authentication filters for admin endpoints.
 - Relies on the Game Session Service for gameplay login and session management.
+- Does not participate in gameplay shard routing. The stable `/ws/game/**` surface lands on the Game Session layer’s session front-end pods; any forwarding from session front-end to region lease owner happens inside the Game Session layer, not in Gateway.
 - Remains tenant-agnostic: it forwards tenant-related headers (such as `X-Tenant-Id` and `X-Game-Instance-Id`) to backend services, but only after applying the gateway’s header trust and canonicalization rules. In particular, Spring Cloud Gateway strips spoofable tenant/game-instance headers from public ingress and only forwards `X-Tenant-Id` / `X-Game-Instance-Id` when they are produced from trusted inputs (for example `X-Proxy-Tenant-Id` / `X-Proxy-Game-Instance-Id` on the authenticated TCP Proxy → Gateway hop) as described in [Multi-Tenancy at the Gateway](../../system-architecture-gateway.md#multi-tenancy-at-the-gateway) and [Header Trust Model](../../system-architecture-gateway.md#header-trust-model). This enforcement is implemented by `HeaderTrustFilter` and configured via `firemud.gateway.header-trust.*`. All tenant isolation and quotas are enforced by domain services as described in [Multi-Tenancy](../../system-architecture-multi-tenancy.md).
 - External TLS is terminated by the load balancer; Spring Cloud Gateway routes to backend services over in-cluster `http://` / `ws://` endpoints, while internal service-to-service traffic uses mTLS gRPC as described in the [Security Architecture](../../system-architecture-security.md).
 - Utilizes the [Shared Libraries](../../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
@@ -68,11 +69,10 @@ services so Docker Compose environments work out of the box.
 - `/api/admin/**` → Logging & Admin Service (tokens are verified by the service).
 - `/api/design/**` → Game Design Service for content management.
 - `/api/account/**` → Account Service for user profiles.
-- `/api/automation/**` → Automation Scripting Service.
-- `/api/entity/**` → Entity Management Service.
-- `/api/logic/**` → Game Logic Service.
+- `/api/session/**` → Game Session Service control-plane/admin APIs.
 - `/api/social/**` → Social Groups Service.
-- `/api/world/**` → World Management Service.
+
+The canonical external allowlist stops there. World Management, Entity Management, Game Logic, and Automation & Scripting do **not** expose direct Gateway-routed external APIs in the base architecture; they are reached through owning control-plane services or internal service-to-service gRPC unless a dedicated design update extends the allowlist.
 
 Telnet clients send every line through the TCP Proxy Service, which bridges the commands onto the gateway’s `/ws/game/**` route. Because of that shared pipeline, Telnet and WebSocket sessions share the same admission and reconnection flow once connected: both use `LOGIN` followed by `PLAY` before gameplay commands, while the Telnet path may additionally provide optional `SESSION`-derived headers as described in the TCP Proxy Service design’s **Telnet Session Envelope & Event Metrics** section.
 

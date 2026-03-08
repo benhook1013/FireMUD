@@ -40,6 +40,7 @@ To make script patch rollback meaningful:
 
 - **Entity-scoped events** (`onSpawn`, `onEnterRegion`, `onCommand`, custom events) must treat the unique trigger identity as including at least `tenantId`, `gameInstanceId`, `regionId`, `entityId`, `scriptId`, `eventType`, `scriptPatchVersion`, `scriptEventId`, and `isDryRun`. For gameplay/runtime triggers, `regionEpoch` is required to fence across scoped coordination resets as defined in `design/architecture/system-architecture-scripting-normative-contract-tables.md`.
 - **Scheduler events** (`onInterval`, `onTimerExpire`) must use deterministic identities that include the due point plus `regionEpoch`, `scriptPatchVersion`, and `isDryRun` so leader catch-up and retries do not double-fire. For tick-cadence scheduling (for example `onInterval` configured in ticks), the due point must be expressed as `dueTickId` in the canonical tick timeline. For wall-clock timers, the due point must be expressed as absolute `dueAt` (and still include `regionEpoch` to fence across coordination resets).
+- Scheduler identities and durable timer state must also include `gameInstanceId`. For plugin timers, `pluginId` and `pluginVersionId` are additionally required so multi-instance and plugin-version rollbacks cannot alias timer state.
 
 Callers must reuse the same `scriptEventId` on retries for live ingress. For dry-run/test ingress, server-generated IDs are preferred by default; if caller-supplied IDs are accepted, they must be collision-validated in the dry-run namespace.
 
@@ -62,6 +63,7 @@ Dry-run executions are privileged and must not destabilize production:
 - Dry-run/test ingress must enforce explicit authorization scopes/roles (for example `automation.dryrun.execute`) and must record principal identity in audit fields for privileged use.
 - Dry-run/test ingress must apply deterministic principal and tenant rate-limit outcomes (for example `DRY_RUN_RATE_LIMITED`) as application-level errors rather than transport failures.
 - If dry-run authorization context is missing or invalid, the call must fail with deterministic application error (for example `DRY_RUN_UNAUTHORIZED`) and must not execute DSL evaluation.
+- Dry-run/test execution capacity must be isolated from live traffic with separate worker pools, reserved worker shares, or equivalent scheduling partitions so privileged tooling cannot consume the last available live automation capacity.
 
 ### 7) Reload Backpressure Contract
 
@@ -72,6 +74,12 @@ Dry-run executions are privileged and must not destabilize production:
   - Jitter must be non-zero to avoid synchronized retry storms.
 - Backpressure responses must include a server hint (`retryAfterMs`) so callers can align retries with expected reload/rollback progress.
 - For timer-derived scheduler events, best-effort timer semantics apply; triggers not admitted during reload are not backfilled unless explicitly covered by a bounded catch-up rule.
+
+### 7a) Runtime Scope Isolation
+
+- Tenant-scoped patch readiness (`READY` / `FAILED`) is an eligibility signal, not a runtime execution scope.
+- Admission pause, reload backpressure, timer ownership, rollback convergence, and plugin lifecycle actions must preserve instance isolation at minimum scope `(tenantId, gameInstanceId)`.
+- A deployment may intentionally couple all instances in a tenant only if that invariant is explicitly documented and enforced end-to-end; otherwise one instance's patch transition must not stall unrelated instances.
 
 ### 8) Plugin Version Fencing and Control-Plane Scope
 
@@ -120,6 +128,13 @@ Plugins are executed by the same runtime engine as scripts and must not rely on 
   - `scriptPatchVersion` must match currently pinned patch for the scoped instance.
   - Plugin work items must match currently active `(pluginId, pluginVersionId)` for the scoped instance.
 - Ineligible work items must remain dead-lettered and return deterministic application-level mismatch errors; replay must not be best-effort for version-fenced mismatches.
+
+### 13) Output Budget Safety
+
+- A successfully admitted trigger must still be prevented from emitting unbounded work.
+- The Automation & Scripting Service must enforce explicit ceilings including `maxCommandsPerRun`, `maxCommandsPerEntityPerTrigger`, and `maxSerializedWorkItemBytes` before durable persistence/handoff.
+- Output-budget violations must be recorded as non-success stage-aware outcomes and must not partially persist oversized work items.
+- Publish-time validation in Game Design should conservatively reject graphs whose bounded worst-case fan-out exceeds runtime ceilings.
 
 ## Related Documents
 

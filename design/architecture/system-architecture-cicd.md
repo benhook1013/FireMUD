@@ -9,6 +9,7 @@ This document describes the continuous integration strategy for FireMUD using **
 - **Automate builds and tests** for all microservices whenever code changes are pushed by running the [`ci.yml`](../../.github/workflows/ci.yml) workflow.
 - **Build Docker images** and push them to GitHub Container Registry (GHCR).
 - **Deploy to Kubernetes development/demo clusters** by triggering the [`manual-helm-deploy.yml`](../../.github/workflows/manual-helm-deploy.yml) workflow, which applies the Helm charts under [`k8s/helm`](../../k8s/helm) using `values-local.yaml` by default. Staging and production clusters use Kustomize overlays as described in the Deployment Runbook and are applied via `kubectl` from a secure admin environment rather than directly from CI.
+- Treat `dev-demo-cluster` as validation-only infrastructure that is excluded from production promotion evidence.
 - Keep the workflow configuration easy to maintain and extensible for additional security scans or nightly jobs.
 - **Generate release notes automatically** whenever version tags are pushed.
 - **Perform code scanning** with CodeQL and open source **license checks** on every pull request.
@@ -203,9 +204,9 @@ FireMUD uses a simple promotion flow from pull requests through staging to produ
 - Production promotion is performed by updating the production Kustomize overlay (for example `k8s/overlays/prod`) to image digests that have already passed staging validation, via a Git change, merging it, and applying it from a secure operator environment using `kubectl apply -k k8s/overlays/prod` following the deployment runbook.
 - Overlay PRs are validated by [`.github/workflows/validate-kustomize-overlays.yml`](../../.github/workflows/validate-kustomize-overlays.yml), which checks that referenced images exist in GHCR, enforces digest pinning for staging/production overlays, and blocks staging backup schedules unless the explicit marker `k8s/overlays/stage/STAGING_BACKUPS_ENABLED` is present.
 - Overlay PRs run the canonical preflight entrypoint (`dev-tools/deploy/preflight.sh`) in `ci-static` context so policy IDs and report shape match operator pre-apply validation. CI-static mode may mark production attestation policy as `not_applicable` when no production promotion is being executed.
-- Production overlay PRs must include a staging promotion attestation that follows `system-architecture-promotion-attestation.md`. Production PRs are rejected if they reference digests that cannot be tied to a valid attestation artifact.
-- Production overlay PRs must include an in-repo attestation artifact so CI can validate promotion evidence deterministically.
-- Staging apply evidence must include the in-repo deployment record `design/operations/deployments/staging/deployments/<stagingOverlayCommitSha>.json`; production promotion validation fails when this record is missing or digest-mismatched.
+- Production overlay PRs must include exactly one in-repo staging promotion attestation under `design/operations/deployments/production/attestations/<deployment-ref>.json` that follows `system-architecture-promotion-attestation.md`. Production PRs are rejected if they reference digests that cannot be tied to that attestation, a successful staging deployment record with live-state verification, and a staging deployment record whose `secretComplianceStatus` is `pass`.
+- Production overlay PR CI must evaluate the attestation and, when the attestation classifies the release as `roll-forward-only`, the matching backup-readiness evidence before merge. Deferring those checks to operator-only preflight is non-compliant.
+- Staging apply evidence must include the in-repo deployment record `design/operations/deployments/staging/deployments/<stagingOverlayCommitSha>.json`; production promotion validation fails when this record is missing, digest-mismatched, lacks live-state verification, or lacks passing secret-compliance evidence.
 
 Rollbacks are handled by resuming a previously known-good image digest set and re-applying the staging or production manifests with those digests. See the Deployment Runbook for the step-by-step operator flow.
 Before approving a production promotion, deployment evidence must classify rollback mode as either:
@@ -214,6 +215,14 @@ Before approving a production promotion, deployment evidence must classify rollb
 - `roll-forward-only` (schema or contract change requires forward remediation and/or restore-point recovery rather than old-binary rollback).
 
 Production promotions lacking this explicit rollback-mode classification are non-compliant.
+
+For production releases classified as `roll-forward-only`, promotion evidence must also include fresh backup-readiness evidence proving:
+
+- a recent successful logical backup,
+- recent backup-verification success, and
+- a current restore-plan or restore-drill reference suitable for the release.
+
+The canonical evidence path is `design/operations/deployments/production/backup-readiness/<deployment-ref>.json`, and production CI/preflight must reject `roll-forward-only` promotions when that evidence is missing, stale, or not bound to the attestation/digest set being promoted.
 
 Pre-apply policy checks for staging and production must run through the canonical preflight contract in `system-architecture-deploy-preflight-policy.md`. Static checks run in overlay PR CI, and resolved-manifest/runtime checks run in operator preflight execution. Both use the same policy IDs and evidence shape.
 
@@ -224,6 +233,10 @@ Promotion and DR-readiness reporting depend on environment secret-compliance rec
 - `production`: missing or stale secret-compliance records are a hard CI gate for promotion.
 - `staging`: missing or stale records emit warnings until **June 30, 2026**, and become a hard CI gate for staging promotions on **July 1, 2026**.
 - `hobby-self-hosted`: operator tooling should validate records before opening traffic, but GitHub CI gating may be unavailable.
+
+Promotion-evidence rule:
+
+- Any staging deployment record used by production attestation must carry `secretComplianceStatus=pass` and a `secretComplianceEvidenceRef` even during the staging warning-only period.
 
 Enforcement workflow contract:
 

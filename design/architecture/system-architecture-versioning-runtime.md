@@ -15,10 +15,28 @@ The **Game Design Service** manages version metadata and publish workflows for g
 3. During authoring, the Game Design Service applies revisions incrementally to **Draft** template rows hosted by the owning domain services via idempotent design APIs keyed by `(tenantId, versionId)`. At publish time, a Saga coordinates all domain services so they validate and finalize their existing Draft data for the given `tenantId` and `version_id`, marking that data as Published and ready for runtime use. No separate design database is copied into the domain services; they already host the versioned graphs for their domains.
    - Publish-time validation must be based on durable digests: every participating domain service must report `GetDraftDesignDigest` for the publish scope (`oneof {versionId, scriptPatchVersion}`) matching the commit being published (`appliedCommitId`, `contentDigest`, and `digestSchemaVersion`), and the Game Design Service must report a control-plane digest for normalized dependency tables (`game_template_*_ref`, `version_asset`, and related publish-critical metadata) for the same commit/version scope. If any required digest is missing or mismatched, publish must fail fast and the version must remain Draft/OUT_OF_SYNC until reconciliation succeeds. See `design/architecture/microservices/game-design-service/world-editing-tools.md`.
    - Participant selection is fixed by publish type (full publish vs script-only patch) using the matrix in `design/architecture/microservices/game-design-service/version-control.md#digest-participants-by-publish-type`; publish workflows must not change digest participants implicitly at runtime.
-   - For versions that use procedural generation, publish must also freeze and persist a `generationConfigRevision`/hash identity for `(tenantId, versionId)` (derived from version override or tenant defaults at publish time). World creation for that version must use the frozen identity and fail closed if it cannot be resolved.
+   - For versions that use procedural generation, publish must also freeze and persist a `generationConfigRevision`/hash identity for `(tenantId, versionId)` derived from the version-scoped generation inputs committed through Game Design workflows. Mutable World Management operational defaults are not valid publish inputs. World creation for that version must use the frozen identity and fail closed if it cannot be resolved.
 4. As part of the Saga, the Game Design Service runs an **asset export** step for each `(tenantId, versionId)` that uploads design-time assets to object storage, generates a deterministic `manifest.json` for the version, and updates version metadata with the manifest location. This step is implemented as an idempotent Saga step with compensation as described in [Asset Storage Setup](./microservices/game-design-service/asset-storage.md). If this step or another publish step fails irrecoverably, the Saga marks the version as **Failed** and records the asset artifact as `TOMBSTONED` (quarantined) so it is not eligible for activation.
    - The asset export step must persist a `manifestHash` in version metadata and treat any mismatch between recorded hash and served bytes as drift/corruption, not a legitimate “update” to a Published/Active version.
-5. A notification or message informs the Game Session Service that a new version exists so game instances can be started or patched against it.
+5. Before the version can transition to `Published`, the Game Design Service must persist a single immutable `published_release_bundle` attestation row for `(tenantId, versionId)` containing at minimum:
+   - publish identity (`publishWorkflowId`, target `commitId`, `versionId`, `publishedAt`);
+   - the digest attestation returned by each required publish participant (`serviceName`, `contentDigest`, `digestSchemaVersion`, `appliedCommitId`);
+   - the frozen `generationConfigRevision`/hash for the version;
+   - the exported asset `manifestHash` and manifest schema version;
+   - bundle status fields proving the attestation was written only after all publish gates passed.
+   Activation, rollback-preflight, repair, and audit workflows must treat this row as the canonical release attestation rather than reconstructing release state from multiple service-local tables.
+   - Game Design must expose this attestation through `GetPublishedReleaseBundle(tenantId, versionId)`; runtime/control-plane consumers must not read attestation tables directly.
+   - `GetPublishedReleaseBundle` must return deterministic fields at minimum:
+     - `tenantId`, `versionId`, `commitId`, `publishWorkflowId`, `publishedAt`
+     - `participantDigests[] { serviceName, appliedCommitId, contentDigest, digestSchemaVersion }`
+     - `manifestHash`, `manifestSchemaVersion`
+     - `generationConfigRevision`
+     - `attestationSchemaVersion`
+   - Error/caching contract:
+     - `NOT_FOUND` means the version is not release-attested and must be treated as non-launchable.
+     - `SCHEMA_VERSION_UNSUPPORTED` means the caller cannot safely interpret the attestation and must fail closed.
+     - Activation, cutover preflight, and repair workflows must use a fresh attestation read; cached/stale attestation payloads are not sufficient for admission decisions.
+6. A notification or message informs the Game Session Service that a new version exists so game instances can be started or patched against it.
 
 Published versions are immutable; further changes require publishing a new `version_id`. Services may keep additional draft or experimental versions internally, but only Published versions are eligible to be activated for live game instances.
 
@@ -170,6 +188,31 @@ Normalized-template dependency checks require explicit phase enforcement:
 - Game Session and retirement tooling must block dependency-sensitive operations unless the tenant phase is `ENFORCED`.
 - Once `ENFORCED`, control-plane checks must not fall back to JSON parsing for dependency resolution.
 
+### Replacement-Instance Upgrade Contract
+
+Replacement-instance cutover is not allowed to infer runtime-state behavior. The system must classify persistent state before any version cutover workflow is considered complete:
+
+- **Class S1: account-scoped durable state** – state expected to survive version replacement by default (for example character identity, progression, account ownership, currency balances, stable inventory contents where the referenced templates remain valid).
+- **Class S2: version-mapped durable state** – state that may survive only through an explicit upgrade mapping validated against the target version (for example equipment slots tied to item templates, learned abilities tied to ability identifiers, starter-loadout references, housing metadata keyed to world templates).
+- **Class S3: instance-scoped ephemeral state** – state that never survives replacement-instance cutover unless a feature-specific migration contract says otherwise (for example room-ground containers, transient ambient world state, temporary dungeon topology, in-flight instanced events, and other data keyed to the source `gameInstanceId`).
+
+Required cutover workflow additions:
+
+- Game Session owns a pre-admission `PrepareVersionUpgrade(tenantId, sourceGameInstanceId, targetVersionId)` compatibility workflow.
+- Entity Management must expose an upgrade surface that validates entity-owned S1/S2 runtime entities against the target version and returns deterministic outcomes: `COMPATIBLE`, `REQUIRES_MAPPING`, or `INCOMPATIBLE`.
+- World Management must expose an upgrade surface that validates world-owned S2 references and persistent world-bound metadata against the target version using the same outcome vocabulary.
+- Any S2 data that survives must do so through explicit versioned remap records owned by the domain service that owns the referenced template identifiers. The system must not infer remaps from names, slugs, or “closest match” heuristics.
+- Game Design control-plane metadata is the source of truth for approved version-to-version remap set identities and audit history when a cutover depends on remapped template references across services.
+- Remap sets must be persisted explicitly in Game Design control-plane storage (for example `version_template_remap_set` and child mapping rows) and exposed through APIs such as:
+  - `CreateTemplateRemapSet(sourceVersionId, targetVersionId, mappings...)`
+  - `ApproveTemplateRemapSet(remapSetId, reason)`
+  - `GetTemplateRemapSet(remapSetId)`
+- `PrepareVersionUpgrade` and `ValidateInstanceCutoverCompatibility` must reference a concrete `remapSetId` whenever cutover depends on remapped S2 state. Ad hoc inferred remaps are not allowed.
+- If any surviving runtime row references missing or incompatible target-version templates and no approved remap exists, cutover fails closed before admission-pointer swap.
+- S3 state is discarded with the source instance through standard termination workflows. No component may silently copy room-ground containers, room ambient state, or instance topology to the target `gameInstanceId`.
+
+The `ValidateInstanceCutoverCompatibility` contract below is the orchestration surface for these rules; it must report which state classes were checked, which owning domains attested compatibility, and whether any remap set was required.
+
 ### Schema Migrations vs Design Data
 
 Published game versions are **design-data bundles** (world templates, entity templates, abilities/actions, scripts/plugins, and asset manifests) keyed by `versionId` and scoped to a `tenantId`. Database schema changes remain the responsibility of each microservice and are applied via Flyway when a service container restarts during a platform deployment. Publishing a new design version therefore does not run Flyway migrations—it finalizes versioned data already stored in domain services, exports version-scoped manifests/assets, and makes the new `versionId` eligible for activation. Runtime instances load data by `runtime_version` and may hot-reload only script/plugin patch layers where explicitly supported. See
@@ -207,10 +250,12 @@ Replacement-instance cutover requires an explicit compatibility preflight before
 - The API must return deterministic payload fields at minimum: `{result: COMPATIBLE|INCOMPATIBLE|UNAVAILABLE, reasons[], checkedParticipants[], checkedAt}`.
 - `UNAVAILABLE` (for participant outage or stale dependency state) is fail-closed for cutover.
 - Minimum required checks:
+  - S1/S2 runtime-state compatibility passes in every owning domain and all required remap sets are present, versioned, and approved.
   - All template identifiers referenced by the target launch path resolve in owning domain services for `(tenantId, targetVersionId)`.
   - Entity/runtime bootstrap compatibility passes (starter inventory, class/archetype mappings, required item/NPC templates, balance schema compatibility).
-  - World/runtime bootstrap compatibility passes (required region/room templates, generation config revision resolution, required script patch readiness when pinned).
+  - World/runtime bootstrap compatibility passes (required region/room templates, persistent world-bound metadata mappings, generation config revision resolution, required script patch readiness when pinned).
   - No unresolved `OUT_OF_SYNC` digest state for required publish participants.
+  - The target `published_release_bundle` attestation returned by `GetPublishedReleaseBundle` exists and matches the digests, `manifestHash`, and `generationConfigRevision` used during preflight.
 - Pointer swap is forbidden until this preflight reports `COMPATIBLE`; no best-effort fallback defaults are allowed at cutover time.
 
 ## Version Activation & Rollback

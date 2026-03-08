@@ -51,6 +51,7 @@ It complements the degraded-mode expectations in `design/architecture/system-arc
 2. Verify that scrape targets return to `UP` and series timestamps advance.
 3. Confirm a known “heartbeat” metric updates (for example a service uptime gauge).
 4. Confirm alerts re-evaluate and resolve/firing states change as expected.
+5. Confirm the canonical tail-loss and entry-path recording rules are evaluating again (`redis_coordination_tail_loss_budget_ms`, `redis_coordination_tail_loss_slo_breached`, short-window entry-path availability, and 1-day entry-path availability), since operator fallback depends on them.
 
 ## Alertmanager Down or Not Routing
 
@@ -70,6 +71,7 @@ It complements the degraded-mode expectations in `design/architecture/system-arc
 
 - Use the fallback recording-rule approach documented in `design/architecture/system-architecture-logging-monitoring.md` only for a small, explicitly supported set of critical conditions.
 - During fallback, explicitly check all supported player SLO conditions (login success ratio, command p99 latency, entry-path availability, and chat delivery latency) so edge and chat incidents are not hidden when Alertmanager is unavailable.
+- Also check the supported backup fallback conditions (`backup_pipeline_recent_backup_slo_breached`, `backup_pipeline_recent_verification_slo_breached`, `backup_tick_pause_wait_budget_breached`, `backup_tick_pause_duration_budget_breached`, and `backup_ticks_paused_budget_breached`) so backup pipeline incidents do not disappear when Alertmanager routing is impaired.
 - If Logging & Admin consumes Alertmanager notifications, ensure the UI clearly shows “Alertmanager unavailable” and does not present fallback conditions as canonical alerts.
 
 ### Alertmanager recovery and verification
@@ -117,10 +119,11 @@ It complements the degraded-mode expectations in `design/architecture/system-arc
 - Query Prometheus directly for a small set of critical “is it healthy?” checks:
   - login success ratio (`login_success_ratio_gateway_15m`, `login_success_ratio_tcpproxy_15m` or equivalent expressions),
   - command latency (`command_latency_ms_p99_gateway_5m`, `command_latency_ms_p99_tcpproxy_5m`),
-  - entry-path availability (`entrypath_availability_gateway_1d`, `entrypath_availability_tcpproxy_1d`),
+  - entry-path availability (`entrypath_availability_gateway_5m`, `entrypath_availability_tcpproxy_5m`, plus `entrypath_availability_gateway_1d` / `entrypath_availability_tcpproxy_1d` for compliance context),
   - chat latency (`chat_delivery_latency_ms_p99_5m`),
+  - backup fallback conditions (`backup_pipeline_recent_backup_slo_breached`, `backup_pipeline_recent_verification_slo_breached`, `backup_tick_pause_wait_budget_breached`, `backup_tick_pause_duration_budget_breached`, `backup_ticks_paused_budget_breached`),
   - tick safety ratio (`tick_execution_safety_ratio_p99`),
-  - coordination tail-loss (`redis_coordination_tail_loss_ms`).
+  - coordination tail-loss (`redis_coordination_tail_loss_ms`, `redis_coordination_tail_loss_budget_ms`, and `redis_coordination_tail_loss_slo_breached`).
 - Prefer recorded rules where available so operators do not hand-craft complex PromQL during an incident.
 
 ## Jaeger / OpenTelemetry Collector Down

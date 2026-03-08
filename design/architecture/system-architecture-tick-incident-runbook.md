@@ -170,6 +170,9 @@ Tick incidents often benefit from trace-level diagnosis, but mitigation must not
   - `tick_effects_pending_total{tenantId,regionId}` remaining high for specific regions even after coordination and domain metrics suggest normal operation.
   - Individual `(tenantId, regionId, region_epoch, tickId, effectKey)` rows staying in `SCHEDULED` status beyond the grace window defined in the tick architecture docs.
   - Alerts firing when `SCHEDULED` rows exceed this grace window.
+  - Replay fairness signals distinguish two failure shapes:
+    - `tick_effects_pending_total > 0` while `tick_effects_replay_batches_total` does not advance for the same region.
+    - `tick_effects_replay_scan_lag_ms{tenantId,regionId}` grows for a subset of regions even though the controller is still making progress elsewhere.
 - Logs and traces:
   - Game Session logs may show repeated attempts to process the same effects or gaps in processing for certain tick IDs.
   - Traces for those tick IDs show missing or incomplete spans for expected domain calls.
@@ -195,17 +198,23 @@ Tick incidents often benefit from trace-level diagnosis, but mitigation must not
      - Treat those rows as genuinely stuck and decide whether to:
        - Re-enqueue work by re-running the appropriate tick flows, or
        - Mark them `ABANDONED` if the effect is no longer valid (expired sessions, deleted entities, or invalid commands).
+   - Inspect replay fairness before choosing remediation:
+     - If `tick_effects_replay_batches_total` is flat for the affected region, treat the controller as not servicing that region at all.
+     - If replay batches are increasing elsewhere but `tick_effects_replay_scan_lag_ms` continues rising for the affected region, treat the controller as unfair/starved rather than idle.
 3. **Apply targeted remediation**
    - For “applied but not marked” rows:
      - Use a small, scripted Job or administrative endpoint to update their status to `APPLIED` with an appropriate `outcome`/`reason`, keeping a record of the correction.
    - For genuinely stuck rows:
      - If it is safe to re-run the effects, enqueue follow-up commands or trigger replay using the same idempotent handlers that tick execution uses.
      - If effects are no longer valid, mark rows `ABANDONED` with precise reasons (for example `EXPIRED`, `INVALID_TARGET`, `REGION_RESET_SCOPED`) so they stop appearing as pending.
+   - For replay-controller starvation:
+     - Reduce per-region replay batch monopolization or other hot-region pressure first.
+     - If the region remains starved, run scoped replay-controller remediation for the affected `<tenantId,regionId>` before escalating to broader reset actions.
 4. **Prevent recurrence**
    - Review Game Session and domain handlers to ensure:
      - Ledger status transitions happen atomically with domain commits where required.
      - Errors that prevent ledger updates are surfaced clearly via logs, metrics, and traces.
-   - Add or tighten alerts on `tick_effects_pending_total` and related gauges so future accumulations are detected earlier.
+   - Add or tighten alerts on `tick_effects_pending_total`, `tick_effects_replay_batches_total`, and `tick_effects_replay_scan_lag_ms` so both idle and unfair replay-controller behavior are detected earlier.
 
 ## Using Traces During Tick Incidents
 

@@ -91,9 +91,10 @@ Role classification: Game Logic is a **digest-gate participant** for full publis
 
 ### LOOK aggregation & formatting
 
-- `ResolveLook` orchestrates World Management and Entity Management: World provides room topology and ambient world state, while Entity provides the live entities and items (including room/ground inventory from room-ground container entities belonging to that room/instance) to build a deterministic `LookResult` that Game Session renders for clients.
+- `ResolveLook` orchestrates World Management and Entity Management: World provides room topology, ambient state, and the authoritative occupant set for the target room/instance, while Entity enriches those caller-supplied occupant/entity references with live entity and ground-item display data to build a deterministic `LookResult` that Game Session renders for clients.
 - A dedicated `LookResultRenderer` keeps the canonical textual output in sync with the documented protocol transcripts (room name/desc/exits/entities) so the service can log or inspect the text while keeping the structured DTO clean.
 - Downstream errors from World or Entity services are labeled (`WorldManagement`, `EntityManagement`) so they surface as precise error codes (`ROOM_NOT_FOUND`, `WORLD_UNAVAILABLE`, `ENTITY_UNAVAILABLE`) when Game Session formats replies for Telnet and WebSocket clients.
+- Game Logic is the orchestration boundary for these gameplay reads; downstream services on the hot path should answer from owned state, caches, or caller-supplied references rather than recursively building additional cross-service fan-out trees for steady-state command handling.
 
 ### Implementation status (LOOK slice)
 
@@ -123,9 +124,11 @@ This service is largely stateless. It relies on:
 ### Command Flow
 
 1. Commands are queued in Redis by the Game Session Service.
-2. This service fetches the next command, loads the required context, and
-   resolves the action to a rule engine module.
-3. Results are pushed back to the session queue for delivery to players.
+2. The lease-owning Game Session executor invokes this service over gRPC with
+   the queued command plus tick/session context, and this service loads the
+   required world/entity context to resolve the action.
+3. The gRPC response returns the structured result to Game Session for commit
+   and delivery to players.
 
 ### gRPC APIs
 
@@ -201,6 +204,11 @@ the generated code with `./gradlew generateProto` after making changes.
 ## Additional Details
 
 ### REST & gRPC Endpoints
+
+### Exposure Class
+
+- gRPC gameplay APIs are **internal-only** service-to-service contracts invoked from Game Session and other trusted backend services.
+- The documented REST endpoints are **local-dev/test conveniences only** and are not part of the Gateway allowlist or the production external API surface.
 
 #### REST
 

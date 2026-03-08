@@ -17,6 +17,14 @@ require_cmd kubectl
 require_cmd docker
 require_cmd python3
 
+changed_files_between_base_and_head() {
+  local base_ref="$1"
+  git fetch origin "$base_ref" --quiet
+  local merge_base
+  merge_base="$(git merge-base "origin/$base_ref" HEAD)"
+  git diff --name-only "$merge_base"...HEAD
+}
+
 render_overlay() {
   local overlay="$1"
   kubectl kustomize "$overlay"
@@ -84,9 +92,60 @@ run_preflight_policy_checks() {
     FIREMUD_PREFLIGHT_OUTPUT=/tmp/firemud-preflight-staging.json \
     "$ROOT_DIR/dev-tools/deploy/preflight.sh" staging
 
-  FIREMUD_PREFLIGHT_CONTEXT=ci-static \
-    FIREMUD_PREFLIGHT_OUTPUT=/tmp/firemud-preflight-production.json \
-    "$ROOT_DIR/dev-tools/deploy/preflight.sh" production
+  local promotion_attestation=""
+  local backup_readiness=""
+  local deployment_ref=""
+  local production_pr_validation="false"
+
+  if [[ "${GITHUB_EVENT_NAME:-}" = "pull_request" && -n "${GITHUB_BASE_REF:-}" ]]; then
+    local changed_files
+    changed_files="$(changed_files_between_base_and_head "$GITHUB_BASE_REF")"
+
+    if printf '%s\n' "$changed_files" | grep -q '^k8s/overlays/prod/'; then
+      production_pr_validation="true"
+      mapfile -t attestation_files < <(printf '%s\n' "$changed_files" | grep '^design/operations/deployments/production/attestations/.*\.json$' || true)
+      if [[ "${#attestation_files[@]}" -ne 1 ]]; then
+        echo "Production overlay PRs must include exactly one attestation file under design/operations/deployments/production/attestations/." >&2
+        exit 1
+      fi
+      promotion_attestation="${attestation_files[0]}"
+      deployment_ref="$(basename "$promotion_attestation" .json)"
+
+      local rollback_mode
+      rollback_mode="$(python3 - <<'PY' "$ROOT_DIR/$promotion_attestation"
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+data = json.loads(path.read_text(encoding="utf-8"))
+print(str(data.get("rollbackMode", "")))
+PY
+)"
+
+      if [[ "$rollback_mode" = "roll-forward-only" ]]; then
+        mapfile -t backup_files < <(printf '%s\n' "$changed_files" | grep '^design/operations/deployments/production/backup-readiness/.*\.json$' || true)
+        if [[ "${#backup_files[@]}" -ne 1 ]]; then
+          echo "Roll-forward-only production overlay PRs must include exactly one backup-readiness file under design/operations/deployments/production/backup-readiness/." >&2
+          exit 1
+        fi
+        backup_readiness="${backup_files[0]}"
+      fi
+    fi
+  fi
+
+  if [[ "$production_pr_validation" = "true" ]]; then
+    FIREMUD_PREFLIGHT_CONTEXT=ci-static \
+      FIREMUD_DEPLOYMENT_REF="$deployment_ref" \
+      FIREMUD_PREFLIGHT_OUTPUT=/tmp/firemud-preflight-production.json \
+      FIREMUD_PROMOTION_ATTESTATION="$promotion_attestation" \
+      FIREMUD_BACKUP_READINESS_EVIDENCE="$backup_readiness" \
+      "$ROOT_DIR/dev-tools/deploy/preflight.sh" production
+  else
+    FIREMUD_PREFLIGHT_CONTEXT=ci-static \
+      FIREMUD_PREFLIGHT_OUTPUT=/tmp/firemud-preflight-production.json \
+      "$ROOT_DIR/dev-tools/deploy/preflight.sh" production
+  fi
   echo "::endgroup::"
 }
 

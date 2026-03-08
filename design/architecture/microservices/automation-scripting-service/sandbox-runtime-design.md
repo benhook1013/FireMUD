@@ -80,6 +80,7 @@ Each script run follows a consistent lifecycle:
      - The pinned `scriptPatchVersion`
      - Per-run budgets (CPU/time, memory, and concurrency)
    - The run is submitted to a **bounded thread pool** dedicated to script execution.
+   - Dry-run/test work must use isolated execution capacity (separate pool, reserved worker share, or equivalent partition) so live automation retains guaranteed worker availability under load.
 
 3. **Graph evaluation**
    - The engine evaluates the script’s component graph:
@@ -89,6 +90,7 @@ Each script run follows a consistent lifecycle:
 
 4. **Command staging**
    - Successful runs emit a list of commands which are persisted as part of a durable work item (outbox) and then indexed for batching/draining by `ScriptTickService`.
+   - Before persistence, the engine must enforce explicit output budgets such as `maxCommandsPerRun`, `maxCommandsPerEntityPerTrigger`, and `maxSerializedWorkItemBytes`; exceeding those ceilings is a non-success outcome and must not partially commit an oversized work item.
    - Staging is subject to automation tick limits (`AUTOMATION_TICK_MAX_EVENTS`, `AUTOMATION_TICK_BUDGET_MS`) and uses only `automation:*` Redis prefixes. The Automation & Scripting Service never writes `tick:*` keys directly; it hands off commands to Game Session over internal gRPC so Game Session can enqueue tick commands under its own tick and locking model.
 
 5. **Outcome recording**

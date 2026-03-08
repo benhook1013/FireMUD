@@ -257,9 +257,10 @@ and [Authentication & Authorization](../../system-architecture-authentication.md
 - Incoming bytes are queued and forwarded to the gateway in order.
 - If the proxy cannot establish the WebSocket bridge to Spring Cloud Gateway because gameplay upstream is unavailable, it fail-closes the Telnet socket with a clear user-facing message (for example “Gateway link unavailable; please reconnect”) and a Telnet disconnect reason of `backend_unavailable` as defined in the Telnet disconnect taxonomy in [Protocol Bridging](../../system-architecture-protocol-bridging.md#telnet-disconnect-reasons).
 - If bridge establishment fails because trust/policy checks fail (for example `cert_validation`, client-certificate mismatch, handshake policy deny), the proxy fail-closes with `policy_violation`, not `backend_unavailable`.
-- If the WebSocket bridge drops after the Telnet connection is established, the proxy applies the established-session bridge state machine: it enters `unreachable`, retries bridge recovery for up to `TCP_PROXY_GATEWAY_RECONNECT_WINDOW_MS`, then closes with `backend_unavailable` if recovery does not succeed. For unauthenticated/pre-admission sockets where initial bridge establishment fails due to upstream unavailability, the proxy fail-closes immediately with `backend_unavailable`.
+- If the WebSocket bridge drops after the Telnet connection is established, the proxy applies the established-session bridge state machine: it enters `unreachable`, retries bridge recovery for up to `TCP_PROXY_GATEWAY_RECONNECT_WINDOW_MS`, and fail-closes immediately with `backend_unavailable` if a gameplay line arrives while the connection is already in `unreachable`. If recovery does not succeed within the window, the proxy closes with `backend_unavailable` even for otherwise idle sockets. For unauthenticated/pre-admission sockets where initial bridge establishment fails due to upstream unavailability, the proxy fail-closes immediately with `backend_unavailable`.
 - During sustained Gateway gameplay unreachability, proxy admission uses a bridge-availability circuit-breaker model: new Telnet sockets are rejected quickly with `backend_unavailable` instead of being held while repeated bridge attempts fail. Admission resumes only after bridge-health recovery criteria are met (`TCP_PROXY_GATEWAY_CIRCUIT_RECOVERY_SUCCESS_COUNT` consecutive successful probes) so reconnect storms do not amplify edge resource pressure.
 - If upstream backpressure causes the Telnet → Gateway buffered-line ceiling to be exceeded while upstream is still reachable, the proxy closes the Telnet connection with `policy_violation` and emits `edge_backpressure` context in structured logs/metrics rather than using `backend_unavailable`, so client behavior and outage dashboards remain distinguishable. If upstream is already in `unreachable`, `backend_unavailable` takes precedence as the terminal reason.
+- If the upstream bridge closes cleanly because Gateway is performing a planned drain and the proxy receives the canonical deterministic bridge-drain signal defined in [Gateway Architecture](../../system-architecture-gateway.md#websocket-liveness-and-idle-timeouts) (`1000/logout;subreason=gateway_restart` on the internal bridge), the proxy preserves the Telnet-side disconnect category as `logout` rather than translating that clean restart into `backend_unavailable`. If that signal is absent, the proxy treats the loss as an unattributed bridge failure and follows the normal `unreachable` / recovery-window rules. Both sides should log and metricize the outcome using a bounded class such as `bridge_shutdown_class=planned_drain|unattributed_failure`.
 - If the connection is lost, the in-memory queue is cleared and no Telnet
   commands are replayed by the proxy. Reconnection hooks notify downstream
   services so the Game Session Service can resume gameplay from Redis-backed
@@ -278,6 +279,7 @@ For already-established Telnet sessions, the proxy uses an explicit per-connecti
 
 - `healthy` – upstream bridge established and forwarding.
 - `unreachable` – upstream bridge cannot be maintained; per-connection unreachability timer starts.
+- `reject_input_while_unreachable` – if a gameplay line arrives while the bridge is already `unreachable`, fail-close immediately with `backend_unavailable` rather than continuing to accept opaque buffered input.
 - `close_due_to_unreachable` – if continuous unreachability exceeds `TCP_PROXY_GATEWAY_RECONNECT_WINDOW_MS`, close with `backend_unavailable`.
 - `close_due_to_edge_backpressure` – if queued lines exceed `TCP_PROXY_GATEWAY_MAX_BUFFERED_LINES` while upstream is reachable, close with `policy_violation` and record `edge_backpressure` context in structured logs/metrics.
 - `recovered` – return to `healthy` only after proxy-level recovery hysteresis is met (`TCP_PROXY_GATEWAY_CIRCUIT_RECOVERY_SUCCESS_COUNT` consecutive successful probes).
@@ -292,8 +294,9 @@ for internal coordination:
 - **NotifyDisconnect** – informs the Game Session Service when a Telnet client
   drops so the session may be suspended. This exists primarily to provide a fast, correlatable liveness hint keyed by `proxyConnectionId` when Telnet sockets close, even if the proxy’s WebSocket bridge teardown or downstream close detection is delayed or ambiguous during restarts.
 
-These events let the Game Session Service resume suspended sessions and deliver
-any **Redis-backed queued commands** owned by the Game Session Service. The TCP
+These events let the Game Session Service resume suspended sessions and resume
+processing of any **Redis-backed gameplay command queues** it owns. They do not
+authorize replay of prior outbound transport bytes onto a new client socket. The TCP
 Proxy never replays Telnet input after a disconnect; connection-local buffers
 are cleared as soon as the TCP session closes. The `NotifyDisconnect` event is
 therefore a **best-effort, at-least-once** lifecycle signal keyed by
@@ -322,7 +325,7 @@ The `NotifyDisconnectResponse.error.code` field uses a small, bounded set of val
 
 Additional codes may be introduced in the future as new failure modes are surfaced, but they must remain few in number and be added to this table when introduced. Implementations should avoid inventing arbitrary, high-cardinality codes; instead, they should map related failures into these shared buckets and, where necessary, record more detailed context in logs and traces rather than in the error code itself.
 
-The proxy generates `proxyConnectionId` when the Telnet socket is accepted and uses a **single, stable** identifier for the entire lifetime of that TCP connection. Every WebSocket bridge handshake initiated on behalf of that Telnet connection – including reconnects during a Gateway blip – re-sends the same `proxyConnectionId` as a WebSocket handshake header (`X-Proxy-Connection-Id`). Spring Cloud Gateway strips this header from public ingress and forwards it only when it has authenticated the TCP Proxy identity; Game Session captures this identifier during login/session binding so it can associate disconnect events with the correct authenticated session even when the client did not provide a `SESSION` envelope.
+The proxy generates `proxyConnectionId` when the Telnet socket is accepted and uses a **single, stable** identifier for the entire lifetime of that TCP connection. Every WebSocket bridge handshake initiated on behalf of that Telnet connection – including reconnects during a Gateway blip – re-sends the same `proxyConnectionId` as a WebSocket handshake header (`X-Proxy-Connection-Id`). Spring Cloud Gateway strips this header from public ingress, emits `X-Firemud-Connection-Mode: trusted_tcp_proxy` for the authenticated bridge path, and forwards proxy-owned correlation headers only when it has authenticated the TCP Proxy identity; Game Session captures this identifier during login/session binding so it can associate disconnect events with the correct authenticated session even when the client did not provide a `SESSION` envelope.
 
 When a valid `SESSION <gameInstanceId> <tenantId>` envelope is captured, the proxy forwards those identifiers as WebSocket handshake headers (`X-Proxy-Game-Instance-Id` and `X-Proxy-Tenant-Id`). Spring Cloud Gateway strips these from public ingress and may forward canonical `X-Game-Instance-Id` / `X-Tenant-Id` headers only after authenticating the TCP Proxy identity. These values remain advisory context, not trusted facts: Game Session validates them against Redis-backed session ownership and tenant authorization.
 
@@ -377,7 +380,7 @@ When used, the envelope is a plain-text line that starts with `SESSION`
 SESSION <gameInstanceId> <tenantId>
 ```
 
-Both `gameInstanceId` and `tenantId` are UUIDs across the system and must be supplied in canonical UUID string form.
+Both `gameInstanceId` and `tenantId` are UUIDs across the system and must be supplied in canonical UUID string form. Gameplay aliases such as `primary` are not valid on the wire in the `SESSION` envelope; if a client conceptually wants the primary gameplay instance, that resolution happens later inside Game Session during admission after `LOGIN` / `PLAY`.
 
 The `TelnetSessionContext.captureFromEnvelope` helper trims and upper-cases the
 prefix, splits on the first colon or whitespace, and ignores envelopes that are
@@ -424,7 +427,8 @@ multi-tenant safety:
   known sessions/tenants is treated as a cross-tenant hijack attempt, rejected,
   and logged with enough context for audit/alerting (without leaking sensitive
   credentials).
-- While gameplay lobby admission is single-instance-per-tenant (`gameInstanceId="primary"`), non-`primary` `gameInstanceId` values from `SESSION` are forwarded only as advisory context and must not influence admission decisions. This mismatch should be observable via a bounded metric/log signal so stale clients can be migrated.
+- `SESSION` carries only canonical UUID identifiers. Any higher-level gameplay aliasing or default-instance selection (for example a conceptual “primary” instance) happens after authentication inside Game Session and must not be encoded as a special edge-level `SESSION` value.
+- If a `SESSION` hint resolves to an instance that is not admissible for the authenticated account, Game Session ignores or rejects it according to the canonical admission rules and emits a bounded metric/log signal so stale clients can be migrated.
 
 Metrics give observability into each Telnet connection while keeping
 Prometheus label cardinality bounded:

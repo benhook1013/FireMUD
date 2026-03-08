@@ -8,7 +8,7 @@ This document defines the backup schedule and disaster recovery procedures for F
 - **local-dev / ci-preview / dev-demo-cluster**: disposable or ad hoc backup posture unless explicitly upgraded.
 
 Staging is treated as **disposable by default**: it does not run the production backup CronJobs unless operators explicitly install staging-specific schedules. Operators may temporarily restore staging from production backups for disaster recovery rehearsals or investigations; when doing so, staging must follow the same post-restore secret hardening flow before it is considered player-facing again (see [Post-Restore Secret Hardening](#post-restore-secret-hardening)).
-`hobby-self-hosted` restores that return an environment to player-facing status must also execute the same core hardening controls (JWT/JWKS rotation, DB credential rotation, and external credential validation) before reopening traffic.
+`hobby-self-hosted` restores that return an environment to player-facing status must also execute the same core hardening controls (JWT/JWKS rotation, DB credential rotation, certificate reissuance, and external credential validation) before reopening traffic.
 
 ---
 
@@ -62,8 +62,10 @@ Operational constraints:
 - Pause scope should be limited to the smallest safe blast radius (prefer tenant- or region-scoped pausing over global pausing) so backups do not create unnecessary player impact.
 - If a pause does not reach `PAUSED` within a documented budget, the backup Job should fail fast (skip the dump) and alert operators rather than silently holding the game in a paused state or producing an inconsistent backup.
   - Recommended budget: `max_pause_wait = max(10s, 2 * tick_interval_ms)` for the affected scope.
-  - Recommended alert threshold: page if `max_pause_wait` is exceeded for any production backup attempt, or if the scope remains `PAUSED` for longer than a small multiple of `max_pause_wait` (indicating the resume step failed).
+  - Recommended alert threshold: page if `max_pause_wait` is exceeded for any production backup attempt, or if the scope remains `PAUSED` for longer than `3 * max_pause_wait` (indicating the resume step failed).
   - Backup tooling should expose pause metrics with unambiguous units (for example `backup_tick_pause_wait_seconds` and `backup_tick_pause_duration_seconds`) and include `tenantId`/`regionId` labels only when the pause scope is already bounded to avoid high cardinality.
+- Backup tooling should also expose matching budget gauges (`backup_tick_pause_wait_budget_seconds` and `backup_tick_pause_duration_budget_seconds`) as first-class emitted metrics for each backup attempt/scope so alert rules do not hardcode thresholds that can drift from the documented cadence-derived budgets.
+  - These gauges must already carry the same scope labels as the observed pause metrics (`scope_type`, `tenantId`, `regionId` when bounded). Prometheus rules may derive fallback breach indicators from them, but should not try to reconstruct scoped budget gauges from `tick_interval_ms` alone because that loses alias-scope context and can break label matching.
 
 For convenience, `dev-tools/backups/firemud-backup.sh` automates these steps by pausing ticks, waiting until the service is paused, running `pg_dump`, and then calling `ResumeTicks`.
 
@@ -240,12 +242,25 @@ Backup and verification jobs must emit simple, environment-agnostic metrics so o
 - `backup_last_success_timestamp_seconds` – Unix timestamp of the last successful PostgreSQL logical backup (`pg_dump`) for the environment.
 - `backup_verify_last_success_timestamp_seconds` – Unix timestamp of the last successful verification run from `verify-backups.sh` (for example, verifying that recent dumps exist in the object store).
 - Coordinated pause/resume safety metrics (to ensure backups do not cause prolonged player-visible degradation):
-  - `backup_tick_pause_duration_seconds{scope}` – duration of the tick pause window for a backup attempt (including wait-for-paused time).
-  - `backup_ticks_paused{scope}` – gauge indicating whether ticks are currently paused for a given scope.
-  - `backup_commands_queued_during_pause_total{scope}` – count of commands queued while ticks were paused (helps detect unbounded backlog growth during long pauses).
+  - `backup_tick_pause_wait_seconds{scope_type,tenantId?,regionId?}` – time from `PauseTicks` request to `PAUSED`.
+  - `backup_tick_pause_duration_seconds{scope_type,tenantId?,regionId?}` – duration of the tick pause window for a backup attempt (including wait-for-paused time).
+  - `backup_tick_pause_wait_budget_seconds{scope_type,tenantId?,regionId?}` – the expected wait budget for the scoped backup attempt, normally derived from `max(10s, 2 * tick_interval_ms)` for canonical region scope.
+  - `backup_tick_pause_duration_budget_seconds{scope_type,tenantId?,regionId?}` – the expected pause-duration budget for the scoped backup attempt, normally derived as a small multiple of `backup_tick_pause_wait_budget_seconds` (default target-state guidance: `3x`).
+  - `backup_ticks_paused{scope_type,tenantId?,regionId?}` – gauge indicating whether ticks are currently paused for a given scope.
+  - `backup_commands_queued_during_pause_total{scope_type,tenantId?,regionId?}` – count of commands queued while ticks were paused (helps detect unbounded backlog growth during long pauses).
+  - `backup_pause_attempts_total{scope_type,result}` – counts pause/resume control attempts by result (`paused`, `resume_failed`, `timeout`, `invalid_scope`, `transport_error`).
+  - `backup_pause_scope_alias_requests_total{alias="game_instance_id"}` – counts backup pause/resume requests that still rely on alias scope instead of canonical `region_id`.
 - Optional per-job counters such as:
   - `backup_run_total{result="success"|"failure"}` – counts of backup Job executions.
   - `backup_verify_run_total{result="success"|"failure"}` – counts of verification Job executions.
+
+For Alertmanager-down fallback and dashboard consistency, Prometheus should also publish derived breach indicators from those emitted metrics:
+
+- `backup_pipeline_recent_backup_slo_breached` – boolean-like recording for “no successful backup within the configured freshness window”.
+- `backup_pipeline_recent_verification_slo_breached` – boolean-like recording for “no successful verification within the configured freshness window”.
+- `backup_tick_pause_wait_budget_breached{scope_type,tenantId?,regionId?}` – derived from `backup_tick_pause_wait_seconds > backup_tick_pause_wait_budget_seconds`.
+- `backup_tick_pause_duration_budget_breached{scope_type,tenantId?,regionId?}` – derived from `backup_tick_pause_duration_seconds > backup_tick_pause_duration_budget_seconds`.
+- `backup_ticks_paused_budget_breached{scope_type,tenantId?,regionId?}` – derived from “scope remains paused while the emitted pause-duration budget is exceeded”, so fallback and alerting do not rely on a fixed wall-clock constant.
 
 Prometheus and Alertmanager should expose and alert on these metrics using rules along the lines of:
 
@@ -256,19 +271,34 @@ Prometheus and Alertmanager should expose and alert on these metrics using rules
   - Expression: “no successful verification in the last 24h” (for example, `time() - backup_verify_last_success_timestamp_seconds > 24 * 60 * 60`).
   - Labels similar to the backup alert, with a clear `runbook` annotation.
 - **Backup pause too long (P1)**
-  - Expression: pause duration exceeds an agreed budget for any scope (for example `max by (scope) (backup_tick_pause_duration_seconds) > 30`).
+  - Expression: pause wait or pause duration exceeds the emitted per-scope budget (for example `backup_tick_pause_wait_seconds > backup_tick_pause_wait_budget_seconds` or `backup_tick_pause_duration_seconds > backup_tick_pause_duration_budget_seconds`).
   - Labels: `service="postgres-backup"`, `severity="P1"`, `owner="infra"`, `runbook="design/architecture/system-architecture-backup-recovery.md#backup-verification-restoration-testing"`.
 - **Backup scope stuck paused (P1)**
-  - Expression: a pause gauge remains asserted unexpectedly (for example `backup_ticks_paused == 1` for multiple minutes).
+  - Expression: a pause gauge remains asserted after the emitted pause-duration budget has been exceeded (for example `backup_ticks_paused == 1 and backup_tick_pause_duration_seconds > backup_tick_pause_duration_budget_seconds`).
   - Labels: `service="postgres-backup"`, `severity="P1"`, `owner="infra"`, `runbook="design/architecture/system-architecture-backup-recovery.md#backup-verification-restoration-testing"`.
+- **Legacy alias-scope usage (P2)**
+  - Expression: `increase(backup_pause_scope_alias_requests_total[24h]) > 0` in production-like environments after canonical region scope is expected.
+  - Labels: `service="postgres-backup"`, `severity="P2"`, `owner="infra"`, `runbook="design/architecture/system-architecture-backup-recovery.md#tick-pause-scope-migration-plan-normative"`.
 
 Grafana dashboards under `design/observability/grafana` should include a small “Backups” section or dedicated dashboard that visualizes:
 
 - The age of the last successful backup and verification.
 - Recent backup/verify success vs failure counts.
-- Tick pause duration and queue growth signals during backup windows.
+- Tick pause wait, pause duration, alias-scope usage, and queue growth signals during backup windows.
 
 These signals allow operators to treat backup and verification health as first-class SLOs alongside tick, Redis, and player experience SLOs.
+
+#### Scope Migration Behaviour for Backup Signals
+
+Until `region_id` is enforced end-to-end, backup dashboards and alerts must make alias-scope state explicit rather than silently pretending it is canonical:
+
+- `scope_type` is always required and should distinguish `region`, `tenant`, `game_instance_alias`, and any broader maintenance scope the environment supports.
+- During Phase A/B:
+  - `tenantId` should still be present when known.
+  - `regionId` may be absent for alias-scoped pause/resume attempts.
+  - `backup_pause_scope_alias_requests_total` must increment for every alias-scoped attempt.
+  - Traces should set `alias_scope_used=true` when `game_instance_id` was used instead of `region_id`.
+- Grafana and Logging & Admin should group alias-scoped backup activity separately from canonical region-scoped activity so operators can distinguish “legacy scope still in use” from “missing labels due to broken instrumentation”.
 
 ---
 
@@ -276,7 +306,7 @@ These signals allow operators to treat backup and verification health as first-c
 
 Restoring a player-facing environment (`hobby-self-hosted`, `staging`, or `production`) from backup recreates Kubernetes Secrets and ConfigMaps as they existed at the time of the snapshot. To avoid bringing back stale or compromised credentials, operators must rotate critical secrets immediately after a restore.
 
-Post-restore hardening is performed by a dedicated Kubernetes Job (for example `post-restore-secret-hardening`) that coordinates two flows:
+Post-restore hardening is performed by a dedicated Kubernetes Job (for example `post-restore-secret-hardening`) that coordinates multiple flows:
 
 1. JWT signing key and JWKS rotation:
    - Creates or runs a restore-hardening JWT rotation Job (restore mode) derived from `jwt-rotation` but with compromise-style key cutover semantics.
@@ -293,22 +323,35 @@ Post-restore hardening is performed by a dedicated Kubernetes Job (for example `
      - Triggers a rolling restart of Deployments and StatefulSets that consume this Secret (for example via `kubectl rollout restart` using the Kubernetes API) so all services reconnect using the new credentials.
    - The Job fails fast on any error so operators can investigate before exposing the restored environment to players.
 
-3. External credentials (environment-specific secrets):
+3. Certificate reissuance (leaf trust reset):
+   - Reissue workload mTLS certificates consumed by `FIREMUD_GRPC_*` paths so restored snapshot-era leaf certificates are not trusted after reopen.
+   - Reissue the TCP Proxy → Gateway WebSocket mTLS credentials consumed by `FIREMUD_GATEWAY_WS_CLIENT_*` and the Gateway mTLS listener certificate if it was restored from snapshot-era Secrets.
+   - Reissue operator client certificates used for internal-only control-plane access.
+   - Default restore hardening rotates leaf certificates only; rotating the cluster CA or issuer root is reserved for CA-compromise response and is not part of the standard restore path.
+   - Require peer/validator convergence evidence before traffic reopen.
+
+4. External credentials (environment-specific secrets):
    - Restoring a namespace also restores any third-party credentials stored as Kubernetes Secrets (for example S3/MinIO access keys for backups and asset storage, SMTP credentials, webhook/API keys, and operator-only client certificates).
    - Post-restore hardening must either rotate/re-issue these credentials or re-bind the restored cluster to the correct per-environment secrets before any external traffic is allowed.
    - At minimum:
      - Ensure object storage credentials used for `pg_dump` uploads and Velero point to the intended bucket and are not stale.
      - Ensure asset store credentials (see `design/architecture/system-architecture-asset-store-runbook.md`) are correct for the environment and rotated if compromise is suspected.
      - Ensure any outbound email/notification credentials are correct for the environment (staging should not be able to send production email).
-   - Suggested post-restore credential checklist:
-     - Backups: `PG_DUMP_BUCKET` / `PG_DUMP_ENDPOINT` access keys, Velero credentials and bucket targets.
-     - Asset storage: `ASSET_STORE_*` credentials and endpoint expectations (and any CDN/gateway proxy configuration that affects published asset URLs).
-     - Outbound comms: SMTP and webhook/API tokens, with explicit “staging cannot send production messages” guards.
-     - Operator access: operator-only client certificates and any kube credentials used by operator tooling.
+   - Canonical external validation matrix:
+     - Backup storage (`backup-storage`): verify bucket/endpoint binding, access succeeds, and non-production isolation constraints are met.
+     - Asset storage (`asset-storage`): verify bucket/endpoint binding and publishing target isolation.
+     - Outbound communications (`outbound-comms`): verify SMTP/webhook targets and enforce “staging cannot send production messages” isolation.
+     - Operator credentials (`operator-credentials`): verify the expected operator certificate or credential binding for the restored environment.
+   - Each class must produce one machine-checkable validation result, one explicit environment-isolation assertion, and one immutable evidence reference in the recovery record before reopening traffic.
+   - The recovery record must also include:
+     - `validationMethod` for each credential class,
+     - `validatedAt`,
+     - `validatedBy`,
+     - `observedValue` or fingerprint/token target sufficient to prove what was checked without disclosing the secret itself.
    - If these credentials are rotated out-of-band (for example via the cloud provider console), record the required re-bind/re-issue steps in the relevant runbooks so the restore procedure remains repeatable.
    - Before enabling external traffic, run a mandatory external credential validation pass and fail the restore if validation does not pass:
      - `dev-tools/restores/validate-external-credentials.sh <hobby-self-hosted|staging|production>`
-     - Provide expected values via environment variables such as `EXPECTED_PG_DUMP_BUCKET`, `EXPECTED_ASSET_STORE_BUCKET`, and `EXPECTED_ASSET_STORE_ENDPOINT`, and optionally `PRODUCTION_PG_DUMP_BUCKET` / `PRODUCTION_ASSET_STORE_BUCKET` when validating staging isolation.
+     - Provide expected values via environment variables such as `EXPECTED_PG_DUMP_BUCKET`, `EXPECTED_ASSET_STORE_BUCKET`, `EXPECTED_ASSET_STORE_ENDPOINT`, `EXPECTED_SMTP_HOST`, and `EXTERNAL_CREDENTIAL_EVIDENCE_REF`, and optionally `PRODUCTION_PG_DUMP_BUCKET` / `PRODUCTION_ASSET_STORE_BUCKET` when validating staging isolation.
    - For staging restores sourced from production-origin snapshots, run mandatory data sanitization and record evidence before traffic reopen:
      - `design/operations/deployments/staging/recovery/<recovery-ref>.json`
      - Export `SANITIZATION_EVIDENCE_REF` with that in-repo evidence path so `validate-external-credentials.sh staging` can enforce the gate.
@@ -317,17 +360,19 @@ The `post-restore-secret-hardening` Job runs after PostgreSQL and core services 
 
 - JWT rotation service accounts can only read/update the `jwt-signing-keys` Secret, the `jwt-jwks` Secret for player-facing environments (`hobby-self-hosted`, staging, production), and, optionally, the Account Service Deployment. Non-player-facing environments may use a JWKS ConfigMap.
 - Database rotation service accounts can only read/update the PostgreSQL credential Secrets and, optionally, restart the Deployments/StatefulSets that use them.
+- Certificate reissuance automation can only read/update the specific certificate resources or Secrets required for workload, bridge, and operator leaf identities.
 
 Runbooks should treat this Job (or equivalent operator automation for hobby/self-hosted) as a mandatory step in any player-facing disaster recovery:
 
 1. Restore PostgreSQL and Kubernetes manifests as described above.
 2. Run `post-restore-secret-hardening` in the target namespace and wait for it to complete successfully.
-3. Run `dev-tools/restores/validate-external-credentials.sh <hobby-self-hosted|staging|production>` with environment-specific expected values and ensure it succeeds.
-4. For staging restores from production-origin data, ensure data sanitization evidence exists and is referenced by `SANITIZATION_EVIDENCE_REF`.
-5. Confirm application health checks, login/session flows, and JWT validation.
-6. Only then route external or player traffic to the restored cluster.
+3. Confirm workload, bridge, and operator leaf certificates have been reissued and peers have converged on the new identities.
+4. Run `dev-tools/restores/validate-external-credentials.sh <hobby-self-hosted|staging|production>` with environment-specific expected values and ensure it succeeds.
+5. For staging restores from production-origin data, ensure data sanitization evidence exists and is referenced by `SANITIZATION_EVIDENCE_REF`.
+6. Confirm application health checks, login/session flows, and JWT validation.
+7. Only then route external or player traffic to the restored cluster.
 
-For hobby/self-hosted environments that do not use the Kubernetes Job template directly, operators must run an equivalent one-shot restore-hardening automation that performs the same three control groups (JWT/JWKS rotation, DB credential rotation, external credential validation) and writes evidence to `design/operations/deployments/hobby-self-hosted/recovery/<recovery-ref>.json` before reopening player traffic.
+For hobby/self-hosted environments that do not use the Kubernetes Job template directly, operators must run an equivalent one-shot restore-hardening automation that performs the same four control groups (JWT/JWKS rotation, DB credential rotation, certificate reissuance, external credential validation) and writes evidence to `design/operations/deployments/hobby-self-hosted/recovery/<recovery-ref>.json` before reopening player traffic.
 
 ---
 
@@ -347,6 +392,35 @@ Recommended flow:
 5. If issues appear, revert to the previous known-good password and Secret value and repeat the rotation later with additional diagnostics.
 
 No CronJob is defined for automatic DB credential rotation; any such cadence should be explicitly chosen based on compliance requirements and operational experience.
+
+## Production Backup Readiness Evidence
+
+Production releases classified as `roll-forward-only` must include fresh backup-readiness evidence stored at:
+
+- `design/operations/deployments/production/backup-readiness/<deployment-ref>.json`
+
+Required fields:
+
+- `environment` (`production`)
+- `deploymentRef`
+- `assessedAt`
+- `assessedBy`
+- `rollbackMode` (`roll-forward-only`)
+- `promotionAttestationRef`
+- `serviceDigests`
+- `backupLastSuccessAt`
+- `backupVerifyLastSuccessAt`
+- `restoreDrillLastSuccessAt`
+- `restorePlanRef`
+- `evidenceRefs[]`
+
+Freshness policy:
+
+- `backupLastSuccessAt` must be within 90 minutes of production preflight.
+- `backupVerifyLastSuccessAt` must be within 36 hours of production preflight.
+- `restoreDrillLastSuccessAt` should be within the last 30 days unless an explicit break-glass waiver is recorded.
+
+This evidence is consumed by production CI and preflight and is mandatory before applying a `roll-forward-only` production release. Validation must fail when `promotionAttestationRef` or `serviceDigests` do not match the attestation being promoted.
 
 ## Hobby Backup Compliance Evidence
 

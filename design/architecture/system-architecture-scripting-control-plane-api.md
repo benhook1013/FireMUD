@@ -34,6 +34,7 @@ This document does not define the designer-facing DSL, sandbox internals, or per
 - **Control plane is idempotent.** Every mutating operation must accept a caller-provided `controlPlaneRequestId` and be safely retryable.
 - **Auditable and observable.** Every mutating action must emit an audit entry and a durable status event that downstream tooling can consume.
 - **Pin visibility is bounded-staleness.** Services that cache pinned patch/plugin versions must enforce a max staleness bound and fail closed on stale/unknown pin state for admission-critical decisions.
+- **Runtime scope is instance-first.** Tenant-level patch readiness is only an eligibility gate; pause/resume, rollback convergence, timer ownership, and plugin lifecycle actions must preserve `(tenantId, gameInstanceId)` isolation.
 
 ## Actors and Responsibilities
 

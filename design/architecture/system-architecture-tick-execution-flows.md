@@ -93,6 +93,7 @@ At each tick for a `<tenantId, regionId>`, the executor:
    - Pulls at most one queued command per active entity into the per-entity worklist.
    - Pulls a bounded number of due timers and retries (up to configured caps per tick).
    - Optionally includes a bounded “remote follow-up drain” step (see below); drained remote follow-ups are enqueued into the same per-entity queues as local commands at the target region.
+   - Selection alone does **not** make work exclusive yet. Until the tick batch and durable claims exist, the selected work remains recoverable from its source queues/indexes.
 2. Orders fairly:
    - Aggregates all candidate work items per entity (queued commands, due timers, retries, and remote follow-ups) and selects **at most one** work item per entity for the current tick; any additional due work for that entity is deferred to future ticks according to the retry/timer scheduling rules.
    - Orders per-entity selections using a deterministic ordering function:
@@ -140,14 +141,27 @@ The canonical commit model uses the same two boundaries defined in `system-archi
 
 Conceptually, tick commit proceeds through these phases:
 
-1. **Staging complete**
-   - All effects selected for the tick have been written into `tick:{tenantRegionTag}:pending` and mirrored into the ledger with `status = SCHEDULED`.
-2. **Domain application**
+1. **Durable batch creation**
+   - Before Redis `pending` is treated as authoritative for a tick, Game Session creates a durable tick-batch record in PostgreSQL for `(tenantId, regionId, region_epoch, tickId)`.
+   - The tick-batch record stores at minimum:
+     - `tick_batch_id`
+     - `expected_effect_count`
+     - `status` (`CREATED`, `REDIS_STAGED`, `COMMITTED`, `ABANDONED`)
+     - a correlation field that Redis `pending` can carry back (for example `tick_batch_id`)
+   - Tick effect ledger rows for the selected effects are inserted in the same PostgreSQL transaction as the tick-batch record with `status = SCHEDULED`.
+   - Source-claim rule (required):
+     - Any selected command/timer/retry/remote follow-up must remain discoverable from its source structure until it is durably tied to the `tick_batch_id`.
+     - Implementations may satisfy this either by leaving source entries in place until `tick_batch.status = REDIS_STAGED`, or by creating durable claim rows tied to `tick_batch_id` before removing the source entry.
+     - Removing selected work from its source queue/index before one of those durable conditions is met is not allowed.
+2. **Redis staging complete**
+   - After the durable batch exists, the executor stages the selected effects into `tick:{tenantRegionTag}:pending`, carrying the `tick_batch_id` and the expected effect count (or equivalent digest) so Redis and PostgreSQL can be correlated during recovery.
+   - `tick:{tenantRegionTag}:pending` is an acceleration/coordination structure. The durable tick-batch plus ledger rows are the authoritative record of what the tick intended to stage.
+3. **Domain application**
    - Domain services process staged effects under idempotent rules keyed by `(tenantId, regionId, region_epoch, tickId, effectKey)` and update authoritative PostgreSQL state in their own databases.
    - Game Session records the outcome of each effect in its tick effect ledger (`SCHEDULED` → `APPLIED` or `ABANDONED`) based on the domain calls’ return semantics. Domain services do not write to the Game Session ledger directly.
-3. **Commit visibility**
+4. **Commit visibility**
    - Once all ledger rows for that tick are terminal (`APPLIED` or `ABANDONED`), Game Session advances the durable commit watermark for the region (for example updating `RegionStatus.lastCommittedTickId` for the current `region_epoch`), and only then emits the tick heartbeat for that `(region_epoch, tickId)`.
-4. **Coordination cleanup**
+5. **Coordination cleanup**
    - A final commit/cleanup script clears the `pending` entry for the tick and releases any entity locks for that region.
    - Cleanup is a required part of “tick is no longer in flight”; if an executor crashes after commit visibility but before cleanup, crash recovery must clear/abandon the `pending` entry before any subsequent tick stages new work.
 
@@ -161,6 +175,14 @@ From the perspective of the `(region_epoch, tickId)` timeline:
 - Any state before `durable_committed` is **replayable**:
   - Executors may crash after staging but before all effects are applied; the next executor replays remaining SCHEDULED entries using ledger and idempotency rules.
   - AOF replay or tail-loss may cause staging scripts to be re-run; domain idempotency guards and the ledger ensure that replays converge to the same terminal outcome.
+- Recovery treats PostgreSQL as the source of truth for staging intent:
+  - `tick_batch` exists, Redis `pending` missing:
+    - Recovery re-drives or re-stages from the durable batch and `SCHEDULED` ledger rows; missing Redis state is not treated as “no work existed”.
+    - If source entries were intentionally left in place until `REDIS_STAGED`, recovery may also re-select them by reconciling source state with the durable batch, but the batch remains authoritative for what was chosen.
+  - Redis `pending` exists, `tick_batch` missing:
+    - Recovery treats the Redis entry as orphaned coordination state, clears it via the cleanup path, and alerts; no executor is allowed to commit work from `pending` that lacks a durable batch.
+  - Both exist but `expected_effect_count` or a stored digest disagrees:
+    - Recovery pauses the region, marks the batch inconsistent, and requires reconcile tooling before ticks resume. Silent “best effort” continuation is not allowed.
 - If a crash occurs after `durable_committed` but before `coordination_cleared`, recovery must finish cleanup before the next tick stages new work; this window does not regress the durable commit watermark.
 
 The **TickScheduler** in Game Session enforces a **single in-flight tick per region** invariant and derives tick positions from durable state:
@@ -230,6 +252,10 @@ Required policy defaults:
 - If origin has already reached `REMOTE_TIMEOUT_ABANDONED`, any later remote result must not silently mutate prior terminal state:
   - Default: record `LATE_RESULT_IGNORED` for observability and keep origin terminal state unchanged.
   - Feature-specific override: `LATE_RESULT_RECONCILED` is allowed only if the feature documents an explicit reconciliation/compensation flow.
+- Every cross-region command type must explicitly declare one of two late-result classes in its design:
+  - `late_result_safe_to_ignore`
+  - `late_result_requires_reconciliation`
+- Flows with paired player-visible consequences (for example remote damage plus local heal/refund/reward/economic settlement) must not use the default ignore policy unless the design proves that ignoring the late result cannot strand origin-side state.
 - For `LATE_RESULT_RECONCILED`, compensation and external side effects must use outbox/saga mechanisms outside the tick loop.
 
 ## Tick Chaining and Reentrant Effect Control

@@ -61,6 +61,10 @@ Dry-run and test execution paths exposed by the Automation & Scripting Service s
 - They record `sandbox_error` and `infrastructure_error` outcomes in `script_event_audit` so failure modes are observable.
 - By default they do **not** consume per-script quotas or per-tenant budgets enforced by `ScriptQuotaService`; instead, they are restricted to privileged principals (for example, designers and operators) and should be further protected by separate rate limits or ACLs at the API gateway or Logging & Admin layer.
   - Dry-run/test executions must not increment live-traffic error counters. Sandbox failures observed during tests are emitted via dry-run/test-only metric families (for example `automation_script_test_sandbox_failures_total`) so production SLO dashboards do not conflate privileged tooling with live automation reliability.
+- Dry-run/test traffic must not be allowed to consume the same last-resort execution capacity reserved for live automation:
+  - Implementations should use separate executor pools or explicit worker reservations for `isDryRun=true`.
+  - When the cluster is under pressure, live traffic must be admitted ahead of dry-run/test traffic even if dry-run quotas have not been exceeded.
+  - Queue limits and concurrency ceilings for dry-run/test work must be enforced independently from live execution queues.
 
 ---
 
@@ -139,6 +143,12 @@ The table below summarizes the major quota and budget types that apply to script
 | **Per-tenant tier budgets** | Per tenant and priority tier | Tenant-scoped automation budgets per tier, tracked as aggregates such as `automation_script_tenant_budget_seconds{tenantId, tier}`. | Budget consumption and skip metrics per tenant/tier, plus matching audit entries with `finalStage=ADMISSION` and `finalOutcome=tenant_budget_exceeded`. |
 | **Cluster-wide safety limits** | Entire Automation & Scripting cluster | Global ceilings on automation work, including `AUTOMATION_TICK_MAX_EVENTS` and cluster-level CPU/time budgets. | Cluster-level throughput and drop metrics that indicate when global ceilings are hit. |
 
+Per-trigger output is also part of the quota model even when the run itself was admitted successfully:
+
+- Each admitted script/plugin run must be constrained by explicit output ceilings such as `maxCommandsPerRun`, `maxCommandsPerEntityPerTrigger`, and `maxSerializedWorkItemBytes`.
+- Output-budget failures must be surfaced as stage-aware non-success outcomes and must not be treated as successful handoff merely because the DSL graph began evaluating.
+- Game Design validation should reject graphs whose conservatively bounded worst-case fan-out cannot fit within those runtime ceilings.
+
 ---
 
 ## Auditability & Metrics
@@ -192,7 +202,7 @@ are updated throughout the scripting pipeline so operators can monitor how often
 
 Additional queue-health metrics help detect automation backlogs that are not draining into ticks as expected:
 
-- `automation_queue_orphaned_entries_total` – counts work items that have remained in `automation:queue:<tenantId>:<entityId>` beyond a bounded age window (for example, N ticks or seconds) without corresponding staging in `automation:tick:{tenantScriptTag}:...` or entries in the tick effect ledger.
+- `automation_queue_orphaned_entries_total` – counts work items that have remained in `automation:queue:{tenantInstanceTag}:<entityId>` beyond a bounded age window (for example, N ticks or seconds) without corresponding staging in `automation:tick:{tenantInstanceScriptTag}:...` or entries in the tick effect ledger.
 - `automation_queue_oldest_entry_age_seconds` – records the age of the oldest sampled queue item per tenant/script so operators can see when automation queues are falling behind.
 
 A small, bounded inspector loop in `ScriptTickService` periodically samples a subset of queues to update these metrics; it does not attempt to repair or delete items itself, but surfaces misalignment between automation and tick processing for investigation.
@@ -205,6 +215,7 @@ For scripting and automation, these metrics follow shared naming and labeling co
 - `script_quota_allowed_total{tenantId, scriptId}` / `script_quota_denied_total{tenantId, scriptId, reason}` – per-script quota decisions before sandbox work begins.
 - `automation_script_sandbox_failures_total{tenantId, scriptId, pluginId, reason}` – sandbox-level failures such as `reason="cpu_budget_exceeded"` or `reason="memory_budget_exceeded"`.
 - `automation_script_errors_total{tenantId, scriptId, pluginId, reason}` – higher-level error classification, including downstream failures.
+- `automation_script_output_budget_exceeded_total{tenantId, scriptId, pluginId, reason}` – counts runs rejected because emitted work exceeded bounded output ceilings such as `command_count_exceeded` or `work_item_size_exceeded`.
 - `automation_script_tenant_budget_seconds{tenantId, tier}` – per-tenant, per-priority-tier budget consumption.
 - `automation_script_runtime_seconds{tenantId, scriptId, pluginId, eventType}` – distribution of sandbox runtime per script/plugin and event type.
 - `automation_plugin_policy_violations_total{tenantId, pluginId, pluginVersionId, componentId, reason}` – counts plugin triggers rejected due to component policy; each violation should correspond to a `script_event_audit` entry with `finalStage=ADMISSION`, `finalOutcome=plugin_component_blocked`, and a `finalReason` indicating the blocked component/policy decision.
@@ -251,6 +262,9 @@ Dry-run and test executions share the same sandbox engine and guards as live tra
 - To prevent abuse, the Automation & Scripting Service enforces additional dry-run ceilings, such as:
   - Per-tenant and per-principal maximum runs per window (for example, `SCRIPT_TEST_MAX_RUNS_PER_MINUTE`).
   - Maximum concurrent dry-runs per tenant or cluster-wide (for example, `SCRIPT_TEST_MAX_CONCURRENCY`).
+- Dry-run/test executions must also have isolated execution capacity:
+  - Separate queues or worker reservations are required so privileged test traffic cannot starve live automation workers.
+  - When shared infrastructure is saturated, dry-run/test work must be shed before live gameplay automation for the same scope/tier.
 - Per-principal limits require deterministic identity:
   - Use a stable principal key derived from authenticated actor claims (for example, subject/`actorPrincipal`) in dry-run quota keys.
   - Reject missing principal identity for endpoints configured with per-principal enforcement.
@@ -276,6 +290,7 @@ At a high level:
 
 - **Sandbox-level failures**
   - `finalStage=DSL_EVAL`, `finalOutcome=sandbox_error` – the DSL runtime rejected the run or hit a guard (for example, `finalReason=cpu_budget_exceeded`, `finalReason=memory_budget_exceeded`, `finalReason=iteration_budget_exceeded`); increments `automation_script_sandbox_failures_total{reason=...}` and `automation_script_errors_total{reason=...}` and feeds into failure-rate circuit breakers for live traffic (`isDryRun=false`).
+  - Output-budget failures (for example `finalReason=command_count_exceeded`, `finalReason=per_entity_command_limit_exceeded`, `finalReason=work_item_size_exceeded`) must increment `automation_script_output_budget_exceeded_total{reason=...}` and remain non-success stage-aware outcomes; they must not be counted as successful handoff.
 
 - **Infrastructure-level failures**
   - `finalOutcome=infrastructure_error` (with a `finalStage` that reflects where it failed) – transport or infrastructure problems (for example, Redis timeouts, gRPC `UNAVAILABLE`); counted separately from sandbox errors, may trigger retries at lower layers using idempotency keys, and contribute to infra-focused alerts.

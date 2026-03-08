@@ -71,14 +71,19 @@ A small set of automation/scheduler-specific prefixes live on Coordination Redis
   - Role: Coordination Redis.
   - Owner: Automation & Scripting Service.
   - Purpose: per-region checkpoint for “every N ticks” schedulers tied to the canonical `(regionEpoch, tickId)` timeline.
-  - Reset behavior: classified as reset-tolerant in the reset policy matrix; region/tenant/cluster resets may drop this key. After resets or data loss, Automation & Scripting recomputes due work from PostgreSQL schedules and the tick heartbeat as described in the tick and scripting docs.
+  - Reset behavior: classified as reset-tolerant in the reset policy matrix; region/tenant/cluster resets may drop this key. After resets or data loss, Automation & Scripting recomputes due work from PostgreSQL schedules and the tick heartbeat as described in the tick and scripting docs. Duplicate trigger prevention comes from a durable PostgreSQL trigger-instance or outbox key such as `(scheduleId, gameInstanceId, regionEpoch, dueTickId, triggerKind)` (or another explicitly instance-aware uniqueness projection), not from this Redis checkpoint.
+- `automation:timer:{tenantRegionTag}`
+  - Role: Coordination Redis.
+  - Owner: Automation & Scripting Service.
+  - Purpose: per-region timer/index structure for script intervals and timer-driven triggers; stored entries remain instance-aware via payload identity such as `gameInstanceId`.
+  - Reset behavior: classified as reset-tolerant in the reset policy matrix; keys may be dropped by scoped coordination resets and are rebuilt from PostgreSQL-backed schedules, trigger-instance rows, and heartbeat progress.
 - `automation:tick:{tenantScriptTag}:*`
   - Role: Coordination Redis.
   - Owner: Automation & Scripting Service.
   - Purpose: shard-local automation tick locks and staging structures that participate directly in tick timelines.
   - Reset behavior: classified as reset-tolerant in the reset policy matrix; keys may be dropped by scoped coordination resets and are rebuilt from durable automation state and fresh tick activity.
 
-Durable automation schedules, quotas, and script configuration live in PostgreSQL; these coordination prefixes are latency and progress hints only and must not be treated as the primary record of “which scripts should run”. Designs that introduce new automation-related coordination prefixes must register them in the reset policy matrix and document how they recover from resets.
+Durable automation schedules, quotas, script configuration, and trigger-instance de-duplication live in PostgreSQL; these coordination prefixes are latency and progress hints only and must not be treated as the primary record of “which scripts should run”. Designs that introduce new automation-related coordination prefixes must register them in the reset policy matrix and document how they recover from resets.
 
 ### Automation Routing: Coordination vs Cache/Rate-Limit
 

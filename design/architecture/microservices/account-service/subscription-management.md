@@ -39,7 +39,7 @@ To keep authorization consistent, subscription and billing operations map to the
     - `billingAdmin` for billing-focused reporting surfaces.
 
 Implementations must not introduce ad-hoc “owner” or “admin” concepts; they should rely on `tenantAdmin`, `platformAdmin`, and `billingAdmin` from the shared role model and the Tenant Authorization Contract. Support roles (`support`) may read high-level subscription state and derived entitlements for troubleshooting purposes but must not be granted access to detailed billing artifacts (for example, invoices or payment methods) or to any subscription-mutating APIs. These troubleshooting endpoints must be explicitly classified as **support-safe** in the auth middleware contract (`design/architecture/system-architecture-authentication.md#auth-middleware-algorithm-normative`) so support access cannot accidentally expand to billing-safe or data-bearing surfaces.
-For billing-safe tenant routes that intentionally remain reachable during `suspended`/`canceled` periods, services must perform a live membership/role check against authoritative account-tenant membership data (for example `GetCallerTenantMembership(tenantId)`) before allowing mutations; JWT role claims alone are insufficient for billing-safe mutations.
+For billing-safe tenant routes that intentionally remain reachable during `suspended`/`canceled` periods, services must perform a live membership/role check against authoritative account-tenant membership data (for example `GetCallerTenantMembership(tenantId)`) before allowing mutations; JWT role claims alone are insufficient for billing-safe mutations. Caller-bound tenant variants must derive actor identity from auth context rather than a client-supplied `accountId`.
 Caller-bound membership responses must include `evaluatedAt` and `membershipVersion`; if membership authority is unavailable, billing-safe mutations fail closed.
 
 Current support-safe allowlist in this domain:
@@ -111,7 +111,13 @@ These behaviors tie directly into the session revocation rules described in [Aut
 
 ## Runtime Entitlement Contract
 
-The Account Service is the source of truth for per-tenant billing state and entitlements. It exposes a `GetTenantEntitlements(tenantId)` API (gRPC and REST) that returns a snapshot of:
+The Account Service is the source of truth for per-tenant billing state and entitlements. It exposes distinct entitlement surfaces instead of one mixed-use endpoint:
+
+- `GetTenantEntitlementsForRuntime(tenantId)` for internal gameplay admission/runtime callers.
+- `GetTenantEntitlementsTenant(tenantId)` for caller-bound tenant-admin billing-safe UX.
+- `GetTenantEntitlementsCrossTenantSupportSafe(tenantId)` for support-safe cross-tenant troubleshooting with redacted fields only.
+
+The internal runtime entitlement surface returns a snapshot of:
 
 - The current subscription status for the tenant (for example, `trialing`, `active`, `past_due`, `grace`, `suspended`, `canceled`).  
 - The effective plan and quotas (for example, maximum `active_sessions`, maximum concurrent instances, and storage/world-size tiers) derived from the active plan.  
@@ -123,13 +129,13 @@ The Account Service is the source of truth for per-tenant billing state and enti
   - `entitlementVersion` (monotonic entitlement snapshot/version identifier), and
   - `tenantBillingSequence` (latest applied billing-event sequence for the tenant).
 
-Runtime services such as the Game Session Service and world-management components use this contract as follows:
+Runtime services such as the Game Session Service and world-management components use this internal runtime contract as follows:
 
-- On game instance start, restart, rollback that changes the active version, or significant scaling operations, they call `GetTenantEntitlements(tenantId)` and enforce both availability and quotas before admitting new load.  
+- On game instance start, restart, rollback that changes the active version, or significant scaling operations, they call `GetTenantEntitlementsForRuntime(tenantId)` and enforce both availability and quotas before admitting new load.  
 - When admitting new player sessions for a tenant, they consult entitlements (either via a fresh call or a cached snapshot) to confirm that the tenant is still available for new logins.  
 - They cache entitlements for a bounded period (for example, at most 60 seconds) and **must** invalidate or refresh them immediately when `SubscriptionStatusChanged` or `TenantBillingStateChanged` events are received, rather than checking entitlements on every tick. Admission paths (new player logins and game instance start/restart flows) must always consult a fresh or recently refreshed entitlement snapshot and must not bypass revocation rules based solely on stale cache entries.
 - Admission-critical paths (`PLAY`, new session admission, instance start/restart/rollback) must enforce a hard entitlement freshness bound of 15 seconds. If the local entitlement snapshot is older than this bound and a refresh cannot be completed immediately, the path fails closed with canonical error `ENTITLEMENT_UNAVAILABLE` (or protocol-mapped equivalent).
-- Admission-critical paths must also fail closed when `tenantBillingSequence` is behind locally observed sequence or when a sequence gap is detected, then reconcile immediately via `GetTenantEntitlements(tenantId)`.
+- Admission-critical paths must also fail closed when `tenantBillingSequence` is behind locally observed sequence or when a sequence gap is detected, then reconcile immediately via `GetTenantEntitlementsForRuntime(tenantId)`.
 
 ## Edge Cases and Failure Handling
 
@@ -150,10 +156,10 @@ Downstream services depend on billing events for timely entitlement enforcement,
 - **At-least-once delivery** – consumers must assume duplicates and must apply events idempotently.
 - **Per-tenant sequencing** – every event that affects a tenant’s availability or quotas (for example `SubscriptionStatusChanged` and `TenantBillingStateChanged`) must carry a monotonically increasing `tenantBillingSequence` scoped to `{tenantId}` so consumers can detect out-of-order or missing events.
 - **Idempotency key** – every event includes a stable `eventId` (UUID) and the `(tenantId, tenantBillingSequence)` pair; consumers persist the latest applied sequence per tenant and treat older/duplicate events as no-ops.
-- **Gap detection and reconciliation** – if a consumer detects a sequence gap (or has no prior watermark for a tenant), it must call `GetTenantEntitlements(tenantId)` to reconcile immediately and should emit an operator-visible warning metric/log indicating entitlement drift was possible.
+- **Gap detection and reconciliation** – if a consumer detects a sequence gap (or has no prior watermark for a tenant), it must call `GetTenantEntitlementsForRuntime(tenantId)` to reconcile immediately and should emit an operator-visible warning metric/log indicating entitlement drift was possible.
 - **Periodic refresh** – even when events are flowing, runtime services should refresh cached entitlements on a bounded interval (for example once per minute) so extended event outages do not cause unbounded drift.
 
-- `CreateSubscription` – Create or update a hosting subscription for a `tenantId` and `plan_code`.  
+- `CreateSubscription` – Create or update a hosting subscription for a `tenantId` and `plan_code`. Caller-bound tenant variants derive actor identity from auth context; cross-tenant admin variants are separate APIs.  
 - `GetSubscriptionTenantHighLevel` / `ListSubscriptionsTenantHighLevel` – Query subscription state for one tenant, scoped by tenant authorization.  
 - `ListSubscriptionsCrossTenantSupportSafe` – Cross-tenant support-safe high-level listing for troubleshooting only.  
 - `ListSubscriptionsCrossTenantBillingSafeReports` – Cross-tenant billing-report listing for `billingAdmin`/`platformAdmin` only.  

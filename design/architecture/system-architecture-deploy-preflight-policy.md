@@ -12,6 +12,7 @@ This document defines the authoritative preflight policy gate for staging and pr
 
 - Command: `./dev-tools/deploy/preflight.sh <staging|production|hobby-self-hosted>`
 - Input: target environment and resolved overlay/manifests for that environment.
+- `hobby-self-hosted` runs must provide an explicit render input via `FIREMUD_PREFLIGHT_RENDER_PATH`; falling back to the stage overlay is not an allowed substitute for hobby deployment validation.
 - Output: non-zero exit code on failure and a machine-readable report artifact (for example JSON).
 - Context:
   - `operator` (default): required checks are blocking for real applies.
@@ -21,7 +22,7 @@ This document defines the authoritative preflight policy gate for staging and pr
 
 ## Enforcement Boundaries
 
-- Overlay PR CI (`validate-kustomize-overlays.yml`) enforces static checks: digest pinning, image existence, attestation schema/digest matching, and repository policy markers.
+- Overlay PR CI (`validate-kustomize-overlays.yml`) enforces static checks: digest pinning, image existence, attestation schema/digest matching, repository policy markers, and production backup-readiness binding when required.
 - Operator pre-apply execution (`preflight.sh`) enforces resolved-manifest and target-environment checks: required secret/key contracts, JWT/JWKS contracts, Redis role split, and bridge alignment.
 - Deployment apply is blocked unless required checks for the target class pass (or an explicit break-glass waiver is recorded).
 
@@ -45,10 +46,12 @@ Every run must emit one result per policy ID below, with status `pass`, `fail`, 
 - `PREFLIGHT-BRIDGE-001` – `GATEWAY_WS_URL` matches the expected internal Gateway listener for the target environment.
 - `PREFLIGHT-REDIS-001` – player-facing environments resolve distinct Coordination vs Cache Redis endpoints.
 - `PREFLIGHT-PROMOTION-001` – production promotions reference a valid staging attestation with matching digests.
+- `PREFLIGHT-BACKUP-001` – production `roll-forward-only` promotions include fresh backup-readiness evidence.
 
 Policy applicability:
 
 - `PREFLIGHT-PROMOTION-001` is required for `production` and `not_applicable` for `staging` and `hobby-self-hosted`.
+- `PREFLIGHT-BACKUP-001` is required for `production` when the referenced attestation classifies the release as `roll-forward-only`, and `not_applicable` otherwise.
 - `PREFLIGHT-DIGEST-001` is required for any flow using Kustomize overlays (`staging`, `production`) and `not_applicable` for `hobby-self-hosted`.
 - `PREFLIGHT-DIGEST-002` is recommended/advisory for `hobby-self-hosted` and `not_applicable` for `staging`/`production`.
 

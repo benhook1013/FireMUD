@@ -51,8 +51,8 @@ For designer-oriented guidance on building and debugging scripts in the visual e
 ## Terminology Glossary
 
 - **Game tick** – a region-scoped tick in the Game Session Service. Each `<tenantId, regionId>` advances through a monotonic `tickId` stream; game ticks are authoritative for gameplay state changes and use `tick:{tenantRegionTag}:...` keys and locks as described in [Tick System and Runtime Design](./system-architecture-ticks.md).
-- **Automation/script tick** – a batching cycle inside the Automation & Scripting Service. `ScriptTickService` drains **script work items** from Redis-backed queues such as `automation:queue:<tenantId>:<entityId>`, stages them under `automation:tick:{tenantScriptTag}:...`, and hands the resulting commands to the Game Session Service so Game Session can enqueue **tick commands** into per-entity tick queues for later execution by game ticks. Automation ticks control script-side quotas and batching, not authoritative game state.
-- **Automation queue** – a per-tenant, per-entity Redis queue (`automation:queue:<tenantId>:<entityId>`) that holds **derived work-item indexes/pointers** after sandboxed DSL execution and durable persistence. It is reset-tolerant and rebuildable from the durable outbox; it must not be treated as an authoritative log of pending work.
+- **Automation/script tick** – a batching cycle inside the Automation & Scripting Service. `ScriptTickService` drains **script work items** from Redis-backed queues such as `automation:queue:{tenantInstanceTag}:<entityId>`, stages them under `automation:tick:{tenantInstanceScriptTag}:...`, and hands the resulting commands to the Game Session Service so Game Session can enqueue **tick commands** into per-entity tick queues for later execution by game ticks. Automation ticks control script-side quotas and batching, not authoritative game state.
+- **Automation queue** – an instance-aware, per-entity Redis queue (`automation:queue:{tenantInstanceTag}:<entityId>`) that holds **derived work-item indexes/pointers** after sandboxed DSL execution and durable persistence. It is reset-tolerant and rebuildable from the durable outbox; it must not be treated as an authoritative log of pending work.
 - **Tick heartbeat** – a **gRPC streaming feed** produced by the Game Session Service that reports `(regionEpoch, tickId)` progression per `<tenantId, regionId>`. The script scheduler consumes this heartbeat over a long-lived gRPC stream to count “every N ticks” intervals and align `onInterval` triggers with the canonical game tick timeline without owning tick execution itself. See [Tick Events & Heartbeat Stream](./system-architecture-ticks.md#tick-events--heartbeat-stream) for transport details and the `(regionEpoch, tickId)` coordination timeline.
 
 ---
@@ -77,7 +77,7 @@ Normative Trigger Identity required fields (including `gameInstanceId` and when 
 | --- | --- | --- | --- |
 | 1 | **Trigger** | A concrete event such as `onEnterRegion`, `onCommand`, or a custom event emitted by a service. | gRPC `TriggerScriptEvent` call, tick heartbeat, or internal scheduler event. |
 | 2 | **DSL run** | Execution of a script handler in the sandboxed DSL for a single trigger. Produces domain commands, not direct state changes. | In-memory execution in the Automation & Scripting Service; results summarized as script work items. |
-| 3 | **Script work item** | A post-DSL, per-entity descriptor of what should happen (domain commands + `scriptEventId`, `scriptId`, version metadata) persisted durably (outbox). | Indexed via `automation:queue:<tenantId>:<entityId>` and staged under `automation:tick:{tenantScriptTag}:...`. |
+| 3 | **Script work item** | A post-DSL, per-entity descriptor of what should happen (domain commands + `scriptEventId`, `scriptId`, version metadata) persisted durably (outbox). | Indexed via `automation:queue:{tenantInstanceTag}:<entityId>` and staged under `automation:tick:{tenantInstanceScriptTag}:...`. |
 | 4 | **Tick command** | A concrete command that the Game Session Service executes during game ticks under its normal locking and idempotency rules. | Enqueued into `tick:{tenantRegionTag}:queue:<entityId>` for consumption by the tick loop. |
 
 Triggers lead to DSL runs, which produce script work items in the automation queues, which automation ticks turn into tick commands for the Game Session Service.
@@ -115,10 +115,10 @@ Statuses are a target-state contract; implementations may use different internal
 
 ### Pointer Payload Contract for `automation:queue:*`
 
-Entries in `automation:queue:<tenantId>:<entityId>` must contain enough information to locate and safely process the durable outbox record:
+Entries in `automation:queue:{tenantInstanceTag}:<entityId>` must contain enough information to locate and safely process the durable outbox record:
 
 - `outboxWorkItemId`
-- A minimal identity checksum (for example `scriptPatchVersion`, optional `pluginVersionId`) so rebuild/drain logic can detect version-fence mismatches early without reading full payloads.
+- A minimal identity checksum (for example `gameInstanceId`, `scriptPatchVersion`, optional `pluginVersionId`) so rebuild/drain logic can detect version-fence mismatches early without reading full payloads.
 
 The pointer/index format must be forward-compatible (versioned envelope) so it can evolve without requiring out-of-band Redis migrations.
 
@@ -150,7 +150,7 @@ The pointer/index format must be forward-compatible (versioned envelope) so it c
 
 - **Deterministic scheduler IDs**
   - Scheduler-originated `scriptEventId` values must be deterministic so leader failover and bounded catch-up do not double-fire.
-  - The specific encoding is an implementation detail, but it must be derived from stable inputs (for example `<tenantId, regionId, regionEpoch, entityId, scriptId, eventType, dueTickId|dueAt, scriptPatchVersion>`), not from process-local randomness.
+  - The specific encoding is an implementation detail, but it must be derived from stable inputs (for example `<tenantId, gameInstanceId, regionId, regionEpoch, entityId, scriptId, eventType, dueTickId|dueAt, scriptPatchVersion[, pluginId, pluginVersionId]>`), not from process-local randomness.
 
 - **Handling retries and duplicates**
   - The Automation & Scripting Service treats script execution as **at-most-once per Trigger Identity**, as defined in the uniqueness scope above. If it receives a duplicate delivery for the same Trigger Identity—for example, because the caller retried a gRPC call—it does **not** re-run the DSL graph for that trigger. Instead it consults existing `script_event_audit` state and treats the duplicate as a replay of an already completed or skipped trigger.
@@ -239,6 +239,13 @@ Domain services can define **custom events** that feed into the scripting pipeli
 - Event schemas are versioned so scripts can be migrated when payloads change.
 
 Custom events must follow the same determinism and idempotency rules as built-in events; they are keyed by Trigger Identity plus tick context when producing commands (for example including `entityId`, `eventType`, `scriptPatchVersion`, `scriptEventId`, and `tickId`/`regionEpoch` where applicable).
+
+Custom events also require an explicit trust and ownership contract:
+
+- Every custom `eventType` must be registered in a canonical event registry that defines the owning service, payload schema/version, required identity fields, allowed producer principals/services, quota class, and replay semantics.
+- Event ingress must authenticate producer identity via the service-to-service auth layer and reject unregistered or unauthorized `eventType` values deterministically at admission.
+- `script_event_audit` must record the producing service identity (for example `sourceService`) for custom events so operators can diagnose spoofing, routing errors, and unexpected fan-out.
+- The Game Design Service may expose only event types present in this registry for the selected game/runtime scope; an event being "enabled" must be backed by a concrete contract, not just UI configuration.
 
 ---
 
@@ -341,6 +348,13 @@ Script patches have two related but distinct lifecycle views:
 
 The tenant lifecycle governs patch readiness and eligibility. The instance lifecycle governs rollout/rollback for running games.
 
+Runtime execution must still remain **instance-aware** even though patch readiness is tenant-scoped:
+
+- A tenant-scoped `READY` state means a patch is eligible to be pinned by instances in that tenant; it does not imply that every running instance must pause, reload, or switch together.
+- Admission, timer scheduling, rollback pause, convergence checks, and plugin activation must evaluate the effective runtime scope as `<tenantId, gameInstanceId>`, even if implementations batch internal work by tenant.
+- If a deployment wants stronger coupling, it must explicitly declare the invariant that all instances in a tenant share one active script patch. Absent that declaration, instance isolation is the normative behavior.
+- Runtime patch registry state (`activePatchVersion`, `pendingPatchVersion`, `reloadState`) must therefore be tracked per instance or per explicit pin cohort. A single tenant-wide mutable `activePatchVersion` is not sufficient unless the stronger tenant-coupling invariant is declared and enforced everywhere.
+
 The canonical states are:
 
 - `PENDING_VALIDATION` – the Game Design Service has published a script-only patch version and the Automation & Scripting Service has accepted the compiled graphs and bindings, but `onLoad` initialization has not yet completed for the tenant.
@@ -374,7 +388,7 @@ When a trigger arrives at the Automation & Scripting Service:
 
 Scripts are designed to behave **deterministically for a given game configuration and event**, so that both the original execution and any offline replay in tools or tests produce the same observable behavior. The Automation & Scripting Service enforces this by constraining how randomness and time are exposed to DSL components:
 
-- All **pseudo-random behavior** (for example, “pick a random waypoint”, “roll for loot”, or encounter selection) flows through curated components that read from a **seeded RNG** supplied by the runtime. The seed is derived from stable identifiers such as `<tenantId, regionId, entityId, scriptId, eventType, scriptEventId, tickId, scriptPatchVersion[, regionEpoch]>` so that re-evaluating the same trigger with the same inputs produces the **same sequence of random values**. Components must not call process-wide RNG APIs directly; they receive a scoped RNG instance from the sandbox.
+- All **pseudo-random behavior** (for example, “pick a random waypoint”, “roll for loot”, or encounter selection) flows through curated components that read from a **seeded RNG** supplied by the runtime. The seed is derived from stable identifiers such as `<tenantId, gameInstanceId, regionId, entityId, scriptId, eventType, scriptEventId, tickId, scriptPatchVersion[, regionEpoch, pluginId, pluginVersionId]>` so that re-evaluating the same trigger with the same inputs produces the **same sequence of random values**. Components must not call process-wide RNG APIs directly; they receive a scoped RNG instance from the sandbox.
   - Seeds are derived from this tuple primarily so offline replay tools and test harnesses can reproduce behavior for a given event stream; production tick replays never re-enter the DSL for the same `scriptEventId`.
 - **Wall-clock time is not exposed** to scripts. DSL components see only **derived game time** sourced from the tick and session model (for example, `tickId`, region-local “world time” counters, or effect durations computed by Game Logic). This ensures that replaying the same tick timeline yields the same time values from the script’s perspective, independent of real-world clock drift.
 - Any component that introduces variability must either:
@@ -403,6 +417,19 @@ Script executions are treated as **at-most-once per trigger** at the scheduler l
 - Script-generated commands—like any gameplay command—may fail due to lock contention or target remote regions. These cases are automatically handled by the Game Session Service via standard tick rescheduling and cross-region routing logic.
 - The Automation & Scripting Service only determines which commands to inject. It may query world state via gRPC but never mutates entity or world data directly—every action passes through the Game Session Service so tick regions remain consistent.
 
+### Output Budgeting and Command Fan-Out
+
+Admission and sandboxing must bound not only how often a handler runs, but also how much work a single admitted run can emit:
+
+- Each DSL run must enforce explicit output budgets before a work item is persisted, including:
+  - `maxCommandsPerRun`
+  - `maxCommandsPerEntityPerTrigger`
+  - `maxSerializedWorkItemBytes`
+  - Optional per-command payload ceilings for known large command families
+- Exceeding an output budget must fail deterministically with a non-success stage-aware outcome. Implementations may classify this at `DSL_EVAL` or `WORK_ITEM_PERSIST`, but `finalReason` must use bounded canonical codes such as `command_count_exceeded`, `per_entity_command_limit_exceeded`, or `work_item_size_exceeded` rather than collapsing the failure into an undifferentiated sandbox error.
+- Output budgets apply equally to core scripts and plugins.
+- Publish-time validation in Game Design should perform conservative worst-case fan-out analysis for bounded loops and bulk action nodes. Graphs whose statically bounded output exceeds runtime ceilings should be rejected before publish whenever feasible.
+
 ### Ordering Between Player and Script Commands
 
 - Each entity has a **single authoritative command queue** in Redis (for example, `tick:{tenantRegionTag}:queue:<entityId>`) that contains both player-originated commands and script-generated commands.
@@ -420,10 +447,10 @@ The main Redis keys used by the Automation & Scripting Service are:
 
 | Key pattern | Owner / service | Purpose | Hash tag / shard scope | TTL / retention expectations |
 | --- | --- | --- | --- | --- |
-| `automation:queue:<tenantId>:<entityId>` | Automation & Scripting | Per-tenant, per-entity queue of post-DSL script work item *indexes* awaiting automation ticks. | Single-key queue per entity; automation ticks drain these and hand off resulting commands to Game Session for enqueue into tick queues. | Reset-tolerant, best-effort derived index; authoritative pending work items are persisted durably in PostgreSQL (outbox) so this queue can be rebuilt. Loss/reset must be observable (metrics + `script_event_audit`). Any TTL is a short safety valve, not long-term storage. |
-| `automation:tick:{tenantScriptTag}:lock` | Automation & Scripting (`ScriptTickService`) | Per-script automation tick lock to serialize staging for a script’s work batch. | Hash-tagged on `{tenantScriptTag}` so multi-key operations remain shard-local. | Short-lived lock; lifetime bounded by a single automation tick batch and its retry window. |
-| `automation:tick:{tenantScriptTag}:queue` | Automation & Scripting (`ScriptTickService`) | Staging queue for batched script events before they are written into per-entity tick queues. | Hash-tagged on `{tenantScriptTag}` so staging, draining, and metrics are shard-local. | Short-lived staging; drained quickly by automation ticks. |
-| `automation:timer:{tenantRegionTag}` | Automation & Scripting scheduler | Region-scoped index of script timers and intervals (`onTimerExpire`, `onInterval`, `intervalTicks`). | Hash-tagged on `{tenantRegionTag}` to align with tick-region keys. | Persistent while timers are active; entries are added and removed as timers are created and satisfied. |
+| `automation:queue:{tenantInstanceTag}:<entityId>` | Automation & Scripting | Per-instance, per-entity queue of post-DSL script work item *indexes* awaiting automation ticks. | Single-key queue per entity within an instance scope; automation ticks drain these and hand off resulting commands to Game Session for enqueue into tick queues. | Reset-tolerant, best-effort derived index; authoritative pending work items are persisted durably in PostgreSQL (outbox) so this queue can be rebuilt. Loss/reset must be observable (metrics + `script_event_audit`). Any TTL is a short safety valve, not long-term storage. |
+| `automation:tick:{tenantInstanceScriptTag}:lock` | Automation & Scripting (`ScriptTickService`) | Per-instance, per-script automation tick lock to serialize staging for a script’s work batch. | Hash-tagged on `{tenantInstanceScriptTag}` so multi-key operations remain shard-local. | Short-lived lock; lifetime bounded by a single automation tick batch and its retry window. |
+| `automation:tick:{tenantInstanceScriptTag}:queue` | Automation & Scripting (`ScriptTickService`) | Staging queue for batched script events before they are written into per-entity tick queues. | Hash-tagged on `{tenantInstanceScriptTag}` so staging, draining, and metrics are shard-local. | Short-lived staging; drained quickly by automation ticks. |
+| `automation:timer:{tenantRegionTag}` | Automation & Scripting scheduler | Region-scoped index of script timers and intervals (`onTimerExpire`, `onInterval`, `intervalTicks`). Stored entries and durable identities remain instance-aware (`gameInstanceId`, and plugin identifiers when applicable) even though the Redis key is region-scoped. | Hash-tagged on `{tenantRegionTag}` so scheduler coordination stays shard-local with the region's authoritative tick stream and reset scope. | Persistent while timers are active; entries are added and removed as timers are created and satisfied. |
 | `script-leader:{<tenantId>}` | Automation & Scripting scheduler | Leadership lease for scheduler coordination per tenant. | Hash-tagged per tenant. | Short-lived lease refreshed by the active scheduler instance. |
 
 For additional details and any new key patterns, see the Automation & Scripting Service README and Redis design docs.
@@ -437,6 +464,8 @@ Script timers are layered on top of the core tick model and always express caden
 - Cadence for `onInterval` and other tick-based timers is configured in **ticks** (for example, “every N ticks”). Internally, schedulers may derive wall-clock hints from tick heartbeat streams, but the public contract is expressed in game ticks.
 - Missed firings are handled in a **bounded, deterministic way**:
   - When leaders change, the new leader walks forward from its last persisted `tickId` to the current `tickId` and enqueues at most **one synthetic firing** for each cadence boundary crossed in that gap (see [End-to-End `onInterval` Timer Lifecycle](#end-to-end-oninterval-timer-lifecycle)).
+  - Before enqueueing any such firing, the scheduler must first claim or insert a durable trigger-instance row keyed by an **instance-aware** uniqueness projection so failover or duplicate consumers cannot create duplicate logical triggers.
+    - If `scheduleId` is not globally unique across game instances, this projection must include `gameInstanceId`.
   - Missed firings due to quotas, budgets, disabled scripts, or failed/unknown versions are **not replayed later**; they are recorded in `script_event_audit` and associated metrics as dropped or skipped triggers.
 
 Within that model:
@@ -453,28 +482,34 @@ From the tick system’s perspective, script timers are just another source of w
 
 This section summarizes how a single `onInterval` timer behaves across normal operation, leader changes, and script reloads, and which Redis keys are authoritative at each step.
 
+All durable timer identity and scheduler checkpoints must be **instance-aware** even when Redis keys are region-scoped for slotting/locality:
+
+- `gameInstanceId` is a required part of timer identity, deterministic scheduler `scriptEventId` derivation, catch-up deduplication, and checkpoint projection state.
+- If a Redis key name omits `gameInstanceId`, the stored timer/checkpoint payload must still include it, and rebuild logic must treat instance mismatches as corruption rather than as reusable timer state.
+- Plugin timers must additionally carry `pluginId` and `pluginVersionId` in their durable identity so plugin rollback, disablement, and revocation cannot cross-contaminate interval state.
+
 - **Normal operation**
-  - When an NPC spawns or a script is first loaded, the scheduler creates or updates an interval entry for the `<tenantId, scriptId, entityId>` tuple in the region-scoped timer index under `automation:timer:{tenantRegionTag}`. That entry stores at least the configured cadence (for example, `intervalTicks` or equivalent) and the next due point (`nextTick` or `nextRunAt`). If a per-script index is enabled, a corresponding projection entry may be written under `automation:script:{tenantScriptTag}:timer`, but the region index remains authoritative.
+- When an NPC spawns or a script is first loaded, the scheduler creates or updates an interval entry for the `<tenantId, gameInstanceId, scriptId, entityId>` tuple in the region-scoped timer index under `automation:timer:{tenantRegionTag}`. That entry stores at least the configured cadence (for example, `intervalTicks` or equivalent) and the next due point (`nextTick` or `nextRunAt`). The stored payload must include `gameInstanceId` (and plugin identifiers when applicable) so rebuild and reconciliation logic can reject cross-instance contamination. If a per-script index is enabled, a corresponding projection entry may be written under `automation:script:{tenantInstanceScriptTag}:timer`, but the region index remains authoritative.
   - Leaders track these interval entries alongside other automation timers, using bounded scans and the automation tick budget (for example, `AUTOMATION_TICK_DURATION_MS`, `AUTOMATION_TICK_MAX_EVENTS`, `AUTOMATION_TICK_BUDGET_MS`) to decide which `onInterval` triggers should fire in each automation tick.
   - When an interval becomes due, the scheduler creates a `scriptEventId` for the `onInterval` trigger and evaluates it using the same quota, cadence, and budgeting layers described in `design/architecture/system-architecture-scripting-quotas-and-operations.md`. If the script is outside its budgets or disabled, the trigger is skipped and recorded in both metrics and the audit feed; otherwise it is enqueued for sandbox execution and the interval entry’s next due point is advanced.
 
 - **Leader changes**
-  - Leaders advance a per-region notion of time by consuming the tick heartbeat stream and tracking how far they have progressed. In addition to the current heartbeat `(regionEpoch, tickId)`, schedulers maintain a region-scoped checkpoint such as `script-scheduler:{tenantRegionTag}:lastTickId` (see the tick and Redis design docs).
+- Leaders advance a per-region notion of time by consuming the tick heartbeat stream and tracking how far they have progressed. In addition to the current heartbeat `(regionEpoch, tickId)`, schedulers maintain a region-scoped checkpoint such as `script-scheduler:{tenantRegionTag}:lastTickId` (see the tick and Redis design docs). Any checkpoint payload that also carries instance-level projection state must include `gameInstanceId`.
   - When leadership changes, the new leader:
     - reads `script-scheduler:{tenantRegionTag}:lastTickId` for each region it owns, interpreted in the context of the current `regionEpoch`,
     - walks forward from `lastTickId` to the current `tickId` using the heartbeat stream for that epoch, and
-    - for each timer entry in the region index `automation:timer:{tenantRegionTag}`, determines which “every N ticks” boundaries were crossed during the gap. Any missed `onInterval` triggers are enqueued at most once before the leader resumes normal scheduling from the latest `(regionEpoch, tickId)`, capped by `SCRIPT_TIMER_CATCH_UP_MAX_FIRINGS_PER_RESUME` per resume window. Candidates beyond this cap are intentionally truncated (coalesced or dropped) and surfaced via audit/metrics (for example `automation_script_timer_catchup_truncated_total`). If a per-script index is used, it is reconciled against the region index as needed; discrepancies are treated as projection bugs and corrected, not as new timers.
+    - for each timer entry in the region index `automation:timer:{tenantRegionTag}`, determines which “every N ticks” boundaries were crossed during the gap. Before enqueueing any `onInterval` trigger, it first claims or inserts a durable trigger-instance row keyed by `(scheduleId, gameInstanceId, regionEpoch, dueTickId, triggerKind)` (or an equivalent uniqueness projection). Any missed `onInterval` triggers are then enqueued at most once before the leader resumes normal scheduling from the latest `(regionEpoch, tickId)`, capped by `SCRIPT_TIMER_CATCH_UP_MAX_FIRINGS_PER_RESUME` per resume window. Candidates beyond this cap are intentionally truncated (coalesced or dropped) and surfaced via audit/metrics (for example `automation_script_timer_catchup_truncated_total`). If a per-script index is used, it is reconciled against the region index as needed; discrepancies are treated as projection bugs and corrected, not as new timers.
   - Because the authoritative schedule configuration lives in PostgreSQL and Redis holds only coordination state (timer indexes and checkpoints), leader changes do not reset cadences; they only introduce a bounded delay before the new leader catches up.
 
 - **Script reload**
-  - During reload, leaders set `reloadState=RELOADING` for the affected `<tenantId, pendingPatchVersion>` and pause new triggers, including `onInterval` firings, while they load and validate the new script definitions. Existing timer entries in the region index `automation:timer:{tenantRegionTag}` (and any derived per-script projections) remain in Redis but are treated as **pending**.
+- During reload, leaders set `reloadState=RELOADING` for the affected runtime scope and pending patch, and pause new triggers, including `onInterval` firings, while they load and validate the new script definitions. Existing timer entries in the region index `automation:timer:{tenantRegionTag}` (and any derived per-script projections) remain in Redis but are treated as **pending**.
   - Once reload succeeds and `activePatchVersion` is switched, the leader:
     - re-reads its heartbeat checkpoint and the current `tickId`,
     - updates each interval entry’s next due point (`nextTick` or `nextRunAt`) in the region index as needed so the cadence resumes from the latest tick/time (rather than replaying the paused window), and
     - resumes normal scheduling for `onInterval` using the updated `activePatchVersion`. No interval runs against a partially loaded script definition.
   - If reload fails, `activePatchVersion` remains unchanged, `pendingPatchVersion` is marked failed, and the leader resumes using the existing region-index timer entries as-is. Any `onInterval` triggers that fire after a failed reload are still scheduled according to the stored cadence, but always execute under the last known good patch version.
 
-Under this model, durable script schedules and quotas live in PostgreSQL, while `automation:timer:{tenantRegionTag}`, `script-scheduler:{tenantRegionTag}:lastTickId`, and related coordination keys form a reset-tolerant coordination layer for interval state. The combination of tick heartbeat, checkpoints, and script patch versioning preserves both correctness and determinism across failures and leader changes: losing or resetting these Redis keys may delay or slightly reshuffle timer firings within the tail-loss envelope but must not change which scripts are eventually scheduled according to their stored configurations.
+Under this model, durable script schedules, quotas, and trigger-instance de-duplication live in PostgreSQL, while `automation:timer:{tenantRegionTag}`, `script-scheduler:{tenantRegionTag}:lastTickId`, and related coordination keys form a reset-tolerant coordination layer for interval state. Stored entries and reconciliation logic remain instance-aware even though the Redis keys are region-scoped. The combination of tick heartbeat, durable trigger-instance claims, checkpoints, and script patch versioning preserves both correctness and determinism across failures and leader changes: losing or resetting these Redis keys may delay or slightly reshuffle timer firings within the tail-loss envelope but must not change which scripts are eventually scheduled according to their stored configurations or cause duplicate logical trigger creation.
 
 ---
 
@@ -483,7 +518,7 @@ Under this model, durable script schedules and quotas live in PostgreSQL, while 
 Scheduler leadership and coordination ensure that script timers and automation ticks are processed safely in a distributed environment:
 
 - Leadership is tracked using Redis keys such as `script-leader:{<tenantId>}` and leases described in the tick and automation docs.
-- Only the **current leader** for a tenant processes that tenant’s script timers and automation queues.
+- Only the **current leader** for a runtime scope processes that scope’s script timers and automation queues. Implementations may lease by tenant for operational simplicity only if the leased worker still preserves per-instance isolation in its timer, queue, and reload state.
 - Automation ticks coordinate with tick heartbeat streams to ensure that:
   - `onInterval` triggers fire on the correct tick boundaries.
   - Per-tenant and per-script quotas are respected.
@@ -506,7 +541,7 @@ for the current leadership and sharding model.
   - updates bindings and metadata, and
   - transitions scripts through reload states (for example, `reloadState=RELOADING`) to avoid partial visibility.
 - During reloads, triggers are **paused or skipped** while in-flight runs drain under existing concurrency settings:
-  - New triggers for the affected tenant are not admitted; attempts to schedule additional runs receive explicit backpressure outcomes (`skipped_reloading` during reload, `skipped_rollback_pause` during rollback pause). For low-rate external events, callers may retry with the same `scriptEventId` using bounded backoff (`maxAttempts`, `maxElapsedMs`, jitter) and should honor server retry hints such as `retryAfterMs`; audit records must remain keyed by Trigger Identity and must not multiply rows per retry.
+  - New triggers for the affected runtime scope are not admitted; attempts to schedule additional runs receive explicit backpressure outcomes (`skipped_reloading` during reload, `skipped_rollback_pause` during rollback pause). For low-rate external events, callers may retry with the same `scriptEventId` using bounded backoff (`maxAttempts`, `maxElapsedMs`, jitter) and should honor server retry hints such as `retryAfterMs`; audit records must remain keyed by Trigger Identity and must not multiply rows per retry.
   - In-flight runs remain bounded by each script’s configured `maxConcurrent` and `concurrencyPolicy` (for example, `queue_until_free`); any short per-script waiting queues are allowed to drain, but no new entries are added while `reloadState=RELOADING`.
   - Pending timer-based triggers that became due during reload remain in the scheduler’s timer indexes and resume after reload with recalculated `nextTick` / `nextRunAt` so cadences remain coherent.
 - On success, the new `scriptPatchVersion` becomes active for future triggers; on failure:
@@ -581,6 +616,16 @@ The `onLoad` lifecycle event is used to initialize shared script state for scrip
 - Handlers are expected to:
   - Use idempotent operations and stable idempotency keys when calling downstream services, following patterns from `design/architecture/system-architecture-transactions.md`.
   - Avoid irreversible side effects that cannot be safely retried or compensated.
+
+`onLoad` is intentionally **not** a general-purpose migration hook for durable gameplay state:
+
+- Allowed uses are limited to versioned runtime initialization such as cache warmup, lookup materialization, precomputed indexes, and other replaceable shared state whose loss or recomputation does not change authoritative gameplay history.
+- `onLoad` must not create durable world/player/NPC state whose continued existence is required after patch rollback unless that state is itself versioned, garbage-collectable, and ignored when its owning `scriptPatchVersion` is no longer pinned.
+- There is no compensating `onUnload` / `onDeactivate` lifecycle in the current architecture. Rollback safety therefore depends on keeping `onLoad` side effects disposable or explicitly version-fenced.
+- If future requirements demand durable patch-managed shared state, the platform must add a symmetric deactivation/cleanup lifecycle and rollback ordering before expanding `onLoad` semantics.
+- Any durable or semi-durable artifact produced by `onLoad` must carry a namespace that includes at least `tenantId`, `scriptId`, and `scriptPatchVersion`.
+- If an `onLoad` artifact can vary by running instance (for example instance-local caches, projections over instance state, or scheduler-visible warm state), it must additionally include `gameInstanceId`; tenant-scoped artifacts must be safe for concurrent use by instances pinned to different patches.
+- Garbage collection rules for abandoned `onLoad` artifacts must be explicit: either a bounded TTL or an operator-visible cleanup job keyed by patch/version state. "Eventually overwritten" is not a sufficient contract.
 
 Failure handling:
 
