@@ -21,7 +21,31 @@ The following tools are not strictly required to build or run the stack, but the
 - **Insomnia** – a desktop client for REST and WebSocket testing. An Insomnia project is provided in `dev-tools/insomnia/` to exercise login, registration, and gateway admin routes.
 - **Kreya** – a gRPC client configured via `dev-tools/kreya/.kreya-project.yaml` for calling services like `AccountService`, `EntityService`, and `PlayerService` on `localhost:6565`.
 - **Redis CLI (`redis-cli`)** and **RedisInsight** – useful for inspecting transient gameplay/session state in the local Redis instance and browsing keys like `session:*`, `tick:*`, and `timer:*`.
-- **Kubernetes CLI (`kubectl`)** and optionally **Helm** – recommended if you plan to interact with development or production clusters using the manifests and runbooks under `design/architecture/infrastructure/`.
+- **Kubernetes CLI (`kubectl`)** and optionally **Helm** – install `kubectl` if you work on `k8s/`, Kustomize overlays, or overlay validation CI. Local validation uses `kubectl kustomize`, so this is effectively required for Kubernetes-related changes.
+
+## Windows + WSL Tooling
+
+If you develop from Windows, prefer running build and package-management tools inside WSL with Linux-native toolchains.
+
+- Install **Node.js/npm inside WSL**, not only on Windows. If `which node` or `which npm` resolves to a `/mnt/c/...` path, you are using the Windows toolchain from a Linux shell, which can break `npm ci`, lockfile generation, and frontend linting.
+- Keep your editor on Windows if you want, but run `./gradlew`, `npm`, and `kubectl` from the WSL shell.
+- Avoid mixing Windows `node.exe` / `npm.cmd` with a WSL shell for repository work. That mixed setup is fragile and was the source of repeated frontend CI/debugging issues in this repo.
+- Install `kubectl` inside WSL as well if you want local overlay validation. You do not need Docker Desktop or a running local cluster just to use `kubectl kustomize`.
+
+Quick verification checklist:
+
+```bash
+which node
+which npm
+node -v
+npm -v
+kubectl version --client
+```
+
+Expected result:
+
+- `node` and `npm` should resolve to Linux paths such as `$HOME/.nvm/...`, not `/mnt/c/...`.
+- `kubectl version --client` should succeed from the WSL shell.
 
 ## Building Services
 
@@ -168,9 +192,14 @@ Linting rules are defined in `config/markdownlint/.markdownlint-cli2.jsonc`. Aut
 
 ### Frontend Lint & Accessibility
 
-The React client in `web-client` provides npm scripts for linting, formatting,
-and running an accessibility audit. After installing dependencies with
-`npm --prefix config/openapi ci`. you can run these checks:
+The React client in `web-client` provides npm scripts for linting, formatting, and running an accessibility audit. Install dependencies with Linux-native npm from the `web-client` directory:
+
+```bash
+cd web-client
+npm ci
+```
+
+Then run these checks:
 
 ```bash
 cd web-client
@@ -397,6 +426,7 @@ These documents explain how the compose setup differs from production and provid
 
 - Running Gradle inside WSL avoids the Windows file-locking issues that can block `build/test-results/**`. Open a WSL shell, `cd` into this repository via the `/mnt/c/.../FireMUD` path, and run the usual `./gradlew …` commands there.
 - You can keep your editor on Windows while letting long-running builds/tests execute on the Linux filesystem by pointing it at the same working tree.
+- Use the same rule for frontend and Kubernetes tooling: run `npm` and `kubectl` from the WSL shell with Linux-native installs rather than Windows executables on the mounted drive.
 
 ---
 
