@@ -18,6 +18,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -199,15 +200,16 @@ class SayWebSocketCrossServiceTest {
         )
         """);
     jdbc.update("DELETE FROM game_instances");
-    return Objects.requireNonNull(
-        jdbc.queryForObject(
-            "INSERT INTO game_instances (tenant_id, runtime_version, script_patch_version, owner_account_id, status) VALUES (?, ?, ?, ?, ?) RETURNING id",
-            Long.class,
-            TENANT_ID,
-            "0.1.0",
-            "initial",
-            ACCOUNT_ID,
-            "ACTIVE"));
+    return Optional.ofNullable(
+            jdbc.queryForObject(
+                "INSERT INTO game_instances (tenant_id, runtime_version, script_patch_version, owner_account_id, status) VALUES (?, ?, ?, ?, ?) RETURNING id",
+                Long.class,
+                TENANT_ID,
+                "0.1.0",
+                "initial",
+                ACCOUNT_ID,
+                "ACTIVE"))
+        .orElseThrow(() -> new IllegalStateException("Game instance insert did not return an id"));
   }
 
   private List<String> runSaySequence(long sessionId) throws Exception {
