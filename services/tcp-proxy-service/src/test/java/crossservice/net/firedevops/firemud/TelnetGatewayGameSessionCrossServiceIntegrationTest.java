@@ -91,7 +91,8 @@ class TelnetGatewayGameSessionCrossServiceIntegrationTest {
   @AfterAll
   @SuppressFBWarnings(
       value = "LI_LAZY_INIT_STATIC",
-      justification = "Cross-service test fixtures are created and torn down under class-level control")
+      justification =
+          "Cross-service test fixtures are created and torn down under class-level control")
   static synchronized void stopTestServices() {
     GatewayHolder gateway = GATEWAY;
     GATEWAY = null;

@@ -138,7 +138,8 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
   @AfterAll
   @SuppressFBWarnings(
       value = "LI_LAZY_INIT_STATIC",
-      justification = "Cross-service test fixtures are created and torn down under class-level control")
+      justification =
+          "Cross-service test fixtures are created and torn down under class-level control")
   static synchronized void stopTestServices() {
     GatewayHolder gateway = GATEWAY;
     GATEWAY = null;
@@ -398,7 +399,8 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
                     "initial",
                     ACCOUNT_ID,
                     "ACTIVE"))
-            .orElseThrow(() -> new IllegalStateException("Game instance insert did not return an id"));
+            .orElseThrow(
+                () -> new IllegalStateException("Game instance insert did not return an id"));
     int port =
         ((org.springframework.boot.web.context.WebServerApplicationContext) context)
             .getWebServer()
