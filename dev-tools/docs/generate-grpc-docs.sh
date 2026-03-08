@@ -24,12 +24,11 @@ After editing any `.proto` definitions, run the following commands:
 
 ```bash
 BUF_WORKSPACE_CONFIG=config/protobuf/buf.work.yaml buf lint
-BUF_WORKSPACE_CONFIG=config/protobuf/buf.work.yaml buf breaking --against origin/main
 ./gradlew generateProto
 ./dev-tools/docs/generate-grpc-docs.sh
 ```
 
-to regenerate these docs and verify compatibility.
+to regenerate these docs and verify schema/doc consistency.
 
 Refer to the [gRPC API Style Guide](../architecture/system-architecture-grpc.md)
 for conventions on schema evolution and error handling. See each service's

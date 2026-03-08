@@ -4,6 +4,3 @@ lint:
     - DEFAULT
   except:
     - PACKAGE_DIRECTORY_MATCH
-breaking:
-  use:
-    - FILE

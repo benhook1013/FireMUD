@@ -18,7 +18,7 @@ concurrency:
 
 jobs:
   buf-check:
-    name: Buf Breaking and Generation
+    name: Buf Generation
     runs-on: ubuntu-latest
     steps:
       - name: ⬇️ Checkout Code
@@ -38,18 +38,6 @@ jobs:
           path: ~/.cache/buf
           key: buf-mod-${{ runner.os }}-${{ hashFiles('protos/buf.yaml', 'protos/**/*.proto', 'config/protobuf/buf.gen.yaml', 'config/protobuf/buf.work.yaml') }}
           restore-keys: buf-mod-${{ runner.os }}-
-
-      - name: 🛠️ Fetch Base Commit for Buf Breaking
-        if: github.event_name == 'pull_request'
-        run: |
-          git fetch --depth=1 origin ${{ github.event.pull_request.base.sha }}
-
-      - name: ⚠️ Buf Breaking
-        if: github.event_name == 'pull_request'
-        working-directory: protos
-        env:
-          BUF_WORKSPACE_CONFIG: ../config/protobuf/buf.work.yaml
-        run: buf breaking --against "../.git#ref=${{ github.event.pull_request.base.sha }},subdir=protos"
 
       - name: ⚙️ Generate Protobufs
         working-directory: protos

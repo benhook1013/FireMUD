@@ -37,7 +37,7 @@ The workflow YAML files remain the source of truth for concrete triggers; this t
 
 The main [`ci.yml`](../../.github/workflows/ci.yml) workflow:
 
-- Performs a **Buf breaking change check** to keep protobuf APIs compatible.
+- Generates protobuf outputs to keep generated stubs aligned with the checked-in schemas.
 - Runs formatting and lint steps (Spotless, markdownlint, link checks).
 - Executes a matrix of Gradle `check` tasks (one per microservice) with SpotBugs, Checkstyle, and tests enabled.
 - Generates coverage with JaCoCo and runs Trivy scans over the workspace.
