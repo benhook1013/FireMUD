@@ -25,7 +25,7 @@ jobs:
           path: .lychee_cache
           key: lychee-${{ runner.os }}-${{ hashFiles('**/*.md') }}
       - name: Check links
-        uses: lycheeverse/lychee-action@v2.7.0
+        uses: lycheeverse/lychee-action@v2.8.0
         env:
           LYCHEE_CACHE: true
         with:
