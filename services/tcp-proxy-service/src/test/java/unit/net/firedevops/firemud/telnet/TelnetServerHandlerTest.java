@@ -17,6 +17,7 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelFuture;
+import io.netty.channel.ChannelFutureListener;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.util.concurrent.DefaultEventExecutor;
 import io.netty.util.concurrent.EventExecutor;
@@ -94,7 +95,13 @@ class TelnetServerHandlerTest {
         Mockito.mock(TelnetServerHandler.WebSocketConnector.class);
     Mockito.doReturn(CompletableFuture.completedFuture(mock(WebSocket.class)))
         .when(connector)
-        .connect(anyString(), anyString(), anyString(), anyString(), anyString(), any());
+        .connect(
+            anyString(),
+            anyString(),
+            anyString(),
+            anyString(),
+            anyString(),
+            any(WebSocket.Listener.class));
     TelnetServerHandler handler =
         new TelnetServerHandler(
             "ws://localhost/ws",
@@ -686,14 +693,14 @@ class TelnetServerHandlerTest {
               long delay = invocation.getArgument(1);
               TimeUnit unit = invocation.getArgument(2);
               scheduledTasks.add(new ScheduledTask(command, unit.toMillis(delay)));
-              return mock(ScheduledFuture.class);
+              return mockScheduledFutureTyped();
             });
     when(executor.scheduleAtFixedRate(
             any(Runnable.class), anyLong(), anyLong(), any(TimeUnit.class)))
-        .thenReturn(mock(ScheduledFuture.class));
+        .thenReturn(mockScheduledFutureTyped());
     when(executor.scheduleWithFixedDelay(
             any(Runnable.class), anyLong(), anyLong(), any(TimeUnit.class)))
-        .thenReturn(mock(ScheduledFuture.class));
+        .thenReturn(mockScheduledFutureTyped());
 
     TelnetServerHandler handler =
         new TelnetServerHandler(
@@ -722,7 +729,7 @@ class TelnetServerHandlerTest {
 
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     ChannelFuture future = mock(ChannelFuture.class);
-    when(future.addListener(any())).thenReturn(future);
+    when(future.addListener(any(ChannelFutureListener.class))).thenReturn(future);
     Channel channel = mock(Channel.class);
     when(ctx.channel()).thenReturn(channel);
     when(ctx.executor()).thenReturn(executor);
@@ -736,7 +743,7 @@ class TelnetServerHandlerTest {
     listener.onClose(initialSocket.get(), 1001, "closing");
 
     verify(ctx).writeAndFlush(startsWith("DISCONNECT backend_unavailable "));
-    verify(future).addListener(any());
+    verify(future).addListener(any(ChannelFutureListener.class));
   }
 
   @Test
@@ -786,6 +793,11 @@ class TelnetServerHandlerTest {
     } catch (ReflectiveOperationException e) {
       throw new IllegalStateException(e);
     }
+  }
+
+  @SuppressWarnings("unchecked")
+  private static <V> ScheduledFuture<V> mockScheduledFutureTyped() {
+    return mock(ScheduledFuture.class);
   }
 
   private ScheduledTask takeReconnectTask(List<ScheduledTask> tasks) {
