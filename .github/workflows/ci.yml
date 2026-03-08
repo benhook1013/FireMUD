@@ -264,7 +264,7 @@ jobs:
             const coverage = Number("${{ steps.coverage.outputs.percent }}");
             const testPassed = "${{ steps.checks.outcome }}" === "success";
 
-            const summaryLines = [
+            const commentLines = [
               `### 🧪 Build Summary`,
               testPassed ? "✅ All tests passed" : "❌ Some tests failed (see logs)",
               "🧼 Lint + format steps completed",
@@ -272,10 +272,14 @@ jobs:
               ""
             ];
 
-            const body = summaryLines.join('\n');
+            const body = commentLines.join('\n');
 
-            core.summary.addHeading("🧪 Build Summary");
-            core.summary.addRaw(body).write();
+            await core.summary
+              .addHeading("🧪 Build Summary")
+              .addRaw(testPassed ? "✅ All tests passed" : "❌ Some tests failed (see logs)", true)
+              .addRaw("🧼 Lint + format steps completed", true)
+              .addRaw(`📊 Code coverage: ${coverage}%`, true)
+              .write();
 
             const { data: comments } = await github.rest.issues.listComments({
               ...context.repo,
