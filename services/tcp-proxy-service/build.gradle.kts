@@ -40,6 +40,7 @@ dependencies {
     testImplementation(testFixtures(project(":game-session-service")))
     testImplementation(project(":game-logic-service"))
     testImplementation(project(":spring-cloud-gateway"))
+    testCompileOnly("com.github.spotbugs:spotbugs-annotations:4.9.8")
     testRuntimeOnly(libs.postgresql)
 }
 

@@ -3,6 +3,7 @@ package crossservice.net.firedevops.firemud;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import crossservice.net.firedevops.firemud.stub.GatewayStubApplication;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.Server;
 import io.grpc.ServerBuilder;
 import io.grpc.health.v1.HealthCheckResponse;
@@ -26,6 +27,7 @@ import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -134,38 +136,49 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
   }
 
   @AfterAll
-  static void stopTestServices() {
-    if (GATEWAY != null) {
-      GATEWAY.close();
-      GATEWAY = null;
+  @SuppressFBWarnings(
+      value = "LI_LAZY_INIT_STATIC",
+      justification = "Cross-service test fixtures are created and torn down under class-level control")
+  static synchronized void stopTestServices() {
+    GatewayHolder gateway = GATEWAY;
+    GATEWAY = null;
+    if (gateway != null) {
+      gateway.close();
     }
-    if (GAME_SESSION != null) {
-      GAME_SESSION.close();
-      GAME_SESSION = null;
+    GameSessionHolder gameSession = GAME_SESSION;
+    GAME_SESSION = null;
+    if (gameSession != null) {
+      gameSession.close();
     }
-    if (ACCOUNT_STUB != null) {
-      ACCOUNT_STUB.close();
-      ACCOUNT_STUB = null;
+    AccountServiceStub accountStub = ACCOUNT_STUB;
+    ACCOUNT_STUB = null;
+    if (accountStub != null) {
+      accountStub.close();
     }
-    if (GAME_LOGIC != null) {
-      GAME_LOGIC.close();
-      GAME_LOGIC = null;
+    GameLogicHolder gameLogic = GAME_LOGIC;
+    GAME_LOGIC = null;
+    if (gameLogic != null) {
+      gameLogic.close();
     }
-    if (WORLD_STUB != null) {
-      WORLD_STUB.close();
-      WORLD_STUB = null;
+    WorldManagementStubServer worldStub = WORLD_STUB;
+    WORLD_STUB = null;
+    if (worldStub != null) {
+      worldStub.close();
     }
-    if (CHAT_ENTITY_STUB != null) {
-      CHAT_ENTITY_STUB.close();
-      CHAT_ENTITY_STUB = null;
+    ChatEntityManagementStubServer chatEntityStub = CHAT_ENTITY_STUB;
+    CHAT_ENTITY_STUB = null;
+    if (chatEntityStub != null) {
+      chatEntityStub.close();
     }
-    if (ENTITY_STUB != null) {
-      ENTITY_STUB.close();
-      ENTITY_STUB = null;
+    EntityManagementStubServer entityStub = ENTITY_STUB;
+    ENTITY_STUB = null;
+    if (entityStub != null) {
+      entityStub.close();
     }
-    if (SOCIAL_STUB != null) {
-      SOCIAL_STUB.close();
-      SOCIAL_STUB = null;
+    SocialGroupsStubServer socialStub = SOCIAL_STUB;
+    SOCIAL_STUB = null;
+    if (socialStub != null) {
+      socialStub.close();
     }
   }
 
@@ -375,15 +388,17 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
           status VARCHAR(20) NOT NULL
         )
         """);
-    Long insertedId =
-        jdbc.queryForObject(
-            "INSERT INTO game_instances (tenant_id, runtime_version, script_patch_version, owner_account_id, status) VALUES (?, ?, ?, ?, ?) RETURNING id",
-            Long.class,
-            TENANT_ID,
-            "0.1.0",
-            "initial",
-            ACCOUNT_ID,
-            "ACTIVE");
+    long insertedId =
+        Optional.ofNullable(
+                jdbc.queryForObject(
+                    "INSERT INTO game_instances (tenant_id, runtime_version, script_patch_version, owner_account_id, status) VALUES (?, ?, ?, ?, ?) RETURNING id",
+                    Long.class,
+                    TENANT_ID,
+                    "0.1.0",
+                    "initial",
+                    ACCOUNT_ID,
+                    "ACTIVE"))
+            .orElseThrow(() -> new IllegalStateException("Game instance insert did not return an id"));
     int port =
         ((org.springframework.boot.web.context.WebServerApplicationContext) context)
             .getWebServer()
@@ -513,7 +528,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     private final int port;
     private final long sessionId;
 
-    GameSessionHolder(ConfigurableApplicationContext context, int port, Long sessionId) {
+    GameSessionHolder(ConfigurableApplicationContext context, int port, long sessionId) {
       this.context = context;
       this.port = port;
       this.sessionId = sessionId;

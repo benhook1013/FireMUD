@@ -3,6 +3,7 @@ package crossservice.net.firedevops.firemud;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import crossservice.net.firedevops.firemud.stub.GatewayStubApplication;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
@@ -88,14 +89,19 @@ class TelnetGatewayGameSessionCrossServiceIntegrationTest {
   private GRpcServerRunner grpcServerRunner;
 
   @AfterAll
-  static void stopTestServices() {
-    if (GATEWAY != null) {
-      GATEWAY.close();
-      GATEWAY = null;
+  @SuppressFBWarnings(
+      value = "LI_LAZY_INIT_STATIC",
+      justification = "Cross-service test fixtures are created and torn down under class-level control")
+  static synchronized void stopTestServices() {
+    GatewayHolder gateway = GATEWAY;
+    GATEWAY = null;
+    if (gateway != null) {
+      gateway.close();
     }
-    if (GAME_SESSION_STUB != null) {
-      GAME_SESSION_STUB.close();
-      GAME_SESSION_STUB = null;
+    GameSessionStubHolder gameSessionStub = GAME_SESSION_STUB;
+    GAME_SESSION_STUB = null;
+    if (gameSessionStub != null) {
+      gameSessionStub.close();
     }
   }
 
