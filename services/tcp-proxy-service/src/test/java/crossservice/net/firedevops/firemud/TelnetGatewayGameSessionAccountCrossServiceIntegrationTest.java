@@ -3,7 +3,6 @@ package crossservice.net.firedevops.firemud;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import crossservice.net.firedevops.firemud.stub.GatewayStubApplication;
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.Server;
 import io.grpc.ServerBuilder;
 import io.grpc.health.v1.HealthCheckResponse;
@@ -136,10 +135,6 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
   }
 
   @AfterAll
-  @SuppressFBWarnings(
-      value = "LI_LAZY_INIT_STATIC",
-      justification =
-          "Cross-service test fixtures are created and torn down under class-level control")
   static synchronized void stopTestServices() {
     GatewayHolder gateway = GATEWAY;
     GATEWAY = null;
