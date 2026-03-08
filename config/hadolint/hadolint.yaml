@@ -3,3 +3,4 @@ trustedRegistries:
   - ghcr.io
 ignored:
   - DL3007 # using latest tag for base image intentionally
+  - DL3026 # base image registry is parameterized via ARG BASE_IMAGE
