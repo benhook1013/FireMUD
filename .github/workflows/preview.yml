@@ -9,6 +9,10 @@ on:
       - 'release/**'
   workflow_dispatch:
 
+permissions:
+  contents: read
+  packages: read
+
 jobs:
   preview:
     if: github.base_ref == 'develop' || github.base_ref == 'main' || startsWith(github.base_ref, 'release/')
@@ -40,6 +44,9 @@ jobs:
       - name: Enable BuildKit
         run: echo "DOCKER_BUILDKIT=1" >> $GITHUB_ENV
 
+      - name: Resolve published base image tag
+        run: echo "FIREMUD_BASE_IMAGE=ghcr.io/benhook1013/firemud-base:latest" >> $GITHUB_ENV
+
       - name: Prepare environment file
         run: cp .env.sample .env
 
@@ -49,9 +56,11 @@ jobs:
       - name: Build service images with cache
         run: |
           services="account-service automation-scripting-service entity-management-service game-design-service game-logic-service game-session-service logging-admin-service social-groups-service spring-cloud-gateway tcp-proxy-service world-management-service"
+          docker pull "$FIREMUD_BASE_IMAGE"
           for service in $services; do
             docker pull ghcr.io/benhook1013/$service:latest || true
             docker buildx build \
+              --build-arg BASE_IMAGE=$FIREMUD_BASE_IMAGE \
               --cache-from type=registry,ref=ghcr.io/benhook1013/$service:buildcache \
               --cache-from type=registry,ref=ghcr.io/benhook1013/$service:latest \
               --cache-from type=gha \

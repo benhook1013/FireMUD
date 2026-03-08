@@ -1,4 +1,5 @@
-FROM ghcr.io/benhook1013/firemud-base:latest
+ARG BASE_IMAGE=ghcr.io/benhook1013/firemud-base:latest
+FROM ${BASE_IMAGE}
 WORKDIR /app
 COPY build/libs/*.jar app.jar
 COPY ../../dev-tools/wait-for-it.sh /usr/local/bin/wait-for-it.sh
