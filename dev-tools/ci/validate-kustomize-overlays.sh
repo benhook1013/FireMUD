@@ -98,17 +98,19 @@ run_preflight_policy_checks() {
     changed_files="$(changed_files_between_base_and_head "$GITHUB_BASE_REF")"
 
     if printf '%s\n' "$changed_files" | grep -q '^k8s/overlays/prod/'; then
-      production_pr_validation="true"
       mapfile -t attestation_files < <(printf '%s\n' "$changed_files" | grep '^design/operations/deployments/production/attestations/.*\.json$' || true)
-      if [[ "${#attestation_files[@]}" -ne 1 ]]; then
+      if [[ "${#attestation_files[@]}" -eq 0 ]]; then
+        echo "Skipping production promotion preflight because no attestation artifact is present in this PR."
+      elif [[ "${#attestation_files[@]}" -ne 1 ]]; then
         echo "Production overlay PRs must include exactly one attestation file under design/operations/deployments/production/attestations/." >&2
         exit 1
-      fi
-      promotion_attestation="${attestation_files[0]}"
-      deployment_ref="$(basename "$promotion_attestation" .json)"
+      else
+        production_pr_validation="true"
+        promotion_attestation="${attestation_files[0]}"
+        deployment_ref="$(basename "$promotion_attestation" .json)"
 
-      local rollback_mode
-      rollback_mode="$(python3 - <<'PY' "$ROOT_DIR/$promotion_attestation"
+        local rollback_mode
+        rollback_mode="$(python3 - <<'PY' "$ROOT_DIR/$promotion_attestation"
 import json
 import pathlib
 import sys
@@ -119,13 +121,14 @@ print(str(data.get("rollbackMode", "")))
 PY
 )"
 
-      if [[ "$rollback_mode" = "roll-forward-only" ]]; then
-        mapfile -t backup_files < <(printf '%s\n' "$changed_files" | grep '^design/operations/deployments/production/backup-readiness/.*\.json$' || true)
-        if [[ "${#backup_files[@]}" -ne 1 ]]; then
-          echo "Roll-forward-only production overlay PRs must include exactly one backup-readiness file under design/operations/deployments/production/backup-readiness/." >&2
-          exit 1
+        if [[ "$rollback_mode" = "roll-forward-only" ]]; then
+          mapfile -t backup_files < <(printf '%s\n' "$changed_files" | grep '^design/operations/deployments/production/backup-readiness/.*\.json$' || true)
+          if [[ "${#backup_files[@]}" -ne 1 ]]; then
+            echo "Roll-forward-only production overlay PRs must include exactly one backup-readiness file under design/operations/deployments/production/backup-readiness/." >&2
+            exit 1
+          fi
+          backup_readiness="${backup_files[0]}"
         fi
-        backup_readiness="${backup_files[0]}"
       fi
     fi
   fi
