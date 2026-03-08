@@ -183,12 +183,12 @@ General rules:
 | `automation_script_skips_total` | `tenantId`, `scriptId`, `reason`, optional `pluginId`, `priorityTag` | `scriptEventId` | “Skip” is pre-eval. |
 | `automation_script_triggers_dropped_total` | `tenantId`, `scriptId`, `reason`, optional `pluginId`, `priorityTag` | `scriptEventId` | “Dropped” indicates the trigger was not processed to tick acceptance. |
 | `script_quota_allowed_total` | `tenantId`, `scriptId` | `scriptEventId` | Quota decisions are pre-eval. |
-| `script_quota_denied_total` | `tenantId`, `scriptId`, `reason` | `scriptEventId` |  |
+| `script_quota_denied_total` | `tenantId`, `scriptId`, `reason` | `scriptEventId` | N/A |
 | `automation_tick_events_enqueued_total` | `tenantId` | `scriptEventId` | Counts successful tick handoffs, not DSL evaluations. |
 | `automation_tick_version_fence_dropped_total` | `tenantId`, `scriptId`, `reason` | `scriptEventId` | Counts commands dropped at execution-time due to script patch version fence mismatches. |
 | `automation_tick_plugin_version_fence_dropped_total` | `tenantId`, `pluginId`, `pluginVersionId`, `reason` | `scriptEventId` | Counts commands dropped at execution-time due to plugin version fence mismatches. |
 | `automation_script_runtime_seconds` | `tenantId`, `scriptId`, `eventType`, optional `pluginId` | `scriptEventId` | Runtime is sandbox eval time (not tick execution time). |
-| `automation_script_sandbox_failures_total` | `tenantId`, `scriptId`, `reason`, optional `pluginId` | `scriptEventId` |  |
+| `automation_script_sandbox_failures_total` | `tenantId`, `scriptId`, `reason`, optional `pluginId` | `scriptEventId` | N/A |
 | `automation_script_test_runs_total` | `tenantId`, `scriptId`, `eventType`, `result`, optional `pluginId` | `scriptEventId` | Must be separate from live-traffic counters. |
 | `automation_script_test_runtime_seconds` | `tenantId`, `scriptId`, `eventType`, optional `pluginId` | `scriptEventId` | Dry-run/test runtime latency; must remain separate from live runtime histograms. |
 | `automation_script_test_sandbox_failures_total` | `tenantId`, `scriptId`, `eventType`, `reason`, optional `pluginId` | `scriptEventId` | Dry-run/test-only sandbox failures; must not increment live sandbox failure counters. |
