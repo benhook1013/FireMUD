@@ -241,7 +241,6 @@ jobs:
             PERCENT=0
           fi
           echo "percent=$PERCENT" >> $GITHUB_OUTPUT
-          echo "### 📊 Code coverage: **$PERCENT%**" >> $GITHUB_STEP_SUMMARY
 
       - name: 📤 Upload Coverage Report
         uses: actions/upload-artifact@v7
