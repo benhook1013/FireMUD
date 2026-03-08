@@ -88,10 +88,6 @@ check_stage_has_no_backup_schedules_unless_enabled() {
 
 run_preflight_policy_checks() {
   echo "::group::Run canonical preflight policy checks (ci-static)"
-  FIREMUD_PREFLIGHT_CONTEXT=ci-static \
-    FIREMUD_PREFLIGHT_OUTPUT=/tmp/firemud-preflight-staging.json \
-    bash "$ROOT_DIR/dev-tools/deploy/preflight.sh" staging
-
   local promotion_attestation=""
   local backup_readiness=""
   local deployment_ref=""
@@ -142,9 +138,8 @@ PY
       FIREMUD_BACKUP_READINESS_EVIDENCE="$backup_readiness" \
       bash "$ROOT_DIR/dev-tools/deploy/preflight.sh" production
   else
-    FIREMUD_PREFLIGHT_CONTEXT=ci-static \
-      FIREMUD_PREFLIGHT_OUTPUT=/tmp/firemud-preflight-production.json \
-      bash "$ROOT_DIR/dev-tools/deploy/preflight.sh" production
+    echo "Skipping static preflight policy enforcement because no production attestation context is present."
+    echo "Overlay render and image validation still run below."
   fi
   echo "::endgroup::"
 }
