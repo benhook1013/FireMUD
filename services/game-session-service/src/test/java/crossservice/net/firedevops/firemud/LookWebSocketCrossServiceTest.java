@@ -16,6 +16,7 @@ import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -65,26 +66,35 @@ class LookWebSocketCrossServiceTest {
   private static GameSessionHolder GAME_SESSION;
 
   @AfterAll
-  static void stopServices() {
-    if (GAME_SESSION != null) {
-      GAME_SESSION.close();
-      GAME_SESSION = null;
+  static synchronized void stopServices() {
+    GameSessionHolder gameSession = GAME_SESSION;
+    GAME_SESSION = null;
+    if (gameSession != null) {
+      gameSession.close();
     }
-    if (GAME_LOGIC != null) {
-      GAME_LOGIC.close();
-      GAME_LOGIC = null;
+
+    GameLogicHolder gameLogic = GAME_LOGIC;
+    GAME_LOGIC = null;
+    if (gameLogic != null) {
+      gameLogic.close();
     }
-    if (ACCOUNT_STUB != null) {
-      ACCOUNT_STUB.close();
-      ACCOUNT_STUB = null;
+
+    AccountServiceStub accountStub = ACCOUNT_STUB;
+    ACCOUNT_STUB = null;
+    if (accountStub != null) {
+      accountStub.close();
     }
-    if (WORLD_STUB != null) {
-      WORLD_STUB.close();
-      WORLD_STUB = null;
+
+    WorldManagementStubServer worldStub = WORLD_STUB;
+    WORLD_STUB = null;
+    if (worldStub != null) {
+      worldStub.close();
     }
-    if (ENTITY_STUB != null) {
-      ENTITY_STUB.close();
-      ENTITY_STUB = null;
+
+    EntityManagementStubServer entityStub = ENTITY_STUB;
+    ENTITY_STUB = null;
+    if (entityStub != null) {
+      entityStub.close();
     }
   }
 
@@ -174,14 +184,15 @@ class LookWebSocketCrossServiceTest {
         )
         """);
     jdbc.update("DELETE FROM game_instances");
-    return jdbc.queryForObject(
-        "INSERT INTO game_instances (tenant_id, runtime_version, script_patch_version, owner_account_id, status) VALUES (?, ?, ?, ?, ?) RETURNING id",
-        Long.class,
-        TENANT_ID,
-        "0.1.0",
-        "initial",
-        ACCOUNT_ID,
-        "ACTIVE");
+    return Objects.requireNonNull(
+        jdbc.queryForObject(
+            "INSERT INTO game_instances (tenant_id, runtime_version, script_patch_version, owner_account_id, status) VALUES (?, ?, ?, ?, ?) RETURNING id",
+            Long.class,
+            TENANT_ID,
+            "0.1.0",
+            "initial",
+            ACCOUNT_ID,
+            "ACTIVE"));
   }
 
   private List<String> runLookSequence(long sessionId) throws Exception {

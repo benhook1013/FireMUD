@@ -63,10 +63,6 @@ class SessionResumptionFlowTest {
 
   @BeforeEach
   void setUp() {
-    GameInstance instance = new GameInstance();
-    instance.setId(1L);
-    instance.setTenantId(22L);
-    instance.setOwnerAccountId(77L);
     when(instanceRepository.findById(Mockito.anyLong()))
         .thenAnswer(
             invocation -> {

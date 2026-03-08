@@ -95,7 +95,6 @@ class LoginCommandHandlerTest {
 
   @Test
   void invalidSessionIdReturnsInvalidArgument() {
-    CommandEnqueueResult success = CommandEnqueueResult.success();
     TextCommand command =
         new TextCommand(
             TextCommandType.LOGIN,
@@ -142,7 +141,6 @@ class LoginCommandHandlerTest {
 
   @Test
   void successfulLoginStoresSessionContext() {
-    CommandEnqueueResult success = CommandEnqueueResult.success();
     TextCommand command =
         new TextCommand(
             TextCommandType.LOGIN,
@@ -194,7 +192,6 @@ class LoginCommandHandlerTest {
 
   @Test
   void accountMismatchReturnsFailure() {
-    CommandEnqueueResult success = CommandEnqueueResult.success();
     TextCommand command =
         new TextCommand(
             TextCommandType.LOGIN,
@@ -316,7 +313,6 @@ class LoginCommandHandlerTest {
 
   @Test
   void repeatedLoginStillStoresContext() {
-    CommandEnqueueResult success = CommandEnqueueResult.success();
     TextCommand command =
         new TextCommand(
             TextCommandType.LOGIN,
@@ -339,7 +335,6 @@ class LoginCommandHandlerTest {
 
   @Test
   void sessionTakeoverDeletesPreviousContextAndTracksMetric() {
-    CommandEnqueueResult success = CommandEnqueueResult.success();
     TextCommand command =
         new TextCommand(
             TextCommandType.LOGIN,
@@ -363,7 +358,6 @@ class LoginCommandHandlerTest {
 
   @Test
   void sessionResumeIncrementsMetricWhenReusingSameSession() {
-    CommandEnqueueResult success = CommandEnqueueResult.success();
     TextCommand command =
         new TextCommand(
             TextCommandType.LOGIN,
