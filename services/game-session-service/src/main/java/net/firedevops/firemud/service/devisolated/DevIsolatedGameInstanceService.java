@@ -1,5 +1,6 @@
 package net.firedevops.firemud.service.devisolated;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.dto.GameInstanceDto;
 import net.firedevops.firemud.dto.StartSessionRequest;
@@ -17,6 +18,9 @@ public class DevIsolatedGameInstanceService implements GameInstanceService {
 
   private final DevIsolatedGameInstanceRegistry registry;
 
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "Registry is an injected internal collaborator")
   public DevIsolatedGameInstanceService(DevIsolatedGameInstanceRegistry registry) {
     this.registry = registry;
   }

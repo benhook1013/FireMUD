@@ -1,5 +1,6 @@
 package net.firedevops.firemud.service.impl;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Duration;
 import java.util.Optional;
 import net.firedevops.firemud.service.SessionContext;
@@ -22,6 +23,9 @@ public final class RedisSessionContextService implements SessionContextService {
   private static final String CONTEXT_KEY_TEMPLATE = "sessionctx:%d:%d:context";
   private static final String IDENTITY_KEY_TEMPLATE = "sessionctx:%d:identity:%d:%d:context";
 
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "RedisTemplate is a shared Spring bean used only internally")
   public RedisSessionContextService(
       RedisTemplate<String, Object> redisTemplate,
       @Value("${FIREMUD_AUTH_SESSION_EXPIRATION_MS:3600000}") long sessionExpirationMs) {

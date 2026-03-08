@@ -1,5 +1,6 @@
 package net.firedevops.firemud.service.impl;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -33,6 +34,9 @@ public final class GameSessionControlPlaneGrpcService
   private final TickService tickService;
   private final MeterRegistry meterRegistry;
 
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "Injected repository/services are internal Spring collaborators")
   public GameSessionControlPlaneGrpcService(
       GameInstanceRepository gameInstanceRepository,
       TickService tickService,

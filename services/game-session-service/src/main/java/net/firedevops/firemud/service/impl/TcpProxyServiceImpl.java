@@ -1,5 +1,6 @@
 package net.firedevops.firemud.service.impl;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -35,6 +36,9 @@ public final class TcpProxyServiceImpl extends TcpProxyServiceGrpc.TcpProxyServi
   private final DevIsolatedProperties devIsolatedProperties;
   private final DisconnectDeduplicator disconnectDeduplicator = new DisconnectDeduplicator(50_000);
 
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "Injected repository/services are internal Spring collaborators")
   public TcpProxyServiceImpl(
       GameInstanceRepository repository,
       SessionStateService sessionStateService,

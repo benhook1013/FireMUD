@@ -2,6 +2,7 @@ package net.firedevops.firemud.cache;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Duration;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
@@ -13,6 +14,9 @@ import org.springframework.stereotype.Service;
 @Service
 @ConditionalOnMissingBean(LookCacheService.class)
 @RequiredArgsConstructor
+@SuppressFBWarnings(
+    value = "EI_EXPOSE_REP2",
+    justification = "Injected Redis/ObjectMapper dependencies are shared framework singletons")
 public class RedisLookCacheService implements LookCacheService {
   private final RedisTemplate<String, String> redisTemplate;
   private final ObjectMapper objectMapper;

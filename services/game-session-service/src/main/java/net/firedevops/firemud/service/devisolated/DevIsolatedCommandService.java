@@ -1,5 +1,6 @@
 package net.firedevops.firemud.service.devisolated;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.dto.CommandEnqueueResult;
 import net.firedevops.firemud.service.CommandService;
@@ -16,6 +17,9 @@ public class DevIsolatedCommandService implements CommandService {
 
   private final TickService tickService;
 
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "TickService is an injected internal collaborator")
   public DevIsolatedCommandService(TickService tickService) {
     this.tickService = tickService;
   }

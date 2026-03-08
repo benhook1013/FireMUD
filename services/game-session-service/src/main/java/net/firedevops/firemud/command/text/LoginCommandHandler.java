@@ -1,5 +1,6 @@
 package net.firedevops.firemud.command.text;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.util.List;
@@ -112,7 +113,7 @@ public final class LoginCommandHandler {
         return invalidAccountFailure();
       }
     }
-    if (authenticatedAccountId != instance.getOwnerAccountId()) {
+    if (!Objects.equals(authenticatedAccountId, instance.getOwnerAccountId())) {
       return accountMismatchFailure();
     }
 
@@ -242,9 +243,12 @@ public final class LoginCommandHandler {
   }
 
   private Long parseAccountId(String accountIdText) {
+    if (accountIdText == null) {
+      return null;
+    }
     try {
       return Long.parseLong(accountIdText);
-    } catch (NumberFormatException | NullPointerException ex) {
+    } catch (NumberFormatException ex) {
       return null;
     }
   }

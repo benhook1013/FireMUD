@@ -1,5 +1,6 @@
 package net.firedevops.firemud.command.text;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.util.List;
 import java.util.Locale;
@@ -19,6 +20,9 @@ import org.springframework.stereotype.Component;
 /** Handles authenticated SAY-family text commands by speaking through Game Logic. */
 @Component
 @RequiredArgsConstructor
+@SuppressFBWarnings(
+    value = "EI_EXPOSE_REP2",
+    justification = "Injected services/configuration are stored internally")
 public class SayCommandHandler {
   private static final Logger LOG = LoggerFactory.getLogger(SayCommandHandler.class);
   private static final String INVOCATIONS_METRIC = "gamesession.command.say.invocations";

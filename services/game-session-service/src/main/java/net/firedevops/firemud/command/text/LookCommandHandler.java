@@ -1,5 +1,6 @@
 package net.firedevops.firemud.command.text;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -19,6 +20,9 @@ import org.springframework.util.StringUtils;
 
 @Component
 @RequiredArgsConstructor
+@SuppressFBWarnings(
+    value = "EI_EXPOSE_REP2",
+    justification = "Injected services/configuration are stored internally")
 public final class LookCommandHandler {
   private static final Logger LOG = LoggerFactory.getLogger(LookCommandHandler.class);
   private static final String INVOCATIONS_METRIC = "gamesession.command.look.invocations";

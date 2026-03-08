@@ -1,5 +1,6 @@
 package net.firedevops.firemud.client;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
 import io.grpc.netty.shaded.io.grpc.netty.GrpcSslContexts;
@@ -21,6 +22,9 @@ import org.springframework.stereotype.Component;
 
 /** gRPC client for the Account Service login endpoint. */
 @Component
+@SuppressFBWarnings(
+    value = "EI_EXPOSE_REP2",
+    justification = "Injected configuration is stored internally")
 public final class AccountClient implements AutoCloseable {
   private static final Logger logger = LoggingUtil.getLogger(AccountClient.class);
 
