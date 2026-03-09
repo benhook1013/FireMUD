@@ -1,7 +1,7 @@
 package net.firedevops.firemud.tcpproxy.config;
 
-import net.firedevops.firemud.cache.RedisLookCacheService;
 import net.firedevops.firemud.common.config.RedisProperties;
+import net.firedevops.firemud.gamesession.cache.RedisLookCacheService;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;

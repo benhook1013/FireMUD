@@ -64,7 +64,7 @@ tasks.named<BootRun>("bootRun") {
 tasks.register<BootRun>("bootRunDevIsolated") {
     group = "application"
     description = "Start the game session service in dev with dev-isolated handling"
-    mainClass.set("net.firedevops.firemud.GameSessionServiceApplication")
+    mainClass.set("net.firedevops.firemud.gamesession.GameSessionServiceApplication")
     classpath = sourceSets.main.get().runtimeClasspath
     systemProperty("spring.profiles.active", "dev")
     environment("GAME_SESSION_DEV_ISOLATED", "true")
