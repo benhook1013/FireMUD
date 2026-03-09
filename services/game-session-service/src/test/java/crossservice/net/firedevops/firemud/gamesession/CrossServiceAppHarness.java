@@ -17,6 +17,7 @@ public final class CrossServiceAppHarness {
     int grpcPort = TestSocketUtils.findAvailableTcpPort();
     Map<String, Object> props = new LinkedHashMap<>();
     props.put("spring.profiles.active", "test");
+    props.put("spring.application.name", "game-logic-service");
     props.put("server.port", "0");
     props.put("grpc.server.port", String.valueOf(grpcPort));
     props.put("grpc.server.security.enabled", "false");
@@ -40,6 +41,7 @@ public final class CrossServiceAppHarness {
       int gameLogicPort, int accountPort, Consumer<Map<String, Object>> customizer) {
     Map<String, Object> props = new LinkedHashMap<>();
     props.put("spring.profiles.active", "test");
+    props.put("spring.application.name", "game-session-service");
     props.put("server.port", "0");
     props.put("grpc.server.port", "0");
     props.put("grpc.server.enabled", "false");
@@ -86,8 +88,8 @@ public final class CrossServiceAppHarness {
       return port;
     }
 
-    public ConfigurableApplicationContext context() {
-      return context;
+    public <T> T bean(Class<T> type) {
+      return context.getBean(type);
     }
 
     public void close() {

@@ -168,8 +168,7 @@ class SayWebSocketCrossServiceTest {
   }
 
   private long prepareGameInstance() {
-    JdbcTemplate jdbc =
-        new JdbcTemplate(GAME_SESSION.context().getBean(javax.sql.DataSource.class));
+    JdbcTemplate jdbc = new JdbcTemplate(GAME_SESSION.bean(javax.sql.DataSource.class));
     jdbc.execute(
         """
         CREATE TABLE IF NOT EXISTS game_instances (

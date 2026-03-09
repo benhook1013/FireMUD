@@ -9,10 +9,12 @@ import jakarta.annotation.PostConstruct;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.conflict.ConflictTracker;
@@ -75,6 +77,7 @@ public class TickServiceImpl implements TickService {
   private final AtomicBoolean pauseRequested = new AtomicBoolean(false);
   private final Set<Long> pausedGameInstances = ConcurrentHashMap.newKeySet();
   private final AtomicInteger activeTicks = new AtomicInteger();
+  private final Map<String, AtomicLong> retryQueueDepthGauges = new ConcurrentHashMap<>();
 
   private Long executeScriptWithRetry(RedisScript<Long> script, List<String> keys, Object... args) {
     int attempts = 0;
@@ -185,12 +188,8 @@ public class TickServiceImpl implements TickService {
     boolean solo = false;
     try {
       Long pending = redisTemplate.opsForList().size(pendingKey(tenantId, sessionId));
-      double depth = pending != null ? pending.doubleValue() : 0.0;
-      meterRegistry.gauge(
-          "tick_retry_queue_depth",
-          io.micrometer.core.instrument.Tags.of(
-              "tenantId", tenantId.toString(), "regionId", sessionId.toString()),
-          depth);
+      long depth = pending != null ? pending : 0L;
+      retryQueueDepthGauge(tenantId, sessionId).set(depth);
       if (pending != null && pending > 0) {
         logger.info("Replaying {} pending commands for {}", pending, sessionId);
         tickTimer.record(
@@ -240,6 +239,18 @@ public class TickServiceImpl implements TickService {
       redisTemplate.delete(lockKey);
       activeTicks.decrementAndGet();
     }
+  }
+
+  private AtomicLong retryQueueDepthGauge(Long tenantId, Long sessionId) {
+    String gaugeKey = tenantId + ":" + sessionId;
+    return retryQueueDepthGauges.computeIfAbsent(
+        gaugeKey,
+        ignored ->
+            meterRegistry.gauge(
+                "tick_retry_queue_depth",
+                io.micrometer.core.instrument.Tags.of(
+                    "tenantId", tenantId.toString(), "regionId", sessionId.toString()),
+                new AtomicLong()));
   }
 
   @Override

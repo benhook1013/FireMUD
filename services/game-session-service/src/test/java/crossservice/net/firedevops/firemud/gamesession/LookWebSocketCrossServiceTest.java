@@ -153,7 +153,7 @@ class LookWebSocketCrossServiceTest {
   }
 
   private long prepareGameInstance() {
-    DataSource dataSource = GAME_SESSION.context().getBean(DataSource.class);
+    DataSource dataSource = GAME_SESSION.bean(DataSource.class);
     JdbcTemplate jdbc = new JdbcTemplate(dataSource);
     jdbc.execute(
         """
