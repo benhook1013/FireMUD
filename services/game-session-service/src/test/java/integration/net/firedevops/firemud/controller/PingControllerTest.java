@@ -5,7 +5,12 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import net.firedevops.firemud.command.text.LoginCommandHandler;
+import net.firedevops.firemud.command.text.LookCommandHandler;
+import net.firedevops.firemud.command.text.SayCommandHandler;
+import net.firedevops.firemud.repository.GameInstanceRepository;
 import net.firedevops.firemud.service.PingService;
+import net.firedevops.firemud.service.SessionAuthenticationService;
 import org.junit.jupiter.api.Test;
 import org.lognet.springboot.grpc.GRpcServerRunner;
 import org.mockito.Mockito;
@@ -20,6 +25,11 @@ class PingControllerTest {
 
   @MockitoBean private PingService pingService;
   @MockitoBean private GRpcServerRunner grpcServerRunner;
+  @MockitoBean private LoginCommandHandler loginCommandHandler;
+  @MockitoBean private LookCommandHandler lookCommandHandler;
+  @MockitoBean private SayCommandHandler sayCommandHandler;
+  @MockitoBean private SessionAuthenticationService sessionAuthenticationService;
+  @MockitoBean private GameInstanceRepository gameInstanceRepository;
 
   @Test
   void pingReturnsApiResponse() throws Exception {

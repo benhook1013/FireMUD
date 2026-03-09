@@ -5,9 +5,13 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import net.firedevops.firemud.config.GameLogicGrpcClientConfig;
 import net.firedevops.firemud.logic.dto.CommandResult;
 import net.firedevops.firemud.logic.service.CommandService;
+import net.firedevops.firemud.service.LookAggregationService;
+import net.firedevops.firemud.service.SayAggregationService;
 import org.junit.jupiter.api.Test;
+import org.lognet.springboot.grpc.GRpcServerRunner;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.http.MediaType;
@@ -19,7 +23,11 @@ class CommandControllerTest {
 
   @Autowired private MockMvc mockMvc;
 
+  @MockitoBean private GameLogicGrpcClientConfig gameLogicGrpcClientConfig;
+  @MockitoBean private GRpcServerRunner grpcServerRunner;
   @MockitoBean private CommandService commandService;
+  @MockitoBean private LookAggregationService lookAggregationService;
+  @MockitoBean private SayAggregationService sayAggregationService;
 
   @Test
   void executeReturnsResult() throws Exception {

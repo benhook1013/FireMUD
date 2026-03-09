@@ -5,8 +5,12 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import net.firedevops.firemud.config.GameLogicGrpcClientConfig;
+import net.firedevops.firemud.service.LookAggregationService;
 import net.firedevops.firemud.service.PingService;
+import net.firedevops.firemud.service.SayAggregationService;
 import org.junit.jupiter.api.Test;
+import org.lognet.springboot.grpc.GRpcServerRunner;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -17,7 +21,11 @@ class PingControllerTest {
 
   @Autowired private MockMvc mockMvc;
 
+  @MockitoBean private GameLogicGrpcClientConfig gameLogicGrpcClientConfig;
+  @MockitoBean private GRpcServerRunner grpcServerRunner;
+  @MockitoBean private LookAggregationService lookAggregationService;
   @MockitoBean private PingService pingService;
+  @MockitoBean private SayAggregationService sayAggregationService;
 
   @Test
   void pingEndpointReturnsPong() throws Exception {

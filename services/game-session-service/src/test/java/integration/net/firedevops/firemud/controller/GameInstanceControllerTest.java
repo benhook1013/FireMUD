@@ -5,9 +5,14 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import net.firedevops.firemud.command.text.LoginCommandHandler;
+import net.firedevops.firemud.command.text.LookCommandHandler;
+import net.firedevops.firemud.command.text.SayCommandHandler;
 import net.firedevops.firemud.dto.GameInstanceDto;
 import net.firedevops.firemud.dto.StartSessionRequest;
+import net.firedevops.firemud.repository.GameInstanceRepository;
 import net.firedevops.firemud.service.GameInstanceService;
+import net.firedevops.firemud.service.SessionAuthenticationService;
 import org.junit.jupiter.api.Test;
 import org.lognet.springboot.grpc.GRpcServerRunner;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -23,6 +28,11 @@ class GameInstanceControllerTest {
 
   @MockitoBean private GameInstanceService gameInstanceService;
   @MockitoBean private GRpcServerRunner grpcServerRunner;
+  @MockitoBean private LoginCommandHandler loginCommandHandler;
+  @MockitoBean private LookCommandHandler lookCommandHandler;
+  @MockitoBean private SayCommandHandler sayCommandHandler;
+  @MockitoBean private SessionAuthenticationService sessionAuthenticationService;
+  @MockitoBean private GameInstanceRepository gameInstanceRepository;
 
   @Test
   void startSessionReturnsDto() throws Exception {
