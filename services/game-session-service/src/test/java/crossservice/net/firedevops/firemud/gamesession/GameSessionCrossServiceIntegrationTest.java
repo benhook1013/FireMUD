@@ -21,6 +21,9 @@ class GameSessionCrossServiceIntegrationTest {
 
   @Test
   void gameSessionRunsAlongsideGameLogicService() throws Exception {
-    mockMvc.perform(get("/ping")).andExpect(status().isOk()).andExpect(content().string(org.hamcrest.Matchers.containsString("pong")));
+    mockMvc
+        .perform(get("/ping"))
+        .andExpect(status().isOk())
+        .andExpect(content().string(org.hamcrest.Matchers.containsString("pong")));
   }
 }

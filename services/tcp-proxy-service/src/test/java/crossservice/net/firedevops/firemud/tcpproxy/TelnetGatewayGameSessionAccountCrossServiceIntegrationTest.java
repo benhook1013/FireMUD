@@ -332,8 +332,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     ConfigurableApplicationContext context =
         new SpringApplicationBuilder(
                 GameSessionServiceApplication.class, GameSessionTestOverrides.class)
-            .properties(
-                gameSessionProps(gameLogicPort, accountPort))
+            .properties(gameSessionProps(gameLogicPort, accountPort))
             .run();
 
     JdbcTemplate jdbc = new JdbcTemplate(context.getBean(DataSource.class));

@@ -127,8 +127,10 @@ class LookWebSocketCrossServiceTest {
     }
   }
 
-  private static CrossServiceAppHarness.GameLogicHolder startGameLogic(int worldPort, int entityPort) {
-    return CrossServiceAppHarness.startGameLogic(WORLD_STUB.endpoint(), ENTITY_STUB.endpoint(), null);
+  private static CrossServiceAppHarness.GameLogicHolder startGameLogic(
+      int worldPort, int entityPort) {
+    return CrossServiceAppHarness.startGameLogic(
+        WORLD_STUB.endpoint(), ENTITY_STUB.endpoint(), null);
   }
 
   private static CrossServiceAppHarness.GameSessionHolder startGameSession(
@@ -288,5 +290,4 @@ class LookWebSocketCrossServiceTest {
       }
     }
   }
-
 }

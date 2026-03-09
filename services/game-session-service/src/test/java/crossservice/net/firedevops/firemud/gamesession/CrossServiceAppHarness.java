@@ -29,7 +29,8 @@ public final class CrossServiceAppHarness {
     }
 
     ConfigurableApplicationContext context =
-        new SpringApplicationBuilder(net.firedevops.firemud.gamelogic.GameLogicServiceApplication.class)
+        new SpringApplicationBuilder(
+                net.firedevops.firemud.gamelogic.GameLogicServiceApplication.class)
             .properties(props)
             .run();
     return new GameLogicHolder(context, grpcPort);
