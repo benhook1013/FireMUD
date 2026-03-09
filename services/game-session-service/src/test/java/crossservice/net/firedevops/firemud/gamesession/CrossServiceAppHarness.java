@@ -22,6 +22,7 @@ public final class CrossServiceAppHarness {
     props.put("grpc.server.port", String.valueOf(grpcPort));
     props.put("grpc.server.security.enabled", "false");
     props.put("firemud.grpc.plaintext", "true");
+    props.put("firemud.database.enabled", "false");
     props.put("otel.endpoint", "disabled");
     props.put("firemud.services.worldManagementService", worldEndpoint);
     props.put("firemud.services.entityManagementService", entityEndpoint);
@@ -45,6 +46,7 @@ public final class CrossServiceAppHarness {
     props.put("server.port", "0");
     props.put("grpc.server.port", "0");
     props.put("grpc.server.enabled", "false");
+    props.put("game-session.dev-isolated", "false");
     props.put("firemud.services.gameLogicService", "localhost:" + gameLogicPort);
     props.put("firemud.services.accountService", "localhost:" + accountPort);
     props.put("firemud.grpc.plaintext", "true");
