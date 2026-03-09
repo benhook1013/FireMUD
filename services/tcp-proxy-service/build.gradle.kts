@@ -19,7 +19,6 @@ dependencies {
     implementation(libs.spring.boot.starter.websocket)
     implementation(libs.spring.boot.starter.data.redis)
     implementation(project(":common-library"))
-    implementation(project(":game-session-service"))
     implementation(libs.grpc.spring.boot.starter)
     implementation(libs.micrometer.core)
     implementation(libs.micrometer.registry.prometheus)

@@ -35,16 +35,12 @@ import javax.sql.DataSource;
 import net.firedevops.firemud.account.v1.AccountServiceGrpc;
 import net.firedevops.firemud.account.v1.AuthenticateRequest;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
-import net.firedevops.firemud.common.config.CommonAutoConfiguration;
-import net.firedevops.firemud.common.config.DatabaseAutoConfiguration;
 import net.firedevops.firemud.common.conflict.ConflictTracker;
 import net.firedevops.firemud.gamelogic.GameLogicServiceApplication;
-import net.firedevops.firemud.gamesession.config.GameSessionProperties;
-import net.firedevops.firemud.gamesession.config.GrpcClientProperties;
+import net.firedevops.firemud.gamesession.GameSessionServiceApplication;
 import net.firedevops.firemud.gamesession.dto.GameInstanceDto;
 import net.firedevops.firemud.gamesession.dto.StartSessionRequest;
 import net.firedevops.firemud.gamesession.service.GameInstanceService;
-import net.firedevops.firemud.gamesession.GameSessionServiceApplication;
 import net.firedevops.firemud.gamesession.test.ChatTestFixtures;
 import net.firedevops.firemud.gamesession.test.LookTestFixtures;
 import net.firedevops.firemud.gamesession.test.stubs.ChatEntityManagementStubServer;
@@ -61,25 +57,19 @@ import org.lognet.springboot.grpc.GRpcServerRunner;
 import org.lognet.springboot.grpc.GRpcServicesRegistry;
 import org.lognet.springboot.grpc.health.ManagedHealthStatusService;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.SpringBootConfiguration;
-import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
-import org.springframework.boot.autoconfigure.domain.EntityScan;
 import org.springframework.boot.builder.SpringApplicationBuilder;
-import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
+import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.ComponentScan;
-import org.springframework.context.annotation.Import;
-import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
+import org.springframework.context.annotation.Primary;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.util.TestSocketUtils;
@@ -370,7 +360,10 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     props.put("spring.datasource.password", POSTGRES.getPassword());
     props.put("spring.jpa.hibernate.ddl-auto", "none");
     ConfigurableApplicationContext context =
-        new SpringApplicationBuilder(GameSessionTestApplication.class).properties(props).run();
+        new SpringApplicationBuilder(
+                GameSessionServiceApplication.class, GameSessionTestOverrides.class)
+            .properties(props)
+            .run();
 
     JdbcTemplate jdbc = new JdbcTemplate(context.getBean(DataSource.class));
     jdbc.execute(
@@ -580,16 +573,8 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     }
   }
 
-  @SpringBootConfiguration
-  @EnableAutoConfiguration(
-      excludeName = "org.lognet.springboot.grpc.autoconfigure.GRpcAutoConfiguration")
-  @EnableScheduling
-  @EnableConfigurationProperties({GrpcClientProperties.class, GameSessionProperties.class})
-  @EntityScan(basePackages = "net.firedevops.firemud.gamesession.entity")
-  @EnableJpaRepositories(basePackages = "net.firedevops.firemud.gamesession.repository")
-  @ComponentScan(basePackageClasses = GameSessionServiceApplication.class)
-  @Import({DatabaseAutoConfiguration.class, CommonAutoConfiguration.class})
-  static class GameSessionTestApplication {
+  @TestConfiguration
+  static class GameSessionTestOverrides {
 
     @Bean
     RedisConnectionFactory redisConnectionFactory() {
@@ -616,11 +601,13 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     }
 
     @Bean
+    @Primary
     ConflictTracker conflictTracker() {
       return key -> {};
     }
 
     @Bean
+    @Primary
     GameInstanceService stubGameInstanceService() {
       return new GameInstanceService() {
         @Override
@@ -647,6 +634,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     }
 
     @Bean
+    @Primary
     GatewayRouteService gatewayRouteService() {
       return new GatewayRouteService() {
         @Override
@@ -662,16 +650,19 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     }
 
     @Bean
+    @Primary
     Tracer tracer() {
       return GlobalOpenTelemetry.getTracer("test");
     }
 
     @Bean
+    @Primary
     GRpcServicesRegistry grpcServicesRegistry() {
       return new GRpcServicesRegistry();
     }
 
     @Bean
+    @Primary
     ManagedHealthStatusService managedHealthStatusService() {
       return new ManagedHealthStatusService() {
         @Override

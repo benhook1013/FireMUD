@@ -1,4 +1,4 @@
-package net.firedevops.firemud.gamesession.cache;
+package net.firedevops.firemud.cache;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -6,7 +6,6 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Duration;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
-import net.firedevops.firemud.cache.LookCacheService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.data.redis.core.RedisTemplate;
