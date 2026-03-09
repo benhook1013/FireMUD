@@ -13,9 +13,7 @@ import java.net.http.WebSocket;
 import java.net.http.WebSocket.Listener;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
@@ -31,9 +29,6 @@ import net.firedevops.firemud.gamesession.test.stubs.EntityManagementStubServer;
 import net.firedevops.firemud.gamesession.test.stubs.WorldManagementStubServer;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
-import org.springframework.boot.builder.SpringApplicationBuilder;
-import org.springframework.boot.web.context.WebServerApplicationContext;
-import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.util.TestSocketUtils;
 import org.testcontainers.containers.GenericContainer;
@@ -62,18 +57,18 @@ class LookWebSocketCrossServiceTest {
   private static AccountServiceStub ACCOUNT_STUB;
   private static WorldManagementStubServer WORLD_STUB;
   private static EntityManagementStubServer ENTITY_STUB;
-  private static GameLogicHolder GAME_LOGIC;
-  private static GameSessionHolder GAME_SESSION;
+  private static CrossServiceAppHarness.GameLogicHolder GAME_LOGIC;
+  private static CrossServiceAppHarness.GameSessionHolder GAME_SESSION;
 
   @AfterAll
   static synchronized void stopServices() {
-    GameSessionHolder gameSession = GAME_SESSION;
+    CrossServiceAppHarness.GameSessionHolder gameSession = GAME_SESSION;
     GAME_SESSION = null;
     if (gameSession != null) {
       gameSession.close();
     }
 
-    GameLogicHolder gameLogic = GAME_LOGIC;
+    CrossServiceAppHarness.GameLogicHolder gameLogic = GAME_LOGIC;
     GAME_LOGIC = null;
     if (gameLogic != null) {
       gameLogic.close();
@@ -132,48 +127,31 @@ class LookWebSocketCrossServiceTest {
     }
   }
 
-  private static GameLogicHolder startGameLogic(int worldPort, int entityPort) {
-    int grpcPort = TestSocketUtils.findAvailableTcpPort();
-    Map<String, Object> props = new LinkedHashMap<>();
-    props.put("server.port", "0");
-    props.put("grpc.server.port", String.valueOf(grpcPort));
-    props.put("grpc.server.security.enabled", "false");
-    props.put("firemud.grpc.plaintext", "true");
-    props.put("firemud.services.worldManagementService", WORLD_STUB.endpoint());
-    props.put("firemud.services.entityManagementService", ENTITY_STUB.endpoint());
-    ConfigurableApplicationContext context =
-        new SpringApplicationBuilder(
-                net.firedevops.firemud.gamelogic.GameLogicServiceApplication.class)
-            .properties(props)
-            .run();
-    return new GameLogicHolder(context, grpcPort);
+  private static CrossServiceAppHarness.GameLogicHolder startGameLogic(int worldPort, int entityPort) {
+    return CrossServiceAppHarness.startGameLogic(WORLD_STUB.endpoint(), ENTITY_STUB.endpoint(), null);
   }
 
-  private static GameSessionHolder startGameSession(int gameLogicPort, int accountPort) {
-    Map<String, Object> props = new LinkedHashMap<>();
-    props.put("server.port", "0");
-    props.put("grpc.server.port", "0");
-    props.put("firemud.services.gameLogicService", "localhost:" + gameLogicPort);
-    props.put("firemud.services.accountService", "localhost:" + accountPort);
-    props.put("firemud.grpc.plaintext", "true");
-    props.put("game.logic.default-room-id", LookTestFixtures.ROOM_ID);
-    props.put("firemud.redis.host", REDIS.getHost());
-    props.put("firemud.redis.port", REDIS.getMappedPort(6379));
-    props.put("firemud.postgres.host", POSTGRES.getHost());
-    props.put("firemud.postgres.port", POSTGRES.getMappedPort(5432));
-    props.put("firemud.postgres.database", POSTGRES.getDatabaseName());
-    props.put("firemud.postgres.username", POSTGRES.getUsername());
-    props.put("firemud.postgres.password", POSTGRES.getPassword());
-    props.put("firemud.database.enabled", "true");
-    props.put("spring.jpa.hibernate.ddl-auto", "none");
-    ConfigurableApplicationContext context =
-        new SpringApplicationBuilder(GameSessionServiceApplication.class).properties(props).run();
-    int port = ((WebServerApplicationContext) context).getWebServer().getPort();
-    return new GameSessionHolder(context, port);
+  private static CrossServiceAppHarness.GameSessionHolder startGameSession(
+      int gameLogicPort, int accountPort) {
+    return CrossServiceAppHarness.startGameSession(
+        gameLogicPort,
+        accountPort,
+        props -> {
+          props.put("game.logic.default-room-id", LookTestFixtures.ROOM_ID);
+          props.put("firemud.redis.host", REDIS.getHost());
+          props.put("firemud.redis.port", REDIS.getMappedPort(6379));
+          props.put("firemud.postgres.host", POSTGRES.getHost());
+          props.put("firemud.postgres.port", POSTGRES.getMappedPort(5432));
+          props.put("firemud.postgres.database", POSTGRES.getDatabaseName());
+          props.put("firemud.postgres.username", POSTGRES.getUsername());
+          props.put("firemud.postgres.password", POSTGRES.getPassword());
+          props.put("firemud.database.enabled", "true");
+          props.put("spring.jpa.hibernate.ddl-auto", "none");
+        });
   }
 
   private long prepareGameInstance() {
-    DataSource dataSource = GAME_SESSION.dataSource();
+    DataSource dataSource = GAME_SESSION.context().getBean(DataSource.class);
     JdbcTemplate jdbc = new JdbcTemplate(dataSource);
     jdbc.execute(
         """
@@ -311,43 +289,4 @@ class LookWebSocketCrossServiceTest {
     }
   }
 
-  private static final class GameLogicHolder {
-    private final ConfigurableApplicationContext context;
-    private final int grpcPort;
-
-    GameLogicHolder(ConfigurableApplicationContext context, int grpcPort) {
-      this.context = context;
-      this.grpcPort = grpcPort;
-    }
-
-    int grpcPort() {
-      return grpcPort;
-    }
-
-    void close() {
-      context.close();
-    }
-  }
-
-  private static final class GameSessionHolder {
-    private final ConfigurableApplicationContext context;
-    private final int webPort;
-
-    GameSessionHolder(ConfigurableApplicationContext context, int webPort) {
-      this.context = context;
-      this.webPort = webPort;
-    }
-
-    int port() {
-      return webPort;
-    }
-
-    DataSource dataSource() {
-      return context.getBean(DataSource.class);
-    }
-
-    void close() {
-      context.close();
-    }
-  }
 }

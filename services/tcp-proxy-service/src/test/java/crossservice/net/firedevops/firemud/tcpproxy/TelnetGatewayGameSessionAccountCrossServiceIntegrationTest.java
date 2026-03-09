@@ -23,7 +23,6 @@ import java.net.http.WebSocket;
 import java.net.http.WebSocket.Listener;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -313,12 +312,14 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
   }
 
   private static GameLogicHolder startGameLogic(int worldPort, int entityPort, int socialPort) {
+    Map<String, Object> props = new java.util.LinkedHashMap<>();
     int grpcPort = TestSocketUtils.findAvailableTcpPort();
-    Map<String, Object> props = new LinkedHashMap<>();
+    props.put("spring.profiles.active", "test");
     props.put("server.port", "0");
     props.put("grpc.server.port", String.valueOf(grpcPort));
     props.put("grpc.server.security.enabled", "false");
     props.put("firemud.grpc.plaintext", "true");
+    props.put("otel.endpoint", "disabled");
     props.put("firemud.services.worldManagementService", "localhost:" + worldPort);
     props.put("firemud.services.entityManagementService", "localhost:" + entityPort);
     props.put("firemud.services.socialGroupsService", "localhost:" + socialPort);
@@ -328,41 +329,11 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
   }
 
   private static GameSessionHolder startGameSession(int gameLogicPort, int accountPort) {
-    Map<String, Object> props = new LinkedHashMap<>();
-    props.put("server.port", "0");
-    props.put("grpc.server.port", "0");
-    props.put("grpc.server.enabled", "false");
-    props.put("game-session.dev-isolated", "false");
-    props.put("game-session.require-authenticated-commands", "true");
-    props.put("firemud.services.accountService", "localhost:" + accountPort);
-    props.put("firemud.services.gameLogicService", "localhost:" + gameLogicPort);
-    props.put("firemud.grpc.plaintext", "true");
-    props.put("game.logic.default-room-id", LookTestFixtures.ROOM_ID);
-    props.put("firemud.postgres.host", POSTGRES.getHost());
-    props.put("firemud.postgres.port", String.valueOf(POSTGRES.getMappedPort(5432)));
-    props.put("firemud.postgres.database", POSTGRES.getDatabaseName());
-    props.put("firemud.postgres.username", POSTGRES.getUsername());
-    props.put("firemud.postgres.password", POSTGRES.getPassword());
-    props.put("firemud.redis.host", REDIS.getHost());
-    props.put("firemud.redis.port", String.valueOf(REDIS.getMappedPort(6379)));
-    props.put("firemud.database.enabled", "true");
-    props.put("spring.main.allow-bean-definition-overriding", "true");
-    props.put("firemud.auth.jwt-secret", "stub-secret");
-    props.put(
-        "spring.datasource.url",
-        "jdbc:postgresql://"
-            + POSTGRES.getHost()
-            + ":"
-            + POSTGRES.getMappedPort(5432)
-            + "/"
-            + POSTGRES.getDatabaseName());
-    props.put("spring.datasource.username", POSTGRES.getUsername());
-    props.put("spring.datasource.password", POSTGRES.getPassword());
-    props.put("spring.jpa.hibernate.ddl-auto", "none");
     ConfigurableApplicationContext context =
         new SpringApplicationBuilder(
                 GameSessionServiceApplication.class, GameSessionTestOverrides.class)
-            .properties(props)
+            .properties(
+                gameSessionProps(gameLogicPort, accountPort))
             .run();
 
     JdbcTemplate jdbc = new JdbcTemplate(context.getBean(DataSource.class));
@@ -394,6 +365,61 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
             .getWebServer()
             .getPort();
     return new GameSessionHolder(context, port, insertedId);
+  }
+
+  private static Map<String, Object> gameSessionProps(int gameLogicPort, int accountPort) {
+    Map<String, Object> props = new java.util.LinkedHashMap<>();
+    props.put("spring.profiles.active", "test");
+    props.put("server.port", "0");
+    props.put("grpc.server.port", "0");
+    props.put("grpc.server.enabled", "false");
+    props.put("game-session.dev-isolated", "false");
+    props.put("game-session.require-authenticated-commands", "true");
+    props.put("firemud.services.accountService", "localhost:" + accountPort);
+    props.put("firemud.services.gameLogicService", "localhost:" + gameLogicPort);
+    props.put("firemud.grpc.plaintext", "true");
+    props.put("otel.endpoint", "disabled");
+    props.put("game.logic.default-room-id", LookTestFixtures.ROOM_ID);
+    props.put("firemud.postgres.host", POSTGRES.getHost());
+    props.put("firemud.postgres.port", String.valueOf(POSTGRES.getMappedPort(5432)));
+    props.put("firemud.postgres.database", POSTGRES.getDatabaseName());
+    props.put("firemud.postgres.username", POSTGRES.getUsername());
+    props.put("firemud.postgres.password", POSTGRES.getPassword());
+    props.put("firemud.redis.host", REDIS.getHost());
+    props.put("firemud.redis.port", String.valueOf(REDIS.getMappedPort(6379)));
+    props.put("firemud.database.enabled", "true");
+    props.put("spring.main.allow-bean-definition-overriding", "true");
+    props.put("firemud.auth.jwt-secret", "stub-secret");
+    props.put(
+        "spring.datasource.url",
+        "jdbc:postgresql://"
+            + POSTGRES.getHost()
+            + ":"
+            + POSTGRES.getMappedPort(5432)
+            + "/"
+            + POSTGRES.getDatabaseName());
+    props.put("spring.datasource.username", POSTGRES.getUsername());
+    props.put("spring.datasource.password", POSTGRES.getPassword());
+    props.put("spring.jpa.hibernate.ddl-auto", "none");
+    return props;
+  }
+
+  private static final class GameLogicHolder {
+    private final ConfigurableApplicationContext context;
+    private final int grpcPort;
+
+    GameLogicHolder(ConfigurableApplicationContext context, int grpcPort) {
+      this.context = context;
+      this.grpcPort = grpcPort;
+    }
+
+    int grpcPort() {
+      return grpcPort;
+    }
+
+    void close() {
+      context.close();
+    }
   }
 
   private static GatewayHolder startGateway(int gameSessionPort) {
@@ -548,24 +574,6 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
 
     String websocketUrl() {
       return "ws://localhost:" + port + "/ws/game";
-    }
-
-    void close() {
-      context.close();
-    }
-  }
-
-  private static final class GameLogicHolder {
-    private final ConfigurableApplicationContext context;
-    private final int grpcPort;
-
-    GameLogicHolder(ConfigurableApplicationContext context, int grpcPort) {
-      this.context = context;
-      this.grpcPort = grpcPort;
-    }
-
-    int grpcPort() {
-      return grpcPort;
     }
 
     void close() {
