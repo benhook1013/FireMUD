@@ -37,7 +37,9 @@ public class JwtAuthInterceptor implements HandlerInterceptor {
       Claims payload = claims.getPayload();
       List<?> rawGlobalRoles = payload.get("globalRoles", List.class);
       List<String> globalRoles =
-          rawGlobalRoles == null ? List.of() : rawGlobalRoles.stream().map(String::valueOf).toList();
+          rawGlobalRoles == null
+              ? List.of()
+              : rawGlobalRoles.stream().map(String::valueOf).toList();
       Map<?, ?> rawScopedRoles = payload.get("scopedRoles", Map.class);
       Map<String, List<String>> scopedRoles = new HashMap<>();
       if (rawScopedRoles != null) {

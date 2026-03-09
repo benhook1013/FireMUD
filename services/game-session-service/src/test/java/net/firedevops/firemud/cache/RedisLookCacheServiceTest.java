@@ -15,6 +15,7 @@ import org.mockito.Mockito;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
 
+@SuppressWarnings("unchecked")
 class RedisLookCacheServiceTest {
   private RedisTemplate<String, String> redisTemplate;
   private ValueOperations<String, String> valueOperations;

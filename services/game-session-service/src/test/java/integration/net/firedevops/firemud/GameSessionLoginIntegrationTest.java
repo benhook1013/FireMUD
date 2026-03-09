@@ -35,6 +35,7 @@ import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.client.standard.StandardWebSocketClient;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
 
+@SuppressWarnings({"unchecked", "removal"})
 @Disabled(
     "TODO: re-enable once Account/Redis/GameInstance persistence is wired; "
         + "test relies on the dev-isolated stubbed services (design/project-management/vertical-slices/02-task-list-login-and-session-vertical-slice.md#7-dev-mode-stubs-and-real-service-rollout)")

@@ -20,6 +20,9 @@ import io.netty.handler.codec.string.StringEncoder;
 import io.netty.handler.ssl.SslContext;
 import io.netty.handler.ssl.SslContextBuilder;
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.io.InputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
@@ -133,7 +136,12 @@ public final class TelnetServer {
 
   @SuppressWarnings("deprecation")
   private SslContext buildServerSslContext() throws SSLException {
-    return SslContextBuilder.forServer(new File(certPath), new File(keyPath)).build();
+    try (InputStream cert = new FileInputStream(new File(certPath));
+        InputStream key = new FileInputStream(new File(keyPath))) {
+      return SslContextBuilder.forServer(cert, key).build();
+    } catch (IOException e) {
+      throw new IllegalStateException("Failed to read TLS certificate or key", e);
+    }
   }
 
   private void validateTlsConfiguration() {

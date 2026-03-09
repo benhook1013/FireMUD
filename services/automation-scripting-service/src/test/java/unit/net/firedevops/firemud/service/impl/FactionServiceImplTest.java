@@ -25,7 +25,8 @@ class FactionServiceImplTest {
     when(standingRepository.findByTenantIdAndPlayerIdAndFaction_Id(1L, 2L, 1L))
         .thenReturn(Optional.empty());
     ArgumentCaptor<FactionStanding> captor = ArgumentCaptor.forClass(FactionStanding.class);
-    when(standingRepository.save(captor.capture())).thenAnswer(i -> i.getArgument(0));
+    when(standingRepository.save(captor.capture()))
+        .thenAnswer(i -> i.getArgument(0, FactionStanding.class));
 
     int result = service.adjustReputation(1L, 2L, 1L, 5);
 

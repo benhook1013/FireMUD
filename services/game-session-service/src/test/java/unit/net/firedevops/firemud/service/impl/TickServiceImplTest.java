@@ -7,8 +7,8 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.lang.reflect.Field;
 import java.time.Duration;
-import java.util.List;
 import net.firedevops.firemud.config.DevIsolatedProperties;
 import net.firedevops.firemud.service.TickService;
 import org.junit.jupiter.api.BeforeEach;
@@ -17,6 +17,7 @@ import org.mockito.ArgumentCaptor;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
 
+@SuppressWarnings("unchecked")
 class TickServiceImplTest {
   private RedisTemplate<String, Object> redisTemplate;
   private org.springframework.data.redis.core.ListOperations<String, Object> listOps;
@@ -60,7 +61,7 @@ class TickServiceImplTest {
     when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
         .thenReturn(true);
     service.processTick(2L);
-    ArgumentCaptor<RedisScript> scriptCaptor = ArgumentCaptor.forClass(RedisScript.class);
+    ArgumentCaptor<RedisScript<?>> scriptCaptor = redisScriptCaptor();
     verify(redisTemplate, org.mockito.Mockito.atLeastOnce())
         .execute(scriptCaptor.capture(), org.mockito.ArgumentMatchers.<String>anyList());
   }
@@ -86,7 +87,7 @@ class TickServiceImplTest {
         .thenReturn(1L);
     when(listOps.size(any(String.class))).thenReturn(0L);
 
-    org.springframework.test.util.ReflectionTestUtils.setField(service, "tickBudgetMs", 0L);
+    setField(service, "tickBudgetMs", 0L);
 
     service.processTick(2L);
 
@@ -112,5 +113,21 @@ class TickServiceImplTest {
             .gauge()
             .value(),
         0.001);
+  }
+
+  @SuppressWarnings("unchecked")
+  private static ArgumentCaptor<RedisScript<?>> redisScriptCaptor() {
+    return (ArgumentCaptor<RedisScript<?>>)
+        (ArgumentCaptor<?>) ArgumentCaptor.forClass(RedisScript.class);
+  }
+
+  private static void setField(Object target, String fieldName, Object value) {
+    try {
+      Field field = target.getClass().getDeclaredField(fieldName);
+      field.setAccessible(true);
+      field.set(target, value);
+    } catch (ReflectiveOperationException e) {
+      throw new IllegalStateException("Failed to set field " + fieldName, e);
+    }
   }
 }

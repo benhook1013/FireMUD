@@ -21,7 +21,7 @@ class NpcAggressionServiceImplTest {
         .thenReturn(Optional.empty());
 
     ArgumentCaptor<NpcMemory> captor = ArgumentCaptor.forClass(NpcMemory.class);
-    when(repository.save(captor.capture())).thenAnswer(i -> i.getArgument(0));
+    when(repository.save(captor.capture())).thenAnswer(i -> i.getArgument(0, NpcMemory.class));
 
     service.setAggressionState(1L, 2L, AggressionState.FLEEING);
 

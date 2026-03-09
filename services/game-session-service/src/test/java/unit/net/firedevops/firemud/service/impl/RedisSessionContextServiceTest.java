@@ -14,6 +14,7 @@ import org.mockito.Mockito;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
 
+@SuppressWarnings("unchecked")
 class RedisSessionContextServiceTest {
   private static final Duration TTL = Duration.ofMillis(1000L);
 

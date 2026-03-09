@@ -73,7 +73,10 @@ public class GameLogicClient implements AutoCloseable {
             .setSessionId(sessionId)
             .setPlayerId(playerId)
             .setRoomInstance(
-                RoomInstanceRef.newBuilder().setTenantId(tenantId).setRoomInstanceId(roomId).build())
+                RoomInstanceRef.newBuilder()
+                    .setTenantId(tenantId)
+                    .setRoomInstanceId(roomId)
+                    .build())
             .build();
     return stub.resolveLook(request);
   }
@@ -91,7 +94,10 @@ public class GameLogicClient implements AutoCloseable {
             .setSessionId(sessionId)
             .setPlayerId(playerId)
             .setRoomInstance(
-                RoomInstanceRef.newBuilder().setTenantId(tenantId).setRoomInstanceId(roomId).build())
+                RoomInstanceRef.newBuilder()
+                    .setTenantId(tenantId)
+                    .setRoomInstanceId(roomId)
+                    .build())
             .setAlias(mapAlias(aliasToken))
             .setText(text)
             .build();

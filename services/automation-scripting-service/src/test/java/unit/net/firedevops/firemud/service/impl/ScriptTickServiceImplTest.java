@@ -6,8 +6,8 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.lang.reflect.Field;
 import java.time.Duration;
-import java.util.List;
 import net.firedevops.firemud.service.quota.ScriptQuotaService;
 import net.firedevops.firemud.service.tick.ScriptTickService;
 import org.junit.jupiter.api.BeforeEach;
@@ -16,6 +16,7 @@ import org.mockito.ArgumentCaptor;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
 
+@SuppressWarnings("unchecked")
 class ScriptTickServiceImplTest {
   private RedisTemplate<String, Object> redisTemplate;
   private org.springframework.data.redis.core.ListOperations<String, Object> listOps;
@@ -60,7 +61,7 @@ class ScriptTickServiceImplTest {
     when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
         .thenReturn(true);
     service.processTick(1L, 2L);
-    ArgumentCaptor<RedisScript> scriptCaptor = ArgumentCaptor.forClass(RedisScript.class);
+    ArgumentCaptor<RedisScript<?>> scriptCaptor = redisScriptCaptor();
     verify(redisTemplate, org.mockito.Mockito.atLeastOnce())
         .execute(scriptCaptor.capture(), org.mockito.ArgumentMatchers.<String>anyList());
   }
@@ -84,11 +85,27 @@ class ScriptTickServiceImplTest {
         .thenReturn(1L);
     when(listOps.size(any(String.class))).thenReturn(0L);
 
-    org.springframework.test.util.ReflectionTestUtils.setField(service, "tickDurationMs", 0L);
+    setField(service, "tickDurationMs", 0L);
 
     service.processTick(1L, 2L);
 
     org.junit.jupiter.api.Assertions.assertEquals(
         1.0, meterRegistry.get("automation_tick_budget_exceeded_total").counter().count(), 0.001);
+  }
+
+  @SuppressWarnings("unchecked")
+  private static ArgumentCaptor<RedisScript<?>> redisScriptCaptor() {
+    return (ArgumentCaptor<RedisScript<?>>)
+        (ArgumentCaptor<?>) ArgumentCaptor.forClass(RedisScript.class);
+  }
+
+  private static void setField(Object target, String fieldName, Object value) {
+    try {
+      Field field = target.getClass().getDeclaredField(fieldName);
+      field.setAccessible(true);
+      field.set(target, value);
+    } catch (ReflectiveOperationException e) {
+      throw new IllegalStateException("Failed to set field " + fieldName, e);
+    }
   }
 }

@@ -9,11 +9,7 @@ public class LookTextRenderer {
   public String render(LookResult result) {
     StringBuilder out = new StringBuilder();
     String roomId = displayRoomId(result);
-    out.append("Room: ")
-        .append(result.getRoomName())
-        .append(" (ID: ")
-        .append(roomId)
-        .append(")\n");
+    out.append("Room: ").append(result.getRoomName()).append(" (ID: ").append(roomId).append(")\n");
     out.append("Short: ").append(result.getShortDescription()).append("\n");
     out.append("Long: ").append(result.getLongDescription()).append("\n");
     out.append("Exits: ");

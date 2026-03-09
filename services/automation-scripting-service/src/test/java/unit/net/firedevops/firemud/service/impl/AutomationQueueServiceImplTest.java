@@ -12,6 +12,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.core.ListOperations;
 import org.springframework.data.redis.core.RedisTemplate;
 
+@SuppressWarnings("unchecked")
 class AutomationQueueServiceImplTest {
   private RedisTemplate<String, Object> redisTemplate;
   private ListOperations<String, Object> listOps;

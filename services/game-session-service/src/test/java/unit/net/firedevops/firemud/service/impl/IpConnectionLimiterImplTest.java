@@ -16,6 +16,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
 
+@SuppressWarnings("unchecked")
 class IpConnectionLimiterImplTest {
   @Test
   void enforcesMaxConnectionsPerIp() {
@@ -23,7 +24,7 @@ class IpConnectionLimiterImplTest {
     StringRedisTemplate redis = mock(StringRedisTemplate.class);
     ValueOperations<String, String> ops = mock(ValueOperations.class);
     when(redis.opsForValue()).thenReturn(ops);
-    when(ops.get(anyString())).thenAnswer(inv -> store.get(inv.getArgument(0)));
+    when(ops.get(anyString())).thenAnswer(inv -> store.get(inv.getArgument(0, String.class)));
     when(ops.increment(anyString()))
         .thenAnswer(
             inv -> {
