@@ -315,6 +315,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     Map<String, Object> props = new java.util.LinkedHashMap<>();
     int grpcPort = TestSocketUtils.findAvailableTcpPort();
     props.put("spring.profiles.active", "test");
+    props.put("spring.application.name", "game-logic-service");
     props.put("server.port", "0");
     props.put("grpc.server.port", String.valueOf(grpcPort));
     props.put("grpc.server.security.enabled", "false");
@@ -369,6 +370,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
   private static Map<String, Object> gameSessionProps(int gameLogicPort, int accountPort) {
     Map<String, Object> props = new java.util.LinkedHashMap<>();
     props.put("spring.profiles.active", "test");
+    props.put("spring.application.name", "game-session-service");
     props.put("server.port", "0");
     props.put("grpc.server.port", "0");
     props.put("grpc.server.enabled", "false");
