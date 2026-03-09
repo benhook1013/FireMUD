@@ -6,11 +6,11 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
-import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.context.annotation.Bean;
 import org.springframework.http.HttpHeaders;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.web.reactive.socket.client.ReactorNettyWebSocketClient;
 import reactor.core.publisher.Mono;
 import reactor.core.publisher.Sinks;
@@ -32,10 +32,10 @@ class DevEchoWebSocketIntegrationTest {
 
   @LocalServerPort private int port;
 
-  @MockBean private org.lognet.springboot.grpc.GRpcServerRunner grpcServerRunner;
-  @MockBean private org.lognet.springboot.grpc.GRpcServicesRegistry grpcServicesRegistry;
+  @MockitoBean private org.lognet.springboot.grpc.GRpcServerRunner grpcServerRunner;
+  @MockitoBean private org.lognet.springboot.grpc.GRpcServicesRegistry grpcServicesRegistry;
 
-  @MockBean
+  @MockitoBean
   private org.lognet.springboot.grpc.health.ManagedHealthStatusService managedHealthStatusService;
 
   @Autowired private ReactorNettyWebSocketClient client;

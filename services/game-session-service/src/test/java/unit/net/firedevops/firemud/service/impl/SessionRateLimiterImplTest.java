@@ -3,10 +3,12 @@ package net.firedevops.firemud.service.impl;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import java.time.Duration;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import net.firedevops.firemud.config.DevIsolatedProperties;
@@ -37,7 +39,7 @@ class SessionRateLimiterImplTest {
             })
         .when(ops)
         .set(anyString(), anyString());
-    doAnswer(inv -> true).when(redis).expire(anyString(), org.mockito.ArgumentMatchers.any());
+    doAnswer(inv -> true).when(redis).expire(anyString(), any(Duration.class));
     SessionRateLimiterImpl limiter =
         new SessionRateLimiterImpl(redis, 2, new DevIsolatedProperties(false));
     assertTrue(limiter.allow(1L));

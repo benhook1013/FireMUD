@@ -29,7 +29,7 @@ class CommandControllerTest {
     ResponseEntity<ApiResponse<CommandEnqueueResult>> response =
         controller.enqueueCommand("42", request);
 
-    assertEquals(200, response.getStatusCodeValue());
+    assertEquals(200, response.getStatusCode().value());
     assertEquals(expected, response.getBody().data());
     verify(interpreter).interpret("42", "LOOK", false);
   }

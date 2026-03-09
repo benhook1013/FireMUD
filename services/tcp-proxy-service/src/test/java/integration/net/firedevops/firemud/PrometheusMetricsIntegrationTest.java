@@ -13,11 +13,11 @@ import org.springframework.boot.actuate.metrics.export.prometheus.PrometheusScra
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.boot.test.context.TestConfiguration;
-import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 @SpringBootTest(
     webEnvironment = WebEnvironment.RANDOM_PORT,
@@ -38,8 +38,8 @@ class PrometheusMetricsIntegrationTest {
 
   @Autowired private TestRestTemplate restTemplate;
 
-  @MockBean private TcpProxyEventClient tcpProxyEventClient;
-  @MockBean private GRpcServerRunner grpcServerRunner;
+  @MockitoBean private TcpProxyEventClient tcpProxyEventClient;
+  @MockitoBean private GRpcServerRunner grpcServerRunner;
 
   @Test
   void prometheusEndpointExposesTcpProxyMetrics() {

@@ -14,6 +14,7 @@ import net.firedevops.firemud.entitymanagement.v1.RoomEntity;
 import net.firedevops.firemud.gamelogic.v1.LookExit;
 import net.firedevops.firemud.gamelogic.v1.LookRequest;
 import net.firedevops.firemud.gamelogic.v1.LookResult;
+import net.firedevops.firemud.shared.v1.RoomInstanceRef;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.worldmanagement.v1.GetRoomSnapshotResponse;
 import net.firedevops.firemud.worldmanagement.v1.RoomExitSnapshot;
@@ -43,21 +44,21 @@ class LookAggregationServiceTest {
 
   @BeforeEach
   void setUp() {
-    snapshot =
+    RoomSnapshot.Builder snapshotBuilder =
         RoomSnapshot.newBuilder()
-            .setRoomId("1021")
+            .setRoomInstanceId("1021")
             .setRoomName("Candle-lit Antechamber")
             .setShortDescription("short desc")
             .setLongDescription("long desc")
             .addExits(
                 RoomExitSnapshot.newBuilder()
                     .setLabel("NORTH")
-                    .setTargetRoomId("2045")
+                    .setTargetRoomInstanceId("2045")
                     .setDescription("arch")
                     .build())
-            .putAmbientState("lighting", "dim")
-            .addRoomFlags("isQuestArea")
-            .build();
+            .addRoomFlags("isQuestArea");
+    applyLegacyAmbientState(snapshotBuilder);
+    snapshot = snapshotBuilder.build();
     RoomEntity entity =
         RoomEntity.newBuilder()
             .setEntityId("NPC-1")
@@ -76,20 +77,22 @@ class LookAggregationServiceTest {
             .setTenantId("tenant-1")
             .setSessionId("session-1")
             .setPlayerId("player-1")
-            .setRoomId("1021")
+            .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("1021").build())
             .build();
   }
 
   @Test
   void resolvesLookResultFromSnapshotAndEntities() {
     LookResult result = service.resolve(request);
-    assertThat(result.getRoomId()).isEqualTo("1021");
+    assertThat(result.getRoomInstance().getRoomInstanceId()).isEqualTo("1021");
     assertThat(result.getRoomName()).isEqualTo("Candle-lit Antechamber");
     assertThat(result.getShortDescription()).isEqualTo("short desc");
-    assertThat(result.getExitsList()).extracting(LookExit::getTargetRoomId).containsExactly("2045");
+    assertThat(result.getExitsList())
+        .extracting(LookExit::getTargetRoomInstanceId)
+        .containsExactly("2045");
     assertThat(result.getEntitiesList()).hasSize(1);
     assertThat(result.getEntitiesList().get(0).getDisplayName()).isEqualTo("Kobold");
-    assertThat(result.getAmbientStateMap()).containsEntry("lighting", "dim");
+    assertLegacyAmbientState(result);
   }
 
   @Test
@@ -119,5 +122,15 @@ class LookAggregationServiceTest {
         .isInstanceOf(StatusRuntimeException.class)
         .hasMessageContaining("WorldManagement")
         .hasMessageContaining("room missing");
+  }
+
+  @SuppressWarnings("deprecation")
+  private static void applyLegacyAmbientState(RoomSnapshot.Builder builder) {
+    builder.putAmbientState("lighting", "dim");
+  }
+
+  @SuppressWarnings("deprecation")
+  private static void assertLegacyAmbientState(LookResult result) {
+    assertThat(result.getAmbientStateMap()).containsEntry("lighting", "dim");
   }
 }

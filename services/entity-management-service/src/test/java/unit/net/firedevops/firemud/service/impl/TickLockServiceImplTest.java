@@ -24,7 +24,7 @@ class TickLockServiceImplTest {
   @BeforeEach
   void setup() {
     redisTemplate = mock(StringRedisTemplate.class);
-    valueOps = mock(ValueOperations.class);
+    valueOps = mockValueOperations();
     when(redisTemplate.opsForValue()).thenReturn(valueOps);
     meterRegistry = new SimpleMeterRegistry();
     conflictTracker = mock(net.firedevops.firemud.common.conflict.ConflictTracker.class);
@@ -51,5 +51,10 @@ class TickLockServiceImplTest {
     org.junit.jupiter.api.Assertions.assertEquals(
         1.0, meterRegistry.get("tick_lock_contention_total").counter().count(), 0.001);
     verify(conflictTracker).recordConflict("entity:1:2");
+  }
+
+  @SuppressWarnings("unchecked")
+  private static ValueOperations<String, String> mockValueOperations() {
+    return mock(ValueOperations.class);
   }
 }

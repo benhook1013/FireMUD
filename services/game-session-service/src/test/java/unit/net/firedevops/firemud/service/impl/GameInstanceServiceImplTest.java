@@ -53,7 +53,7 @@ class GameInstanceServiceImplTest {
     entity.setOwnerAccountId(42L);
     entity.setStatus("RUNNING");
 
-    when(repository.save(any())).thenReturn(entity);
+    when(repository.save(org.mockito.ArgumentMatchers.any(GameInstance.class))).thenReturn(entity);
     GameInstanceDto dto = new GameInstanceDto(10L, 1L, "v1", null, 42L, "RUNNING");
     when(mapper.toDto(entity)).thenReturn(dto);
 

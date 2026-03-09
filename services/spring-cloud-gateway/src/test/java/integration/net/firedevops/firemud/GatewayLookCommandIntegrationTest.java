@@ -55,6 +55,7 @@ class GatewayLookCommandIntegrationTest {
   }
 
   @Test
+  @SuppressWarnings("removal")
   void lookCommandReturnsExpectedResponseThroughGateway() throws Exception {
     ensureGatewayStarted();
 

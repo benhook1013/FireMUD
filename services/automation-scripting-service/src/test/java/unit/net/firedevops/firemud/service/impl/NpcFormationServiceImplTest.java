@@ -31,7 +31,7 @@ class NpcFormationServiceImplTest {
   void createFormationPersistsEntity() {
     NpcFormation saved = new NpcFormation();
     saved.setId(10L);
-    when(formationRepo.save(any())).thenReturn(saved);
+    when(formationRepo.save(any(NpcFormation.class))).thenReturn(saved);
     Long id = service.createFormation(1L, "alpha", 2L, FormationType.LINE);
     assertEquals(10L, id);
   }

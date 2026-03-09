@@ -187,7 +187,8 @@ class LoginCommandHandlerTest {
     LoginCommandHandlingResult result = handler.handle("1", command, false);
 
     assertFalse(result.commandResult().accepted());
-    verify(sessionContextService, never()).save(any());
+    verify(sessionContextService, never())
+        .save(any(net.firedevops.firemud.service.SessionContext.class));
   }
 
   @Test
@@ -207,7 +208,8 @@ class LoginCommandHandlerTest {
 
     assertFalse(result.commandResult().accepted());
     assertEquals("ACCOUNT_MISMATCH", result.commandResult().errorCode());
-    verify(sessionContextService, never()).save(any());
+    verify(sessionContextService, never())
+        .save(any(net.firedevops.firemud.service.SessionContext.class));
   }
 
   @Test
@@ -328,7 +330,8 @@ class LoginCommandHandlerTest {
     handler.handle("1", command, false);
     handler.handle("1", command, false);
 
-    verify(sessionContextService, times(2)).save(any());
+    verify(sessionContextService, times(2))
+        .save(any(net.firedevops.firemud.service.SessionContext.class));
     verify(accountClient, times(2))
         .authenticate(anyString(), anyString(), anyString(), anyString());
   }

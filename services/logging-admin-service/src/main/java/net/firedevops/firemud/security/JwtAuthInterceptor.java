@@ -5,6 +5,7 @@ import io.jsonwebtoken.Jws;
 import io.jsonwebtoken.JwtException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import net.firedevops.firemud.common.security.JwtUtil;
@@ -32,19 +33,28 @@ public class JwtAuthInterceptor implements HandlerInterceptor {
     String token = authHeader.substring(7);
     try {
       Jws<Claims> claims = jwtUtil.parseToken(token);
-      List<String> globalRoles = claims.getBody().get("globalRoles", List.class);
-      Map<String, List<String>> scopedRoles = claims.getBody().get("scopedRoles", Map.class);
+      Claims payload = claims.getPayload();
+      List<?> rawGlobalRoles = payload.get("globalRoles", List.class);
+      List<String> globalRoles =
+          rawGlobalRoles == null ? List.of() : rawGlobalRoles.stream().map(String::valueOf).toList();
+      Map<?, ?> rawScopedRoles = payload.get("scopedRoles", Map.class);
+      Map<String, List<String>> scopedRoles = new HashMap<>();
+      if (rawScopedRoles != null) {
+        for (Map.Entry<?, ?> entry : rawScopedRoles.entrySet()) {
+          if (entry.getValue() instanceof List<?> rolesList) {
+            scopedRoles.put(
+                String.valueOf(entry.getKey()), rolesList.stream().map(String::valueOf).toList());
+          }
+        }
+      }
 
       boolean hasGlobalRole =
-          globalRoles != null
-              && (globalRoles.contains("platformAdmin") || globalRoles.contains("moderator"));
+          globalRoles.contains("platformAdmin") || globalRoles.contains("moderator");
       boolean hasScopedRole = false;
-      if (scopedRoles != null) {
-        for (List<String> roles : scopedRoles.values()) {
-          if (roles != null && (roles.contains("admin") || roles.contains("moderator"))) {
-            hasScopedRole = true;
-            break;
-          }
+      for (List<String> roles : scopedRoles.values()) {
+        if (roles.contains("admin") || roles.contains("moderator")) {
+          hasScopedRole = true;
+          break;
         }
       }
 

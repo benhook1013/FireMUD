@@ -35,7 +35,8 @@ public class GrpcJwtAuthInterceptor implements ServerInterceptor {
     String token = authHeader.substring(7);
     try {
       Jws<Claims> claims = jwtUtil.parseToken(token);
-      List<?> rawGlobalRoles = claims.getBody().get("globalRoles", List.class);
+      Claims payload = claims.getPayload();
+      List<?> rawGlobalRoles = payload.get("globalRoles", List.class);
       List<String> globalRoles =
           rawGlobalRoles == null
               ? List.of()
@@ -43,7 +44,7 @@ public class GrpcJwtAuthInterceptor implements ServerInterceptor {
                   .filter(String.class::isInstance)
                   .map(String.class::cast)
                   .toList();
-      Map<?, ?> rawScopedRoles = claims.getBody().get("scopedRoles", Map.class);
+      Map<?, ?> rawScopedRoles = payload.get("scopedRoles", Map.class);
       Map<String, List<String>> scopedRoles = new HashMap<>();
       if (rawScopedRoles != null) {
         for (Map.Entry<?, ?> entry : rawScopedRoles.entrySet()) {

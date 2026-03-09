@@ -8,15 +8,15 @@ import net.firedevops.firemud.service.SessionRoleService;
 import org.junit.jupiter.api.Test;
 import org.lognet.springboot.grpc.GRpcServerRunner;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 @GameSessionIntegrationTest
 class SessionRoleControllerTest {
 
   @Autowired private MockMvc mockMvc;
-  @MockBean private SessionRoleService sessionRoleService;
-  @MockBean private GRpcServerRunner grpcServerRunner;
+  @MockitoBean private SessionRoleService sessionRoleService;
+  @MockitoBean private GRpcServerRunner grpcServerRunner;
 
   @Test
   void refreshRolesReturnsOk() throws Exception {

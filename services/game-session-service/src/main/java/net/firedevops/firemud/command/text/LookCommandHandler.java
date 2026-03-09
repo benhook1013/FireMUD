@@ -110,7 +110,7 @@ public final class LookCommandHandler {
       lookCacheService.cache(
           context.tenantId(),
           context.sessionId(),
-          lookResult.getRoomId(),
+          lookRoomId(lookResult),
           rendered,
           buildProtocolResponse(rendered));
     } catch (RuntimeException ex) {
@@ -148,5 +148,14 @@ public final class LookCommandHandler {
 
   private String buildProtocolResponse(String rendered) {
     return "OK LOOK\n" + rendered + "\n\n";
+  }
+
+  @SuppressWarnings("deprecation")
+  private String lookRoomId(LookResult lookResult) {
+    if (lookResult.hasRoomInstance()
+        && !lookResult.getRoomInstance().getRoomInstanceId().isBlank()) {
+      return lookResult.getRoomInstance().getRoomInstanceId();
+    }
+    return lookResult.getRoomId();
   }
 }

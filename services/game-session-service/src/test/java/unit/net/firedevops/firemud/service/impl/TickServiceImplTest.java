@@ -7,6 +7,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.time.Duration;
 import java.util.List;
 import net.firedevops.firemud.config.DevIsolatedProperties;
 import net.firedevops.firemud.service.TickService;
@@ -51,21 +52,23 @@ class TickServiceImplTest {
   @Test
   void enqueueCommandPushesToQueue() {
     service.enqueueCommand(2L, "look", false);
-    verify(listOps).rightPush(any(String.class), any());
+    verify(listOps).rightPush(any(String.class), any(Object.class));
   }
 
   @Test
   void processTickAttemptsLockAndExecutesScript() {
-    when(valueOps.setIfAbsent(any(), any(), any())).thenReturn(true);
+    when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
+        .thenReturn(true);
     service.processTick(2L);
     ArgumentCaptor<RedisScript> scriptCaptor = ArgumentCaptor.forClass(RedisScript.class);
     verify(redisTemplate, org.mockito.Mockito.atLeastOnce())
-        .execute(scriptCaptor.capture(), any(List.class));
+        .execute(scriptCaptor.capture(), org.mockito.ArgumentMatchers.<String>anyList());
   }
 
   @Test
   void lockContentionIncrementsMetric() {
-    when(valueOps.setIfAbsent(any(), any(), any())).thenReturn(false);
+    when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
+        .thenReturn(false);
 
     service.processTick(2L);
 
@@ -76,9 +79,12 @@ class TickServiceImplTest {
 
   @Test
   void slowTickIncrementsBudgetMetric() {
-    when(valueOps.setIfAbsent(any(), any(), any())).thenReturn(true);
-    when(redisTemplate.execute(any(RedisScript.class), any(List.class))).thenReturn(1L);
-    when(listOps.size(any())).thenReturn(0L);
+    when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
+        .thenReturn(true);
+    when(redisTemplate.execute(
+            any(RedisScript.class), org.mockito.ArgumentMatchers.<String>anyList()))
+        .thenReturn(1L);
+    when(listOps.size(any(String.class))).thenReturn(0L);
 
     org.springframework.test.util.ReflectionTestUtils.setField(service, "tickBudgetMs", 0L);
 
@@ -90,8 +96,9 @@ class TickServiceImplTest {
 
   @Test
   void retryQueueGaugeRecorded() {
-    when(valueOps.setIfAbsent(any(), any(), any())).thenReturn(true);
-    when(listOps.size(any())).thenReturn(3L);
+    when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
+        .thenReturn(true);
+    when(listOps.size(any(String.class))).thenReturn(3L);
     var instance = new net.firedevops.firemud.entity.GameInstance();
     instance.setId(2L);
     instance.setTenantId(10L);

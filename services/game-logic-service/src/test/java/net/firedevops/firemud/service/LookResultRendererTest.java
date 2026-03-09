@@ -3,6 +3,7 @@ package net.firedevops.firemud.service;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import net.firedevops.firemud.gamelogic.v1.LookResult;
+import net.firedevops.firemud.shared.v1.RoomInstanceRef;
 import net.firedevops.firemud.test.LookTestFixtures;
 import org.junit.jupiter.api.Test;
 
@@ -23,7 +24,7 @@ class LookResultRendererTest {
   void rendersEmptyRoom() {
     LookResult result =
         LookResult.newBuilder()
-            .setRoomId("R-0001")
+            .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("R-0001").build())
             .setRoomName("Empty Chamber")
             .setShortDescription("Quiet")
             .setLongDescription("No one is here.")

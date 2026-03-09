@@ -36,8 +36,8 @@ class ChatServiceImplTest {
     repository = mock(ChatMessageRepository.class);
     profanityFilter = mock(ProfanityFilter.class);
     loggingAdminClient = mock(LoggingAdminClient.class);
-    redisTemplate = mock(RedisTemplate.class);
-    listOps = mock(ListOperations.class);
+    redisTemplate = mockRedisTemplate();
+    listOps = mockListOperations();
     when(redisTemplate.opsForList()).thenReturn(listOps);
     when(profanityFilter.filter(any())).thenAnswer(i -> i.getArgument(0));
     meterRegistry = new SimpleMeterRegistry();
@@ -86,5 +86,15 @@ class ChatServiceImplTest {
     service.sendMessage(req);
 
     assertEquals(1.0, meterRegistry.get("chat_redis_errors_total").counter().count(), 0.001);
+  }
+
+  @SuppressWarnings("unchecked")
+  private static RedisTemplate<String, Object> mockRedisTemplate() {
+    return mock(RedisTemplate.class);
+  }
+
+  @SuppressWarnings("unchecked")
+  private static ListOperations<String, Object> mockListOperations() {
+    return mock(ListOperations.class);
   }
 }

@@ -17,6 +17,7 @@ import net.firedevops.firemud.gamelogic.v1.BroadcastSayRequest;
 import net.firedevops.firemud.gamelogic.v1.BroadcastSayResponse;
 import net.firedevops.firemud.gamelogic.v1.ChatAlias;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
+import net.firedevops.firemud.shared.v1.RoomInstanceRef;
 import net.firedevops.firemud.socialgroups.v1.ChatType;
 import net.firedevops.firemud.socialgroups.v1.SendMessageRequest;
 import net.firedevops.firemud.socialgroups.v1.SendMessageResponse;
@@ -56,7 +57,7 @@ public class SayAggregationService {
           entityStub.listRoomEntities(
               ListRoomEntitiesRequest.newBuilder()
                   .setTenantId(request.getTenantId())
-                  .setRoomId(request.getRoomId())
+                  .setRoomInstance(resolveRoomInstance(request))
                   .build());
     } catch (StatusRuntimeException ex) {
       LOG.warn("EntityManagementService unavailable for SAY broadcast", ex);
@@ -183,6 +184,17 @@ public class SayAggregationService {
     return ErrorDetail.newBuilder()
         .setCode("UNAVAILABLE")
         .setMessage("Social service reported an unknown failure")
+        .build();
+  }
+
+  @SuppressWarnings("deprecation")
+  private RoomInstanceRef resolveRoomInstance(BroadcastSayRequest request) {
+    if (request.hasRoomInstance()) {
+      return request.getRoomInstance();
+    }
+    return RoomInstanceRef.newBuilder()
+        .setTenantId(request.getTenantId())
+        .setRoomInstanceId(request.getRoomId())
         .build();
   }
 }

@@ -27,6 +27,7 @@ import net.firedevops.firemud.config.GameSessionProperties;
 import net.firedevops.firemud.dto.CommandEnqueueResult;
 import net.firedevops.firemud.entity.GameInstance;
 import net.firedevops.firemud.gamelogic.v1.LookResult;
+import net.firedevops.firemud.shared.v1.RoomInstanceRef;
 import net.firedevops.firemud.repository.GameInstanceRepository;
 import net.firedevops.firemud.service.CommandService;
 import net.firedevops.firemud.service.SessionAuthenticationService;
@@ -105,7 +106,10 @@ class SessionResumptionFlowTest {
             meterRegistry,
             lookCacheService,
             devIsolatedProperties);
-    LookResult lookResult = LookResult.newBuilder().setRoomId("1021").build();
+    LookResult lookResult =
+        LookResult.newBuilder()
+            .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("1021").build())
+            .build();
     when(gameLogicClient.resolveLook(anyString(), anyString(), anyString(), anyString()))
         .thenReturn(lookResult);
     when(lookTextRenderer.render(lookResult)).thenReturn("OK LOOK text");

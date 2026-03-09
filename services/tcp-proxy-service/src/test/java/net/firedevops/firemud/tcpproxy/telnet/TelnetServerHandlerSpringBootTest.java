@@ -19,8 +19,8 @@ import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.SpringBootConfiguration;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.context.annotation.Bean;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 @SpringBootTest(classes = TelnetServerHandlerSpringBootTest.TestConfig.class)
 class TelnetServerHandlerSpringBootTest {
@@ -40,7 +40,7 @@ class TelnetServerHandlerSpringBootTest {
 
   @Autowired private MeterRegistry meterRegistry;
 
-  @MockBean private TcpProxyEventService eventService;
+  @MockitoBean private TcpProxyEventService eventService;
 
   @Test
   void recordsConnectEventWhenSessionEnvelopeArrives() {

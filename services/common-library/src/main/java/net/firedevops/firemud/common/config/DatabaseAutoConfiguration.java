@@ -16,6 +16,8 @@ import org.springframework.boot.jdbc.DataSourceBuilder;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
+import org.springframework.data.redis.connection.RedisStandaloneConfiguration;
+import org.springframework.data.redis.connection.lettuce.LettuceClientConfiguration;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 import org.springframework.data.redis.core.RedisTemplate;
 
@@ -62,10 +64,11 @@ public class DatabaseAutoConfiguration {
 
   @Bean
   public RedisConnectionFactory redisConnectionFactory(ClientResources resources) {
-    LettuceConnectionFactory factory =
-        new LettuceConnectionFactory(redis.getHost(), redis.getPort());
-    factory.setClientResources(resources);
-    return factory;
+    RedisStandaloneConfiguration standalone =
+        new RedisStandaloneConfiguration(redis.getHost(), redis.getPort());
+    LettuceClientConfiguration clientConfiguration =
+        LettuceClientConfiguration.builder().clientResources(resources).build();
+    return new LettuceConnectionFactory(standalone, clientConfiguration);
   }
 
   @Bean

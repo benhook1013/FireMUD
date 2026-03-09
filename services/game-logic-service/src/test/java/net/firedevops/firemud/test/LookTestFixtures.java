@@ -5,19 +5,23 @@ import net.firedevops.firemud.gamelogic.v1.EntityType;
 import net.firedevops.firemud.gamelogic.v1.LookExit;
 import net.firedevops.firemud.gamelogic.v1.LookResult;
 import net.firedevops.firemud.gamelogic.v1.RoomEntity;
+import net.firedevops.firemud.shared.v1.RoomInstanceRef;
 import net.firedevops.firemud.worldmanagement.v1.RoomExitSnapshot;
 import net.firedevops.firemud.worldmanagement.v1.RoomSnapshot;
 
 public final class LookTestFixtures {
   public static final String TENANT = "demo";
   public static final String ROOM_ID = "R-1021";
+  public static final String ROOM_INSTANCE_ID = ROOM_ID;
+  public static final String GAME_INSTANCE_ID = "game-inst-demo";
   public static final String ROOM_NAME = "Candle-lit Antechamber";
 
   private LookTestFixtures() {}
 
   public static RoomSnapshot sampleRoomSnapshot() {
     return RoomSnapshot.newBuilder()
-        .setRoomId(ROOM_ID)
+        .setRoomInstanceId(ROOM_INSTANCE_ID)
+        .setGameInstanceId(GAME_INSTANCE_ID)
         .setRoomName(ROOM_NAME)
         .setShortDescription(
             "You stand in a basalt chamber warmed by the brazier near the western wall.")
@@ -28,13 +32,13 @@ public final class LookTestFixtures {
         .addExits(
             RoomExitSnapshot.newBuilder()
                 .setLabel("NORTH")
-                .setTargetRoomId("R-3042")
+                .setTargetRoomInstanceId("R-3042")
                 .setDescription("arched passage leading toward the cavern mouth")
                 .build())
         .addExits(
             RoomExitSnapshot.newBuilder()
                 .setLabel("EAST")
-                .setTargetRoomId("R-2045")
+                .setTargetRoomInstanceId("R-2045")
                 .setDescription("narrow fissure descending toward the forges")
                 .build())
         .build();
@@ -77,13 +81,13 @@ public final class LookTestFixtures {
     LookExit northExit =
         LookExit.newBuilder()
             .setLabel("NORTH")
-            .setTargetRoomId("R-3042")
+            .setTargetRoomInstanceId("R-3042")
             .setDescription("arched passage leading toward the cavern mouth")
             .build();
     LookExit eastExit =
         LookExit.newBuilder()
             .setLabel("EAST")
-            .setTargetRoomId("R-2045")
+            .setTargetRoomInstanceId("R-2045")
             .setDescription("narrow fissure descending toward the forges")
             .build();
     RoomEntity koboldEntity =
@@ -103,7 +107,12 @@ public final class LookTestFixtures {
             .build();
 
     return LookResult.newBuilder()
-        .setRoomId(ROOM_ID)
+        .setRoomInstance(
+            RoomInstanceRef.newBuilder()
+                .setTenantId(TENANT)
+                .setGameInstanceId(GAME_INSTANCE_ID)
+                .setRoomInstanceId(ROOM_INSTANCE_ID)
+                .build())
         .setRoomName(ROOM_NAME)
         .setShortDescription(sampleRoomSnapshot().getShortDescription())
         .setLongDescription(sampleRoomSnapshot().getLongDescription())

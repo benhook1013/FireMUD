@@ -18,10 +18,10 @@ import org.junit.jupiter.api.Test;
 import org.lognet.springboot.grpc.GRpcServerRunner;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
-import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.web.socket.TextMessage;
@@ -62,11 +62,11 @@ class GameSessionWebSocketHandlerIntegrationTest {
 
   @LocalServerPort private int port;
 
-  @MockBean private GRpcServerRunner grpcServerRunner;
+  @MockitoBean private GRpcServerRunner grpcServerRunner;
 
-  @MockBean private CommandService commandService;
+  @MockitoBean private CommandService commandService;
 
-  @MockBean private RedisTemplate<String, Object> redisTemplate;
+  @MockitoBean private RedisTemplate<String, Object> redisTemplate;
 
   @Test
   void websocketCommandIsEnqueuedAndClientGetsAck() throws Exception {

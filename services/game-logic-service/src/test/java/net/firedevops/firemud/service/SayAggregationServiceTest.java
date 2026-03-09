@@ -12,6 +12,7 @@ import net.firedevops.firemud.entitymanagement.v1.ListRoomEntitiesResponse;
 import net.firedevops.firemud.entitymanagement.v1.RoomEntity;
 import net.firedevops.firemud.gamelogic.v1.BroadcastSayRequest;
 import net.firedevops.firemud.gamelogic.v1.BroadcastSayResponse;
+import net.firedevops.firemud.shared.v1.RoomInstanceRef;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.socialgroups.v1.SendMessageRequest;
 import net.firedevops.firemud.socialgroups.v1.SendMessageResponse;
@@ -74,7 +75,7 @@ class SayAggregationServiceTest {
                 .setTenantId("tenant-1")
                 .setSessionId("sess-1")
                 .setPlayerId("player-0")
-                .setRoomId("room-7")
+                .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("room-7").build())
                 .setText("  Hello travelers  ")
                 .build());
 
@@ -96,7 +97,7 @@ class SayAggregationServiceTest {
                 .setTenantId("tenant-1")
                 .setSessionId("sess-1")
                 .setPlayerId("player-0")
-                .setRoomId("room-7")
+                .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("room-7").build())
                 .setText("   ")
                 .build());
 
@@ -127,7 +128,7 @@ class SayAggregationServiceTest {
                 .setTenantId("tenant-1")
                 .setSessionId("sess-1")
                 .setPlayerId("player-0")
-                .setRoomId("room-7")
+                .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("room-7").build())
                 .setText("Hi")
                 .build());
 

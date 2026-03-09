@@ -21,6 +21,7 @@ import net.firedevops.firemud.gamelogic.v1.LookRequest;
 import net.firedevops.firemud.gamelogic.v1.LookResult;
 import net.firedevops.firemud.gamelogic.v1.PingRequest;
 import net.firedevops.firemud.gamelogic.v1.PingResponse;
+import net.firedevops.firemud.shared.v1.RoomInstanceRef;
 import org.springframework.stereotype.Component;
 
 @Component
@@ -71,7 +72,8 @@ public class GameLogicClient implements AutoCloseable {
             .setTenantId(tenantId)
             .setSessionId(sessionId)
             .setPlayerId(playerId)
-            .setRoomId(roomId)
+            .setRoomInstance(
+                RoomInstanceRef.newBuilder().setTenantId(tenantId).setRoomInstanceId(roomId).build())
             .build();
     return stub.resolveLook(request);
   }
@@ -88,7 +90,8 @@ public class GameLogicClient implements AutoCloseable {
             .setTenantId(tenantId)
             .setSessionId(sessionId)
             .setPlayerId(playerId)
-            .setRoomId(roomId)
+            .setRoomInstance(
+                RoomInstanceRef.newBuilder().setTenantId(tenantId).setRoomInstanceId(roomId).build())
             .setAlias(mapAlias(aliasToken))
             .setText(text)
             .build();

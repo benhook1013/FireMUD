@@ -25,6 +25,6 @@ class CacheConfigTest {
     manager.getCache("characterGraph");
     RedisCacheConfiguration cfg = manager.getCacheConfigurations().get("characterGraph");
 
-    assertEquals(Duration.ofSeconds(5), cfg.getTtl());
+    assertEquals(Duration.ofSeconds(5), cfg.getTtlFunction().getTimeToLive("characterGraph", null));
   }
 }

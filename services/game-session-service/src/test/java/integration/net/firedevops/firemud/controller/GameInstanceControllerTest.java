@@ -11,8 +11,8 @@ import net.firedevops.firemud.service.GameInstanceService;
 import org.junit.jupiter.api.Test;
 import org.lognet.springboot.grpc.GRpcServerRunner;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.http.MediaType;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 @GameSessionIntegrationTest
@@ -21,13 +21,15 @@ class GameInstanceControllerTest {
   @Autowired private MockMvc mockMvc;
   @Autowired private ObjectMapper objectMapper;
 
-  @MockBean private GameInstanceService gameInstanceService;
-  @MockBean private GRpcServerRunner grpcServerRunner;
+  @MockitoBean private GameInstanceService gameInstanceService;
+  @MockitoBean private GRpcServerRunner grpcServerRunner;
 
   @Test
   void startSessionReturnsDto() throws Exception {
     GameInstanceDto dto = new GameInstanceDto(1L, 1L, "v1", null, 1L, "RUNNING");
-    org.mockito.Mockito.when(gameInstanceService.startSession(org.mockito.ArgumentMatchers.any()))
+    org.mockito.Mockito.when(
+            gameInstanceService.startSession(
+                org.mockito.ArgumentMatchers.any(StartSessionRequest.class)))
         .thenReturn(dto);
     StartSessionRequest request = new StartSessionRequest(1L, "v1", null, 1L);
     mockMvc

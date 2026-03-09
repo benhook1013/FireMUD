@@ -17,7 +17,6 @@ import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
-import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.boot.test.web.client.TestRestTemplate;
@@ -32,6 +31,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 @Disabled(
     "TODO: re-enable once Account/Redis/GameInstance persistence is wired; "
@@ -56,7 +56,7 @@ class DevIsolatedGameSessionSmokeTest {
 
   @Autowired private TestRestTemplate restTemplate;
 
-  @MockBean private RedisTemplate<String, Object> redisTemplate;
+  @MockitoBean private RedisTemplate<String, Object> redisTemplate;
 
   @Test
   void startSessionIsAcceptedAndLogged(CapturedOutput output) {

@@ -19,6 +19,7 @@ import net.firedevops.firemud.command.text.LookTextRenderer;
 import net.firedevops.firemud.config.DevIsolatedProperties;
 import net.firedevops.firemud.config.GameLogicProperties;
 import net.firedevops.firemud.gamelogic.v1.LookResult;
+import net.firedevops.firemud.shared.v1.RoomInstanceRef;
 import net.firedevops.firemud.service.SessionAuthenticationService;
 import net.firedevops.firemud.service.SessionContext;
 import org.junit.jupiter.api.BeforeEach;
@@ -44,7 +45,10 @@ class LookCommandHandlerTest {
           lookCacheService,
           devIsolatedProperties);
   private final SessionContext sessionContext = new SessionContext(1L, 22L, 123L, 911L, 0L, "jwt");
-  private final LookResult lookResult = LookResult.newBuilder().setRoomId("1021").build();
+  private final LookResult lookResult =
+      LookResult.newBuilder()
+          .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("1021").build())
+          .build();
 
   @BeforeEach
   void setUp() {

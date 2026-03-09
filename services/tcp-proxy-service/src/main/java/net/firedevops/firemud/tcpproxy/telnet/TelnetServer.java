@@ -121,7 +121,7 @@ public final class TelnetServer {
     if (tlsEnabled) {
       validateTlsConfiguration();
       try {
-        sslContext = SslContextBuilder.forServer(new File(certPath), new File(keyPath)).build();
+        sslContext = buildServerSslContext();
       } catch (SSLException e) {
         tlsMisconfigCounter.increment();
         String message = "TCP proxy TLS configuration failed to load";
@@ -129,6 +129,11 @@ public final class TelnetServer {
         throw new IllegalStateException(message, e);
       }
     }
+  }
+
+  @SuppressWarnings("deprecation")
+  private SslContext buildServerSslContext() throws SSLException {
+    return SslContextBuilder.forServer(new File(certPath), new File(keyPath)).build();
   }
 
   private void validateTlsConfiguration() {

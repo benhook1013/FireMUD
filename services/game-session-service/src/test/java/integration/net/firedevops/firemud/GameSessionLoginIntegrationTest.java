@@ -27,9 +27,8 @@ import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.boot.test.web.server.LocalServerPort;
-import org.springframework.util.concurrent.ListenableFuture;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketHttpHeaders;
 import org.springframework.web.socket.WebSocketSession;
@@ -52,12 +51,12 @@ import org.springframework.web.socket.handler.TextWebSocketHandler;
 class GameSessionLoginIntegrationTest {
   @LocalServerPort private int port;
 
-  @MockBean private AccountClient accountClient;
-  @MockBean private GameInstanceRepository gameInstanceRepository;
-  @MockBean private SessionContextService sessionContextService;
-  @MockBean private SessionAuthenticationService sessionAuthenticationService;
-  @MockBean private CommandService commandService;
-  @MockBean private org.lognet.springboot.grpc.GRpcServerRunner grpcServerRunner;
+  @MockitoBean private AccountClient accountClient;
+  @MockitoBean private GameInstanceRepository gameInstanceRepository;
+  @MockitoBean private SessionContextService sessionContextService;
+  @MockitoBean private SessionAuthenticationService sessionAuthenticationService;
+  @MockitoBean private CommandService commandService;
+  @MockitoBean private org.lognet.springboot.grpc.GRpcServerRunner grpcServerRunner;
 
   @BeforeEach
   void setUp() {
@@ -83,7 +82,7 @@ class GameSessionLoginIntegrationTest {
     WebSocketHttpHeaders headers = new WebSocketHttpHeaders();
     headers.add("X-Game-Instance-Id", "1");
 
-    ListenableFuture<WebSocketSession> future =
+    var future =
         client.doHandshake(
             new TextWebSocketHandler() {
               @Override

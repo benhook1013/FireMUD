@@ -34,8 +34,8 @@ class RoomServiceImplTest {
   @BeforeEach
   void setup() {
     repository = mock(RoomRepository.class);
-    redisTemplate = mock(RedisTemplate.class);
-    valueOps = mock(ValueOperations.class);
+    redisTemplate = mockRedisTemplate();
+    valueOps = mockValueOperations();
     when(redisTemplate.opsForValue()).thenReturn(valueOps);
     props = new WorldProperties();
     props.getRoom().setCacheTtlSeconds(1);
@@ -102,5 +102,15 @@ class RoomServiceImplTest {
     assertEquals(longDesc, snapshot.longDescription());
     assertEquals(1, snapshot.exits().size());
     assertEquals(2045L, snapshot.exits().get(0).targetRoomId().longValue());
+  }
+
+  @SuppressWarnings("unchecked")
+  private static RedisTemplate<String, Object> mockRedisTemplate() {
+    return mock(RedisTemplate.class);
+  }
+
+  @SuppressWarnings("unchecked")
+  private static ValueOperations<String, Object> mockValueOperations() {
+    return mock(ValueOperations.class);
   }
 }

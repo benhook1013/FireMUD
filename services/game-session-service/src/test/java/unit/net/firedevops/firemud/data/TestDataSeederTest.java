@@ -7,6 +7,9 @@ import static org.mockito.Mockito.when;
 import net.firedevops.firemud.repository.FeatureFlagRepository;
 import net.firedevops.firemud.repository.GameInstanceRepository;
 import net.firedevops.firemud.repository.GameManifestRepository;
+import net.firedevops.firemud.entity.FeatureFlag;
+import net.firedevops.firemud.entity.GameInstance;
+import net.firedevops.firemud.entity.GameManifest;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mock;
@@ -35,8 +38,8 @@ class TestDataSeederTest {
 
     seeder.run(new DefaultApplicationArguments(new String[] {}));
 
-    verify(gameManifestRepository).save(any());
-    verify(featureFlagRepository).save(any());
-    verify(gameInstanceRepository).save(any());
+    verify(gameManifestRepository).save(any(GameManifest.class));
+    verify(featureFlagRepository).save(any(FeatureFlag.class));
+    verify(gameInstanceRepository).save(any(GameInstance.class));
   }
 }

@@ -14,6 +14,7 @@ import net.firedevops.firemud.gamelogic.v1.LookRequest;
 import net.firedevops.firemud.gamelogic.v1.LookResult;
 import net.firedevops.firemud.gamelogic.v1.RoomEntity;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
+import net.firedevops.firemud.shared.v1.RoomInstanceRef;
 import net.firedevops.firemud.worldmanagement.v1.GetRoomSnapshotRequest;
 import net.firedevops.firemud.worldmanagement.v1.GetRoomSnapshotResponse;
 import net.firedevops.firemud.worldmanagement.v1.RoomExitSnapshot;
@@ -39,12 +40,17 @@ public class LookAggregationService {
 
     LookResult.Builder builder =
         LookResult.newBuilder()
-            .setRoomId(snapshot.getRoomId())
+            .setRoomInstance(
+                RoomInstanceRef.newBuilder()
+                    .setTenantId(snapshot.getTenantId())
+                    .setGameInstanceId(snapshot.getGameInstanceId())
+                    .setRoomInstanceId(snapshot.getRoomInstanceId())
+                    .build())
             .setRoomName(snapshot.getRoomName())
             .setShortDescription(snapshot.getShortDescription())
             .setLongDescription(snapshot.getLongDescription())
-            .putAllAmbientState(snapshot.getAmbientStateMap())
             .addAllRoomFlags(snapshot.getRoomFlagsList());
+    applyLegacyAmbientState(builder, snapshot);
 
     snapshot.getExitsList().forEach(exit -> builder.addExits(toLookExit(exit)));
     entityResponse.getEntitiesList().stream().map(this::toRoomEntity).forEach(builder::addEntities);
@@ -59,8 +65,8 @@ public class LookAggregationService {
       GetRoomSnapshotResponse response =
           worldStub.getRoomSnapshot(
               GetRoomSnapshotRequest.newBuilder()
-                  .setTenantId(request.getTenantId())
-                  .setRoomId(request.getRoomId())
+                  .setTenantId(resolveTenantId(request))
+                  .setRoomInstance(resolveRoomInstance(request))
                   .build());
       if (response.hasError()) {
         throw statusFromError(response.getError(), "WorldManagement");
@@ -76,8 +82,8 @@ public class LookAggregationService {
       ListRoomEntitiesResponse response =
           entityStub.listRoomEntities(
               ListRoomEntitiesRequest.newBuilder()
-                  .setTenantId(request.getTenantId())
-                  .setRoomId(request.getRoomId())
+                  .setTenantId(resolveTenantId(request))
+                  .setRoomInstance(resolveRoomInstance(request))
                   .build());
       if (response.hasError()) {
         throw statusFromError(response.getError(), "EntityManagement");
@@ -122,8 +128,31 @@ public class LookAggregationService {
   private LookExit toLookExit(RoomExitSnapshot exit) {
     return LookExit.newBuilder()
         .setLabel(exit.getLabel())
-        .setTargetRoomId(exit.getTargetRoomId())
+        .setTargetRoomInstanceId(exit.getTargetRoomInstanceId())
         .setDescription(exit.getDescription())
+        .build();
+  }
+
+  @SuppressWarnings("deprecation")
+  private void applyLegacyAmbientState(LookResult.Builder builder, RoomSnapshot snapshot) {
+    builder.putAllAmbientState(snapshot.getAmbientStateMap());
+  }
+
+  private String resolveTenantId(LookRequest request) {
+    if (request.hasRoomInstance() && !request.getRoomInstance().getTenantId().isBlank()) {
+      return request.getRoomInstance().getTenantId();
+    }
+    return request.getTenantId();
+  }
+
+  @SuppressWarnings("deprecation")
+  private RoomInstanceRef resolveRoomInstance(LookRequest request) {
+    if (request.hasRoomInstance()) {
+      return request.getRoomInstance();
+    }
+    return RoomInstanceRef.newBuilder()
+        .setTenantId(request.getTenantId())
+        .setRoomInstanceId(request.getRoomId())
         .build();
   }
 

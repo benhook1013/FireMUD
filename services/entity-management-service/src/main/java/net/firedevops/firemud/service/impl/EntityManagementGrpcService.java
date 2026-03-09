@@ -203,7 +203,8 @@ public class EntityManagementGrpcService
   public void listRoomEntities(
       ListRoomEntitiesRequest request, StreamObserver<ListRoomEntitiesResponse> responseObserver) {
     try {
-      var entities = roomEntityService.listEntities(request.getTenantId(), request.getRoomId());
+      var entities =
+          roomEntityService.listEntities(resolveTenantId(request), resolveRoomId(request));
       var builder = ListRoomEntitiesResponse.newBuilder();
       entities.stream().map(this::toProto).forEach(builder::addEntities);
       responseObserver.onNext(builder.build());
@@ -212,6 +213,21 @@ public class EntityManagementGrpcService
       responseObserver.onError(
           Status.INTERNAL.withDescription(ex.getMessage()).asRuntimeException());
     }
+  }
+
+  private String resolveTenantId(ListRoomEntitiesRequest request) {
+    if (request.hasRoomInstance() && !request.getRoomInstance().getTenantId().isBlank()) {
+      return request.getRoomInstance().getTenantId();
+    }
+    return request.getTenantId();
+  }
+
+  @SuppressWarnings("deprecation")
+  private String resolveRoomId(ListRoomEntitiesRequest request) {
+    if (request.hasRoomInstance() && !request.getRoomInstance().getRoomInstanceId().isBlank()) {
+      return request.getRoomInstance().getRoomInstanceId();
+    }
+    return request.getRoomId();
   }
 
   private Character toProto(CharacterDto dto) {

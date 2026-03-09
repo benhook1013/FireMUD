@@ -31,6 +31,7 @@ import net.firedevops.firemud.config.GameLogicProperties;
 import net.firedevops.firemud.dto.CommandEnqueueResult;
 import net.firedevops.firemud.entity.GameInstance;
 import net.firedevops.firemud.gamelogic.v1.LookResult;
+import net.firedevops.firemud.shared.v1.RoomInstanceRef;
 import net.firedevops.firemud.repository.GameInstanceRepository;
 import net.firedevops.firemud.service.CommandService;
 import net.firedevops.firemud.service.SessionAuthenticationService;
@@ -160,7 +161,10 @@ class TextCommandInterpreterTest {
     when(commandService.enqueue("123", "LOOK", false)).thenReturn(success);
 
     TextCommand command = new TextCommand(TextCommandType.LOOK, List.of(), "LOOK");
-    LookResult lookResult = LookResult.newBuilder().setRoomId("1021").build();
+    LookResult lookResult =
+        LookResult.newBuilder()
+            .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("1021").build())
+            .build();
     when(gameLogicClient.resolveLook("22", "1", "911", "1021")).thenReturn(lookResult);
     when(lookTextRenderer.render(lookResult)).thenReturn("OK LOOK constructed");
     TextCommandInterpretationResult interpretation = interpreter.interpret("123", command, false);
@@ -172,7 +176,8 @@ class TextCommandInterpreterTest {
   void sayCommandDelegatesToHandler() {
     SayCommandHandlingResult sayResult =
         new SayCommandHandlingResult(CommandEnqueueResult.success(), "OK SAY text");
-    when(sayHandler.handle(Mockito.anyString(), Mockito.any())).thenReturn(sayResult);
+    when(sayHandler.handle(Mockito.anyString(), Mockito.any(TextCommand.class)))
+        .thenReturn(sayResult);
 
     TextCommandInterpretationResult interpretation =
         interpreter.interpret("123", "SAY Hello", false);

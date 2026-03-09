@@ -8,6 +8,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.mapper.RoomMapper;
 import net.firedevops.firemud.service.PingService;
 import net.firedevops.firemud.service.RoomService;
+import net.firedevops.firemud.shared.v1.RoomInstanceRef;
 import net.firedevops.firemud.worldmanagement.v1.PingRequest;
 import net.firedevops.firemud.worldmanagement.v1.PingResponse;
 import org.junit.jupiter.api.Test;
@@ -66,7 +67,7 @@ class WorldManagementGrpcServiceTest {
     service.getRoom(
         net.firedevops.firemud.worldmanagement.v1.GetRoomRequest.newBuilder()
             .setTenantId("bad")
-            .setRoomId("1")
+            .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("1").build())
             .build(),
         new StreamObserver<>() {
           @Override

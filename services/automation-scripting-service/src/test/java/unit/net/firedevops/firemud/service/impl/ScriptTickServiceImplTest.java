@@ -6,6 +6,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.time.Duration;
 import java.util.List;
 import net.firedevops.firemud.service.quota.ScriptQuotaService;
 import net.firedevops.firemud.service.tick.ScriptTickService;
@@ -32,7 +33,7 @@ class ScriptTickServiceImplTest {
     when(redisTemplate.opsForList()).thenReturn(listOps);
     when(redisTemplate.opsForValue()).thenReturn(valueOps);
     quotaService = mock(ScriptQuotaService.class);
-    when(quotaService.tryAcquire(any(), any())).thenReturn(true);
+    when(quotaService.tryAcquire(any(Long.class), any(Long.class))).thenReturn(true);
     meterRegistry = new SimpleMeterRegistry();
     conflictTracker = mock(net.firedevops.firemud.common.conflict.ConflictTracker.class);
     service =
@@ -43,29 +44,31 @@ class ScriptTickServiceImplTest {
   @Test
   void enqueueEventPushesToQueue() {
     service.enqueueEvent(1L, 2L, "evt");
-    verify(listOps).rightPush(any(String.class), any());
+    verify(listOps).rightPush(any(String.class), any(Object.class));
     verify(quotaService).tryAcquire(1L, 2L);
   }
 
   @Test
   void enqueueEventSkippedWhenQuotaExceeded() {
-    when(quotaService.tryAcquire(any(), any())).thenReturn(false);
+    when(quotaService.tryAcquire(any(Long.class), any(Long.class))).thenReturn(false);
     service.enqueueEvent(1L, 2L, "evt");
     org.mockito.Mockito.verifyNoInteractions(listOps);
   }
 
   @Test
   void processTickAttemptsLockAndExecutesScript() {
-    when(valueOps.setIfAbsent(any(), any(), any())).thenReturn(true);
+    when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
+        .thenReturn(true);
     service.processTick(1L, 2L);
     ArgumentCaptor<RedisScript> scriptCaptor = ArgumentCaptor.forClass(RedisScript.class);
     verify(redisTemplate, org.mockito.Mockito.atLeastOnce())
-        .execute(scriptCaptor.capture(), any(List.class));
+        .execute(scriptCaptor.capture(), org.mockito.ArgumentMatchers.<String>anyList());
   }
 
   @Test
   void lockContentionRecordsConflict() {
-    when(valueOps.setIfAbsent(any(), any(), any())).thenReturn(false);
+    when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
+        .thenReturn(false);
 
     service.processTick(1L, 2L);
 
@@ -74,9 +77,12 @@ class ScriptTickServiceImplTest {
 
   @Test
   void slowTickIncrementsBudgetMetric() {
-    when(valueOps.setIfAbsent(any(), any(), any())).thenReturn(true);
-    when(redisTemplate.execute(any(RedisScript.class), any(List.class))).thenReturn(1L);
-    when(listOps.size(any())).thenReturn(0L);
+    when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
+        .thenReturn(true);
+    when(redisTemplate.execute(
+            any(RedisScript.class), org.mockito.ArgumentMatchers.<String>anyList()))
+        .thenReturn(1L);
+    when(listOps.size(any(String.class))).thenReturn(0L);
 
     org.springframework.test.util.ReflectionTestUtils.setField(service, "tickDurationMs", 0L);
 

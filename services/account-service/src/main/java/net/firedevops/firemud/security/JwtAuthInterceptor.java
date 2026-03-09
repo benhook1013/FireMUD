@@ -35,13 +35,14 @@ public class JwtAuthInterceptor implements HandlerInterceptor {
     String token = authHeader.substring(7);
     try {
       Jws<Claims> claims = jwtUtil.parseToken(token);
-      String accountId = claims.getBody().get("accountId", String.class);
+      Claims payload = claims.getPayload();
+      String accountId = payload.get("accountId", String.class);
 
-      List<?> globalRolesRaw = claims.getBody().get("globalRoles", List.class);
+      List<?> globalRolesRaw = payload.get("globalRoles", List.class);
       List<String> globalRoles =
           globalRolesRaw == null ? null : globalRolesRaw.stream().map(Object::toString).toList();
 
-      Map<?, ?> scopedRolesRaw = claims.getBody().get("scopedRoles", Map.class);
+      Map<?, ?> scopedRolesRaw = payload.get("scopedRoles", Map.class);
       Map<String, List<String>> scopedRoles = null;
       if (scopedRolesRaw != null) {
         scopedRoles = new HashMap<>();

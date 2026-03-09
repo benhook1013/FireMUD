@@ -8,6 +8,7 @@ import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import java.time.Duration;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import net.firedevops.firemud.config.DevIsolatedProperties;
@@ -46,7 +47,7 @@ class IpConnectionLimiterImplTest {
               return null;
             })
         .when(ops)
-        .set(anyString(), anyString(), any());
+        .set(anyString(), anyString(), any(Duration.class));
     doAnswer(
             inv -> {
               store.remove(inv.getArgument(0));

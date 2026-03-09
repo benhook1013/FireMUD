@@ -14,10 +14,10 @@ import org.lognet.springboot.grpc.GRpcServerRunner;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
-import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.util.TestSocketUtils;
 
 @SpringBootTest(
@@ -29,7 +29,7 @@ class DevEchoTelnetIntegrationTest {
   private static final int TELNET_SERVER_PORT = allocatePort();
 
   @Autowired private TelnetServer telnetServer;
-  @MockBean private GRpcServerRunner grpcServerRunner;
+  @MockitoBean private GRpcServerRunner grpcServerRunner;
 
   @DynamicPropertySource
   static void registerProperties(DynamicPropertyRegistry registry) {

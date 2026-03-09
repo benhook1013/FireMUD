@@ -35,11 +35,12 @@ public class AuthTokenInterceptor implements ServerInterceptor {
     String token = authHeader.substring(7);
     try {
       Jws<Claims> claims = jwtUtil.parseToken(token);
-      String accountId = claims.getBody().get("accountId", String.class);
-      List<?> globalRaw = claims.getBody().get("globalRoles", List.class);
+      Claims payload = claims.getPayload();
+      String accountId = payload.get("accountId", String.class);
+      List<?> globalRaw = payload.get("globalRoles", List.class);
       List<String> globalRoles =
           globalRaw == null ? List.of() : globalRaw.stream().map(String::valueOf).toList();
-      Map<?, ?> scopedRaw = claims.getBody().get("scopedRoles", Map.class);
+      Map<?, ?> scopedRaw = payload.get("scopedRoles", Map.class);
       Map<String, List<String>> scopedRoles = new HashMap<>();
       if (scopedRaw != null) {
         for (Map.Entry<?, ?> e : scopedRaw.entrySet()) {

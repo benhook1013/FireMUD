@@ -72,8 +72,8 @@ public class WorldManagementGrpcService
   @Timed(value = "worldGrpc.getRoom")
   public void getRoom(GetRoomRequest request, StreamObserver<GetRoomResponse> responseObserver) {
     try {
-      Long roomId = Long.valueOf(request.getRoomId());
-      Long tenantId = Long.valueOf(request.getTenantId());
+      Long roomId = Long.valueOf(resolveRoomId(request));
+      Long tenantId = Long.valueOf(resolveTenantId(request));
       Optional<String> json =
           Optional.ofNullable(roomService.getRoom(tenantId, roomId)).map(this::toJson);
       if (json.isPresent()) {
@@ -104,8 +104,8 @@ public class WorldManagementGrpcService
   public void getRoomSnapshot(
       GetRoomSnapshotRequest request, StreamObserver<GetRoomSnapshotResponse> responseObserver) {
     try {
-      Long roomId = Long.valueOf(request.getRoomId());
-      Long tenantId = Long.valueOf(request.getTenantId());
+      Long roomId = Long.valueOf(resolveRoomId(request));
+      Long tenantId = Long.valueOf(resolveTenantId(request));
       RoomSnapshotDto snapshot = roomService.getRoomSnapshot(tenantId, roomId);
       GetRoomSnapshotResponse response =
           GetRoomSnapshotResponse.newBuilder().setSnapshot(toProto(snapshot)).build();
@@ -129,6 +129,7 @@ public class WorldManagementGrpcService
   }
 
   @Override
+  @SuppressWarnings("deprecation")
   @Timed(value = "worldGrpc.updateState")
   public void updateWorldState(
       UpdateWorldStateRequest request, StreamObserver<UpdateWorldStateResponse> responseObserver) {
@@ -155,14 +156,14 @@ public class WorldManagementGrpcService
   private RoomSnapshot toProto(RoomSnapshotDto snapshot) {
     RoomSnapshot.Builder builder =
         RoomSnapshot.newBuilder()
-            .setRoomId(snapshot.roomId().toString())
+            .setRoomInstanceId(snapshot.roomId().toString())
             .setTenantId(snapshot.tenantId().toString())
             .setRoomName(snapshot.roomName())
             .setShortDescription(snapshot.shortDescription())
             .setLongDescription(snapshot.longDescription());
     snapshot.exits().forEach(exit -> builder.addExits(toProto(exit)));
     if (snapshot.ambientState() != null) {
-      builder.putAllAmbientState(snapshot.ambientState());
+      applyLegacyAmbientState(builder, snapshot);
     }
     if (snapshot.roomFlags() != null) {
       builder.addAllRoomFlags(snapshot.roomFlags());
@@ -170,11 +171,16 @@ public class WorldManagementGrpcService
     return builder.build();
   }
 
+  @SuppressWarnings("deprecation")
+  private void applyLegacyAmbientState(RoomSnapshot.Builder builder, RoomSnapshotDto snapshot) {
+    builder.putAllAmbientState(snapshot.ambientState());
+  }
+
   private RoomExitSnapshot toProto(RoomExitSnapshotDto exit) {
     RoomExitSnapshot.Builder builder =
         RoomExitSnapshot.newBuilder()
             .setExitId(exit.exitId().toString())
-            .setTargetRoomId(exit.targetRoomId().toString())
+            .setTargetRoomInstanceId(exit.targetRoomId().toString())
             .setTargetRoomName(exit.targetRoomName())
             .setLabel(exit.label())
             .setDescription(exit.description());
@@ -190,5 +196,35 @@ public class WorldManagementGrpcService
     } catch (JsonProcessingException e) {
       throw new RuntimeException("Failed to serialize room", e);
     }
+  }
+
+  private String resolveTenantId(GetRoomRequest request) {
+    if (request.hasRoomInstance() && !request.getRoomInstance().getTenantId().isBlank()) {
+      return request.getRoomInstance().getTenantId();
+    }
+    return request.getTenantId();
+  }
+
+  @SuppressWarnings("deprecation")
+  private String resolveRoomId(GetRoomRequest request) {
+    if (request.hasRoomInstance() && !request.getRoomInstance().getRoomInstanceId().isBlank()) {
+      return request.getRoomInstance().getRoomInstanceId();
+    }
+    return request.getRoomId();
+  }
+
+  private String resolveTenantId(GetRoomSnapshotRequest request) {
+    if (request.hasRoomInstance() && !request.getRoomInstance().getTenantId().isBlank()) {
+      return request.getRoomInstance().getTenantId();
+    }
+    return request.getTenantId();
+  }
+
+  @SuppressWarnings("deprecation")
+  private String resolveRoomId(GetRoomSnapshotRequest request) {
+    if (request.hasRoomInstance() && !request.getRoomInstance().getRoomInstanceId().isBlank()) {
+      return request.getRoomInstance().getRoomInstanceId();
+    }
+    return request.getRoomId();
   }
 }

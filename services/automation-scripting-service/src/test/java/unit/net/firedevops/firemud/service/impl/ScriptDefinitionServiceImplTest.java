@@ -39,6 +39,6 @@ class ScriptDefinitionServiceImplTest {
     ScriptDefinitionDto result = service.updateScript(dto);
 
     assertNotNull(result);
-    verify(sagaRunner).run(any());
+    verify(sagaRunner).run(any(net.firedevops.firemud.common.saga.Saga.class));
   }
 }

@@ -8,11 +8,11 @@ import net.firedevops.firemud.SpringCloudGatewayApplication;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.cloud.gateway.config.GatewayProperties;
 import org.springframework.cloud.gateway.route.RouteDefinition;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 @SpringBootTest(
     classes = SpringCloudGatewayApplication.class,
@@ -29,10 +29,10 @@ import org.springframework.test.context.ActiveProfiles;
 @Import(TestGatewayRateLimiterConfig.class)
 class GatewayRoutesConfigurationProdTest {
 
-  @MockBean private org.lognet.springboot.grpc.GRpcServerRunner grpcServerRunner;
-  @MockBean private org.lognet.springboot.grpc.GRpcServicesRegistry grpcServicesRegistry;
+  @MockitoBean private org.lognet.springboot.grpc.GRpcServerRunner grpcServerRunner;
+  @MockitoBean private org.lognet.springboot.grpc.GRpcServicesRegistry grpcServicesRegistry;
 
-  @MockBean
+  @MockitoBean
   private org.lognet.springboot.grpc.health.ManagedHealthStatusService managedHealthStatusService;
 
   @Autowired private GatewayProperties gatewayProperties;
