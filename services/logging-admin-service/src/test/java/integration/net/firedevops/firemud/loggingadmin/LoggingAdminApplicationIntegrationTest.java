@@ -2,20 +2,13 @@ package net.firedevops.firemud.loggingadmin;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import net.firedevops.firemud.common.config.CommonAutoConfiguration;
-import net.firedevops.firemud.loggingadmin.config.AuthConfig;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
-import org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration;
-import org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.boot.test.web.server.LocalServerPort;
-import org.springframework.context.annotation.Configuration;
-import org.springframework.context.annotation.Import;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -23,7 +16,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 @Testcontainers
 @SpringBootTest(
     webEnvironment = WebEnvironment.RANDOM_PORT,
-    classes = LoggingAdminApplicationIntegrationTest.TestApp.class)
+    classes = LoggingAdminServiceApplication.class)
 @Disabled("integration environment not configured")
 class LoggingAdminApplicationIntegrationTest {
 
@@ -39,10 +32,4 @@ class LoggingAdminApplicationIntegrationTest {
     String body = restTemplate.getForObject("http://localhost:" + port + "/ping", String.class);
     assertThat(body).contains("pong");
   }
-
-  @Configuration
-  @EnableAutoConfiguration(
-      exclude = {DataSourceAutoConfiguration.class, RedisAutoConfiguration.class})
-  @Import({CommonAutoConfiguration.class, AuthConfig.class})
-  static class TestApp {}
 }

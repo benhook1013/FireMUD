@@ -2,21 +2,15 @@ package net.firedevops.firemud.gamesession;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import net.firedevops.firemud.common.config.CommonAutoConfiguration;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
-import org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration;
-import org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.boot.test.web.server.LocalServerPort;
-import org.springframework.context.annotation.Configuration;
-import org.springframework.context.annotation.Import;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.testcontainers.DockerClientFactory;
@@ -28,7 +22,7 @@ import org.testcontainers.utility.DockerImageName;
 @Testcontainers(disabledWithoutDocker = true)
 @SpringBootTest(
     webEnvironment = WebEnvironment.RANDOM_PORT,
-    classes = GameSessionCrossServiceIntegrationTest.TestApp.class,
+    classes = GameSessionServiceApplication.class,
     properties = "game-session.require-authenticated-commands=false")
 class GameSessionCrossServiceIntegrationTest {
 
@@ -73,10 +67,4 @@ class GameSessionCrossServiceIntegrationTest {
     String body = restTemplate.getForObject("http://localhost:" + port + "/ping", String.class);
     assertThat(body).contains("pong");
   }
-
-  @Configuration
-  @EnableAutoConfiguration(
-      exclude = {DataSourceAutoConfiguration.class, RedisAutoConfiguration.class})
-  @Import({CommonAutoConfiguration.class})
-  static class TestApp {}
 }

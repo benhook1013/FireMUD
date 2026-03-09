@@ -2,19 +2,13 @@ package net.firedevops.firemud.entitymanagement;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import net.firedevops.firemud.common.config.CommonAutoConfiguration;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
-import org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration;
-import org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.boot.test.web.server.LocalServerPort;
-import org.springframework.context.annotation.Configuration;
-import org.springframework.context.annotation.Import;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -28,7 +22,7 @@ import org.testcontainers.utility.DockerImageName;
 @Disabled("integration environment not configured")
 @SpringBootTest(
     webEnvironment = WebEnvironment.RANDOM_PORT,
-    classes = EntityManagementCrossServiceIntegrationTest.TestApp.class)
+    classes = EntityManagementServiceApplication.class)
 class EntityManagementCrossServiceIntegrationTest {
 
   @Container
@@ -52,10 +46,4 @@ class EntityManagementCrossServiceIntegrationTest {
     String body = restTemplate.getForObject("http://localhost:" + port + "/ping", String.class);
     assertThat(body).contains("pong");
   }
-
-  @Configuration
-  @EnableAutoConfiguration(
-      exclude = {DataSourceAutoConfiguration.class, RedisAutoConfiguration.class})
-  @Import(CommonAutoConfiguration.class)
-  static class TestApp {}
 }
