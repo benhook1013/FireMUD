@@ -9,14 +9,14 @@ import io.grpc.inprocess.InProcessServerBuilder;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.gamesession.command.text.TextCommandInterpreter;
-import net.firedevops.firemud.gamesession.v1.GameSessionServiceGrpc;
-import net.firedevops.firemud.gamesession.v1.PingRequest;
-import net.firedevops.firemud.gamesession.v1.PingResponse;
 import net.firedevops.firemud.gamesession.service.FeatureFlagService;
 import net.firedevops.firemud.gamesession.service.GameInstanceService;
 import net.firedevops.firemud.gamesession.service.IpConnectionLimiter;
 import net.firedevops.firemud.gamesession.service.PingService;
 import net.firedevops.firemud.gamesession.service.TickService;
+import net.firedevops.firemud.gamesession.v1.GameSessionServiceGrpc;
+import net.firedevops.firemud.gamesession.v1.PingRequest;
+import net.firedevops.firemud.gamesession.v1.PingResponse;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 

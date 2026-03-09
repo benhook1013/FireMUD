@@ -5,14 +5,14 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import io.grpc.stub.StreamObserver;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
+import net.firedevops.firemud.automationscripting.model.FormationType;
+import net.firedevops.firemud.automationscripting.service.NpcFormationService;
 import net.firedevops.firemud.automationscripting.v1.AddFormationMemberRequest;
 import net.firedevops.firemud.automationscripting.v1.AddFormationMemberResponse;
 import net.firedevops.firemud.automationscripting.v1.CreateFormationRequest;
 import net.firedevops.firemud.automationscripting.v1.CreateFormationResponse;
 import net.firedevops.firemud.automationscripting.v1.ListFormationMembersRequest;
 import net.firedevops.firemud.automationscripting.v1.ListFormationMembersResponse;
-import net.firedevops.firemud.automationscripting.model.FormationType;
-import net.firedevops.firemud.automationscripting.service.NpcFormationService;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 

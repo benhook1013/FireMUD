@@ -11,11 +11,11 @@ import java.util.concurrent.TimeUnit;
 import javax.net.ssl.SSLException;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
-import net.firedevops.firemud.gamesession.config.DevIsolatedProperties;
-import net.firedevops.firemud.gamesession.config.GrpcClientProperties;
 import net.firedevops.firemud.entitymanagement.v1.EntityManagementServiceGrpc;
 import net.firedevops.firemud.entitymanagement.v1.PingRequest;
 import net.firedevops.firemud.entitymanagement.v1.PingResponse;
+import net.firedevops.firemud.gamesession.config.DevIsolatedProperties;
+import net.firedevops.firemud.gamesession.config.GrpcClientProperties;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 

@@ -6,6 +6,8 @@ import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import java.util.List;
 import java.util.Objects;
+import net.firedevops.firemud.automationscripting.model.FormationType;
+import net.firedevops.firemud.automationscripting.service.NpcFormationService;
 import net.firedevops.firemud.automationscripting.v1.AddFormationMemberRequest;
 import net.firedevops.firemud.automationscripting.v1.AddFormationMemberResponse;
 import net.firedevops.firemud.automationscripting.v1.AutomationScriptingServiceGrpc;
@@ -13,8 +15,6 @@ import net.firedevops.firemud.automationscripting.v1.CreateFormationRequest;
 import net.firedevops.firemud.automationscripting.v1.CreateFormationResponse;
 import net.firedevops.firemud.automationscripting.v1.ListFormationMembersRequest;
 import net.firedevops.firemud.automationscripting.v1.ListFormationMembersResponse;
-import net.firedevops.firemud.automationscripting.model.FormationType;
-import net.firedevops.firemud.automationscripting.service.NpcFormationService;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.lognet.springboot.grpc.GRpcService;
 

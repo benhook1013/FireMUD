@@ -1,8 +1,8 @@
 package net.firedevops.firemud.accountservice.controller;
 
+import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
 import net.firedevops.firemud.common.ApiResponse;
 import net.firedevops.firemud.common.ErrorDetail;
-import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;

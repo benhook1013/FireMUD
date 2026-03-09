@@ -12,9 +12,9 @@ import java.util.concurrent.TimeUnit;
 import javax.net.ssl.SSLException;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.TlsCertificateWatcher;
-import net.firedevops.firemud.socialgroups.config.GrpcClientProperties;
 import net.firedevops.firemud.loggingadmin.v1.CreateReportRequest;
 import net.firedevops.firemud.loggingadmin.v1.ReportServiceGrpc;
+import net.firedevops.firemud.socialgroups.config.GrpcClientProperties;
 import org.springframework.stereotype.Component;
 
 /** Client for communicating with the Logging & Admin Service. */

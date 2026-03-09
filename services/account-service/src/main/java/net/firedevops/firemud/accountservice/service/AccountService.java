@@ -26,12 +26,14 @@ public interface AccountService {
 
   void completePasswordReset(CompletePasswordResetRequest request);
 
-  void linkExternalAccount(net.firedevops.firemud.accountservice.dto.LinkExternalAccountRequest request);
+  void linkExternalAccount(
+      net.firedevops.firemud.accountservice.dto.LinkExternalAccountRequest request);
 
   void requestEmailVerification(Long tenantId, Long accountId);
 
   void verifyEmail(net.firedevops.firemud.accountservice.dto.VerifyEmailRequest request);
 
   /** Send the username associated with an email address. */
-  void sendUsernameReminder(net.firedevops.firemud.accountservice.dto.UsernameRecoveryRequest request);
+  void sendUsernameReminder(
+      net.firedevops.firemud.accountservice.dto.UsernameRecoveryRequest request);
 }

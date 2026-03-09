@@ -2,10 +2,10 @@ package net.firedevops.firemud.accountservice.controller;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import jakarta.validation.Valid;
-import net.firedevops.firemud.common.ApiResponse;
 import net.firedevops.firemud.accountservice.dto.ProfileDto;
 import net.firedevops.firemud.accountservice.dto.UpdateProfileRequest;
 import net.firedevops.firemud.accountservice.service.AccountService;
+import net.firedevops.firemud.common.ApiResponse;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;

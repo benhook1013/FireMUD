@@ -1,7 +1,7 @@
 package net.firedevops.firemud.automationscripting.controller;
 
-import net.firedevops.firemud.common.ApiResponse;
 import net.firedevops.firemud.automationscripting.service.FactionService;
+import net.firedevops.firemud.common.ApiResponse;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;

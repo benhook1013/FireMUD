@@ -128,7 +128,8 @@ class AccountGrpcServiceTest {
     PingService pingService = Mockito.mock(PingService.class);
     AccountService accountService = Mockito.mock(AccountService.class);
     Mockito.when(accountService.getProfile(1L, 2L))
-        .thenReturn(new net.firedevops.firemud.accountservice.dto.ProfileDto(1L, 1L, 2L, "demo", "bio"));
+        .thenReturn(
+            new net.firedevops.firemud.accountservice.dto.ProfileDto(1L, 1L, 2L, "demo", "bio"));
     AccountGrpcService service = new AccountGrpcService(pingService, accountService);
 
     AtomicReference<GetProfileResponse> ref = new AtomicReference<>();

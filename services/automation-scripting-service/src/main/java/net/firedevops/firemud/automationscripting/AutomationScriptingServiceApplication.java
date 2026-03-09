@@ -1,8 +1,8 @@
 package net.firedevops.firemud.automationscripting;
 
+import net.firedevops.firemud.automationscripting.config.AuthProperties;
 import net.firedevops.firemud.common.config.CommonAutoConfiguration;
 import net.firedevops.firemud.common.config.DatabaseAutoConfiguration;
-import net.firedevops.firemud.automationscripting.config.AuthProperties;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;

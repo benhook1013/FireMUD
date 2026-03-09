@@ -1,8 +1,8 @@
 package net.firedevops.firemud.accountservice.service.impl;
 
 import io.micrometer.core.annotation.Timed;
-import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.accountservice.service.PingService;
+import net.firedevops.firemud.common.LoggingUtil;
 import org.slf4j.Logger;
 import org.springframework.stereotype.Service;
 

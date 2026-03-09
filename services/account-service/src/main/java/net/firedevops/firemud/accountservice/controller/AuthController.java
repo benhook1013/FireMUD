@@ -2,7 +2,6 @@ package net.firedevops.firemud.accountservice.controller;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import jakarta.validation.Valid;
-import net.firedevops.firemud.common.ApiResponse;
 import net.firedevops.firemud.accountservice.dto.AccountRefRequest;
 import net.firedevops.firemud.accountservice.dto.AuthenticationResult;
 import net.firedevops.firemud.accountservice.dto.CompletePasswordResetRequest;
@@ -11,6 +10,7 @@ import net.firedevops.firemud.accountservice.dto.PasswordResetRequest;
 import net.firedevops.firemud.accountservice.dto.UsernameRecoveryRequest;
 import net.firedevops.firemud.accountservice.dto.VerifyEmailRequest;
 import net.firedevops.firemud.accountservice.service.AccountService;
+import net.firedevops.firemud.common.ApiResponse;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;

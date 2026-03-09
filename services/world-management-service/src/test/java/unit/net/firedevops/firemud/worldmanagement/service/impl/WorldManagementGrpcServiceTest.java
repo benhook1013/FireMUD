@@ -5,10 +5,10 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.util.concurrent.atomic.AtomicReference;
+import net.firedevops.firemud.shared.v1.RoomInstanceRef;
 import net.firedevops.firemud.worldmanagement.mapper.RoomMapper;
 import net.firedevops.firemud.worldmanagement.service.PingService;
 import net.firedevops.firemud.worldmanagement.service.RoomService;
-import net.firedevops.firemud.shared.v1.RoomInstanceRef;
 import net.firedevops.firemud.worldmanagement.v1.PingRequest;
 import net.firedevops.firemud.worldmanagement.v1.PingResponse;
 import org.junit.jupiter.api.Test;
@@ -22,7 +22,8 @@ class WorldManagementGrpcServiceTest {
     Mockito.when(pingService.ping()).thenReturn("pong");
     RoomService roomService = Mockito.mock(RoomService.class);
     RoomMapper mapper = Mappers.getMapper(RoomMapper.class);
-    var worldEventService = Mockito.mock(net.firedevops.firemud.worldmanagement.service.WorldEventService.class);
+    var worldEventService =
+        Mockito.mock(net.firedevops.firemud.worldmanagement.service.WorldEventService.class);
     MeterRegistry meterRegistry = Mockito.mock(MeterRegistry.class);
     Mockito.when(meterRegistry.counter(Mockito.anyString(), Mockito.any(String[].class)))
         .thenReturn(Mockito.mock(io.micrometer.core.instrument.Counter.class));
@@ -54,7 +55,8 @@ class WorldManagementGrpcServiceTest {
     PingService pingService = Mockito.mock(PingService.class);
     RoomService roomService = Mockito.mock(RoomService.class);
     RoomMapper mapper = Mappers.getMapper(RoomMapper.class);
-    var worldEventService = Mockito.mock(net.firedevops.firemud.worldmanagement.service.WorldEventService.class);
+    var worldEventService =
+        Mockito.mock(net.firedevops.firemud.worldmanagement.service.WorldEventService.class);
     MeterRegistry meterRegistry = Mockito.mock(MeterRegistry.class);
     Mockito.when(meterRegistry.counter(Mockito.anyString(), Mockito.any(String[].class)))
         .thenReturn(Mockito.mock(io.micrometer.core.instrument.Counter.class));
@@ -90,7 +92,8 @@ class WorldManagementGrpcServiceTest {
     PingService pingService = Mockito.mock(PingService.class);
     RoomService roomService = Mockito.mock(RoomService.class);
     RoomMapper mapper = Mappers.getMapper(RoomMapper.class);
-    var worldEventService = Mockito.mock(net.firedevops.firemud.worldmanagement.service.WorldEventService.class);
+    var worldEventService =
+        Mockito.mock(net.firedevops.firemud.worldmanagement.service.WorldEventService.class);
     MeterRegistry meterRegistry = Mockito.mock(MeterRegistry.class);
     Mockito.when(meterRegistry.counter(Mockito.anyString(), Mockito.any(String[].class)))
         .thenReturn(Mockito.mock(io.micrometer.core.instrument.Counter.class));

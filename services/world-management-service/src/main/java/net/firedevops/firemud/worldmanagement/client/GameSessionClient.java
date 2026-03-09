@@ -13,10 +13,10 @@ import java.util.concurrent.TimeUnit;
 import javax.net.ssl.SSLException;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.TlsCertificateWatcher;
-import net.firedevops.firemud.worldmanagement.config.GrpcClientProperties;
 import net.firedevops.firemud.gamesession.v1.GameSessionServiceGrpc;
 import net.firedevops.firemud.gamesession.v1.PingRequest;
 import net.firedevops.firemud.gamesession.v1.PingResponse;
+import net.firedevops.firemud.worldmanagement.config.GrpcClientProperties;
 import org.springframework.stereotype.Component;
 
 /** gRPC client for communicating with the Game Session Service. */

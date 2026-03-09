@@ -11,9 +11,9 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
+import net.firedevops.firemud.automationscripting.service.tick.ScriptTickService;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.conflict.ConflictTracker;
-import net.firedevops.firemud.automationscripting.service.tick.ScriptTickService;
 import org.slf4j.Logger;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.ClassPathResource;
@@ -34,7 +34,8 @@ public class ScriptTickServiceImpl implements ScriptTickService {
 
   private final RedisTemplate<String, Object> redisTemplate;
   private final MeterRegistry meterRegistry;
-  private final net.firedevops.firemud.automationscripting.service.quota.ScriptQuotaService quotaService;
+  private final net.firedevops.firemud.automationscripting.service.quota.ScriptQuotaService
+      quotaService;
   private final ConflictTracker conflictTracker;
 
   @Value("${automation.tick-duration-ms:1000}")

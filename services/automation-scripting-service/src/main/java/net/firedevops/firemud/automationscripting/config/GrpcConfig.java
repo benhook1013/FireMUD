@@ -2,10 +2,10 @@ package net.firedevops.firemud.automationscripting.config;
 
 import io.micrometer.core.instrument.MeterRegistry;
 import io.opentelemetry.api.trace.Tracer;
+import net.firedevops.firemud.automationscripting.security.GrpcJwtAuthInterceptor;
 import net.firedevops.firemud.common.grpc.LoggingInterceptor;
 import net.firedevops.firemud.common.grpc.MetricsInterceptor;
 import net.firedevops.firemud.common.grpc.TracingInterceptor;
-import net.firedevops.firemud.automationscripting.security.GrpcJwtAuthInterceptor;
 import org.lognet.springboot.grpc.GRpcGlobalInterceptor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;

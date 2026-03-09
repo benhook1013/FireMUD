@@ -158,7 +158,10 @@ class SayWebSocketCrossServiceTest {
     props.put("firemud.services.entityManagementService", ENTITY_STUB.endpoint());
     props.put("firemud.services.socialGroupsService", SOCIAL_STUB.endpoint());
     ConfigurableApplicationContext context =
-        new SpringApplicationBuilder(net.firedevops.firemud.gamelogic.GameLogicServiceApplication.class).properties(props).run();
+        new SpringApplicationBuilder(
+                net.firedevops.firemud.gamelogic.GameLogicServiceApplication.class)
+            .properties(props)
+            .run();
     return new GameLogicHolder(context, grpcPort);
   }
 

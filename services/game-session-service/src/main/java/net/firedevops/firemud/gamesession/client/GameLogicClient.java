@@ -12,7 +12,6 @@ import java.util.Locale;
 import java.util.concurrent.TimeUnit;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
-import net.firedevops.firemud.gamesession.config.GrpcClientProperties;
 import net.firedevops.firemud.gamelogic.v1.BroadcastSayRequest;
 import net.firedevops.firemud.gamelogic.v1.BroadcastSayResponse;
 import net.firedevops.firemud.gamelogic.v1.ChatAlias;
@@ -21,6 +20,7 @@ import net.firedevops.firemud.gamelogic.v1.LookRequest;
 import net.firedevops.firemud.gamelogic.v1.LookResult;
 import net.firedevops.firemud.gamelogic.v1.PingRequest;
 import net.firedevops.firemud.gamelogic.v1.PingResponse;
+import net.firedevops.firemud.gamesession.config.GrpcClientProperties;
 import net.firedevops.firemud.shared.v1.RoomInstanceRef;
 import org.springframework.stereotype.Component;
 

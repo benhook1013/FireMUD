@@ -2,9 +2,9 @@ package net.firedevops.firemud.accountservice.service.impl;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.annotation.Timed;
-import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.accountservice.config.MailProperties;
 import net.firedevops.firemud.accountservice.service.EmailService;
+import net.firedevops.firemud.common.LoggingUtil;
 import org.slf4j.Logger;
 import org.springframework.mail.SimpleMailMessage;
 import org.springframework.mail.javamail.JavaMailSender;

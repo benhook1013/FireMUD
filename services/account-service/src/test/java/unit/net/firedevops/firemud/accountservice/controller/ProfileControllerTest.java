@@ -9,13 +9,13 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.List;
 import java.util.Map;
-import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.accountservice.config.AuthConfig;
 import net.firedevops.firemud.accountservice.config.WebConfig;
 import net.firedevops.firemud.accountservice.dto.ProfileDto;
 import net.firedevops.firemud.accountservice.dto.UpdateProfileRequest;
 import net.firedevops.firemud.accountservice.security.JwtAuthInterceptor;
 import net.firedevops.firemud.accountservice.service.AccountService;
+import net.firedevops.firemud.common.security.JwtUtil;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;

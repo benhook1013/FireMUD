@@ -1,8 +1,8 @@
 package net.firedevops.firemud.gamedesign.config;
 
 import javax.net.ssl.SSLException;
-import net.firedevops.firemud.gamedesign.client.AutomationScriptingClient;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
+import net.firedevops.firemud.gamedesign.client.AutomationScriptingClient;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 

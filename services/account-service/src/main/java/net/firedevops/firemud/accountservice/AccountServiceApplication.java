@@ -1,11 +1,11 @@
 package net.firedevops.firemud.accountservice;
 
-import net.firedevops.firemud.common.config.CommonAutoConfiguration;
-import net.firedevops.firemud.common.config.DatabaseAutoConfiguration;
 import net.firedevops.firemud.accountservice.config.AuthConfig;
 import net.firedevops.firemud.accountservice.config.GrpcClientProperties;
 import net.firedevops.firemud.accountservice.config.MailConfig;
 import net.firedevops.firemud.accountservice.config.PaymentConfig;
+import net.firedevops.firemud.common.config.CommonAutoConfiguration;
+import net.firedevops.firemud.common.config.DatabaseAutoConfiguration;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;

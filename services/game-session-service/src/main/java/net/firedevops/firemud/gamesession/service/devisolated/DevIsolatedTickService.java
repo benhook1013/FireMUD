@@ -1,8 +1,8 @@
 package net.firedevops.firemud.gamesession.service.devisolated;
 
 import net.firedevops.firemud.common.LoggingUtil;
-import net.firedevops.firemud.gamesession.v1.TickStatus;
 import net.firedevops.firemud.gamesession.service.TickService;
+import net.firedevops.firemud.gamesession.v1.TickStatus;
 import org.slf4j.Logger;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;

@@ -11,8 +11,6 @@ import de.mkammerer.argon2.Argon2Factory;
 import java.util.Optional;
 import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.accountservice.client.LoggingAdminClient;
-import net.firedevops.firemud.common.saga.SagaRunner;
-import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.accountservice.config.MailProperties;
 import net.firedevops.firemud.accountservice.dto.AccountDto;
 import net.firedevops.firemud.accountservice.dto.AuthenticationResult;
@@ -33,6 +31,8 @@ import net.firedevops.firemud.accountservice.service.EmailService;
 import net.firedevops.firemud.accountservice.service.NotificationService;
 import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
 import net.firedevops.firemud.accountservice.service.session.SessionService;
+import net.firedevops.firemud.common.saga.SagaRunner;
+import net.firedevops.firemud.common.security.JwtUtil;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mapstruct.factory.Mappers;
@@ -143,7 +143,8 @@ class AccountServiceImplTest {
     profile.setDisplayName("demo");
     when(profileRepository.findByAccountIdAndTenantId(2L, 1L)).thenReturn(Optional.of(profile));
     when(profileMapper.toDto(profile))
-        .thenReturn(new net.firedevops.firemud.accountservice.dto.ProfileDto(1L, 1L, 2L, "demo", null));
+        .thenReturn(
+            new net.firedevops.firemud.accountservice.dto.ProfileDto(1L, 1L, 2L, "demo", null));
 
     var dto = service.getProfile(1L, 2L);
 
@@ -158,11 +159,13 @@ class AccountServiceImplTest {
     when(profileRepository.findByAccountIdAndTenantId(2L, 1L)).thenReturn(Optional.of(profile));
     when(profileRepository.save(profile)).thenReturn(profile);
     when(profileMapper.toDto(profile))
-        .thenReturn(new net.firedevops.firemud.accountservice.dto.ProfileDto(1L, 1L, 2L, "demo", "bio"));
+        .thenReturn(
+            new net.firedevops.firemud.accountservice.dto.ProfileDto(1L, 1L, 2L, "demo", "bio"));
 
     var dto =
         service.updateProfile(
-            new net.firedevops.firemud.accountservice.dto.UpdateProfileRequest(1L, 2L, "demo", "bio"));
+            new net.firedevops.firemud.accountservice.dto.UpdateProfileRequest(
+                1L, 2L, "demo", "bio"));
 
     assertEquals("demo", dto.displayName());
     org.mockito.Mockito.verify(notificationService).sendNotification(1L, 2L, "Profile updated");
@@ -200,7 +203,8 @@ class AccountServiceImplTest {
         .thenReturn(Optional.of(account));
 
     service.sendUsernameReminder(
-        new net.firedevops.firemud.accountservice.dto.UsernameRecoveryRequest(1L, "demo@example.com"));
+        new net.firedevops.firemud.accountservice.dto.UsernameRecoveryRequest(
+            1L, "demo@example.com"));
 
     org.mockito.Mockito.verify(emailService)
         .sendEmail(
@@ -221,10 +225,13 @@ class AccountServiceImplTest {
         .thenReturn(false);
 
     service.linkExternalAccount(
-        new net.firedevops.firemud.accountservice.dto.LinkExternalAccountRequest(1L, 5L, "google", "abc"));
+        new net.firedevops.firemud.accountservice.dto.LinkExternalAccountRequest(
+            1L, 5L, "google", "abc"));
 
-    org.mockito.ArgumentCaptor<net.firedevops.firemud.accountservice.entity.ExternalAccount> captor =
-        org.mockito.ArgumentCaptor.forClass(net.firedevops.firemud.accountservice.entity.ExternalAccount.class);
+    org.mockito.ArgumentCaptor<net.firedevops.firemud.accountservice.entity.ExternalAccount>
+        captor =
+            org.mockito.ArgumentCaptor.forClass(
+                net.firedevops.firemud.accountservice.entity.ExternalAccount.class);
     org.mockito.Mockito.verify(externalAccountRepository).save(captor.capture());
     assertEquals("abc", captor.getValue().getExternalId());
   }
@@ -261,7 +268,8 @@ class AccountServiceImplTest {
     when(emailVerificationTokenRepository.findByTokenAndTenantId("tok", 1L))
         .thenReturn(Optional.of(token));
 
-    service.verifyEmail(new net.firedevops.firemud.accountservice.dto.VerifyEmailRequest(1L, "tok"));
+    service.verifyEmail(
+        new net.firedevops.firemud.accountservice.dto.VerifyEmailRequest(1L, "tok"));
 
     assertTrue(account.isEmailVerified());
     org.mockito.Mockito.verify(emailVerificationTokenRepository).delete(token);

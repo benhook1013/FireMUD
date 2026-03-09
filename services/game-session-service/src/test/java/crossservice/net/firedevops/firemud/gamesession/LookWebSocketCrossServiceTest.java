@@ -142,7 +142,10 @@ class LookWebSocketCrossServiceTest {
     props.put("firemud.services.worldManagementService", WORLD_STUB.endpoint());
     props.put("firemud.services.entityManagementService", ENTITY_STUB.endpoint());
     ConfigurableApplicationContext context =
-        new SpringApplicationBuilder(net.firedevops.firemud.gamelogic.GameLogicServiceApplication.class).properties(props).run();
+        new SpringApplicationBuilder(
+                net.firedevops.firemud.gamelogic.GameLogicServiceApplication.class)
+            .properties(props)
+            .run();
     return new GameLogicHolder(context, grpcPort);
   }
 

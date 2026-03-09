@@ -6,10 +6,10 @@ import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
 import net.firedevops.firemud.loggingadmin.dto.ReportDto;
+import net.firedevops.firemud.loggingadmin.service.ReportService;
 import net.firedevops.firemud.loggingadmin.v1.CreateReportRequest;
 import net.firedevops.firemud.loggingadmin.v1.CreateReportResponse;
 import net.firedevops.firemud.loggingadmin.v1.ReportServiceGrpc;
-import net.firedevops.firemud.loggingadmin.service.ReportService;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.lognet.springboot.grpc.GRpcService;
 

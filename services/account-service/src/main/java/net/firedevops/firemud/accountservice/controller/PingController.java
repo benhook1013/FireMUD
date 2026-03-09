@@ -1,7 +1,7 @@
 package net.firedevops.firemud.accountservice.controller;
 
-import net.firedevops.firemud.common.ApiResponse;
 import net.firedevops.firemud.accountservice.service.PingService;
+import net.firedevops.firemud.common.ApiResponse;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;

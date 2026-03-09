@@ -24,7 +24,8 @@ class GuildServiceImplTest {
   @BeforeEach
   void setUp() {
     repository = Mockito.mock(GuildMemberRepository.class);
-    loggingAdminClient = Mockito.mock(net.firedevops.firemud.socialgroups.client.LoggingAdminClient.class);
+    loggingAdminClient =
+        Mockito.mock(net.firedevops.firemud.socialgroups.client.LoggingAdminClient.class);
     sagaRunner = Mockito.mock(net.firedevops.firemud.common.saga.SagaRunner.class);
     service =
         new GuildServiceImpl(

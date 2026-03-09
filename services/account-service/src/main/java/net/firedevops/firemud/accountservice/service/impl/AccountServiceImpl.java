@@ -9,11 +9,6 @@ import java.util.Map;
 import java.util.Optional;
 import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.accountservice.client.LoggingAdminClient;
-import net.firedevops.firemud.common.LoggingUtil;
-import net.firedevops.firemud.common.saga.SagaBuilder;
-import net.firedevops.firemud.common.saga.SagaException;
-import net.firedevops.firemud.common.saga.SagaRunner;
-import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.accountservice.config.MailProperties;
 import net.firedevops.firemud.accountservice.dto.AccountDataExportDto;
 import net.firedevops.firemud.accountservice.dto.AccountDto;
@@ -40,6 +35,11 @@ import net.firedevops.firemud.accountservice.service.AccountService;
 import net.firedevops.firemud.accountservice.service.EmailService;
 import net.firedevops.firemud.accountservice.service.NotificationService;
 import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
+import net.firedevops.firemud.common.LoggingUtil;
+import net.firedevops.firemud.common.saga.SagaBuilder;
+import net.firedevops.firemud.common.saga.SagaException;
+import net.firedevops.firemud.common.saga.SagaRunner;
+import net.firedevops.firemud.common.security.JwtUtil;
 import org.slf4j.Logger;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -173,7 +173,8 @@ public class AccountServiceImpl implements AccountService {
             Map.of(
                 "accountId", account.getId(), "globalRoles", java.util.List.of(account.getRole())));
     sessionService.storeSession(tenantId, account.getId(), token);
-    return new net.firedevops.firemud.accountservice.dto.AuthenticationResult(account.getId(), token);
+    return new net.firedevops.firemud.accountservice.dto.AuthenticationResult(
+        account.getId(), token);
   }
 
   @Override
@@ -319,7 +320,8 @@ public class AccountServiceImpl implements AccountService {
   @Override
   @Transactional
   @Timed(value = "account.link_external")
-  public void linkExternalAccount(net.firedevops.firemud.accountservice.dto.LinkExternalAccountRequest request) {
+  public void linkExternalAccount(
+      net.firedevops.firemud.accountservice.dto.LinkExternalAccountRequest request) {
     Account account =
         accountRepository
             .findById(request.accountId())
