@@ -1,4 +1,4 @@
-FROM ghcr.io/library/postgres:16
+FROM postgres:16
 USER root
 RUN apt-get update -y \
   && apt-get install -y --no-install-recommends cron \
