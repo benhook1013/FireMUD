@@ -111,7 +111,7 @@ public class SayCommandHandler {
     String speaker = delivered.isEmpty() ? "Unknown" : delivered.get(0);
     String deliveredLine = String.join(", ", delivered);
     return String.format(
-        "OK SAY%nSpeaker: %s%nDelivered-To: %s%nMessage: %s",
+        "Speaker: %s%nDelivered-To: %s%nMessage: %s",
         speaker, deliveredLine, response.getMessage());
   }
 

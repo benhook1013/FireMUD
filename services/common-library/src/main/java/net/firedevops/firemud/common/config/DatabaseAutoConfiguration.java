@@ -10,6 +10,7 @@ import io.micrometer.core.instrument.MeterRegistry;
 import java.util.Objects;
 import javax.sql.DataSource;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.jdbc.DataSourceBuilder;
@@ -20,6 +21,7 @@ import org.springframework.data.redis.connection.RedisStandaloneConfiguration;
 import org.springframework.data.redis.connection.lettuce.LettuceClientConfiguration;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.StringRedisTemplate;
 
 @Configuration
 @ConditionalOnProperty(
@@ -88,6 +90,14 @@ public class DatabaseAutoConfiguration {
   @Bean
   public RedisTemplate<String, Object> redisTemplate(RedisConnectionFactory factory) {
     RedisTemplate<String, Object> template = new RedisTemplate<>();
+    template.setConnectionFactory(factory);
+    return template;
+  }
+
+  @Bean
+  @ConditionalOnMissingBean(StringRedisTemplate.class)
+  public StringRedisTemplate stringRedisTemplate(RedisConnectionFactory factory) {
+    StringRedisTemplate template = new StringRedisTemplate();
     template.setConnectionFactory(factory);
     return template;
   }

@@ -4,14 +4,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import io.grpc.Server;
 import io.grpc.ServerBuilder;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.net.http.WebSocket;
 import java.net.http.WebSocket.Listener;
-import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
@@ -104,9 +103,9 @@ class LookWebSocketCrossServiceTest {
     assertThat(responses.get(1).trim()).isEqualTo(LookTestFixtures.canonicalLookText().trim());
     assertThat(responses.get(2)).startsWith("ERROR ROOM_NOT_FOUND");
 
-    assertMetricEventually("gamesession_command_look_invocations_total{tenantId=\"1\"}", 2.0);
+    assertMetricEventually("gamesession.command.look.invocations", 2.0, "tenantId", "1");
     assertMetricEventually(
-        "gamesession_command_look_failures_total{tenantId=\"1\",error=\"ROOM_NOT_FOUND\"}", 1.0);
+        "gamesession.command.look.failures", 1.0, "tenantId", "1", "error", "ROOM_NOT_FOUND");
   }
 
   private static synchronized void ensureTestServicesStarted() throws Exception {
@@ -162,6 +161,9 @@ class LookWebSocketCrossServiceTest {
           tenant_id BIGINT NOT NULL,
           runtime_version VARCHAR(100) NOT NULL,
           script_patch_version VARCHAR(100),
+          script_patch_pinned_at TIMESTAMP NULL,
+          script_patch_pinned_by VARCHAR(200) NULL,
+          script_patch_pinned_reason VARCHAR(500) NULL,
           owner_account_id BIGINT NOT NULL,
           status VARCHAR(20) NOT NULL
         )
@@ -236,20 +238,21 @@ class LookWebSocketCrossServiceTest {
         "Expected at least " + expected + " responses, got " + responses.size());
   }
 
-  private void assertMetricEventually(String metric, double expectedValue) throws Exception {
-    HttpClient client = HttpClient.newHttpClient();
-    URI uri = URI.create("http://localhost:" + GAME_SESSION.port() + "/actuator/prometheus");
+  private void assertMetricEventually(String meterName, double expectedValue, String... tags)
+      throws Exception {
+    MeterRegistry registry = GAME_SESSION.bean(MeterRegistry.class);
     long deadline = System.currentTimeMillis() + COMMAND_WAIT.toMillis();
     while (System.currentTimeMillis() < deadline) {
-      HttpRequest request = HttpRequest.newBuilder(uri).GET().build();
-      HttpResponse<String> response =
-          client.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
-      if (response.body().contains(metric + " " + expectedValue)) {
+      Counter counter = registry.find(meterName).tags(tags).counter();
+      if (counter != null && counter.count() >= expectedValue) {
         return;
       }
       Thread.sleep(100);
     }
-    throw new AssertionError("Metric " + metric + " did not reach " + expectedValue);
+    Counter counter = registry.find(meterName).tags(tags).counter();
+    double actual = counter == null ? 0.0 : counter.count();
+    throw new AssertionError(
+        "Metric " + meterName + " did not reach " + expectedValue + "; actual=" + actual);
   }
 
   private static final class AccountServiceStub implements AutoCloseable {

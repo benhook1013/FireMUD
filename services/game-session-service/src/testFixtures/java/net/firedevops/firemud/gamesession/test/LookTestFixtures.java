@@ -12,7 +12,7 @@ import net.firedevops.firemud.worldmanagement.v1.RoomSnapshot;
 public final class LookTestFixtures {
   public static final String TENANT = "demo";
   public static final String ROOM_ID = "R-1021";
-  public static final String ROOM_INSTANCE_ID = "room-inst-1021";
+  public static final String ROOM_INSTANCE_ID = ROOM_ID;
   public static final String GAME_INSTANCE_ID = "game-inst-demo";
   public static final String ROOM_NAME = "Candle-lit Antechamber";
 

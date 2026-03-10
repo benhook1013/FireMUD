@@ -32,7 +32,7 @@ import org.springframework.transaction.annotation.Transactional;
     name = "game-session.dev-isolated",
     havingValue = "false",
     matchIfMissing = false)
-public final class GameInstanceServiceImpl implements GameInstanceService {
+public class GameInstanceServiceImpl implements GameInstanceService {
   private static final Logger logger = LoggingUtil.getLogger(GameInstanceServiceImpl.class);
 
   private final GameInstanceRepository repository;

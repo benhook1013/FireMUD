@@ -68,10 +68,7 @@ class SayCommandHandlerTest {
     List<String> lines = result.responseText().lines().map(String::trim).toList();
     assertThat(lines)
         .containsExactly(
-            "OK SAY",
-            "Speaker: Emberline",
-            "Delivered-To: Emberline, Sora",
-            "Message: Hello travelers");
+            "Speaker: Emberline", "Delivered-To: Emberline, Sora", "Message: Hello travelers");
   }
 
   @Test
