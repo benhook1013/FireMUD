@@ -27,7 +27,7 @@ x-service-healthcheck: &service-health
   retries: 5
 
 x-service-volumes: &service-vols
-  - ./dev-tools/certs:/app/certs:ro
+  - ../dev-tools/certs:/app/certs:ro
 
 x-service-resources: &service-resources
   cpus: "0.5"
@@ -38,7 +38,7 @@ x-service-env-file: &service-env-file
 
 services:
   account-service:
-    build: ./services/account-service
+    build: ../services/account-service
     ports:
       - "8081:8080"
     <<: *service-resources
@@ -57,7 +57,7 @@ services:
     healthcheck:
       <<: *service-health
   gateway:
-    build: ./services/spring-cloud-gateway
+    build: ../services/spring-cloud-gateway
     ports:
       - "8080:8080"
     <<: *service-resources
@@ -76,7 +76,7 @@ services:
     healthcheck:
       <<: *service-health
   automation-scripting-service:
-    build: ./services/automation-scripting-service
+    build: ../services/automation-scripting-service
     ports:
       - "8082:8080"
     <<: *service-resources
@@ -95,7 +95,7 @@ services:
     healthcheck:
       <<: *service-health
   entity-management-service:
-    build: ./services/entity-management-service
+    build: ../services/entity-management-service
     ports:
       - "8083:8080"
     <<: *service-resources
@@ -114,7 +114,7 @@ services:
     healthcheck:
       <<: *service-health
   game-design-service:
-    build: ./services/game-design-service
+    build: ../services/game-design-service
     ports:
       - "8084:8080"
     <<: *service-resources
@@ -133,7 +133,7 @@ services:
     healthcheck:
       <<: *service-health
   game-logic-service:
-    build: ./services/game-logic-service
+    build: ../services/game-logic-service
     ports:
       - "8085:8080"
     <<: *service-resources
@@ -152,7 +152,7 @@ services:
     healthcheck:
       <<: *service-health
   game-session-service:
-    build: ./services/game-session-service
+    build: ../services/game-session-service
     ports:
       - "8086:8080"
     <<: *service-resources
@@ -171,7 +171,7 @@ services:
     healthcheck:
       <<: *service-health
   logging-admin-service:
-    build: ./services/logging-admin-service
+    build: ../services/logging-admin-service
     ports:
       - "8087:8080"
     <<: *service-resources
@@ -190,7 +190,7 @@ services:
     healthcheck:
       <<: *service-health
   social-groups-service:
-    build: ./services/social-groups-service
+    build: ../services/social-groups-service
     ports:
       - "8088:8080"
     <<: *service-resources
@@ -209,7 +209,7 @@ services:
     healthcheck:
       <<: *service-health
   tcp-proxy-service:
-    build: ./services/tcp-proxy-service
+    build: ../services/tcp-proxy-service
     ports:
       - "2323:2323"
     <<: *service-resources
@@ -228,7 +228,7 @@ services:
     healthcheck:
       <<: *service-health
   world-management-service:
-    build: ./services/world-management-service
+    build: ../services/world-management-service
     ports:
       - "8089:8080"
     <<: *service-resources
@@ -334,7 +334,7 @@ services:
 
   pg-dump-cron:
     build:
-      context: .
+      context: ..
       dockerfile: docker/pg-dump-cron.Dockerfile
     cpus: "0.5"
     mem_limit: 256m

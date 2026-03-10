@@ -60,6 +60,7 @@ for service in "${SERVICES[@]}"; do
     echo "Generating ERD for $service"
     docker run --rm \
       --network host \
+      --user "$(id -u):$(id -g)" \
       -v "$(pwd)/$OUT_DIR":/output \
       schemacrawler/schemacrawler:latest \
       /opt/schemacrawler/bin/schemacrawler.sh \
@@ -78,6 +79,7 @@ done
 echo "Generating ERD for saga schema"
 docker run --rm \
   --network host \
+  --user "$(id -u):$(id -g)" \
   -v "$(pwd)/$OUT_DIR":/output \
   schemacrawler/schemacrawler:latest \
   /opt/schemacrawler/bin/schemacrawler.sh \
