@@ -31,6 +31,10 @@ docker run --name "$POSTGRES_CONTAINER" -e POSTGRES_USER=firemud \
   -e POSTGRES_PASSWORD=firemud -e POSTGRES_DB=firemud -p 5432:5432 -d postgres:16
 trap 'docker rm -f "$POSTGRES_CONTAINER" >/dev/null' EXIT
 
+until docker exec "$POSTGRES_CONTAINER" pg_isready -U firemud -d firemud >/dev/null 2>&1; do
+  sleep 1
+done
+
 export FIREMUD_POSTGRES_HOST=localhost
 export FIREMUD_POSTGRES_PORT=5432
 export FIREMUD_POSTGRES_DB=firemud
@@ -58,6 +62,7 @@ for service in "${SERVICES[@]}"; do
       --network host \
       -v "$(pwd)/$OUT_DIR":/output \
       schemacrawler/schemacrawler:latest \
+      /opt/schemacrawler/bin/schemacrawler.sh \
       --server=postgresql \
       --host=localhost --port=5432 \
       --user=firemud --password=firemud \
@@ -75,6 +80,7 @@ docker run --rm \
   --network host \
   -v "$(pwd)/$OUT_DIR":/output \
   schemacrawler/schemacrawler:latest \
+  /opt/schemacrawler/bin/schemacrawler.sh \
   --server=postgresql \
   --host=localhost --port=5432 \
   --user=firemud --password=firemud \
