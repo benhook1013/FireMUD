@@ -325,6 +325,9 @@ jobs:
         with:
           cache-read-only: false
 
+      - name: 📝 Create CI .env placeholder
+        run: touch .env
+
       - name: 🚀 Start Dev Stack (devUp)
         run: ./gradlew devUp
 

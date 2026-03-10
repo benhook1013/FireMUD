@@ -48,7 +48,7 @@ for service in "${SERVICES[@]}"; do
   MIGRATION_DIR="services/$service/src/main/resources/db/migration"
   if [ -d "$MIGRATION_DIR" ]; then
     echo "Running Flyway migrations for $service"
-    ./gradlew ":$service:flywayClean" ":$service:flywayMigrate"
+    ./gradlew --no-configuration-cache ":$service:flywayClean" ":$service:flywayMigrate"
 
     echo "Generating ERD for $service"
     docker run --rm \
