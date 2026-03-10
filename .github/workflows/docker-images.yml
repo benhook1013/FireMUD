@@ -35,7 +35,8 @@ jobs:
       - name: Build and Push
         uses: docker/build-push-action@v7
         with:
-          context: ./services/${{ matrix.service }}
+          context: .
+          file: ./services/${{ matrix.service }}/Dockerfile
           push: true
           tags: |
             ghcr.io/benhook1013/${{ matrix.service }}:${{ github.sha }}

@@ -1,2 +1,2 @@
-ALTER TABLE region \
+ALTER TABLE region
     ADD COLUMN spacing_multiplier DOUBLE PRECISION NOT NULL DEFAULT 1.0;

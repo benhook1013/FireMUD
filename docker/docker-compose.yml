@@ -38,7 +38,9 @@ x-service-env-file: &service-env-file
 
 services:
   account-service:
-    build: ../services/account-service
+    build:
+      context: ..
+      dockerfile: services/account-service/Dockerfile
     ports:
       - "8081:8080"
     <<: *service-resources
@@ -57,7 +59,9 @@ services:
     healthcheck:
       <<: *service-health
   gateway:
-    build: ../services/spring-cloud-gateway
+    build:
+      context: ..
+      dockerfile: services/spring-cloud-gateway/Dockerfile
     ports:
       - "8080:8080"
     <<: *service-resources
@@ -76,7 +80,9 @@ services:
     healthcheck:
       <<: *service-health
   automation-scripting-service:
-    build: ../services/automation-scripting-service
+    build:
+      context: ..
+      dockerfile: services/automation-scripting-service/Dockerfile
     ports:
       - "8082:8080"
     <<: *service-resources
@@ -95,7 +101,9 @@ services:
     healthcheck:
       <<: *service-health
   entity-management-service:
-    build: ../services/entity-management-service
+    build:
+      context: ..
+      dockerfile: services/entity-management-service/Dockerfile
     ports:
       - "8083:8080"
     <<: *service-resources
@@ -114,7 +122,9 @@ services:
     healthcheck:
       <<: *service-health
   game-design-service:
-    build: ../services/game-design-service
+    build:
+      context: ..
+      dockerfile: services/game-design-service/Dockerfile
     ports:
       - "8084:8080"
     <<: *service-resources
@@ -133,7 +143,9 @@ services:
     healthcheck:
       <<: *service-health
   game-logic-service:
-    build: ../services/game-logic-service
+    build:
+      context: ..
+      dockerfile: services/game-logic-service/Dockerfile
     ports:
       - "8085:8080"
     <<: *service-resources
@@ -152,7 +164,9 @@ services:
     healthcheck:
       <<: *service-health
   game-session-service:
-    build: ../services/game-session-service
+    build:
+      context: ..
+      dockerfile: services/game-session-service/Dockerfile
     ports:
       - "8086:8080"
     <<: *service-resources
@@ -171,7 +185,9 @@ services:
     healthcheck:
       <<: *service-health
   logging-admin-service:
-    build: ../services/logging-admin-service
+    build:
+      context: ..
+      dockerfile: services/logging-admin-service/Dockerfile
     ports:
       - "8087:8080"
     <<: *service-resources
@@ -190,7 +206,9 @@ services:
     healthcheck:
       <<: *service-health
   social-groups-service:
-    build: ../services/social-groups-service
+    build:
+      context: ..
+      dockerfile: services/social-groups-service/Dockerfile
     ports:
       - "8088:8080"
     <<: *service-resources
@@ -209,7 +227,9 @@ services:
     healthcheck:
       <<: *service-health
   tcp-proxy-service:
-    build: ../services/tcp-proxy-service
+    build:
+      context: ..
+      dockerfile: services/tcp-proxy-service/Dockerfile
     ports:
       - "2323:2323"
     <<: *service-resources
@@ -228,7 +248,9 @@ services:
     healthcheck:
       <<: *service-health
   world-management-service:
-    build: ../services/world-management-service
+    build:
+      context: ..
+      dockerfile: services/world-management-service/Dockerfile
     ports:
       - "8089:8080"
     <<: *service-resources

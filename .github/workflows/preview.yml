@@ -68,7 +68,8 @@ jobs:
               --cache-to type=gha,mode=max \
               --load \
               -t firemud-$service \
-              ./services/$service
+              -f ./services/$service/Dockerfile \
+              .
           done
 
       - name: Start preview
