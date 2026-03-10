@@ -47,8 +47,11 @@ export FLYWAY_PASSWORD="$FIREMUD_POSTGRES_PASSWORD"
 for service in "${SERVICES[@]}"; do
   MIGRATION_DIR="services/$service/src/main/resources/db/migration"
   if [ -d "$MIGRATION_DIR" ]; then
+    docker exec "$POSTGRES_CONTAINER" psql -U firemud -d firemud -v ON_ERROR_STOP=1 -c \
+      "DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public; DROP SCHEMA IF EXISTS saga CASCADE; CREATE SCHEMA saga;"
+
     echo "Running Flyway migrations for $service"
-    ./gradlew --no-configuration-cache ":$service:flywayClean" ":$service:flywayMigrate"
+    ./gradlew --no-configuration-cache ":$service:flywayMigrate"
 
     echo "Generating ERD for $service"
     docker run --rm \
