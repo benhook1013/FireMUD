@@ -257,7 +257,7 @@ tasks.register("buildDockerImages") {
 
 tasks.register<Exec>("generateDevCerts") {
     workingDir("dev-tools")
-    commandLine("bash", "generate-dev-certs.sh")
+    commandLine("bash", "generate-dev-certs.sh", "certs")
 }
 
 tasks.register<Exec>("devUp") {

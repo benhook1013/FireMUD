@@ -13,6 +13,12 @@ public record RoomSnapshotDto(
     Map<String, String> ambientState,
     List<String> roomFlags) {
 
+  public RoomSnapshotDto {
+    exits = exits == null ? List.of() : List.copyOf(exits);
+    ambientState = ambientState == null ? Map.of() : Map.copyOf(ambientState);
+    roomFlags = roomFlags == null ? List.of() : List.copyOf(roomFlags);
+  }
+
   public record RoomExitSnapshotDto(
       Long exitId,
       Long targetRoomId,

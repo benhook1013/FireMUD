@@ -51,7 +51,7 @@ jobs:
         run: cp .env.sample .env
 
       - name: Generate Dev Certificates
-        run: ./dev-tools/generate-dev-certs.sh
+        run: ./dev-tools/generate-dev-certs.sh dev-tools/certs
 
       - name: Build service images with cache
         run: |
