@@ -13,7 +13,12 @@ import lombok.EqualsAndHashCode;
 @EqualsAndHashCode(onlyExplicitlyIncluded = true)
 @NamedEntityGraph(
     name = "recipe.ingredients",
-    attributeNodes = {@NamedAttributeNode("ingredients"), @NamedAttributeNode("ingredients.item")})
+    attributeNodes =
+        @NamedAttributeNode(value = "ingredients", subgraph = "recipe.ingredients.item"),
+    subgraphs =
+        @NamedSubgraph(
+            name = "recipe.ingredients.item",
+            attributeNodes = @NamedAttributeNode("item")))
 public class CraftingRecipe {
   @Id
   @GeneratedValue(strategy = GenerationType.IDENTITY)
