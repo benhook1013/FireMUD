@@ -6,6 +6,8 @@ x-service-environment: &service-env
   FIREMUD_POSTGRES_DB: ${FIREMUD_POSTGRES_DB:-firemud}
   FIREMUD_POSTGRES_USER: ${FIREMUD_POSTGRES_USER:-firemud}
   FIREMUD_POSTGRES_PASSWORD: ${FIREMUD_POSTGRES_PASSWORD:-firemud}
+  FIREMUD_REDIS_HOST: ${FIREMUD_REDIS_HOST:-redis-cache}
+  FIREMUD_REDIS_PORT: ${FIREMUD_REDIS_PORT:-6379}
   FIREMUD_REDIS_COORD_HOST: ${FIREMUD_REDIS_COORD_HOST:-redis-coord}
   FIREMUD_REDIS_COORD_PORT: ${FIREMUD_REDIS_COORD_PORT:-6379}
   FIREMUD_REDIS_CACHE_HOST: ${FIREMUD_REDIS_CACHE_HOST:-redis-cache}
@@ -172,6 +174,13 @@ services:
     <<: *service-resources
     environment:
       <<: *service-env
+      FIREMUD_DATABASE_ENABLED: "true"
+      GAME_SESSION_DEV_ISOLATED: "false"
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/firemud
+      SPRING_DATASOURCE_DRIVER_CLASS_NAME: org.postgresql.Driver
+      SPRING_DATASOURCE_USERNAME: firemud
+      SPRING_DATASOURCE_PASSWORD: firemud
+      SPRING_FLYWAY_ENABLED: "true"
     env_file: *service-env-file
     volumes: *service-vols
     restart: unless-stopped
@@ -343,11 +352,11 @@ services:
       - sh
       - -c
       - |
-        mc alias set local http://minio:9000 $ASSET_STORE_ACCESS_KEY $ASSET_STORE_SECRET_KEY &&
-        mc mb --ignore-existing local/$ASSET_STORE_BUCKET &&
-        mc anonymous set download local/$ASSET_STORE_BUCKET &&
-        printf '[{"AllowedMethods":["GET"],"AllowedOrigins":["%s"],"AllowedHeaders":["*"]}]' "$ASSET_STORE_CORS_ORIGIN" > /tmp/cors.json &&
-        mc cors set local/$ASSET_STORE_BUCKET /tmp/cors.json
+        mc alias set local http://minio:9000 $$ASSET_STORE_ACCESS_KEY $$ASSET_STORE_SECRET_KEY &&
+        mc mb --ignore-existing local/$$ASSET_STORE_BUCKET &&
+        mc anonymous set download local/$$ASSET_STORE_BUCKET &&
+        printf '[{"AllowedMethods":["GET"],"AllowedOrigins":["%s"],"AllowedHeaders":["*"]}]' "$$ASSET_STORE_CORS_ORIGIN" > /tmp/cors.json &&
+        mc cors set local/$$ASSET_STORE_BUCKET /tmp/cors.json
     environment:
       ASSET_STORE_ACCESS_KEY: ${ASSET_STORE_ACCESS_KEY:-minio}
       ASSET_STORE_SECRET_KEY: ${ASSET_STORE_SECRET_KEY:-minio123}

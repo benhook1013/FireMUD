@@ -38,9 +38,4 @@ public class GrpcConfig {
   public AuthTokenInterceptor authTokenInterceptor(JwtUtil jwtUtil) {
     return new AuthTokenInterceptor(jwtUtil);
   }
-
-  @Bean
-  public Tracer tracer(io.opentelemetry.api.OpenTelemetry openTelemetry) {
-    return openTelemetry.getTracer("game-design-service");
-  }
 }

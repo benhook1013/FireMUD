@@ -328,6 +328,9 @@ jobs:
       - name: 📝 Create CI .env placeholder
         run: touch .env
 
+      - name: Generate Dev Certificates
+        run: ./dev-tools/generate-dev-certs.sh
+
       - name: 🚀 Start Dev Stack (devUp)
         run: ./gradlew devUp
 

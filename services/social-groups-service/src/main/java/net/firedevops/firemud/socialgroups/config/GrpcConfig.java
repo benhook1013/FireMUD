@@ -29,9 +29,4 @@ public class GrpcConfig {
   public TracingInterceptor tracingInterceptor(Tracer tracer) {
     return new TracingInterceptor(tracer);
   }
-
-  @Bean
-  public Tracer tracer(io.opentelemetry.api.OpenTelemetry openTelemetry) {
-    return openTelemetry.getTracer("social-groups-service");
-  }
 }
