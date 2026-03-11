@@ -19,22 +19,24 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.boot.autoconfigure.domain.EntityScan;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.jdbc.DataSourceBuilder;
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Condition;
+import org.springframework.context.annotation.ConditionContext;
+import org.springframework.context.annotation.Conditional;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.type.AnnotatedTypeMetadata;
 import org.springframework.data.jpa.repository.support.JpaRepositoryFactory;
-import org.springframework.orm.jpa.SharedEntityManagerCreator;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
 import org.springframework.data.redis.connection.RedisStandaloneConfiguration;
 import org.springframework.data.redis.connection.lettuce.LettuceClientConfiguration;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.orm.jpa.SharedEntityManagerCreator;
 
 @Configuration
-@EntityScan(basePackageClasses = {SagaInstance.class, SagaStep.class})
 @ConditionalOnProperty(
     prefix = "firemud.database",
     name = "enabled",
@@ -115,6 +117,7 @@ public class DatabaseAutoConfiguration {
 
   @Bean
   @ConditionalOnBean(EntityManagerFactory.class)
+  @Conditional(SagaPersistenceManagedCondition.class)
   @ConditionalOnMissingBean(SagaInstanceRepository.class)
   public SagaInstanceRepository sagaInstanceRepository(EntityManagerFactory entityManagerFactory) {
     EntityManager entityManager =
@@ -124,10 +127,32 @@ public class DatabaseAutoConfiguration {
 
   @Bean
   @ConditionalOnBean(EntityManagerFactory.class)
+  @Conditional(SagaPersistenceManagedCondition.class)
   @ConditionalOnMissingBean(SagaStepRepository.class)
   public SagaStepRepository sagaStepRepository(EntityManagerFactory entityManagerFactory) {
     EntityManager entityManager =
         SharedEntityManagerCreator.createSharedEntityManager(entityManagerFactory);
     return new JpaRepositoryFactory(entityManager).getRepository(SagaStepRepository.class);
+  }
+
+  static final class SagaPersistenceManagedCondition implements Condition {
+    @Override
+    public boolean matches(ConditionContext context, AnnotatedTypeMetadata metadata) {
+      if (context.getBeanFactory() == null) {
+        return false;
+      }
+      EntityManagerFactory entityManagerFactory =
+          context.getBeanFactory().getBeanProvider(EntityManagerFactory.class).getIfAvailable();
+      if (entityManagerFactory == null) {
+        return false;
+      }
+      try {
+        entityManagerFactory.getMetamodel().managedType(SagaInstance.class);
+        entityManagerFactory.getMetamodel().managedType(SagaStep.class);
+        return true;
+      } catch (IllegalArgumentException ignored) {
+        return false;
+      }
+    }
   }
 }
