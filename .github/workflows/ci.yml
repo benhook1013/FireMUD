@@ -170,15 +170,22 @@ jobs:
         run: |
           CHROME_VERSION=$(google-chrome --product-version)
           DRIVER_ZIP_URL="https://storage.googleapis.com/chrome-for-testing-public/${CHROME_VERSION}/linux64/chromedriver-linux64.zip"
+          DRIVER_DIR=/tmp/chromedriver-for-testing
           curl -fsSL "$DRIVER_ZIP_URL" -o /tmp/chromedriver-linux64.zip
-          rm -rf /tmp/chromedriver-linux64
-          unzip -q /tmp/chromedriver-linux64.zip -d /tmp
-          echo "/tmp/chromedriver-linux64" >> $GITHUB_PATH
+          rm -rf "$DRIVER_DIR"
+          mkdir -p "$DRIVER_DIR"
+          unzip -q /tmp/chromedriver-linux64.zip -d "$DRIVER_DIR"
+          echo "CHROMEDRIVER_PATH=$DRIVER_DIR/chromedriver-linux64/chromedriver" >> $GITHUB_ENV
 
       - name: ♿ Run Accessibility Audit
         run: |
           cd web-client
-          npm run accessibility
+          npm run build
+          npx serve dist -l 5000 &
+          SERVER_PID=$!
+          trap 'kill $SERVER_PID' EXIT
+          npx wait-on http://localhost:5000/index.html
+          npx axe http://localhost:5000/index.html --chromedriver-path "$CHROMEDRIVER_PATH" --chrome-options="--no-sandbox" --exit
 
   build-and-test:
     name: Build and Test (${{ matrix.service }})
