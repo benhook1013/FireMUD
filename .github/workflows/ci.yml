@@ -168,10 +168,12 @@ jobs:
 
       - name: Install ChromeDriver for axe
         run: |
-          cd web-client
-          npx browser-driver-manager install chrome
-          driver_path=$(npx browser-driver-manager which | grep CHROMEDRIVER_TEST_PATH | cut -d'"' -f2)
-          echo "$(dirname \"$driver_path\")" >> $GITHUB_PATH
+          CHROME_VERSION=$(google-chrome --product-version)
+          DRIVER_ZIP_URL="https://storage.googleapis.com/chrome-for-testing-public/${CHROME_VERSION}/linux64/chromedriver-linux64.zip"
+          curl -fsSL "$DRIVER_ZIP_URL" -o /tmp/chromedriver-linux64.zip
+          rm -rf /tmp/chromedriver-linux64
+          unzip -q /tmp/chromedriver-linux64.zip -d /tmp
+          echo "/tmp/chromedriver-linux64" >> $GITHUB_PATH
 
       - name: ♿ Run Accessibility Audit
         run: |
