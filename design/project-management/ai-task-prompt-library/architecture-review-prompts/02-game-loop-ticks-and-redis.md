@@ -1,6 +1,6 @@
 # Architecture Review Prompt: Game Loop, Ticks, and Redis
 
-Read the following documents, and follow references to any other design documents that appear relevant:
+Read the following documents. Follow references only when a listed document clearly points to another canonical source needed to resolve a contradiction or a missing contract. Do not recursively expand beyond that.
 
 - `design/architecture/system-architecture-ticks.md`
 - `design/architecture/system-architecture-tick-concepts-and-invariants.md`
@@ -22,5 +22,13 @@ Then:
 
 - Review the game loop and tick model together with the Redis usage and operational docs as a single, cohesive design.
 - Do not summarize the intended behavior or describe what is already good.
-- Only identify problems, gaps, or contradictions: unclear tick invariants, missing guarantees (ordering, idempotency, consistency), ambiguous data ownership across services, weak failure or recovery stories, unrealistic scaling assumptions, or Redis usage that is risky or under-specified.
-- For each issue, tie it back to the specific document or documents involved and propose concrete, actionable improvements (clarifications, additional flows, stronger invariants, different Redis patterns, or better operational safeguards).
+- Focus on issues that would block safe implementation of tick execution, replay, Redis ownership, or operator recovery.
+- Do not attempt to list every theoretical scaling or failure concern. Ignore non-blocking polish, distant scale concerns, and optional optimizations.
+- Return at most 5 issues, ordered by severity. If more exist, keep only the most implementation-relevant ones.
+- For each issue, include:
+  - `Severity`: `blocking` or `important`
+  - `Why it matters now`
+  - `Docs involved`
+  - `Suggested decision or spec change`
+- If the design is implementable and the remaining concerns are non-blocking, say `No implementation-blocking issues found.` and optionally list up to 3 deferred follow-ups.
+- Stop once the remaining issues would not change the first implementation approach.

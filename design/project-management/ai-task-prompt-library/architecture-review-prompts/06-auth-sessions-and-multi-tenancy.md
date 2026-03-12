@@ -1,6 +1,6 @@
 # Architecture Review Prompt: Auth, Sessions, and Multi-tenancy
 
-Read the following documents, and follow references to any other design documents that appear relevant:
+Read the following documents. Follow references only when a listed document clearly delegates a canonical contract needed to resolve an implementation-blocking contradiction or missing security rule. Do not recursively expand through all related auth docs.
 
 - `design/architecture/system-architecture-authentication.md`
 - `design/architecture/system-architecture-multi-tenancy.md`
@@ -15,5 +15,13 @@ Then:
 
 - Review authentication, session management, and multi-tenancy as a single, end-to-end design (identity, authentication and authorization, session lifecycle, tenant scoping, and subscription or entitlement checks).
 - Do not summarize behavior or highlight what is already good.
-- Only identify problems, contradictions, or gaps: unclear trust boundaries between services; inconsistent definitions of “user”, “account”, “session”, or “tenant”; missing rules for cross-tenant isolation; ambiguous session invalidation or expiry; under-specified interaction between billing, subscriptions, and access control; or flows that create security, data-leak, or user-experience risks.
-- For each issue, reference the specific document or documents involved and propose concrete, actionable improvements, such as clearer role or identity models, more precise session contracts, explicit tenant-isolation rules, or better coordination between account and session services.
+- Focus on issues that would create ambiguous trust boundaries, incompatible identity/session handling, or unsafe tenant isolation in the first implementation.
+- Ignore non-blocking UX refinements and future policy sophistication unless they alter the current contract surface.
+- Return at most 5 issues, ordered by severity.
+- For each issue, include:
+  - `Severity`: `blocking` or `important`
+  - `Why it matters now`
+  - `Docs involved`
+  - `Suggested decision or spec change`
+- If no implementation-blocking issues remain, say `No implementation-blocking issues found.` and optionally list up to 3 deferred follow-ups.
+- Stop once only non-blocking refinement remains.

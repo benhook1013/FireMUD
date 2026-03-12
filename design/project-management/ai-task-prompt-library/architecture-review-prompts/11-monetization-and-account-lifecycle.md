@@ -1,6 +1,6 @@
 # Architecture Review Prompt: Monetization and Account Lifecycle
 
-Read the following documents, and follow references to any other design documents that appear relevant:
+Read the following documents. Follow references only when a listed document clearly delegates a canonical contract needed to resolve a contradiction or implementation-blocking account/billing rule. Do not recursively traverse unrelated docs.
 
 - `design/architecture/system-architecture-frontend.md` (if it covers authentication, payments, or account flows)
 - `design/architecture/microservices/account-service/README.md`
@@ -15,5 +15,13 @@ Then:
 
 - Review monetization, billing, and account lifecycle as a unified design: onboarding, subscription purchase and renewal, entitlement management, downgrade or cancellation, and account deactivation or deletion.
 - Do not summarize the happy-path billing flows or restate API details that are already clear.
-- Only identify problems, contradictions, or gaps: inconsistencies between billing state and access control, unclear handling of grace periods or payment failures, missing rules for refunds or chargebacks, weak security or privacy stories around payment data and account deletion, or UX risks around surprise lockouts or entitlement changes.
-- For each issue, reference the specific document or documents involved and propose concrete, actionable improvements, such as clearer state models, explicit lifecycle diagrams, better coordination between billing and authorization, or additional safeguards for payment and account transitions.
+- Focus on issues that would block correct implementation of billing, entitlement enforcement, or account lifecycle transitions.
+- Ignore non-blocking policy refinement and future business-model ideas unless they materially affect the first implementation path.
+- Return at most 5 issues, ordered by severity.
+- For each issue, include:
+  - `Severity`: `blocking` or `important`
+  - `Why it matters now`
+  - `Docs involved`
+  - `Suggested decision or spec change`
+- If no implementation-blocking issues remain, say `No implementation-blocking issues found.` and optionally list up to 3 deferred follow-ups.
+- Stop once only non-blocking refinement remains.

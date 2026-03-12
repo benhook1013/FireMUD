@@ -1,6 +1,6 @@
 # Architecture Review Prompt: Networking, Protocols, and Reconnection
 
-Read the following documents, and follow references to any other design documents that appear relevant:
+Read the following documents. Follow references only when a listed document points to a canonical contract needed to resolve a contradiction or missing implementation-critical rule. Do not recursively traverse unrelated networking docs.
 
 - `design/architecture/microservices/tcp-proxy-service/README.md`
 - `design/architecture/microservices/spring-cloud-gateway/README.md`
@@ -15,5 +15,13 @@ Then:
 
 - Review networking and client connectivity as a unified design: TCP and WebSocket entry points, gateway behavior, protocol translation, and reconnection flows across these documents.
 - Do not summarize intended behavior or praise what is already clear.
-- Only identify problems, contradictions, or gaps: unclear ownership between the TCP proxy, gateway, and backend services; missing or inconsistent protocol guarantees such as ordering, backpressure, or idempotency; weak reconnection semantics; under-specified degraded modes; or operational edge cases not covered, such as partial disconnects, slow clients, or load spikes.
-- For each issue, reference the specific document or documents involved and propose concrete, actionable improvements, such as clarified responsibilities, more precise protocol contracts, explicit reconnection and state-recovery rules, or additional degraded-mode and failure-handling scenarios.
+- Focus on issues that would force different implementations of admission, transport guarantees, reconnection, or degraded-mode behavior.
+- Ignore non-blocking protocol polish and low-probability edge cases unless they would materially change the first implementation.
+- Return at most 5 issues, ordered by severity.
+- For each issue, include:
+  - `Severity`: `blocking` or `important`
+  - `Why it matters now`
+  - `Docs involved`
+  - `Suggested decision or spec change`
+- If no implementation-blocking issues remain, say `No implementation-blocking issues found.` and optionally list up to 3 deferred follow-ups.
+- Stop once only non-blocking refinement remains.

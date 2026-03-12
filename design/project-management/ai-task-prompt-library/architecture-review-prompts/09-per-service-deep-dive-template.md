@@ -2,7 +2,7 @@
 
 Use this template to review any individual microservice in the context of the overall architecture.
 
-First, gather and read, following references to any other design documents that appear relevant:
+First, gather and read. Follow references only when the target service docs clearly defer a canonical contract needed to resolve a contradiction or an implementation-blocking gap. Do not recursively traverse unrelated docs.
 
 - The main architecture overview documents you need for context, such as:
   - `design/architecture/system-architecture-overview.md`
@@ -17,5 +17,13 @@ Then:
 
 - Review the chosen service’s responsibilities, interfaces, and data flows in the context of the whole system.
 - Do not summarize the service or describe what is already working well.
-- Only identify problems, contradictions, or gaps: unclear or leaking boundaries with neighboring services, responsibilities that conflict with the global responsibility matrix, underspecified failure or retry behavior, ambiguous data ownership or lifecycle, or missing observability and operational hooks.
-- For each issue, reference the specific document or documents involved and propose concrete, actionable improvements, such as clearer contracts, responsibility shifts between services, additional diagrams or flow descriptions, or more precise error and lifecycle handling.
+- Focus on issues that would cause implementers of this service or its neighbors to make incompatible decisions.
+- Ignore non-blocking cleanup, local wording improvements, and future enhancement ideas unless they alter the first implementation path.
+- Return at most 5 issues, ordered by severity.
+- For each issue, include:
+  - `Severity`: `blocking` or `important`
+  - `Why it matters now`
+  - `Docs involved`
+  - `Suggested decision or spec change`
+- If no implementation-blocking issues remain, say `No implementation-blocking issues found.` and optionally list up to 3 deferred follow-ups.
+- Stop once only non-blocking refinement remains.

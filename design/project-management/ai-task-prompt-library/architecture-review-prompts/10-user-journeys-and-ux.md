@@ -1,6 +1,6 @@
 # Architecture Review Prompt: User Journeys and Experience
 
-Read the following documents, and follow references to any other design documents that appear relevant:
+Read the following documents. Follow references only when a listed document clearly delegates a canonical contract needed to judge whether a journey is actually supported. Do not recursively expand into the full architecture set.
 
 - `design/architecture/user-journeys.md`
 - `design/architecture/user-journeys-players.md`
@@ -15,5 +15,13 @@ Then:
 
 - Review player, creator, and operator journeys as a single, coherent experience and compare them against the architectural constraints and features.
 - Do not simply restate the journeys or list features that already align well.
-- Only identify problems, contradictions, or gaps: journeys that rely on flows not supported by the architecture, missing steps or feedback for users during critical operations, unclear transitions between services or tools, or UX risks created by latency, consistency, or operational behaviors.
-- For each issue, reference the specific document or documents involved and propose concrete, actionable improvements, such as revised flows, additional support tools or surfaces, clearer user feedback, or architectural changes needed to support the intended experience.
+- Focus on journey gaps that would block shipping a coherent first user experience or that reveal missing architecture needed to support the stated flows.
+- Ignore polish, delight features, and secondary UX improvements unless they change system behavior or implementation contracts.
+- Return at most 5 issues, ordered by severity.
+- For each issue, include:
+  - `Severity`: `blocking` or `important`
+  - `Why it matters now`
+  - `Docs involved`
+  - `Suggested decision or spec change`
+- If no implementation-blocking issues remain, say `No implementation-blocking issues found.` and optionally list up to 3 deferred follow-ups.
+- Stop once only non-blocking refinement remains.
