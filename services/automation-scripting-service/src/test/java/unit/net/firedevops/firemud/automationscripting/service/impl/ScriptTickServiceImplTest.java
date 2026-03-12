@@ -93,7 +93,6 @@ class ScriptTickServiceImplTest {
         1.0, meterRegistry.get("automation_tick_budget_exceeded_total").counter().count(), 0.001);
   }
 
-  @SuppressWarnings("unchecked")
   private static ArgumentCaptor<RedisScript<?>> redisScriptCaptor() {
     return (ArgumentCaptor<RedisScript<?>>)
         (ArgumentCaptor<?>) ArgumentCaptor.forClass(RedisScript.class);

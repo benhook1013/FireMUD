@@ -30,7 +30,7 @@ import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.client.standard.StandardWebSocketClient;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
 
-@SuppressWarnings({"unchecked", "removal"})
+@SuppressWarnings({"removal"})
 @Disabled(
     "TODO: re-enable once Account/Redis/GameInstance persistence is wired; "
         + "test currently depends on dev-isolated stubs "

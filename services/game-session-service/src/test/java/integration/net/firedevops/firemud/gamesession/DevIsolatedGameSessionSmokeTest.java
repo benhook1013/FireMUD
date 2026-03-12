@@ -33,7 +33,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
-@SuppressWarnings({"unchecked", "removal"})
+@SuppressWarnings({})
 @Disabled(
     "TODO: re-enable once Account/Redis/GameInstance persistence is wired; "
         + "tests currently depend on the dev-isolated stubbed services "

@@ -129,7 +129,6 @@ public class WorldManagementGrpcService
   }
 
   @Override
-  @SuppressWarnings("deprecation")
   @Timed(value = "worldGrpc.updateState")
   public void updateWorldState(
       UpdateWorldStateRequest request, StreamObserver<UpdateWorldStateResponse> responseObserver) {
