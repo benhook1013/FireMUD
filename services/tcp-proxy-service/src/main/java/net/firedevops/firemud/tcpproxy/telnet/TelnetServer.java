@@ -31,6 +31,7 @@ import net.firedevops.firemud.tcpproxy.service.TcpProxyEventService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
@@ -38,6 +39,21 @@ import org.springframework.util.StringUtils;
 @Component
 public final class TelnetServer {
   private static final Logger logger = LoggerFactory.getLogger(TelnetServer.class);
+  private static final LookCacheService NOOP_LOOK_CACHE_SERVICE =
+      new LookCacheService() {
+        @Override
+        public void cache(
+            long tenantId,
+            long sessionId,
+            String roomId,
+            String renderedText,
+            String protocolText) {}
+
+        @Override
+        public java.util.Optional<CachedLook> get(long tenantId, long sessionId) {
+          return java.util.Optional.empty();
+        }
+      };
 
   private final int port;
   private final String gatewayWsUrl;
@@ -88,7 +104,7 @@ public final class TelnetServer {
       @Value("${TCP_PROXY_MAX_MALFORMED_ENVELOPES:5}") int maxMalformedSessionEnvelopes,
       MeterRegistry meterRegistry,
       TcpProxyEventService eventService,
-      LookCacheService lookCacheService) {
+      @Nullable LookCacheService lookCacheService) {
     this.port = port;
     this.boundPort = port;
     this.gatewayWsUrl = gatewayWsUrl;
@@ -108,7 +124,7 @@ public final class TelnetServer {
     this.connectionLimitExceededCounter =
         meterRegistry.counter("tcpproxy.connections.limit.exceeded");
     this.eventService = eventService;
-    this.lookCacheService = lookCacheService;
+    this.lookCacheService = lookCacheService != null ? lookCacheService : NOOP_LOOK_CACHE_SERVICE;
     Gauge.builder(
             "tcpproxy.connections.active",
             activeConnections,
