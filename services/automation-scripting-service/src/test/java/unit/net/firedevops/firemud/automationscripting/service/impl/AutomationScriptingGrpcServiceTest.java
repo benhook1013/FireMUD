@@ -7,6 +7,7 @@ import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.grpc.stub.StreamObserver;
 import java.util.concurrent.atomic.AtomicReference;
+import net.firedevops.firemud.automationscripting.service.NpcFormationService;
 import net.firedevops.firemud.automationscripting.service.PingService;
 import net.firedevops.firemud.automationscripting.service.ScriptDefinitionService;
 import net.firedevops.firemud.automationscripting.service.ScriptVersionService;
@@ -23,8 +24,10 @@ class AutomationScriptingGrpcServiceTest {
     Mockito.when(pingService.ping()).thenReturn("pong");
     ScriptDefinitionService scriptService = Mockito.mock(ScriptDefinitionService.class);
     ScriptVersionService versionService = Mockito.mock(ScriptVersionService.class);
+    NpcFormationService formationService = Mockito.mock(NpcFormationService.class);
     AutomationScriptingGrpcService service =
-        new AutomationScriptingGrpcService(pingService, scriptService, versionService);
+        new AutomationScriptingGrpcService(
+            pingService, scriptService, versionService, formationService);
 
     AtomicReference<PingResponse> ref = new AtomicReference<>();
     service.ping(
@@ -51,8 +54,10 @@ class AutomationScriptingGrpcServiceTest {
     Mockito.when(pingService.ping()).thenThrow(new IllegalArgumentException("bad"));
     ScriptDefinitionService scriptService = Mockito.mock(ScriptDefinitionService.class);
     ScriptVersionService versionService = Mockito.mock(ScriptVersionService.class);
+    NpcFormationService formationService = Mockito.mock(NpcFormationService.class);
     AutomationScriptingGrpcService service =
-        new AutomationScriptingGrpcService(pingService, scriptService, versionService);
+        new AutomationScriptingGrpcService(
+            pingService, scriptService, versionService, formationService);
 
     AtomicReference<PingResponse> ref = new AtomicReference<>();
     service.ping(
@@ -81,8 +86,10 @@ class AutomationScriptingGrpcServiceTest {
     Mockito.when(pingService.ping()).thenThrow(new RuntimeException("boom"));
     ScriptDefinitionService scriptService = Mockito.mock(ScriptDefinitionService.class);
     ScriptVersionService versionService = Mockito.mock(ScriptVersionService.class);
+    NpcFormationService formationService = Mockito.mock(NpcFormationService.class);
     AutomationScriptingGrpcService service =
-        new AutomationScriptingGrpcService(pingService, scriptService, versionService);
+        new AutomationScriptingGrpcService(
+            pingService, scriptService, versionService, formationService);
 
     AtomicReference<Throwable> err = new AtomicReference<>();
     service.ping(

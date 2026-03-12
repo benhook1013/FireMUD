@@ -2,8 +2,21 @@ plugins {
     `java-test-fixtures`
 }
 
+import org.gradle.api.DefaultTask
+import org.gradle.api.file.ConfigurableFileCollection
+import org.gradle.api.tasks.OutputDirectories
+import org.gradle.api.tasks.TaskAction
 import org.gradle.api.tasks.testing.Test
 import org.springframework.boot.gradle.tasks.run.BootRun
+
+abstract class CreateDirectoriesTask : DefaultTask() {
+    @get:OutputDirectories abstract val outputDirectories: ConfigurableFileCollection
+
+    @TaskAction
+    fun createDirectories() {
+        outputDirectories.files.forEach { it.mkdirs() }
+    }
+}
 
 val gameSessionProto = rootDir.resolve("protos/game-session/v1/game_session_service.proto")
 
@@ -12,6 +25,22 @@ apply(from = "${rootDir}/gradle/proto-convention.gradle")
 tasks.named("generateProto") {
     // Make sure the Game Session proto definition is part of the stub generation inputs.
     inputs.file(gameSessionProto)
+}
+
+val generatedTestFixturesJavaDir = layout.buildDirectory.dir("generated/sources/proto/testFixtures/java")
+val generatedTestFixturesGrpcDir = layout.buildDirectory.dir("generated/sources/proto/testFixtures/grpc")
+
+val createEmptyTestFixturesProtoDirs =
+    tasks.register<CreateDirectoriesTask>("createEmptyTestFixturesProtoDirs") {
+        outputDirectories.from(generatedTestFixturesJavaDir, generatedTestFixturesGrpcDir)
+    }
+
+tasks.named("compileTestFixturesJava") {
+    dependsOn(createEmptyTestFixturesProtoDirs)
+}
+
+tasks.named("generateTestFixturesProto") {
+    finalizedBy(createEmptyTestFixturesProtoDirs)
 }
 
 dependencies {

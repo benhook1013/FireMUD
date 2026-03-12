@@ -1,4 +1,4 @@
-package integration.net.firedevops.firemud.springcloudgateway;
+package net.firedevops.firemud.springcloudgateway;
 
 import static org.assertj.core.api.Assertions.assertThat;
 

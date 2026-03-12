@@ -7,6 +7,9 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.automationscripting.model.FormationType;
 import net.firedevops.firemud.automationscripting.service.NpcFormationService;
+import net.firedevops.firemud.automationscripting.service.PingService;
+import net.firedevops.firemud.automationscripting.service.ScriptDefinitionService;
+import net.firedevops.firemud.automationscripting.service.ScriptVersionService;
 import net.firedevops.firemud.automationscripting.v1.AddFormationMemberRequest;
 import net.firedevops.firemud.automationscripting.v1.AddFormationMemberResponse;
 import net.firedevops.firemud.automationscripting.v1.CreateFormationRequest;
@@ -21,7 +24,7 @@ class NpcFormationGrpcServiceTest {
   void createFormationReturnsId() {
     NpcFormationService npcService = Mockito.mock(NpcFormationService.class);
     Mockito.when(npcService.createFormation(1L, "alpha", 2L, FormationType.LINE)).thenReturn(10L);
-    NpcFormationGrpcService service = new NpcFormationGrpcService(npcService);
+    AutomationScriptingGrpcService service = newService(npcService);
 
     AtomicReference<CreateFormationResponse> ref = new AtomicReference<>();
     service.createFormation(
@@ -51,7 +54,7 @@ class NpcFormationGrpcServiceTest {
   void listMembersReturnsIds() {
     NpcFormationService npcService = Mockito.mock(NpcFormationService.class);
     Mockito.when(npcService.getMembers(1L, 5L)).thenReturn(List.of(2L, 3L));
-    NpcFormationGrpcService service = new NpcFormationGrpcService(npcService);
+    AutomationScriptingGrpcService service = newService(npcService);
 
     AtomicReference<ListFormationMembersResponse> ref = new AtomicReference<>();
     service.listFormationMembers(
@@ -75,7 +78,7 @@ class NpcFormationGrpcServiceTest {
   @Test
   void addMemberReturnsSuccess() {
     NpcFormationService npcService = Mockito.mock(NpcFormationService.class);
-    NpcFormationGrpcService service = new NpcFormationGrpcService(npcService);
+    AutomationScriptingGrpcService service = newService(npcService);
 
     AtomicReference<AddFormationMemberResponse> ref = new AtomicReference<>();
     service.addFormationMember(
@@ -98,5 +101,13 @@ class NpcFormationGrpcServiceTest {
         });
 
     assertEquals(true, ref.get().getSuccess());
+  }
+
+  private static AutomationScriptingGrpcService newService(NpcFormationService npcService) {
+    return new AutomationScriptingGrpcService(
+        Mockito.mock(PingService.class),
+        Mockito.mock(ScriptDefinitionService.class),
+        Mockito.mock(ScriptVersionService.class),
+        npcService);
   }
 }

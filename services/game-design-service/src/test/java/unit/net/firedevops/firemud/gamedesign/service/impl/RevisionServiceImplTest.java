@@ -37,7 +37,7 @@ class RevisionServiceImplTest {
     when(gameRepository.findByTenantId("1")).thenReturn(game);
     Revision saved = new Revision();
     saved.setId(10L);
-    saved.setGame(game);
+    saved.setTenantId(game.getTenantId());
     when(revisionRepository.save(any(Revision.class))).thenReturn(saved);
 
     RevisionDto dto = new RevisionDto(null, "1", 3L, "{}", null);
