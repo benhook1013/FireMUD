@@ -275,6 +275,8 @@ tasks.register<Exec>("devUp") {
         "docker/docker-compose.yml",
         "-f",
         "docker/docker-compose.override.yml",
+        "-f",
+        "docker/docker-compose.local-images.override.yml",
         "up",
         "-d",
         "--no-build"
@@ -289,6 +291,8 @@ tasks.register<Exec>("devDown") {
         "docker/docker-compose.yml",
         "-f",
         "docker/docker-compose.override.yml",
+        "-f",
+        "docker/docker-compose.local-images.override.yml",
         "down"
     )
 }
