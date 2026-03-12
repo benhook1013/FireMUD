@@ -47,6 +47,7 @@ account_api_base = os.environ.get("SMOKE_ACCOUNT_API_BASE", "http://localhost:80
 login_expect = os.environ.get("SMOKE_LOGIN_EXPECT", "OK LOGIN")
 look_expect = os.environ.get("SMOKE_LOOK_EXPECT", "OK LOOK")
 timeout_seconds = int(os.environ.get("SMOKE_TIMEOUT_SECONDS", "10"))
+startup_wait_seconds = int(os.environ.get("SMOKE_STARTUP_WAIT_SECONDS", "90"))
 
 def recv_until(sock, expected_substring, timeout):
     deadline = time.time() + timeout
@@ -101,6 +102,68 @@ def ensure_smoke_account():
         print(f"Account bootstrap skipped: {last_error}")
 
 
+def wait_for_account_schema():
+    deadline = time.time() + startup_wait_seconds
+    query = "select to_regclass('public.accounts');"
+    while time.time() < deadline:
+        try:
+            table_name = subprocess.check_output(
+                [
+                    "docker",
+                    "exec",
+                    "docker-postgres-1",
+                    "psql",
+                    "-U",
+                    "firemud",
+                    "-d",
+                    "firemud",
+                    "-tAc",
+                    query,
+                ],
+                text=True,
+                timeout=timeout_seconds,
+            ).strip()
+            if table_name == "accounts":
+                print("Confirmed account schema is ready.")
+                return
+        except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            pass
+        time.sleep(2)
+    print("Account schema readiness wait timed out; continuing anyway.")
+
+
+def wait_for_account_api():
+    deadline = time.time() + startup_wait_seconds
+    readiness_urls = (
+        f"{account_api_base}/actuator/health/readiness",
+        f"{account_api_base}/actuator/health",
+    )
+    while time.time() < deadline:
+        for url in readiness_urls:
+            try:
+                with urllib.request.urlopen(url, timeout=timeout_seconds) as response:
+                    body = response.read().decode("utf-8", errors="ignore")
+                    if response.status < 500 and "\"status\":\"UP\"" in body.replace(" ", ""):
+                        print(f"Confirmed account API is ready via {url}.")
+                        return
+            except (urllib.error.URLError, OSError):
+                continue
+        time.sleep(2)
+    print("Account API readiness wait timed out; continuing anyway.")
+
+
+def wait_for_telnet_port():
+    deadline = time.time() + startup_wait_seconds
+    while time.time() < deadline:
+        try:
+            with socket.create_connection((host, port), timeout=timeout_seconds):
+                print(f"Confirmed telnet endpoint is accepting connections on {host}:{port}.")
+                return
+        except OSError:
+            time.sleep(2)
+    print("Telnet endpoint readiness wait timed out; continuing anyway.")
+
+
 def sync_session_owner_account():
     query = (
         "select id from accounts "
@@ -152,6 +215,9 @@ def sync_session_owner_account():
         print(f"Session-owner sync skipped: {exc}")
 
 try:
+    wait_for_account_schema()
+    wait_for_account_api()
+    wait_for_telnet_port()
     ensure_smoke_account()
     sync_session_owner_account()
     with socket.create_connection((host, port), timeout=timeout_seconds) as sock:

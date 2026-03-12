@@ -298,6 +298,9 @@ tasks.register<Exec>("devUp") {
         "docker/docker-compose.local-images.override.yml",
         "up",
         "-d",
+        "--wait",
+        "--wait-timeout",
+        "180",
         "--no-build"
     )
 }
