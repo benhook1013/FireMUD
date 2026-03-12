@@ -31,7 +31,6 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 import org.lognet.springboot.grpc.GRpcServerRunner;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.SpringBootConfiguration;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -257,7 +256,7 @@ class TelnetGatewayGameSessionCrossServiceIntegrationTest {
     }
   }
 
-  @SpringBootConfiguration
+  @Configuration(proxyBeanMethods = false)
   @EnableAutoConfiguration(
       excludeName = {
         "org.lognet.springboot.grpc.autoconfigure.GRpcAutoConfiguration",
