@@ -11,7 +11,8 @@ import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandlerAdapter;
 import io.netty.channel.ChannelInitializer;
 import io.netty.channel.EventLoopGroup;
-import io.netty.channel.nio.NioEventLoopGroup;
+import io.netty.channel.MultiThreadIoEventLoopGroup;
+import io.netty.channel.nio.NioIoHandler;
 import io.netty.channel.socket.SocketChannel;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
 import io.netty.handler.codec.LineBasedFrameDecoder;
@@ -81,8 +82,10 @@ public final class TelnetServer {
   private volatile int boundPort;
   private final LookCacheService lookCacheService;
 
-  private final EventLoopGroup bossGroup = new NioEventLoopGroup(1);
-  private final EventLoopGroup workerGroup = new NioEventLoopGroup();
+  private final EventLoopGroup bossGroup =
+      new MultiThreadIoEventLoopGroup(1, NioIoHandler.newFactory());
+  private final EventLoopGroup workerGroup =
+      new MultiThreadIoEventLoopGroup(NioIoHandler.newFactory());
   private Channel serverChannel;
   private final AtomicBoolean running = new AtomicBoolean(false);
   private SslContext sslContext;
