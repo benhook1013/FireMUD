@@ -28,6 +28,8 @@ import org.springframework.core.io.ClassPathResource;
 import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
+import org.springframework.data.redis.serializer.GenericToStringSerializer;
+import org.springframework.data.redis.serializer.StringRedisSerializer;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.scripting.support.ResourceScriptSource;
 import org.springframework.stereotype.Service;
@@ -74,6 +76,9 @@ public class TickServiceImpl implements TickService {
   private RedisScript<Long> stageScript;
   private RedisScript<Long> commitScript;
   private RedisScript<Long> rollbackScript;
+  private final StringRedisSerializer scriptArgsSerializer = new StringRedisSerializer();
+  private final GenericToStringSerializer<Long> scriptResultSerializer =
+      new GenericToStringSerializer<>(Long.class);
   private final AtomicBoolean pauseRequested = new AtomicBoolean(false);
   private final Set<Long> pausedGameInstances = ConcurrentHashMap.newKeySet();
   private final AtomicInteger activeTicks = new AtomicInteger();
@@ -208,10 +213,12 @@ public class TickServiceImpl implements TickService {
           () ->
               luaTimer.record(
                   () ->
-                      executeScriptWithRetry(
+                      redisTemplate.execute(
                           stageScript,
+                          scriptArgsSerializer,
+                          scriptResultSerializer,
                           List.of(queueKey(tenantId, sessionId), pendingKey(tenantId, sessionId)),
-                          max)));
+                          String.valueOf(max))));
       tickTimer.record(
           () ->
               luaTimer.record(
