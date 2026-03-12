@@ -1,8 +1,7 @@
-package crossservice.net.firedevops.firemud.tcpproxy;
+package net.firedevops.firemud.tcpproxy;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import crossservice.net.firedevops.firemud.tcpproxy.stub.GatewayStubApplication;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
@@ -26,7 +25,7 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.gamesession.test.LookTestFixtures;
-import net.firedevops.firemud.tcpproxy.TcpProxyServiceApplication;
+import net.firedevops.firemud.tcpproxy.stub.GatewayStubApplication;
 import net.firedevops.firemud.tcpproxy.telnet.TelnetServer;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;

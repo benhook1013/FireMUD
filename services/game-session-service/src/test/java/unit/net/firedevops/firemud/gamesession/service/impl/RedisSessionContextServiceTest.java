@@ -1,4 +1,4 @@
-package unit.net.firedevops.firemud.gamesession.service.impl;
+package net.firedevops.firemud.gamesession.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.Mockito.verify;
@@ -7,7 +7,6 @@ import static org.mockito.Mockito.when;
 import java.time.Duration;
 import java.util.Optional;
 import net.firedevops.firemud.gamesession.service.SessionContext;
-import net.firedevops.firemud.gamesession.service.impl.RedisSessionContextService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;

@@ -1,4 +1,4 @@
-package integration.net.firedevops.firemud.gamesession.websocket;
+package net.firedevops.firemud.gamesession.websocket;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.verify;

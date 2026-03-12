@@ -1,12 +1,9 @@
-package unit.net.firedevops.firemud.gamesession.command.text;
+package net.firedevops.firemud.gamesession.command.text;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
-import net.firedevops.firemud.gamesession.command.text.TextCommand;
-import net.firedevops.firemud.gamesession.command.text.TextCommandParser;
-import net.firedevops.firemud.gamesession.command.text.TextCommandType;
 import org.junit.jupiter.api.Test;
 
 class TextCommandParserTest {

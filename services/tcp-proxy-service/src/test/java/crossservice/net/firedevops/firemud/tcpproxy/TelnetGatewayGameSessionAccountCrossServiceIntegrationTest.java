@@ -1,8 +1,7 @@
-package crossservice.net.firedevops.firemud.tcpproxy;
+package net.firedevops.firemud.tcpproxy;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import crossservice.net.firedevops.firemud.tcpproxy.stub.GatewayStubApplication;
 import io.grpc.Server;
 import io.grpc.ServerBuilder;
 import io.grpc.health.v1.HealthCheckResponse;
@@ -49,7 +48,7 @@ import net.firedevops.firemud.gamesession.test.stubs.SocialGroupsStubServer;
 import net.firedevops.firemud.gamesession.test.stubs.WorldManagementStubServer;
 import net.firedevops.firemud.springcloudgateway.service.GatewayRoute;
 import net.firedevops.firemud.springcloudgateway.service.GatewayRouteService;
-import net.firedevops.firemud.tcpproxy.TcpProxyServiceApplication;
+import net.firedevops.firemud.tcpproxy.stub.GatewayStubApplication;
 import net.firedevops.firemud.tcpproxy.telnet.TelnetServer;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Disabled;

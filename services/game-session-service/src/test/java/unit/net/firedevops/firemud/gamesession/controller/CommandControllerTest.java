@@ -1,4 +1,4 @@
-package unit.net.firedevops.firemud.gamesession.controller;
+package net.firedevops.firemud.gamesession.controller;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.Mockito.verify;
@@ -7,7 +7,6 @@ import static org.mockito.Mockito.when;
 import net.firedevops.firemud.common.ApiResponse;
 import net.firedevops.firemud.gamesession.command.text.TextCommandInterpretationResult;
 import net.firedevops.firemud.gamesession.command.text.TextCommandInterpreter;
-import net.firedevops.firemud.gamesession.controller.CommandController;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.dto.EnqueueCommandRequest;
 import org.junit.jupiter.api.Test;

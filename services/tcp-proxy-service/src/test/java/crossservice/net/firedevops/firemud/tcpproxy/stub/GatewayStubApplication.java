@@ -1,4 +1,4 @@
-package crossservice.net.firedevops.firemud.tcpproxy.stub;
+package net.firedevops.firemud.tcpproxy.stub;
 
 import java.net.URI;
 import java.util.List;
@@ -6,6 +6,7 @@ import java.util.Map;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.SpringBootConfiguration;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.http.HttpHeaders;
 import org.springframework.web.reactive.handler.SimpleUrlHandlerMapping;
@@ -24,6 +25,7 @@ import reactor.core.publisher.Mono;
  * Spring Cloud Gateway stack.
  */
 @SpringBootConfiguration
+@ConditionalOnProperty("gateway.stub.target-uri")
 @EnableAutoConfiguration(
     excludeName = {
       "org.lognet.springboot.grpc.autoconfigure.GRpcAutoConfiguration",

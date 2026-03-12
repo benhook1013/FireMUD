@@ -1,4 +1,4 @@
-package unit.net.firedevops.firemud.gamesession.command.text;
+package net.firedevops.firemud.gamesession.command.text;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.when;
@@ -8,10 +8,6 @@ import java.util.List;
 import java.util.Optional;
 import net.firedevops.firemud.gamelogic.v1.BroadcastSayResponse;
 import net.firedevops.firemud.gamesession.client.GameLogicClient;
-import net.firedevops.firemud.gamesession.command.text.SayCommandHandler;
-import net.firedevops.firemud.gamesession.command.text.SayCommandHandlingResult;
-import net.firedevops.firemud.gamesession.command.text.TextCommand;
-import net.firedevops.firemud.gamesession.command.text.TextCommandType;
 import net.firedevops.firemud.gamesession.config.GameLogicProperties;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;

@@ -1,4 +1,4 @@
-package unit.net.firedevops.firemud.gamesession.command.text;
+package net.firedevops.firemud.gamesession.command.text;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -19,11 +19,6 @@ import java.util.Optional;
 import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
 import net.firedevops.firemud.gamesession.client.AccountClient;
-import net.firedevops.firemud.gamesession.command.text.LoginCommandConstants;
-import net.firedevops.firemud.gamesession.command.text.LoginCommandHandler;
-import net.firedevops.firemud.gamesession.command.text.LoginCommandHandlingResult;
-import net.firedevops.firemud.gamesession.command.text.TextCommand;
-import net.firedevops.firemud.gamesession.command.text.TextCommandType;
 import net.firedevops.firemud.gamesession.config.DevIsolatedProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.entity.GameInstance;

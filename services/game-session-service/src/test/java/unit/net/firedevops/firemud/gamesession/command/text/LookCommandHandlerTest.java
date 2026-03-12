@@ -1,4 +1,4 @@
-package unit.net.firedevops.firemud.gamesession.command.text;
+package net.firedevops.firemud.gamesession.command.text;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -15,8 +15,6 @@ import net.firedevops.firemud.cache.LookCacheService;
 import net.firedevops.firemud.command.text.LookCommandConstants;
 import net.firedevops.firemud.gamelogic.v1.LookResult;
 import net.firedevops.firemud.gamesession.client.GameLogicClient;
-import net.firedevops.firemud.gamesession.command.text.LookCommandHandler;
-import net.firedevops.firemud.gamesession.command.text.LookTextRenderer;
 import net.firedevops.firemud.gamesession.config.DevIsolatedProperties;
 import net.firedevops.firemud.gamesession.config.GameLogicProperties;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
