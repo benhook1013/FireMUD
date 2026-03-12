@@ -47,30 +47,33 @@ spring:
   config:
     activate:
       on-profile: dev
-  redis:
-    host: ${FIREMUD_REDIS_CACHE_HOST:redis}
-    port: ${FIREMUD_REDIS_CACHE_PORT:6379}
+  data:
+    redis:
+      host: ${FIREMUD_REDIS_CACHE_HOST:redis}
+      port: ${FIREMUD_REDIS_CACHE_PORT:6379}
   cloud:
     gateway:
-      metrics:
-        enabled: true
-      default-filters:
-        - name: Retry
-          args:
-            retries: 3
-            statuses: BAD_GATEWAY,GATEWAY_TIMEOUT
-            series: SERVER_ERROR
-            methods: GET,POST
-            backoff:
-              firstBackoff: 50ms
-              maxBackoff: 500ms
-              factor: 2
-              basedOnPreviousValue: false
-      httpclient:
-        pool:
-          type: fixed
-          maxConnections: 500
-          acquireTimeout: 5000
+      server:
+        webflux:
+          metrics:
+            enabled: true
+          default-filters:
+            - name: Retry
+              args:
+                retries: 3
+                statuses: BAD_GATEWAY,GATEWAY_TIMEOUT
+                series: SERVER_ERROR
+                methods: GET,POST
+                backoff:
+                  firstBackoff: 50ms
+                  maxBackoff: 500ms
+                  factor: 2
+                  basedOnPreviousValue: false
+          httpclient:
+            pool:
+              type: fixed
+              maxConnections: 500
+              acquireTimeout: 5000
 
 firemud:
   grpc:
@@ -83,34 +86,37 @@ spring:
   config:
     activate:
       on-profile: prod
-  redis:
-    host: ${FIREMUD_REDIS_CACHE_HOST:redis}
-    port: ${FIREMUD_REDIS_CACHE_PORT:6379}
+  data:
+    redis:
+      host: ${FIREMUD_REDIS_CACHE_HOST:redis}
+      port: ${FIREMUD_REDIS_CACHE_PORT:6379}
   cloud:
     gateway:
-      metrics:
-        enabled: true
-      default-filters:
-        - name: RequestRateLimiter
-          args:
-            redis-rate-limiter.replenishRate: 20
-            redis-rate-limiter.burstCapacity: 40
-        - name: Retry
-          args:
-            retries: 3
-            statuses: BAD_GATEWAY,GATEWAY_TIMEOUT
-            series: SERVER_ERROR
-            methods: GET,POST
-            backoff:
-              firstBackoff: 50ms
-              maxBackoff: 500ms
-              factor: 2
-              basedOnPreviousValue: false
-      httpclient:
-        pool:
-          type: fixed
-          maxConnections: 500
-          acquireTimeout: 5000
+      server:
+        webflux:
+          metrics:
+            enabled: true
+          default-filters:
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 20
+                redis-rate-limiter.burstCapacity: 40
+            - name: Retry
+              args:
+                retries: 3
+                statuses: BAD_GATEWAY,GATEWAY_TIMEOUT
+                series: SERVER_ERROR
+                methods: GET,POST
+                backoff:
+                  firstBackoff: 50ms
+                  maxBackoff: 500ms
+                  factor: 2
+                  basedOnPreviousValue: false
+          httpclient:
+            pool:
+              type: fixed
+              maxConnections: 500
+              acquireTimeout: 5000
 firemud:
   grpc:
     cert-chain: ${FIREMUD_GRPC_CERT_CHAIN_PATH:certs/client.crt}

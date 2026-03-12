@@ -1,8 +1,10 @@
 spring:
   cloud:
     gateway:
-      routes:
-        - id: session
-          uri: ws://game-session-service:8080
-          predicates:
-            - Path=/api/session/**,/ws/game/**
+      server:
+        webflux:
+          routes:
+            - id: session
+              uri: ws://game-session-service:8080
+              predicates:
+                - Path=/api/session/**,/ws/game/**

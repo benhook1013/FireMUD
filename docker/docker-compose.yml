@@ -21,7 +21,7 @@ x-service-environment: &service-env
   ASSET_STORE_SECRET_KEY: ${ASSET_STORE_SECRET_KEY:-minio123}
 
 x-service-healthcheck: &service-health
-  test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
+  test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health/readiness"]
   interval: 10s
   timeout: 5s
   retries: 5

@@ -80,17 +80,25 @@ def ensure_smoke_account():
         headers={"Content-Type": "application/json"},
         method="POST",
     )
-    try:
-        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
-            body = response.read().decode("utf-8", errors="ignore").strip()
+    last_error = None
+    for attempt in range(1, 4):
+        try:
+            with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+                body = response.read().decode("utf-8", errors="ignore").strip()
+                print("=== Account bootstrap response ===")
+                print(body or "<empty>")
+                return
+        except urllib.error.HTTPError as exc:
+            body = exc.read().decode("utf-8", errors="ignore").strip()
             print("=== Account bootstrap response ===")
             print(body or "<empty>")
-    except urllib.error.HTTPError as exc:
-        body = exc.read().decode("utf-8", errors="ignore").strip()
-        print("=== Account bootstrap response ===")
-        print(body or f"HTTP {exc.code}")
-    except OSError as exc:
-        print(f"Account bootstrap skipped: {exc}")
+            return
+        except OSError as exc:
+            last_error = exc
+            if attempt < 3:
+                time.sleep(1)
+    if last_error is not None:
+        print(f"Account bootstrap skipped: {last_error}")
 
 
 def sync_session_owner_account():
