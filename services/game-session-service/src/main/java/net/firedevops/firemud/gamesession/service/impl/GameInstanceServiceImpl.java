@@ -21,6 +21,7 @@ import net.firedevops.firemud.gamesession.service.SessionStateService;
 import org.slf4j.Logger;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -54,7 +55,7 @@ public class GameInstanceServiceImpl implements GameInstanceService {
       GameLogicClient gameLogicClient,
       WorldManagementClient worldManagementClient,
       EntityManagementClient entityManagementClient,
-      SagaRunner sagaRunner,
+      @Nullable SagaRunner sagaRunner,
       MeterRegistry meterRegistry,
       DevIsolatedProperties devIsolatedProperties) {
     this.repository = repository;

@@ -23,6 +23,8 @@ services:
     mem_limit: 768m
     environment:
       <<: *local-java-env
+      FIREMUD_GATEWAY_HEADER_TRUST_TCP_PROXY_ALLOW_INSECURE_HEADERS_FROM_TRUSTED_CIDRS: "true"
+      FIREMUD_GATEWAY_HEADER_TRUST_TCP_PROXY_INSECURE_TRUSTED_CIDRS_0: 172.16.0.0/12
 
   automation-scripting-service:
     build: null

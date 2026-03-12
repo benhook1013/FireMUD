@@ -11,6 +11,7 @@ import net.firedevops.firemud.common.saga.SagaBuilder;
 import net.firedevops.firemud.common.saga.SagaException;
 import net.firedevops.firemud.common.saga.SagaRunner;
 import org.slf4j.Logger;
+import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -24,7 +25,9 @@ public class PurchaseWorkflowServiceImpl implements PurchaseWorkflowService {
   private final SagaRunner sagaRunner;
 
   public PurchaseWorkflowServiceImpl(
-      PaymentService paymentService, LoggingAdminClient loggingAdminClient, SagaRunner sagaRunner) {
+      PaymentService paymentService,
+      LoggingAdminClient loggingAdminClient,
+      @Nullable SagaRunner sagaRunner) {
     this.paymentService = paymentService;
     this.loggingAdminClient = loggingAdminClient;
     this.sagaRunner = sagaRunner;
@@ -53,6 +56,13 @@ public class PurchaseWorkflowServiceImpl implements PurchaseWorkflowService {
             () ->
                 loggingAdminClient.logPayment(
                     request.tenantId(), request.accountId(), ref[0].id()));
+    if (sagaRunner == null) {
+      ref[0] =
+          paymentService.createPaymentIntent(
+              request.tenantId(), request.accountId(), request.amountCents());
+      loggingAdminClient.logPayment(request.tenantId(), request.accountId(), ref[0].id());
+      return ref[0];
+    }
     try {
       sagaRunner.run(builder.build());
     } catch (SagaException e) {

@@ -59,6 +59,9 @@ public class LoggingAdminClient implements AutoCloseable {
   @PostConstruct
   void init() throws SSLException, IOException {
     reloadChannel();
+    if (tlsProps.isPlaintext()) {
+      return;
+    }
     watcher =
         TlsCertificateWatcher.createAndStart(
             List.of(

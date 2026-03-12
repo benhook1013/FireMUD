@@ -41,6 +41,7 @@ import net.firedevops.firemud.common.saga.SagaException;
 import net.firedevops.firemud.common.saga.SagaRunner;
 import net.firedevops.firemud.common.security.JwtUtil;
 import org.slf4j.Logger;
+import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -84,7 +85,7 @@ public class AccountServiceImpl implements AccountService {
       LoggingAdminClient loggingAdminClient,
       JwtUtil jwtUtil,
       net.firedevops.firemud.accountservice.service.session.SessionService sessionService,
-      SagaRunner sagaRunner) {
+      @Nullable SagaRunner sagaRunner) {
     this.accountRepository = accountRepository;
     this.accountMapper = accountMapper;
     this.profileRepository = profileRepository;
@@ -134,6 +135,14 @@ public class AccountServiceImpl implements AccountService {
             })
         .step("logCreation", () -> loggingAdminClient.logAccountCreation(0L, account.getId()));
     var saga = builder.build();
+    if (sagaRunner == null) {
+      Account saved = accountRepository.save(account);
+      account.setId(saved.getId());
+      profile.setAccount(saved);
+      profileRepository.save(profile);
+      loggingAdminClient.logAccountCreation(0L, account.getId());
+      return accountMapper.toDto(account);
+    }
     try {
       sagaRunner.run(saga);
     } catch (SagaException e) {
