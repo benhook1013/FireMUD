@@ -3,6 +3,7 @@ package net.firedevops.firemud.entitymanagement.entity;
 import jakarta.persistence.*;
 import jakarta.persistence.NamedAttributeNode;
 import jakarta.persistence.NamedEntityGraph;
+import jakarta.persistence.NamedSubgraph;
 import java.time.Instant;
 import java.util.Collections;
 import java.util.HashSet;
@@ -16,10 +17,9 @@ import lombok.EqualsAndHashCode;
 @EqualsAndHashCode(onlyExplicitlyIncluded = true)
 @NamedEntityGraph(
     name = "character.inventory",
-    attributeNodes = {
-      @NamedAttributeNode("inventoryEntries"),
-      @NamedAttributeNode("inventoryEntries.item")
-    })
+    attributeNodes = @NamedAttributeNode(value = "inventoryEntries", subgraph = "inventory.item"),
+    subgraphs =
+        @NamedSubgraph(name = "inventory.item", attributeNodes = @NamedAttributeNode("item")))
 public class Character {
   @Id
   @GeneratedValue(strategy = GenerationType.IDENTITY)
