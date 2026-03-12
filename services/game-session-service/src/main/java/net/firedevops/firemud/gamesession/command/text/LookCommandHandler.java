@@ -77,11 +77,11 @@ public final class LookCommandHandler {
 
   private String mapStatusToError(StatusRuntimeException ex) {
     Status.Code code = ex.getStatus().getCode();
+    String description = ex.getStatus().getDescription();
     return switch (code) {
       case NOT_FOUND -> "ROOM_NOT_FOUND";
       case UNAVAILABLE ->
-          ex.getStatus().getDescription() != null
-                  && ex.getStatus().getDescription().contains("EntityManagement")
+          description != null && description.contains("EntityManagement")
               ? "ENTITY_UNAVAILABLE"
               : "WORLD_UNAVAILABLE";
       case DEADLINE_EXCEEDED -> "WORLD_UNAVAILABLE";

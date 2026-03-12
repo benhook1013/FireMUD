@@ -4,8 +4,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.IOException;
 import java.net.URI;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.Map;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
@@ -211,10 +209,6 @@ class GatewayLookCommandIntegrationTest {
 
     void recordCommand(String command) {
       commands.add(command);
-    }
-
-    List<String> receivedCommands() {
-      return new ArrayList<>(commands);
     }
   }
 }

@@ -38,6 +38,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
 @Testcontainers(disabledWithoutDocker = true)
+@SuppressWarnings("resource")
 class SayWebSocketCrossServiceTest {
   private static final Duration COMMAND_WAIT = Duration.ofSeconds(5);
   private static final long TENANT_ID = 1L;

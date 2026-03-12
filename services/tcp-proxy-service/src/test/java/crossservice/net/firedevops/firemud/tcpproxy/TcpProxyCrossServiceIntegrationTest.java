@@ -26,6 +26,7 @@ import org.testcontainers.utility.DockerImageName;
 
 /** Cross-service integration test verifying Telnet to WebSocket bridging. */
 @Testcontainers(disabledWithoutDocker = true)
+@SuppressWarnings("resource")
 @SpringBootTest(
     webEnvironment = WebEnvironment.RANDOM_PORT,
     classes = TcpProxyServiceApplication.class)

@@ -17,7 +17,6 @@ import java.net.http.WebSocket.Listener;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
-import java.util.List;
 import java.util.Locale;
 import java.util.Queue;
 import java.util.Set;
@@ -59,7 +58,6 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   private final Timer commandTimer;
   private final Timer heartbeatTimer;
   private final Timer idleCloseTimer;
-  private final Timer reconnectTimer;
   private final Counter reconnectCounter;
   private final AtomicInteger bufferDepth;
   private final WebSocketConnector webSocketConnector;
@@ -172,7 +170,6 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     this.commandTimer = meterRegistry.timer("tcpproxy.command");
     this.heartbeatTimer = meterRegistry.timer("tcpproxy.heartbeat");
     this.idleCloseTimer = meterRegistry.timer("tcpproxy.idleClose");
-    this.reconnectTimer = meterRegistry.timer("tcpproxy.websocket.reconnect.delay");
     this.reconnectCounter = meterRegistry.counter("tcpproxy.websocket.reconnects");
     this.reconnectCounter.increment(0.0);
     updateBufferDepthGauge();
@@ -564,23 +561,6 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     outstandingSends.forEach(future -> future.cancel(true));
     outstandingSends.clear();
     updateBufferDepthGauge();
-  }
-
-  private long backoffDelayMillis() {
-    long baseDelay = INITIAL_RECONNECT_DELAY.toMillis();
-    int attempts = reconnectAttempts.getAndIncrement();
-    long delay = baseDelay * (1L << Math.min(attempts, 10));
-    return Math.min(delay, MAX_RECONNECT_DELAY.toMillis());
-  }
-
-  private List<String> consumeBuffer() {
-    List<String> drained = new java.util.ArrayList<>();
-    String next;
-    while ((next = buffer.poll()) != null) {
-      drained.add(next);
-    }
-    updateBufferDepthGauge();
-    return drained;
   }
 
   private void updateBufferDepthGauge() {

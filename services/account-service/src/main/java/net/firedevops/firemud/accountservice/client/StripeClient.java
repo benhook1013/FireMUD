@@ -11,11 +11,9 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
     value = "ST_WRITE_TO_STATIC_FROM_INSTANCE_METHOD",
     justification = "Stripe library requires global API key; set once in constructor")
 public class StripeClient {
-  private final String apiKey;
   private final double platformFeePercent;
 
   public StripeClient(String apiKey, double platformFeePercent) {
-    this.apiKey = apiKey;
     this.platformFeePercent = platformFeePercent;
     // Set once during construction to avoid repeated writes to static field
     Stripe.apiKey = apiKey;

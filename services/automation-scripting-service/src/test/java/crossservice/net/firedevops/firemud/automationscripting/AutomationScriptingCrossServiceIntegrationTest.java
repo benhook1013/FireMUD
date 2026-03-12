@@ -19,6 +19,7 @@ import org.testcontainers.utility.DockerImageName;
  * Scripting Service.
  */
 @Testcontainers
+@SuppressWarnings("resource")
 @Disabled("integration environment not configured")
 @SpringBootTest(
     webEnvironment = WebEnvironment.RANDOM_PORT,

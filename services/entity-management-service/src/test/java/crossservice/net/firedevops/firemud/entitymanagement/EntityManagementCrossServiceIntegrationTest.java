@@ -20,6 +20,7 @@ import org.testcontainers.utility.DockerImageName;
  */
 @Testcontainers(disabledWithoutDocker = true)
 @Disabled("integration environment not configured")
+@SuppressWarnings("resource")
 @SpringBootTest(
     webEnvironment = WebEnvironment.RANDOM_PORT,
     classes = EntityManagementServiceApplication.class)

@@ -11,6 +11,7 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 @Testcontainers
+@SuppressWarnings("resource")
 @SpringBootTest(
     webEnvironment = WebEnvironment.RANDOM_PORT,
     classes = EntityManagementServiceApplication.class)

@@ -16,6 +16,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
 @Testcontainers
+@SuppressWarnings("resource")
 @Disabled("integration environment not configured")
 @SpringBootTest(
     webEnvironment = WebEnvironment.RANDOM_PORT,

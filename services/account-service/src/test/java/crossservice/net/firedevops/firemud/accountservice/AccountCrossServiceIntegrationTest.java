@@ -20,6 +20,7 @@ import org.testcontainers.utility.DockerImageName;
 /** Cross-service test ensuring Account Service starts with Logging Admin Service. */
 @Testcontainers(disabledWithoutDocker = true)
 @Disabled("integration environment not configured")
+@SuppressWarnings("resource")
 @SpringBootTest(
     webEnvironment = WebEnvironment.RANDOM_PORT,
     classes = AccountServiceApplication.class)

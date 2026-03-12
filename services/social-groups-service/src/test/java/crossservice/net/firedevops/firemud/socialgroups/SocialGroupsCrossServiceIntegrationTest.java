@@ -21,6 +21,7 @@ import org.testcontainers.utility.DockerImageName;
  * Service.
  */
 @Testcontainers(disabledWithoutDocker = true)
+@SuppressWarnings("resource")
 @SpringBootTest(
     webEnvironment = WebEnvironment.RANDOM_PORT,
     classes = SocialGroupsServiceApplication.class)
