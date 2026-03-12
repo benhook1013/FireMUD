@@ -16,6 +16,7 @@ import net.firedevops.firemud.loggingadmin.mapper.ModerationActionMapper;
 import net.firedevops.firemud.loggingadmin.repository.ModerationActionRepository;
 import net.firedevops.firemud.loggingadmin.service.ModerationService;
 import org.slf4j.Logger;
+import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -30,14 +31,14 @@ public class ModerationServiceImpl implements ModerationService {
   private final ModerationActionMapper mapper;
   private final AccountClient accountClient;
   private final GameSessionClient gameSessionClient;
-  private final SagaRunner sagaRunner;
+  @Nullable private final SagaRunner sagaRunner;
 
   public ModerationServiceImpl(
       ModerationActionRepository repository,
       ModerationActionMapper mapper,
       AccountClient accountClient,
       GameSessionClient gameSessionClient,
-      SagaRunner sagaRunner) {
+      @Nullable SagaRunner sagaRunner) {
     this.repository = repository;
     this.mapper = mapper;
     this.accountClient = accountClient;
@@ -69,7 +70,12 @@ public class ModerationServiceImpl implements ModerationService {
         .step("stopSession", () -> gameSessionClient.stopSession(request.accountId()));
 
     try {
-      sagaRunner.run(builder.build());
+      var saga = builder.build();
+      if (sagaRunner == null) {
+        saga.run();
+      } else {
+        sagaRunner.run(saga);
+      }
     } catch (SagaException e) {
       logger.warn("Admin operation saga failed", e);
       throw new IllegalStateException("Moderation action failed", e);

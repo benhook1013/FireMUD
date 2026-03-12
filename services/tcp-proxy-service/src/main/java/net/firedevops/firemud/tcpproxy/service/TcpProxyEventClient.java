@@ -58,6 +58,7 @@ public class TcpProxyEventClient implements AutoCloseable {
 
   private static GrpcClientProperties copyTlsProps(GrpcClientProperties src) {
     var copy = new GrpcClientProperties();
+    copy.setPlaintext(src.isPlaintext());
     copy.setCertChain(src.getCertChain());
     copy.setPrivateKey(src.getPrivateKey());
     copy.setCaCert(src.getCaCert());
@@ -102,7 +103,10 @@ public class TcpProxyEventClient implements AutoCloseable {
             .keepAliveTime(30, TimeUnit.SECONDS)
             .keepAliveTimeout(5, TimeUnit.SECONDS)
             .keepAliveWithoutCalls(true);
-    if (resolved != null) {
+    if (tlsProps.isPlaintext()) {
+      builder = builder.usePlaintext();
+      resolved = null;
+    } else if (resolved != null) {
       try (InputStream certChainStream = resolved.certChain().openStream();
           InputStream privateKeyStream = resolved.privateKey().openStream();
           InputStream caCertStream = resolved.caCert().openStream()) {
@@ -166,6 +170,9 @@ public class TcpProxyEventClient implements AutoCloseable {
   }
 
   private TlsFiles resolveTlsFiles() throws IOException {
+    if (tlsProps.isPlaintext()) {
+      return null;
+    }
     TlsResource certChain = resolveTlsResource(tlsProps.getCertChain(), "certChain");
     TlsResource privateKey = resolveTlsResource(tlsProps.getPrivateKey(), "privateKey");
     TlsResource caCert = resolveTlsResource(tlsProps.getCaCert(), "caCert");

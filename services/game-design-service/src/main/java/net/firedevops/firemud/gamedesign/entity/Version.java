@@ -29,7 +29,12 @@ public class Version {
               value = "EI_EXPOSE_REP2",
               justification = "JPA association stored directly"))
   @ManyToOne(fetch = FetchType.LAZY)
-  @JoinColumn(name = "tenant_id", nullable = false)
+  @JoinColumn(
+      name = "tenant_id",
+      referencedColumnName = "tenantId",
+      nullable = false,
+      insertable = false,
+      updatable = false)
   private Game game;
 
   @Column(nullable = false)

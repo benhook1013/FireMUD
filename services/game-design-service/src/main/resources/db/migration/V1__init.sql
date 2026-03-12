@@ -2,7 +2,7 @@ CREATE TABLE game (
     id BIGSERIAL PRIMARY KEY,
     owner_id BIGINT NOT NULL,
     name VARCHAR(100) NOT NULL,
-    tenant_id VARCHAR(36) NOT NULL
+    tenant_id VARCHAR(36) NOT NULL UNIQUE
 );
 
 CREATE TABLE revision (

@@ -11,7 +11,7 @@ public class Game {
   @GeneratedValue(strategy = GenerationType.IDENTITY)
   private Long id;
 
-  @Column(nullable = false, length = 36)
+  @Column(nullable = false, length = 36, unique = true)
   private String tenantId;
 
   @Column(nullable = false, length = 100)

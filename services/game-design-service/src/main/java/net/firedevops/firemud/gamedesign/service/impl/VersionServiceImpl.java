@@ -4,7 +4,6 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.annotation.Timed;
 import java.util.List;
 import java.util.Optional;
-import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.saga.SagaBuilder;
 import net.firedevops.firemud.common.saga.SagaException;
@@ -19,11 +18,12 @@ import net.firedevops.firemud.gamedesign.repository.VersionRepository;
 import net.firedevops.firemud.gamedesign.service.AssetExportService;
 import net.firedevops.firemud.gamedesign.service.VersionService;
 import org.slf4j.Logger;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
-@RequiredArgsConstructor
 @SuppressFBWarnings(
     value = "EI_EXPOSE_REP2",
     justification = "Injected dependencies are not exposed")
@@ -34,8 +34,32 @@ public class VersionServiceImpl implements VersionService {
   private final GameRepository gameRepository;
   private final VersionMapper versionMapper;
   private final AutomationScriptingClient scriptingClient;
-  private final SagaRunner sagaRunner;
+  @Nullable private final SagaRunner sagaRunner;
   private final AssetExportService assetExportService;
+
+  @Autowired
+  public VersionServiceImpl(
+      VersionRepository versionRepository,
+      GameRepository gameRepository,
+      VersionMapper versionMapper,
+      AutomationScriptingClient scriptingClient,
+      @Nullable SagaRunner sagaRunner,
+      AssetExportService assetExportService) {
+    this.versionRepository = versionRepository;
+    this.gameRepository = gameRepository;
+    this.versionMapper = versionMapper;
+    this.scriptingClient = scriptingClient;
+    this.sagaRunner = sagaRunner;
+    this.assetExportService = assetExportService;
+  }
+
+  private void runSaga(net.firedevops.firemud.common.saga.Saga saga) throws SagaException {
+    if (sagaRunner == null) {
+      saga.run();
+      return;
+    }
+    sagaRunner.run(saga);
+  }
 
   @Override
   @Transactional
@@ -63,7 +87,7 @@ public class VersionServiceImpl implements VersionService {
         "exportAssets",
         () -> assetExportService.exportAssets(tenantId, version.getVersionNumber()),
         () -> assetExportService.deleteExportedAssets(tenantId, version.getVersionNumber()));
-    sagaRunner.run(builder.build());
+    runSaga(builder.build());
     return versionMapper.toDto(version);
   }
 
@@ -98,7 +122,7 @@ public class VersionServiceImpl implements VersionService {
           versionRepository.save(version);
         },
         () -> versionRepository.delete(version));
-    sagaRunner.run(builder.build());
+    runSaga(builder.build());
     scriptingClient.notifyScriptVersionUpdate(
         String.valueOf(game.getTenantId()), scriptPatchVersion, List.of());
     return versionMapper.toDto(version);

@@ -10,6 +10,7 @@ import net.firedevops.firemud.automationscripting.service.ScriptDefinitionServic
 import net.firedevops.firemud.common.saga.SagaBuilder;
 import net.firedevops.firemud.common.saga.SagaException;
 import net.firedevops.firemud.common.saga.SagaRunner;
+import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -18,7 +19,15 @@ import org.springframework.transaction.annotation.Transactional;
 public class ScriptDefinitionServiceImpl implements ScriptDefinitionService {
   private final ScriptDefinitionRepository repository;
   private final ScriptDefinitionMapper mapper;
-  private final SagaRunner sagaRunner;
+  @Nullable private final SagaRunner sagaRunner;
+
+  private void runSaga(net.firedevops.firemud.common.saga.Saga saga) throws SagaException {
+    if (sagaRunner == null) {
+      saga.run();
+      return;
+    }
+    sagaRunner.run(saga);
+  }
 
   @Override
   @Transactional
@@ -29,7 +38,7 @@ public class ScriptDefinitionServiceImpl implements ScriptDefinitionService {
         new SagaBuilder("updateScript")
             .step("persistScript", () -> repository.save(entity), () -> repository.delete(entity))
             .build();
-    sagaRunner.run(saga);
+    runSaga(saga);
     return mapper.toDto(entity);
   }
 }

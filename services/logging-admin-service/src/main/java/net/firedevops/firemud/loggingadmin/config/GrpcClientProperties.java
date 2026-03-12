@@ -7,6 +7,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 @Data
 @ConfigurationProperties(prefix = "firemud.grpc")
 public class GrpcClientProperties {
+  private boolean plaintext;
   private String certChain;
   private String privateKey;
   private String caCert;

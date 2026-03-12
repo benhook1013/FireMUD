@@ -31,6 +31,7 @@ import net.firedevops.firemud.socialgroups.repository.GuildRepository;
 import net.firedevops.firemud.socialgroups.repository.GuildStorageItemRepository;
 import net.firedevops.firemud.socialgroups.service.GuildService;
 import org.slf4j.Logger;
+import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -48,7 +49,15 @@ public class GuildServiceImpl implements GuildService {
   private final GuildMemberRepository guildMemberRepository;
   private final GuildMemberMapper guildMemberMapper;
   private final LoggingAdminClient loggingAdminClient;
-  private final SagaRunner sagaRunner;
+  @Nullable private final SagaRunner sagaRunner;
+
+  private void runSaga(net.firedevops.firemud.common.saga.Saga saga) throws SagaException {
+    if (sagaRunner == null) {
+      saga.run();
+      return;
+    }
+    sagaRunner.run(saga);
+  }
 
   @Override
   @Transactional
@@ -76,7 +85,7 @@ public class GuildServiceImpl implements GuildService {
                         "Guild created: " + request.name()))
             .build();
     try {
-      sagaRunner.run(saga);
+      runSaga(saga);
     } catch (SagaException e) {
       logger.warn("Guild creation saga failed", e);
       throw new IllegalStateException("Guild creation failed", e);
@@ -140,7 +149,7 @@ public class GuildServiceImpl implements GuildService {
                         "Joined guild " + request.guildId()))
             .build();
     try {
-      sagaRunner.run(saga);
+      runSaga(saga);
     } catch (SagaException e) {
       logger.warn("Add member saga failed", e);
       throw new IllegalStateException("Add member failed", e);
@@ -189,7 +198,7 @@ public class GuildServiceImpl implements GuildService {
                         "Updated guild role to " + request.role()))
             .build();
     try {
-      sagaRunner.run(saga);
+      runSaga(saga);
     } catch (SagaException e) {
       logger.warn("Update member role saga failed", e);
       throw new IllegalStateException("Update member role failed", e);
@@ -229,7 +238,7 @@ public class GuildServiceImpl implements GuildService {
                         tenantId, accountId, "Left guild " + guildId))
             .build();
     try {
-      sagaRunner.run(saga);
+      runSaga(saga);
     } catch (SagaException e) {
       logger.warn("Remove member saga failed", e);
       throw new IllegalStateException("Remove member failed", e);

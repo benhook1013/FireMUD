@@ -48,6 +48,7 @@ public class AccountClient implements AutoCloseable {
 
   private static GrpcClientProperties copyTlsProps(GrpcClientProperties src) {
     var copy = new GrpcClientProperties();
+    copy.setPlaintext(src.isPlaintext());
     copy.setCertChain(src.getCertChain());
     copy.setPrivateKey(src.getPrivateKey());
     copy.setCaCert(src.getCaCert());
@@ -57,6 +58,10 @@ public class AccountClient implements AutoCloseable {
   @PostConstruct
   void init() throws SSLException, IOException {
     reloadChannel();
+    if (tlsProps.isPlaintext()) {
+      watcher = null;
+      return;
+    }
     watcher =
         TlsCertificateWatcher.createAndStart(
             List.of(
@@ -83,18 +88,22 @@ public class AccountClient implements AutoCloseable {
     String[] parts = target.split(":");
     String host = parts[0];
     int port = parts.length > 1 ? Integer.parseInt(parts[1]) : 6565;
-    var sslContext =
-        GrpcSslContexts.forClient()
-            .trustManager(new File(tlsProps.getCaCert()))
-            .keyManager(new File(tlsProps.getCertChain()), new File(tlsProps.getPrivateKey()))
-            .build();
-    ManagedChannel newChannel =
+    NettyChannelBuilder builder =
         NettyChannelBuilder.forAddress(host, port)
-            .sslContext(sslContext)
             .keepAliveTime(30, TimeUnit.SECONDS)
             .keepAliveTimeout(5, TimeUnit.SECONDS)
-            .keepAliveWithoutCalls(true)
-            .build();
+            .keepAliveWithoutCalls(true);
+    if (tlsProps.isPlaintext()) {
+      builder = builder.usePlaintext();
+    } else {
+      var sslContext =
+          GrpcSslContexts.forClient()
+              .trustManager(new File(tlsProps.getCaCert()))
+              .keyManager(new File(tlsProps.getCertChain()), new File(tlsProps.getPrivateKey()))
+              .build();
+      builder = builder.sslContext(sslContext);
+    }
+    ManagedChannel newChannel = builder.build();
     if (channel != null) {
       channel.shutdown();
     }

@@ -276,7 +276,8 @@ tasks.register<Exec>("devUp") {
         "-f",
         "docker/docker-compose.override.yml",
         "up",
-        "--build"
+        "-d",
+        "--no-build"
     )
 }
 
