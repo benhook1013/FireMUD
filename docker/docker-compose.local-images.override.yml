@@ -112,3 +112,8 @@ services:
     <<: *local-app-healthcheck-disabled
     environment:
       <<: *local-java-env
+
+  pg-dump-cron:
+    build: null
+    image: pg-dump-cron:0.1.0
+    pull_policy: never

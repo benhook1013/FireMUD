@@ -250,9 +250,22 @@ tasks.register<Exec>("buildBaseImage") {
     )
 }
 
+tasks.register<Exec>("buildPgDumpCronImage") {
+    commandLine(
+        "docker",
+        "build",
+        "-f",
+        "docker/pg-dump-cron.Dockerfile",
+        "-t",
+        "pg-dump-cron:0.1.0",
+        "."
+    )
+}
+
 tasks.register("buildDockerImages") {
     dependsOn(
         "buildBaseImage",
+        "buildPgDumpCronImage",
         ":account-service:bootBuildImage",
         ":automation-scripting-service:bootBuildImage",
         ":entity-management-service:bootBuildImage",
