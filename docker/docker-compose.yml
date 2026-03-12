@@ -1,5 +1,3 @@
-version: '3.9'
-
 x-service-environment: &service-env
   FIREMUD_POSTGRES_HOST: ${FIREMUD_POSTGRES_HOST:-postgres}
   FIREMUD_POSTGRES_PORT: ${FIREMUD_POSTGRES_PORT:-5432}

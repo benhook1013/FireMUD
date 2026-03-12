@@ -15,6 +15,7 @@
 *.log
 .DS_Store
 certs/
+docker/backups/
 
 # Python bytecode
 __pycache__/

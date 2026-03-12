@@ -1,5 +1,3 @@
-version: '3.9'
-
 x-local-java-env: &local-java-env
   BPL_JAVA_NMT_ENABLED: "false"
   BPL_JVM_THREAD_COUNT: "20"
