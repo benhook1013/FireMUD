@@ -133,14 +133,14 @@ public class AccountServiceImpl implements AccountService {
               profileRepository.delete(profile);
               accountRepository.delete(account);
             })
-        .step("logCreation", () -> loggingAdminClient.logAccountCreation(0L, account.getId()));
+        .step("logCreation", () -> safeLogAccountCreation(account.getId()));
     var saga = builder.build();
     if (sagaRunner == null) {
       Account saved = accountRepository.save(account);
       account.setId(saved.getId());
       profile.setAccount(saved);
       profileRepository.save(profile);
-      loggingAdminClient.logAccountCreation(0L, account.getId());
+      safeLogAccountCreation(account.getId());
       return accountMapper.toDto(account);
     }
     try {
@@ -158,7 +158,7 @@ public class AccountServiceImpl implements AccountService {
   @Timed(value = "account.authenticate")
   public net.firedevops.firemud.accountservice.dto.AuthenticationResult authenticate(
       Long tenantId, String username, String password, String otp) {
-    Optional<Account> accountOpt = accountRepository.findByTenantIdAndUsername(tenantId, username);
+    Optional<Account> accountOpt = findAccountForAuthentication(tenantId, username);
     Account account =
         accountOpt.orElseThrow(
             () ->
@@ -184,6 +184,36 @@ public class AccountServiceImpl implements AccountService {
     sessionService.storeSession(tenantId, account.getId(), token);
     return new net.firedevops.firemud.accountservice.dto.AuthenticationResult(
         account.getId(), token);
+  }
+
+  private Optional<Account> findAccountForAuthentication(Long tenantId, String usernameOrEmail) {
+    Optional<Account> tenantUsernameMatch =
+        accountRepository.findByTenantIdAndUsername(tenantId, usernameOrEmail);
+    if (tenantUsernameMatch.isPresent()) {
+      return tenantUsernameMatch;
+    }
+
+    Optional<Account> tenantEmailMatch =
+        accountRepository.findByTenantIdAndEmail(tenantId, usernameOrEmail);
+    if (tenantEmailMatch.isPresent()) {
+      return tenantEmailMatch;
+    }
+
+    Optional<Account> globalUsernameMatch =
+        accountRepository.findByTenantIdAndUsername(0L, usernameOrEmail);
+    if (globalUsernameMatch.isPresent()) {
+      return globalUsernameMatch;
+    }
+
+    return accountRepository.findByTenantIdAndEmail(0L, usernameOrEmail);
+  }
+
+  private void safeLogAccountCreation(Long accountId) {
+    try {
+      loggingAdminClient.logAccountCreation(0L, accountId);
+    } catch (RuntimeException ex) {
+      logger.warn("Account creation logging failed for account {}", accountId, ex);
+    }
   }
 
   @Override

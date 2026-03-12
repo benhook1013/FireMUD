@@ -3,6 +3,8 @@ package net.firedevops.firemud.gamesession.client;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
+import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import io.grpc.netty.shaded.io.grpc.netty.GrpcSslContexts;
 import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
 import jakarta.annotation.PostConstruct;
@@ -34,6 +36,7 @@ public final class AccountClient implements AutoCloseable {
 
   private ManagedChannel channel;
   private AccountServiceGrpc.AccountServiceBlockingStub stub;
+  private String target;
 
   public AccountClient(
       ServiceEndpointsProperties endpoints,
@@ -50,15 +53,23 @@ public final class AccountClient implements AutoCloseable {
       logger.info("Dev-isolated mode enabled; skipping AccountService channel initialization");
       return;
     }
-    String target = endpoints.getAccountService();
+    target = endpoints.getAccountService();
     if (target == null || target.isEmpty()) {
       target = "account-service:6565";
+    }
+    reloadChannel();
+  }
+
+  private synchronized void reloadChannel() throws Exception {
+    if (devIsolatedProperties.isDevIsolated()) {
+      return;
     }
     String[] parts = target.split(":");
     String host = parts[0];
     int port = parts.length > 1 ? Integer.parseInt(parts[1]) : 6565;
+    ManagedChannel newChannel;
     if (tlsProps.isPlaintext()) {
-      channel =
+      newChannel =
           ManagedChannelBuilder.forAddress(host, port)
               .keepAliveTime(30, TimeUnit.SECONDS)
               .keepAliveTimeout(5, TimeUnit.SECONDS)
@@ -71,7 +82,7 @@ public final class AccountClient implements AutoCloseable {
               .trustManager(new File(tlsProps.getCaCert()))
               .keyManager(new File(tlsProps.getCertChain()), new File(tlsProps.getPrivateKey()))
               .build();
-      channel =
+      newChannel =
           NettyChannelBuilder.forAddress(host, port)
               .sslContext(sslContext)
               .keepAliveTime(30, TimeUnit.SECONDS)
@@ -79,6 +90,10 @@ public final class AccountClient implements AutoCloseable {
               .keepAliveWithoutCalls(true)
               .build();
     }
+    if (channel != null) {
+      channel.shutdown();
+    }
+    channel = newChannel;
     stub = AccountServiceGrpc.newBlockingStub(channel).withCompression("gzip");
   }
 
@@ -97,15 +112,28 @@ public final class AccountClient implements AutoCloseable {
             .build();
     try {
       return stub.authenticate(request);
+    } catch (StatusRuntimeException ex) {
+      if (ex.getStatus().getCode() == Status.Code.UNAVAILABLE) {
+        logger.warn(
+            "Account Service unavailable; rebuilding channel and retrying authenticate", ex);
+        try {
+          reloadChannel();
+          return stub.authenticate(request);
+        } catch (Exception retryEx) {
+          logger.warn("Failed to retry Account Service authenticate after channel reload", retryEx);
+        }
+      } else {
+        logger.warn("Failed to call Account Service authenticate endpoint", ex);
+      }
     } catch (Exception ex) {
       logger.warn("Failed to call Account Service authenticate endpoint", ex);
-      return AuthenticateResponse.newBuilder()
-          .setError(
-              ErrorDetail.newBuilder()
-                  .setCode(AuthenticationErrorCodes.UPSTREAM_FAILURE)
-                  .setMessage("Authentication service unavailable"))
-          .build();
     }
+    return AuthenticateResponse.newBuilder()
+        .setError(
+            ErrorDetail.newBuilder()
+                .setCode(AuthenticationErrorCodes.UPSTREAM_FAILURE)
+                .setMessage("Authentication service unavailable"))
+        .build();
   }
 
   @Override

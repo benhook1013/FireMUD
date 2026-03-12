@@ -5,7 +5,6 @@ import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.annotation.PostConstruct;
-import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.saga.SagaBuilder;
 import net.firedevops.firemud.common.saga.SagaException;
@@ -15,6 +14,8 @@ import net.firedevops.firemud.worldmanagement.entity.Region;
 import net.firedevops.firemud.worldmanagement.repository.RegionRepository;
 import net.firedevops.firemud.worldmanagement.service.WorldCreationService;
 import org.slf4j.Logger;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -23,7 +24,6 @@ import org.springframework.transaction.annotation.Transactional;
  * copy design data from the Game Design Service and schedule initial world events.
  */
 @Service
-@RequiredArgsConstructor
 @SuppressFBWarnings(
     value = "EI_EXPOSE_REP2",
     justification = "Dependencies are injected and remain internal")
@@ -38,6 +38,20 @@ public class WorldCreationServiceImpl implements WorldCreationService {
   private Counter sagaFailedCounter;
 
   private static final Logger logger = LoggingUtil.getLogger(WorldCreationServiceImpl.class);
+
+  @Autowired
+  public WorldCreationServiceImpl(
+      RegionRepository regionRepository,
+      MeterRegistry meterRegistry,
+      WorldProperties worldProperties,
+      net.firedevops.firemud.worldmanagement.client.GameDesignClient gameDesignClient,
+      @Nullable SagaRunner sagaRunner) {
+    this.regionRepository = regionRepository;
+    this.meterRegistry = meterRegistry;
+    this.worldProperties = worldProperties;
+    this.gameDesignClient = gameDesignClient;
+    this.sagaRunner = sagaRunner;
+  }
 
   @PostConstruct
   void initMetrics() {
@@ -66,7 +80,12 @@ public class WorldCreationServiceImpl implements WorldCreationService {
             () -> rollbackDesignCopy(tenantId))
         .step("scheduleEvents", () -> scheduleInitialEvents(tenantId));
     try {
-      sagaRunner.run(builder.build());
+      var saga = builder.build();
+      if (sagaRunner == null) {
+        saga.run();
+      } else {
+        sagaRunner.run(saga);
+      }
     } catch (SagaException ex) {
       sagaFailedCounter.increment();
       logger.warn("World creation saga failed for tenant {}", tenantId);

@@ -19,6 +19,8 @@ import net.firedevops.firemud.worldmanagement.mapper.RoomMapper;
 import net.firedevops.firemud.worldmanagement.repository.RoomExitRepository;
 import net.firedevops.firemud.worldmanagement.repository.RoomRepository;
 import net.firedevops.firemud.worldmanagement.service.RoomService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -29,6 +31,8 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 @RequiredArgsConstructor
 public class RoomServiceImpl implements RoomService {
+  private static final Logger LOG = LoggerFactory.getLogger(RoomServiceImpl.class);
+
   private final RoomRepository roomRepository;
   private final RoomMapper roomMapper;
   private final RedisTemplate<String, Object> redisTemplate;
@@ -59,10 +63,14 @@ public class RoomServiceImpl implements RoomService {
   @Timed(value = "room.get")
   public RoomDto getRoom(Long tenantId, Long roomId) {
     String key = cacheKey(tenantId, roomId);
-    Object cached = redisTemplate.opsForValue().get(key);
-    if (cached instanceof RoomDto dto) {
-      cacheHitCounter.increment();
-      return dto;
+    try {
+      Object cached = redisTemplate.opsForValue().get(key);
+      if (cached instanceof RoomDto dto) {
+        cacheHitCounter.increment();
+        return dto;
+      }
+    } catch (RuntimeException ex) {
+      LOG.warn("Room cache read failed for key {}", key, ex);
     }
     cacheMissCounter.increment();
     RoomDto dto =
@@ -71,7 +79,11 @@ public class RoomServiceImpl implements RoomService {
             .filter(r -> r.getTenantId().equals(tenantId))
             .map(roomMapper::toDto)
             .orElseThrow(() -> new IllegalArgumentException("Room not found"));
-    redisTemplate.opsForValue().set(key, dto, Duration.ofSeconds(cacheTtlSeconds));
+    try {
+      redisTemplate.opsForValue().set(key, dto, Duration.ofSeconds(cacheTtlSeconds));
+    } catch (RuntimeException ex) {
+      LOG.warn("Room cache write failed for key {}", key, ex);
+    }
     return dto;
   }
 

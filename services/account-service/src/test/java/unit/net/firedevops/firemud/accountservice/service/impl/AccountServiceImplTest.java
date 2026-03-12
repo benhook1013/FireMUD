@@ -8,6 +8,8 @@ import static org.mockito.Mockito.when;
 
 import de.mkammerer.argon2.Argon2;
 import de.mkammerer.argon2.Argon2Factory;
+import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import java.util.Optional;
 import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.accountservice.client.LoggingAdminClient;
@@ -109,6 +111,23 @@ class AccountServiceImplTest {
   }
 
   @Test
+  void createAccountContinuesWhenAuditLoggingFails()
+      throws net.firedevops.firemud.common.saga.SagaException {
+    CreateAccountRequest request = new CreateAccountRequest("demo", "demo@example.com", "password");
+    Account saved = new Account();
+    saved.setId(1L);
+    when(accountRepository.save(org.mockito.ArgumentMatchers.any(Account.class))).thenReturn(saved);
+    org.mockito.Mockito.doThrow(new StatusRuntimeException(Status.UNAVAILABLE))
+        .when(loggingAdminClient)
+        .logAccountCreation(0L, 1L);
+
+    AccountDto dto = service.createAccount(request);
+
+    assertEquals(1L, dto.id());
+    org.mockito.Mockito.verify(sagaRunner).run(org.mockito.ArgumentMatchers.any());
+  }
+
+  @Test
   void authenticateReturnsTokenWhenPasswordMatches() {
     Account account = new Account();
     account.setId(1L);
@@ -125,8 +144,55 @@ class AccountServiceImplTest {
   }
 
   @Test
+  void authenticateFallsBackToTenantEmailLookup() {
+    Account account = new Account();
+    account.setId(1L);
+    account.setTenantId(1L);
+    account.setUsername("demo");
+    account.setEmail("demo@example.com");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findByTenantIdAndUsername(1L, "demo@example.com"))
+        .thenReturn(Optional.empty());
+    when(accountRepository.findByTenantIdAndEmail(1L, "demo@example.com"))
+        .thenReturn(Optional.of(account));
+
+    AuthenticationResult result = service.authenticate(1L, "demo@example.com", "password", null);
+
+    assertNotNull(result.authToken());
+    assertEquals(1L, result.accountId());
+    org.mockito.Mockito.verify(sessionService).storeSession(1L, 1L, result.authToken());
+  }
+
+  @Test
+  void authenticateFallsBackToGlobalAccountLookup() {
+    Account account = new Account();
+    account.setId(1L);
+    account.setTenantId(0L);
+    account.setUsername("demo");
+    account.setEmail("demo@example.com");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findByTenantIdAndUsername(1L, "demo@example.com"))
+        .thenReturn(Optional.empty());
+    when(accountRepository.findByTenantIdAndEmail(1L, "demo@example.com"))
+        .thenReturn(Optional.empty());
+    when(accountRepository.findByTenantIdAndUsername(0L, "demo@example.com"))
+        .thenReturn(Optional.empty());
+    when(accountRepository.findByTenantIdAndEmail(0L, "demo@example.com"))
+        .thenReturn(Optional.of(account));
+
+    AuthenticationResult result = service.authenticate(1L, "demo@example.com", "password", null);
+
+    assertNotNull(result.authToken());
+    assertEquals(1L, result.accountId());
+    org.mockito.Mockito.verify(sessionService).storeSession(1L, 1L, result.authToken());
+  }
+
+  @Test
   void authenticateThrowsWhenInvalid() {
     when(accountRepository.findByTenantIdAndUsername(1L, "demo")).thenReturn(Optional.empty());
+    when(accountRepository.findByTenantIdAndEmail(1L, "demo")).thenReturn(Optional.empty());
+    when(accountRepository.findByTenantIdAndUsername(0L, "demo")).thenReturn(Optional.empty());
+    when(accountRepository.findByTenantIdAndEmail(0L, "demo")).thenReturn(Optional.empty());
     AuthenticationException exception =
         assertThrows(
             AuthenticationException.class, () -> service.authenticate(1L, "demo", "bad", null));

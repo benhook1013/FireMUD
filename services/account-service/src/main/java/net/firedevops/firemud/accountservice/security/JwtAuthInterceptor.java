@@ -27,6 +27,9 @@ public class JwtAuthInterceptor implements HandlerInterceptor {
   @Override
   public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler)
       throws Exception {
+    if (isPublicPath(request.getRequestURI())) {
+      return true;
+    }
     String authHeader = request.getHeader(HttpHeaders.AUTHORIZATION);
     if (authHeader == null || !authHeader.startsWith("Bearer ")) {
       response.setStatus(HttpStatus.UNAUTHORIZED.value());
@@ -78,6 +81,19 @@ public class JwtAuthInterceptor implements HandlerInterceptor {
       response.setStatus(HttpStatus.UNAUTHORIZED.value());
       return false;
     }
+  }
+
+  private boolean isPublicPath(String requestUri) {
+    return "/accounts".equals(requestUri)
+        || "/accounts/".equals(requestUri)
+        || "/auth/login".equals(requestUri)
+        || "/auth/request-password-reset".equals(requestUri)
+        || "/auth/complete-password-reset".equals(requestUri)
+        || "/auth/request-email-verification".equals(requestUri)
+        || "/auth/verify-email".equals(requestUri)
+        || "/auth/recover-username".equals(requestUri)
+        || "/ping".equals(requestUri)
+        || requestUri.startsWith("/.well-known/");
   }
 
   @Override

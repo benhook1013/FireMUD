@@ -46,6 +46,19 @@ class GrpcJwtAuthInterceptorTest {
   }
 
   private static class TestServerCall extends ServerCall<Object, Object> {
+    private static final MethodDescriptor.Marshaller<Object> NOOP_MARSHALLER =
+        new MethodDescriptor.Marshaller<>() {
+          @Override
+          public java.io.InputStream stream(Object value) {
+            return new java.io.ByteArrayInputStream(new byte[0]);
+          }
+
+          @Override
+          public Object parse(java.io.InputStream stream) {
+            return new Object();
+          }
+        };
+
     Status status;
 
     @Override
@@ -69,7 +82,12 @@ class GrpcJwtAuthInterceptorTest {
 
     @Override
     public MethodDescriptor<Object, Object> getMethodDescriptor() {
-      return null;
+      return MethodDescriptor.<Object, Object>newBuilder()
+          .setType(MethodDescriptor.MethodType.UNARY)
+          .setFullMethodName("test.Service/Method")
+          .setRequestMarshaller(NOOP_MARSHALLER)
+          .setResponseMarshaller(NOOP_MARSHALLER)
+          .build();
     }
   }
 }

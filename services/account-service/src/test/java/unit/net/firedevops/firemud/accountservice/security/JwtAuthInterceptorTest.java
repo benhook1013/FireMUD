@@ -21,6 +21,7 @@ class JwtAuthInterceptorTest {
   @Test
   void rejectsRequestWithoutToken() throws Exception {
     MockHttpServletRequest request = new MockHttpServletRequest();
+    request.setRequestURI("/profiles/me");
     MockHttpServletResponse response = new MockHttpServletResponse();
 
     boolean result = interceptor.preHandle(request, response, new Object());
@@ -33,6 +34,7 @@ class JwtAuthInterceptorTest {
   void allowsRequestWithValidRole() throws Exception {
     String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
     MockHttpServletRequest request = new MockHttpServletRequest();
+    request.setRequestURI("/profiles/me");
     request.addHeader(HttpHeaders.AUTHORIZATION, "Bearer " + token);
     MockHttpServletResponse response = new MockHttpServletResponse();
 
@@ -43,5 +45,17 @@ class JwtAuthInterceptorTest {
     assertEquals(List.of("platformAdmin"), SessionContext.getGlobalRoles());
     interceptor.afterCompletion(request, response, new Object(), null);
     assertTrue(SessionContext.getGlobalRoles().isEmpty());
+  }
+
+  @Test
+  void allowsPublicCreateAccountRequestWithoutToken() throws Exception {
+    MockHttpServletRequest request = new MockHttpServletRequest();
+    request.setRequestURI("/accounts");
+    MockHttpServletResponse response = new MockHttpServletResponse();
+
+    boolean result = interceptor.preHandle(request, response, new Object());
+
+    assertTrue(result);
+    assertEquals(200, response.getStatus());
   }
 }

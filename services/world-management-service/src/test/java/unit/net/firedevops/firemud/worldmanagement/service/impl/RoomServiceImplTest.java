@@ -19,6 +19,7 @@ import net.firedevops.firemud.worldmanagement.repository.RoomRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mapstruct.factory.Mappers;
+import org.springframework.data.redis.RedisSystemException;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
 
@@ -102,6 +103,45 @@ class RoomServiceImplTest {
     assertEquals(longDesc, snapshot.longDescription());
     assertEquals(1, snapshot.exits().size());
     assertEquals(2045L, snapshot.exits().get(0).targetRoomId().longValue());
+  }
+
+  @Test
+  void getRoomIgnoresCacheReadFailure() {
+    Room entity = new Room();
+    entity.setId(1L);
+    entity.setTenantId(1L);
+    Region region = new Region();
+    region.setId(2L);
+    entity.setRegion(region);
+    entity.setName("A");
+    when(valueOps.get("room:1:1"))
+        .thenThrow(new RedisSystemException("boom", new RuntimeException()));
+    when(repository.findById(1L)).thenReturn(Optional.of(entity));
+
+    RoomDto dto = service.getRoom(1L, 1L);
+
+    assertEquals("A", dto.name());
+    verify(repository).findById(1L);
+  }
+
+  @Test
+  void getRoomIgnoresCacheWriteFailure() {
+    Room entity = new Room();
+    entity.setId(1L);
+    entity.setTenantId(1L);
+    Region region = new Region();
+    region.setId(2L);
+    entity.setRegion(region);
+    entity.setName("A");
+    when(repository.findById(1L)).thenReturn(Optional.of(entity));
+    doThrow(new RedisSystemException("boom", new RuntimeException()))
+        .when(valueOps)
+        .set(eq("room:1:1"), any(), eq(java.time.Duration.ofSeconds(1)));
+
+    RoomDto dto = service.getRoom(1L, 1L);
+
+    assertEquals("A", dto.name());
+    verify(repository).findById(1L);
   }
 
   @SuppressWarnings("unchecked")
