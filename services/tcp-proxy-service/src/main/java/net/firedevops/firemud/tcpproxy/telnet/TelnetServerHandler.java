@@ -39,8 +39,6 @@ import org.slf4j.LoggerFactory;
 /** Handler that forwards Telnet lines to the gateway via WebSocket. */
 public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   private static final Logger logger = LoggerFactory.getLogger(TelnetServerHandler.class);
-  private static final Duration INITIAL_RECONNECT_DELAY = Duration.ofSeconds(1);
-  private static final Duration MAX_RECONNECT_DELAY = Duration.ofSeconds(30);
   private static final Duration HEARTBEAT_INTERVAL = Duration.ofSeconds(30);
   private static final Duration IDLE_TIMEOUT = Duration.ofMinutes(5);
   private static final int MAX_BUFFER_DEPTH = 512;

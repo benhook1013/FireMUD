@@ -26,6 +26,7 @@ public class TracingConfig {
   private String serviceName;
 
   @Bean
+  @SuppressWarnings("null")
   public OpenTelemetry openTelemetry() {
     String endpoint = Objects.requireNonNullElse(otelEndpoint, "");
     if (isDisabledEndpoint(endpoint)) {
@@ -53,6 +54,7 @@ public class TracingConfig {
   }
 
   @Bean
+  @SuppressWarnings("null")
   public Tracer tracer(OpenTelemetry openTelemetry) {
     return openTelemetry.getTracer(Objects.requireNonNullElse(serviceName, "unknown-service"));
   }

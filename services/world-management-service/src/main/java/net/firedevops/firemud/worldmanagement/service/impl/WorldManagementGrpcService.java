@@ -13,7 +13,6 @@ import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.worldmanagement.dto.RoomDto;
 import net.firedevops.firemud.worldmanagement.dto.RoomSnapshotDto;
 import net.firedevops.firemud.worldmanagement.dto.RoomSnapshotDto.RoomExitSnapshotDto;
-import net.firedevops.firemud.worldmanagement.mapper.RoomMapper;
 import net.firedevops.firemud.worldmanagement.service.PingService;
 import net.firedevops.firemud.worldmanagement.service.RoomService;
 import net.firedevops.firemud.worldmanagement.v1.GetRoomRequest;
@@ -39,7 +38,6 @@ public class WorldManagementGrpcService
     extends WorldManagementServiceGrpc.WorldManagementServiceImplBase {
   private final PingService pingService;
   private final RoomService roomService;
-  private final RoomMapper roomMapper;
   private final net.firedevops.firemud.worldmanagement.service.WorldEventService worldEventService;
   private final MeterRegistry meterRegistry;
   private final ObjectMapper objectMapper = new ObjectMapper();

@@ -17,7 +17,6 @@ import org.mockito.ArgumentCaptor;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
 
-@SuppressWarnings("unchecked")
 class TickServiceImplTest {
   private RedisTemplate<String, Object> redisTemplate;
   private org.springframework.data.redis.core.ListOperations<String, Object> listOps;
@@ -28,6 +27,7 @@ class TickServiceImplTest {
   private TickService service;
 
   @BeforeEach
+  @SuppressWarnings("unchecked")
   void setup() {
     redisTemplate = mock(RedisTemplate.class);
     listOps = mock(org.springframework.data.redis.core.ListOperations.class);
@@ -79,6 +79,7 @@ class TickServiceImplTest {
   }
 
   @Test
+  @SuppressWarnings("unchecked")
   void slowTickIncrementsBudgetMetric() {
     when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
         .thenReturn(true);

@@ -28,7 +28,6 @@ import java.net.http.WebSocket;
 import java.nio.ByteBuffer;
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.Iterator;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
@@ -800,21 +799,8 @@ class TelnetServerHandlerTest {
     return mock(ScheduledFuture.class);
   }
 
-  private ScheduledTask takeReconnectTask(List<ScheduledTask> tasks) {
-    Iterator<ScheduledTask> iterator = tasks.iterator();
-    while (iterator.hasNext()) {
-      ScheduledTask task = iterator.next();
-      if (task.delayMillis() <= TimeUnit.SECONDS.toMillis(5)) {
-        iterator.remove();
-        return task;
-      }
-    }
-    throw new IllegalStateException("No reconnect task recorded");
-  }
-
   private static final class RecordingConnector implements TelnetServerHandler.WebSocketConnector {
     private StubWebSocket current;
-    private WebSocket.Listener listener;
     private String sessionId;
     private String tenantId;
 
@@ -826,7 +812,6 @@ class TelnetServerHandlerTest {
         String sessionId,
         String tenantId,
         WebSocket.Listener listener) {
-      this.listener = listener;
       this.sessionId = sessionId;
       this.tenantId = tenantId;
       current = new StubWebSocket();
@@ -841,93 +826,11 @@ class TelnetServerHandlerTest {
     String getTenantId() {
       return tenantId;
     }
-
-    StubWebSocket getCurrent() {
-      return current;
-    }
-
-    WebSocket.Listener getListener() {
-      return listener;
-    }
-  }
-
-  private static final class TestConnector implements TelnetServerHandler.WebSocketConnector {
-    private StubWebSocket current;
-    private WebSocket.Listener listener;
-
-    @Override
-    public CompletableFuture<WebSocket> connect(
-        String gatewayWsUrl,
-        String clientIp,
-        String proxyConnectionId,
-        String sessionId,
-        String tenantId,
-        WebSocket.Listener listener) {
-      this.listener = listener;
-      current = new StubWebSocket();
-      listener.onOpen(current);
-      return CompletableFuture.completedFuture(current);
-    }
-
-    StubWebSocket getCurrent() {
-      return current;
-    }
-
-    WebSocket.Listener getListener() {
-      return listener;
-    }
-
-    StubWebSocket reconnect() {
-      current = new StubWebSocket();
-      listener.onOpen(current);
-      return current;
-    }
-  }
-
-  private static final class ControllableConnector
-      implements TelnetServerHandler.WebSocketConnector {
-    private WebSocket current;
-    private WebSocket.Listener listener;
-
-    ControllableConnector(WebSocket first) {
-      this.current = first;
-    }
-
-    @Override
-    public CompletableFuture<WebSocket> connect(
-        String gatewayWsUrl,
-        String clientIp,
-        String proxyConnectionId,
-        String sessionId,
-        String tenantId,
-        WebSocket.Listener listener) {
-      this.listener = listener;
-      listener.onOpen(current);
-      return CompletableFuture.completedFuture(current);
-    }
-
-    WebSocket.Listener getListener() {
-      return listener;
-    }
-
-    WebSocket getCurrent() {
-      return current;
-    }
-
-    WebSocket reconnect(WebSocket next) {
-      current = next;
-      listener.onOpen(current);
-      return current;
-    }
   }
 
   private static final class StubWebSocket implements WebSocket {
     private final List<String> sentTexts = new ArrayList<>();
     private boolean closed;
-
-    List<String> getSentTexts() {
-      return sentTexts;
-    }
 
     @Override
     public CompletableFuture<WebSocket> sendText(CharSequence data, boolean last) {
@@ -980,69 +883,8 @@ class TelnetServerHandlerTest {
     }
   }
 
-  private static final class HangingWebSocket implements WebSocket {
-    private final CompletableFuture<WebSocket> sendFuture = new CompletableFuture<>();
-
-    CompletableFuture<WebSocket> getSendFuture() {
-      return sendFuture;
-    }
-
-    @Override
-    public CompletableFuture<WebSocket> sendText(CharSequence data, boolean last) {
-      return sendFuture;
-    }
-
-    @Override
-    public CompletableFuture<WebSocket> sendBinary(ByteBuffer data, boolean last) {
-      return CompletableFuture.completedFuture(this);
-    }
-
-    @Override
-    public CompletableFuture<WebSocket> sendPing(ByteBuffer message) {
-      return CompletableFuture.completedFuture(this);
-    }
-
-    @Override
-    public CompletableFuture<WebSocket> sendPong(ByteBuffer message) {
-      return CompletableFuture.completedFuture(this);
-    }
-
-    @Override
-    public CompletableFuture<WebSocket> sendClose(int statusCode, String reason) {
-      sendFuture.cancel(true);
-      return CompletableFuture.completedFuture(this);
-    }
-
-    @Override
-    public void request(long n) {}
-
-    @Override
-    public String getSubprotocol() {
-      return "";
-    }
-
-    @Override
-    public boolean isOutputClosed() {
-      return false;
-    }
-
-    @Override
-    public boolean isInputClosed() {
-      return false;
-    }
-
-    @Override
-    public void abort() {
-      sendFuture.cancel(true);
-    }
-  }
-
   private static final class RecordingWebSocket implements WebSocket {
     private final List<String> sentTexts = new ArrayList<>();
-
-    List<String> getSentTexts() {
-      return sentTexts;
-    }
 
     @Override
     public CompletableFuture<WebSocket> sendText(CharSequence data, boolean last) {

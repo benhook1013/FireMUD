@@ -10,7 +10,6 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.shared.v1.RoomInstanceRef;
 import net.firedevops.firemud.worldmanagement.dto.RoomSnapshotDto;
-import net.firedevops.firemud.worldmanagement.mapper.RoomMapper;
 import net.firedevops.firemud.worldmanagement.service.PingService;
 import net.firedevops.firemud.worldmanagement.service.RoomService;
 import net.firedevops.firemud.worldmanagement.v1.GetRoomSnapshotRequest;
@@ -18,7 +17,6 @@ import net.firedevops.firemud.worldmanagement.v1.GetRoomSnapshotResponse;
 import net.firedevops.firemud.worldmanagement.v1.PingRequest;
 import net.firedevops.firemud.worldmanagement.v1.PingResponse;
 import org.junit.jupiter.api.Test;
-import org.mapstruct.factory.Mappers;
 import org.mockito.Mockito;
 
 class WorldManagementGrpcServiceTest {
@@ -27,15 +25,13 @@ class WorldManagementGrpcServiceTest {
     PingService pingService = Mockito.mock(PingService.class);
     Mockito.when(pingService.ping()).thenReturn("pong");
     RoomService roomService = Mockito.mock(RoomService.class);
-    RoomMapper mapper = Mappers.getMapper(RoomMapper.class);
     var worldEventService =
         Mockito.mock(net.firedevops.firemud.worldmanagement.service.WorldEventService.class);
     MeterRegistry meterRegistry = Mockito.mock(MeterRegistry.class);
     Mockito.when(meterRegistry.counter(Mockito.anyString(), Mockito.any(String[].class)))
         .thenReturn(Mockito.mock(io.micrometer.core.instrument.Counter.class));
     WorldManagementGrpcService service =
-        new WorldManagementGrpcService(
-            pingService, roomService, mapper, worldEventService, meterRegistry);
+        new WorldManagementGrpcService(pingService, roomService, worldEventService, meterRegistry);
 
     AtomicReference<PingResponse> ref = new AtomicReference<>();
     service.ping(
@@ -60,15 +56,13 @@ class WorldManagementGrpcServiceTest {
   void getRoomInvalidIdReturnsErrorDetail() {
     PingService pingService = Mockito.mock(PingService.class);
     RoomService roomService = Mockito.mock(RoomService.class);
-    RoomMapper mapper = Mappers.getMapper(RoomMapper.class);
     var worldEventService =
         Mockito.mock(net.firedevops.firemud.worldmanagement.service.WorldEventService.class);
     MeterRegistry meterRegistry = Mockito.mock(MeterRegistry.class);
     Mockito.when(meterRegistry.counter(Mockito.anyString(), Mockito.any(String[].class)))
         .thenReturn(Mockito.mock(io.micrometer.core.instrument.Counter.class));
     WorldManagementGrpcService service =
-        new WorldManagementGrpcService(
-            pingService, roomService, mapper, worldEventService, meterRegistry);
+        new WorldManagementGrpcService(pingService, roomService, worldEventService, meterRegistry);
 
     AtomicReference<net.firedevops.firemud.worldmanagement.v1.GetRoomResponse> ref =
         new AtomicReference<>();
@@ -97,15 +91,13 @@ class WorldManagementGrpcServiceTest {
   void updateWorldStateSuccess() {
     PingService pingService = Mockito.mock(PingService.class);
     RoomService roomService = Mockito.mock(RoomService.class);
-    RoomMapper mapper = Mappers.getMapper(RoomMapper.class);
     var worldEventService =
         Mockito.mock(net.firedevops.firemud.worldmanagement.service.WorldEventService.class);
     MeterRegistry meterRegistry = Mockito.mock(MeterRegistry.class);
     Mockito.when(meterRegistry.counter(Mockito.anyString(), Mockito.any(String[].class)))
         .thenReturn(Mockito.mock(io.micrometer.core.instrument.Counter.class));
     WorldManagementGrpcService service =
-        new WorldManagementGrpcService(
-            pingService, roomService, mapper, worldEventService, meterRegistry);
+        new WorldManagementGrpcService(pingService, roomService, worldEventService, meterRegistry);
 
     AtomicReference<net.firedevops.firemud.worldmanagement.v1.UpdateWorldStateResponse> ref =
         new AtomicReference<>();
@@ -147,15 +139,13 @@ class WorldManagementGrpcServiceTest {
                         1L, 2L, "Room B", "Room B", "Leads toward Room B", 1)),
                 Map.of("lighting", "dim"),
                 List.of()));
-    RoomMapper mapper = Mappers.getMapper(RoomMapper.class);
     var worldEventService =
         Mockito.mock(net.firedevops.firemud.worldmanagement.service.WorldEventService.class);
     MeterRegistry meterRegistry = Mockito.mock(MeterRegistry.class);
     Mockito.when(meterRegistry.counter(Mockito.anyString(), Mockito.any(String[].class)))
         .thenReturn(Mockito.mock(io.micrometer.core.instrument.Counter.class));
     WorldManagementGrpcService service =
-        new WorldManagementGrpcService(
-            pingService, roomService, mapper, worldEventService, meterRegistry);
+        new WorldManagementGrpcService(pingService, roomService, worldEventService, meterRegistry);
 
     AtomicReference<GetRoomSnapshotResponse> ref = new AtomicReference<>();
     AtomicReference<Throwable> error = new AtomicReference<>();
