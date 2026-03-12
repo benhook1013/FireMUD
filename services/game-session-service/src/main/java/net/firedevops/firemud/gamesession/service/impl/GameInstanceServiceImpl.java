@@ -19,6 +19,7 @@ import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.GameInstanceService;
 import net.firedevops.firemud.gamesession.service.SessionStateService;
 import org.slf4j.Logger;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -45,6 +46,7 @@ public class GameInstanceServiceImpl implements GameInstanceService {
   private final MeterRegistry meterRegistry;
   private final DevIsolatedProperties devIsolatedProperties;
 
+  @Autowired
   public GameInstanceServiceImpl(
       GameInstanceRepository repository,
       GameInstanceMapper mapper,
