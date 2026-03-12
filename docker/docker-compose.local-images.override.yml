@@ -7,12 +7,17 @@ x-local-java-env: &local-java-env
   GRPC_SERVER_SECURITY_ENABLED: "false"
   GRPC_SERVER_TLS_ENABLED: "false"
 
+x-local-app-healthcheck-disabled: &local-app-healthcheck-disabled
+  healthcheck:
+    disable: true
+
 services:
   account-service:
     build: null
     image: account-service:0.1.0
     pull_policy: never
     mem_limit: 768m
+    <<: *local-app-healthcheck-disabled
     environment:
       <<: *local-java-env
 
@@ -21,6 +26,7 @@ services:
     image: spring-cloud-gateway:0.1.0
     pull_policy: never
     mem_limit: 768m
+    <<: *local-app-healthcheck-disabled
     environment:
       <<: *local-java-env
       FIREMUD_GATEWAY_HEADER_TRUST_TCP_PROXY_ALLOW_INSECURE_HEADERS_FROM_TRUSTED_CIDRS: "true"
@@ -31,6 +37,7 @@ services:
     image: automation-scripting-service:0.1.0
     pull_policy: never
     mem_limit: 768m
+    <<: *local-app-healthcheck-disabled
     environment:
       <<: *local-java-env
 
@@ -39,6 +46,7 @@ services:
     image: entity-management-service:0.1.0
     pull_policy: never
     mem_limit: 768m
+    <<: *local-app-healthcheck-disabled
     environment:
       <<: *local-java-env
 
@@ -47,6 +55,7 @@ services:
     image: game-design-service:0.1.0
     pull_policy: never
     mem_limit: 768m
+    <<: *local-app-healthcheck-disabled
     environment:
       <<: *local-java-env
 
@@ -55,6 +64,7 @@ services:
     image: game-logic-service:0.1.0
     pull_policy: never
     mem_limit: 768m
+    <<: *local-app-healthcheck-disabled
     environment:
       <<: *local-java-env
 
@@ -63,6 +73,7 @@ services:
     image: game-session-service:0.1.0
     pull_policy: never
     mem_limit: 768m
+    <<: *local-app-healthcheck-disabled
     environment:
       <<: *local-java-env
       GAME_LOGIC_DEFAULT_ROOM_ID: "1"
@@ -72,6 +83,7 @@ services:
     image: logging-admin-service:0.1.0
     pull_policy: never
     mem_limit: 768m
+    <<: *local-app-healthcheck-disabled
     environment:
       <<: *local-java-env
 
@@ -80,6 +92,7 @@ services:
     image: social-groups-service:0.1.0
     pull_policy: never
     mem_limit: 768m
+    <<: *local-app-healthcheck-disabled
     environment:
       <<: *local-java-env
 
@@ -88,6 +101,7 @@ services:
     image: tcp-proxy-service:0.1.0
     pull_policy: never
     mem_limit: 768m
+    <<: *local-app-healthcheck-disabled
     environment:
       <<: *local-java-env
       TCP_PROXY_GATEWAY_WS_URL_DEV: ws://gateway:8080/ws/game
@@ -97,5 +111,6 @@ services:
     image: world-management-service:0.1.0
     pull_policy: never
     mem_limit: 768m
+    <<: *local-app-healthcheck-disabled
     environment:
       <<: *local-java-env
