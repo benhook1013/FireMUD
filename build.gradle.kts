@@ -74,6 +74,12 @@ subprojects {
                 options.compilerArgs.add("-Xlint:-removal")
             }
         }
+        if (categorizedTestRoots.isNotEmpty()) {
+            tasks.named<JavaCompile>("compileTestJava").configure {
+                // Categorized test roots have produced stale cache hits where selectors miss real test classes.
+                outputs.cacheIf { false }
+            }
+        }
     }
 
     if (projectDir.parentFile.name == "services" && name != "common-library") {
