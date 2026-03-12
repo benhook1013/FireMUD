@@ -1,4 +1,4 @@
-CREATE TABLE game_instances (
+CREATE TABLE IF NOT EXISTS game_instances (
     id BIGSERIAL PRIMARY KEY,
     tenant_id BIGINT NOT NULL,
     runtime_version VARCHAR(100) NOT NULL,

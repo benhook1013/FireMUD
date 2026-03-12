@@ -2,6 +2,7 @@ package net.firedevops.firemud.common.config;
 
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import net.firedevops.firemud.cache.RedisLookCacheService;
 import net.firedevops.firemud.common.conflict.RedisConflictTracker;
 import net.firedevops.firemud.common.grpc.GrpcServerTlsReloader;
 import net.firedevops.firemud.common.saga.SagaRunner;
@@ -25,7 +26,8 @@ import org.springframework.context.annotation.Import;
   TracingConfig.class,
   RequireAdminRoleAspect.class,
   GrpcServerTlsReloader.class,
-  RedisConflictTracker.class
+  RedisConflictTracker.class,
+  RedisLookCacheService.class
 })
 public class CommonAutoConfiguration {
 

@@ -1,4 +1,4 @@
-CREATE TABLE game_manifest (
+CREATE TABLE IF NOT EXISTS game_manifest (
     id BIGSERIAL PRIMARY KEY,
     version_id VARCHAR(100) NOT NULL,
     description TEXT,

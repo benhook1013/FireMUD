@@ -1,0 +1,98 @@
+version: '3.9'
+
+x-local-java-env: &local-java-env
+  BPL_JAVA_NMT_ENABLED: "false"
+  BPL_JVM_THREAD_COUNT: "20"
+  FIREMUD_GRPC_PLAINTEXT: "true"
+  GRPC_SERVER_SECURITY_ENABLED: "false"
+  GRPC_SERVER_TLS_ENABLED: "false"
+
+services:
+  account-service:
+    build: null
+    image: account-service:0.1.0
+    pull_policy: never
+    mem_limit: 768m
+    environment:
+      <<: *local-java-env
+
+  gateway:
+    build: null
+    image: spring-cloud-gateway:0.1.0
+    pull_policy: never
+    mem_limit: 768m
+    environment:
+      <<: *local-java-env
+
+  automation-scripting-service:
+    build: null
+    image: automation-scripting-service:0.1.0
+    pull_policy: never
+    mem_limit: 768m
+    environment:
+      <<: *local-java-env
+
+  entity-management-service:
+    build: null
+    image: entity-management-service:0.1.0
+    pull_policy: never
+    mem_limit: 768m
+    environment:
+      <<: *local-java-env
+
+  game-design-service:
+    build: null
+    image: game-design-service:0.1.0
+    pull_policy: never
+    mem_limit: 768m
+    environment:
+      <<: *local-java-env
+
+  game-logic-service:
+    build: null
+    image: game-logic-service:0.1.0
+    pull_policy: never
+    mem_limit: 768m
+    environment:
+      <<: *local-java-env
+
+  game-session-service:
+    build: null
+    image: game-session-service:0.1.0
+    pull_policy: never
+    mem_limit: 768m
+    environment:
+      <<: *local-java-env
+
+  logging-admin-service:
+    build: null
+    image: logging-admin-service:0.1.0
+    pull_policy: never
+    mem_limit: 768m
+    environment:
+      <<: *local-java-env
+
+  social-groups-service:
+    build: null
+    image: social-groups-service:0.1.0
+    pull_policy: never
+    mem_limit: 768m
+    environment:
+      <<: *local-java-env
+
+  tcp-proxy-service:
+    build: null
+    image: tcp-proxy-service:0.1.0
+    pull_policy: never
+    mem_limit: 768m
+    environment:
+      <<: *local-java-env
+      TCP_PROXY_GATEWAY_WS_URL_DEV: ws://gateway:8080/ws/game
+
+  world-management-service:
+    build: null
+    image: world-management-service:0.1.0
+    pull_policy: never
+    mem_limit: 768m
+    environment:
+      <<: *local-java-env

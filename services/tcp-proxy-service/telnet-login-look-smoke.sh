@@ -6,6 +6,8 @@ TCP_PORT=${TCP_PROXY_PORT:-2323}
 SMOKE_HOST=${SMOKE_TELNET_HOST:-localhost}
 SMOKE_USERNAME=${SMOKE_USERNAME:-demo@example.com}
 SMOKE_PASSWORD=${SMOKE_PASSWORD:-swordfish}
+SMOKE_SESSION_ID=${SMOKE_SESSION_ID:-1}
+SMOKE_TENANT_ID=${SMOKE_TENANT_ID:-1}
 SMOKE_LOGIN_EXPECT=${SMOKE_LOGIN_EXPECT:-"OK LOGIN"}
 SMOKE_LOOK_EXPECT=${SMOKE_LOOK_EXPECT:-"OK LOOK"}
 SMOKE_TIMEOUT_SECONDS=${SMOKE_TIMEOUT_SECONDS:-10}
@@ -21,6 +23,7 @@ fi
 
 echo "Running Telnet LOGIN + LOOK smoke test against ${SMOKE_HOST}:${TCP_PORT}"
 echo "Using username='${SMOKE_USERNAME}' (password redacted)"
+echo "Using session='${SMOKE_SESSION_ID}' tenant='${SMOKE_TENANT_ID}'"
 
 "$PYTHON" - <<'PYTHON'
 import os
@@ -32,6 +35,8 @@ host = os.environ.get("SMOKE_TELNET_HOST", "localhost")
 port = int(os.environ.get("TCP_PORT", "2323"))
 username = os.environ.get("SMOKE_USERNAME", "demo@example.com")
 password = os.environ.get("SMOKE_PASSWORD", "swordfish")
+session_id = os.environ.get("SMOKE_SESSION_ID", "1")
+tenant_id = os.environ.get("SMOKE_TENANT_ID", "1")
 login_expect = os.environ.get("SMOKE_LOGIN_EXPECT", "OK LOGIN")
 look_expect = os.environ.get("SMOKE_LOOK_EXPECT", "OK LOOK")
 timeout_seconds = int(os.environ.get("SMOKE_TIMEOUT_SECONDS", "10"))
@@ -55,6 +60,9 @@ def recv_until(sock, expected_substring, timeout):
 
 try:
     with socket.create_connection((host, port), timeout=timeout_seconds) as sock:
+        session_envelope = f"SESSION {session_id} {tenant_id}\r\n"
+        sock.sendall(session_envelope.encode("iso-8859-1"))
+
         # LOGIN
         login_line = f"LOGIN {username} {password}\r\n"
         sock.sendall(login_line.encode("iso-8859-1"))
@@ -84,4 +92,3 @@ except OSError as exc:
 
 print("Telnet LOGIN + LOOK smoke test passed.")
 PYTHON
-

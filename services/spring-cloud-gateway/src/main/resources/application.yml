@@ -1,6 +1,8 @@
 spring:
   application:
     name: spring-cloud-gateway
+  main:
+    web-application-type: reactive
   flyway:
     enabled: true
     schemas: ${SERVICE_SCHEMA:public},saga
@@ -53,10 +55,6 @@ spring:
       metrics:
         enabled: true
       default-filters:
-        - name: RequestRateLimiter
-          args:
-            redis-rate-limiter.replenishRate: 20
-            redis-rate-limiter.burstCapacity: 40
         - name: Retry
           args:
             retries: 3
