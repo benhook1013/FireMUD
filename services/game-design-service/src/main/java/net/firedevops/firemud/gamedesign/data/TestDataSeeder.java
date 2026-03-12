@@ -51,7 +51,6 @@ public class TestDataSeeder implements ApplicationRunner {
     if (revisionRepository.count() == 0) {
       Revision rev = new Revision();
       rev.setTenantId(game.getTenantId());
-      rev.setGame(game);
       rev.setAuthorAccountId(1L);
       rev.setData("{}");
       revisionRepository.save(rev);
@@ -60,7 +59,6 @@ public class TestDataSeeder implements ApplicationRunner {
     if (versionRepository.count() == 0) {
       Version v = new Version();
       v.setTenantId(game.getTenantId());
-      v.setGame(game);
       v.setVersionNumber(1);
       v.setNotes("Initial version");
       versionRepository.save(v);

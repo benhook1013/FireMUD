@@ -33,7 +33,6 @@ public class RevisionServiceImpl implements RevisionService {
         Optional.ofNullable(gameRepository.findByTenantId(dto.tenantId()))
             .orElseThrow(() -> new IllegalArgumentException("game not found"));
     Revision entity = revisionMapper.toEntity(dto);
-    entity.setGame(game);
     entity.setTenantId(game.getTenantId());
     entity = revisionRepository.save(entity);
     return revisionMapper.toDto(entity);

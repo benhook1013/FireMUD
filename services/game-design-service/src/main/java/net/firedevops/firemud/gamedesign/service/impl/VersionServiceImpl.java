@@ -71,7 +71,6 @@ public class VersionServiceImpl implements VersionService {
             .orElseThrow(() -> new IllegalArgumentException("game not found"));
 
     Version version = new Version();
-    version.setGame(game);
     version.setTenantId(game.getTenantId());
     version.setNotes(notes);
     version.setVersionNumber(calculateNextNumber(tenantId));
@@ -107,7 +106,6 @@ public class VersionServiceImpl implements VersionService {
             .orElseThrow(() -> new IllegalArgumentException("game not found"));
 
     Version version = new Version();
-    version.setGame(game);
     version.setTenantId(game.getTenantId());
     version.setNotes(notes);
     version.setVersionNumber(calculateNextNumber(tenantId));
@@ -136,7 +134,7 @@ public class VersionServiceImpl implements VersionService {
         Optional.ofNullable(gameRepository.findByTenantId(tenantId))
             .orElseThrow(() -> new IllegalArgumentException("game not found"));
     return versionRepository.findAll().stream()
-        .filter(v -> v.getGame().equals(game))
+        .filter(v -> v.getTenantId().equals(game.getTenantId()))
         .map(versionMapper::toDto)
         .toList();
   }

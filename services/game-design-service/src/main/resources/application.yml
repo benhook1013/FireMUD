@@ -42,6 +42,8 @@ grpc:
       clientAuth: REQUIRE
 
 firemud:
+  auth:
+    jwt-expiration-ms: 3600000
   grpc:
     cert-chain: ${FIREMUD_GRPC_CERT_CHAIN_PATH:certs/client.crt}
     private-key: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:certs/client.key}

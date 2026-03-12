@@ -1,6 +1,7 @@
 package net.firedevops.firemud.socialgroups.client;
 
 import io.grpc.ManagedChannel;
+import io.grpc.ManagedChannelBuilder;
 import io.grpc.netty.shaded.io.grpc.netty.GrpcSslContexts;
 import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
 import jakarta.annotation.PostConstruct;
@@ -50,12 +51,16 @@ public class LoggingAdminClient implements AutoCloseable {
     copy.setCertChain(src.getCertChain());
     copy.setPrivateKey(src.getPrivateKey());
     copy.setCaCert(src.getCaCert());
+    copy.setPlaintext(src.isPlaintext());
     return copy;
   }
 
   @PostConstruct
   void init() throws SSLException, IOException {
     reloadChannel();
+    if (tlsProps.isPlaintext()) {
+      return;
+    }
     watcher =
         TlsCertificateWatcher.createAndStart(
             List.of(
@@ -82,20 +87,31 @@ public class LoggingAdminClient implements AutoCloseable {
     String[] parts = target.split(":");
     String host = parts[0];
     int port = parts.length > 1 ? Integer.parseInt(parts[1]) : 6565;
-    var sslContext =
-        GrpcSslContexts.forClient()
-            .trustManager(new java.io.File(tlsProps.getCaCert()))
-            .keyManager(
-                new java.io.File(tlsProps.getCertChain()),
-                new java.io.File(tlsProps.getPrivateKey()))
-            .build();
-    ManagedChannel newChannel =
-        NettyChannelBuilder.forAddress(host, port)
-            .sslContext(sslContext)
-            .keepAliveTime(30, TimeUnit.SECONDS)
-            .keepAliveTimeout(5, TimeUnit.SECONDS)
-            .keepAliveWithoutCalls(true)
-            .build();
+    ManagedChannel newChannel;
+    if (tlsProps.isPlaintext()) {
+      newChannel =
+          ManagedChannelBuilder.forAddress(host, port)
+              .usePlaintext()
+              .keepAliveTime(30, TimeUnit.SECONDS)
+              .keepAliveTimeout(5, TimeUnit.SECONDS)
+              .keepAliveWithoutCalls(true)
+              .build();
+    } else {
+      var sslContext =
+          GrpcSslContexts.forClient()
+              .trustManager(new java.io.File(tlsProps.getCaCert()))
+              .keyManager(
+                  new java.io.File(tlsProps.getCertChain()),
+                  new java.io.File(tlsProps.getPrivateKey()))
+              .build();
+      newChannel =
+          NettyChannelBuilder.forAddress(host, port)
+              .sslContext(sslContext)
+              .keepAliveTime(30, TimeUnit.SECONDS)
+              .keepAliveTimeout(5, TimeUnit.SECONDS)
+              .keepAliveWithoutCalls(true)
+              .build();
+    }
     if (channel != null) {
       channel.shutdown();
     }
