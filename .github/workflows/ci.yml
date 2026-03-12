@@ -352,7 +352,7 @@ jobs:
           cd services/tcp-proxy-service
           for attempt in 1 2 3; do
             echo "Attempt ${attempt}: running Telnet LOGIN + LOOK smoke test..."
-            if ./telnet-login-look-smoke.sh; then
+            if bash ./telnet-login-look-smoke.sh; then
               echo "Telnet smoke test succeeded on attempt ${attempt}."
               exit 0
             fi
