@@ -61,13 +61,11 @@ subprojects {
 
     plugins.withId("java") {
         the<JavaPluginExtension>().toolchain.languageVersion.set(JavaLanguageVersion.of(21))
+        val categorizedTestRoots = listOf("src/test/java/unit", "src/test/java/integration", "src/test/java/crossservice")
+            .map(::file)
+            .filter(File::exists)
         the<SourceSetContainer>()["test"].java.setSrcDirs(
-            listOf(
-                "src/test/java/unit",
-                "src/test/java/integration",
-                "src/test/java/crossservice",
-                "src/test/java"
-            ).map(::file).filter(File::exists)
+            categorizedTestRoots.ifEmpty { listOf(file("src/test/java")) }
         )
         tasks.withType<JavaCompile>().configureEach {
             options.release.set(21)
