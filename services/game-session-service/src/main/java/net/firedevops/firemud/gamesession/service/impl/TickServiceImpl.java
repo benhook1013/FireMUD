@@ -198,11 +198,12 @@ public class TickServiceImpl implements TickService {
       if (pending != null && pending > 0) {
         logger.info("Replaying {} pending commands for {}", pending, sessionId);
         tickTimer.record(
-            () ->
-                luaTimer.record(
-                    () ->
-                        executeScriptWithRetry(
-                            commitScript, List.of(pendingKey(tenantId, sessionId)))));
+            () -> {
+              luaTimer.record(
+                  () -> {
+                    executeScriptWithRetry(commitScript, List.of(pendingKey(tenantId, sessionId)));
+                  });
+            });
         awaitReplication();
       }
       Object headObj = redisTemplate.opsForList().index(queueKey(tenantId, sessionId), 0);
@@ -210,30 +211,34 @@ public class TickServiceImpl implements TickService {
       solo = head != null && head.startsWith("S|");
       int max = solo ? 1 : tickMaxCommands;
       tickTimer.record(
-          () ->
-              luaTimer.record(
-                  () ->
-                      redisTemplate.execute(
-                          stageScript,
-                          scriptArgsSerializer,
-                          scriptResultSerializer,
-                          List.of(queueKey(tenantId, sessionId), pendingKey(tenantId, sessionId)),
-                          String.valueOf(max))));
+          () -> {
+            luaTimer.record(
+                () -> {
+                  redisTemplate.execute(
+                      stageScript,
+                      scriptArgsSerializer,
+                      scriptResultSerializer,
+                      List.of(queueKey(tenantId, sessionId), pendingKey(tenantId, sessionId)),
+                      String.valueOf(max));
+                });
+          });
       tickTimer.record(
-          () ->
-              luaTimer.record(
-                  () ->
-                      executeScriptWithRetry(
-                          commitScript, List.of(pendingKey(tenantId, sessionId)))));
+          () -> {
+            luaTimer.record(
+                () -> {
+                  executeScriptWithRetry(commitScript, List.of(pendingKey(tenantId, sessionId)));
+                });
+          });
       awaitReplication();
     } catch (Exception ex) {
       logger.error("Tick processing failed, rolling back", ex);
       conflictTracker.recordConflict("session:" + tenantId + ":" + sessionId);
       luaTimer.record(
-          () ->
-              executeScriptWithRetry(
-                  rollbackScript,
-                  List.of(pendingKey(tenantId, sessionId), queueKey(tenantId, sessionId))));
+          () -> {
+            executeScriptWithRetry(
+                rollbackScript,
+                List.of(pendingKey(tenantId, sessionId), queueKey(tenantId, sessionId)));
+          });
       requeuedActionCounter.increment();
       awaitReplication();
     } finally {

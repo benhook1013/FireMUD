@@ -152,36 +152,41 @@ public class ScriptTickServiceImpl implements ScriptTickService {
       if (pending != null && pending > 0) {
         logger.info("Replaying {} pending events for {}:{}", pending, tenantId, scriptId);
         tickTimer.record(
-            () ->
-                luaTimer.record(
-                    () ->
-                        executeScriptWithRetry(
-                            commitScript, List.of(pendingKey(tenantId, scriptId)))));
+            () -> {
+              luaTimer.record(
+                  () -> {
+                    executeScriptWithRetry(commitScript, List.of(pendingKey(tenantId, scriptId)));
+                  });
+            });
         awaitReplication();
       }
       tickTimer.record(
-          () ->
-              luaTimer.record(
-                  () ->
-                      executeScriptWithRetry(
-                          stageScript,
-                          List.of(queueKey(tenantId, scriptId), pendingKey(tenantId, scriptId)),
-                          tickMaxEvents)));
+          () -> {
+            luaTimer.record(
+                () -> {
+                  executeScriptWithRetry(
+                      stageScript,
+                      List.of(queueKey(tenantId, scriptId), pendingKey(tenantId, scriptId)),
+                      tickMaxEvents);
+                });
+          });
       tickTimer.record(
-          () ->
-              luaTimer.record(
-                  () ->
-                      executeScriptWithRetry(
-                          commitScript, List.of(pendingKey(tenantId, scriptId)))));
+          () -> {
+            luaTimer.record(
+                () -> {
+                  executeScriptWithRetry(commitScript, List.of(pendingKey(tenantId, scriptId)));
+                });
+          });
       awaitReplication();
     } catch (Exception ex) {
       logger.error("Script tick failed, rolling back", ex);
       conflictTracker.recordConflict("script:" + tenantId + ":" + scriptId);
       luaTimer.record(
-          () ->
-              executeScriptWithRetry(
-                  rollbackScript,
-                  List.of(pendingKey(tenantId, scriptId), queueKey(tenantId, scriptId))));
+          () -> {
+            executeScriptWithRetry(
+                rollbackScript,
+                List.of(pendingKey(tenantId, scriptId), queueKey(tenantId, scriptId)));
+          });
       awaitReplication();
     } finally {
       long elapsed = (System.nanoTime() - start) / 1_000_000;
