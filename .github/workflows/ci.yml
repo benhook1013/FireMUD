@@ -26,11 +26,15 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: 🧰 Set up Buf
-        uses: bufbuild/buf-setup-action@v1
-        with:
-          version: '1.30.0'
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+      - name: 🧰 Install Buf CLI
+        env:
+          BUF_VERSION: '1.30.0'
+        run: |
+          sudo curl -sSL \
+            "https://github.com/bufbuild/buf/releases/download/v${BUF_VERSION}/buf-$(uname -s)-$(uname -m)" \
+            -o /usr/local/bin/buf
+          sudo chmod +x /usr/local/bin/buf
+          buf --version
 
       - name: 💾 Cache Buf modules
         uses: actions/cache@v5
