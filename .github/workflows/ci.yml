@@ -319,9 +319,6 @@ jobs:
     name: Core Smoke Tests
     needs: [build-and-test]
     runs-on: ubuntu-latest
-    # TODO: once the Telnet → Gateway → Game Session slice is stable in CI,
-    # remove continue-on-error so smoke failures block the workflow.
-    continue-on-error: true
     timeout-minutes: 25
     steps:
       - name: ⬇️ Checkout Code
