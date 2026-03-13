@@ -108,7 +108,8 @@ manifest metadata:
 Artifact lifecycle states for a `(tenantId, versionId)` prefix are explicit:
 
 - `STAGED` – publish attempt has written candidate bytes but version is not yet Published.
-- `PUBLISHED` – publish succeeded and `manifestHash` is committed for the immutable bytes.
+- `EXPORTED_UNATTESTED` – candidate bytes and `manifest.json` have been exported and `manifestHash` is known, but the immutable `published_release_bundle` attestation has not yet been committed.
+- `PUBLISHED` – publish succeeded, `manifestHash` is attested in `published_release_bundle`, and the immutable bytes for the version are launchable.
 - `FAILED` – publish workflow failed for this version.
 - `TOMBSTONED` – failed or abandoned artifact is quarantined for diagnostics and excluded from activation paths.
 - `PURGE_IN_PROGRESS` – purge workflow has atomically locked this prefix for deletion and is removing object-store bytes.
@@ -116,7 +117,9 @@ Artifact lifecycle states for a `(tenantId, versionId)` prefix are explicit:
 
 Allowed transitions:
 
-- `STAGED -> PUBLISHED` on successful `ExportAssets` completion and `manifestHash` commit.
+- `STAGED -> EXPORTED_UNATTESTED` on successful `ExportAssets` completion and `manifestHash` computation.
+- `EXPORTED_UNATTESTED -> PUBLISHED` only after `published_release_bundle` is written successfully for the same `(tenantId, versionId)` and records the same `manifestHash`.
+- `EXPORTED_UNATTESTED -> FAILED` when attestation or later publish completion fails after asset export.
 - `STAGED -> FAILED` when publish workflow fails before activation eligibility.
 - `FAILED -> STAGED` only through an explicit repair/retry workflow.
 - `FAILED -> TOMBSTONED` when operators abandon retry and quarantine bytes.
@@ -137,6 +140,7 @@ Transition enforcement contract:
 - Every transition is persisted by updating `version_asset_artifact` with CAS on `state_epoch`.
 - Failed CAS means another workflow already changed state; callers must reload current state and re-evaluate.
 - Publish Saga and operator runbooks must both use this same state record; object-store state is never treated as authoritative by itself.
+- `PUBLISHED` is the only success state that may be treated as launchable. Object-store bytes in `STAGED` or `EXPORTED_UNATTESTED` are not publish-complete on their own.
 
 - For each `(tenantId, versionId)` the Saga runs an `ExportAssets` step that:
   - Selects assets by joining `version_asset` to `game_assets` for the target
@@ -146,12 +150,19 @@ Transition enforcement contract:
     `<tenantId>/<versionId>/` in object storage.
   - Writes or overwrites the version-scoped `manifest.json` in the same prefix.
   - Updates version metadata with the manifest location.
+  - Transitions `version_asset_artifact` from `STAGED` to `EXPORTED_UNATTESTED`.
   - Fails the Saga step if any asset referenced in `version_asset` for the target
     `(tenantId, versionId)` is missing, so partially published versions cannot be
     marked as Published.
 - The step is **idempotent**: rerunning `ExportAssets` for the same
   `(tenantId, versionId)` overwrites the same prefix and manifest and leaves the
   version metadata consistent.
+- A later `FinalizePublishedRelease` step must read the computed `manifestHash`,
+  write `published_release_bundle`, and only then transition
+  `version_asset_artifact` from `EXPORTED_UNATTESTED` to `PUBLISHED`. If the
+  attestation write fails, the artifact must remain `EXPORTED_UNATTESTED` or
+  move to `FAILED`; implementations must not expose launchable `PUBLISHED`
+  assets without a matching release attestation.
 - Once a version is in the **Published** or **Active** state, immutability rules apply:
   - `version_asset` rows for `(tenantId, versionId)` must be treated as immutable mappings.
   - Referenced `game_assets` binaries must not be modified in place; replacing bytes requires a new `game_assets` row and (for Draft versions only) an updated mapping.

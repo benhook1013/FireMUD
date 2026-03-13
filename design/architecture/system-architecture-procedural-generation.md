@@ -92,6 +92,12 @@ For each design-time generation run, World Management must persist a durable gen
 - seed and any derived deterministic inputs
 - `outputDigest` computed from a canonical serialized topology output
 
+These design-time generation artifacts are replay/reconciliation provenance, not published topology rows themselves:
+
+- The canonical publish contract is still the finalized version-scoped template rows keyed by `(tenantId, versionId)`.
+- Design-time generation artifact tables are excluded from `GetDraftDesignDigest` unless a future doc revision explicitly promotes named semantic fields into the digest manifest.
+- Retention and migration rules for these artifact rows must preserve deterministic replay for non-Retired versions, but publish gating compares only the finalized template graph plus other documented semantic inputs.
+
 Reconciliation behavior:
 
 - Replaying a previously applied design revision must either:

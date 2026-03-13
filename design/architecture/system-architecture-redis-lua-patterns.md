@@ -251,6 +251,10 @@ Bulk key-walking is reserved for **offline maintenance tooling**, not tick execu
         - If `current_tick_id` is unset, the script sets it to `requestedTickId` and stages new effects.
         - If `current_tick_id == requestedTickId`, the script proceeds and treats existing effect entries as already staged (see Pattern 3).
         - If `current_tick_id > requestedTickId`, the script returns a non-mutating “out-of-date” outcome and does not modify state; callers must not attempt to re-stage older ticks through these hot-path scripts and should instead rely on ledger-driven replay/maintenance flows to reconcile older work.
+      - Recovery rule:
+        - These hot-path scripts are intentionally **not** the mechanism for reconstructing a lost older tick after tail-loss or reset.
+        - First implementation replays older work directly from durable tick-batch manifests and ledger rows without re-materializing that old tick into `pending`.
+        - If FireMUD later introduces a dedicated recovery-restage script, it must be registered as a separate maintenance script category with its own explicit invariants; it must not silently reuse the normal tick staging contract.
 
 - **Pattern 3 – Effect-key sets for staging (no duplicate staging)**
   - Staged effects inside `pending` are keyed by a deterministic `effectKey` (for example `entity:<entityId>:apply:damage:<commandId>`), and scripts use **set-style semantics**:

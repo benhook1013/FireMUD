@@ -69,6 +69,26 @@ Because enqueueing uses reset-tolerant Redis coordination queues, command accept
   - Re-sends with a new `commandId` are treated as new commands.
 - Features that require “accepted means never silently lost” semantics must explicitly adopt `ACCEPTED_DURABLE` with a durable intake record and replay story documented in their design.
 
+#### Command Outcome Convergence (Required)
+
+Ingress deduplication is not sufficient on its own: every accepted command must also converge to a terminal command outcome, even when the underlying Redis queue entry is lost before staging.
+
+- Minimum command lifecycle:
+  - `RECEIVED` – durable dedupe record exists.
+  - `ENQUEUED` – command has been accepted into volatile coordination flow.
+  - `BOUND_TO_BATCH` – command has been durably tied to a specific `tick_batch_id` and `(tenantId, regionId, region_epoch, tickId)`.
+  - `TERMINAL` – command has reached a final command outcome.
+- Minimum terminal command outcomes:
+  - `APPLIED`
+  - `ABANDONED`
+  - `LOST_BEFORE_STAGING` – accepted into volatile coordination flow but never durably tied to a surviving `tick_batch_id` before reset/tail-loss/reconcile.
+- Required recovery behavior:
+  - Region/tenant/cluster resets and tail-loss reconciliation must drive every accepted command record that is not `BOUND_TO_BATCH` or already `TERMINAL` to an explicit terminal outcome.
+  - For `ACCEPTED_VOLATILE`, `LOST_BEFORE_STAGING` is an expected terminal outcome and must be returned by command-status APIs/events rather than leaving the command indefinitely deduplicated with no execution result.
+  - Re-sends with the same `(tenantId, gameInstanceId, commandId)` after a terminal outcome return that prior terminal outcome and must not enqueue a new logical command.
+  - Re-sends with a new `commandId` remain new commands.
+- `ACCEPTED_DURABLE` designs may replace `LOST_BEFORE_STAGING` with a stronger replay/re-drive contract, but that contract must be documented explicitly in the feature design.
+
 #### Ingress Deduplication Store (Required)
 
 To make the re-submission contract enforceable across failover and scoped coordination resets, ingress deduplication must use a durable record outside Redis coordination queues:
@@ -76,14 +96,15 @@ To make the re-submission contract enforceable across failover and scoped coordi
 - Game Session persists a dedupe record keyed by `(tenantId, gameInstanceId, commandId)` in PostgreSQL.
 - Minimum fields:
   - `ack_level` (`ACCEPTED_VOLATILE` or `ACCEPTED_DURABLE`)
-  - `ingress_status` (`RECEIVED`, `ENQUEUED`, `TERMINAL`)
+  - `ingress_status` (`RECEIVED`, `ENQUEUED`, `BOUND_TO_BATCH`, `TERMINAL`)
   - `first_seen_at`, `last_seen_at`
+  - `tick_batch_id` (nullable until bound)
   - `last_outcome_code` (nullable until terminal outcome)
 - Required behavior:
   - Re-send with same `(tenantId, gameInstanceId, commandId)` returns the prior acknowledgement and must not enqueue a second logical command.
   - Region/tenant/cluster coordination resets do not delete this dedupe record; they only affect volatile queue state.
   - Retention is TTL-based at the SQL layer and must outlive expected client retry windows.
-- `ACCEPTED_VOLATILE` remains volatile for execution semantics: the dedupe record guarantees no duplicate logical enqueue for the same `commandId`, not guaranteed eventual execution.
+- `ACCEPTED_VOLATILE` remains volatile for execution semantics: the dedupe record guarantees no duplicate logical enqueue for the same `commandId`, not guaranteed eventual execution, but it does guarantee eventual convergence to a terminal command outcome.
 
 ## Tick Execution Flow
 
@@ -147,8 +168,16 @@ Conceptually, tick commit proceeds through these phases:
      - `tick_batch_id`
      - `expected_effect_count`
      - `status` (`CREATED`, `REDIS_STAGED`, `COMMITTED`, `ABANDONED`)
+     - the selected-work manifest for this batch
      - a correlation field that Redis `pending` can carry back (for example `tick_batch_id`)
+   - The selected-work manifest is the authoritative record of which source items were chosen for the tick before Redis staging. At minimum, each selected item records:
+     - `source_kind` (`command`, `timer`, `retry`, `remote_followup`)
+     - source item identity (`commandId`, timer member ID, retry member ID, or follow-up row ID)
+     - `entityId`
+     - the canonical ordering tuple `(priority, due_tick_id_or_due_ms_normalized, enqueue_seq, source_kind, entityId, commandId_or_effectKey)`
+     - source-claim/removal state indicating whether the source entry still resides in Redis/PostgreSQL source structures or has been durably claimed elsewhere
    - Tick effect ledger rows for the selected effects are inserted in the same PostgreSQL transaction as the tick-batch record with `status = SCHEDULED`.
+   - Any selected command tied to the batch moves its durable command record to `BOUND_TO_BATCH` in the same transaction.
    - Source-claim rule (required):
      - Any selected command/timer/retry/remote follow-up must remain discoverable from its source structure until it is durably tied to the `tick_batch_id`.
      - Implementations may satisfy this either by leaving source entries in place until `tick_batch.status = REDIS_STAGED`, or by creating durable claim rows tied to `tick_batch_id` before removing the source entry.
@@ -177,8 +206,9 @@ From the perspective of the `(region_epoch, tickId)` timeline:
   - AOF replay or tail-loss may cause staging scripts to be re-run; domain idempotency guards and the ledger ensure that replays converge to the same terminal outcome.
 - Recovery treats PostgreSQL as the source of truth for staging intent:
   - `tick_batch` exists, Redis `pending` missing:
-    - Recovery re-drives or re-stages from the durable batch and `SCHEDULED` ledger rows; missing Redis state is not treated as “no work existed”.
-    - If source entries were intentionally left in place until `REDIS_STAGED`, recovery may also re-select them by reconciling source state with the durable batch, but the batch remains authoritative for what was chosen.
+    - Recovery replays directly from the durable batch manifest and `SCHEDULED` ledger rows to drive effects to terminal `APPLIED` or `ABANDONED` outcomes; missing Redis state is not treated as “no work existed”.
+    - First implementation does **not** re-stage old ticks through the normal hot-path `pending` scripts once Redis state is missing. The durable batch manifest is authoritative for what was selected, and replay proceeds without requiring the old tick to be materialized back into Redis.
+    - If source entries were intentionally left in place until `REDIS_STAGED`, recovery may reconcile those source structures against the durable batch manifest to clean up or reclassify them, but it must not re-select different work for the same `tick_batch_id`.
   - Redis `pending` exists, `tick_batch` missing:
     - Recovery treats the Redis entry as orphaned coordination state, clears it via the cleanup path, and alerts; no executor is allowed to commit work from `pending` that lacks a durable batch.
   - Both exist but `expected_effect_count` or a stored digest disagrees:

@@ -113,6 +113,14 @@ Validation results for plugins surface through the same tooling as core scripts 
 
 Plugins follow a lifecycle similar to script patches but scoped to `<tenantId, gameInstanceId, pluginId>` so a tenant can run multiple game instances with different plugin selections safely.
 
+- Plugins do **not** participate in the script-patch `onLoad` lifecycle. There is no plugin-scoped `onLoad` or `onUnload` contract in the first implementation slice.
+- Plugin activation therefore consists only of:
+  - signature and policy verification,
+  - graph validation and compatibility checks,
+  - loading the new plugin version into the instance-scoped runtime registry, and
+  - reconciling any plugin-owned derived scheduler state such as timers.
+- Any plugin setup that would otherwise require startup code must be expressed through normal event handlers (`onSpawn`, `onEnterRegion`, `onInterval`, custom events) or explicit operator/admin workflows. Implementations must not invent an implicit plugin initialization hook.
+
 - Each plugin version is identified by `pluginVersionId`. A registry in the Automation & Scripting Service tracks, per `<tenantId, gameInstanceId, pluginId>`:
   - `activeVersionId` – the plugin version currently enabled.
   - `pendingVersionId` – a plugin version being loaded or validated.
@@ -121,7 +129,7 @@ Plugins follow a lifecycle similar to script patches but scoped to `<tenantId, g
 - Disabling a plugin can follow two modes:
   - **Hard disable** – immediately marks the plugin `DISABLED`; new triggers are rejected at admission (`finalStage=ADMISSION`, `finalOutcome=plugin_disabled`) and recorded in `script_event_audit`, while in-flight runs complete under existing budgets.
   - **Disable after drain** – transitions the plugin to `DRAINING` until queued triggers are processed or expired, then marks it `DISABLED`. New triggers are rejected once draining begins.
-- Updating a plugin involves setting a new `pendingVersionId`, loading and validating the new plugin graphs and bindings, and then atomically switching `activeVersionId` if validation succeeds. If validation or initialization fails, the new version is marked `FAILED`, `activeVersionId` remains unchanged, and triggers for the failed version are rejected at admission with an appropriate `finalOutcome` (for example, `version_unavailable` or `plugin_version_failed`).
+- Updating a plugin involves setting a new `pendingVersionId`, loading and validating the new plugin graphs and bindings, reconciling plugin-owned timers and other derived scheduler state, and then atomically switching `activeVersionId` if validation succeeds. If validation or activation-state reconciliation fails, the new version is marked `FAILED`, `activeVersionId` remains unchanged, and triggers for the failed version are rejected at admission with an appropriate `finalOutcome` (for example, `version_unavailable` or `plugin_version_failed`).
 
 Plugin triggers share the same Trigger Identity and `scriptEventId` lifecycle as regular scripts. Each invocation is recorded in `script_event_audit` with the required Trigger Identity fields (including `tenantId`, `gameInstanceId`, and for gameplay/runtime triggers `regionEpoch`) plus `pluginId` / `pluginVersionId` and stage-aware outcome fields (`finalStage`, `finalOutcome`, `finalReason`) so operators can correlate plugin behavior with publish and enable/disable operations and still distinguish “DSL evaluated” from “accepted into tick queues”.
 
@@ -162,6 +170,12 @@ Operationally, the **Logging & Admin Service** acts as the control plane for plu
 To roll back a misbehaving plugin, operators promote a previously trusted `pluginVersionId` to `activeVersionId` for the affected `<tenantId, gameInstanceId, pluginId>` via Logging & Admin. The Automation & Scripting Service then resumes admitting triggers for the restored version while continuing to enforce quotas, budgets, and sandbox limits as described in `design/architecture/system-architecture-scripting-quotas-and-operations.md`.
 
 Plugin rollback/disable/revocation flows must also cancel pending outbox work for the displaced plugin version (for example via `CancelPendingWorkItemsForPluginVersion`) before or alongside queue purges, so stale plugin-version work cannot continue to hand off after control-plane changes.
+
+Rollback/disable/revocation flows must also reconcile durable plugin-owned timers:
+
+- Any timer or interval owned by the displaced `pluginVersionId` must be removed or tombstoned before normal scheduling resumes for that plugin.
+- Canceling queued work items alone is insufficient; otherwise an old plugin version could continue minting new timer-driven triggers after disablement or rollback.
+- If a newer plugin version preserves the same semantic schedule, the scheduler may carry the schedule forward only through an explicit reconciliation step that rewrites ownership to the new `pluginVersionId`.
 
 The normative control-plane API shapes and required events for plugin management are defined in `design/architecture/system-architecture-scripting-control-plane-api.md` (for example `SetPluginActiveVersion`, `DisablePlugin`, and `DrainPlugin`).
 

@@ -353,7 +353,8 @@ Runtime execution must still remain **instance-aware** even though patch readine
 - A tenant-scoped `READY` state means a patch is eligible to be pinned by instances in that tenant; it does not imply that every running instance must pause, reload, or switch together.
 - Admission, timer scheduling, rollback pause, convergence checks, and plugin activation must evaluate the effective runtime scope as `<tenantId, gameInstanceId>`, even if implementations batch internal work by tenant.
 - If a deployment wants stronger coupling, it must explicitly declare the invariant that all instances in a tenant share one active script patch. Absent that declaration, instance isolation is the normative behavior.
-- Runtime patch registry state (`activePatchVersion`, `pendingPatchVersion`, `reloadState`) must therefore be tracked per instance or per explicit pin cohort. A single tenant-wide mutable `activePatchVersion` is not sufficient unless the stronger tenant-coupling invariant is declared and enforced everywhere.
+- Instance-scoped runtime state tracks only **pin observation and admission control** for the patch that an instance is trying to run (for example `observedPinnedScriptPatchVersion`, `reloadState`, convergence checkpoints, and rollback pause). It does **not** rerun tenant patch readiness or `onLoad`.
+- A single tenant-wide mutable `activePatchVersion` inside Automation & Scripting is therefore not sufficient. The service must keep tenant-scoped patch readiness separate from instance-scoped pin observation and scheduling state.
 
 The canonical states are:
 
@@ -378,7 +379,9 @@ Automation & Scripting exposes this lifecycle to other services via:
 
 When a trigger arrives at the Automation & Scripting Service:
 
-- If the supplied `scriptPatchVersion` is `READY` for the tenant, the scheduler proceeds normally (subject to quotas, sandbox limits, and error handling).
+- If the supplied `scriptPatchVersion` is `READY` for the tenant, the service must additionally compare it to a fresh-enough observed pin for `<tenantId, gameInstanceId>`. Admission proceeds only when the request patch matches the observed pinned patch for that instance.
+- If pin visibility for the instance is stale beyond its configured max age and fresh control-plane state cannot be obtained, admission fails closed with `finalStage=ADMISSION`, `finalOutcome=pin_state_unavailable`, and a bounded `finalReason`.
+- If the supplied `scriptPatchVersion` is `READY` for the tenant but does not match the observed pinned patch for `<tenantId, gameInstanceId>`, admission is rejected at `finalStage=ADMISSION` with `finalOutcome=version_unavailable` and a bounded mismatch reason such as `pin_state_mismatch_requested_vs_observed`. Automation & Scripting must not speculate or silently substitute either version.
 - If the patch is unknown or in a non-ready state (for example, `PENDING_VALIDATION`, `ONLOAD_RUNNING`, `FAILED`), the trigger is rejected at admission: `script_event_audit.finalStage=ADMISSION` with `finalOutcome=version_unavailable` (or a more specific variant such as `onload_failed`) and an explicit `finalReason`. A drop metric like `automation_script_triggers_dropped_total{reason="version_unavailable"}` is incremented.
 - Automation & Scripting never silently falls back to an older patch for that trigger; callers must fix the pinned version, repin explicitly, or republish.
 
@@ -502,12 +505,22 @@ All durable timer identity and scheduler checkpoints must be **instance-aware** 
   - Because the authoritative schedule configuration lives in PostgreSQL and Redis holds only coordination state (timer indexes and checkpoints), leader changes do not reset cadences; they only introduce a bounded delay before the new leader catches up.
 
 - **Script reload**
-- During reload, leaders set `reloadState=RELOADING` for the affected runtime scope and pending patch, and pause new triggers, including `onInterval` firings, while they load and validate the new script definitions. Existing timer entries in the region index `automation:timer:{tenantRegionTag}` (and any derived per-script projections) remain in Redis but are treated as **pending**.
+- During reload, leaders set `reloadState=RELOADING` for the affected runtime scope after observing that Game Session has pinned a tenant-`READY` patch for that instance. `onLoad` is not part of this instance reload path; it has already completed as part of tenant patch readiness. Existing timer entries in the region index `automation:timer:{tenantRegionTag}` (and any derived per-script projections) remain in Redis but are treated as **pending** until reconciliation completes.
   - Once reload succeeds and `activePatchVersion` is switched, the leader:
     - re-reads its heartbeat checkpoint and the current `tickId`,
-    - updates each interval entry’s next due point (`nextTick` or `nextRunAt`) in the region index as needed so the cadence resumes from the latest tick/time (rather than replaying the paused window), and
+    - reconciles durable schedule definitions for the newly pinned patch before any timer is allowed to fire again, and
+    - updates each surviving interval entry’s next due point (`nextTick` or `nextRunAt`) in the region index as needed so the cadence resumes from the latest tick/time (rather than replaying the paused window), and
     - resumes normal scheduling for `onInterval` using the updated `activePatchVersion`. No interval runs against a partially loaded script definition.
   - If reload fails, `activePatchVersion` remains unchanged, `pendingPatchVersion` is marked failed, and the leader resumes using the existing region-index timer entries as-is. Any `onInterval` triggers that fire after a failed reload are still scheduled according to the stored cadence, but always execute under the last known good patch version.
+
+Timer reconciliation on patch or plugin change is a required part of reload/rollback safety:
+
+- Durable timer identities must be version-scoped by the schedule definition that created them (for example `scriptPatchVersion` for core scripts and `pluginVersionId` for plugins), not just by entity and cadence.
+- When an instance observes a newly pinned `scriptPatchVersion`, the scheduler must compare the durable schedules for the previously observed patch with those for the newly pinned patch before resuming timer admission.
+- Schedules that do not exist in the newly pinned patch must be removed or tombstoned so they can no longer generate triggers.
+- Schedules whose semantic identity still exists in the newly pinned patch may be preserved, but only after their stored version identity is updated through a deterministic reconciliation step.
+- The same rule applies to plugin activation, disable, rollback, and signer-revocation flows: any schedule owned by a displaced `pluginVersionId` must be removed or tombstoned before normal scheduling resumes for that plugin.
+- Canceling outbox work items alone is insufficient for rollback safety; old-version timer schedules must also be reconciled so they cannot mint new `scriptEventId` values after the version has been displaced.
 
 Under this model, durable script schedules, quotas, and trigger-instance de-duplication live in PostgreSQL, while `automation:timer:{tenantRegionTag}`, `script-scheduler:{tenantRegionTag}:lastTickId`, and related coordination keys form a reset-tolerant coordination layer for interval state. Stored entries and reconciliation logic remain instance-aware even though the Redis keys are region-scoped. The combination of tick heartbeat, durable trigger-instance claims, checkpoints, and script patch versioning preserves both correctness and determinism across failures and leader changes: losing or resetting these Redis keys may delay or slightly reshuffle timer firings within the tail-loss envelope but must not change which scripts are eventually scheduled according to their stored configurations or cause duplicate logical trigger creation.
 
@@ -537,13 +550,14 @@ for the current leadership and sharding model.
 
 - Scripts are versioned and published via the Game Design Service; the Game Session Service pins an active `scriptPatchVersion` per game.
 - When a new script patch is published, the Automation & Scripting Service:
-  - loads the new definitions and validates them,
-  - updates bindings and metadata, and
-  - transitions scripts through reload states (for example, `reloadState=RELOADING`) to avoid partial visibility.
+  - ingests the new definitions and validates them for tenant readiness,
+  - runs tenant-scoped `onLoad` handlers while the patch is still in `PENDING_VALIDATION` / `ONLOAD_RUNNING`,
+  - marks the patch `READY` or `FAILED` for the tenant, and only then
+  - uses instance-scoped reload state (for example, `reloadState=RELOADING`) when a running game pins that already-`READY` patch.
 - During reloads, triggers are **paused or skipped** while in-flight runs drain under existing concurrency settings:
   - New triggers for the affected runtime scope are not admitted; attempts to schedule additional runs receive explicit backpressure outcomes (`skipped_reloading` during reload, `skipped_rollback_pause` during rollback pause). For low-rate external events, callers may retry with the same `scriptEventId` using bounded backoff (`maxAttempts`, `maxElapsedMs`, jitter) and should honor server retry hints such as `retryAfterMs`; audit records must remain keyed by Trigger Identity and must not multiply rows per retry.
   - In-flight runs remain bounded by each script’s configured `maxConcurrent` and `concurrencyPolicy` (for example, `queue_until_free`); any short per-script waiting queues are allowed to drain, but no new entries are added while `reloadState=RELOADING`.
-  - Pending timer-based triggers that became due during reload remain in the scheduler’s timer indexes and resume after reload with recalculated `nextTick` / `nextRunAt` so cadences remain coherent.
+  - Pending timer-based triggers that became due during reload remain in the scheduler’s timer indexes until version reconciliation completes, then resume only for schedules that still exist under the newly observed patch/plugin version with recalculated `nextTick` / `nextRunAt` so cadences remain coherent.
 - On success, the new `scriptPatchVersion` becomes active for future triggers; on failure:
   - `activePatchVersion` remains unchanged and continues to govern live execution.
   - `pendingPatchVersion` is marked failed along with an error reason, and leaders discard any partially loaded state for that patch and resume scheduling using the existing `activePatchVersion`.
@@ -629,11 +643,14 @@ The `onLoad` lifecycle event is used to initialize shared script state for scrip
 
 Failure handling:
 
-- If `onLoad` completes successfully for a tenant, the Automation & Scripting Service may mark the patch as `READY` for that tenant and allow it to become the `activePatchVersion` during the next reload transition.
+- `onLoad` admission uses a dedicated publish-time initialization budget, not the normal live-trigger quota windows enforced by `ScriptQuotaService`.
+- This publish-time budget must be deterministic and operator-visible: implementations must define bounded concurrency, timeout, and retry ceilings for `onLoad`, reserve capacity so normal live traffic cannot starve patch readiness forever, and surface exhaustion with explicit reasons.
+- If `onLoad` completes successfully for a tenant, the Automation & Scripting Service may mark the patch as `READY` for that tenant and allow Game Session to pin it for specific instances during later rollout.
 - If `onLoad` fails with a logical or sandbox-level error (for example, misconfiguration, quota denial, sandbox guard), the patch is marked `FAILED` for that tenant:
   - The previous `activePatchVersion` remains in use for live execution.
   - Events referencing the failed patch are rejected explicitly at admission with `script_event_audit.finalStage=ADMISSION`, `finalOutcome=version_unavailable` (or a more specific variant such as `onload_failed`), and corresponding metrics.
   - No automatic retries of the `onLoad` handler occur; an operator or designer must fix the underlying configuration and republish.
+- If the dedicated `onLoad` initialization budget is exhausted before completion, the patch must fail deterministically with an explicit bounded reason (for example `onload_budget_exceeded`) rather than consuming arbitrary live runtime quota or waiting indefinitely behind ordinary trigger traffic.
 - If `onLoad` fails with `infrastructure_error`, the service may optionally retry the initialization a bounded number of times using the same `scriptEventId` and idempotent operations. If retries are exhausted, the patch is treated as `FAILED` for that tenant as above.
 
 All `onLoad` runs are recorded in `script_event_audit` with `eventType=onLoad`, the target `scriptPatchVersion`, and their final stage-aware outcome (`finalStage`, `finalOutcome`, `finalReason`), so operators can verify initialization state for each patch and tenant.

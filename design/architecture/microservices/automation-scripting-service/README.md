@@ -194,10 +194,13 @@ interaction.
 
 Script definitions are updated via `NotifyScriptVersionUpdate` from the Game Design Service. For each runtime scope carrying a newly published `scriptPatchVersion`:
 
-- The service tracks the currently executing version as `activePatchVersion` and treats the incoming one as `pendingPatchVersion`, with a simple `reloadState` (`IDLE`, `RELOADING`, `FAILED`) mirroring [Hot Reload & Resume Behavior](../../system-architecture-scripting.md#hot-reload--resume-behavior). These fields are runtime-scope state, not tenant-global mutable state.
-- On `NotifyScriptVersionUpdate`, leaders set `pendingPatchVersion` and `reloadState=RELOADING` while keeping `activePatchVersion` unchanged. Scheduling is paused for the affected runtime scope: in-flight executions complete under the existing patch, but **new triggers are not admitted** for the affected `<tenantId, gameInstanceId>` while reload is in progress.
-- Leaders coordinate with `ScriptVersionService` to load and validate the pending scripts and execute any `onLoad` initialization handlers required for the new patch. If this process succeeds on the current leaders responsible for that runtime scope, they atomically switch `activePatchVersion` to the new value, clear `pendingPatchVersion`, set `reloadState=IDLE`, and resume scheduling.
-- If reload or validation fails, the new patch never becomes active. The service keeps `activePatchVersion` on the prior patch, marks the pending patch as failed and `reloadState=FAILED`, discards any partially loaded state, and resumes scheduling using the last known good configuration. A failure result is reported back to the Game Design Service so the publish can be investigated or retried.
+- `NotifyScriptVersionUpdate` is a **tenant-readiness ingestion** signal, not an instance activation signal. It causes Automation & Scripting to ingest compiled graphs and bindings for `<tenantId, scriptPatchVersion>`, then run tenant-scoped readiness checks and `onLoad` before any running instance is allowed to pin that patch.
+- Tenant readiness is tracked separately from runtime-scope pin observation:
+  - Tenant readiness uses the patch lifecycle `PENDING_VALIDATION -> ONLOAD_RUNNING -> READY/FAILED`.
+  - Runtime scopes track only the patch observed as pinned for `<tenantId, gameInstanceId>` plus instance-scoped admission state such as `reloadState` and rollback pause.
+- When Game Session later pins a tenant-`READY` patch for a specific `<tenantId, gameInstanceId>`, leaders set runtime-scope `pendingPatchVersion` and `reloadState=RELOADING` while keeping the previously observed `activePatchVersion` unchanged. Scheduling is paused for that runtime scope: in-flight executions complete under the existing patch, but **new triggers are not admitted** for the affected `<tenantId, gameInstanceId>` while reload is in progress.
+- Instance reload does **not** rerun `onLoad`. Instead, leaders load the already-validated tenant-`READY` definitions for the newly observed pin, reconcile version-scoped timers and other derived scheduler state, then atomically switch the runtime scope to the new observed patch and clear `reloadState=IDLE`.
+- If tenant readiness fails, the patch remains `FAILED` for that tenant and never becomes eligible for pinning. If instance reload of an already-`READY` patch fails, the service keeps `activePatchVersion` on the prior observed patch, marks the runtime scope `reloadState=FAILED`, discards partially loaded derived state, and resumes scheduling using the last known good configuration. The failure is reported back through the normal patch-status and rollout-status surfaces.
 - Triggers pinned to a failed or unknown `scriptPatchVersion` are rejected explicitly. The service records an audit entry with `finalStage=ADMISSION` and a non-success `finalOutcome` (for example, `finalOutcome=version_unavailable` or `finalOutcome=skipped_reloading`) and increments a drop metric such as `automation_script_triggers_dropped_total{reason=\"version_unavailable\"}` or `automation_script_triggers_dropped_total{reason=\"reloading\"}` instead of silently falling back to the previous patch or allowing unbounded queuing during reload.
 
 This behavior ensures that a script patch either becomes the new active version for the targeted runtime scope or fails cleanly without affecting unrelated live automation behavior.
@@ -217,6 +220,10 @@ This behavior ensures that a script patch either becomes the new active version 
   - `eventType` and versioning metadata such as `scriptPatchVersion`.
   - An envelope for the event payload, including any domain-specific fields.
   Event ingress RPCs are **idempotent** with respect to Trigger Identity (including `scriptEventId`) and the script that handles the event: repeated calls with the same Trigger Identity must not cause the DSL body to run twice. The Automation & Scripting Service implements this in accordance with the `scriptEventId` lifecycle and deduplication rules described in `design/architecture/system-architecture-scripting-dsl-reference-and-lifecycle.md#scripteventid-lifecycle-and-deduplication`.
+  Admission must also enforce pin consistency for `<tenantId, gameInstanceId>`:
+  - if the request patch is not `READY` for the tenant, reject with `finalOutcome=version_unavailable`;
+  - if local pin state is stale beyond max age and cannot be refreshed, reject with `finalOutcome=pin_state_unavailable`;
+  - if the request patch is `READY` but differs from the observed pinned patch for the instance, reject with `finalOutcome=version_unavailable` and a bounded mismatch reason rather than silently substituting a version.
   Custom/service-specific events must additionally be validated against a canonical event registry so only authorized producer services can emit a given `eventType` and schema version.
 
 ### Idempotency & Retries
@@ -272,6 +279,7 @@ Admission and scheduler decisions must use a bounded-staleness view of pinned sc
 - If pin data for a scope is stale beyond max-age, the service must refresh from authoritative control-plane APIs/events before admitting new work.
 - If fresh authoritative pin data cannot be obtained, admission must fail closed with an explicit non-success outcome and audit visibility rather than speculatively running with stale pin state.
 - The canonical failure contract for this case is `finalStage=ADMISSION`, `finalOutcome=pin_state_unavailable`, and a bounded `finalReason` (for example `pin_cache_stale_source_unreachable`).
+- If fresh authoritative pin data is available and does not match the request's `scriptPatchVersion` / plugin version, the request must still fail closed. For scripts, use `finalOutcome=version_unavailable` with a bounded mismatch reason; for plugins, reject against the instance's active plugin state with the corresponding plugin-version failure outcome.
 - Any override of this fail-closed behavior must be explicit, time-bounded, and operator-audited (`controlPlaneRequestId`, actor, reason, scope), and must auto-expire back to fail-closed mode.
 
 Plugin signer-policy admission follows the same fail-closed principle:

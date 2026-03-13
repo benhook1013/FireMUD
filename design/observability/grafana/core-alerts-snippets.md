@@ -209,7 +209,7 @@ Example alerts for missed backups and verification runs:
   for: 5m
   labels:
     service: postgres-backup
-    severity: P1
+    severity: P0
     owner: infra
     runbook: design/architecture/system-architecture-backup-recovery.md#backup-verification-restoration-testing
   annotations:
@@ -221,7 +221,7 @@ Example alerts for missed backups and verification runs:
   for: 5m
   labels:
     service: postgres-backup
-    severity: P1
+    severity: P0
     owner: infra
     runbook: design/architecture/system-architecture-backup-recovery.md#backup-verification-restoration-testing
   annotations:
@@ -233,7 +233,7 @@ Example alerts for missed backups and verification runs:
   for: 5m
   labels:
     service: postgres-backup
-    severity: P1
+    severity: P0
     owner: infra
     runbook: design/architecture/system-architecture-backup-recovery.md#backup-verification-restoration-testing
   annotations:
@@ -308,7 +308,7 @@ These example rules enforce the player-centric SLOs defined in the Logging & Mon
 - alert: CommandLatencyP99HighGateway
   expr: histogram_quantile(
           0.99,
-          sum by (tenantId, regionId, le) (
+          sum by (tenantId, regionId, command, le) (
             rate(command_end_to_end_latency_ms_bucket{service="spring-cloud-gateway", command=~"move|look|combat"}[5m])
           )
         ) > 250
@@ -320,12 +320,12 @@ These example rules enforce the player-centric SLOs defined in the Logging & Mon
     runbook: design/architecture/system-architecture-player-experience-incident-runbook.md#command-latency-above-slo
   annotations:
     summary: Command p99 latency above SLO
-    description: Gateway command end-to-end p99 latency has exceeded 250ms for core commands. Align the `command` label values and the core command regex with the bounded command set in the Logging & Monitoring contract.
+    description: Gateway command end-to-end p99 latency has exceeded 250ms for at least one bounded core command. Preserve the `command` label so single-command regressions are not hidden by healthy higher-volume commands.
 
 - alert: CommandLatencyP99HighTcpProxy
   expr: histogram_quantile(
           0.99,
-          sum by (tenantId, regionId, le) (
+          sum by (tenantId, regionId, command, le) (
             rate(command_end_to_end_latency_ms_bucket{service="tcp-proxy-service", command=~"move|look|combat"}[5m])
           )
         ) > 250
@@ -337,7 +337,7 @@ These example rules enforce the player-centric SLOs defined in the Logging & Mon
     runbook: design/architecture/system-architecture-player-experience-incident-runbook.md#command-latency-above-slo
   annotations:
     summary: Command p99 latency above SLO (TCP Proxy)
-    description: TCP Proxy command end-to-end p99 latency has exceeded 250ms for core commands. Align the `command` label values and the core command regex with the bounded command set in the Logging & Monitoring contract.
+    description: TCP Proxy command end-to-end p99 latency has exceeded 250ms for at least one bounded core command. Preserve the `command` label so single-command regressions are not hidden by healthy higher-volume commands.
 
 - alert: ChatDeliveryLatencyP99High
   expr: histogram_quantile(
@@ -421,6 +421,32 @@ These example rules enforce the player-centric SLOs defined in the Logging & Mon
   annotations:
     summary: TCP Proxy entry-path availability below 1-day SLO
     description: One or more tenants have sustained connection failures on TCP Proxy entry paths over the compliance window. Inspect entrypath_connection_attempts_total and follow the player experience runbook.
+
+- alert: WebSocketEntryPathBlackboxUnavailable
+  expr: max_over_time(entrypath_blackbox_probe_success{path="websocket"}[2m]) == 0
+  for: 2m
+  labels:
+    service: spring-cloud-gateway
+    component: entrypath
+    severity: P0
+    owner: platform
+    runbook: design/architecture/system-architecture-player-experience-incident-runbook.md#telnet-and-websocket-path-availability-below-slo
+  annotations:
+    summary: WebSocket entry path unreachable from external probe
+    description: Independent blackbox probes cannot reach the public WebSocket gameplay path; this catches LB, DNS, TLS, and ingress failures before traffic reaches Gateway.
+
+- alert: TelnetEntryPathBlackboxUnavailable
+  expr: max_over_time(entrypath_blackbox_probe_success{path="telnet"}[2m]) == 0
+  for: 2m
+  labels:
+    service: tcp-proxy-service
+    component: entrypath
+    severity: P0
+    owner: platform
+    runbook: design/architecture/system-architecture-player-experience-incident-runbook.md#telnet-and-websocket-path-availability-below-slo
+  annotations:
+    summary: Telnet entry path unreachable from external probe
+    description: Independent blackbox probes cannot reach the public Telnet gameplay path; this catches LB, DNS, TLS, and ingress failures before traffic reaches TCP Proxy.
 ```
 
 ## Observability Stack Health
@@ -428,6 +454,18 @@ These example rules enforce the player-centric SLOs defined in the Logging & Mon
 Example alerts for the observability stack itself:
 
 ```yaml
+- alert: AlertmanagerServiceUnavailable
+  expr: up{job="alertmanager"} == 0
+  for: 5m
+  labels:
+    service: alertmanager
+    severity: P1
+    owner: platform
+    runbook: design/architecture/system-architecture-observability-incident-runbook.md#alertmanager-down-or-not-routing
+  annotations:
+    summary: Alertmanager service unavailable
+    description: Alertmanager is unreachable from Prometheus, so notifications and alert-state visibility are impaired even if rule evaluation continues.
+
 - alert: AlertmanagerNotificationsFailing
   expr: rate(alertmanager_notifications_failed_total[5m]) > 0
   for: 10m
@@ -475,6 +513,18 @@ Example alerts for the observability stack itself:
   annotations:
     summary: OpenTelemetry Collector is failing to export spans
     description: Distributed tracing data is being dropped before it reaches Jaeger or the configured backend.
+
+- alert: OTelCollectorUnavailable
+  expr: up{job="otel-collector"} == 0
+  for: 5m
+  labels:
+    service: otel-collector
+    severity: P1
+    owner: platform
+    runbook: design/architecture/system-architecture-observability-incident-runbook.md#jaeger-opentelemetry-collector-down
+  annotations:
+    summary: OpenTelemetry Collector unavailable
+    description: The collector is unreachable, so new traces cannot be received even before downstream export or storage is considered.
 
 - alert: PrometheusServiceDiscoveryFailures
   expr: increase(prometheus_sd_refresh_failures_total[5m]) > 0

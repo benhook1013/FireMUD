@@ -10,6 +10,14 @@ It complements the degraded-mode expectations in `design/architecture/system-arc
 - Provide predictable fallbacks so operators can still answer “is the game healthy?” without Kibana/Grafana/Jaeger.
 - Restore observability backends with minimal risk and clear verification steps.
 
+## Independent Detection Contract
+
+- Prod-like environments must not rely solely on Prometheus + Alertmanager to detect failure of that same observability stack.
+- Required independent detection:
+  - A deadman/heartbeat path from the in-cluster monitoring stack to an external sink, or an equivalent independently hosted monitor.
+  - External blackbox checks for public observability entrypoints and public gameplay entrypaths.
+- During an incident, treat these external checks as the source of truth for “is the monitoring stack itself alive?” and “is the public edge reachable at all?” when in-cluster telemetry is missing.
+
 ## Common Fallbacks (When Dashboards Are Unavailable)
 
 - **Service health**
@@ -52,6 +60,7 @@ It complements the degraded-mode expectations in `design/architecture/system-arc
 3. Confirm a known “heartbeat” metric updates (for example a service uptime gauge).
 4. Confirm alerts re-evaluate and resolve/firing states change as expected.
 5. Confirm the canonical tail-loss and entry-path recording rules are evaluating again (`redis_coordination_tail_loss_budget_ms`, `redis_coordination_tail_loss_slo_breached`, short-window entry-path availability, and 1-day entry-path availability), since operator fallback depends on them.
+6. Confirm the independent deadman/heartbeat monitor recovers so future total-Prometheus outages will page again.
 
 ## Alertmanager Down or Not Routing
 
@@ -118,8 +127,9 @@ It complements the degraded-mode expectations in `design/architecture/system-arc
 
 - Query Prometheus directly for a small set of critical “is it healthy?” checks:
   - login success ratio (`login_success_ratio_gateway_15m`, `login_success_ratio_tcpproxy_15m` or equivalent expressions),
-  - command latency (`command_latency_ms_p99_gateway_5m`, `command_latency_ms_p99_tcpproxy_5m`),
+  - command latency (`command_latency_ms_p99_gateway_5m`, `command_latency_ms_p99_tcpproxy_5m`) broken down by the bounded core-command label set (`move`, `look`, `combat`),
   - entry-path availability (`entrypath_availability_gateway_5m`, `entrypath_availability_tcpproxy_5m`, plus `entrypath_availability_gateway_1d` / `entrypath_availability_tcpproxy_1d` for compliance context),
+  - entry-path blackbox reachability (`entrypath_blackbox_probe_success{path=...}` or the environment-equivalent external probe metric) so total edge failures that never reached Gateway/TCP Proxy are still visible,
   - chat latency (`chat_delivery_latency_ms_p99_5m`),
   - backup fallback conditions (`backup_pipeline_recent_backup_slo_breached`, `backup_pipeline_recent_verification_slo_breached`, `backup_tick_pause_wait_budget_breached`, `backup_tick_pause_duration_budget_breached`, `backup_ticks_paused_budget_breached`),
   - tick safety ratio (`tick_execution_safety_ratio_p99`),
@@ -154,4 +164,5 @@ It complements the degraded-mode expectations in `design/architecture/system-arc
 
 - Document the root cause and whether the observability stack failure masked a player-visible incident.
 - Add or tighten alerts on observability backend health (Prometheus target availability, Alertmanager routing errors, Elasticsearch disk pressure, collector export failures).
+- If detection depended on an external deadman or edge blackbox path, confirm that path is documented and tested as part of the prod-like monitoring contract rather than left as environment-specific tribal knowledge.
 - If the incident required manual fallback steps, encode them into a small, repeatable operator checklist or one-shot script rather than leaving them as tribal knowledge.

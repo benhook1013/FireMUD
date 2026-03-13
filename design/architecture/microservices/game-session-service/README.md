@@ -15,6 +15,7 @@ Orchestrates live game sessions, including tick execution, player input validati
 ### Responsibilities
 
 - Maintain session state and tick timing in Redis
+- Persist Game Session control-plane metadata in PostgreSQL, including game-instance rows, pinned runtime-version/script-patch selections, active runtime feature-flag overrides, and operator/audit-relevant disconnect/remediation metadata
 - Queue player commands and dispatch them to Game Logic Service
 - Broadcast lifecycle events and world updates to other services
 - Support reconnection and recovery of running games
@@ -30,6 +31,7 @@ Orchestrates live game sessions, including tick execution, player input validati
 - For gameplay-domain gRPC calls made on behalf of a player, includes a signed `SessionAttestation` (as defined in Authentication & Authorization) and rotates it on bounded TTL; downstream gameplay services must reject calls missing valid attestation even when mTLS is present.
 - Communicates game lifecycle changes to other services via gRPC so they can react to games starting or ending.
 - Provides a single point of truth for current tick and world time.
+- Uses PostgreSQL for durable Game Session control-plane metadata and audit-relevant workflow state, while Redis remains the coordination plane for gameplay session bindings, tick queues, timers, retries, and region leases.
 - Implements the gameplay layer’s **session front-end + lease-owner execution** model: connected sockets bind to a stable session front-end pod, while region-scoped tick execution remains fenced to the current `<tenantId, regionId>` lease owner. Session front-ends may forward work to lease owners over internal gRPC, but only lease owners may mutate region-scoped coordination state.
 - Ensures atomic command execution using Redis Lua scripts for all multi-key operations; the service does not rely on Redis `MULTI`/`EXEC` for consistency. Tick-related multi-key operations (locks, pending state, queues, timers, retry metadata) are performed exclusively via the shared Lua scripts described in [Redis Architecture](../../system-architecture-redis.md#atomicity-and-concurrency-control); ad-hoc multi-key sequences against tick keys are not allowed outside these scripts.
 - Treats Redis **Coordination** and **Cache/Rate-Limit** roles as separate concerns:

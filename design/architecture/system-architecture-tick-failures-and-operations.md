@@ -67,8 +67,16 @@ To make replays observable and bounded, Game Session maintains a **tick effect l
   - `tick_batch_id`
   - `expected_effect_count`
   - `status`
+  - selected-work manifest entries for the batch
   - optional `pending_digest` or equivalent integrity field
   - `created_at`, `updated_at`
+- The selected-work manifest is required for deterministic replay and source cleanup. At minimum it records, per selected source item:
+  - `source_kind`
+  - source item identity
+  - `entity_id`
+  - the canonical ordering tuple used when the batch was formed
+  - source-claim/removal state
+- For commands, the same durable transaction that creates the tick batch and selected-work manifest also advances the command record to `BOUND_TO_BATCH`; commands that never reach that state must still converge to a terminal command outcome during recovery or reset handling.
 - For any `(tenant_id, region_id, region_epoch, tick_id, effect_key)` there must eventually be **exactly one terminal state**:
   - `status = APPLIED` – effect successfully committed to domain state.
   - `status = ABANDONED` – effect intentionally skipped or judged unrecoverable.
@@ -96,11 +104,21 @@ Replay of a tick is driven from ledger state:
 - Every Lua script that stages effects is required to include the `effect_key` used in the ledger so Redis `pending` entries can always be correlated with ledger rows; staging scripts that cannot be tied back to a ledger identity are rejected.
 - Recovery rules for Redis/SQL mismatch are explicit:
   - durable tick-batch + `SCHEDULED` ledger rows exist, Redis `pending` missing:
-    - replay proceeds from PostgreSQL and may re-stage Redis as needed.
+    - replay proceeds from PostgreSQL using the durable batch manifest and `SCHEDULED` ledger rows; it does not rely on re-materializing the old tick through the normal hot-path staging scripts.
+    - First implementation treats normal tick Lua scripts as hot-path guards only. Recovery drives effects directly to `APPLIED`/`ABANDONED`, reconciles any surviving source claims/entries against the manifest, and then clears stale coordination residue.
   - Redis `pending` exists without a durable tick-batch:
     - treat the Redis entry as orphaned coordination state, clear it, alert, and do not commit work from it.
   - durable tick-batch and Redis `pending` disagree on expected effect count or digest:
     - mark the batch inconsistent, pause the region, and require reconcile tooling before resuming normal ticks.
+
+### Command Record Convergence Under Replay and Reset
+
+Command recovery must converge just like effect recovery:
+
+- Any accepted command that is still `RECEIVED` or `ENQUEUED` when a reset or tail-loss reconcile occurs and that is not durably tied to a surviving `tick_batch_id` must be marked `TERMINAL` with a precise terminal outcome such as `LOST_BEFORE_STAGING`.
+- Commands that are `BOUND_TO_BATCH` follow the batch/effect replay path and converge based on the terminal outcomes of the effects tied to that batch.
+- Reconciliation of command records is part of the same operational scope as ledger replay/reset tooling; operators must not need a separate ad-hoc command repair path just to clear dedupe rows stranded before staging.
+- This keeps command deduplication safe: the same `commandId` can be retried by clients for status lookup without leaving an unexecutable, permanently non-terminal record behind.
 
 ### EffectId, Ledger Rows, and Guard Keys
 
@@ -178,6 +196,7 @@ Common scenarios and invariants:
     - Metrics and dashboards surface gaps or stuck regions.
     - Operators treat serious tail-loss as a trigger to run the **ledger replay controller** (and, where appropriate, the scoped reset/reconcile flows) for the affected `(tenantId, regionId, region_epoch)` combinations.
     - The controller drives any lingering `SCHEDULED` effects in the tail-loss window to terminal `APPLIED` or `ABANDONED` outcomes based on idempotent domain state. It does **not** attempt to re-stage older ticks through the normal tick-staging Lua scripts; any need to move effects across epochs or tick ranges is handled only by dedicated maintenance tooling that understands ledger state.
+    - The same reconcile scope also converges accepted-but-unbound command records to terminal outcomes (for example `LOST_BEFORE_STAGING`) so ingress dedupe state does not strand commands indefinitely after coordination loss.
 - **GC pause > `lock_ttl_ms` but < `lease_ttl_ms`**
   - Redis: locks may expire and be reacquired; `pending` remains; lease still held by original executor.
   - PostgreSQL: any effects applied before the pause remain consistent; replays of the same `(tenantId, regionId, region_epoch, tickId, effectKey)` are treated as no-ops by idempotent handlers.

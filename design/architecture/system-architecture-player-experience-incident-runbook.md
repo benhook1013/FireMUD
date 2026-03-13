@@ -79,7 +79,7 @@ Trace-driven triage is optional but often decisive for command-latency incidents
 - Alert: `CommandLatencyP99HighGateway` or `CommandLatencyP99HighTcpProxy` fires (p99 command latency > 250ms over 5 minutes).
 - Player reports: perceived lag or delayed command responses in game.
 - Metrics:
-  - Player Experience dashboard shows elevated command p99 latency.
+  - Player Experience dashboard shows elevated command p99 latency for one or more bounded core commands (`move`, `look`, `combat`).
   - Tick Health & Ledger dashboard shows whether tick execution or queue depth is also degraded.
 
 ### Decide (Command latency)
@@ -105,6 +105,7 @@ Trace-driven triage is optional but often decisive for command-latency incidents
 3. **Inspect downstream domains**
    - For commands dominating latency:
      - Use Jaeger and service-specific dashboards to identify slow spans (e.g., `entity_apply_damage`, `room_resolve_look`).
+     - Start with the per-command latency series from `command_latency_ms_p99_gateway_5m` / `command_latency_ms_p99_tcpproxy_5m`; do not rely on an aggregate “all core commands” rollup as the primary decision signal.
      - Use stage-split command latency metrics (`command_latency_stage_ms_bucket`) first to determine whether the regression is in `edge_queue`, `dispatch`, `tick_wait`, or `domain_commit` before relying on trace sampling.
      - Verify database query performance and indexes for those paths.
 4. **Mitigate**
@@ -166,6 +167,7 @@ Trace-driven triage is optional but often decisive for command-latency incidents
 - Player reports: failed or flaky connections on one entry path (Telnet or WebSocket/HTTPS).
 - Metrics:
   - Player Experience dashboard shows a drop in availability computed from `entrypath_connection_attempts_total{path,outcome}` for one or more tenants.
+  - External synthetic probes show whether the public Telnet or WebSocket path is reachable at all when traffic may not be reaching Gateway or TCP Proxy.
   - TCP Proxy dashboards show whether `tcpproxy_connections_limit_exceeded` or `tcpproxy_telnet_discarded` are elevated (Telnet path), and Gateway dashboards show whether WebSocket upgrade failures are elevated (WebSocket path).
 
 ### Decide (Entry path availability)
@@ -178,6 +180,8 @@ Trace-driven triage is optional but often decisive for command-latency incidents
   - `protocol_error` suggests client/edge parsing problems.
   - `upstream_unreachable` suggests Gateway or downstream availability issues.
   - `auth_failed` suggests account/JWT or session binding problems.
+- Check the external synthetic probe result first:
+  - If the blackbox probe is failing and `entrypath_connection_attempts_total` is flat or absent, treat this as an ingress/LB/TLS/DNS edge outage rather than an application-level success-ratio problem.
 
 ### Act (Entry path availability)
 
@@ -199,6 +203,6 @@ Trace-driven triage is optional but often decisive for command-latency incidents
    - Confirm the short-window detection view recovers quickly for affected `{tenantId,path}` combinations and the dominant failure outcomes subside.
    - Confirm the 1-day compliance view trends back toward SLO after the acute incident is resolved.
 4. **Degraded-mode branch (if observability backends are unavailable)**
-   - If Grafana is down: query Prometheus directly for `entrypath_connection_attempts_total` success/total ratios by `{tenantId,path}` and dominant `outcome`.
+   - If Grafana is down: query Prometheus directly for both `entrypath_connection_attempts_total` success/total ratios by `{tenantId,path}` and the external synthetic-probe metric for each public path.
    - If Kibana is down: use Gateway/TCP Proxy logs directly to classify failures (`limit_exceeded`, `protocol_error`, `upstream_unreachable`, `auth_failed`).
    - If Prometheus is down: rely on edge health, pod events, and direct ingress error logs to guide rollback/scale/cap actions.

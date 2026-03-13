@@ -10,6 +10,18 @@ World creation is a long-running process that prepares the initial world state f
 - `gameInstanceId` – identifies the specific running world instance recorded in
   the Game Session Service.
 
+World creation consumes a previously resolved immutable launch descriptor for the attempt. At minimum this descriptor carries:
+
+- `launchDescriptorId`
+- `tenantId`
+- `gameTemplateId` when launch originated from a template
+- resolved `versionId`
+- resolved `scriptPatchVersion` (or explicit null)
+- `expectedVersionStateEpoch`
+- `expectedGenerationConfigRevision`
+- any approved `remapSetId`
+- resolved runtime flags/defaults needed by downstream services
+
 The implementation uses the published world topology for the chosen `tenantId` and `version_id`, inserts a starter region instance, schedules initial events, and can generate terrain chunks and materialize instance-scoped population schedules for expansive worlds. Throughout the workflow, the Saga:
 
 - Reads only **template/topology** rows keyed by `(tenantId, versionId)` (for example `region_template`, `room_template`, or authored generation metadata); and
@@ -19,6 +31,8 @@ Activation requests must carry both:
 
 - `expectedVersionStateEpoch` from Game Session so the workflow can fail fast if the target version was retired or changed mid-flight.
 - `expectedGenerationConfigRevision` so pre-activation generation steps can prove they used the frozen publish identity rather than mutable tenant defaults.
+
+These fields are sourced from the resolved launch descriptor and must remain immutable across retries of the same launch attempt. World Management must not re-read mutable template JSON, tenant defaults, or "latest READY patch" state during activation.
 
 It never mutates template rows for Published versions; any structural changes to the world layout must occur through design-time workflows on Draft versions before publishing a new `versionId`. More broadly, world creation is allowed to invoke procedural generators only in **runtime/instance** mode as described in [Procedural Generation](../../system-architecture-procedural-generation.md); any attempt to write template rows from this Saga, even for non-Published versions, must be rejected by World Management validation. All template edits must flow through Game Design Service design-time APIs.
 

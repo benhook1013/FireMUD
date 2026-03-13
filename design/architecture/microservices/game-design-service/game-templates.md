@@ -98,6 +98,29 @@ Game templates may optionally carry default runtime configuration alongside thei
 - When these defaults are present, instance-creation flows should apply them explicitly; when they are absent, callers must provide the desired `scriptPatchVersion` and runtime flags at creation time. Templates must not implicitly select “latest READY patch” or other moving targets without operator input.
 - If a template pins a default `scriptPatchVersion`, instance creation must validate that Automation & Scripting has marked that patch `READY` for the tenant before pinning it for a running instance; otherwise instance creation fails with a clear error and no instance rows are created.
 
+### Resolved Launch Descriptor
+
+Template-driven instance creation must materialize one immutable resolved launch descriptor before any `gameInstanceId` rows are created. Runtime services must not independently reinterpret `GameTemplateDto.config`, re-resolve defaults, or fetch moving-target control-plane state during launch.
+
+Canonical minimum fields:
+
+- `launchDescriptorId`
+- `tenantId`
+- `gameTemplateId`
+- resolved `versionId`
+- resolved `scriptPatchVersion` (or explicit null when none is pinned)
+- resolved runtime feature flags/defaults
+- `generationConfigRevision` taken from the target version’s `published_release_bundle`
+- `versionStateEpoch` used for CAS-safe activation checks
+- any approved `remapSetId` required by the launch path
+
+Ownership and usage rules:
+
+- Game Design Service owns deterministic resolution of template metadata and normalized references into this descriptor, or exposes a read API that lets the instance-creation orchestrator do so deterministically from Game Design-owned state.
+- Retries for the same launch attempt must reuse the same descriptor values.
+- World creation, Game Session admission, and script-patch pinning consume this descriptor as input; they must not fetch "latest READY patch" or re-parse template JSON mid-flight.
+- If descriptor resolution fails because a dependency is missing, not `READY`, not attested, or not enforceable under `GetTemplateReferencePhase`, the launch fails before any instance rows are created.
+
 ### Interaction with Version Lifecycle
 
 Game templates participate in the same version lifecycle as the domain templates they reference:

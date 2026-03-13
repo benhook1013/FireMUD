@@ -175,7 +175,7 @@ Concrete per-effect required writes and reconciliation rules live in `design/arc
 - `GetRoomSnapshot` – returns a minimal, `LOOK`-focused view (room identity, names, descriptions, exit metadata, ambient state) scoped by `RoomInstanceRef`.
 - `ListRoomOccupants` – returns the authoritative typed occupant list (`occupants`) for actors in a room, scoped by `RoomInstanceRef`. The legacy `occupantEntityIds` list is a derived compatibility mirror only.
 - `ApplyRoomAmbientStatePatch` – applies an ambient state patch to the target `RoomInstanceRef`, guarded by `EffectId`.
-- `GetDraftDesignDigest` – returns publish-gating digest for Draft world templates using a typed scope request. Request shape is `GetDraftDesignDigestRequest { tenantId, scope: oneof { versionId, scriptPatchVersion } }`; World Management supports `versionId` scope only and must return `UNSUPPORTED_SCOPE` for `scriptPatchVersion`. Minimum response fields are `{tenantId, scope, appliedCommitId or lastAppliedRevisionId, contentDigest, digestSchemaVersion}`. `contentDigest` must cover only version-scoped template/binding rows (for example region/zone/room templates and spawn bindings) and must exclude runtime/instance rows and audit metadata.
+- `GetDraftDesignDigest` – returns publish-gating digest for Draft world templates using a typed scope request. Request shape is `GetDraftDesignDigestRequest { tenantId, scope: oneof { versionId, scriptPatchVersion } }`; World Management supports `versionId` scope only and must return `UNSUPPORTED_SCOPE` for `scriptPatchVersion`. Minimum response fields are `{tenantId, scope, appliedCommitId, contentDigest, digestSchemaVersion}`. `appliedCommitId` means the highest Game Design commit whose complete revision set has been durably applied to the target Draft world scope. `contentDigest` must cover only version-scoped template/binding rows (for example region/zone/room templates and spawn bindings) and must exclude runtime/instance rows and audit metadata.
 - `ValidateWorldUpgradeMappings` – validates world-owned durable references and approved remap sets for replacement-instance cutover to a target `(tenantId, versionId)`.
 - `UpdateWorldState` – legacy bulk update surface scheduled for removal on **June 30, 2026**. Effective immediately, runtime mutation requests on this RPC must return `UNSUPPORTED_OPERATION` and callers must use effect-shaped mutation RPCs (`ApplyRoomAmbientStatePatch` and related effect APIs).
 
@@ -201,6 +201,7 @@ World Management is a required publish-gate participant and must maintain a stab
 - Excluded objects:
   - all runtime/instance tables keyed by `gameInstanceId`;
   - `generation_run` rows created for runtime instances;
+  - design-time generation artifact/provenance rows such as staged `generation_run`, `generation_output_artifact`, or equivalent records that exist only to prove replayability and deterministic reconciliation rather than published topology semantics;
   - audit/provenance columns such as `created_at`, `updated_at`, `changedAt`, workflow ids, and applied-revision ledgers when those values do not affect semantics.
 - Canonicalization rules:
   - serialize included objects in stable table order, then primary-key order within each table;

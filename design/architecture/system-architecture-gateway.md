@@ -103,7 +103,7 @@ After applying strip/authentication rules, the gateway sets or forwards the down
   - Otherwise derive `X-Client-IP` from the trusted load balancer forwarded headers (for example `X-Forwarded-For`) using the gateway’s configured trusted-proxy rules.
 - `X-Proxy-Connection-Id` – forwarded only when the upstream hop is authenticated as the TCP Proxy Service so downstream services can correlate lifecycle signals.
 - `X-Game-Instance-Id` / `X-Tenant-Id` – forwarded only when the upstream hop is authenticated as the TCP Proxy Service and the corresponding `X-Proxy-Game-Instance-Id` / `X-Proxy-Tenant-Id` inputs were provided. These remain advisory admission hints; the Game Session Service validates any game-instance/tenant claims against Redis, entitlements, and authenticated session state.
-- `X-Firemud-Connect-Context` – for first-party `/ws/game/**` handshakes that pass connect-token validation, gateway emits a short-lived signed context payload containing verified connect scope (`accountId`, `tenantId`, `gameInstanceId`, `connectTokenJti`, `verifiedAt`, `expiresAt`, `gatewayRequestId`). Game Session must validate signature, expiry, and replay before using this context.
+- `X-Firemud-Connect-Context` – for first-party `/ws/game/**` handshakes that pass connect-token validation, gateway emits a short-lived signed context payload containing verified connect scope (`accountId`, `tenantId`, `gameInstanceId`, `connectTokenJti`, `verifiedAt`, `expiresAt`, `gatewayRequestId`). Game Session must validate signature and expiry before using this context; replay protection for `connectTokenJti` remains Gateway-owned and is not re-implemented as a second authority in Game Session.
 - `X-Firemud-Connection-Mode` – gateway-owned marker identifying the gameplay admission path. Supported values are `first_party_web` and `trusted_tcp_proxy`. Game Session must treat this header as meaningful only when produced by the gateway after trust/canonicalization filters run, and must reject `/ws/game/**` admissions that present neither supported mode.
 - `X-Session-Id` is not part of the canonical header contract and must not be emitted or consumed for gameplay/session binding decisions.
 
@@ -330,14 +330,14 @@ This token is an edge admission/rate-limiting hint only. It does not replace `LO
 - **Verified context handoff (Gateway -> Game Session)**
   - After successful connect-token validation, Gateway must emit a signed, short-lived connect context (`X-Firemud-Connect-Context`) for the upgraded `/ws/game/**` connection.
   - Context payload must include at least: `accountId`, `tenantId`, `gameInstanceId`, `connectTokenJti`, `verifiedAt`, `expiresAt`, `gatewayRequestId`.
-  - Game Session validates signature (`kid` aware), expiry bounds, and replay (`{issuer, connectTokenJti}`) before using scope for `CONNECT_SCOPE_MISMATCH` enforcement.
+  - Game Session validates signature (`kid` aware) and expiry bounds before using scope for `CONNECT_SCOPE_MISMATCH` enforcement. Replay protection for `connectTokenJti` is performed only at Gateway handshake time.
   - Missing/invalid/expired context on first-party handshakes that required connect-token validation must be rejected by Game Session admission with canonical error `CONNECT_CONTEXT_INVALID` before `PLAY` (no scope fallback to raw headers).
   - Gateway must also emit `X-Firemud-Connection-Mode: first_party_web` for these handshakes.
   - Key ownership and rotation contract:
     - Gateway signs context with a dedicated asymmetric key set identified by stable issuer and `kid`.
     - Game Session trusts keys from a gateway verification-key source and must support overlap during rotation (old and new `kid` concurrently valid for a bounded window).
     - Verification-key fetch/cache policy must be explicit (bounded cache TTL, refresh-on-miss for unknown `kid`, fail-closed if no valid key set is available).
-    - Metrics/logs must distinguish signer/verification failures with bounded reasons (for example `unknown_kid`, `signature_invalid`, `context_expired`, `replay_detected`, `verification_keys_unavailable`) so incidents are triageable without high-cardinality labels.
+    - Metrics/logs must distinguish signer/verification failures with bounded reasons (for example `unknown_kid`, `signature_invalid`, `context_expired`, `verification_keys_unavailable`) so incidents are triageable without high-cardinality labels.
 
 - **Trusted proxy handoff (Gateway -> Game Session)**
   - For authenticated TCP Proxy bridge handshakes, Gateway must emit `X-Firemud-Connection-Mode: trusted_tcp_proxy`.

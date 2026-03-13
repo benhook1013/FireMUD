@@ -392,7 +392,7 @@ Semantics:
   - `plugin.baseVersionId` must equal the instance `runtimeVersionId`.
   - `plugin.abilitySchemaDigest` must match the immutable digest recorded for the same base version used by the running instance.
   - Any mismatch fails deterministically with an application error (for example `PLUGIN_BASE_VERSION_MISMATCH` or `PLUGIN_ABILITY_SCHEMA_MISMATCH`) and must not mutate active plugin state.
-- On success, updates the registry for `(tenantId, gameInstanceId, pluginId)` and emits `PluginVersionActivated` (or `PluginVersionDisabled` as appropriate if this operation also transitions state).
+- On success, updates the registry for `(tenantId, gameInstanceId, pluginId)`, reconciles any durable plugin-owned schedules/timers so the displaced `pluginVersionId` cannot keep minting new triggers, and emits `PluginVersionActivated` (or `PluginVersionDisabled` as appropriate if this operation also transitions state).
 
 Outputs:
 
@@ -738,12 +738,17 @@ Fields:
 3. Game Session emits `ScriptPatchPinChanged`.
 4. Call `CancelPendingWorkItemsForPatch` for the previous patch in scope so outbox work produced under displaced patch state cannot continue handing off indefinitely.
 5. Call `PurgeQueuedTickCommandsForScriptPatch` for the previous patch (and plugin equivalents when plugin version changes are coupled with the promotion).
-6. Wait for pin-convergence acknowledgments from both Automation & Scripting and Game Session for the requested `controlPlaneRequestId`.
-7. Automation & Scripting observes the committed pin event for visibility (not for authority) and treats the pinned patch as the expected active one for tick handoffs.
-8. Schedulers use a bounded-staleness pin cache for admission and timer firing decisions:
+6. Automation & Scripting must reconcile durable schedules/timers for the newly pinned patch before timer admission resumes:
+   - schedules absent from the newly pinned patch are removed or tombstoned;
+   - schedules that still exist may be carried forward only through explicit reconciliation to the new version identity;
+   - displaced patch/plugin versions must not be able to generate new `scriptEventId` values after promotion.
+7. Wait for pin-convergence acknowledgments from both Automation & Scripting and Game Session for the requested `controlPlaneRequestId`.
+8. Automation & Scripting observes the committed pin event for visibility (not for authority) and treats the pinned patch as the expected active one for tick handoffs.
+9. Schedulers use a bounded-staleness pin cache for admission and timer firing decisions:
    - If cached pin data is stale beyond the configured max-age, they must refresh from authoritative control-plane APIs/events before admitting new work.
    - If fresh authoritative pin data cannot be obtained, admission must fail closed with `finalStage=ADMISSION`, `finalOutcome=pin_state_unavailable`, and an explicit `finalReason`.
-9. Operators monitor `script_event_audit` and automation metrics; per-event correlation uses `scriptEventId` in audit/logs/traces, not metric labels.
+   - If fresh authoritative pin data is available but differs from the request version for the instance, admission must fail closed with `finalOutcome=version_unavailable` and a bounded mismatch reason; Automation must not silently substitute a patch.
+10. Operators monitor `script_event_audit` and automation metrics; per-event correlation uses `scriptEventId` in audit/logs/traces, not metric labels.
 
 ### Patch Rollback (Operator-Driven, Required)
 
@@ -753,9 +758,13 @@ Fields:
 4. Call `CancelPendingWorkItemsForPatch` in Automation & Scripting for the rolled-back patch (and optionally purge volatile coordination indexes).
 5. If plugin versions are also being rolled back/disabled/revoked, call `CancelPendingWorkItemsForPluginVersion`.
 6. Call `PurgeQueuedTickCommandsForScriptPatch` (and, if applicable, `PurgeQueuedTickCommandsForPluginVersion`) so mismatched queued entries do not accumulate after repin.
-7. Wait for pin-convergence acknowledgments from both Automation & Scripting and Game Session for the new pin (`controlPlaneRequestId` must match).
-8. Call `SetAutomationAdmissionMode(..., mode=NORMAL)` once convergence and cleanup complete.
-9. Resume ticks with `ResumeTicks`.
+7. Automation & Scripting must reconcile durable schedules/timers before resuming admission:
+   - timers owned by the displaced patch/plugin version are removed or tombstoned;
+   - only schedules present in the rollback target may survive reconciliation;
+   - cancellation of outbox work alone is not sufficient rollback cleanup.
+8. Wait for pin-convergence acknowledgments from both Automation & Scripting and Game Session for the new pin (`controlPlaneRequestId` must match).
+9. Call `SetAutomationAdmissionMode(..., mode=NORMAL)` once convergence and cleanup complete.
+10. Resume ticks with `ResumeTicks`.
 
 ### Rollback Orchestration State Machine (Required)
 

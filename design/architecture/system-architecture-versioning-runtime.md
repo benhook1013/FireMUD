@@ -289,12 +289,12 @@ If any step after step 1 fails, admission remains closed and the same terminatio
 
 Before any operation that changes whether a tenant is actively serving gameplay for a given instance (for example, starting a new instance, cutting over admission to a replacement instance with a different `runtime_version`, or rolling back to a previous version), the Game Session Service must consult the runtime entitlement contract:
 
-- Call `GetTenantEntitlements(tenantId)` in the Account Service and enforce that:
+- Call `GetTenantEntitlementsForRuntime(tenantId)` in the Account Service and enforce that:
   - The tenant is currently **available for gameplay** under its subscription and billing state (for example, not `suspended` or `canceled`).  
   - The requested instance count and configuration remain within plan-derived quotas (for example, maximum concurrent instances for the tenant).
 - If entitlements indicate that the tenant is unavailable for gameplay or that quotas would be exceeded, the operation fails with a clear, tenant-scoped error and no instance-level changes are applied.
 - Entitlement snapshots used by these admission/control operations must be no older than 15 seconds. If a fresh snapshot cannot be obtained (for example due to event lag or Account Service uncertainty), operations fail closed with canonical error `ENTITLEMENT_UNAVAILABLE` (or protocol-mapped equivalent).
-- Entitlement snapshots must include `evaluatedAt`, `entitlementVersion`, and `tenantBillingSequence`; runtime operations must reject stale time/sequence data and reconcile via fresh `GetTenantEntitlements(tenantId)` reads.
+- Entitlement snapshots must include `evaluatedAt`, `entitlementVersion`, and `tenantBillingSequence`; runtime operations must reject stale time/sequence data and reconcile via fresh `GetTenantEntitlementsForRuntime(tenantId)` reads.
 - Until a dedicated player-facing instance-selection protocol exists, runtime operations must preserve the single gameplay-admissible instance invariant (`gameInstanceId="primary"`). If operational workflows temporarily create additional running instances, gameplay admission remains blocked for those extra instances and player admission must fail with `MULTIPLE_INSTANCES_NOT_SUPPORTED` (or protocol-mapped equivalent) rather than implicitly choosing among them.
 
 Version cutover contract under the single-admissible-instance invariant:
@@ -325,7 +325,7 @@ When entitlements transition to hard-cutoff states (`suspended` or `canceled`) a
 - Existing player gameplay sessions are revoked immediately.
 - Running instances enter a bounded non-admissible drain phase (target: 5 minutes maximum) for cleanup, then stop.
 
-Activation, rollback, and cutover operations remain blocked until `GetTenantEntitlements(tenantId)` returns gameplay-available status again.
+Activation, rollback, and cutover operations remain blocked until `GetTenantEntitlementsForRuntime(tenantId)` returns gameplay-available status again.
 
 Because rollback relies on being able to reactivate previously published `version_id` values, schema migrations must be coordinated with versioned data. See the **Version-Aware Migration Guidelines** in [Database Migrations](./system-architecture-database-migrations.md) for constraints on dropping or reshaping columns that are still used by any published version.
 

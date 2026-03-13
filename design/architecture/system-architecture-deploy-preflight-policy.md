@@ -8,6 +8,20 @@ This document defines the authoritative preflight policy gate for staging and pr
 - Ensure secret contracts, digest pinning, and bridge/security invariants are enforced before apply.
 - Produce a reusable pass/fail artifact for deployment evidence.
 
+## Bootstrap Contract
+
+For a brand-new player-facing environment (`hobby-self-hosted`, `staging`, or `production`), preflight must verify the baseline trust and secret set before any workload apply. The minimum bootstrap set is:
+
+- registry pull credentials for workload image access,
+- PostgreSQL application credentials and admin rotation credentials when rotation Jobs are used,
+- JWT signing and validation resources (`jwt-signing-keys`, `jwt-jwks`),
+- cert-manager issuer or issuer reference for workload and bridge certificates,
+- backup/object-store credentials when the environment requires backups,
+- asset-store and outbound-communications credentials when those integrations are enabled,
+- operator credential bindings required for environment-scoped control-plane access.
+
+Bootstrap resources must be unique to the environment boundary. Reusing staging and production bootstrap secrets, buckets, or operator trust bindings is non-compliant.
+
 ## Authoritative Entrypoint
 
 - Command: `./dev-tools/deploy/preflight.sh <staging|production|hobby-self-hosted>`
@@ -23,7 +37,7 @@ This document defines the authoritative preflight policy gate for staging and pr
 ## Enforcement Boundaries
 
 - Overlay PR CI (`validate-kustomize-overlays.yml`) enforces static checks: digest pinning, image existence, attestation schema/digest matching, repository policy markers, and production backup-readiness binding when required.
-- Operator pre-apply execution (`preflight.sh`) enforces resolved-manifest and target-environment checks: required secret/key contracts, JWT/JWKS contracts, Redis role split, and bridge alignment.
+- Operator pre-apply execution (`preflight.sh`) enforces resolved-manifest and target-environment checks: required secret/key contracts, JWT/JWKS contracts, Redis role split, bridge alignment, bootstrap completeness, and external integration isolation.
 - Deployment apply is blocked unless required checks for the target class pass (or an explicit break-glass waiver is recorded).
 
 ## Environment Applicability
@@ -45,15 +59,20 @@ Every run must emit one result per policy ID below, with status `pass`, `fail`, 
 - `PREFLIGHT-JWKS-001` – JWKS resource type matches environment policy (`jwt-jwks` Secret for player-facing environments; ConfigMap only for explicitly non-player-facing/test environments).
 - `PREFLIGHT-BRIDGE-001` – `GATEWAY_WS_URL` matches the expected internal Gateway listener for the target environment.
 - `PREFLIGHT-REDIS-001` – player-facing environments resolve distinct Coordination vs Cache Redis endpoints.
+- `PREFLIGHT-BOOTSTRAP-001` – player-facing environments confirm the minimum bootstrap secret and trust resources exist before apply.
+- `PREFLIGHT-EXTERNAL-001` – player-facing environments validate that backup storage, asset storage, outbound communications, and operator credential bindings match the target environment and do not cross environment boundaries.
 - `PREFLIGHT-PROMOTION-001` – production promotions reference a valid staging attestation with matching digests.
 - `PREFLIGHT-BACKUP-001` – production `roll-forward-only` promotions include fresh backup-readiness evidence.
+- `PREFLIGHT-BACKUP-002` – production first-live or traffic-reopen events verify at least one successful logical backup upload and one successful backup verification result for the environment before traffic is opened.
 
 Policy applicability:
 
 - `PREFLIGHT-PROMOTION-001` is required for `production` and `not_applicable` for `staging` and `hobby-self-hosted`.
 - `PREFLIGHT-BACKUP-001` is required for `production` when the referenced attestation classifies the release as `roll-forward-only`, and `not_applicable` otherwise.
+- `PREFLIGHT-BACKUP-002` is required for `production` on first-live opens and reopen-after-restore events, and `not_applicable` for routine steady-state rollouts that do not change traffic-open status.
 - `PREFLIGHT-DIGEST-001` is required for any flow using Kustomize overlays (`staging`, `production`) and `not_applicable` for `hobby-self-hosted`.
 - `PREFLIGHT-DIGEST-002` is recommended/advisory for `hobby-self-hosted` and `not_applicable` for `staging`/`production`.
+- `PREFLIGHT-BOOTSTRAP-001` and `PREFLIGHT-EXTERNAL-001` are required for all player-facing environments.
 
 ## Evidence Contract
 

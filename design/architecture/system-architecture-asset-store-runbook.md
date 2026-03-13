@@ -66,6 +66,7 @@ When using a self-hosted MinIO cluster as the asset store:
    - Asset deletion eligibility must account for design-history reachability as well as version mappings. Use the Game Design control-plane check `CanDeleteVersionAssets(tenantId, versionId)` that validates no non-Retired `version_asset` references remain, no reachable `revision_asset` / branch references require retained bytes, and no template or launch metadata still points to the version prefix.
    - Do not run deletion as a separate check + manual delete sequence. Start purge only through `BeginPurgeVersionAssets(tenantId, versionId, expectedArtifactStateEpoch)` so eligibility re-check and `version_asset_artifact` state transition are atomic and CAS-guarded.
    - Operators must verify the persisted artifact lifecycle row (`version_asset_artifact`) is `TOMBSTONED` before issuing purge actions. `BeginPurgeVersionAssets` must transition state to `PURGE_IN_PROGRESS` before bytes are removed, and `FinalizePurgeVersionAssets` must transition to retained terminal state `PURGED` after bytes are removed. Do not infer lifecycle state solely from object-store contents.
+   - `EXPORTED_UNATTESTED` means bytes were exported but publish did not complete. Such prefixes are not launchable and must be repaired or failed through the documented workflow; operators must not treat them as equivalent to `PUBLISHED`.
    - Published assets are discovered via the `version_asset` mapping table in the
      Game Design Service. Operators must never delete individual objects that are
      still referenced by any `version_asset` row for a non-retired version.
@@ -97,6 +98,9 @@ leaves a version incomplete or unusable:
   the version Failed and there is no intention to retry publish. Failed prefixes
   should normally be marked `TOMBSTONED` and retained for diagnostics.
 - State transitions for failed artifacts must follow the asset lifecycle contract:
+  - `STAGED -> EXPORTED_UNATTESTED` when export succeeds but attestation has not yet committed.
+  - `EXPORTED_UNATTESTED -> PUBLISHED` only after `published_release_bundle` commit succeeds.
+  - `EXPORTED_UNATTESTED -> FAILED` when attestation or later publish completion fails.
   - `FAILED -> STAGED` only through documented repair/retry workflow.
   - `FAILED -> TOMBSTONED` when retry is abandoned.
   - `TOMBSTONED -> PURGE_IN_PROGRESS` only through `BeginPurgeVersionAssets(tenantId, versionId, expectedArtifactStateEpoch)`.

@@ -77,7 +77,7 @@ spec:
           expr: |
             histogram_quantile(
               0.99,
-              sum by (tenantId, regionId, le) (
+              sum by (tenantId, regionId, command, le) (
                 rate(command_end_to_end_latency_ms_bucket{service="spring-cloud-gateway",command=~"move|look|combat"}[5m])
               )
             )
@@ -85,7 +85,7 @@ spec:
           expr: |
             histogram_quantile(
               0.99,
-              sum by (tenantId, regionId, le) (
+              sum by (tenantId, regionId, command, le) (
                 rate(command_end_to_end_latency_ms_bucket{service="tcp-proxy-service",command=~"move|look|combat"}[5m])
               )
             )
@@ -280,7 +280,7 @@ spec:
           for: 5m
           labels:
             service: postgres-backup
-            severity: P1
+            severity: P0
             owner: infra
             runbook: design/architecture/system-architecture-backup-recovery.md#backup-verification-restoration-testing
           annotations:
@@ -291,7 +291,7 @@ spec:
           for: 5m
           labels:
             service: postgres-backup
-            severity: P1
+            severity: P0
             owner: infra
             runbook: design/architecture/system-architecture-backup-recovery.md#backup-verification-restoration-testing
           annotations:
@@ -302,7 +302,7 @@ spec:
           for: 5m
           labels:
             service: postgres-backup
-            severity: P1
+            severity: P0
             owner: infra
             runbook: design/architecture/system-architecture-backup-recovery.md#backup-verification-restoration-testing
           annotations:
@@ -425,9 +425,44 @@ spec:
           annotations:
             summary: TCP Proxy entry-path availability below 1-day SLO
             description: One or more tenants have sustained connection failures on TCP Proxy entry paths over the compliance window.
+        - alert: WebSocketEntryPathBlackboxUnavailable
+          expr: max_over_time(entrypath_blackbox_probe_success{path="websocket"}[2m]) == 0
+          for: 2m
+          labels:
+            service: spring-cloud-gateway
+            component: entrypath
+            severity: P0
+            owner: platform
+            runbook: design/architecture/system-architecture-player-experience-incident-runbook.md#telnet-and-websocket-path-availability-below-slo
+          annotations:
+            summary: WebSocket entry path unreachable from external probe
+            description: Independent blackbox probes cannot reach the public WebSocket gameplay path; this may be an LB, DNS, TLS, or ingress failure before requests reach Gateway.
+        - alert: TelnetEntryPathBlackboxUnavailable
+          expr: max_over_time(entrypath_blackbox_probe_success{path="telnet"}[2m]) == 0
+          for: 2m
+          labels:
+            service: tcp-proxy-service
+            component: entrypath
+            severity: P0
+            owner: platform
+            runbook: design/architecture/system-architecture-player-experience-incident-runbook.md#telnet-and-websocket-path-availability-below-slo
+          annotations:
+            summary: Telnet entry path unreachable from external probe
+            description: Independent blackbox probes cannot reach the public Telnet gameplay path; this may be an LB, DNS, TLS, or ingress failure before requests reach TCP Proxy.
 
     - name: firemud.alerts.observability
       rules:
+        - alert: AlertmanagerServiceUnavailable
+          expr: up{job="alertmanager"} == 0
+          for: 5m
+          labels:
+            service: alertmanager
+            severity: P1
+            owner: platform
+            runbook: design/architecture/system-architecture-observability-incident-runbook.md#alertmanager-down-or-not-routing
+          annotations:
+            summary: Alertmanager service unavailable
+            description: Alertmanager is unreachable from Prometheus, so notifications and alert-state visibility are impaired even if rule evaluation continues.
         - alert: AlertmanagerNotificationsFailing
           expr: rate(alertmanager_notifications_failed_total[5m]) > 0
           for: 10m
@@ -505,6 +540,17 @@ spec:
           annotations:
             summary: OpenTelemetry Collector is failing to export spans
             description: Distributed tracing data is being dropped before it reaches Jaeger or the configured backend.
+        - alert: OTelCollectorUnavailable
+          expr: up{job="otel-collector"} == 0
+          for: 5m
+          labels:
+            service: otel-collector
+            severity: P1
+            owner: platform
+            runbook: design/architecture/system-architecture-observability-incident-runbook.md#jaeger-opentelemetry-collector-down
+          annotations:
+            summary: OpenTelemetry Collector unavailable
+            description: The collector is unreachable, so new traces cannot be received even before downstream export/storage is considered.
         - alert: JaegerQueryUnavailable
           expr: up{job="jaeger-query"} == 0
           for: 10m

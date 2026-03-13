@@ -61,7 +61,15 @@ services as the source of truth for the current Draft template graphs:
 - A periodic reconciler in the Game Design Service replays the canonical
   revision set into domain services until their Draft templates converge on the
   expected state. Convergence is validated using a domain-owned digest contract:
-  each participating domain service exposes a read-only `GetDraftDesignDigest` API with typed scope (`oneof {versionId, scriptPatchVersion}`) returning `appliedCommitId` (or `lastAppliedRevisionId`) plus a stable `contentDigest` and `digestSchemaVersion`. The reconciler updates `designSyncStatus` back to `IN_SYNC` once all participating services report digests matching the commit being published.
+  each participating domain service exposes a read-only `GetDraftDesignDigest`
+  API with typed scope (`oneof {versionId, scriptPatchVersion}`) returning
+  `appliedCommitId` plus a stable `contentDigest` and `digestSchemaVersion`.
+  `appliedCommitId` is the highest commit whose complete revision set has been
+  durably applied for that scope. Services may keep revision-level ledgers
+  internally, but publish gates and reconciler comparisons must use
+  commit-level convergence only. The reconciler updates `designSyncStatus` back
+  to `IN_SYNC` once all participating services report digests matching the
+  commit being published.
 - The `PublishVersion` workflow must verify that `designSyncStatus == IN_SYNC`
   before starting the publish Saga. Versions that are out of sync cannot be
   published until reconciliation succeeds.
@@ -93,7 +101,7 @@ Digest comparison rules:
 - If `digestSchemaVersion` differs, publish must fail fast and require an explicit migration of digest semantics (for example by bumping `digestSchemaVersion` and replaying commits to record new digests), rather than silently comparing incompatible hashes.
 - Digest request/response payloads are canonical across participants:
   - `GetDraftDesignDigestRequest { tenantId, scope: oneof {versionId, scriptPatchVersion} }`
-  - `GetDraftDesignDigestResponse { tenantId, scope, appliedCommitId or lastAppliedRevisionId, contentDigest, digestSchemaVersion }`
+  - `GetDraftDesignDigestResponse { tenantId, scope, appliedCommitId, contentDigest, digestSchemaVersion }`
   - Unsupported scopes must fail with `UNSUPPORTED_SCOPE`; publish orchestration must treat this as a hard mismatch for required participants.
 
 ### Digest Participants by Publish Type
@@ -120,7 +128,7 @@ Rules:
   - `UNSUPPORTED_SCOPE` from an in-scope required participant is a hard gate failure.
 - Changes to this matrix require an explicit doc + migration update in both `version-control.md` and `world-editing-tools.md`.
 - Every service listed in this matrix must maintain a service-local digest input manifest documenting included/excluded objects, canonicalization, and `digestSchemaVersion` bump criteria. Publish gating should fail closed when a participant cannot attest a digest under its documented manifest for the reported schema version.
-- Full publish additionally requires that the final immutable release attestation row be written successfully; a version is not publish-complete until `published_release_bundle` exists for the target `(tenantId, versionId)`.
+- Full publish additionally requires that the final immutable release attestation row be written successfully; a version is not publish-complete until `published_release_bundle` exists for the target `(tenantId, versionId)`, and version asset artifacts must not transition to terminal `PUBLISHED` state before that attestation write succeeds.
 
 ### Digest Schema Migration
 

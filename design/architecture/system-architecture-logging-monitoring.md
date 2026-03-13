@@ -85,6 +85,7 @@ In addition to infrastructure-level SLOs for Redis, ticks, and backup pipelines,
   - SLI: gateway-to-domain command latency, measured from reception at Gateway or TCP Proxy through to domain commit, for example `command_end_to_end_latency_ms` histogram with labels such as `command`, `tenantId`, `regionId`.
   - SLO: 99% of core gameplay commands (movement, look, combat) complete in < 250ms over a 5-minute window, per `tenantId`/`regionId`.
   - Instrumentation: emitted by Gateway (and optionally the TCP Proxy for Telnet) with labels `{command, tenantId, regionId}`. Core commands such as movement, LOOK, and combat should use a small, documented set of `command` label values so per-command latency panels remain low-cardinality.
+  - Recording rules and alerts for the bounded core-command SLO set must preserve the `command` label. An additional aggregate “all core commands” panel is allowed for high-level dashboards, but it must not be the sole paging signal because it can hide a single broken command behind healthy higher-volume commands.
   - Phase-split drilldown metrics must also be emitted for bounded command stages so operators can distinguish edge, dispatch, tick-wait, and domain-commit latency without depending entirely on traces. Use a histogram such as `command_latency_stage_ms_bucket{service,tenantId,regionId,command,stage,le}` where `stage` is a bounded enum such as `edge_queue`, `dispatch`, `tick_wait`, or `domain_commit`.
 - **Telnet and WebSocket path availability**
   - SLI: fraction of successful connection attempts over total attempts for each entry path (Telnet and WebSocket). This SLI must be computed from an explicit attempts counter so it captures all failure modes, not just cap rejections.
@@ -95,11 +96,13 @@ In addition to infrastructure-level SLOs for Redis, ticks, and backup pipelines,
       - `outcome` is a bounded enum (for example `success`, `limit_exceeded`, `auth_failed`, `upstream_unreachable`, `timeout`, `protocol_error`, `unknown`).
     - The SLI should be computed as `sum(rate(entrypath_connection_attempts_total{outcome="success"}[...])) / sum(rate(entrypath_connection_attempts_total[...]))` per `{tenantId,path}`.
     - Auxiliary meters such as `tcpproxy_connections_limit_exceeded_total` remain useful drilldowns but are not sufficient to define availability by themselves.
+    - Prod-like environments must also run **independent synthetic probes** from outside the gameplay ingress boundary and export a low-cardinality metric such as `entrypath_blackbox_probe_success{path,target}`. These probes are the authoritative detection source for total entry-path outages that prevent traffic from ever reaching Gateway or TCP Proxy (for example LB, DNS, TLS, or ingress policy failures), while `entrypath_connection_attempts_total` remains the authoritative in-service breakdown for `outcome` analysis once traffic reaches the edge.
   - Alert routing:
     - Entry-path alerts should preserve `service` from the emitting series and include `component="entrypath"` so Telnet-path and WebSocket-path incidents can route and page independently.
   - Detection model:
     - Treat the 1-day availability window as the compliance/SLO view.
     - Also publish short-window recording rules and alerts (for example 5-minute and 30-minute availability or burn-rate views) so acute entry-path failures are detected quickly and do not wait for a 1-day window to move materially.
+    - Blackbox probe alerts must exist alongside the in-service SLI alerts so “no requests reached the service” is still detected as a P0 edge-path outage.
 - **Chat delivery latency**
   - SLI: time from chat message submission to delivery to all intended recipients, for example `chat_delivery_latency_ms` histogram keyed by `tenantId` and chat channel type.
   - SLO: 99% of chat messages are delivered in < 1s over a 5-minute window for active regions.
@@ -218,7 +221,7 @@ When Alertmanager is unavailable but Prometheus is still accessible, Logging & A
 - **Login success ratio**
   - Recording rules mirroring `LoginSuccessRatioLowGateway` and `LoginSuccessRatioLowTcpProxy`, scoped by `service` and based on `login_requests_total{outcome="success"}` vs `login_requests_total`.
 - **Command p99 latency**
-  - Recording rules mirroring `CommandLatencyP99HighGateway` and `CommandLatencyP99HighTcpProxy`, scoped by `service` and based on `command_end_to_end_latency_ms_bucket`.
+  - Recording rules mirroring `CommandLatencyP99HighGateway` and `CommandLatencyP99HighTcpProxy`, scoped by `service` and preserving the bounded `command` label for the core-command SLO set, based on `command_end_to_end_latency_ms_bucket`.
 - **Entry-path availability**
   - Recording rules mirroring both the short-window detection view and the 1-day compliance view for `EntryPathAvailabilityLowGateway` and `EntryPathAvailabilityLowTcpProxy`, scoped by `service` and `path`, based on `entrypath_connection_attempts_total`.
 - **Chat delivery latency**
@@ -244,6 +247,10 @@ Fallback recording rules must be installed as part of the Prometheus ruleset for
 
 Observability backends are best-effort enrichments for gameplay and moderation workflows, but they still require first-class alerts because their failure can mask player-visible incidents and break operator triage.
 
+- Prod-like environments must also provide an **independent meta-monitoring path** outside the Prometheus + Alertmanager failure domain:
+  - A deadman/heartbeat signal from the in-cluster monitoring stack to an external notification sink, or an equivalent externally hosted monitor.
+  - External liveness checks for Prometheus, Alertmanager, Grafana, Elasticsearch/Kibana, and Jaeger/OpenTelemetry Collector entrypoints.
+  - This independent path is required because Prometheus cannot reliably page on its own total outage.
 - Prod-like environments must install a canonical `platform`-owned alert set for:
   - Prometheus rule evaluation or scrape health problems.
   - Alertmanager routing/configuration failures.
@@ -256,17 +263,20 @@ Observability backends are best-effort enrichments for gameplay and moderation w
 - Reference alert names should remain stable across overlays so runbooks and Logging & Admin can key off them predictably. The canonical starting set is:
   - `PrometheusRuleEvaluationsFailing`
   - `PrometheusServiceDiscoveryFailures`
+  - `AlertmanagerServiceUnavailable`
   - `AlertmanagerNotificationsFailing`
   - `AlertmanagerConfigReloadFailed`
   - `ElasticsearchClusterHealthRed`
   - `ElasticsearchIndexingFailuresHigh`
   - `FluentBitOutputErrorsHigh`
+  - `OTelCollectorUnavailable`
   - `OTelCollectorExportFailures`
   - `JaegerQueryUnavailable`
   - `JaegerStorageFailuresHigh`
   - `GrafanaDatasourceUnavailable`
   - `GrafanaServiceUnavailable`
 - Environment overlays may adapt metric expressions to local exporter/job naming, but they should preserve the canonical alert names and routing labels so Logging & Admin and incident docs remain consistent.
+- The in-cluster alert set above complements, but does not replace, the required independent meta-monitoring path for total observability-stack outages.
 
 For scripting and automation workloads, dashboards and alerts must include both live and dry-run activity:
 

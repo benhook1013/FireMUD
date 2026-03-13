@@ -92,7 +92,7 @@ Subscription status feeds directly into tenant availability and resource enforce
 
 - When a subscription is `suspended` or `canceled`:
   - Tenant-level hosting is disabled for gameplay:
-    - The Game Session Service and world-management flows must reject new game instance creations, restarts, and startup requests for the tenant when consulting `GetTenantEntitlements(tenantId)`.  
+    - The Game Session Service and world-management flows must reject new game instance creations, restarts, and startup requests for the tenant when consulting `GetTenantEntitlementsForRuntime(tenantId)`.  
     - New player logins and tenant-selection attempts for that tenant are rejected with a dedicated error code and user-facing message indicating that the game is currently unavailable due to billing.
   - Existing running game instances for the tenant must be transitioned to shutdown:
     - Admission is closed immediately (no new sessions).

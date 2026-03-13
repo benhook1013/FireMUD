@@ -79,6 +79,7 @@ To prevent cross-instance collisions and make retries safe, spatial tick effects
 
 - Every spatial effect includes the `RoomInstanceRef` it targets (and, where applicable, `fromRoomInstanceRef` and `toRoomInstanceRef`), not a bare `roomId`.
 - The same `EffectId` is propagated to both World Management and Entity Management mutations for the effect, and both services implement durable idempotency guards so partial success can be safely retried.
+- A participant acknowledgement is emitted only after that service has durably committed the `EffectId` guard and the effect-visible rows required for its side of the contract. Redis-staged or in-memory state alone is never sufficient to acknowledge convergence.
 - Game Session persists (or can deterministically reconstruct) the intended pre/post state for the effect so a reconciliation pass can re-drive the missing side if one service commits and another fails.
 - Reconciliation behavior is documented per effect type. The default policy is “retry until convergence” using the original `EffectId`, not “best-effort compensate” with a new effect identity.
 
@@ -110,6 +111,7 @@ Durable backlog contract:
   - `lastErrorCode` / `lastErrorMessage`
 - Inserts and status transitions must be idempotent on `(tenantId, gameInstanceId, effectId)` so duplicate scheduling does not create duplicate backlog rows.
 - Backlog rows must be indexed at minimum by `(status, nextAttemptAt)` and `(tenantId, status, firstObservedAt)` for retry scans and operator triage.
+- For participant ack semantics, `applied` means the owning service can serve the effect through its documented durable read surface for the corresponding fence token. It does not mean `accepted for later batch flush`.
 
 Retry and dead-letter policy:
 

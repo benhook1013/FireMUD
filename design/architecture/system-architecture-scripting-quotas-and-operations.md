@@ -111,6 +111,25 @@ Per-script scheduling knobs control how often scripts are allowed to run and how
   - Queued triggers still count toward the script’s quota window; once quota limits are exceeded, additional triggers are dropped with `script_event_audit.finalStage=ADMISSION` and `finalOutcome=quota_denied` (or a more specific quota/concurrency outcome) and matching metrics.
 - **`priorityTag`** – assigns a priority tier (`high`, `normal`, `background`) that interacts with per-tenant budgets and cluster ceilings. When capacity is tight, the scheduler continues to admit `high`-priority work preferentially and defers or drops lower-priority triggers according to budget and quota rules.
 
+### `onLoad` Initialization Capacity
+
+Patch readiness initialization uses a separate admission class from ordinary live triggers:
+
+- `onLoad` is part of the publish/readiness lifecycle for `<tenantId, scriptPatchVersion>`, not part of steady-state gameplay traffic.
+- `onLoad` must **not** consume ordinary live-trigger quota windows or compete indefinitely in the same admission queues as `onEnterRegion`, `onInterval`, or other runtime events.
+- Implementations must reserve bounded publish-time capacity for `onLoad`, including:
+  - explicit concurrency ceilings,
+  - explicit timeout/CPU/memory ceilings, and
+  - bounded infrastructure retry policy for transient failures.
+- Exhausting this dedicated initialization capacity must fail the patch deterministically with an explicit bounded reason (for example `onload_budget_exceeded`) rather than leaving readiness pending indefinitely or consuming arbitrary live runtime budget.
+- Operators must be able to distinguish:
+  - publish/readiness capacity exhaustion,
+  - logical `onLoad` failures,
+  - sandbox-limit failures, and
+  - ordinary live-traffic quota denials.
+
+This separation is required so patch publication remains predictable under load and so live automation traffic cannot accidentally block all progress on new script patch readiness.
+
 ---
 
 ## Resource Isolation and Multi-Level Budgets

@@ -166,6 +166,25 @@ Promotion-evidence exception:
 
 - Even before **July 1, 2026**, a staging deployment record that will be referenced by a production promotion attestation must show `secretComplianceStatus=pass` at deployment time and include a `secretComplianceEvidenceRef`. A warning-only staging deployment may still exist for playtesting, but it is not eligible to produce production promotion evidence.
 
+## Player-Facing Environment Bootstrap Requirements
+
+Before the first deployment into `hobby-self-hosted`, `staging`, or `production`, operators must provision a minimum bootstrap set of secrets and trust resources. This is the canonical bootstrap contract for environment and secret readiness:
+
+- `postgres-credentials`
+- `postgres-admin-credentials` when rotation Jobs are used
+- `jwt-signing-keys`
+- `jwt-jwks`
+- cert-manager issuer or issuer reference used by workload and bridge certificates
+- registry pull credential secret
+- backup/object-store credentials when the environment requires backups
+- asset-store credentials when the environment publishes or serves assets from external object storage
+- outbound communications credentials when email or webhook integrations are enabled
+- operator credential binding used for environment-scoped control-plane access
+
+Bootstrap resources must be unique to the environment boundary. Shared namespace names such as `firemud` do not relax the requirement for separate staging and production secret sources, bucket bindings, or operator trust bindings.
+
+Player-facing preflight must fail when this bootstrap set is incomplete or when an external binding resolves to another environment’s target.
+
 ---
 
 ## Configuration vs Secrets

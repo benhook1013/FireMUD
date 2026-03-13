@@ -127,7 +127,7 @@ resolved during authentication.
 | `GET` | `/accounts/{accountId}/export` | Export account data |
 | `DELETE` | `/accounts/{accountId}` | Delete an account |
 | `POST` | `/accounts/{accountId}/external` | Link external account |
-| `POST` | `/auth/player-bootstrap` | Authenticate a first-party player UI and return a short-lived `player-bootstrap` token for gameplay bootstrap only |
+| `POST` | `/auth/player-bootstrap` | Authenticate a first-party player account and return a short-lived `player-bootstrap` token for gameplay bootstrap only |
 | `GET` | `/profiles/{accountId}` | Retrieve profile information |
 | `PUT` | `/profiles/{accountId}` | Update profile information |
 | `GET` | `/tenants/{tenantId}/memberships/me` | Authoritative caller-bound membership and roles for billing-safe mutation guards |
@@ -143,8 +143,8 @@ resolved during authentication.
 | Surface | Examples | Required auth path | Notes |
 | --- | --- | --- | --- |
 | Public auth/bootstrap | `/auth/login`, `/auth/request-password-reset`, `/auth/complete-password-reset`, `/auth/request-email-verification`, `/auth/verify-email`, `/auth/recover-username`, `/.well-known/jwks.json` | No pre-existing user JWT; endpoint-specific validation and abuse controls | Intended for initial auth/bootstrap flows. |
-| Player bootstrap issuance | `/auth/player-bootstrap` | First-party player credentials or external-login bootstrap | Issues the `player-bootstrap` token profile only; must not return a control-plane Browser JWT. |
-| Player bootstrap | `/auth/connect-token` | Short-lived, memory-only `player-bootstrap` token in `Authorization: Bearer ...` | Caller identity is derived from bootstrap auth context; endpoint must not accept arbitrary `accountId`. |
+| Player bootstrap issuance | `/auth/player-bootstrap` | First-party player account authentication bootstrap | Issues the `player-bootstrap` token profile only; must not return a control-plane Browser JWT or perform tenant-scoped admission checks. |
+| Player bootstrap | `/auth/connect-token` | Short-lived, memory-only `player-bootstrap` token in `Authorization: Bearer ...` | Caller identity is derived from bootstrap auth context; endpoint must not accept arbitrary `accountId` and must perform live membership and runtime entitlement checks for the requested `{tenantId, gameInstanceId}`. |
 | Authenticated account control-plane APIs | `/auth/logout`, `/auth/logout-all`, `/profiles/*`, `/accounts/*/export`, `/tenants/{tenantId}/memberships/me`, `/tenants/{tenantId}/memberships/{accountId}` | JWT middleware (`AuthTokenInterceptor` + route classification) | Must enforce route class, subject-binding rules, and tenant/global role checks. |
 | Internal service gRPC | `Authenticate`, `GetCallerTenantMembership`, `GetTenantMembershipForAccount`, `GetTenantEntitlementsForRuntime`, payment and profile gRPC APIs | mTLS caller identity plus method-level auth policy | Internal service surfaces are not edge-exposed directly. |
 
@@ -280,11 +280,12 @@ The `player-bootstrap` token profile is distinct from both Browser JWTs and Serv
 
 - Audience is `player-bootstrap`.
 - It is issued only by `POST /auth/player-bootstrap` / `IssuePlayerBootstrapToken`.
+- It establishes account identity for first-party gameplay bootstrap only; tenant membership and runtime entitlement checks occur later during `POST /auth/connect-token` for the requested `{tenantId, gameInstanceId}`.
 - It is stored in memory only by first-party gameplay UIs and is accepted only on gameplay-bootstrap surfaces such as `POST /auth/connect-token`.
 - It is backed by `session:auth:account:<accountId>:<tokenHash>` so account-level logout/revocation semantics remain consistent.
 - `POST /auth/logout` and `POST /auth/logout-all` must accept this profile so first-party gameplay UIs can explicitly revoke bootstrap capability on sign-out rather than waiting for expiry.
 
-The Account Service is the sole writer for auth revocation watermark keys (`session:auth:revoked_after:account:*`, `session:auth:revoked_after:tenant:*`). Other services request revocation via events or APIs and must not write watermark keys directly.
+The Account Service is the sole writer for auth revocation watermark keys (`session:auth:revoked_after:account:*`, `session:auth:revoked_after:tenant:*`, `session:auth:revoked_after:membership:<accountId>:<tenantId>`). Other services request revocation via events or APIs and must not write watermark keys directly.
 
 Billing-safe mutation authority contract:
 
@@ -298,6 +299,7 @@ Membership-change producer contract:
 
 - The Account Service emits membership-change events with `eventId`, `accountId`, `tenantId`, `membershipVersion`, changed roles, and a flag indicating whether gameplay admission remains allowed.
 - `membershipVersion` is monotonic per `{accountId, tenantId}` and must advance on any membership or role change that can affect gameplay admission or caller-bound tenant authority.
+- When a membership or tenant-role change invalidates existing caller-bound tenant authorization, the Account Service must also advance `session:auth:revoked_after:membership:<accountId>:<tenantId>` so previously issued control-plane tokens lose tenant authority immediately rather than waiting for expiry.
 - Consumers treat duplicate/older versions as no-ops and reconcile gaps with authoritative membership reads.
 
 Entitlement producer contract:
@@ -373,7 +375,7 @@ Canonical non-login authorization/entitlement errors:
   ```
 
   Error responses use the standard `shared.v1.ErrorDetail` structure and `AuthenticationErrorCodes` as described below.
-- `POST /auth/player-bootstrap` – authenticate a first-party player UI and return a short-lived `player-bootstrap` token profile for gameplay bootstrap only. This endpoint must issue a dedicated audience (`aud=player-bootstrap`), back the token with `session:auth:account:<accountId>:<tokenHash>`, and must not return a control-plane Browser JWT.
+- `POST /auth/player-bootstrap` – authenticate a first-party player account and return a short-lived `player-bootstrap` token profile for gameplay bootstrap only. This endpoint must issue a dedicated audience (`aud=player-bootstrap`), back the token with `session:auth:account:<accountId>:<tokenHash>`, must not return a control-plane Browser JWT, and must not perform tenant-specific admission or entitlement checks.
 - `POST /auth/connect-token` – issue a short-lived gameplay connect token for one `{tenantId, gameInstanceId}` target for first-party WebSocket handshake policy on `/ws/game/**`. This endpoint is caller-bound to the authenticated player bootstrap identity, must not accept arbitrary `accountId`, and is not a general control-plane Browser JWT endpoint.
 - `POST /auth/logout` – revoke only the currently presented token. The service computes `tokenHash` from `Authorization: Bearer <token>`, deletes associated `session:auth:*:<tokenHash>` allowlist entries, and emits an audit event.
 - `POST /auth/logout-all` – revoke all active tokens for the authenticated account by setting `session:auth:revoked_after:account:<accountId>` to now and emitting an audit event. This operation is idempotent.
@@ -415,7 +417,7 @@ curl -X POST http://localhost:8080/auth/login \
 - `RequestPasswordReset(RequestPasswordResetRequest) returns (RequestPasswordResetResponse)` – send a reset token.
 - `CompletePasswordReset(CompletePasswordResetRequest) returns (CompletePasswordResetResponse)` – reset the password using a token.
 - `LinkExternalAccount(LinkExternalAccountRequest) returns (LinkExternalAccountResponse)` – attach a third-party account.
-- `IssuePlayerBootstrapToken(IssuePlayerBootstrapTokenRequest) returns (IssuePlayerBootstrapTokenResponse)` – authenticate a first-party player UI and issue the short-lived `player-bootstrap` token profile used only for gameplay bootstrap.
+- `IssuePlayerBootstrapToken(IssuePlayerBootstrapTokenRequest) returns (IssuePlayerBootstrapTokenResponse)` – authenticate a first-party player account and issue the short-lived `player-bootstrap` token profile used only for gameplay bootstrap.
 - `IssueConnectToken(IssueConnectTokenRequest) returns (IssueConnectTokenResponse)` – issue short-lived gameplay connect token for `/ws/game/**` handshake policy.
 - `GetCallerTenantMembership(GetCallerTenantMembershipRequest) returns (GetCallerTenantMembershipResponse)` – authoritative caller-bound account-tenant membership/role lookup for billing-safe mutation guards.
 - `GetTenantMembershipForAccount(GetTenantMembershipForAccountRequest) returns (GetTenantMembershipForAccountResponse)` – cross-tenant membership lookup for billing/reporting roles.

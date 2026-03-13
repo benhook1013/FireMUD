@@ -63,6 +63,7 @@ Operational constraints:
 - If a pause does not reach `PAUSED` within a documented budget, the backup Job should fail fast (skip the dump) and alert operators rather than silently holding the game in a paused state or producing an inconsistent backup.
   - Recommended budget: `max_pause_wait = max(10s, 2 * tick_interval_ms)` for the affected scope.
   - Recommended alert threshold: page if `max_pause_wait` is exceeded for any production backup attempt, or if the scope remains `PAUSED` for longer than `3 * max_pause_wait` (indicating the resume step failed).
+  - Severity contract: when the affected scope is player-facing, “pause wait exceeded” and “scope still paused” alerts are **P0** because command processing is blocked for that scope. Freshness/verification failures remain `P1`.
   - Backup tooling should expose pause metrics with unambiguous units (for example `backup_tick_pause_wait_seconds` and `backup_tick_pause_duration_seconds`) and include `tenantId`/`regionId` labels only when the pause scope is already bounded to avoid high cardinality.
 - Backup tooling should also expose matching budget gauges (`backup_tick_pause_wait_budget_seconds` and `backup_tick_pause_duration_budget_seconds`) as first-class emitted metrics for each backup attempt/scope so alert rules do not hardcode thresholds that can drift from the documented cadence-derived budgets.
   - These gauges must already carry the same scope labels as the observed pause metrics (`scope_type`, `tenantId`, `regionId` when bounded). Prometheus rules may derive fallback breach indicators from them, but should not try to reconstruct scoped budget gauges from `tick_interval_ms` alone because that loses alias-scope context and can break label matching.
@@ -306,6 +307,14 @@ Until `region_id` is enforced end-to-end, backup dashboards and alerts must make
 
 Restoring a player-facing environment (`hobby-self-hosted`, `staging`, or `production`) from backup recreates Kubernetes Secrets and ConfigMaps as they existed at the time of the snapshot. To avoid bringing back stale or compromised credentials, operators must rotate critical secrets immediately after a restore.
 
+Restore isolation is mandatory. Before restoring manifests or PostgreSQL into a player-facing environment, operators must place the environment in a quarantine state so snapshot-era trust material cannot serve real traffic during recovery:
+
+- scale the public Gateway and TCP Proxy workloads to zero, or detach their external `LoadBalancer` / Ingress exposure,
+- prevent DNS or traffic-manager cutover to the restored environment,
+- keep quarantine in place until post-restore hardening, external credential validation, required sanitization evidence, and smoke checks all succeed.
+
+It is not sufficient to rely on “operators will not send traffic yet” as a procedural control. The restored environment must be technically unable to accept player-facing traffic until the hardening sequence is complete.
+
 Post-restore hardening is performed by a dedicated Kubernetes Job (for example `post-restore-secret-hardening`) that coordinates multiple flows:
 
 1. JWT signing key and JWKS rotation:
@@ -364,13 +373,14 @@ The `post-restore-secret-hardening` Job runs after PostgreSQL and core services 
 
 Runbooks should treat this Job (or equivalent operator automation for hobby/self-hosted) as a mandatory step in any player-facing disaster recovery:
 
-1. Restore PostgreSQL and Kubernetes manifests as described above.
-2. Run `post-restore-secret-hardening` in the target namespace and wait for it to complete successfully.
-3. Confirm workload, bridge, and operator leaf certificates have been reissued and peers have converged on the new identities.
-4. Run `dev-tools/restores/validate-external-credentials.sh <hobby-self-hosted|staging|production>` with environment-specific expected values and ensure it succeeds.
-5. For staging restores from production-origin data, ensure data sanitization evidence exists and is referenced by `SANITIZATION_EVIDENCE_REF`.
-6. Confirm application health checks, login/session flows, and JWT validation.
-7. Only then route external or player traffic to the restored cluster.
+1. Enter restore quarantine by removing or disabling external traffic paths to Gateway and TCP Proxy.
+2. Restore PostgreSQL and Kubernetes manifests as described above.
+3. Run `post-restore-secret-hardening` in the target namespace and wait for it to complete successfully.
+4. Confirm workload, bridge, and operator leaf certificates have been reissued and peers have converged on the new identities.
+5. Run `dev-tools/restores/validate-external-credentials.sh <hobby-self-hosted|staging|production>` with environment-specific expected values and ensure it succeeds.
+6. For staging restores from production-origin data, ensure data sanitization evidence exists and is referenced by `SANITIZATION_EVIDENCE_REF`.
+7. Confirm application health checks, login/session flows, and JWT validation.
+8. Only then remove quarantine and route external or player traffic to the restored cluster.
 
 For hobby/self-hosted environments that do not use the Kubernetes Job template directly, operators must run an equivalent one-shot restore-hardening automation that performs the same four control groups (JWT/JWKS rotation, DB credential rotation, certificate reissuance, external credential validation) and writes evidence to `design/operations/deployments/hobby-self-hosted/recovery/<recovery-ref>.json` before reopening player traffic.
 
@@ -421,6 +431,31 @@ Freshness policy:
 - `restoreDrillLastSuccessAt` should be within the last 30 days unless an explicit break-glass waiver is recorded.
 
 This evidence is consumed by production CI and preflight and is mandatory before applying a `roll-forward-only` production release. Validation must fail when `promotionAttestationRef` or `serviceDigests` do not match the attestation being promoted.
+
+## Production First-Live Backup Evidence
+
+Before opening production to player traffic for the first time, or reopening it after a restore into a fresh environment boundary, operators must record proof that the backup pipeline is already functioning for that environment.
+
+Canonical evidence path:
+
+- `design/operations/deployments/production/backup-readiness/first-live-<deployment-ref>.json`
+
+Required fields:
+
+- `environment` (`production`)
+- `deploymentRef`
+- `assessedAt`
+- `assessedBy`
+- `backupStorageBinding`
+- `backupLastSuccessAt`
+- `backupVerifyLastSuccessAt`
+- `evidenceRefs[]`
+
+Validation rules:
+
+- `backupLastSuccessAt` must point to a successful logical backup upload produced against the live production environment binding.
+- `backupVerifyLastSuccessAt` must point to a successful verification run against that same environment binding.
+- Production traffic-open preflight must fail when this evidence is missing, stale, or bound to the wrong bucket/endpoint.
 
 ## Hobby Backup Compliance Evidence
 

@@ -42,16 +42,18 @@ is marked `OUT_OF_SYNC` and a reconciliation process replays the canonical
 revisions until domain services report a matching draft digest for that scope. Each participating domain service exposes a read-only `GetDraftDesignDigest` API with a typed scope selector (`oneof {versionId, scriptPatchVersion}`) and returns at minimum:
 
 - `tenantId`, and exactly one scope key (`versionId` or `scriptPatchVersion`)
-- `appliedCommitId` (or `lastAppliedRevisionId` if the service applies at revision granularity)
+- `appliedCommitId`, meaning the highest commit whose full revision set has been durably applied for that scope
 - `contentDigest` (a stable hash of the service’s Draft template graph relevant to publishing)
 - `digestSchemaVersion` so hash semantics can evolve without ambiguity
+
+Services may keep revision-granularity ledgers internally for replay and diagnostics, but publish gating and reconciler comparisons must use `appliedCommitId` only. A participant must not expose only `lastAppliedRevisionId` as its convergence token for a multi-revision commit.
 
 `designSyncStatus` must transition to `OUT_OF_SYNC` whenever publish-affecting generation inputs for a target version change. Such inputs must be changed through Game Design-controlled Draft workflows and committed like any other design asset; mutable World Management operational defaults are not allowed to alter the effective Draft graph for a version.
 
 Canonical digest RPC contract:
 
 - Request: `GetDraftDesignDigestRequest { tenantId, scope: oneof { versionId, scriptPatchVersion } }`
-- Response: `GetDraftDesignDigestResponse { tenantId, scope, appliedCommitId or lastAppliedRevisionId, contentDigest, digestSchemaVersion }`
+- Response: `GetDraftDesignDigestResponse { tenantId, scope, appliedCommitId, contentDigest, digestSchemaVersion }`
 - Services that do not support a scope (for example `scriptPatchVersion` for World/Entity) must return `UNSUPPORTED_SCOPE`; they must not silently reinterpret scope fields.
 
 Game Design also computes a control-plane digest over normalized publish-critical metadata (for example `game_template_*_ref` and `version_asset`) and validates it in the same `designSyncStatus` gate using a dedicated read-only API (`GetDesignControlPlaneDigest`).

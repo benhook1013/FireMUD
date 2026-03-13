@@ -10,7 +10,7 @@ Centralized logging and administration tools for the platform. Collects log data
 - Offer dashboards and search for operators and moderators by embedding Kibana and Grafana views.
 - Define moderation policy, issue moderation actions, and keep auditable moderation records
 - Record audit trails for feature flag changes and account events.
-- Monitor **coordination and tick health** across tenants/regions and drive automated remediation where safe (for example, pausing ticks or triggering scoped coordination resets based on Redis/DB signals exposed by the Game Session Service).
+- Monitor **coordination and tick health** across tenants/regions and drive automated remediation where safe by issuing documented Game Session control-plane requests (for example, pausing ticks or requesting scoped remediation based on Redis/DB signals exposed by the Game Session Service).
 
 ## Architecture / Design Notes
 
@@ -21,10 +21,11 @@ In addition to log and moderation tooling, the service acts as a **control-plane
 - Consumes metrics and health information published by the Game Session Service (for example, per-region status such as `HEALTHY`, `DEGRADED`, or `COORDINATION_UNTRUSTWORTHY`).
 - Exposes admin APIs and UI controls to:
   - Pause or resume tick execution for specific `<tenantId, regionId>` pairs.
-  - Trigger **scoped coordination resets** using the runbooks in [Redis Operations & Migrations](../../system-architecture-redis-operations.md) (for example, per-region or per-deployment resets).
+  - Request **scoped coordination remediation** through Game Session control APIs and operator runbooks in [Redis Operations & Migrations](../../system-architecture-redis-operations.md).
 - Implements guarded automation that:
   - Automatically pauses ticks and marks regions as unhealthy when dual-leader or split-brain signals are detected.
-  - Optionally performs safe, narrow coordination resets (such as single-region resets with clean tick ledgers) without requiring an operator to be present, while still emitting audit events for every action.
+  - May request safe, narrow remediation through Game Session-owned control APIs without requiring an operator to be present, while still emitting audit events for every action.
+Game Session remains the only service allowed to mutate gameplay coordination state or execute tick pause/resume behavior. Logging & Admin owns operator UX, automation policy, and audit only; it does not become the runtime state owner for remediation.
 All admin APIs are secured via role-based access control integrated with the Account Service.
 
 ### Availability Partitioning

@@ -207,6 +207,7 @@ FireMUD uses a simple promotion flow from pull requests through staging to produ
 - Production overlay PRs must include exactly one in-repo staging promotion attestation under `design/operations/deployments/production/attestations/<deployment-ref>.json` that follows `system-architecture-promotion-attestation.md`. Production PRs are rejected if they reference digests that cannot be tied to that attestation, a successful staging deployment record with live-state verification, and a staging deployment record whose `secretComplianceStatus` is `pass`.
 - Production overlay PR CI must evaluate the attestation and, when the attestation classifies the release as `roll-forward-only`, the matching backup-readiness evidence before merge. Deferring those checks to operator-only preflight is non-compliant.
 - Staging apply evidence must include the in-repo deployment record `design/operations/deployments/staging/deployments/<stagingOverlayCommitSha>.json`; production promotion validation fails when this record is missing, digest-mismatched, lacks live-state verification, or lacks passing secret-compliance evidence.
+- Player-facing preflight and operator validation must also verify environment bootstrap completeness and external integration isolation before apply; these checks are not limited to restore events.
 
 Rollbacks are handled by resuming a previously known-good image digest set and re-applying the staging or production manifests with those digests. See the Deployment Runbook for the step-by-step operator flow.
 Before approving a production promotion, deployment evidence must classify rollback mode as either:
@@ -225,6 +226,27 @@ For production releases classified as `roll-forward-only`, promotion evidence mu
 The canonical evidence path is `design/operations/deployments/production/backup-readiness/<deployment-ref>.json`, and production CI/preflight must reject `roll-forward-only` promotions when that evidence is missing, stale, or not bound to the attestation/digest set being promoted.
 
 Pre-apply policy checks for staging and production must run through the canonical preflight contract in `system-architecture-deploy-preflight-policy.md`. Static checks run in overlay PR CI, and resolved-manifest/runtime checks run in operator preflight execution. Both use the same policy IDs and evidence shape.
+
+## Canonical Deployment Evidence Lifecycle
+
+FireMUD uses one deployment-evidence chain per deployment event so promotion, rollback, and incident review all answer from the same record set:
+
+1. Preflight produces `design/operations/deployments/<environment>/preflight/<deployment-ref>.json`.
+2. Secret-compliance validation produces or references `design/operations/secret-compliance/<environment>.yaml` plus immutable supporting evidence.
+3. Operator apply produces or updates the environment deployment record:
+   - staging: `design/operations/deployments/staging/deployments/<overlayCommitSha>.json`
+   - production: `design/operations/deployments/production/deployments/<overlayCommitSha>.json`
+   - hobby-self-hosted: `design/operations/deployments/hobby-self-hosted/deployments/<deployment-ref>.json`
+4. Production promotion references exactly one staging attestation at `design/operations/deployments/production/attestations/<deployment-ref>.json`.
+5. If the release is `roll-forward-only`, production also references `design/operations/deployments/production/backup-readiness/<deployment-ref>.json`.
+
+Lifecycle rules:
+
+- The deployment record is the canonical answer to “what is currently deployed and promotable for this environment.”
+- Preflight artifacts, secret-compliance snapshots, smoke evidence, and live-state verification are supporting evidence linked from the deployment record rather than parallel sources of truth.
+- Re-applying the same overlay commit does not create a second competing promotion record; operators update the same deployment record with a new apply event timestamp, new live-state evidence, and the outcome of the latest smoke checks.
+- A promotion attestation is valid only if its referenced staging deployment record remains the latest successful apply record for that staging overlay commit.
+- Rollback uses the deployment record and original attestation lineage for the digest set being restored.
 
 ## Secret Compliance Gate
 
