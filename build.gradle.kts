@@ -301,7 +301,24 @@ tasks.register<Exec>("devUp") {
         "--wait",
         "--wait-timeout",
         "180",
-        "--no-build"
+        "--no-build",
+        "postgres",
+        "redis-coord",
+        "redis-cache",
+        "minio",
+        "redisinsight",
+        "pg-dump-cron",
+        "account-service",
+        "gateway",
+        "automation-scripting-service",
+        "entity-management-service",
+        "game-design-service",
+        "game-logic-service",
+        "game-session-service",
+        "logging-admin-service",
+        "social-groups-service",
+        "tcp-proxy-service",
+        "world-management-service"
     )
 }
 
