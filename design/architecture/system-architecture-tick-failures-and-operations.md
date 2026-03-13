@@ -76,6 +76,12 @@ To make replays observable and bounded, Game Session maintains a **tick effect l
   - `entity_id`
   - the canonical ordering tuple used when the batch was formed
   - source-claim/removal state
+- Per-source minimum fields are:
+  - `command`: `command_id`, queue family, enqueue sequence
+  - `timer`: timer member ID, `due_ms`, normalized due-tick value used for ordering
+  - `retry`: retry member/effect identity, `retry_count`, `next_eligible_tick_id`
+  - `remote_followup`: durable follow-up row ID, `target_region_epoch`, `due_tick_id`
+- Recovery tooling may store and inspect richer per-source payloads, but deterministic replay and cleanup must remain possible from the documented fields above.
 - For commands, the same durable transaction that creates the tick batch and selected-work manifest also advances the command record to `BOUND_TO_BATCH`; commands that never reach that state must still converge to a terminal command outcome during recovery or reset handling.
 - For any `(tenant_id, region_id, region_epoch, tick_id, effect_key)` there must eventually be **exactly one terminal state**:
   - `status = APPLIED` – effect successfully committed to domain state.
@@ -119,6 +125,17 @@ Command recovery must converge just like effect recovery:
 - Commands that are `BOUND_TO_BATCH` follow the batch/effect replay path and converge based on the terminal outcomes of the effects tied to that batch.
 - Reconciliation of command records is part of the same operational scope as ledger replay/reset tooling; operators must not need a separate ad-hoc command repair path just to clear dedupe rows stranded before staging.
 - This keeps command deduplication safe: the same `commandId` can be retried by clients for status lookup without leaving an unexecutable, permanently non-terminal record behind.
+
+Minimum command-status surface for operators and clients:
+
+- Status is keyed by `(tenantId, gameInstanceId, commandId)`.
+- It exposes at least:
+  - `ackLevel`
+  - `ingressStatus`
+  - `terminalOutcome`
+  - `tickBatchId`
+  - bound tick coordinates when present (`regionId`, `regionEpoch`, `tickId`)
+- `LOST_BEFORE_STAGING` is a first-class terminal outcome, not an internal-only repair code.
 
 ### EffectId, Ledger Rows, and Guard Keys
 

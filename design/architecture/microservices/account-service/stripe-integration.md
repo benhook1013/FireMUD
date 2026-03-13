@@ -60,7 +60,11 @@ Stripe integration must preserve tenant isolation while allowing platform-level 
 
 - Each hosted game (`tenantId`) that requires billing has exactly one primary subscription record linking `accountId` and `tenantId`.  
 - Stripe customer IDs are per-account, not per-tenant, to reduce duplication; per-tenant subscriptions are differentiated by products/prices and metadata. This makes payment instruments an **account-owned shared resource** even when a caller is operating through a tenant-scoped billing-safe surface.  
-- Tenant-scoped billing-safe APIs that mutate payment methods must therefore disclose that the change can affect other tenants owned by the same platform account, and audit records must capture the full set of affected tenant subscriptions derivable at mutation time.  
+- Tenant-scoped billing-safe APIs that mutate payment methods must therefore follow an explicit shared-instrument contract:
+  - The mutation request must carry an acknowledgement field (for example `acknowledgeSharedInstrumentImpact=true`) so callers cannot accidentally apply an account-wide billing instrument change through a tenant-scoped route.
+  - The response must include `sharedInstrumentImpact=true` and `affectedTenantIds[]` listing the other tenant subscriptions for the same `accountId` that are expected to observe the changed payment instrument.
+  - Audit records must capture `actorAccountId`, `initiatingTenantId`, mutation type, the stable billing-customer reference, and the full `affectedTenantIds[]` set derivable at mutation time.
+  - If the service cannot determine the affected tenant set at mutation time, the mutation must fail closed rather than silently applying an account-wide change with incomplete audit scope.
 - If a future product requirement needs tenant-isolated payment instruments, the platform must move to tenant-scoped billing customers rather than treating the current shared-customer model as implicitly tenant-safe.  
 - Internal queries always filter billing records by both `accountId` and `tenantId` when operating on tenant-specific subscriptions or transactions. Cross-tenant reports are restricted to roles with appropriate `globalRoles` as defined in the shared role model:
   - `platformAdmin` for full cross-tenant reporting, and

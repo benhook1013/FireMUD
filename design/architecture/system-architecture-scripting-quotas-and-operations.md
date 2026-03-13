@@ -187,6 +187,7 @@ The canonical `script_event_audit` schema includes:
   - `eventType` – logical event key (for example, `onEnterRegion`, `onInterval`, `inventory.item_added`).
   - `scriptPatchVersion` – logical script patch identifier supplied by Game Session and Game Design and used to resolve the runtime script set.
   - `versionId` – optional internal compiled script version identifier used by the Automation & Scripting Service for engine-level debugging and migrations.
+  - `sourceService` – producing service identity for custom/service-specific events so operators can diagnose routing and authorization problems.
   - `tickId` – canonical tick identifier associated with the trigger when the trigger is tick-aligned or once commands are accepted into the tick system.
 
 - **Stage-aware outcome**

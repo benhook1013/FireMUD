@@ -51,14 +51,14 @@ Artifact lifecycle state for each exported prefix must be persisted in a dedicat
 - `version_asset_artifact`:
   - `tenant_id`
   - `version_id`
-  - `artifact_state` (`STAGED`, `PUBLISHED`, `FAILED`, `TOMBSTONED`, `PURGE_IN_PROGRESS`, `PURGE_FAILED`, `PURGED`)
+  - `artifact_state` (`STAGED`, `EXPORTED_UNATTESTED`, `PUBLISHED`, `FAILED`, `TOMBSTONED`, `PURGE_IN_PROGRESS`, `PURGE_FAILED`, `PURGED`)
   - `state_epoch` (monotonic CAS token)
   - `manifest_hash`
   - `last_workflow_id` (publish/repair workflow identity)
   - `last_error_code` / `last_error_message` (nullable; set on failed transitions)
   - `updated_at`
 
-`(tenant_id, version_id)` is unique in `version_asset_artifact`. All lifecycle transitions must use compare-and-set on `state_epoch` so concurrent publish/repair/purge workflows cannot race.
+`(tenant_id, version_id)` is unique in `version_asset_artifact`. This enum list is the canonical schema contract for both persistence and API validation. All lifecycle transitions must use compare-and-set on `state_epoch` so concurrent publish/repair/purge workflows cannot race.
 
 An index named `idx_game_assets_tenant` speeds up queries scoped to a tenant.
 Additional indexes may support common design-time queries (for example by

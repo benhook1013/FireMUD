@@ -132,7 +132,7 @@ resolved during authentication.
 | `PUT` | `/profiles/{accountId}` | Update profile information |
 | `GET` | `/tenants/{tenantId}/memberships/me` | Authoritative caller-bound membership and roles for billing-safe mutation guards |
 | `GET` | `/tenants/{tenantId}/memberships/{accountId}` | Cross-tenant membership lookup for billing/reporting roles (`billingAdmin`/`platformAdmin`) |
-| `POST` | `/auth/connect-token` | Issue a short-lived gameplay connect token for one `{tenantId, gameInstanceId}` target using caller-bound player bootstrap identity |
+| `POST` | `/auth/connect-token` | Issue a short-lived gameplay connect token for one `{tenantId, gameInstanceId}` target using caller-bound player bootstrap identity after live membership, runtime entitlement, and admission-pointer validation |
 | `GET` | `/internal/runtime/tenants/{tenantId}/entitlements` | Internal runtime/admission entitlement snapshot for gameplay-affecting services |
 | `GET` | `/tenants/{tenantId}/entitlements/me` | Caller-bound tenant-admin entitlement view for billing-safe UX |
 | `GET` | `/support/tenants/{tenantId}/entitlements` | Cross-tenant support-safe entitlement view with redacted fields |
@@ -144,9 +144,9 @@ resolved during authentication.
 | --- | --- | --- | --- |
 | Public auth/bootstrap | `/auth/login`, `/auth/request-password-reset`, `/auth/complete-password-reset`, `/auth/request-email-verification`, `/auth/verify-email`, `/auth/recover-username`, `/.well-known/jwks.json` | No pre-existing user JWT; endpoint-specific validation and abuse controls | Intended for initial auth/bootstrap flows. |
 | Player bootstrap issuance | `/auth/player-bootstrap` | First-party player account authentication bootstrap | Issues the `player-bootstrap` token profile only; must not return a control-plane Browser JWT or perform tenant-scoped admission checks. |
-| Player bootstrap | `/auth/connect-token` | Short-lived, memory-only `player-bootstrap` token in `Authorization: Bearer ...` | Caller identity is derived from bootstrap auth context; endpoint must not accept arbitrary `accountId` and must perform live membership and runtime entitlement checks for the requested `{tenantId, gameInstanceId}`. |
+| Player bootstrap | `/auth/connect-token` | Short-lived, memory-only `player-bootstrap` token in `Authorization: Bearer ...` | Caller identity is derived from bootstrap auth context; endpoint must not accept arbitrary `accountId` and must perform live membership, runtime entitlement, and admission-pointer checks for the requested `{tenantId, gameInstanceId}`. |
 | Authenticated account control-plane APIs | `/auth/logout`, `/auth/logout-all`, `/profiles/*`, `/accounts/*/export`, `/tenants/{tenantId}/memberships/me`, `/tenants/{tenantId}/memberships/{accountId}` | JWT middleware (`AuthTokenInterceptor` + route classification) | Must enforce route class, subject-binding rules, and tenant/global role checks. |
-| Internal service gRPC | `Authenticate`, `GetCallerTenantMembership`, `GetTenantMembershipForAccount`, `GetTenantEntitlementsForRuntime`, payment and profile gRPC APIs | mTLS caller identity plus method-level auth policy | Internal service surfaces are not edge-exposed directly. |
+| Internal service gRPC | `Authenticate`, `GetCallerTenantMembership`, `GetTenantMembershipForAccount`, `GetTenantMembershipForRuntime`, `GetTenantEntitlementsForRuntime`, payment and profile gRPC APIs | mTLS caller identity plus method-level auth policy | Internal service surfaces are not edge-exposed directly. |
 
 ### Subject-Binding Rules (Normative)
 
@@ -295,6 +295,20 @@ Billing-safe mutation authority contract:
 - Responses include `evaluatedAt` and `membershipVersion` so callers can verify freshness and detect stale reads.
 - If authoritative membership data is unavailable, callers must fail closed for billing-safe mutations rather than relying on JWT claims alone.
 
+Runtime caller contract:
+
+- `GetTenantMembershipForRuntime(accountId, tenantId)` is the authoritative internal membership surface for gameplay/runtime flows.
+  - Minimum request fields: `accountId`, `tenantId`, `requestId`.
+  - Minimum response fields: `accountId`, `tenantId`, `roles[]`, `gameplayAdmissionAllowed`, `membershipVersion`, `evaluatedAt`.
+- `GetTenantEntitlementsForRuntime(tenantId)` is the authoritative internal entitlement surface for gameplay/runtime flows.
+  - Minimum request fields: `tenantId`, `requestId`.
+  - Minimum response fields: `tenantId`, `subscriptionStatus`, `gameplayAvailable`, `quotas { ... }`, `evaluatedAt`, `entitlementVersion`, `tenantBillingSequence`.
+- `GetAdmissionPointer(tenantId)` is the authoritative gameplay-admissible-instance lookup owned by Game Session.
+  - Minimum request fields: `tenantId`, `requestId`.
+  - Minimum response fields: `tenantId`, `admissibleGameInstanceId`, `pointerVersion`, `updatedAt`.
+- Account Service must use `GetAdmissionPointer(tenantId)` when issuing `/auth/connect-token` so connect-token scope is pinned to the current admissible instance instead of a caller-supplied guess.
+- Runtime callers must treat missing required fields as contract failure and fail closed rather than inferring defaults.
+
 Membership-change producer contract:
 
 - The Account Service emits membership-change events with `eventId`, `accountId`, `tenantId`, `membershipVersion`, changed roles, and a flag indicating whether gameplay admission remains allowed.
@@ -376,7 +390,7 @@ Canonical non-login authorization/entitlement errors:
 
   Error responses use the standard `shared.v1.ErrorDetail` structure and `AuthenticationErrorCodes` as described below.
 - `POST /auth/player-bootstrap` – authenticate a first-party player account and return a short-lived `player-bootstrap` token profile for gameplay bootstrap only. This endpoint must issue a dedicated audience (`aud=player-bootstrap`), back the token with `session:auth:account:<accountId>:<tokenHash>`, must not return a control-plane Browser JWT, and must not perform tenant-specific admission or entitlement checks.
-- `POST /auth/connect-token` – issue a short-lived gameplay connect token for one `{tenantId, gameInstanceId}` target for first-party WebSocket handshake policy on `/ws/game/**`. This endpoint is caller-bound to the authenticated player bootstrap identity, must not accept arbitrary `accountId`, and is not a general control-plane Browser JWT endpoint.
+- `POST /auth/connect-token` – issue a short-lived gameplay connect token for one `{tenantId, gameInstanceId}` target for first-party WebSocket handshake policy on `/ws/game/**`. This endpoint is caller-bound to the authenticated player bootstrap identity, must not accept arbitrary `accountId`, must validate live membership and runtime entitlements for the target tenant, must validate `gameInstanceId` against the current Game Session admission pointer, and is not a general control-plane Browser JWT endpoint.
 - `POST /auth/logout` – revoke only the currently presented token. The service computes `tokenHash` from `Authorization: Bearer <token>`, deletes associated `session:auth:*:<tokenHash>` allowlist entries, and emits an audit event.
 - `POST /auth/logout-all` – revoke all active tokens for the authenticated account by setting `session:auth:revoked_after:account:<accountId>` to now and emitting an audit event. This operation is idempotent.
   - The account watermark is the immediate revocation authority. Existing `session:auth:tenant:*` and `session:auth:global:*` keys for the account may be removed asynchronously by bounded background cleanup and are not required for immediate correctness.
@@ -418,7 +432,7 @@ curl -X POST http://localhost:8080/auth/login \
 - `CompletePasswordReset(CompletePasswordResetRequest) returns (CompletePasswordResetResponse)` – reset the password using a token.
 - `LinkExternalAccount(LinkExternalAccountRequest) returns (LinkExternalAccountResponse)` – attach a third-party account.
 - `IssuePlayerBootstrapToken(IssuePlayerBootstrapTokenRequest) returns (IssuePlayerBootstrapTokenResponse)` – authenticate a first-party player account and issue the short-lived `player-bootstrap` token profile used only for gameplay bootstrap.
-- `IssueConnectToken(IssueConnectTokenRequest) returns (IssueConnectTokenResponse)` – issue short-lived gameplay connect token for `/ws/game/**` handshake policy.
+- `IssueConnectToken(IssueConnectTokenRequest) returns (IssueConnectTokenResponse)` – issue short-lived gameplay connect token for `/ws/game/**` handshake policy after validating live membership, runtime entitlements, and the current admission pointer for the target `{tenantId, gameInstanceId}`.
 - `GetCallerTenantMembership(GetCallerTenantMembershipRequest) returns (GetCallerTenantMembershipResponse)` – authoritative caller-bound account-tenant membership/role lookup for billing-safe mutation guards.
 - `GetTenantMembershipForAccount(GetTenantMembershipForAccountRequest) returns (GetTenantMembershipForAccountResponse)` – cross-tenant membership lookup for billing/reporting roles.
 - `GetTenantMembershipForRuntime(GetTenantMembershipForRuntimeRequest) returns (GetTenantMembershipForRuntimeResponse)` – authoritative internal membership read for gameplay admission, reconnect/resume, and membership-gap reconciliation.

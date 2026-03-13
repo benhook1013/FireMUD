@@ -254,7 +254,7 @@ Bulk key-walking is reserved for **offline maintenance tooling**, not tick execu
       - Recovery rule:
         - These hot-path scripts are intentionally **not** the mechanism for reconstructing a lost older tick after tail-loss or reset.
         - First implementation replays older work directly from durable tick-batch manifests and ledger rows without re-materializing that old tick into `pending`.
-        - If FireMUD later introduces a dedicated recovery-restage script, it must be registered as a separate maintenance script category with its own explicit invariants; it must not silently reuse the normal tick staging contract.
+        - If FireMUD later introduces a dedicated recovery-restage script, it must be registered as a separate maintenance script category with its own explicit invariants, compatibility mode, and runbook entry; it must not silently reuse the normal tick staging contract.
 
 - **Pattern 3 – Effect-key sets for staging (no duplicate staging)**
   - Staged effects inside `pending` are keyed by a deterministic `effectKey` (for example `entity:<entityId>:apply:damage:<commandId>`), and scripts use **set-style semantics**:

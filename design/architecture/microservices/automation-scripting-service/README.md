@@ -192,7 +192,7 @@ interaction.
 
 ### Hot Reload & Failure Handling
 
-Script definitions are updated via `NotifyScriptVersionUpdate` from the Game Design Service. For each runtime scope carrying a newly published `scriptPatchVersion`:
+Script definitions are updated via `NotifyScriptVersionUpdate` from the Game Design Service. This signal starts tenant-scoped readiness ingestion for `<tenantId, scriptPatchVersion>`; instance-scoped reload happens later only when Game Session pins an already-`READY` patch for a specific runtime scope:
 
 - `NotifyScriptVersionUpdate` is a **tenant-readiness ingestion** signal, not an instance activation signal. It causes Automation & Scripting to ingest compiled graphs and bindings for `<tenantId, scriptPatchVersion>`, then run tenant-scoped readiness checks and `onLoad` before any running instance is allowed to pin that patch.
 - Tenant readiness is tracked separately from runtime-scope pin observation:

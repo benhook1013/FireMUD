@@ -89,6 +89,29 @@ Ingress deduplication is not sufficient on its own: every accepted command must 
   - Re-sends with a new `commandId` remain new commands.
 - `ACCEPTED_DURABLE` designs may replace `LOST_BEFORE_STAGING` with a stronger replay/re-drive contract, but that contract must be documented explicitly in the feature design.
 
+#### Command Outcome Status Surface (Required)
+
+Command outcome convergence must be externally observable through one canonical status surface. Whether this is implemented as an API, event stream, or both, the contract is:
+
+- Lookup key:
+  - `(tenantId, gameInstanceId, commandId)`
+- Minimum returned fields:
+  - `commandId`
+  - `ackLevel`
+  - `ingressStatus`
+  - `terminalOutcome` (nullable until terminal)
+  - `tickBatchId` (nullable until `BOUND_TO_BATCH`)
+  - `regionId`, `regionEpoch`, `tickId` (nullable until bound)
+  - `updatedAt`
+- Terminal outcome semantics:
+  - `APPLIED` – command effects converged to a successful terminal result.
+  - `ABANDONED` – command reached a terminal failure after being durably bound to a batch.
+  - `LOST_BEFORE_STAGING` – command never became batch-bound and was terminated by reconcile/reset handling.
+- Delivery rules:
+  - Synchronous status lookups and any emitted status events must expose the same terminal outcome vocabulary.
+  - Events are advisory for latency; the durable status surface is authoritative.
+  - Clients must not infer command success from ingress acknowledgement alone.
+
 #### Ingress Deduplication Store (Required)
 
 To make the re-submission contract enforceable across failover and scoped coordination resets, ingress deduplication must use a durable record outside Redis coordination queues:
@@ -176,6 +199,24 @@ Conceptually, tick commit proceeds through these phases:
      - `entityId`
      - the canonical ordering tuple `(priority, due_tick_id_or_due_ms_normalized, enqueue_seq, source_kind, entityId, commandId_or_effectKey)`
      - source-claim/removal state indicating whether the source entry still resides in Redis/PostgreSQL source structures or has been durably claimed elsewhere
+   - Source-specific minimum manifest fields:
+     - `command`:
+       - `commandId`
+       - queue key / logical queue family
+       - enqueue sequence used for ordering
+     - `timer`:
+       - timer member ID
+       - `dueMs`
+       - normalized due tick value used for ordering
+     - `retry`:
+       - retry member ID or effect identity
+       - `retryCount`
+       - `nextEligibleTickId`
+     - `remote_followup`:
+       - durable follow-up row ID
+       - `targetRegionEpoch`
+       - `dueTickId`
+   - Implementations may persist additional fields for convenience, but replay and source cleanup must not depend on undocumented per-source payloads beyond this contract.
    - Tick effect ledger rows for the selected effects are inserted in the same PostgreSQL transaction as the tick-batch record with `status = SCHEDULED`.
    - Any selected command tied to the batch moves its durable command record to `BOUND_TO_BATCH` in the same transaction.
    - Source-claim rule (required):

@@ -34,7 +34,7 @@ The documents linked from this overview describe the target-state design, but th
 - **Telnet clients maintain sticky TCP connections only to the TCP Proxy Service**, which buffers **active input** but **discards it across reconnects**
 - **Reconnection logic is handled in layers** to preserve gameplay continuity
 - **Synchronous internal service-to-service communication from the Game Session Service onward uses gRPC**, with strict schema enforcement and low latency. All calls are encrypted with **mutual TLS**; see [Security Architecture](./system-architecture-security.md). Asynchronous cross-service signaling (for example edge disconnect hints and saga/domain events) uses documented event contracts and idempotency keys.
-- **Session state is stored in Redis** to keep services stateless and enable full reconnect recovery
+- **Gameplay session bindings and tick coordination state are stored in Redis**, while durable Game Session control-plane metadata remains in PostgreSQL; this keeps the gameplay coordination path stateless at the pod level and enables full reconnect recovery
 - **Game definitions and rules are data-driven and editable via tooling without redeploying code**; see the [Game Design Service documentation](./microservices/game-design-service/README.md).
 - **Game Session Service orchestrates live game instances**, handling tick execution and runtime configuration
 - [**Feature flags**](./microservices/game-design-service/feature-flags.md) are defined at design-time in the Game Design Service; Logging & Admin provides the operator UI for runtime toggles, while Game Session owns the runtime override state and enforcement during gameplay.

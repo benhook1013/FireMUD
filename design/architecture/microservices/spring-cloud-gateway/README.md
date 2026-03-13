@@ -12,6 +12,7 @@ An OpenAPI specification for these REST endpoints lives in `services/spring-clou
 - **Rate limiting and Redis wiring:** Implemented using Spring Cloud Gateway’s `RequestRateLimiter` filter backed by the Cache/Rate‑Limit Redis profile configured in `application.yml` for `dev` and `prod` profiles.
 - **Telnet WebSocket bridge expectations:** Traffic from the TCP Proxy Service always targets `/ws/game/**` via `GATEWAY_WS_URL`, and the proxy→gateway hop is mTLS-authenticated in player-facing environments.
 - **WebSocket close/handshake observability contract:** Gateway Architecture requires `gateway.websocket.closes{reason,subreason}`, `gateway.websocket.handshake.rejected`, and `gateway.websocket.slow_client_closes`. Treat this as a required parity checklist for implementation and operations sign-off in each environment.
+- **Handshake error classification:** Non-`101` `/ws/game/**` handshake failures must emit the canonical bounded error class (for example via `X-Firemud-Handshake-Error-Class` and matching structured logs) so clients and operators can distinguish `CONNECT_TOKEN_REJECTED`, `POLICY_DENY`, `BACKEND_UNAVAILABLE`, `REPLAY_CHECK_UNAVAILABLE`, and other retry classes defined in Gateway Architecture and Reconnection Strategy.
 
 ### Responsibilities
 

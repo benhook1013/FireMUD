@@ -13,7 +13,7 @@ This directory contains detailed design documents for each core microservice in 
 | [Entity Management Service](./entity-management-service/) | Controls player characters, NPCs, items, and inventory management. |
 | [Game Design Service](./game-design-service/) | Provides tools for designing worlds, actions, items, and game events. |
 | [Game Logic Service](./game-logic-service/) | Implements core gameplay mechanics, command parsing, and actions. |
-| [Game Session Service](./game-session-service/) | Orchestrates live gameplay sessions and tick execution; owns gameplay session bindings in Redis. |
+| [Game Session Service](./game-session-service/) | Orchestrates live gameplay sessions and tick execution; owns gameplay session bindings and tick coordination in Redis plus durable game-instance/runtime control metadata in PostgreSQL. |
 | [Logging & Admin Service](./logging-admin-service/) | Provides centralized logging, analytics, and administration tools; owns moderation policy and audit logs; provides operator UX and auditing for quota/limit overrides represented as an overlay on Account Service entitlements. |
 | [Social & Groups Service](./social-groups-service/) | Manages chat, guilds, and cross-game social networking features. |
 | [Spring Cloud Gateway](./spring-cloud-gateway/) | Routes WebSocket and HTTP traffic to backend services. |

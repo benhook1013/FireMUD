@@ -44,6 +44,11 @@ Clients should not be expected to recover from duplicate server greetings beyond
 
 On the Telnet path, `SESSION` remains an attach hint only until the proxy forwards the first non-`SESSION` line upstream. Because MCP control lines are forwarded upstream, they also end the period during which `SESSION` can affect the Proxy → Gateway WebSocket handshake. Clients that want to use both `SESSION` and MCP must therefore send `SESSION` first, then start MCP negotiation (and then proceed to `LOGIN`) so the proxy can include any captured session hints in the initial handshake. After the first forwarded MCP or gameplay line, later `SESSION` lines are no longer attach hints and are treated according to the TCP Proxy Service contract.
 
+Examples:
+
+- `SESSION` first, then MCP: `SESSION <gameInstanceId> <tenantId>` followed by `#$#mcp ...` causes the proxy to include the `SESSION` hints in the initial Proxy → Gateway handshake.
+- MCP first, then `SESSION`: `#$#mcp ...` followed later by `SESSION <gameInstanceId> <tenantId>` does **not** update the already-established bridge handshake; the later `SESSION` line is no longer an attach hint.
+
 Each endpoint then advertises its capabilities using `mcp-negotiate-can package: <name> min-version: <x> max-version: <y>` messages and finishes with `mcp-negotiate-end`. FireMUD uses version 2.0 of the `mcp-negotiate` package, so the package must be advertised explicitly and `mcp-negotiate-end` terminates negotiation. A package is considered active only after both sides have sent `mcp-negotiate-can` for it and both have sent `mcp-negotiate-end`. Implementations may defer using a package until receipt of the other side’s `mcp-negotiate-end`. Unknown packages are ignored so legacy clients remain unaffected.
 
 No other MCP traffic should be sent until both sides have exchanged their initial `mcp` lines and completed negotiation. Every subsequent message must include the agreed `authentication-key`.

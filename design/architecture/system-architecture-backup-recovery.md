@@ -271,12 +271,12 @@ Prometheus and Alertmanager should expose and alert on these metrics using rules
 - **Missed verification (P1/P2)**
   - Expression: “no successful verification in the last 24h” (for example, `time() - backup_verify_last_success_timestamp_seconds > 24 * 60 * 60`).
   - Labels similar to the backup alert, with a clear `runbook` annotation.
-- **Backup pause too long (P1)**
+- **Backup pause too long (P0 for player-facing scopes)**
   - Expression: pause wait or pause duration exceeds the emitted per-scope budget (for example `backup_tick_pause_wait_seconds > backup_tick_pause_wait_budget_seconds` or `backup_tick_pause_duration_seconds > backup_tick_pause_duration_budget_seconds`).
-  - Labels: `service="postgres-backup"`, `severity="P1"`, `owner="infra"`, `runbook="design/architecture/system-architecture-backup-recovery.md#backup-verification-restoration-testing"`.
-- **Backup scope stuck paused (P1)**
+  - Labels: `service="postgres-backup"`, `severity="P0"` when the affected scope is player-facing, `owner="infra"`, `runbook="design/architecture/system-architecture-backup-recovery.md#backup-verification-restoration-testing"`.
+- **Backup scope stuck paused (P0 for player-facing scopes)**
   - Expression: a pause gauge remains asserted after the emitted pause-duration budget has been exceeded (for example `backup_ticks_paused == 1 and backup_tick_pause_duration_seconds > backup_tick_pause_duration_budget_seconds`).
-  - Labels: `service="postgres-backup"`, `severity="P1"`, `owner="infra"`, `runbook="design/architecture/system-architecture-backup-recovery.md#backup-verification-restoration-testing"`.
+  - Labels: `service="postgres-backup"`, `severity="P0"` when the affected scope is player-facing, `owner="infra"`, `runbook="design/architecture/system-architecture-backup-recovery.md#backup-verification-restoration-testing"`.
 - **Legacy alias-scope usage (P2)**
   - Expression: `increase(backup_pause_scope_alias_requests_total[24h]) > 0` in production-like environments after canonical region scope is expected.
   - Labels: `service="postgres-backup"`, `severity="P2"`, `owner="infra"`, `runbook="design/architecture/system-architecture-backup-recovery.md#tick-pause-scope-migration-plan-normative"`.
@@ -436,6 +436,8 @@ This evidence is consumed by production CI and preflight and is mandatory before
 
 Before opening production to player traffic for the first time, or reopening it after a restore into a fresh environment boundary, operators must record proof that the backup pipeline is already functioning for that environment.
 
+This is a specialized `backup-readiness` artifact used for traffic-open gating, not a second unrelated evidence family. It lives under the same `design/operations/deployments/production/backup-readiness/` namespace as release-time backup evidence, but uses the `first-live-<deployment-ref>.json` naming pattern so tooling can distinguish “traffic-open readiness” from “roll-forward-only release readiness” without introducing a separate schema lineage.
+
 Canonical evidence path:
 
 - `design/operations/deployments/production/backup-readiness/first-live-<deployment-ref>.json`
@@ -456,6 +458,7 @@ Validation rules:
 - `backupLastSuccessAt` must point to a successful logical backup upload produced against the live production environment binding.
 - `backupVerifyLastSuccessAt` must point to a successful verification run against that same environment binding.
 - Production traffic-open preflight must fail when this evidence is missing, stale, or bound to the wrong bucket/endpoint.
+- The canonical gate for this artifact is the deployment preflight contract in `system-architecture-deploy-preflight-policy.md` (`PREFLIGHT-BACKUP-002`), and the deployment sequencing that consumes it is defined in `system-architecture-deployment-runbook.md`.
 
 ## Hobby Backup Compliance Evidence
 

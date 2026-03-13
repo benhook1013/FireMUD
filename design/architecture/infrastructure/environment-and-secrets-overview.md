@@ -84,7 +84,9 @@ For full descriptions of the variables and their defaults, open `environment-and
 - Docker Compose passes these variables to each container so Spring Boot can connect to the databases.
 - Secrets such as JWT signing keys are not required in development; random keys are generated on startup.
 
-### Production
+### Shared and Player-Facing Kubernetes Environments
+
+This section describes the Kubernetes-backed environments that use the shared `prod` application profile and Kubernetes Secrets delivery model. Unless a bullet explicitly says `production` only, the rules here apply to `hobby-self-hosted`, `staging`, and `production`.
 
 - Kubernetes `ConfigMap` objects store non‑secret configuration values like host names or feature flags.
 - Sensitive values (database passwords, JWT signing keys, TLS certificates) are stored in Kubernetes `Secret` objects.
@@ -183,7 +185,7 @@ Before the first deployment into `hobby-self-hosted`, `staging`, or `production`
 
 Bootstrap resources must be unique to the environment boundary. Shared namespace names such as `firemud` do not relax the requirement for separate staging and production secret sources, bucket bindings, or operator trust bindings.
 
-Player-facing preflight must fail when this bootstrap set is incomplete or when an external binding resolves to another environment’s target.
+Player-facing preflight must fail when this bootstrap set is incomplete or when an external binding resolves to another environment’s target. The authoritative preflight policy IDs and evidence contract for these checks are defined in `../system-architecture-deploy-preflight-policy.md`.
 
 ---
 

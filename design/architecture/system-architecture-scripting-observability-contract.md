@@ -35,6 +35,7 @@ Audit records must include at least:
   - `scriptPatchVersion`
   - `scriptEventId`
   - `isDryRun` (boolean)
+  - `sourceService` (required for custom/service-specific events; omitted for built-in events that originate entirely within Automation & Scripting)
 - Scheduling context (when applicable)
   - `triggerMode` (for example `NORMAL` vs `CATCH_UP`)
   - `dueTickId` and/or `dueAt` (for timers/intervals)

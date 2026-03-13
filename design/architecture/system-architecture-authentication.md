@@ -154,7 +154,7 @@ Any HTTP/gRPC route that depends on identity, roles, or tenant scoping must be p
 | --- | --- | --- | --- | --- |
 | Public | *(none)* | *(none)* | No | *(none)* |
 | Account-scoped | `session:auth:account:<accountId>:<tokenHash>` | Require authenticated caller; enforce subject binding (`accountId` path/body must match caller) unless route explicitly allows `platformAdmin` override | No | No tenant scope for auth; never require `session:auth:tenant:*` for account-scoped routes |
-| Player-bootstrap (tenant-targeted) | `session:auth:account:<accountId>:<tokenHash>` | Require a valid player-bootstrap token profile for the authenticated account | No | Used only for gameplay bootstrap routes such as `POST /auth/connect-token`; tenant access is established by live membership/entitlement checks during connect-token issuance, not by `session:auth:tenant:*` alone |
+| Player-bootstrap (tenant-targeted) | `session:auth:account:<accountId>:<tokenHash>` | Require a valid player-bootstrap token profile for the authenticated account | No | Used only for gameplay bootstrap routes such as `POST /auth/connect-token`; tenant access is established by live membership, entitlement, and admission-pointer checks during connect-token issuance, not by `session:auth:tenant:*` alone |
 | Pre-tenant discovery | `session:auth:account:<accountId>:<tokenHash>` | Require authenticated caller; no caller-supplied `tenantId` is trusted yet | No | Used only for authenticated lobby/discovery surfaces such as `WORLDS`; services must derive visible tenants by filtering authoritative membership/entitlement data server-side |
 | Tenant-scoped (regular) | `session:auth:account:<accountId>:<tokenHash>` + `session:auth:tenant:<tenantId>:<tokenHash>` | Require a tenant role in `scopedRoles[tenantId]` that authorizes the operation (for example `tenantAdmin`, `designer`, `moderator`, `player`) or `platformAdmin` | Yes | `tenantId` must be in `scopedRoles` for tenant-role callers; `platformAdmin` may target any tenant. `billingAdmin` and `support` must be rejected for `tenant_regular`. Enforce DB query scoping by `tenantId`. |
 | Billing-safe (tenant-scoped) | `session:auth:account:<accountId>:<tokenHash>` | Require caller-bound tenant membership with `tenantAdmin` for the target tenant | No tenant-billing watermark; yes membership watermark | `tenantId` must be validated against caller tenant scope; services must perform a live caller-bound membership/role check against authoritative account-tenant membership data (for example `GetCallerTenantMembership(tenantId)`) before allowing billing-safe mutations; this route must remain reachable even when the tenant is `suspended`/`canceled` for gameplay, but it must fail immediately after caller membership/role revocation via the membership watermark or the live membership check |
@@ -222,6 +222,10 @@ To avoid introducing a second independent end-user login model for first-party g
 - Bootstrap issuance API: Account Service endpoint (for example `POST /auth/player-bootstrap`) that authenticates the player account for first-party gameplay bootstrap only and returns one short-lived bootstrap token plus expiry metadata.
 - Issuer: Account/authentication control-plane only, after account authentication. Tenant membership and entitlement checks do not occur here because no gameplay tenant has been selected yet.
 - Connect-token issuance API: control-plane endpoint (for example `POST /auth/connect-token`) that returns exactly one short-lived token per request and logs `accountId`, `tenantId`, `gameInstanceId`, `jti`, and issuance timestamp.
+  - Before issuance, Account Service must perform a live membership check for `{accountId, tenantId}`, a live runtime entitlement check for `tenantId`, and a live admission-pointer read for `tenantId` via the Game Session control-plane API.
+  - If admission pointer state is unavailable or ambiguous, connect-token issuance fails closed with `ADMISSION_POINTER_UNAVAILABLE`.
+  - If the requested `gameInstanceId` does not equal the current `admissibleGameInstanceId`, connect-token issuance fails closed with `CONNECT_SCOPE_MISMATCH`; it must not mint a token for a non-admissible instance and rely on `PLAY` to correct it later.
+  - In the current single-admissible-instance design, clients should normally request the current gameplay-admissible instance (`"primary"` unless a future lobby protocol introduces explicit instance selection).
 - Transport: `X-Firemud-Connect-Token` header on `/ws/game/**` handshake.
 - Required claims: `accountId`, `tenantId`, `gameInstanceId`, `exp`, `jti`.
 - Lifetime: short-lived (target <= 30 seconds).
@@ -263,6 +267,7 @@ To remove ambiguity between connect-token admission and `LOGIN`, first-party web
 
 1. Call the dedicated first-party player bootstrap endpoint (for example `POST /auth/player-bootstrap`) and establish a short-lived player bootstrap identity.
 2. Request a short-lived gameplay connect token for one target `{tenantId, gameInstanceId}`. This call performs the live membership and runtime entitlement checks for that target.
+   - The issuance path must also validate the target against the authoritative admission pointer. If the target is no longer admissible, the request fails before socket open rather than issuing a stale token.
 3. Open gameplay WebSocket on `/ws/game/**` with `X-Firemud-Connect-Token`.
 4. Complete gameplay authentication in-band using `LOGIN` (or `LOGON`) and then lobby binding with `PLAY`.
 
@@ -272,6 +277,7 @@ Normative constraints:
 - `/ws/game/**` requires a valid connect token for non-proxy clients and rejects missing tokens with `403`.
 - Game Session must bind the verified connect context to the authenticated gameplay login: if `LOGIN` resolves to an `accountId` different from the connect-context `accountId`, the session fails closed with a canonical account-mismatch error and no gameplay scope is bound.
 - For first-party clients on `/ws/game/**`, the `PLAY` selection must match the connect-token scope `{tenantId, gameInstanceId}`. Scope mismatch is rejected with canonical error `CONNECT_SCOPE_MISMATCH`; clients must request a fresh connect token for the intended target and reconnect.
+- Because `/auth/connect-token` already validates against the authoritative admission pointer, `CONNECT_SCOPE_MISMATCH` at `PLAY` is treated as drift between issuance and admission (for example pointer movement during reconnect), not as normal stale-client correction.
 
 ### Mapping to the Account Service
 
