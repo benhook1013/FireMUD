@@ -66,7 +66,7 @@ root
 - `buildSrc/` – Shared Gradle convention plugins and build logic applied across modules.
 - `charts/` – Umbrella Helm chart for deploying all services together.
 - `config/` – Checkstyle, ESLint, git hooks, Hadolint, lychee link checker, Markdownlint, OpenAPI generator, protobuf (Buf), Redis, release automation, security scans, SpotBugs, and TypeScript configs.
-- `design/` – Architecture, operations, and user guide documentation.
+- `design/` – Architecture, operations, and user guide documentation; under `design/architecture/`, overview tables, responsibility matrices, glossary terms, and explicitly labeled canonical sections define target-state contracts for implementation unless a document says otherwise.
 - `dev-tools/` – Shell utilities for database backups and restores, ERD generation, development certificates, a CLI, API client configs (Insomnia and Kreya), data seeding, and a Gatling load-testing module.
 - `docker/` – Base Dockerfiles and Docker Compose stack for local development.
 - `gradle/` – Gradle version catalog, build conventions, and wrapper binaries.

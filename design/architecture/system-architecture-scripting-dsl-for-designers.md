@@ -200,6 +200,13 @@ Timer-driven handlers such as `onInterval` and `onTimerExpire` are **best-effort
 - Infrastructure hiccups (for example, Redis or gRPC outages) do not cause the same timer firing to be re-executed; the engine may retry idempotent downstream effects, but it does not re-run the DSL graph for a given `scriptEventId`.
 - As a result, timers should be treated as **hints**, not guaranteed ledgers. Design timer handlers so they can tolerate missed or delayed firings and recompute from current world state instead of assuming that every interval has executed exactly once.
 
+Example pattern:
+
+- Instead of designing “every 10 ticks, apply exactly 5 damage because this firing must always happen,” design “every 10 ticks, recompute whether the target is still inside the hazard area and, if so, emit the current hazard effect.”
+- Instead of assuming a patrol timer will visit every waypoint exactly once on schedule, store the patrol’s logical destination or mode in normal game state and let each firing compute the next valid move from the entity’s current position.
+
+These patterns keep timer-driven behavior correct even when an individual firing is skipped, delayed, or fenced during reload/rollback.
+
 ---
 
 ## Where to Go for More Detail

@@ -82,14 +82,15 @@ substituting defaults or partial data.
 Entity Management must classify its runtime persistence surface for cutover and migration tooling:
 
 - `S1` entity-owned durable state:
-  - character identity, account ownership, progression, currencies, and other account-scoped rows that do not require version remapping when the referenced templates remain valid;
-  - stable inventory/container membership for player-owned items when the contained item instances remain valid against the target version without remapping.
+  - `character` identity/account-ownership rows and equivalent progression/currency records that do not require version remapping when referenced templates remain valid;
+  - stable player-owned inventory/container membership for item instances that remain valid against the target version without remapping.
 - `S2` entity-owned version-mapped durable state:
-  - equipped-item bindings, learned abilities, starter-loadout references, class/archetype assignments, and any other durable rows whose validity depends on target-version template identifiers;
+  - equipment-slot bindings for equipped items whose template validity depends on the target version;
+  - learned-ability, starter-loadout, class/archetype, or equivalent durable character references whose validity depends on target-version template identifiers;
   - inventory or character rows that remain durable but reference templates requiring an approved remap to the target version.
 - `S3` entity-owned ephemeral state:
   - synthetic room-ground containers and their contents keyed by `(tenantId, gameInstanceId, roomInstanceId)`;
-  - transient containment or encounter-specific entities whose lifecycle is tied to the source `gameInstanceId`;
+  - transient containment, encounter-specific entities, corpses, summons, or equivalent rows whose lifecycle is tied to the source `gameInstanceId`;
   - any row family explicitly documented as instance-scoped only.
 
 Initial-slice rule:
@@ -102,6 +103,62 @@ Entity upgrade validation minimum contract:
 - The service must expose a cutover-validation API that accepts `tenantId`, `sourceGameInstanceId`, `targetVersionId`, and optional `remapSetId`.
 - The response must enumerate the entity-owned row families checked, the referenced template identifiers, and per-family outcomes `COMPATIBLE`, `REQUIRES_MAPPING`, or `INCOMPATIBLE`.
 - If the service currently has no `S2` rows for a given source instance, it must report that explicitly rather than collapsing the result into a generic success.
+
+Illustrative responses:
+
+- Durable rows present but no remap required:
+
+```json
+{
+  "tenantId": "t1",
+  "sourceGameInstanceId": "g-old",
+  "targetVersionId": "v2",
+  "checkedFamilies": [
+    {
+      "family": "equipment_bindings",
+      "referencedTemplateIds": ["itemTemplateId:iron-sword"],
+      "outcome": "COMPATIBLE"
+    }
+  ],
+  "hasS2Rows": true,
+  "result": "COMPATIBLE",
+  "remapSetRequired": false
+}
+```
+
+- Durable rows require remap:
+
+```json
+{
+  "tenantId": "t1",
+  "sourceGameInstanceId": "g-old",
+  "targetVersionId": "v3",
+  "checkedFamilies": [
+    {
+      "family": "class_assignment",
+      "referencedTemplateIds": ["classTemplateId:ranger-v1"],
+      "outcome": "REQUIRES_MAPPING"
+    }
+  ],
+  "hasS2Rows": true,
+  "result": "INCOMPATIBLE",
+  "remapSetRequired": true
+}
+```
+
+- No `S2` rows for a source instance:
+
+```json
+{
+  "tenantId": "t1",
+  "sourceGameInstanceId": "g-old",
+  "targetVersionId": "v2",
+  "checkedFamilies": [],
+  "hasS2Rows": false,
+  "result": "COMPATIBLE",
+  "remapSetRequired": false
+}
+```
 
 See [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md)
 and [Item & Equipment Balancing Tools](../game-design-service/item-equipment-balancing.md)

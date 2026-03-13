@@ -161,12 +161,17 @@ If a required compliance record is missing or stale, the environment is treated 
 Promotion gating policy:
 
 - `production`: non-compliant secret records are a hard block for promotion.
-- `staging`: non-compliant records are warnings through **June 30, 2026** and become a hard promotion gate on **July 1, 2026**.
+- `staging`: non-compliant records are warnings through **June 30, 2026** and become a hard promotion gate on **July 1, 2026**. This cutover applies to staging promotion/deployment evidence and any staging deployment intended to serve as production-promotion evidence; it does not mean every detached or quarantined staging drill must be treated as a promotion candidate.
 - `hobby-self-hosted`: operators must validate records before opening player-facing traffic.
 
 Promotion-evidence exception:
 
 - Even before **July 1, 2026**, a staging deployment record that will be referenced by a production promotion attestation must show `secretComplianceStatus=pass` at deployment time and include a `secretComplianceEvidenceRef`. A warning-only staging deployment may still exist for playtesting, but it is not eligible to produce production promotion evidence.
+
+Illustrative distinction:
+
+- A staging playtest deployment with `deployStatus=pass`, `smokeStatus=pass`, and `secretComplianceStatus=warning` may remain valid for detached or non-promotion playtesting before the cutover date.
+- That same deployment is invalid as production-promotion evidence; production attestation requires the referenced staging deployment to show `secretComplianceStatus=pass` and a valid `secretComplianceEvidenceRef`.
 
 ## Player-Facing Environment Bootstrap Requirements
 

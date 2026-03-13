@@ -34,6 +34,7 @@ Before opening production to player traffic for the first time, operators must p
 4. Record this evidence in the deployment record and require `PREFLIGHT-BACKUP-002=pass` before opening player traffic.
 
 If production must be opened before the normal schedules have accumulated history, operators must create an explicit bootstrap backup and verification record first. Opening traffic without proven backup success is non-compliant.
+This is a traffic-open gate, not a routine steady-state rollout gate.
 
 ## Overlay Deployment Flow (Staging and Production)
 
@@ -99,6 +100,7 @@ If production must be opened before the normal schedules have accumulated histor
    - Run `./dev-tools/deploy/preflight.sh hobby-self-hosted`.
    - Treat required preflight checks as blocking for player-facing traffic.
    - For first-live opens and reopen-after-restore events, require `PREFLIGHT-BACKUP-003=pass` before player traffic is opened.
+   - Treat `PREFLIGHT-BACKUP-003` as a traffic-open gate for first-live and reopen events, not as a required check for ordinary steady-state hobby rollouts that do not change player-traffic status.
    - Store preflight report and optional waiver artifacts using the same evidence path contract: `design/operations/deployments/hobby-self-hosted/preflight/<deployment-ref>.json` and `.../<deployment-ref>.waiver.json`.
 3. **Apply Manifests/Charts**
    - Apply from a secure operator environment using the chosen manifest/chart input.

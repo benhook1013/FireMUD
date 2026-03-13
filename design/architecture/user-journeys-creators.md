@@ -127,7 +127,7 @@ Game Design Service (publish) → Tenant Admin / Platform Admin → Game Session
 8. **Verify Performance** – Check metrics after deployment; see [Performance Optimization Guidelines](./performance-optimization.md).
 
 ```plaintext
-Game Design Service (publish) → Game Session Service (restart)
+Game Design Service (publish) → Tenant Admin / Platform Admin → Script Patch Pin or Replacement-Instance Cutover
 ```
 
 ### Example Hotfix DSL
@@ -158,12 +158,17 @@ Creators adjust the look and feel of their games through the Game Design Service
 
 Before launch or after major updates, creators validate changes with **forked playtest realms**:
 
-1. **Fork a Source Realm** – A `tenantAdmin` selects a source realm, usually the live production realm, and requests a fork. The platform snapshots the source realm's relevant live state and creates a temporary isolated playtest realm with its own `gameInstanceId`.
+1. **Fork a Source Realm** – A `tenantAdmin` selects a source realm, usually the live production realm, and requests a fork. The platform snapshots the source realm using the canonical v1 fork-snapshot boundary from [Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md) and creates a temporary isolated playtest realm with its own `gameInstanceId`.
 2. **Choose the Target Build** – The fork may run the same version as production for reproduction, or a newer `versionId` / `scriptPatchVersion` for validation against realistic state.
-3. **Invite Testers** – Access is explicit. Only authorized testers, creators, and operators see the fork in `REALMS <world>`.
+3. **Invite Testers** – Access is explicit. The fork uses the same platform accounts as production, but only authorized testers, creators, and operators see it in `REALMS <world>`.
 4. **Collect Feedback** – Feedback is collected per the [Playtesting & Feedback](../project-management/playtesting-feedback.md) flow and correlated with the fork realm in analytics.
 5. **Reset or Expire the Fork** – Forks are time-bounded and may be reset repeatedly from source snapshots during an iteration cycle. Runtime writes remain isolated to the fork and never merge back into production automatically.
 6. **Promote by Normal Launch/Cutover** – Successful playtests inform a normal production rollout; there is no direct "promote this fork" merge path for runtime state.
+
+Common fork use cases:
+
+- **Reproduce the current live problem** – Fork the current production realm on the same `versionId` and `scriptPatchVersion` to reproduce a bug against copied live gameplay state without risking the public realm.
+- **Validate an upcoming release** – Fork the current production realm but launch the fork on a newer `versionId` or `scriptPatchVersion` so testers can evaluate the new build against realistic copied state before the production cutover.
 
 ---
 

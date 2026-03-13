@@ -70,7 +70,14 @@ This document gives a high-level view of how FireMUD's clients, gateways, intern
       Spring Cloud Gateway ---------------------> Game Design Service (admin APIs)
 ```
 
+The single `Admin / Operator Tools -> Gateway` line in the ASCII diagram intentionally collapses two entry paths: the internal gRPC management API used for infrastructure control-plane actions, and the external HTTPS admin traffic used by operator and creator UIs.
+
 Admin and operations tools connect to Spring Cloud Gateway over an internal gRPC management API for route configuration and health checks; this **infrastructure control-plane API** is separate from player-facing HTTP and WebSocket traffic. Admin and creator UIs call domain-level admin APIs over HTTP(S) via the Gateway only for the explicitly allowlisted edge-routable services: Logging & Admin, Account, Game Design, Game Session control APIs, and Social & Groups admin APIs. World Management, Entity Management, Game Logic, and Automation & Scripting remain internal-only by default. External admin and creator tools do not call Logging & Admin Service directly; they always go through the Gateway so routing, coarse route protections, and rate limiting are applied consistently, while JWT validation and fine-grained authorization are performed by the consuming services. External domain gRPC is not part of the edge contract unless a dedicated design update adds it. Internal service-to-service calls (including gRPC) do not traverse the Gateway. For external mutating operator workflows such as moderation actions, quota overrides, runtime feature-flag overrides, and tick remediation, Logging & Admin is the mandatory ingress path; direct domain-admin routes are for reads and explicitly documented bypass-safe workflows only.
+
+Context callouts:
+
+- External operator writes do not bypass Logging & Admin even when the owning domain service is edge-routable for reads or other explicitly documented bypass-safe workflows.
+- Canonical room views are composed only after Game Session mints a room-read fence and both World Management and Entity Management satisfy that same fence.
 
 Auth contracts by route group are explicit: gameplay WebSocket routes (`/ws/game/**`) follow the connect-token plus `LOGIN`/`PLAY` flow in [Authentication & Authorization](./system-architecture-authentication.md#websocket-connect-token-contract-wsgame) and [Reconnection Strategy](./system-architecture-reconnection.md#gameplay-websocket-route-handshake-policy-normative), while control-plane/admin APIs follow JWT middleware and route classification in [Authentication & Authorization](./system-architecture-authentication.md#auth-middleware-algorithm-normative) and [Authorization Route Matrix](./system-architecture-authz-route-matrix.md).
 

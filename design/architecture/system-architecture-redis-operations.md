@@ -453,16 +453,19 @@ These budgets complement the AOF size and restart targets in this document. Envi
    - Daily AOF growth is consistently above ~500 MiB/day per node without a clear explanation (for example, a deliberate large-scale test).
 2. Schedule a maintenance window.
 3. Stop game services for affected tenants/regions (or globally for a small/self-hosted deployment).
-4. Reset Coordination Redis:
+4. Begin the authoritative tick reset handshake for affected scope(s) before any Redis wipe:
+   - Pause ticks/new command intake (if not already paused).
+   - Bump `region_epoch` in PostgreSQL for affected regions so any surviving executors become stale by definition.
+5. Reset Coordination Redis for the fenced scope:
    - Stop Redis.
    - Delete or recreate the volume that holds the AOF.
    - Start Redis with an empty keyspace and the desired AOF configuration (`appendonly yes`, `appendfsync everysec`, `aof-use-rdb-preamble yes`, etc.).
-5. Execute the tick reset handshake for affected scope(s):
-   - Pause ticks/new command intake (if not already paused).
-   - Bump `region_epoch` in PostgreSQL for affected regions.
-   - Run scoped ledger reconcile so old-epoch `SCHEDULED` rows converge to terminal outcomes.
+6. Complete the remaining reset handshake steps:
+   - Run scoped ledger reconcile so old-epoch `SCHEDULED` rows converge to terminal effect outcomes.
+   - Converge accepted-but-unbound command records to terminal command status with explicit `executionOutcome` / `gameplayResult` values.
    - Reinitialize `tick:{tenantRegionTag}:meta` from durable baselines.
-6. Resume ticks and player traffic once services are healthy.
+   - Run the post-reset smoke check before resuming traffic.
+7. Resume ticks and player traffic once services are healthy.
    - Expect players to re-login or restart games.
    - Coordination state is rebuilt from PostgreSQL and fresh gameplay activity.
 

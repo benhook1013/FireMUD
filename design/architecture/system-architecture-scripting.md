@@ -104,6 +104,7 @@ At a high level, a script (or plugin) must pass through several stages before it
 
 3. **`onLoad` initialization (Automation & Scripting Service, per tenant patch)**
    - For each `<tenantId, scriptPatchVersion>`, the Automation & Scripting Service runs any configured `onLoad` handlers after static validation succeeds but **before** the patch is marked `READY` for that tenant. `READY` only means the patch is eligible for pinning; runtime admission, timers, reload pause, and rollback remain instance-scoped.
+   - In the first implementation slice, `onLoad` is limited to **ephemeral readiness work** such as validating configuration and warming recomputable in-process caches. It is not a hook for creating durable shared state.
    - `onLoad` is a **mandatory gate**: if it fails with a logical or sandbox-level error, the patch is marked `FAILED` for that tenant, running instances remain on their previously pinned patch, and events referencing the failed patch are rejected with outcomes such as `version_unavailable`. Only transient infrastructure errors are retried a bounded number of times, and even those retries must remain idempotent.
 
 4. **Version pinning (Game Session Service)**
@@ -112,6 +113,7 @@ At a high level, a script (or plugin) must pass through several stages before it
 
 5. **Quota and budget admission (Automation & Scripting Service)**
    - Only after a trigger passes version checks does `ScriptQuotaService` and the multi-level budgeting model decide whether it is allowed to run. Quota denials (`quota_denied`) happen **before** any sandbox work and do not consume CPU/memory budgets.
+   - Ingress admission is evaluated first at the event scope. If the event is accepted for handler resolution, each resolved handler then records its own stage-aware outcome independently in `script_event_audit`; one inbound event can therefore yield a mixed set of handler-level success, quota, disable, or policy outcomes.
 
 6. **Sandbox execution (Automation & Scripting Service)**
    - Admitted triggers run in the sandboxed DSL engine with per-run CPU/iteration and memory budgets as described in `design/architecture/microservices/automation-scripting-service/sandbox-runtime-design.md`.

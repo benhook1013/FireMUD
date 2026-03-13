@@ -57,6 +57,24 @@ The proxy establishes the Proxy → Gateway gameplay WebSocket lazily for each T
 - The bridge must be opened before the first non-`SESSION` line is forwarded upstream. That first forwarded line may be `LOGIN`, an MCP control line, or any other gameplay text.
 - Once the first non-`SESSION` line has been forwarded, the attach-hint phase is over. Later `SESSION` text is treated only as ordinary forwarded input and must not retroactively alter handshake headers or session binding.
 
+Example:
+
+- Client sends `SESSION <gameInstanceId> <tenantId>`.
+- TCP Proxy validates and captures the envelope, opens the authenticated Proxy → Gateway WebSocket, and includes `X-Proxy-Game-Instance-Id`, `X-Proxy-Tenant-Id`, and `X-Proxy-Connection-Id` in that initial handshake as applicable.
+- The next line, such as `LOGIN ...`, is the first forwarded gameplay line on the already-established bridge.
+
+Planned Gateway drain example:
+
+- Gateway closes the authenticated internal bridge with `1000/logout;subreason=gateway_restart`.
+- TCP Proxy classifies that machine-parseable bridge close as `bridge_shutdown_class=planned_drain`.
+- The Telnet client receives a final `logout` disconnect with `subreason=gateway_restart` rather than `backend_unavailable`.
+
+Unattributed bridge-loss example:
+
+- The authenticated internal bridge drops without a machine-parseable planned-drain close (for example abrupt transport reset or crash).
+- TCP Proxy classifies the loss as `bridge_shutdown_class=unattributed_failure`.
+- For an already-established Telnet session, the proxy closes the client connection immediately with `backend_unavailable`; it does not hold the TCP socket open for hidden bridge recovery.
+
 MCP negotiation and cord state are also scoped to a single TCP connection. When a Telnet client reconnects after any disconnect (including Gateway outages, TCP Proxy restarts, or client-side network loss), it must re-run MCP negotiation and re-open any required cords. Redis-backed gameplay session state (account/player identity, tick queues, cooldowns) is distinct from MCP/SESSION state and governs whether gameplay resumes or starts fresh. See [Mud Client Protocol (MCP) Support](./system-architecture-mud-client-protocol.md#reconnection--session-recovery) for details.
 
 ---
@@ -225,7 +243,7 @@ In production, set `GATEWAY_WS_URL` to the Gateway’s internal-only WebSocket m
 
 `GATEWAY_WS_URL` is the **authoritative endpoint** for the TCP Proxy → Gateway WebSocket bridge; it is configured independently of the `FIREMUD_SERVICES_*` service-discovery overrides that other services and the gateway use for gRPC and HTTP routing. Changing `FIREMUD_SERVICES_SPRING_CLOUD_GATEWAY_SERVICE` or related overrides does **not** automatically update the Telnet bridge; operators must keep `GATEWAY_WS_URL` aligned with the Gateway’s internal WebSocket mTLS listener via their deployment configuration.
 
-Set `GATEWAY_WS_URL` explicitly whenever the Spring Cloud Gateway hostname or protocol differs from the dev-profile fallback; regardless of the value, the URL must point to a gateway route
+Set `GATEWAY_WS_URL` explicitly in every shared and player-facing environment; regardless of the value, the URL must point to a gateway route
 whose path contains `/ws/game/**` (or the configured alias) so Telnet and WebSocket clients hit the identical entry point. When using `wss://`, the host portion of
 `GATEWAY_WS_URL` must match a name present in the Gateway certificate’s SANs; pointing it at a bare IP or an unrelated hostname causes TLS validation to fail on the TCP
 Proxy side and increments `tcpproxy.gateway.handshake.failures{reason="cert_validation"}`. For mTLS certificate loading and watcher details, see the TCP Proxy Service design’s WebSocket mTLS section.

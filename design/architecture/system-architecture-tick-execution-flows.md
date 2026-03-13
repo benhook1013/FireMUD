@@ -121,6 +121,27 @@ Command outcome convergence must be externally observable through one canonical 
   - Events are advisory for latency; the durable status surface is authoritative.
   - Clients must not infer command success from ingress acknowledgement alone.
 
+Worked examples:
+
+- Pure local success:
+  - `executionOutcome = APPLIED`
+  - `gameplayResult = SUCCESS`
+- Batch-bound local or same-region failure:
+  - The command was durably tied to a `tick_batch_id`, began normal execution, and then reached a terminal domain failure that is not a timeout path.
+  - `executionOutcome = ABANDONED`
+  - `gameplayResult = FAILED`
+- Cross-region partial success:
+  - Origin effects and at least one remote leg converged, but another remote leg reached terminal failure after timeout or explicit abandonment.
+  - `executionOutcome = APPLIED`
+  - `gameplayResult = PARTIAL`
+- Cross-region timeout before any successful remote leg:
+  - Origin coordinating effect reached terminal failure after the deadline.
+  - `executionOutcome = ABANDONED`
+  - `gameplayResult = TIMEOUT`
+- Lost before staging during reset/tail-loss reconcile:
+  - `executionOutcome = LOST_BEFORE_STAGING`
+  - `gameplayResult = FAILED`
+
 #### Ingress Deduplication Store (Required)
 
 To make the re-submission contract enforceable across failover and scoped coordination resets, ingress deduplication must use a durable record outside Redis coordination queues:
@@ -131,12 +152,26 @@ To make the re-submission contract enforceable across failover and scoped coordi
   - `ingress_status` (`RECEIVED`, `ENQUEUED`, `BOUND_TO_BATCH`, `TERMINAL`)
   - `first_seen_at`, `last_seen_at`
   - `tick_batch_id` (nullable until bound)
-  - `last_outcome_code` (nullable until terminal outcome)
+  - canonical durable status fields for the command outcome surface:
+    - `execution_outcome` (nullable until terminal execution outcome)
+    - `gameplay_result` (nullable until terminal gameplay result)
 - Required behavior:
   - Re-send with same `(tenantId, gameInstanceId, commandId)` returns the prior acknowledgement and must not enqueue a second logical command.
   - Region/tenant/cluster coordination resets do not delete this dedupe record; they only affect volatile queue state.
   - Retention is TTL-based at the SQL layer and must outlive expected client retry windows.
 - `ACCEPTED_VOLATILE` remains volatile for execution semantics: the dedupe record guarantees no duplicate logical enqueue for the same `commandId`, not guaranteed eventual execution, but it does guarantee eventual convergence to a terminal command outcome.
+
+Storage rule:
+
+- The durable command-status surface may be implemented as:
+  - a single command-ingress table carrying the minimum fields above, or
+  - a command-ingress table plus a derived command-outcome projection/table.
+- Canonical persisted shape:
+  - Exactly one durable status record keyed by `(tenantId, gameInstanceId, commandId)` must be readable as the authoritative command outcome surface, whether it is physically stored as one row or as a joined ingress/outcome projection.
+  - That durable surface must expose at least: `ackLevel`, `ingressStatus`, `tickBatchId`, bound tick coordinates when present (`regionId`, `regionEpoch`, `tickId`), `executionOutcome`, `gameplayResult`, and `updatedAt`.
+  - Physical storage may use snake_case column names such as `execution_outcome` / `gameplay_result`, but the logical contract above is canonical and must be documented that way in service APIs and schema docs.
+  - If ingress metadata and outcome fields are split physically, the projection still behaves as one canonical record for `GetCommandStatus`; callers must not reconstruct status from Redis or by replaying effect history ad hoc.
+- Regardless of physical schema, `GetCommandStatus` must be able to return `executionOutcome` and `gameplayResult` from durable storage without re-walking Redis coordination state.
 
 ## Tick Execution Flow
 
@@ -199,7 +234,10 @@ Conceptually, tick commit proceeds through these phases:
    - Exactly one durable tick batch may exist for a given `(tenantId, regionId, region_epoch, tickId)`:
      - PostgreSQL enforces a unique key on `(tenantId, regionId, region_epoch, tickId)`.
      - Batch allocation is lease-fenced: the creating transaction records the current region lease token (or an equivalent fencing token) on the batch row.
-     - If a competing executor loses the insert/update race or observes a different fencing token on the existing row, it must treat the existing batch as authoritative and must not create a second manifest, second set of `SCHEDULED` rows, or alternate selection for the same tick coordinates.
+     - Winner rule:
+       - The winner is the transaction that successfully creates the unique `(tenantId, regionId, region_epoch, tickId)` row while holding the currently valid region lease.
+       - If a competing executor finds the existing row carries the same currently valid lease token, it must reuse that row as authoritative state for replay/continuation.
+       - If a competing executor finds the existing row carries a different lease token, it must treat the row as belonging to another owner and must not create a second manifest, second set of `SCHEDULED` rows, or alternate selection for the same tick coordinates. Recovery/reconcile decides whether that earlier batch is continued or abandoned.
    - The tick-batch record stores at minimum:
      - `tick_batch_id`
      - `lease_token` (or equivalent fencing token)
@@ -240,6 +278,14 @@ Conceptually, tick commit proceeds through these phases:
    - Duplicate-allocation recovery rule (required):
      - If recovery finds more than one durable row purporting to represent the same `(tenantId, regionId, region_epoch, tickId)`, the region is inconsistent by definition.
      - Normal replay must not continue. The region is paused and explicit reconcile tooling chooses one survivor batch and converges the others to an audited terminal state before ticks resume.
+   - Worked allocation-race example:
+     - Executor `E1` and executor `E2` both attempt `(tenantId=T1, regionId=R7, region_epoch=13, tickId=42)`.
+     - `E1` successfully inserts the unique batch row while holding lease token `L9001`; that row becomes the only valid durable batch for `(T1, R7, 13, 42)`.
+     - `E2` then reads the existing row:
+       - if `E2` still holds the same currently valid lease token `L9001`, it may continue/replay from that row;
+       - if `E2` now holds a different token such as `L9002`, it must stop and treat the existing row as authoritative for another execution path.
+     - `E2` must not overwrite the manifest, create a second batch row, or select different work for tick `42`.
+     - If storage ever reveals two durable rows for `(T1, R7, 13, 42)`, the region pauses immediately and reconcile tooling chooses the survivor before any later tick runs.
 2. **Redis staging complete**
    - After the durable batch exists, the executor stages the selected effects into `tick:{tenantRegionTag}:pending`, carrying the `tick_batch_id` and the expected effect count (or equivalent digest) so Redis and PostgreSQL can be correlated during recovery.
    - `tick:{tenantRegionTag}:pending` is an acceleration/coordination structure. The durable tick-batch plus ledger rows are the authoritative record of what the tick intended to stage.
@@ -279,6 +325,10 @@ The **TickScheduler** in Game Session enforces a **single in-flight tick per reg
 - The scheduler does not start a new tick for that `<tenantId, regionId>` until the previous tick is `coordination_cleared` as part of normal cleanup or explicitly handled during crash recovery.
 - The scheduler obtains the current `(region_epoch, tickId)` baseline for each region from PostgreSQL (for example, a `RegionStatus` table and/or the tick effect ledger); it **does not** use `tick:{tenantRegionTag}:meta.current_tick_id` to decide which tick to run next.
 - Additional work enqueued for the same region while a tick is in flight is modeled as retries or follow-up work for a later `tickId`, not as a second concurrent tick.
+- On a non-reset cold start where Coordination Redis is empty but PostgreSQL `RegionStatus` remains authoritative:
+  - The next winning executor derives the next requested tick from `RegionStatus.lastCommittedTickId + 1`.
+  - The first successful hot-path staging script for that tick initializes `tick:{tenantRegionTag}:meta.current_tick_id` to that requested tick as a Redis-side guard only.
+  - Schedulers and operators continue to treat PostgreSQL `RegionStatus` as authoritative for baseline tick selection.
 
 If FireMUD later introduces limited intra-region parallelism (for example by sharding a single region into buckets of entities), this model will evolve to use **per-bucket pending keys** such as `tick:{tenantRegionTag}:bucket:<bucketId>:pending` plus matching idempotency and locking rules. Until such a change is explicitly designed, the invariant remains one `pending` entry and one in-flight tick per `<tenantId, regionId>`.
 

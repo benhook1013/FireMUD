@@ -67,6 +67,7 @@ services so Docker Compose environments work out of the box.
 ### Key Routes
 
 - `/ws/game/**` → Game Session Service (canonical WebSocket gameplay endpoint for first-party clients and Telnet clients bridged via the TCP Proxy Service; connect-token enforced for non-proxy clients, with trusted TCP Proxy bridge admission based on mTLS identity + header-trust checks).
+- For successful gameplay admission, Gateway emits the gateway-owned discriminator `X-Firemud-Connection-Mode`: `first_party_web` for connect-token-validated first-party WebSocket handshakes, and `trusted_tcp_proxy` for authenticated TCP Proxy bridge handshakes. Game Session must rely on this positive marker rather than inferring path type from header absence.
 - `/api/admin/**` → Logging & Admin Service (tokens are verified by the service).
 - `/api/design/**` → Game Design Service for content management.
 - `/api/account/**` → Account Service for user profiles.
@@ -121,7 +122,7 @@ Spring Cloud Gateway reads its configuration from a small set of sources; the fu
 | `routes-dev.yml` / `routes-prod.yml` | Profile-specific route definitions for HTTP and WebSocket paths and backend URIs | Service-local; referenced by `spring.config.import` in `application.yml` |
 | `FIREMUD_SERVICES_*` | Service discovery overrides for backend targets reached from the gateway | Described in [Service Discovery](../../infrastructure/environment-and-secrets.md#service-discovery) |
 | `FIREMUD_REDIS_CACHE_HOST` / `FIREMUD_REDIS_CACHE_PORT` | Cache/Rate‑Limit Redis endpoint used by the gateway’s `RequestRateLimiter` filter | Described in [Redis Connection](../../infrastructure/environment-and-secrets.md#redis-connection) |
-| `firemud.gateway.backendUnavailableGraceMs` / `firemud.gateway.backendUnavailableRecoverySuccessCount` | Gameplay-route backend-unavailable grace window and recovery hysteresis knobs; must align with TCP Proxy bridge-recovery settings per reconnection lockstep contract | Canonical behavior in [Gateway Architecture](../../system-architecture-gateway.md#backend-unavailable-grace-window) and [Reconnection Strategy](../../system-architecture-reconnection.md#backend-unavailable-scenarios) |
+| `firemud.gateway.backendUnavailableGraceMs` / `firemud.gateway.backendUnavailableRecoverySuccessCount` | Gameplay-route backend-unavailable grace window and recovery hysteresis knobs; must align with TCP Proxy bridge-availability / admission-breaker settings per reconnection lockstep contract | Canonical behavior in [Gateway Architecture](../../system-architecture-gateway.md#backend-unavailable-grace-window) and [Reconnection Strategy](../../system-architecture-reconnection.md#backend-unavailable-scenarios) |
 | `FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, `FIREMUD_GRPC_CA_CERT_PATH` | TLS certificate and key paths for the gateway’s internal gRPC/mTLS management plane | Described in [gRPC TLS Certificates](../../infrastructure/environment-and-secrets.md#grpc-tls-certificates) |
 | `OTEL_ENDPOINT` | OpenTelemetry collector endpoint for traces | Described in [Observability](../../infrastructure/environment-and-secrets.md#observability) |
 

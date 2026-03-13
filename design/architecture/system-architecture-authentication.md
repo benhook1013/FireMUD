@@ -118,7 +118,7 @@ Global roles must not be interpreted as broad tenant access shortcuts. Authoriza
 | `billingAdmin` | `cross_tenant_billing_safe` | `tenant_regular`, `billing_safe_tenant`, `cross_tenant_data_bearing`, gameplay admission/switching |
 | `support` | `cross_tenant_support_safe` | `tenant_regular`, `billing_safe_tenant` mutations, `cross_tenant_billing_safe`, `cross_tenant_data_bearing`, gameplay admission/switching |
 
-Tenant-scoped operational/design/runtime actions may allow `platformAdmin` per the route-class matrix, but gameplay admission and gameplay switching must not. Gameplay entry (`WORLDS`/`REALMS`/`CHARS`/`PLAY`) requires caller-bound tenant gameplay authority from authoritative membership data for the target tenant/realm; global roles alone must never grant gameplay access. `billingAdmin` and `support` must never gain gameplay/design authority by virtue of being global roles.
+Tenant-scoped operational/design/runtime actions may allow `platformAdmin` per the route-class matrix, but gameplay admission and gameplay switching must not. Gameplay entry (`WORLDS`/`CHARS`/`PLAY`) requires caller-bound tenant gameplay authority from authoritative membership data for the target tenant; global roles alone must never grant gameplay access. `billingAdmin` and `support` must never gain gameplay/design authority by virtue of being global roles.
 `account_scoped` routes are authorized by authenticated account context and explicit subject-binding rules; global roles do not broaden `account_scoped` access unless a specific route explicitly allows a `platformAdmin` override.
 
 ### Tenant Authorization Contract
@@ -195,15 +195,22 @@ All route classifications must also be registered in [Authorization Route Matrix
 
 ## Login and Session Flow
 
-All clients — whether connecting via Telnet or WebSocket — authenticate using the `LOGIN` command:
+All clients — whether connecting via Telnet or WebSocket — authenticate using the `LOGIN` command.
+
+Target protocol behavior:
 
 - `LOGIN` → Starts prompt-based login (username → password)
 - `LOGIN <username> <password>` → Attempts immediate login
 - `LOGON` → Alias for `LOGIN`
 
+Current implementation note:
+
+- Prompt-based `LOGIN` remains the target behavior for Telnet and generic WebSocket clients, but until the prompt flow is fully implemented those transports currently require `LOGIN <username> <password> [otp]` and return `PROMPT_LOGIN_UNSUPPORTED` on bare `LOGIN`.
+- First-party `/ws/game/**` remains the exception: once Gateway has validated a connect token and attached a signed connect context, bare `LOGIN` is the canonical bootstrap-backed path and must not prompt for or replay credentials.
+
 Telnet-specific behaviors (such as the optional `SESSION <gameInstanceId> <tenantId>` envelope used by advanced clients) reuse this same canonical login flow. The envelope is an advisory attach hint captured by the TCP Proxy Service and forwarded as gateway-owned headers; it is not authentication material and never bypasses the canonical `LOGIN` + lobby selection (`WORLDS`/`CHARS`/`PLAY`) authorization and entitlement checks. The TCP Proxy Service and Spring Cloud Gateway docs describe only their **transport responsibilities** and defer to this section for `LOGIN`/`LOGON` semantics and example transcripts.
 
-Telnet `SESSION` hints may include a target `{gameInstanceId, tenantId}` for advanced clients, but the canonical source of realm selection remains the authenticated lobby/admission flow. Clients must not rely on unauthenticated transport hints to bypass membership, entitlement, or realm-visibility checks.
+Telnet `SESSION` hints may include a target `{gameInstanceId, tenantId}` for advanced clients, but the canonical source of gameplay target selection remains the authenticated lobby/admission flow. Clients must not rely on unauthenticated transport hints to bypass membership, entitlement, or world-visibility checks.
 
 ### WebSocket Connect Token Contract (`/ws/game/**`)
 
@@ -225,9 +232,9 @@ To avoid introducing a second independent end-user login model for first-party g
   - Minimum request fields: `tenantId`, `gameInstanceId`, `requestId`.
   - Minimum response fields: `connectToken`, `expiresAt`, `accountId`, `tenantId`, `gameInstanceId`, `jti`, `issuedAt`.
   - Before issuance, Account Service must perform a live membership check for `{accountId, tenantId}`, a live runtime entitlement check for `tenantId`, and a live admission-pointer read for `tenantId` via the Game Session control-plane API.
-  - If admission pointer state is unavailable or ambiguous, connect-token issuance fails closed with `ADMISSION_POINTER_UNAVAILABLE`.
-  - If the requested `gameInstanceId` does not equal the current `admissibleGameInstanceId`, connect-token issuance fails closed with `CONNECT_SCOPE_MISMATCH`; it must not mint a token for a non-admissible instance and rely on `PLAY` to correct it later.
-  - Clients should normally request a realm that was surfaced by the authenticated lobby/discovery flow for that account and tenant. For first-party playtest access, this may be a non-production fork realm rather than the tenant's default production realm.
+  - If admission-pointer state is unavailable or ambiguous, connect-token issuance fails closed with `ADMISSION_POINTER_UNAVAILABLE`.
+  - If the requested `gameInstanceId` is not the current admissible target for the tenant, connect-token issuance fails closed with `CONNECT_SCOPE_MISMATCH`; it must not mint a token for a stale or non-admissible target and rely on `PLAY` to correct it later.
+  - In the first implementation, clients should request the tenant's single gameplay-admissible instance (`"primary"`). Alternate player-addressable realms are out of scope until the lobby protocol and discovery surfaces are revised together.
   - Missing required request/response fields are contract violations and must fail closed rather than being defaulted by callers.
 - Transport: `X-Firemud-Connect-Token` header on `/ws/game/**` handshake.
 - Required claims: `accountId`, `tenantId`, `gameInstanceId`, `exp`, `jti`.
@@ -280,10 +287,30 @@ Normative constraints:
 - `/ws/game/**` requires a valid connect token for non-proxy clients and rejects missing tokens with `403`.
 - For first-party `/ws/game/**` clients, bare `LOGIN` (or `LOGON`) must complete gameplay authentication by consuming the verified connect context plus the bootstrap identity already bound to that context. Browsers must not be required to replay username/password/OTP after bootstrap.
 - Third-party clients and non-bootstrap transports continue to use credential-bearing `LOGIN <username> <password> [otp]` or the prompt flow.
-- Game Session must bind the verified connect context to the authenticated gameplay login: if bootstrap-backed `LOGIN` resolves to an `accountId` different from the connect-context `accountId`, the session fails closed with a canonical account-mismatch error and no gameplay scope is bound.
+- Game Session must bind the verified connect context to the authenticated gameplay login: if bootstrap-backed `LOGIN` resolves to an `accountId` different from the connect-context `accountId`, the session fails closed with canonical error `ACCOUNT_MISMATCH` and no gameplay scope is bound.
 - For first-party clients on `/ws/game/**`, the `PLAY` selection must match the connect-token scope `{tenantId, gameInstanceId}`. Scope mismatch is rejected with canonical error `CONNECT_SCOPE_MISMATCH`; clients must request a fresh connect token for the intended target and reconnect.
-- Because `/auth/connect-token` validates against the authoritative realm-selection state for the caller, `CONNECT_SCOPE_MISMATCH` at `PLAY` is treated as drift between issuance and admission (for example realm visibility or routing changed during reconnect), not as normal stale-client correction.
-- The bootstrap/connect-token contract and the lobby `PLAY` contract together form the canonical player-selected `{tenantId, gameInstanceId}` path. New realm types, including playtest forks, must extend this single path rather than introducing a separate side-channel selector.
+- Because `/auth/connect-token` validates against the authoritative admission-pointer state for the caller, `CONNECT_SCOPE_MISMATCH` at `PLAY` is treated as drift between issuance and admission (for example pointer movement during reconnect), not as normal stale-client correction.
+- The bootstrap/connect-token contract and the lobby `PLAY` contract together form the canonical player-selected `{tenantId, gameInstanceId}` path. The first implementation supports exactly one player-addressable gameplay instance per tenant. Any future multi-realm design must revise bootstrap, discovery, and `PLAY` in the same change rather than introducing a side-channel selector.
+
+Canonical first-party browser sequence (example):
+
+```text
+POST /auth/player-bootstrap
+-> { bootstrapToken, expiresAt }
+
+POST /auth/connect-token
+Authorization: Bearer <bootstrapToken>
+{ tenantId: "tenant-demo", gameInstanceId: "primary", requestId: "req-123" }
+-> { connectToken, accountId, tenantId: "tenant-demo", gameInstanceId: "primary", expiresAt }
+
+GET /ws/game/** with X-Firemud-Connect-Token: <connectToken>
+
+LOGIN
+OK LOGIN Logged in
+WORLDS
+PLAY demo
+OK PLAY Entered world: Demo World
+```
 
 ### Mapping to the Account Service
 
@@ -297,43 +324,38 @@ Normative constraints:
 4. The Account Service-backed credential path validates credentials (including the OTP when present) and returns either a JWT + account metadata or a canonical error code such as `AUTH_INVALID_CREDENTIALS`, `AUTH_OTP_REQUIRED`, `AUTH_ACCOUNT_LOCKED`, `AUTH_2FA_REQUIRED_FOR_PLAINTEXT_TCP`, `AUTH_PLAINTEXT_TCP_NOT_PERMITTED`, or `AUTH_UPSTREAM_FAILURE`. The Game Session Service translates these codes into the text-protocol equivalents (`ERROR INVALID_CREDENTIALS`, `ERROR OTP_REQUIRED`, `ERROR 2FA_REQUIRED_FOR_PLAINTEXT_TCP`, `ERROR PLAINTEXT_TCP_NOT_PERMITTED`, etc.) so WebSocket and Telnet clients always see the same response format regardless of how the upstream message is worded. For plaintext Telnet logins, the combination of `FIREMUD_AUTH_REQUIRE_2FA_FOR_PLAINTEXT_TCP` and the per-account “allow plaintext Telnet login” flag follows the safety matrix defined in the Security Architecture’s **Plaintext Telnet safety matrix** section; implementations must treat any combination outside the allowed cells as a hard denial (`AUTH_PLAINTEXT_TCP_NOT_PERMITTED` or `AUTH_2FA_REQUIRED_FOR_PLAINTEXT_TCP`) rather than silently weakening security.
 5. Success responses cause the Game Session Service to create/refresh Redis-backed gameplay session bindings and the Account Service to create or refresh the corresponding `session:auth:*` allowlist entries for backend use. The Game Session Service binds the socket to an authenticated account context and emits `OK LOGIN Logged in` (or equivalent account-confirming text) on the wire. Error responses are translated to the shared `ERROR <CODE> <message>` format so protocol clients see consistent codes regardless of transport.
 
-Gameplay commands such as `LOOK` and `SAY` are gated by both the authentication handshake (`LOGIN`) and the lobby selection step (`PLAY`). Any text command received before a session is authenticated is rejected with `ERROR NOT_AUTHENTICATED`, and any gameplay command received before a world is selected is rejected with a dedicated error (for example `ERROR WORLD_NOT_SELECTED Use WORLDS/PLAY first`). Except in explicitly documented development/test bypass modes that grant temporary access, these commands are not processed for anonymous or unscoped sessions, keeping the gameplay queue free of unauthenticated traffic.
+Gameplay commands such as `LOOK` and `SAY` are gated by both the authentication handshake (`LOGIN`) and the lobby selection step (`PLAY`). Any text command received before a session is authenticated is rejected with `ERROR NOT_AUTHENTICATED`, and any gameplay command received before a world is selected is rejected with canonical error `WORLD_NOT_SELECTED` (for example text rendering `ERROR WORLD_NOT_SELECTED Use WORLDS/PLAY first`). Except in explicitly documented development/test bypass modes that grant temporary access, these commands are not processed for anonymous or unscoped sessions, keeping the gameplay queue free of unauthenticated traffic.
 
 Credential-bearing login commands carry account credentials (plus optional OTP). Bootstrap-backed first-party `LOGIN` carries no credentials because it consumes the already verified bootstrap/connect context. Accounts are platform-wide and not tied to a single game or tenant; the same account is used across all worlds as described in [Multi-Tenancy](./system-architecture-multi-tenancy.md#identity--tenant-model).
 
 ### Tenant Selection for Gameplay (Lobby Selection)
 
-FireMUD uses a **single shared entrypoint** for many worlds (tenants). After `LOGIN`, clients complete a lobby selection step that binds the authenticated connection to a specific world (`tenantId`), realm (`gameInstanceId`), and gameplay identity (`characterId` / `playerId`) before gameplay commands are accepted.
+FireMUD uses a **single shared entrypoint** for many worlds (tenants). After `LOGIN`, clients complete a lobby selection step that binds the authenticated connection to a specific world (`tenantId`), gameplay-admissible instance (`gameInstanceId`), and gameplay identity (`characterId` / `playerId`) before gameplay commands are accepted.
 
-Players must never be asked to type raw internal identifiers such as `tenantId` GUIDs, `gameInstanceId` values, or `characterId` values. Lobby selection accepts human-friendly inputs (world slugs, realm labels, world/realm menu indices, character names or indices) and resolves them server-side into stable internal identifiers.
+Players must never be asked to type raw internal identifiers such as `tenantId` GUIDs, `gameInstanceId` values, or `characterId` values. Lobby selection accepts human-friendly inputs (world slugs, world menu indices, character names or indices) and resolves them server-side into stable internal identifiers.
 
 After `LOGIN` succeeds, the Game Session Service requires an explicit lobby selection flow using these canonical commands:
 
 - `WORLDS` – list worlds the authenticated account can enter (a numbered menu plus a stable world slug for each entry).
-- `REALMS <world>` – list player-addressable realms for the selected world, filtered by the caller's access and labeled by type (for example `production`, `playtest-fork`).
-- `CHARS <world> [realm]` – list characters for the selected world/realm combination (`<world>` is a world index from `WORLDS` or a world slug; `<realm>` is a realm label or index from `REALMS` when the world exposes more than one visible realm).
-- `PLAY <world> [realm] [character]` – enter gameplay by selecting a world, optional realm, and optional character.
+- `CHARS <world>` – list characters for the selected world (`<world>` is a world index from `WORLDS` or a world slug).
+- `PLAY <world> [character]` – enter gameplay by selecting a world and optional character.
 
-Realm-selection contract:
+Single-admissible-instance contract:
 
-- Every player-addressable realm belongs to exactly one tenant and is identified internally by `gameInstanceId`.
-- A tenant may expose one default production realm and zero or more additional explicitly addressed realms.
-- Playtest forks are canonical additional realms: they are isolated, non-production gameplay environments, typically derived from a snapshot of another realm's live state, and visible only to authorized testers, creators, and operators.
-- When a world has exactly one realm visible to the caller, `PLAY <world> [character]` may continue to resolve that realm implicitly for convenience.
-- When a world exposes more than one visible realm to the caller, the server must require an unambiguous realm selection or present a numbered realm menu; it must not silently guess.
+- In the first implementation, each tenant has exactly one player-addressable gameplay-admissible instance, identified internally by `gameInstanceId="primary"`.
+- Additional running instances may exist for operator workflows, but they are not player-selectable and must not appear in the lobby flow.
+- Introducing additional player-addressable realms is a future protocol change and must revise bootstrap, discovery, route-matrix entries, and `PLAY` semantics together.
 
 Lobby discovery source-of-truth contract:
 
 - `WORLDS` must be sourced from Account Service tenant-membership and entitlement state (not from opportunistic local caches alone) so world visibility and billing state cannot drift across services.
-- `REALMS <world>` must be sourced from authoritative realm metadata plus caller access rules so production realms, private forks, and expired forks are filtered consistently.
-- `CHARS <world> [realm]` must be sourced from the authoritative character store for the resolved tenant/realm scope and filtered to `{accountId, tenantId, gameInstanceId}` ownership/eligibility before any character names are returned.
-- `WORLDS`, `REALMS`, and `CHARS` responses must not leak inaccessible tenants, realms, or characters; unresolved selectors return canonical errors (`WORLD_NOT_FOUND`, `WORLD_ACCESS_DENIED`, `REALM_NOT_FOUND`, `REALM_ACCESS_DENIED`, `CHARACTER_NOT_FOUND`, `CHARACTER_ACCESS_DENIED`) without exposing whether a hidden resource exists.
+- `CHARS <world>` must be sourced from the authoritative character store for the resolved tenant and filtered to `{accountId, tenantId}` ownership before any character names are returned.
+- `WORLDS` and `CHARS` responses must not leak inaccessible tenants or characters; unresolved selectors return canonical errors (`WORLD_NOT_FOUND`, `WORLD_ACCESS_DENIED`, `CHARACTER_NOT_FOUND`, `CHARACTER_ACCESS_DENIED`) without exposing whether a hidden tenant exists.
 
 Lobby command classification contract:
 
 - `WORLDS` is an authenticated **pre-tenant discovery** operation, not a normal tenant-scoped route. It runs after account authentication but before a single `tenantId` has been selected.
-- `REALMS <world>` is a tenant-bound discovery operation after `<world>` resolves to `tenantId`, but before a specific `gameInstanceId` is bound for gameplay.
-- `CHARS <world> [realm]` and `PLAY <world> [realm] [character]` become realm-scoped only after the server resolves both selectors to canonical `{tenantId, gameInstanceId}` values.
+- `CHARS <world>` and `PLAY <world> [character]` become tenant-scoped only after `<world>` is resolved server-side to canonical `{tenantId, gameInstanceId="primary"}`.
 - Shared auth middleware and route-matrix entries must not model all lobby commands as one undifferentiated tenant-scoped surface.
 
 The `PLAY` flow:
@@ -343,26 +365,39 @@ The `PLAY` flow:
 - Performs an authoritative internal membership read for `{accountId, tenantId}` and persists the returned `membershipVersion` into the gameplay session binding on successful admission. The membership response must also assert `gameplayAdmissionAllowed=true`; gameplay admission must not source `membershipVersion` or gameplay authority from JWT claims or local caches.
 - Consults the runtime entitlement contract `GetTenantEntitlementsForRuntime(tenantId)` to confirm that the tenant is currently available for gameplay (for example, subscription state is not `suspended` or `canceled` and hard quotas are not violated).
 - Resolves `[character]` to a canonical `characterId` scoped to `{accountId, tenantId}`. Until character selection ships, the service may bind to a default character identity derived from `accountId`, but the binding model must still treat `characterId` as a distinct identifier for forward compatibility.
-- Records a `gameInstanceId` in the binding. In the current architecture, gameplay lobby flow is single-instance-per-tenant and always binds to `"primary"` after entitlement checks.
+- Resolves the tenant's gameplay-admissible instance and records that `gameInstanceId` in the gameplay binding.
   - First-party `/ws/game/**` contract: if a validated connect token is present, resolved `tenantId` and `gameInstanceId` must match token claims. On mismatch, reject admission with `CONNECT_SCOPE_MISMATCH` and do not bind session scope.
-  - Normative rule: until an explicit instance-selection lobby protocol is introduced, exactly one gameplay-admissible instance per tenant is supported (`"primary"`). If multiple running instances exist operationally, admission must fail closed with a dedicated error instead of implicitly choosing an instance.
-  - Runtime control-plane and admission flows use the tenant admission-pointer contract from [Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md#version-cutover-contract-under-the-single-admissible-instance-invariant) as the source of truth for which instance is admissible.
-  - Introducing multi-instance player selection requires a dedicated lobby protocol update; `PLAY <world> [character]` must not silently select among multiple live instances.
+  - Runtime control-plane and admission flows use the admission-pointer contract from [Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md#version-cutover-contract-under-the-single-admissible-instance-invariant) as the source of truth for which concrete `gameInstanceId` is admissible.
 - Binds the socket to a gameplay session key for the chosen world/instance/character identity under `session:game:<tenantId>:<gameInstanceId>:<sessionId>` as described in [Multi-Tenancy](./system-architecture-multi-tenancy.md#identity--tenant-model) and [Redis Architecture](./system-architecture-redis.md#session-keys-and-gameplay-binding).
 - Ensures the gameplay session binding is consistent with the tick/lease ownership model for the character’s current `<tenantId, regionId>`. Per `design/architecture/decisions/adr-0007-edge-sharding-and-close-taxonomy.md`, `/ws/game/**` is routed to a stable Game Session service endpoint and the edge does not implement a lease-aware shard routing plane.
 
 `PLAY` returns canonical, stable error codes so clients can recover deterministically:
 
 - `WORLD_NOT_FOUND` – the supplied world selection cannot be resolved to a tenant.
-- `WORLD_ACCESS_DENIED` – the authenticated account is not authorized for the tenant under `scopedRoles` / `globalRoles`.
+- `WORLD_ACCESS_DENIED` – the authenticated account is not authorized for gameplay admission in the tenant under caller-bound membership authority. Global roles alone must not satisfy this check.
 - `TENANT_BILLING_BLOCKED` – the tenant is `suspended` or `canceled` and is not available for gameplay admission.
 - `TENANT_QUOTA_EXCEEDED` – entitlements allow gameplay but quota caps (for example maximum active sessions) would be exceeded.
 - `CONNECT_CONTEXT_INVALID` – first-party `/ws/game/**` admission is missing or has invalid/expired gateway-signed connect context for the handshake that required connect-token verification.
 - `CONNECT_SCOPE_MISMATCH` – first-party `/ws/game/**` reconnect/admission attempted `PLAY` scope that does not match the connect-token `{tenantId, gameInstanceId}`.
-- `MULTIPLE_INSTANCES_NOT_SUPPORTED` – multiple running instances exist for the tenant but the lobby protocol has no instance-selection step; admission is denied until a single gameplay-admissible instance remains.
+- `ACCOUNT_MISMATCH` – bootstrap-backed `LOGIN` resolved to an account different from the validated connect-context subject, so no gameplay scope may be bound.
 - `ADMISSION_POINTER_UNAVAILABLE` – gameplay-admissible instance pointer state is unavailable/ambiguous; admission is denied until pointer reconciliation succeeds.
+- `WORLD_NOT_SELECTED` – a gameplay command requiring an admitted world was issued before `PLAY` completed successfully.
 - `CHARACTER_NOT_FOUND` / `CHARACTER_ACCESS_DENIED` – character selection is requested but the character cannot be found or is not owned by the account (reserved for when character selection ships).
 - Any subsequent attempt to switch tenants or characters for a socket must go through the same tenant-selection flow so that role checks and entitlements are re-evaluated; there is no implicit cross-tenant switching based solely on the initial `LOGIN`.
+
+First-party gameplay admission and reconnect clients should treat the following errors as canonical:
+
+| Surface | Canonical code | Trigger condition | Required client reaction |
+| --- | --- | --- | --- |
+| `/ws/game/**` handshake (`403`) | `CONNECT_TOKEN_REJECTED` | Connect token is missing, expired, invalid, or replayed where required | Obtain a fresh connect token and open a new socket with bounded retry/backoff. |
+| `/ws/game/**` handshake (`403`) | `POLICY_DENY` | Edge policy rejects the handshake for a non-token reason (for example proxy trust/config mismatch) | Treat as non-retriable until operator/client configuration is corrected. |
+| `PLAY` on first-party `/ws/game/**` | `CONNECT_CONTEXT_INVALID` | Required gateway-signed connect context is missing, expired, unverifiable, or otherwise invalid | Refresh connect token, reconnect, then re-`LOGIN`; do not retry `PLAY` on the current socket. |
+| `PLAY` on first-party `/ws/game/**` | `CONNECT_SCOPE_MISMATCH` | Requested `{tenantId, gameInstanceId}` does not match the validated connect-token scope | Re-select the intended world, obtain a fresh connect token for that target, reconnect, and retry `PLAY`. |
+| `LOGIN` on first-party `/ws/game/**` | `ACCOUNT_MISMATCH` | Bootstrap-backed login resolved to an account different from the validated connect-context subject | Treat as a hard auth failure for the current socket; clear the gameplay bootstrap/connect flow and require a fresh authenticated bootstrap. |
+| `PLAY` | `WORLD_ACCESS_DENIED` | Caller-bound membership authority does not allow gameplay admission for the resolved tenant | Keep auth state, surface an authorization error, and do not infer hidden-tenant existence beyond the canonical code. |
+| `PLAY` | `TENANT_BILLING_BLOCKED` | Tenant entitlement state is `suspended` or `canceled` for gameplay | Keep auth state, surface a billing-blocked state for that tenant, and disable gameplay admission flows. |
+| `PLAY`, new admission, restart/rollback | `ENTITLEMENT_UNAVAILABLE` | No entitlement snapshot fresh enough for the 15-second admission SLA can be established | Keep auth state, retry with bounded backoff, and avoid admitting based on stale entitlement cache state. |
+| Gameplay command before `PLAY` | `WORLD_NOT_SELECTED` | Client issued a world-scoped gameplay command before lobby admission completed | Keep auth state and route the client back through `WORLDS` / `PLAY`. |
 
 Clients re-authenticate **only after disconnecting** (TCP or WebSocket loss) or when server-side auth state has expired or been revoked. After a reconnect, clients always issue a fresh `LOGIN` and then complete lobby selection again (`PLAY <world> [character]`). If a resumable gameplay session exists for the selected `{tenantId, gameInstanceId, characterId}`, the Game Session Service resumes it; otherwise it creates a fresh gameplay session binding.
 
@@ -704,7 +739,7 @@ Control-plane UIs must treat certain auth failures as hard logout conditions and
 | Session State | Stored in Redis; bound to socket by Game Session Service |
 | Session TTL | Derived from `FIREMUD_AUTH_JWT_EXPIRATION_MS` + `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS` |
 | Gameplay Reauthentication | Required after disconnect; client re-issues `LOGIN`, and Game Session resumes via Redis if the underlying gameplay and auth session state are still valid |
-| Role Enforcement | Meta/control services only; gameplay services trust Game Session Service |
+| Role Enforcement | Meta/control services validate JWTs directly; gameplay services trust Game Session Service plus validated `SessionAttestation` |
 | Role Updates | Refreshed in-session; no client interaction needed |
 | Multi-Client Behavior | One session per character; new login replaces old session |
 | Two-Factor Auth | Optional TOTP for admin and moderator accounts via `/auth/login`; required for plaintext Telnet logins when `FIREMUD_AUTH_REQUIRE_2FA_FOR_PLAINTEXT_TCP` is enabled |

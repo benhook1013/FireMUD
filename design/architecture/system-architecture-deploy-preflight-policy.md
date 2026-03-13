@@ -71,7 +71,7 @@ Policy applicability:
 - `PREFLIGHT-PROMOTION-001` is required for `production` and `not_applicable` for `staging` and `hobby-self-hosted`.
 - `PREFLIGHT-BACKUP-001` is required for `production` when the referenced attestation classifies the release as `roll-forward-only`, and `not_applicable` otherwise.
 - `PREFLIGHT-BACKUP-002` is required for `production` on first-live opens and reopen-after-restore events, and `not_applicable` for routine steady-state rollouts that do not change traffic-open status.
-- `PREFLIGHT-BACKUP-003` is required for `hobby-self-hosted` on first-live opens and reopen-after-restore events, and `not_applicable` otherwise.
+- `PREFLIGHT-BACKUP-003` is required for `hobby-self-hosted` on first-live opens and reopen-after-restore events, and `not_applicable` otherwise. This check validates both `design/operations/deployments/hobby-self-hosted/backup-compliance.yaml` and `design/operations/deployments/hobby-self-hosted/traffic-open/<deployment-ref>.json` for the current event.
 - `PREFLIGHT-DIGEST-001` is required for any flow using Kustomize overlays (`staging`, `production`) and `not_applicable` for `hobby-self-hosted`.
 - `PREFLIGHT-DIGEST-002` is recommended/advisory for `hobby-self-hosted` and `not_applicable` for `staging`/`production`.
 - `PREFLIGHT-BOOTSTRAP-001` and `PREFLIGHT-EXTERNAL-001` are required for all player-facing environments.
@@ -93,11 +93,40 @@ Minimum required keys:
 - `outboundComms.smtpHost` and/or environment-classified webhook target identifiers
 - `operatorCredentials.bindingRef` or `operatorCredentials.fingerprint`
 
+Illustrative example:
+
+```yaml
+environment: staging
+backupStorage:
+  bucket: firemud-staging-backups
+  endpoint: https://minio.staging.internal
+assetStorage:
+  bucket: firemud-staging-assets
+  endpoint: https://minio.staging.internal
+outboundComms:
+  smtpHost: smtp.staging.internal
+  webhookTargets:
+    accountNotifications: staging-only
+operatorCredentials:
+  bindingRef: cert-manager://firemud/staging-operator-client
+```
+
+Illustrative intentionally shared non-sensitive field:
+
+```yaml
+observability:
+  otelCollectorEndpoint:
+    value: https://otel.shared.internal:4317
+    shared: true
+    sharedRationale: shared collector endpoint; credentials and tenant separation remain environment-specific
+```
+
 Validation contract:
 
 - Preflight fails if the manifest is missing for a player-facing environment.
 - The resolved deployment inputs must match the manifest for the target environment.
 - The manifest must prove environment isolation. Staging and production cannot share bucket names, endpoints, SMTP targets, webhook target classes, or operator credential bindings unless the field is explicitly documented as non-sensitive shared infrastructure.
+- When a field is intentionally shared, the manifest must mark it explicitly with `shared: true` plus a short `sharedRationale` string. Absence of those fields means the binding is treated as environment-unique by default.
 - Restore validation tooling may derive shell environment variables such as `EXPECTED_PG_DUMP_BUCKET`, `EXPECTED_ASSET_STORE_BUCKET`, `EXPECTED_ASSET_STORE_ENDPOINT`, `EXPECTED_SMTP_HOST`, and operator-binding fingerprints from this manifest rather than maintaining a second source of truth.
 - Deployment and recovery evidence must reference the same manifest path so auditors can answer “what binding did we expect?” from one record family.
 
@@ -114,6 +143,30 @@ The report artifact must include:
 - `startedAt` and `completedAt` timestamps
 - `toolVersion`
 
+For `ci-static` runs, `expectedBindingsRef` should point to the same repository path that operator preflight would use for the target environment, even when CI validates only static contracts and not live cluster bindings.
+
+Illustrative `ci-static` report shape:
+
+```json
+{
+  "environment": "staging",
+  "deploymentRef": {
+    "overlayCommitSha": "abc123def456"
+  },
+  "checkResults": [
+    {
+      "policyId": "PREFLIGHT-DIGEST-001",
+      "status": "pass",
+      "message": "all images are digest pinned"
+    }
+  ],
+  "expectedBindingsRef": "design/operations/environments/staging/expected-bindings.yaml",
+  "startedAt": "2026-03-13T08:00:00Z",
+  "completedAt": "2026-03-13T08:00:03Z",
+  "toolVersion": "preflight/v1"
+}
+```
+
 CI and manual operator runs must produce the same report shape so audit tooling can compare them.
 
 ### Evidence Storage and Retention
@@ -125,6 +178,7 @@ CI and manual operator runs must produce the same report shape so audit tooling 
 - `deployment-ref` is:
   - `<overlayCommitSha>` for overlay-driven staging/production deployments, or
   - a normalized manifest/chart reference token for hobby/self-hosted deployments.
+- Naming rule: `<deployment-ref>` and similar artifact tokens must use lowercase ASCII plus digits and `-`, and should be stable across re-runs of the same deployment event so evidence does not fork accidentally.
 - Retention requirement: keep preflight reports and waivers for at least as long as release/rollback audit history is retained.
 - Waiver records must include: approver identity, incident/change ticket, scope (policy IDs waived), expiration (deployment event only), and timestamp.
 

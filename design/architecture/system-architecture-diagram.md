@@ -131,9 +131,16 @@ Note on gateway listener surfaces: the gateway has a public ingress surface (typ
 
 Gameplay WebSocket route policy is canonicalized on `/ws/game/**` for player-facing gameplay admission.
 
+Diagram callouts:
+
+- External operator writes for moderation, quota overrides, runtime feature flags, and tick remediation enter through Logging & Admin via Gateway; direct domain-admin routes are read-only unless explicitly documented as bypass-safe.
+- Canonical room state is not assembled by direct World ↔ Entity joins; Game Session mints the room-read fence and composes room views only from same-fence responses.
+
 Admin and creator API exposure is intentionally allowlisted: external tools call domain admin APIs only through Gateway-routed HTTP(S) routes for owning services (for example Logging & Admin, Account, Game Session, Social & Groups, and Game Design). External mutating operator workflows for moderation, quota overrides, runtime feature-flag overrides, and tick remediation must enter through Logging & Admin; direct domain-admin routes are reserved for reads and explicitly documented bypass-safe workflows. External domain gRPC is not part of the edge contract unless a dedicated design update explicitly introduces it. Internal service-to-service gRPC remains direct and does not traverse Gateway.
 
 Within the Game Session layer, the stable `/ws/game/**` edge surface maps to a session front-end pod plus lease-owner execution model: the connected pod owns socket I/O, per-session sequencing, and the current execution-region pointer, while region-scoped tick execution remains fenced to the current `<tenantId, regionId>` lease owner and may be reached through internal gRPC forwarding. The separate nodes in the diagram represent runtime roles, not separate products or independently exposed edge surfaces. See [System Architecture Overview](./system-architecture-overview.md#session-sharding--routing).
+
+The `Gateway -> SessionFE` arrow represents both gameplay socket admission on `/ws/game/**` and the separate allowlisted Game Session admin/control routes described in the overview and context docs.
 
 For Gateway control-plane behavior in production-like environments (including the dynamic-route override dev/test scope), see the canonical [Gateway Management Plane Capability Matrix](./system-architecture-overview.md#gateway-management-plane-capability-matrix-canonical).
 

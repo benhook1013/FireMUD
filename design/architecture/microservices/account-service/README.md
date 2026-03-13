@@ -148,6 +148,55 @@ resolved during authentication.
 | Authenticated account control-plane APIs | `/auth/logout`, `/auth/logout-all`, `/profiles/*`, `/accounts/*/export`, `/tenants/{tenantId}/memberships/me`, `/tenants/{tenantId}/memberships/{accountId}` | JWT middleware (`AuthTokenInterceptor` + route classification) | Must enforce route class, subject-binding rules, and tenant/global role checks. |
 | Internal service gRPC | `Authenticate`, `GetCallerTenantMembership`, `GetTenantMembershipForAccount`, `GetTenantMembershipForRuntime`, `GetTenantEntitlementsForRuntime`, payment and profile gRPC APIs | mTLS caller identity plus method-level auth policy | Internal service surfaces are not edge-exposed directly. |
 
+### Runtime Membership and Entitlement Response Shapes
+
+The internal runtime auth/admission methods must return deterministic response fields because gameplay admission, reconnect, and entitlement freshness rules depend on them.
+
+Illustrative `GetTenantMembershipForRuntime(accountId, tenantId)` response:
+
+```json
+{
+  "accountId": "acct_123",
+  "tenantId": "tenant-demo",
+  "gameplayAdmissionAllowed": true,
+  "roles": ["player"],
+  "membershipVersion": 42,
+  "evaluatedAt": "2026-03-13T09:15:30Z"
+}
+```
+
+Required semantics:
+
+- `gameplayAdmissionAllowed` is the authoritative boolean for gameplay admission.
+- `membershipVersion` advances monotonically for the `{accountId, tenantId}` membership scope whenever gameplay-relevant membership or role authority changes.
+- `evaluatedAt` timestamps the live membership decision used for admission or resume.
+- `GetTenantMembershipForRuntime` is an internal-only gameplay/runtime authority surface and must not be reused as a caller-facing tenant membership endpoint or as a substitute for `GetCallerTenantMembership`.
+
+Illustrative `GetTenantEntitlementsForRuntime(tenantId)` response:
+
+```json
+{
+  "tenantId": "tenant-demo",
+  "status": "active",
+  "gameplayAvailable": true,
+  "allowNewInstanceStarts": true,
+  "quota": {
+    "maxActiveSessions": 250,
+    "maxConcurrentInstances": 1
+  },
+  "entitlementVersion": 19,
+  "tenantBillingSequence": 311,
+  "evaluatedAt": "2026-03-13T09:15:32Z"
+}
+```
+
+Required semantics:
+
+- `gameplayAvailable` is the admission-critical availability flag consumed by gameplay-affecting services.
+- `entitlementVersion` identifies the evaluated entitlement snapshot.
+- `tenantBillingSequence` allows consumers to detect stale or gapped billing-event application before admitting gameplay.
+- `evaluatedAt` is used with the admission freshness SLA from the authentication and subscription-management designs.
+
 ### Subject-Binding Rules (Normative)
 
 - `GET /profiles/{accountId}`, `PUT /profiles/{accountId}`, `GET /accounts/{accountId}/export`, `DELETE /accounts/{accountId}`, and `POST /accounts/{accountId}/external` are **subject-bound** routes:
@@ -310,7 +359,7 @@ Runtime caller contract:
 - `IssueConnectToken` / `POST /auth/connect-token` is the authoritative gameplay bootstrap token-issuance surface.
   - Minimum request fields: `tenantId`, `gameInstanceId`, `requestId`.
   - Minimum response fields: `connectToken`, `expiresAt`, `accountId`, `tenantId`, `gameInstanceId`, `jti`, `issuedAt`.
-- Account Service must use `GetAdmissionPointer(tenantId)` when issuing `/auth/connect-token` so connect-token scope is pinned to the current admissible instance instead of a caller-supplied guess.
+- Account Service must use `GetAdmissionPointer(tenantId)` when issuing `/auth/connect-token` so connect-token scope is pinned to the tenant's current single admissible instance instead of a caller-supplied guess.
 - Runtime callers must treat missing required fields as contract failure and fail closed rather than inferring defaults.
 
 Membership-change producer contract:

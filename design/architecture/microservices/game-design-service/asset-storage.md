@@ -22,6 +22,13 @@ Derived runtime-consumed artifacts produced by domain services follow the same w
 - If those artifacts are exported to the shared object store for runtime consumption, Game Design publishes them on behalf of the owning service as part of the version publish workflow.
 - Domain services must not write directly to the shared object store used for published version assets. A direct domain-service object-store write would bypass the artifact lifecycle, release attestation, and purge controls defined here.
 
+Initial-slice discovery rule for derived world artifacts:
+
+- For the first implementation slice, exported world navmesh/path graph artifacts must be discoverable through the same attested release surfaces as other version assets.
+- For the first implementation slice, Game Design must publish a `manifest.json` entry keyed by a stable usage name for each exported world navmesh/path graph artifact.
+- `published_release_bundle` must attest the same artifact indirectly through the attested `manifestHash`; implementations may add explicit artifact references to the bundle later, but they are not the required discovery surface for the initial slice.
+- Runtime consumers must treat those attested references as canonical and must not construct object-store paths by convention.
+
 ## Table Structure
 
 The `game_assets` table stores metadata for design-time uploads. Columns include:

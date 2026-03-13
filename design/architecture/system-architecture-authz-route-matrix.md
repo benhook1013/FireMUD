@@ -91,7 +91,7 @@ Without these fields where applicable, a route entry is incomplete for governanc
 | --- | --- | --- | --- |
 | Game Session Service | `LOGIN` / `LOGON` | `public` | Credential entrypoint only; no JWT required |
 | Game Session Service | `WORLDS` | `pre_tenant_discovery` | Authenticated account discovery; tenant visibility derived server-side from membership + entitlements; global roles do not widen gameplay discovery |
-| Game Session Service | `REALMS` / `CHARS` / `PLAY` | `tenant_regular` | Caller-bound gameplay membership plus `gameplayAdmissionAllowed`; global roles alone do not grant gameplay access |
+| Game Session Service | `CHARS` / `PLAY` | `tenant_regular` | Caller-bound gameplay membership plus `gameplayAdmissionAllowed`; global roles alone do not grant gameplay access |
 | Game Session Service | `StartSession` / `RestartSession` / `StopSession` / `RefreshRoles` | `tenant_regular` | `tenantAdmin`/`platformAdmin` |
 | Account Service | `AuthLogin` | `public` | Browser auth entrypoint |
 | Account Service | `PlayerBootstrapLogin` | `public` | First-party gameplay bootstrap entrypoint; issues `player-bootstrap` token profile only |

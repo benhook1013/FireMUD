@@ -2,12 +2,32 @@
 
 The architecture section describes the platform infrastructure and each microservice.
 
+Unless a document explicitly says otherwise, docs in `design/architecture/` describe the canonical target-state behavior and are normative for implementation. Read overview tables, responsibility matrices, glossary terms, and explicitly labeled canonical sections as contracts rather than as informal background.
+
 ## High-Level Diagrams
 
 - [**system-architecture-overview.md**](./system-architecture-overview.md) – High-level diagrams and interactions.
 - [**system-architecture-diagram.md**](./system-architecture-diagram.md) – Component relationships.
 - [**system-context-diagram.md**](./system-context-diagram.md) – Shows clients, DMZ components, services, and datastores.
 - [**service-responsibility-matrix.md**](./service-responsibility-matrix.md) – Summary of which service handles what.
+
+## Canonical Terms
+
+- `session front-end` – The connected Game Session pod that owns socket I/O, connection-local state, and per-session sequencing.
+- `lease owner` – The Game Session execution owner currently holding the `<tenantId, regionId>` lease required to mutate region-scoped coordination state.
+- `canonical room state` – A room view assembled only from same-fence World Management occupancy data and Entity Management containment/presentation data.
+- `control-plane API` – An infrastructure or domain admin API that is not part of player gameplay traffic.
+- `bypass-safe workflow` – An explicitly documented external admin workflow allowed to bypass Logging & Admin ingress because it does not rely on Logging & Admin-owned policy, cross-domain write orchestration, or control-plane availability guarantees.
+
+## When To Update Architecture
+
+Open or amend the architecture docs before implementation when a change would alter a canonical contract, including:
+
+- adding a new edge-routable service or route group
+- allowing a new external mutation path that bypasses Logging & Admin
+- introducing a new Coordination Redis owner prefix or changing an owner boundary
+- adding explicit shard handoff or lease-aware edge admission semantics
+- extending gameplay execution beyond the single-cluster scope
 
 ## Directories
 

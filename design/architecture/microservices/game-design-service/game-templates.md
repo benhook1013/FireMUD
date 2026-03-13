@@ -150,6 +150,75 @@ The exact transport schema may evolve, but every implementation must preserve th
 - response fields are the immutable resolved values consumed by launch-time workflows;
 - `releaseBundleRef` (or equivalent attestation identity) must let downstream workflows prove they are using the same published release attestation that supplied `generationConfigRevision`.
 
+Normative examples:
+
+- Fresh launch from a template with no script patch pinned:
+
+```json
+{
+  "request": {
+    "tenantId": "t1",
+    "gameTemplateId": "gt-default"
+  },
+  "response": {
+    "launchDescriptorId": "ld-1001",
+    "tenantId": "t1",
+    "gameTemplateId": "gt-default",
+    "versionId": "v42",
+    "scriptPatchVersion": null,
+    "runtimeFlags": {
+      "pvpEnabled": false
+    },
+    "generationConfigRevision": "genrev-42a1",
+    "versionStateEpoch": 17,
+    "remapSetId": null,
+    "releaseBundleRef": "prb:t1:v42"
+  }
+}
+```
+
+- Replacement-instance upgrade where durable `S2` state requires an approved remap:
+
+```json
+{
+  "request": {
+    "tenantId": "t1",
+    "gameTemplateId": "gt-default",
+    "sourceVersionId": "v42",
+    "targetVersionId": "v43"
+  },
+  "response": {
+    "launchDescriptorId": "ld-2001",
+    "tenantId": "t1",
+    "gameTemplateId": "gt-default",
+    "versionId": "v43",
+    "scriptPatchVersion": "v43-script.1",
+    "runtimeFlags": {
+      "pvpEnabled": false
+    },
+    "generationConfigRevision": "genrev-43b7",
+    "versionStateEpoch": 3,
+    "remapSetId": "remap-v42-v43-r1",
+    "releaseBundleRef": "prb:t1:v43"
+  }
+}
+```
+
+- Mixed-version template rejection:
+
+```json
+{
+  "request": {
+    "tenantId": "t1",
+    "gameTemplateId": "gt-invalid-mixed"
+  },
+  "error": {
+    "code": "INVALID_TEMPLATE_CONFIGURATION",
+    "message": "Template references multiple base versionIds (world=v42, entity=v43); launchable templates must resolve to one canonical version."
+  }
+}
+```
+
 Illustrative startup sequence:
 
 1. The instance-creation orchestrator calls `GetTemplateReferencePhase(tenantId)` and fails fast unless the result is `ENFORCED`.

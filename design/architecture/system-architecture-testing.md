@@ -2,6 +2,10 @@
 
 FireMUD employs a layered testing approach to keep services reliable while avoiding excessive CI/CD costs. This document describes the scope of each test type, the tooling in use, and how these tests fit into our development workflow.
 
+Environment terminology in this document follows [Deployment Environments](./infrastructure/deployment-environments.md#canonical-environment-classes). Unless a section says otherwise, “prod-like observability smoke” means environment classes `hobby-self-hosted`, `staging`, and `production`; `dev-demo-cluster` may run a subset for rehearsal, but it is not the authoritative environment for prod-like observability sign-off.
+For `hobby-self-hosted`, equivalent operator-run evidence is acceptable when nightly automation is not practical, but the same contracts still apply: external-authority checks, mirrored signals, and player-flow canaries must be validated before player traffic is opened or reopened.
+Minimum acceptable operator-run evidence for that exception is: one retained preflight or smoke record for the event, one retained check result showing the authoritative external pager/deadman path was exercised or verified, one retained check result showing mirrored `entrypath_blackbox_probe_success` / `observability_deadman_heartbeat_timestamp_seconds` and required `playerflow_canary_*` signals were present, and one retained incident or deployment note that records who performed the verification and when.
+
 ---
 
 ## Testing Scope

@@ -2,6 +2,8 @@
 
 This directory contains detailed design documents for each core microservice in the FireMUD Game Platform. These documents outline the responsibilities, APIs, data models, and interactions of each service.
 
+Service READMEs must not contradict the canonical contracts in [System Architecture Overview](../system-architecture-overview.md) and [Service Responsibility Matrix](../service-responsibility-matrix.md). If a service-level design needs to change an edge exposure rule, ownership boundary, Redis prefix owner, moderation/operator write path, or other canonical cross-service contract, update the architecture docs first or in the same change. For shared terminology such as `session front-end`, `lease owner`, `canonical room state`, and `bypass-safe workflow`, use the canonical definitions in the [architecture index glossary](../README.md#canonical-terms).
+
 ---
 
 ## Core Microservices

@@ -2,6 +2,8 @@
 
 This document describes how FireMUD collects logs, metrics, and traces across all services, and how operators use those signals for debugging, moderation, and performance analysis.
 
+For the canonical definition of environment classes and which ones are considered player-facing or prod-like, see [Deployment Environments](./infrastructure/deployment-environments.md#terms) and [Deployment Environments](./infrastructure/deployment-environments.md#canonical-environment-classes). In this document, “prod-like” means `hobby-self-hosted`, `staging`, and `production` unless a section explicitly narrows the requirement further.
+
 ---
 
 ## Logging Pipeline
@@ -131,6 +133,9 @@ The metrics below are treated as the canonical Prometheus-facing shapes for play
   - `command_latency_stage_ms_bucket{service,tenantId,regionId,command,stage,le}` for bounded stage-level drilldown. Required `stage` values are `edge_queue`, `dispatch`, `tick_wait`, and `domain_commit`; environment overlays may add a small number of additional bounded stages only with a design update here.
 - Entry-path availability:
   - `entrypath_connection_attempts_total{tenantId,path,outcome}` with bounded enums for `path` and `outcome` as described above.
+- Synthetic player-flow canaries:
+  - `playerflow_canary_success{flow,path,target}` for the mirrored result of the most recent synthetic login or representative-command run.
+  - `playerflow_canary_latency_ms{flow,path,target}` for the mirrored latency of the same synthetic run in milliseconds.
 - Chat:
   - `chat_delivery_latency_ms_bucket{tenantId,channel_type,le}` with `channel_type` drawn from a bounded enum (global/zone/party/system, etc.).
 
@@ -153,6 +158,7 @@ Live-traffic SLIs remain the authoritative compliance view for player experience
   - Do not label these metrics with canary account IDs, character IDs, tenant IDs, or trace IDs.
 - Operational contract:
   - The canary must use a dedicated non-player identity and data set that is safe to exercise continuously.
+  - Canary identities must be clearly marked as synthetic in the authoritative account/session model and must be excluded from normal moderation, analytics, and player-behavior workflows except when explicitly debugging canary failures.
   - These canaries are an outage-detection path, not the primary SLO compliance metric. They complement, but do not replace, `login_requests_total` and `command_end_to_end_latency_ms_bucket`.
   - The canary execution system should live outside the normal player request path failure domain where practical, and must alert independently from live-traffic volume.
 

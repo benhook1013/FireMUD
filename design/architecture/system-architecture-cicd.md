@@ -249,6 +249,12 @@ Lifecycle rules:
 - A promotion attestation is valid only if its referenced staging deployment record remains the latest successful apply record for that staging overlay commit.
 - Rollback uses the deployment record and original attestation lineage for the digest set being restored.
 
+Terminology note:
+
+- `deployment evidence` answers what was checked, applied, and verified for a concrete deployment event in one environment.
+- `promotion evidence` is the subset of evidence used to prove a staging deployment is eligible to be promoted into production, primarily the attestation plus its referenced deployment and compliance records.
+- `traffic-open evidence` is the evidence family used to prove an environment may be opened or reopened to player traffic, for example production first-live backup readiness or hobby traffic-open records.
+
 Illustrative deployment record shape:
 
 ```json
@@ -284,6 +290,7 @@ Promotion and DR-readiness reporting depend on environment secret-compliance rec
 
 - `production`: missing or stale secret-compliance records are a hard CI gate for promotion.
 - `staging`: missing or stale records emit warnings until **June 30, 2026**, and become a hard CI gate for staging promotions on **July 1, 2026**.
+  This gate applies to staging deployment/promotion evidence, especially any deployment intended to produce production-promotion attestation. Detached or quarantined staging drills remain operational exercises, not promotion candidates.
 - `hobby-self-hosted`: operator tooling should validate records before opening traffic, but GitHub CI gating may be unavailable.
 
 Promotion-evidence rule:

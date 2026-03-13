@@ -59,11 +59,17 @@ Key steps:
 - Use read replicas for read-heavy workloads where supported by the design, but do not assume replicas solve tick-path pressure; the primary write path must be sized for peak tick and replay throughput.
 - Increase instance size or provisioned IOPS as necessary, following database operations runbooks.
 - Monitor Slow Query logs and apply schema/index optimizations as needed.
-- Partition and retention strategy must be explicit for high-churn tick tables:
+- Partition and retention strategy must be explicit for the full high-churn tick-history surface:
   - tick effect ledger / tick-batch tables
   - cross-region follow-up tables
   - effect reconciliation backlog tables
-- Capacity reviews should include vacuum/GC behavior, partition counts, oldest-pending row age, and write-latency SLOs for these tables.
+  - command ingress / command outcome status tables keyed by `(tenantId, gameInstanceId, commandId)`
+- Treat these as one retention policy surface during capacity review:
+  - define the retention horizon for each family,
+  - define the partitioning scheme or archive strategy,
+  - define vacuum/GC cadence,
+  - confirm the command-status retention window outlives expected player/client retry windows,
+  - verify oldest-pending-row age and write-latency SLOs across the whole surface rather than table-by-table in isolation.
 
 ## Verification
 
@@ -119,6 +125,7 @@ Baseline guardrails are only a starting point. Before materially increasing regi
   - remote follow-up claim/update QPS
   - replay-controller scan/update QPS
   - effect-reconciliation backlog retry QPS
+  - command-ingress and command-status update QPS
   - p95/p99 write latency for the primary tick-path tables
   - retention horizon, partitioning scheme, and vacuum/GC cadence for high-churn tables
 

@@ -45,7 +45,7 @@ Frontend flows are split between **player gameplay sessions** and **admin/creato
 - **Player UI (gameplay)**  
   - First-party clients must first call the dedicated player-bootstrap endpoint (`POST /auth/player-bootstrap` or equivalent) to establish short-lived account identity for gameplay bootstrap only, then obtain a short-lived connect token (`POST /auth/connect-token`) for a selected `{tenantId, gameInstanceId}` before opening `/ws/game/**`, then complete gameplay authentication by issuing `LOGIN` over the WebSocket channel using the already-verified bootstrap/connect context rather than replaying username/password/OTP from the browser, as described in [Authentication & Authorization](./system-architecture-authentication.md#login-and-session-flow).  
   - The React client does not store or expose internal control-plane JWTs for gameplay. It may hold only the short-lived, memory-only `player-bootstrap` token described in the authentication design and use it solely for gameplay bootstrap surfaces such as `POST /auth/connect-token`.  
-  - Tenant membership and runtime entitlement checks for first-party gameplay happen during `POST /auth/connect-token`, not during `POST /auth/player-bootstrap`, because tenant selection occurs after account bootstrap.  
+  - Tenant membership and runtime entitlement checks for first-party gameplay happen during `POST /auth/connect-token`, not during `POST /auth/player-bootstrap`. In the first implementation, the connect-token target always resolves to the tenant's single gameplay-admissible instance (`"primary"`).  
   - After login, the client participates in an explicit **lobby world-selection** step by issuing `WORLDS` / `CHARS <world>` and then `PLAY <world> [character]` as described in [Tenant Selection for Gameplay](./system-architecture-authentication.md#tenant-selection-for-gameplay-lobby-selection). The Game Session Service resolves the selected world/character into internal identifiers (`tenantId`, `gameInstanceId`, `characterId`), enforces tenant authorization and entitlements, and then binds the socket to a gameplay session in Redis.  
   - On page reload or connectivity loss, the client requests a fresh connect token, reconnects the WebSocket, then replays `LOGIN` and tenant-selection without prompting for credentials again; the Game Session Service uses Redis gameplay session bindings, current membership authority, and fresh backend token rebinding to restore gameplay state when allowed by server-side TTLs and revocation rules.
 
@@ -70,6 +70,47 @@ For gameplay WebSocket handshake failures on `/ws/game/**`, first-party clients 
 
 - `CONNECT_TOKEN_REJECTED`: prompt a fresh gameplay handshake token acquisition and retry with bounded backoff.
 - `POLICY_DENY`: treat as non-retriable until configuration is corrected and surface an actionable error.
+
+Canonical first-party browser reconnect sequence:
+
+```text
+POST /auth/player-bootstrap
+-> { bootstrapToken, expiresAt }
+
+POST /auth/connect-token
+Authorization: Bearer <bootstrapToken>
+{ tenantId: "tenant-demo", gameInstanceId: "primary", requestId: "req-reconnect-1" }
+-> { connectToken, expiresAt, tenantId: "tenant-demo", gameInstanceId: "primary" }
+
+GET /ws/game/** with X-Firemud-Connect-Token: <connectToken>
+
+LOGIN
+OK LOGIN Logged in
+WORLDS
+OK WORLDS
+1) Demo World (demo)
+PLAY demo
+OK PLAY Entered world: Demo World
+
+...socket drops...
+
+POST /auth/connect-token
+Authorization: Bearer <bootstrapToken>
+{ tenantId: "tenant-demo", gameInstanceId: "primary", requestId: "req-reconnect-2" }
+-> { connectToken, expiresAt, tenantId: "tenant-demo", gameInstanceId: "primary" }
+
+GET /ws/game/** with X-Firemud-Connect-Token: <connectToken>
+
+LOGIN
+OK LOGIN Logged in
+WORLDS
+OK WORLDS
+1) Demo World (demo)
+PLAY demo
+OK PLAY Resumed session
+```
+
+This reconnect flow assumes the player still holds a valid in-memory `player-bootstrap` token. If the bootstrap token has expired or the page was reloaded, the client must obtain a new bootstrap token first, then request a fresh connect token. In all cases, first-party reconnects must not prompt the browser to replay username/password/OTP after bootstrap has been re-established. Clients may skip a visible `WORLDS` step only when they already retain a valid world choice and still drive the same canonical `PLAY <world> [character]` selection on reconnect.
 
 ## API Usage Patterns
 

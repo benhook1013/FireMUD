@@ -57,7 +57,9 @@ Tick incidents often benefit from trace-level diagnosis, but mitigation must not
 ### Decide (Stalled tick region)
 
 - If the stall is brief and metrics already show recovery (status returns to `RUNNING`, queues drain, execution time ratios return to healthy ranges), continue to monitor without intervention.
-- If the region remains stalled or degraded beyond the documented grace window, plan a **region-scoped** coordination reset for the affected `<tenantId, regionId>` as described in `system-architecture-redis-reset-and-recovery.md`.
+- If the region remains stalled or degraded long enough that the shared tick-health paging conditions would still be firing for that scope, plan a **region-scoped** coordination reset for the affected `<tenantId, regionId>` as described in `system-architecture-redis-reset-and-recovery.md`.
+  - Treat `tick_status{tenantId,regionId,status="STALLED"} == 1` sustained through the environment’s alert hold time as an intervention threshold by itself.
+  - Also treat sustained `tick_status{tenantId,regionId,status="DEGRADED"} == 1` together with continued over-threshold `tick_execution_time_ms_p95` / `tick_execution_time_ms_p99` ratios versus `tick_lock_ttl_ms`, or continued growth in `tick_retry_queue_depth` / `tick_command_queue_depth`, as sufficient to intervene before the region flips fully to `STALLED`.
 - Only escalate to a **tenant-scoped** or **cluster-wide** reset if multiple regions for the same tenant show similar symptoms or if Redis incident runbooks indicate broader coordination corruption.
 
 ### Act (Stalled tick region)

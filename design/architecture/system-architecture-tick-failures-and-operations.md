@@ -111,6 +111,15 @@ To keep replay-controller alerting and runbooks deterministic, the replay path u
   - Escalate the region to `DEGRADED` or `STALLED` and require scoped remediation when the oldest pending age exceeds multiple budget windows or when `tick_effects_replay_starved` remains true.
 - Environment overlays may raise the budget for extreme workloads, but they must emit the canonical budget metric rather than hiding the threshold inside PromQL.
 
+Canonical alert names for shared rulesets:
+
+- `TickEffectsReplaySloBreached`
+  - Fires when `tick_effects_replay_slo_breached` is sustained and the region has exceeded its emitted convergence budget.
+- `TickEffectsReplayStarved`
+  - Fires when `tick_effects_replay_starved` is sustained, indicating the replay controller is not servicing a region with pending work.
+
+Environment overlays may tune durations or routing, but they should preserve these alert names and the shared labels (`service`, `severity`, `owner`, `runbook`) so Logging & Admin and incident runbooks remain stable.
+
 #### Ownership Summary
 
 Tick-related durable structures are intentionally split between a central ledger and per-service guards:
@@ -144,8 +153,11 @@ Replay of a tick is driven from ledger state:
 
 Command recovery must converge just like effect recovery:
 
-- Any accepted command that is still `RECEIVED` or `ENQUEUED` when a reset or tail-loss reconcile occurs and that is not durably tied to a surviving `tick_batch_id` must be marked `TERMINAL` with a precise terminal outcome such as `LOST_BEFORE_STAGING`.
+- Any accepted command that is still `RECEIVED` or `ENQUEUED` when a reset or tail-loss reconcile occurs and that is not durably tied to a surviving `tick_batch_id` must be marked `TERMINAL` with explicit status fields:
+  - `executionOutcome = LOST_BEFORE_STAGING`
+  - `gameplayResult` set by the command type's documented terminal mapping (for the shared default, `FAILED` unless a more specific command contract says otherwise)
 - Commands that are `BOUND_TO_BATCH` follow the batch/effect replay path and converge based on the terminal outcomes of the effects tied to that batch.
+  - For commands, this means they converge to terminal command status fields (`executionOutcome`, `gameplayResult`) based on the documented command mapping for those batch-bound effects; do not collapse command status into effect-ledger status names alone.
 - Reconciliation of command records is part of the same operational scope as ledger replay/reset tooling; operators must not need a separate ad-hoc command repair path just to clear dedupe rows stranded before staging.
 - This keeps command deduplication safe: the same `commandId` can be retried by clients for status lookup without leaving an unexecutable, permanently non-terminal record behind.
 
@@ -172,6 +184,10 @@ Minimum command-status surface for operators and clients:
   - `FAILED`
   - `TIMEOUT`
 - `LOST_BEFORE_STAGING` is a first-class terminal execution outcome, not an internal-only repair code.
+- Durable storage rule:
+  - The authoritative status surface must persist both `executionOutcome` and `gameplayResult`, either on the command-ingress row itself or in a durable outcome projection keyed by `(tenantId, gameInstanceId, commandId)`.
+  - Recovery and reset tooling update that durable status surface directly; they do not rely on Redis queues or in-memory command trackers to answer `GetCommandStatus`.
+  - Schema docs may use storage-oriented names such as `execution_outcome` / `gameplay_result`, but the logical command-status contract remains the camel-case field set above.
 
 ### EffectId, Ledger Rows, and Guard Keys
 

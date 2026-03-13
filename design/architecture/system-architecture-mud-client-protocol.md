@@ -37,7 +37,7 @@ These modes are mutually exclusive. Implementations must not allow both the prox
 If configuration drift would cause both greeting paths to fire, producers must fail closed on the duplicate-greeting path rather than sending two server greetings on one connection. This is a rollout/configuration bug, not a valid protocol variant:
 
 - the duplicate greeting must be suppressed before it reaches the client whenever detection is possible,
-- the owning component must emit a bounded misconfiguration signal such as `mcp_greeting_mode_conflict`,
+- the owning component must emit a bounded misconfiguration signal such as `mcp_greeting_mode_conflict` and, if metrics are exposed for this condition, use a stable low-cardinality name such as `mcp.greeting.mode_conflict`,
 - and operators should treat any client-visible duplicate greeting as an incident requiring rollback or feature-flag correction.
 
 Clients should not be expected to recover from duplicate server greetings beyond falling back to plain-text behavior or disconnecting cleanly; the server side owns preventing this condition.
@@ -46,8 +46,10 @@ On the Telnet path, `SESSION` remains an attach hint only until the proxy forwar
 
 Examples:
 
+- `SESSION` first, then `LOGIN`: `SESSION <gameInstanceId> <tenantId>` followed by `LOGIN ...` causes the proxy to open the bridge with the captured `SESSION` hints before forwarding the `LOGIN` line.
 - `SESSION` first, then MCP: `SESSION <gameInstanceId> <tenantId>` followed by `#$#mcp ...` causes the proxy to include the `SESSION` hints in the initial Proxy → Gateway handshake.
 - MCP first, then `SESSION`: `#$#mcp ...` followed later by `SESSION <gameInstanceId> <tenantId>` does **not** update the already-established bridge handshake; the later `SESSION` line is no longer an attach hint.
+- Negative example: `#$#mcp version: 2.1 to: 2.1`, then `SESSION <gameInstanceId> <tenantId>`, then `LOGIN ...` means the bridge was already opened by the initial MCP line; the later `SESSION` text is forwarded as ordinary input and must not affect admission headers.
 
 Each endpoint then advertises its capabilities using `mcp-negotiate-can package: <name> min-version: <x> max-version: <y>` messages and finishes with `mcp-negotiate-end`. FireMUD uses version 2.0 of the `mcp-negotiate` package, so the package must be advertised explicitly and `mcp-negotiate-end` terminates negotiation. A package is considered active only after both sides have sent `mcp-negotiate-can` for it and both have sent `mcp-negotiate-end`. Implementations may defer using a package until receipt of the other side’s `mcp-negotiate-end`. Unknown packages are ignored so legacy clients remain unaffected.
 

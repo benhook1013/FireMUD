@@ -24,6 +24,7 @@ All real-time gameplay logic — movement, combat, item use, AI — is executed 
 - Staged in Redis with Lua-based staging and cleanup/abandon semantics
 - Applied via one or more **service-local transactions** guarded by effect identity
 - Automatically retried on failure (for example, lock contention or transient errors)
+- Reported through a durable command-status surface keyed by `(tenantId, gameInstanceId, commandId)` that persists both execution convergence (`executionOutcome`) and player-facing result (`gameplayResult`) independently of Redis coordination state
 
 From the player’s perspective, a command appears atomic (“either my move happens or it does not”), but the implementation relies on:
 

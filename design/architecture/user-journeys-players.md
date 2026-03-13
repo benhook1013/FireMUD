@@ -70,13 +70,40 @@ The first successful session for a new player follows a single canonical onboard
    - **Telnet / MCP client** – Connects through the [TCP Proxy Service](./microservices/tcp-proxy-service/README.md) and authenticates in-band with `LOGIN`.
 2. **Discover Accessible Worlds** – After `LOGIN`, the player uses `WORLDS` to list only the tenants the account is allowed to enter. Responses use world slugs and friendly names rather than raw IDs, as defined in [Authentication & Authorization](./system-architecture-authentication.md) and [Multi-Tenancy](./system-architecture-multi-tenancy.md).
 3. **Choose a Realm** – If the selected world exposes more than one visible realm, the player uses `REALMS <world>` to choose between the default production realm and any explicitly authorized additional realms such as a playtest fork. Hidden or unauthorized realms are never disclosed.
-4. **List Characters or Create New** – The player uses `CHARS <world> [realm]` to view existing characters. If none exist, the client offers the world's character-creation flow before `PLAY`.
+4. **List Characters or Create New** – The player uses `CHARS <world> [realm]` to view existing characters. If none exist, the client offers the world's character-creation flow before `PLAY`. For playtest forks, a player may arrive with copied fork-local character state from the source snapshot, but if no visible fork-local character exists for that account, the fork may still offer fresh fork-local character creation rather than denying entry outright.
 5. **Bind to Gameplay** – `PLAY <world> [realm] [character]` resolves to canonical `{tenantId, gameInstanceId, characterId}` values and binds the session to the selected realm. After this step, normal gameplay commands become available.
 
 This onboarding flow is the only supported way to discover and enter a realm. Transport-level hints such as Telnet `SESSION` and first-party WebSocket connect tokens may narrow the target realm, but they never replace the authenticated lobby contract.
 
 ```plaintext
 Player → LOGIN → WORLDS → REALMS → CHARS / Create Character → PLAY
+```
+
+Example text-client transcript:
+
+```text
+LOGIN
+OK LOGIN Logged in
+WORLDS
+1) emberfall  Emberfall
+REALMS emberfall
+1) production  Live Realm
+2) playtest-docks  Playtest Fork
+CHARS emberfall production
+1) Mara
+PLAY emberfall production Mara
+OK PLAY Entered Emberfall / Live Realm as Mara
+```
+
+Example first-party web flow:
+
+```text
+POST /auth/player-bootstrap
+POST /auth/connect-token { tenantId, gameInstanceId }
+GET /ws/game/** with X-Firemud-Connect-Token
+LOGIN
+WORLDS / REALMS / CHARS
+PLAY <world> <realm> <character>
 ```
 
 ---
@@ -127,6 +154,12 @@ Players communicate and coordinate through the [Social & Groups Service](./micro
    - `account_security_ban` blocks account authentication and recovery to the normal account-security path.
    - `gameplay_ban` blocks `PLAY` for the affected tenant/realm scope with a canonical gameplay denial.
    - `chat_mute` / `chat_ban` allow gameplay to continue but reject affected messaging commands with canonical chat errors.
+
+Canonical player-facing examples:
+
+- `account_security_ban` – `ERROR ACCOUNT_LOCKED Contact support to recover this account.`
+- `gameplay_ban` – `ERROR GAMEPLAY_BANNED You cannot enter this realm.`
+- `chat_mute` / `chat_ban` – `ERROR CHAT_RESTRICTED You cannot send messages in this realm.`
 
 ```plaintext
 Player → Game Session Service → Social & Groups Service → Logging & Admin Service

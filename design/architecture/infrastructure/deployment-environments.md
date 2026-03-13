@@ -24,6 +24,7 @@ This document outlines how FireMUD is deployed across environments including loc
 ## Terms
 
 - `player-facing`: any environment that may accept real player traffic or is used to validate player-visible operational correctness. In FireMUD this includes `hobby-self-hosted`, `staging`, and `production`.
+- `quarantined`: an environment boundary that would otherwise be player-facing by class but is temporarily prevented from serving external player traffic during restore, drill, or detached maintenance. Quarantined staging or production work does not count as player-facing for traffic-open or player-impact severity decisions until quarantine is removed.
 - `production`: the primary player-facing environment with the strictest change gates and mandatory scheduled backup posture.
 - `shared prod-profile Kubernetes environments`: Kubernetes-backed environments that run the shared Spring `prod` profile and Kubernetes Secret delivery model. This includes `dev-demo-cluster`, `hobby-self-hosted`, `staging`, and `production`, though only the player-facing subset inherits the stricter traffic-open controls.
 
@@ -55,6 +56,7 @@ Cross-document rules:
 - `hobby-self-hosted` first-live and post-restore reopen events must also prove backup-baseline compliance before player traffic opens, using the canonical traffic-open evidence defined in `system-architecture-backup-recovery.md`.
 - When this document refers to “preflight” or “promotion evidence,” the authoritative owning contracts are `system-architecture-deploy-preflight-policy.md` and `system-architecture-promotion-attestation.md`; this document defines environment intent, not a parallel policy schema.
 - `dev-demo-cluster` is explicitly **non-promotable** and **non-attestable**. It must not be used as the source of production promotion evidence, rollback evidence, or DR-readiness sign-off. Any validation performed there is informative only.
+- `dev-demo-cluster` may reuse the expected-bindings manifest pattern for local operator convenience, but that manifest is optional and is not part of any player-facing preflight or promotion contract.
 
 ---
 

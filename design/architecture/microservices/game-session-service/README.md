@@ -22,6 +22,7 @@ Orchestrates live game sessions, including tick execution, player input validati
 - Own the authoritative, pinned `scriptPatchVersion` for each running game instance and enforce version fencing for script-generated work.
 - Publish **coordination and tick health metrics** (per `<tenantId, regionId>`) and expose admin/control APIs that allow authorized services (such as Logging & Admin) to pause/resume tick execution and participate in scoped coordination resets.
 - Front gameplay login commands and session binding, calling Account Service to verify credentials and obtain JWTs/tokens while enforcing single-session control for each character.
+- For first-party `/ws/game/**`, accept bootstrap-backed bare `LOGIN` after Gateway connect-token validation and signed connect-context verification; this path is intentionally credentialless and must not prompt the browser to replay username/password/OTP.
 - Mint and attach short-lived internal `SessionAttestation` payloads on gameplay-service gRPC calls so downstream gameplay services can verify delegated player identity (`accountId`, `tenantId`, `gameInstanceId`, `characterId`, `sessionId`) in addition to mTLS caller identity.
 
 ## Architecture / Design Notes
@@ -322,15 +323,40 @@ If a gameplay session already exists for the selected `{tenantId, gameInstanceId
 
 If a client attempts gameplay commands before selecting a world, the service returns `ERROR WORLD_NOT_SELECTED Use WORLDS/PLAY first` (or the equivalent canonical code) so clients can recover deterministically.
 
+Illustrative world-selection transcript showing slug and index equivalence:
+
+```text
+WORLDS
+OK WORLDS
+1) Demo World (demo)
+2) Builder Sandbox (sandbox)
+
+CHARS 1
+OK CHARS
+1) Emberline
+2) Sora
+
+CHARS demo
+OK CHARS
+1) Emberline
+2) Sora
+
+PLAY 1 2
+OK PLAY Entered world: Demo World as Sora
+```
+
+The same resolution rules apply to `PLAY demo 2` or `PLAY 1 Sora`: menu indices and stable world slugs are equivalent player-facing selectors for the same canonical `{tenantId, gameInstanceId="primary"}` target.
+
 The Account Service returns canonical `AUTH_*` error codes (`AUTH_INVALID_CREDENTIALS`, `AUTH_OTP_REQUIRED`, `AUTH_ACCOUNT_LOCKED`, `AUTH_UPSTREAM_FAILURE`), and the Game Session Service translates them into the protocol-level responses (`ERROR INVALID_CREDENTIALS`, `ERROR OTP_REQUIRED`, etc.) so Telnet and WebSocket clients can rely on stable error semantics while the human-readable message remains flexible.
 
 Additional Game Session-specific login failures cover parsing and session-state issues before the Account Service call:
 
 - `PROMPT_LOGIN_UNSUPPORTED` – prompt-based LOGIN/LOGON exchanges are planned but not implemented yet on non-bootstrap transports, so those clients must send `LOGIN <username> <password>`.
 - `INVALID_ACCOUNT` – the Account Service returned an account identifier that could not be parsed into the expected format.
-- `ACCOUNT_MISMATCH` – the authenticated account is not permitted to attach to the requested game instance or tenant context.
+- `ACCOUNT_MISMATCH` – bootstrap-backed `LOGIN` resolved to an account different from the validated connect-context subject, or the authenticated account is otherwise not permitted to attach to the requested game instance or tenant context.
 - `SESSION_NOT_FOUND` – the supplied game instance identifier has no corresponding `GameInstance`.
 - `INVALID_ARGUMENT` – session ID parsing or other validation failed before the handler reached gameplay state.
+- `WORLD_NOT_SELECTED` – a gameplay command that requires admitted world scope was sent before `PLAY` completed successfully.
 
 Telnet success (prompt-based):
 

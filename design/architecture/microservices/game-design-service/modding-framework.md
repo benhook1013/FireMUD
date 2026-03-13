@@ -59,7 +59,7 @@ Minimum requirements:
   - The allowlist and revocation list must be distributed to runtime services as a signed configuration artifact with a bounded refresh interval.
   - Automation & Scripting must refresh signer policy on a bounded cadence (for example every 60 seconds) and must disable affected plugins within a fixed operator SLO (for example “revocation disables affected plugins within 5 minutes”).
   - Disablement due to revocation must emit an operator-visible control-plane event and be visible in audit tooling so operators can prove when revocation took effect.
-  - Runtime signer-policy visibility must be queryable via control-plane read APIs (for example `GetSignerPolicyConvergence`) so operators can verify policy propagation before and after revocation.
+  - Runtime signer-policy visibility must be queryable via control-plane read APIs (for example `GetSignerPolicyConvergence`) so operators can verify policy propagation before and after revocation. Before resuming normal admission after a revocation or policy repair, operators should use those read surfaces together with the scripting control-plane convergence/drain reads for the affected scope to confirm that policy propagation, plugin disablement, and any required draining have all converged.
   - If signer policy cannot be refreshed/verified for a scope beyond max-age, plugin admission must fail closed with `finalOutcome=signer_policy_unavailable` until policy converges.
   - Any override that permits plugin admission while signer policy is unavailable must be explicit, time-bounded, scoped, and operator-audited, and must auto-expire back to fail-closed mode.
 
@@ -175,9 +175,10 @@ Rollback/disable/revocation flows must also reconcile durable plugin-owned timer
 
 - Any timer or interval owned by the displaced `pluginVersionId` must be removed or tombstoned before normal scheduling resumes for that plugin.
 - Canceling queued work items alone is insufficient; otherwise an old plugin version could continue minting new timer-driven triggers after disablement or rollback.
-- If a newer plugin version preserves the same semantic schedule, the scheduler may carry the schedule forward only through an explicit reconciliation step that rewrites ownership to the new `pluginVersionId`.
+- If a newer plugin version preserves the same schedule, the scheduler may carry it forward only when the old and new definitions share the same stable `scheduleDefinitionId`; reconciliation must then explicitly rewrite ownership to the new `pluginVersionId`.
 
 The normative control-plane API shapes and required events for plugin management are defined in `design/architecture/system-architecture-scripting-control-plane-api.md` (for example `SetPluginActiveVersion`, `DisablePlugin`, and `DrainPlugin`).
+For operator verification during rollback, disablement, or signer revocation, use the same control-plane read surfaces that gate scripting convergence for the affected runtime scope, including plugin-state reads and the scripting drain/convergence APIs delegated from `design/architecture/system-architecture-scripting-control-plane-api.md`.
 
 ## Monitoring & Debugging
 

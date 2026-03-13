@@ -36,6 +36,38 @@ The **Game Design Service** manages version metadata and publish workflows for g
      - `NOT_FOUND` means the version is not release-attested and must be treated as non-launchable.
      - `SCHEMA_VERSION_UNSUPPORTED` means the caller cannot safely interpret the attestation and must fail closed.
      - Activation, cutover preflight, and repair workflows must use a fresh attestation read; cached/stale attestation payloads are not sufficient for admission decisions.
+
+   Illustrative attestation payload:
+
+```json
+{
+  "tenantId": "t1",
+  "versionId": "v42",
+  "commitId": "c-9001",
+  "publishWorkflowId": "pub-42",
+  "publishedAt": "2026-03-13T10:00:00Z",
+  "participantDigests": [
+    {
+      "serviceName": "WORLD",
+      "appliedCommitId": "c-9001",
+      "contentDigest": "sha256:worlddigest",
+      "digestSchemaVersion": 3
+    },
+    {
+      "serviceName": "ENTITY",
+      "appliedCommitId": "c-9001",
+      "contentDigest": "sha256:entitydigest",
+      "digestSchemaVersion": 2
+    }
+  ],
+  "manifestHash": "sha256:manifest42",
+  "manifestSchemaVersion": 1,
+  "generationConfigRevision": "genrev-42a1",
+  "attestationSchemaVersion": 1
+}
+```
+
+In the initial slice, exported derived world artifacts such as navmesh/path graph bundles are discovered through entries in the attested version `manifest.json`. `published_release_bundle` attests those artifact references indirectly via `manifestHash`; callers should not expect a separate required top-level artifact field in the bundle.
 6. A notification or message informs the Game Session Service that a new version exists so game instances can be started or patched against it.
 
 Published versions are immutable; further changes require publishing a new `version_id`. Services may keep additional draft or experimental versions internally, but only Published versions are eligible to be activated for live game instances.
@@ -189,6 +221,16 @@ Launch descriptor version-resolution rules:
 - Mixed-version template bundles are invalid for launch and must be rejected during template validation and launch-descriptor resolution rather than interpreted heuristically at runtime.
 - `scriptPatchVersion` is the only supported per-launch patch override and must reference the same `baseVersionId` as the resolved `versionId`.
 
+Illustrative launch-descriptor examples:
+
+- Fresh launch:
+  - `ResolveLaunchDescriptor(tenantId=t1, gameTemplateId=gt-default)` resolves to exactly one `versionId` (for example `v42`) plus any explicit patch/defaults pinned to that same base version.
+- Replacement-instance upgrade:
+  - `ResolveLaunchDescriptor(tenantId=t1, gameTemplateId=gt-default, sourceVersionId=v42, targetVersionId=v43)` resolves to `versionId=v43` only when template references, release attestation, and any required `remapSetId` all validate against the target version.
+  - If `targetVersionId` would cause mixed-version dependencies or requires an unapproved remap, descriptor resolution fails before any instance rows are created.
+- Mixed-version rejection:
+  - If `game_template_world_ref` resolves to `versionId=v42` while `game_template_entity_ref` resolves to `versionId=v43`, `ResolveLaunchDescriptor` must fail validation instead of choosing one version heuristically.
+
 Normalized-template dependency checks require explicit phase enforcement:
 
 - Game Design exposes persisted cutover state via `GetTemplateReferencePhase(tenantId)` with values `BACKFILLING`, `VALIDATED`, `ENFORCED`.
@@ -207,7 +249,7 @@ Required cutover workflow additions:
 
 - Game Session owns a pre-admission `PrepareVersionUpgrade(tenantId, sourceGameInstanceId, targetVersionId)` compatibility workflow.
 - Entity Management must expose an upgrade surface that validates entity-owned S1/S2 runtime entities against the target version and returns deterministic outcomes: `COMPATIBLE`, `REQUIRES_MAPPING`, or `INCOMPATIBLE`.
-- World Management must expose an upgrade surface that validates world-owned S2 references and persistent world-bound metadata against the target version using the same outcome vocabulary.
+- World Management must expose `ValidateWorldUpgradeMappings`, which validates world-owned S2 references and persistent world-bound metadata against the target version using the same outcome vocabulary.
 - Any S2 data that survives must do so through explicit versioned remap records owned by the domain service that owns the referenced template identifiers. The system must not infer remaps from names, slugs, or “closest match” heuristics.
 - Game Design control-plane metadata is the source of truth for approved version-to-version remap set identities and audit history when a cutover depends on remapped template references across services.
 - Remap sets must be persisted explicitly in Game Design control-plane storage (for example `version_template_remap_set` and child mapping rows) and exposed through APIs such as:
@@ -222,6 +264,10 @@ Required cutover workflow additions:
   - `S2` rows that survive only with a validated remap,
   - `S3` rows that never survive cutover.
   Cutover preflight is incomplete until every owning domain has documented this mapping or explicitly declared that a class has no rows in the current slice.
+
+Initial-slice note:
+
+- In the first implementation slice, World Management declares no mandatory `S2` row families. Cutover preflight should therefore expect World to report `hasS2Rows=false` unless later world-bound durable metadata is introduced explicitly.
 
 The `ValidateInstanceCutoverCompatibility` contract below is the orchestration surface for these rules; it must report which state classes were checked, which owning domains attested compatibility, and whether any remap set was required.
 
@@ -270,6 +316,35 @@ Replacement-instance cutover requires an explicit compatibility preflight before
   - The target `published_release_bundle` attestation returned by `GetPublishedReleaseBundle` exists and matches the digests, `manifestHash`, and `generationConfigRevision` used during preflight.
 - Pointer swap is forbidden until this preflight reports `COMPATIBLE`; no best-effort fallback defaults are allowed at cutover time.
 
+Illustrative compatibility responses:
+
+- Compatible cutover with no remap:
+
+```json
+{
+  "result": "COMPATIBLE",
+  "reasons": [],
+  "checkedParticipants": ["GAME_DESIGN", "WORLD", "ENTITY"],
+  "checkedAt": "2026-03-13T10:15:00Z",
+  "remapSetId": null
+}
+```
+
+- Incompatible cutover because a remap is required but not approved:
+
+```json
+{
+  "result": "INCOMPATIBLE",
+  "reasons": [
+    "ENTITY.class_assignment requires approved remapSetId",
+    "WORLD.housing_anchor requires approved remapSetId"
+  ],
+  "checkedParticipants": ["GAME_DESIGN", "WORLD", "ENTITY"],
+  "checkedAt": "2026-03-13T10:16:00Z",
+  "remapSetId": null
+}
+```
+
 ## Version Activation & Rollback
 
 The **Game Session Service** controls which published version is active for each live game instance. See [User Journeys – Publish and Start a Game Instance](./user-journeys-creators.md#4-publish-and-start-a-game-instance) for the high level flow.
@@ -299,7 +374,7 @@ Termination requires ordered handoff across runtime and domain owners:
 
 If any step after step 1 fails, admission remains closed and the same termination workflow identity must retry until convergence.
 
-Before any operation that changes whether a tenant is actively serving gameplay for a given realm (for example, starting a realm, cutting over a realm to a replacement instance with a different `runtime_version`, creating a forked playtest realm, or rolling back to a previous version), the Game Session Service must consult the runtime entitlement contract:
+Before any operation that changes whether a tenant is actively serving gameplay through its single gameplay-admissible instance (for example, starting that instance, cutting over to a replacement instance with a different `runtime_version`, or rolling back to a previous version), the Game Session Service must consult the runtime entitlement contract:
 
 - Call `GetTenantEntitlementsForRuntime(tenantId)` in the Account Service and enforce that:
   - The tenant is currently **available for gameplay** under its subscription and billing state (for example, not `suspended` or `canceled`).  
@@ -307,44 +382,37 @@ Before any operation that changes whether a tenant is actively serving gameplay 
 - If entitlements indicate that the tenant is unavailable for gameplay or that quotas would be exceeded, the operation fails with a clear, tenant-scoped error and no instance-level changes are applied.
 - Entitlement snapshots used by these admission/control operations must be no older than 15 seconds. If a fresh snapshot cannot be obtained (for example due to event lag or Account Service uncertainty), operations fail closed with canonical error `ENTITLEMENT_UNAVAILABLE` (or protocol-mapped equivalent).
 - Entitlement snapshots must include `evaluatedAt`, `entitlementVersion`, and `tenantBillingSequence`; runtime operations must reject stale time/sequence data and reconcile via fresh `GetTenantEntitlementsForRuntime(tenantId)` reads.
-- Runtime operations must enforce the realm-selection contract exposed to players and testers: production/public admission must target the tenant's designated production realm, while explicitly addressed non-production realms such as playtest forks may also be player-admissible for authorized users. Runtime control-plane workflows must not create ambiguity about which realm a caller is selecting.
+- Runtime operations must enforce the single-admissible-instance contract exposed to players: player admission targets exactly one gameplay-admissible instance per tenant, and control-plane workflows must not create ambiguity about which instance is admissible.
 
-Version cutover contract for a realm:
+### Version Cutover Contract Under The Single-Admissible-Instance Invariant
+
+Version cutover contract for the gameplay-admissible instance:
 
 1. Prepare the replacement instance as non-admissible (`PREPARING`/draining-safe) and run world creation to completion.
 2. Run compatibility preflight for source instance -> target version and fail closed on mismatch.
-3. Perform one atomic admission-pointer swap for that realm-selection target so the selected production or named realm resolves to exactly one admissible `gameInstanceId` at any instant.
+3. Perform one atomic admission-pointer swap so the tenant resolves to exactly one admissible `gameInstanceId` at any instant.
 4. Keep the old instance non-admissible and drain/terminate it through the standard `InstanceTermination` workflow.
 5. If swap fails, keep old instance as sole admissible instance and retry; do not open dual admission.
 
-Admission-pointer / realm-routing contract (required):
+Admission-pointer contract (required):
 
-- Each tenant must have authoritative realm-routing records managed by Game Session that together define:
-  - the tenant's default production realm routing target;
-  - any additional explicitly addressed player-admissible realms such as playtest forks;
-  - realm metadata needed for discovery and audit, including realm type, visibility, and lifecycle status.
-- Each routing record must contain at minimum:
+- Each tenant must have exactly one authoritative gameplay-admission pointer record managed by Game Session.
+- Each pointer record must contain at minimum:
   - `tenantId`,
-  - logical realm selector/label,
   - `admissibleGameInstanceId`,
   - `pointerVersion` (monotonic CAS version),
   - `updatedAt`,
   - `updatedBy` / change reason for audit.
-- Admission (`PLAY`) and runtime control-plane operations must read these records as the source of truth for gameplay-admissible realm selection.
-- Routing updates use compare-and-set semantics on `pointerVersion`; failed CAS must not admit or expose dual-admissible state for the same logical realm target.
-- Ownership: Game Session Service is the sole writer and system of record for realm-routing state; other services consume via API/read models and must not write routing state directly.
-- API surface: Game Session exposes control-plane APIs for reading/updating the default production routing target and explicitly addressed additional realms. All cutover workflows must use these APIs rather than direct table writes.
-- If routing state for a selected realm is unavailable or ambiguous, admission fails closed with `ADMISSION_POINTER_UNAVAILABLE` (or protocol-mapped equivalent) until reconciled.
+- Admission (`PLAY`) and runtime control-plane operations must read this record as the source of truth for gameplay-admissible instance selection.
+- Pointer updates use compare-and-set semantics on `pointerVersion`; failed CAS must not admit or expose dual-admissible state.
+- Ownership: Game Session Service is the sole writer and system of record for gameplay admission-pointer state; other services consume via API/read models and must not write pointer state directly.
+- API surface: Game Session exposes control-plane APIs for reading/updating the gameplay admission pointer. All cutover workflows must use these APIs rather than direct table writes.
+- If pointer state is unavailable or ambiguous, admission fails closed with `ADMISSION_POINTER_UNAVAILABLE` (or protocol-mapped equivalent) until reconciled.
 
-Playtest fork contract:
+Future multi-realm note:
 
-- A playtest fork is a temporary, isolated, non-production realm derived from a snapshot of another realm's live state and/or published version state.
-- Fork creation is a control-plane operation owned by Game Session orchestration and must produce a distinct `gameInstanceId` with isolated runtime writes.
-- Fork realms may target a different `versionId` or `scriptPatchVersion` than the source realm, subject to the same publish, compatibility, and entitlement checks as any other realm launch.
-- Fork visibility is explicit and access-controlled; public lobby discovery must not expose a playtest fork unless the caller is authorized for that fork.
-- Runtime activity inside a fork must never mutate the source production realm.
-- Expiring or deleting a fork discards only fork-local runtime state unless an explicit future export workflow is introduced; there is no implicit merge-back into production.
-
+- Additional player-addressable realms, including playtest forks, are out of scope for the first implementation.
+- If FireMUD later introduces player-selectable additional realms, that design must add a separate canonical routing/discovery contract instead of weakening the single-admissible-instance invariant by implication.
 When entitlements transition to hard-cutoff states (`suspended` or `canceled`) after an instance is already running, runtime behavior is deterministic:
 
 - New admissions are blocked immediately.

@@ -21,6 +21,7 @@ This guide helps game creators customize their worlds on the hosted FireMUD plat
 
 ## Configuring Hosted Games
 
+- **Recommended v1 Flow** – Create a draft tenant, author content, publish a version, create a playtest fork, validate the target build against realistic state, then launch or cut over the public production realm.
 - **World Management** – Import or create zones, rooms, and entities using the Game Editor.
   See
   [World Editing & Customization Tools][world-edit].
@@ -30,6 +31,7 @@ This guide helps game creators customize their worlds on the hosted FireMUD plat
   documentation.
 - **Go-Live Prerequisites** – A tenant can remain in draft/edit-only mode while you build content. To expose a public production realm, publish a version and ensure the tenant's billing/entitlements allow gameplay.
 - **Playtest Forks** – Before cutting production over to a new version, create an isolated fork realm from a source realm snapshot, invite testers, and validate the new ruleset against realistic state. Fork writes never merge back into production automatically.
+- **Choose the Rollout Type** – Prefer a script patch when only automation behavior changes and the underlying published version remains valid. Prefer a replacement-instance cutover when world layouts, entities, balance data, assets, or other non-script content changes.
 - **Multi-Tenancy** – Each game is isolated by a unique identifier so you can manage multiple worlds from one account. See the [Multi-Tenancy design](../architecture/system-architecture-multi-tenancy.md).
 
 ## Scripting & Integration API

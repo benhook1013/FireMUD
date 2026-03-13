@@ -76,3 +76,18 @@ If a hosted monitoring product cannot expose the canonical mirrored metric names
 - the existing runbook behavior and alert naming described in the architecture docs.
 
 Compatibility mappings are acceptable only for the Prometheus mirror. They are not a substitute for the authoritative external checks themselves.
+
+Example compatibility mapping:
+
+- External monitor native checks:
+  - `synthetic.tcp.telnet.prod.status`
+  - `synthetic.http.websocket.prod.status`
+  - `heartbeat.firemud.prod.last_seen_unix`
+- Prometheus mirror mapping:
+  - `synthetic.tcp.telnet.prod.status -> entrypath_blackbox_probe_success{path="telnet",target="prod-telnet-edge"}`
+  - `synthetic.http.websocket.prod.status -> entrypath_blackbox_probe_success{path="websocket",target="prod-web-gateway"}`
+  - `heartbeat.firemud.prod.last_seen_unix -> observability_deadman_heartbeat_timestamp_seconds{source="prod"}`
+- Required preserved semantics:
+  - the external monitor still pages on its native checks without Prometheus,
+  - `path="telnet"` and `path="websocket"` remain canonical in mirrored views,
+  - runbooks and shared alert naming continue to reference the canonical FireMUD contract rather than the vendor-native signal names.

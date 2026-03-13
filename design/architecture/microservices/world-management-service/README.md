@@ -88,6 +88,13 @@ Derived world artifacts such as navmesh/path graph bundles need one canonical pu
 - If a deployment keeps these artifacts only in World Management storage, the read path must remain World-owned via gRPC or database-backed APIs and must not rely on unpublished object-store conventions.
 - Implementations must choose one of those two paths per artifact family and document the consumer read path. Mixing direct World writes to object storage with Game Design-managed asset publication is not allowed.
 
+Initial-slice decision:
+
+- For the first implementation slice, navmesh/path graph artifacts use the Game Design-managed object-store publication path.
+- World Management derives and validates the artifact payload for `(tenantId, versionId)`, then hands it to the publish workflow as an explicit publish input.
+- Game Design writes the artifact under the version-scoped published prefix, records it in the attested version `manifest.json`, and attests that manifest through the immutable `published_release_bundle`.
+- Game Logic and any other runtime consumer must discover the artifact through the attested version manifest for that release; they must not rely on ad hoc World-local storage conventions for this artifact family in the initial slice.
+
 ## Architecture / Design Notes
 
 - World data is stored in PostgreSQL. Redis holds only transient active state used during gameplay.
@@ -205,7 +212,8 @@ World Management owns the lifecycle of `gameInstanceId` rows, but teardown is a 
 World Management must classify its runtime persistence surface for cutover and migration tooling:
 
 - `S2` world-owned durable state:
-  - world-bound metadata that survives outside a single room-instance layout and references versioned world templates, if such rows exist in the current slice;
+  - no mandatory `S2` rows in the initial implementation slice;
+  - world-bound metadata that survives outside a single room-instance layout and references versioned world templates, if such rows are introduced in a later slice;
   - any future persistent world-bound housing, ownership, or quest-anchor rows keyed to template identifiers.
 - `S3` world-owned ephemeral state:
   - `region_instance`, `zone_instance`, `room_instance`, and other topology rows keyed by `(tenantId, gameInstanceId)`;
@@ -223,6 +231,42 @@ Initial-slice rule:
 - Input must identify `tenantId`, `sourceGameInstanceId`, `targetVersionId`, and optional `remapSetId`.
 - Response must enumerate the world-owned row families checked, the template identifiers referenced by each family, whether each family is `COMPATIBLE`, `REQUIRES_MAPPING`, or `INCOMPATIBLE`, and whether the supplied `remapSetId` satisfied all required mappings.
 - If the service currently has no `S2` row families for a tenant/version pair, it must report that explicitly rather than implying compatibility from an empty response.
+
+Illustrative responses:
+
+- No `S2` rows in initial slice:
+
+```json
+{
+  "tenantId": "t1",
+  "sourceGameInstanceId": "g-old",
+  "targetVersionId": "v2",
+  "checkedFamilies": [],
+  "hasS2Rows": false,
+  "result": "COMPATIBLE",
+  "remapSetRequired": false
+}
+```
+
+- Future durable world-bound metadata requiring approved mappings:
+
+```json
+{
+  "tenantId": "t1",
+  "sourceGameInstanceId": "g-old",
+  "targetVersionId": "v3",
+  "checkedFamilies": [
+    {
+      "family": "housing_anchor",
+      "referencedTemplateIds": ["roomTemplateId:starter-house-01"],
+      "outcome": "REQUIRES_MAPPING"
+    }
+  ],
+  "hasS2Rows": true,
+  "result": "INCOMPATIBLE",
+  "remapSetRequired": true
+}
+```
 
 ### Digest Input Manifest
 
@@ -259,6 +303,11 @@ Runtime population materialization must be documented separately from published 
   - optional diagnostics for failed activation or failed termination must live in separate bounded-retention diagnostic tables or exports, not by retaining active schedule rows indefinitely.
 - World Management must expose the owning runtime table names and cleanup ordering for these schedules in implementation docs so termination, backup, and replay tooling use the same lifecycle.
 - Those implementation docs must be maintained as the canonical operator/developer reference for this runtime slice and kept in sync with any schema or saga-step changes that affect instance-scoped schedule retention or teardown.
+
+Initial-slice scope:
+
+- In the first implementation slice, instance-scoped population schedules are materialized only during world creation for the primary `gameInstanceId`.
+- Later runtime instancing or portal-driven population scheduling may reuse the same lifecycle contract, but those flows are not part of the initial persistence slice and must not be implied as already required for first delivery.
 
 ### LOOK snapshot contract
 

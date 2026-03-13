@@ -26,7 +26,7 @@ For the design of the Telnet and protocol-bridging path, see:
      - `tcpproxy.connections.active` / `tcpproxy.connections.total` for unusual spikes or drops.
      - `tcpproxy.connections.limit.exceeded` for sustained non-zero values, which indicate global or per-IP caps are rejecting new connections.
      - `tcpproxy.telnet.discarded` for spikes that may reflect malformed Telnet sequences, buffer overflows, repeated malformed `SESSION` envelopes, or upstream backpressure that forces the proxy to close connections (for example `tcpproxy.telnet.discarded{reason="gateway_buffer_full"}` when the Telnet → Gateway input buffer reaches its configured ceiling).
-     - `tcpproxy.websocket.reconnects` and `tcpproxy.websocket.reconnect.delay` for repeated Proxy → Gateway WebSocket bridge connection attempts and backoff delays (these correlate with Telnet disconnects because the proxy fail-closes when it cannot maintain the bridge).
+     - `tcpproxy.websocket.reconnects` and `tcpproxy.websocket.reconnect.delay` for repeated Proxy → Gateway WebSocket bridge establishment/retry attempts and backoff delays. Treat these as admission-time or re-probe bridge behavior metrics, not evidence of hidden transport-preserving recovery for already-established Telnet sessions.
      - Circuit-breaker/open-admission indicators for sustained Gateway unreachability (for example counters of quick rejects with `backend_unavailable`) to distinguish intentional protective rejects from random network churn.
      - `tcpproxy.tls.misconfig` and `tcpproxy.gateway.handshake.failures{reason=...}` for TLS/mTLS configuration issues.
      - MCP protection indicators for negotiation loops and control-line floods (for example `tcpproxy.telnet.discarded{reason="mcp_budget"}` and MCP negotiation failure counters) to distinguish protocol-tooling regressions from generic Telnet instability.
@@ -51,6 +51,7 @@ For the design of the Telnet and protocol-bridging path, see:
      - Confirm `GATEWAY_WS_URL` points to a hostname that matches the Gateway certificate SANs.
      - Verify `FIREMUD_GATEWAY_WS_CLIENT_CERT_CHAIN_PATH`, `FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH`, and `FIREMUD_GATEWAY_WS_CA_CERT_PATH` are valid and mounted in the proxy deployment.
      - If needed, roll back recent TLS or gateway changes and reapply them with correct hostnames and certificate bundles.
+     - Interpret these reconnect metrics as bridge-establishment churn for new admissions or probe traffic; established Telnet sessions still fail-close when their gameplay bridge is lost.
    - If Telnet client IP-related behaviour looks incorrect (for example, per-IP limits clearly not matching real client IPs, or logs showing node/LoadBalancer IPs as the client address), validate the PROXY protocol deployment:
      - Confirm that the public Telnet `LoadBalancer` fronts a dedicated Telnet edge proxy (for example HAProxy) and that it forwards to the TCP Proxy Service using PROXY protocol on the internal-only listener/port configured by `TCP_PROXY_PROXY_PROTOCOL_PORT`. This is the canonical topology for all shared and player-facing environments.
      - Ensure the raw Telnet listener (`TCP_PROXY_PORT`) is not PROXY-enabled and is not exposed directly on the Internet in production; accepting PROXY headers from public clients allows client-IP spoofing.
@@ -109,6 +110,21 @@ When inspecting Telnet-side disconnects, prefer reasoning in terms of the standa
 - Treat `policy_violation` with `edge_backpressure` context (from structured logs/metrics such as `tcpproxy.telnet.discarded{reason="gateway_buffer_full"}`) as edge buffer-pressure enforcement, not as backend outage.
 - Treat `idle_timeout` and `logout` as expected lifecycle noise rather than indicators of incidents unless volumes spike unexpectedly.
 - If correlating with WebSocket dashboards, use the bounded WebSocket `subreason` taxonomy from Gateway Architecture (`user_logout`, `takeover`, `gateway_restart`, `admin_termination`, `edge_backpressure`, `none`) so planned edge restarts are not misclassified as player-driven logout volume.
+
+Quick operator guide:
+
+| Observed disconnect | Interpretation | First operator action |
+| --- | --- | --- |
+| `policy_violation` | Usually client misuse, malformed protocol, or trust/policy failure; non-retriable by default | Check client behavior, malformed input, and TLS/trust-policy logs before treating it as platform outage |
+| `policy_violation;subreason=edge_backpressure` | Edge buffer pressure or slow-client enforcement; retriable with outage-style backoff | Check `tcpproxy.telnet.discarded{reason="gateway_buffer_full"}` and related backpressure metrics before changing backend outage settings |
+| `backend_unavailable` | Core gameplay outage or edge-to-gateway bridge failure | Check Gateway, Game Session, and Redis health first |
+| `logout;subreason=gateway_restart` | Planned Gateway drain / restart path | Treat as expected lifecycle behavior and confirm deploy/drain timeline before opening an outage incident |
+
+Unattributed bridge-loss example:
+
+- If the authenticated Proxy → Gateway bridge drops without `1000/logout;subreason=gateway_restart`, treat the event as `bridge_shutdown_class=unattributed_failure`.
+- For already-established Telnet sessions, expect an immediate `backend_unavailable` disconnect rather than a grace window or hidden bridge recovery attempt.
+- Investigate Gateway/Game Session/process crash timelines before tuning Telnet-side limits.
 
 ### Web-Only WebSocket Degradation Playbook
 

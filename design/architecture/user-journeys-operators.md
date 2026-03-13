@@ -95,6 +95,8 @@ These steps apply both to game-specific services and to the FireMUD platform its
 
 For tenant-scoped runtime lifecycle, operators are not the routine owners of creator game launches. `tenantAdmin` handles normal realm launch, playtest-fork creation, cutover, script-patch pinning, and rollback for that tenant. Operators retain break-glass and platform-wide override authority when incidents, abuse, or entitlement failures require intervention.
 
+At minimum, operator tooling should expose enough fork metadata to reason about support and incident response safely: realm type, source snapshot identity, target build (`versionId` / `scriptPatchVersion`), reset/expiry status, and whether the fork is currently player-admissible.
+
 ---
 
 ## 4. Deployment & Environment Configuration

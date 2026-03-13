@@ -78,9 +78,41 @@ Heartbeat consumers that track progress or offsets must key their state by `(ten
 
 This handshake ensures that resets move regions forward on the coordination timeline instead of trying to “repair” mixed-epoch state in place.
 
+Worked example: region-scoped reset for `<tenantId=T1, regionId=R7>`
+
+1. `PauseTicks(--scope region --tenant T1 --region R7)` rejects new command intake and stops new batch creation for `R7`.
+2. Control plane bumps `region_epoch` for `(T1, R7)` from `12` to `13` in PostgreSQL.
+3. `RunScopedCoordinationReset(--scope region --tenant T1 --region R7)` clears `tick:{tenantRegionTag}:*`, `timer:{tenantRegionTag}`, `retry:{tenantRegionTag}`, and `tick-executor-lease:{tenantRegionTag}` for `R7`.
+4. `ReconcileTickLedger(--scope region --tenant T1 --region R7 --old-region-epoch 12)` drives old-epoch `SCHEDULED` rows to `APPLIED` or `ABANDONED`, and `ConvergeCommandRecords(...)` moves accepted-but-unbound commands to `executionOutcome = LOST_BEFORE_STAGING`.
+5. `InitializeRegionMeta(--scope region --tenant T1 --region R7 --region-epoch 13 --current-tick-id -1)` re-establishes Redis-side guards.
+6. `RunPostResetSmokeCheck(--scope region --tenant T1 --region R7)` proves a fresh lease can be acquired and a sample tick can stage/clear.
+7. `ResumeTicks(--scope region --tenant T1 --region R7)` allows `tickId=0` in epoch `13` to begin.
+
+`RunPostResetSmokeCheck(scope)` is a required resume gate, not an optional example step. Its minimum pass criteria are defined in `system-architecture-redis-ops-access.md`.
+
+Worked example: tenant-scoped reset for `<tenantId=T1>`
+
+1. `PauseTicks(--scope tenant --tenant T1)` rejects new command intake and stops new batch creation for all regions owned by `T1`.
+2. Control plane bumps `region_epoch` for every `(T1, regionId)` in PostgreSQL.
+3. `RunScopedCoordinationReset(--scope tenant --tenant T1)` clears all coordination prefixes scoped to `T1`, including `tick:*`, `timer:*`, `retry:*`, `tick-executor-lease:*`, and any tenant-scoped `remote:T1:*` keys.
+4. `ReconcileTickLedger(--scope tenant --tenant T1 --old-region-epoch-map ...)` converges old-epoch `SCHEDULED` rows for every affected region, and `ConvergeCommandRecords(--scope tenant --tenant T1)` terminates accepted-but-unbound command records with `executionOutcome = LOST_BEFORE_STAGING`.
+5. `InitializeRegionMeta(--scope tenant --tenant T1 --region-epoch-map ... --current-tick-id -1)` re-establishes Redis-side guards for each affected region.
+6. `RunPostResetSmokeCheck(--scope tenant --tenant T1)` samples at least one representative region per affected executor/shard group.
+7. `ResumeTicks(--scope tenant --tenant T1)` allows each affected region to restart at `tickId=0` in its new epoch.
+
+Worked example: cluster-scoped reset
+
+1. `PauseTicks(--scope cluster)` rejects new command intake and stops all new batch creation.
+2. Control plane bumps `region_epoch` for every region in PostgreSQL.
+3. The maintenance workflow wipes Coordination Redis for the cluster, including any remaining leases, queues, timers, retries, remote follow-up hints, and observer streams.
+4. `ReconcileTickLedger(--scope cluster --old-region-epoch-map ...)` converges old-epoch `SCHEDULED` rows cluster-wide, and `ConvergeCommandRecords(--scope cluster)` terminates accepted-but-unbound command records with `executionOutcome = LOST_BEFORE_STAGING`.
+5. `InitializeRegionMeta(--scope cluster --region-epoch-map ... --current-tick-id -1)` re-establishes per-region Redis guard metadata from PostgreSQL baselines.
+6. `RunPostResetSmokeCheck(--scope cluster)` samples at least one representative region per executor/shard group before reopening traffic.
+7. `ResumeTicks(--scope cluster)` resumes normal scheduling on the new epochs.
+
 ### Reset Ordering Is Normative
 
-The six-step handshake above is the authoritative order for all scoped resets and full wipes:
+The seven-step handshake above is the authoritative order for all scoped resets and full wipes:
 
 - No runbook may clear Coordination Redis for a scope before the pause-and-epoch-bump steps complete for that same scope.
 - Storage-level wipes, PVC deletion, `FLUSH*`, or prefix deletion that happen before epoch fencing are treated as an invalid reset sequence because stale executors could repopulate empty coordination state under the old epoch.
@@ -100,6 +132,10 @@ Do not collapse all Redis events into “Redis repopulates from PostgreSQL.” F
   - Treat as a **coordination reset event**, not a normal failover.
   - There is no durable coordination history to replay; all coordination keys start empty.
   - Services re‑establish leases/locks as new activity occurs, but any coordination intent that existed only in Redis (timers, retry schedules, in‑flight queues, session bindings) is dropped unless it is also represented durably elsewhere.
+  - For region tick guards:
+    - `tick:{tenantRegionTag}:meta` is re-created lazily by the first successful hot-path tick staging for that region, using PostgreSQL `RegionStatus` as the baseline for the next requested tick.
+    - The winning tick executor for that first post-cold-start tick is responsible for initializing `region_epoch` and `current_tick_id` in Redis during staging; schedulers and operators do not pre-seed these values during ordinary cold-start recovery.
+    - Operators do not need to pre-populate `current_tick_id` outside reset tooling unless they are performing an explicit scoped reset/maintenance operation.
 
 - **Reset** (intentional operational action)
   - A deliberate, scoped choice to discard volatile coordination state (region/tenant/cluster) and resume from PostgreSQL state plus new activity.

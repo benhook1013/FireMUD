@@ -181,3 +181,40 @@ It complements the degraded-mode expectations in `design/architecture/system-arc
 - Add or tighten alerts on observability backend health (Prometheus target availability, Alertmanager routing errors, Elasticsearch disk pressure, collector export failures).
 - If detection depended on an external deadman or edge blackbox path, confirm that path is documented and tested as part of the prod-like monitoring contract rather than left as environment-specific tribal knowledge.
 - If the incident required manual fallback steps, encode them into a small, repeatable operator checklist or one-shot script rather than leaving them as tribal knowledge.
+
+## Fallback Query Cheat Sheet
+
+When Grafana is unavailable but Prometheus is healthy, operators should start with the canonical recording names already referenced in this runbook:
+
+- `login_success_ratio_gateway_15m`
+- `login_success_ratio_tcpproxy_15m`
+- `command_latency_ms_p99_gateway_5m`
+- `command_latency_ms_p99_tcpproxy_5m`
+- `entrypath_availability_gateway_5m`
+- `entrypath_availability_tcpproxy_5m`
+- `entrypath_availability_gateway_1d`
+- `entrypath_availability_tcpproxy_1d`
+- `chat_delivery_latency_ms_p99_5m`
+- `tick_execution_safety_ratio_p99`
+- `redis_coordination_tail_loss_budget_ms`
+- `redis_coordination_tail_loss_slo_breached`
+- `backup_pipeline_recent_backup_slo_breached`
+- `backup_pipeline_recent_verification_slo_breached`
+- `backup_tick_pause_wait_budget_breached`
+- `backup_tick_pause_duration_budget_breached`
+- `backup_ticks_paused_budget_breached`
+- `tick_effects_pending_oldest_age_seconds`
+- `tick_effects_replay_convergence_budget_seconds`
+- `tick_effects_replay_slo_breached`
+- `tick_effects_replay_starved`
+- `TickEffectsReplaySloBreached`
+- `TickEffectsReplayStarved`
+
+When external reachability or total monitoring-stack failure is in question, also check the mirrored external signals:
+
+- `entrypath_blackbox_probe_success{path="websocket",target=...}`
+- `entrypath_blackbox_probe_success{path="telnet",target=...}`
+- `observability_deadman_heartbeat_timestamp_seconds{source=...}`
+- `playerflow_canary_success{flow="login",path=...,target=...}`
+- `playerflow_canary_success{flow="command",path=...,target=...}`
+- `playerflow_canary_latency_ms{flow="command",path=...,target=...}`

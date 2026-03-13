@@ -65,6 +65,12 @@ Initial NPC and item presence is modeled declaratively:
 3. **Generate Terrain & Materialize Population Schedules** – optional stages that create terrain chunks and materialize instance-scoped spawn schedules for expansive worlds from already-published bindings. These stages must persist the `generationConfigRevision` actually used on each `generation_run` and fail if it differs from `expectedGenerationConfigRevision`.
 4. **Activate Instance** – acquires the per-instance lifecycle fence, re-validates `expectedVersionStateEpoch`, verifies that all generation runs for this workflow resolved to `expectedGenerationConfigRevision`, and performs the one-way transition from `PREPARING` to `ACTIVE` after all required pre-activation writes succeed.
 
+Initial-slice delivery expectation:
+
+- The first implementation slice must implement steps 1, 2, and 4.
+- Step 3 is optional for the initial slice unless the launched version actually requires expansive-world terrain generation or instance-scoped population schedule materialization.
+- When step 3 is omitted for an initial-slice launch, the same launch descriptor and activation invariants still apply; the workflow simply records that no runtime generation/materialization step was required for that `gameInstanceId`.
+
 ### Saga Step Idempotency
 
 World creation steps write durable instance rows and must be safely retryable. Each externally retryable step must implement a durable idempotency guard keyed by a stable business idempotency key plus step identity, at minimum:
