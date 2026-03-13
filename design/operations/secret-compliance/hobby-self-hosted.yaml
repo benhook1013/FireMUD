@@ -1,11 +1,11 @@
 {
   "environment": "hobby-self-hosted",
-  "generatedAt": "2026-02-25T00:00:00Z",
+  "generatedAt": "2026-03-13T00:00:00Z",
   "credentialClasses": {
     "jwt-signing-keys-jwks": {
       "owner": "operator",
       "maxAgeDays": 30,
-      "lastRotationAt": "2026-02-05T00:00:00Z",
+      "lastRotationAt": "2026-03-08T00:00:00Z",
       "alertRuleId": "hobby.jwt.rotation.age",
       "evidenceRef": "design/operations/secret-compliance/evidence/hobby-self-hosted-2026-02-25.json",
       "evidenceKey": "jwt-signing-keys-jwks"
@@ -13,7 +13,7 @@
     "postgres-application-credentials": {
       "owner": "operator",
       "maxAgeDays": 45,
-      "lastRotationAt": "2026-02-01T00:00:00Z",
+      "lastRotationAt": "2026-02-27T00:00:00Z",
       "alertRuleId": "hobby.postgres.credentials.age",
       "evidenceRef": "design/operations/secret-compliance/evidence/hobby-self-hosted-2026-02-25.json",
       "evidenceKey": "postgres-application-credentials"
@@ -21,7 +21,7 @@
     "backup-object-store-credentials": {
       "owner": "operator",
       "maxAgeDays": 60,
-      "lastRotationAt": "2026-01-22T00:00:00Z",
+      "lastRotationAt": "2026-02-12T00:00:00Z",
       "alertRuleId": "hobby.backup.objectstore.age",
       "evidenceRef": "design/operations/secret-compliance/evidence/hobby-self-hosted-2026-02-25.json",
       "evidenceKey": "backup-object-store-credentials"
@@ -29,7 +29,7 @@
     "operator-credentials": {
       "owner": "operator",
       "maxAgeDays": 90,
-      "lastRotationAt": "2026-01-01T00:00:00Z",
+      "lastRotationAt": "2026-01-25T00:00:00Z",
       "alertRuleId": "hobby.operator.credentials.age",
       "evidenceRef": "design/operations/secret-compliance/evidence/hobby-self-hosted-2026-02-25.json",
       "evidenceKey": "operator-credentials"
