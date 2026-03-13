@@ -104,7 +104,7 @@ At a high level, a script (or plugin) must pass through several stages before it
 
 3. **`onLoad` initialization (Automation & Scripting Service, per tenant patch)**
    - For each `<tenantId, scriptPatchVersion>`, the Automation & Scripting Service runs any configured `onLoad` handlers after static validation succeeds but **before** the patch is marked `READY` for that tenant. `READY` only means the patch is eligible for pinning; runtime admission, timers, reload pause, and rollback remain instance-scoped.
-   - `onLoad` is a **mandatory gate**: if it fails with a logical or sandbox-level error, the patch is marked `FAILED` for that tenant, the previous `activePatchVersion` remains in use, and events referencing the failed patch are rejected with outcomes such as `version_unavailable`. Only transient infrastructure errors are retried a bounded number of times, and even those retries must remain idempotent.
+   - `onLoad` is a **mandatory gate**: if it fails with a logical or sandbox-level error, the patch is marked `FAILED` for that tenant, running instances remain on their previously pinned patch, and events referencing the failed patch are rejected with outcomes such as `version_unavailable`. Only transient infrastructure errors are retried a bounded number of times, and even those retries must remain idempotent.
 
 4. **Version pinning (Game Session Service)**
    - Once a patch is `READY` for a tenant, the Game Session Service may pin it as the active `scriptPatchVersion` for a game. All script events emitted by Game Session include that pinned version and the upstream-generated `scriptEventId`.

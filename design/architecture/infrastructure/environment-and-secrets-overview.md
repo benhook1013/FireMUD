@@ -7,7 +7,7 @@ For the full catalog of environment variables (including defaults and detailed r
 ## Table of Contents
 
 - [Operator Quick Reference](#operator-quick-reference)
-- [Local Development vs Production](#local-development-vs-production)
+- [Local Development vs Kubernetes Environments](#local-development-vs-kubernetes-environments)
 - [Secret Governance Tiers](#secret-governance-tiers)
 - [Configuration vs Secrets](#configuration-vs-secrets)
 - [Certificate Management & Watchers](#certificate-management--watchers)
@@ -75,7 +75,7 @@ For full descriptions of the variables and their defaults, open `environment-and
 
 ---
 
-## Local Development vs Production
+## Local Development vs Kubernetes Environments
 
 ### Local Development
 
@@ -109,7 +109,7 @@ JWT signing key and JWKS behavior differs slightly by environment to balance saf
   - Cross-service JWT validation is best-effort when random keys are used; operators should not assume that tokens remain valid across service restarts unless a persistent signing key Secret is configured.
 - **Staging / Non-production clusters**
   - Recommended to mirror production: use a persistent `jwt-signing-keys` Secret and `jwt-jwks` Secret, with the Account Service serving JWKS from the mounted file.
-  - The `jwt-rotation` CronJob may be enabled on a low-frequency schedule to exercise the rotation path.
+  - The same `jwt-rotation` CronJob template used in production may be enabled on a low-frequency schedule (for example monthly) to exercise the rotation path; leaving it operator-triggered is also acceptable when staging is being kept closer to production change control than to rotation-path testing.
 - **Production**
   - Required to use a persistent `jwt-signing-keys` Secret and JWKS document; JWKS is the canonical trust source for all validating services.
   - The `jwt-rotation` CronJob is defined with `spec.suspend: true` and is triggered explicitly by operators as part of a rotation runbook.

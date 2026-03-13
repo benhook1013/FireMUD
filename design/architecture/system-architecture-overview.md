@@ -177,7 +177,7 @@ See [Redis Architecture](./system-architecture-redis.md) and [Redis Usage & Prof
 | **MUD Clients** | Traditional Telnet clients connecting via TCP, proxied into the system |
 | **[TCP Proxy Service](./microservices/tcp-proxy-service/README.md)** | Accepts Telnet connections, buffers input, forwards over WebSocket; proxy-to-gateway mTLS secures the link |
 | **[Spring Cloud Gateway](./microservices/spring-cloud-gateway/README.md)** | Handles WebSocket termination, routing, and observability; enforces coarse-grained admin access controls but does not own gameplay authentication or authorization decisions |
-| **[Game Session Service](./microservices/game-session-service/README.md)** | Fronts gameplay login commands and session binding, manages player sessions, tick orchestration, runtime flags, and input validation |
+| **[Game Session Service](./microservices/game-session-service/README.md)** | Fronts gameplay login commands and session binding, manages player sessions, tick orchestration, runtime flags, input validation, and durable game-instance/runtime control metadata |
 | **[Account Service](./microservices/account-service/README.md)** | Manages player accounts, credentials, authentication, and JWT/JWKS issuance; handles subscriptions and account-security ban state; publishes the canonical tenant entitlement/quota contract consumed by enforcement points |
 | **[Entity Management Service](./microservices/entity-management-service/README.md)** | Handles all runtime entity data: players, NPCs, items, stats, and all inventories/containment (player inventory/equipment, containers, and items on the ground held in room-ground container entities keyed by room/instance ID) |
 | **[World Management Service](./microservices/world-management-service/README.md)** | Owns maps, rooms, and tick region structure; provides room/region geometry and snapshots, plus authoritative runtime location/occupancy and mutable room-environment state (doors, hazards, and persistent ambient flags) |
@@ -218,7 +218,7 @@ Durable domain-event delivery in FireMUD is implemented via the transactional ou
 ## Data and State Management
 
 - **Persistent data** (accounts, entities, rooms) is stored in PostgreSQL by domain-aligned services
-- **Volatile state** (sessions, command queues, timers) is stored in Redis and coordinated by the Game Session Service
+- **Volatile gameplay coordination state** (gameplay session bindings, command queues, timers, retries, and region leases) is stored in Redis and coordinated by the Game Session Service, while Game Session control-plane/runtime metadata remains in PostgreSQL
 - **Redis** is a **non-authoritative coordination buffer** — but **critical** for consistency, ticks, retries, and recovery
 - **Tick regions** are shard-aligned in Redis to preserve atomicity
 - **DMZ services (TCP Proxy Service and Spring Cloud Gateway)** remain stateless with respect to PostgreSQL; they may use **Cache/Rate-Limit Redis** and always emit logs/metrics, but do not own persistent domain tables.

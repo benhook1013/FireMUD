@@ -278,6 +278,24 @@ Observability backends are best-effort enrichments for gameplay and moderation w
 - Environment overlays may adapt metric expressions to local exporter/job naming, but they should preserve the canonical alert names and routing labels so Logging & Admin and incident docs remain consistent.
 - The in-cluster alert set above complements, but does not replace, the required independent meta-monitoring path for total observability-stack outages.
 
+#### External Probe and Deadman Contract (Normative)
+
+To keep overlays, smoke tests, dashboards, and runbooks aligned, prod-like environments must expose a small canonical contract for signals that originate outside the Prometheus + Alertmanager failure domain:
+
+- `entrypath_blackbox_probe_success{path,target}`:
+  - Required for each public player entry path.
+  - `path` is a bounded enum and must use `websocket` for the browser/Gateway path and `telnet` for the TCP Proxy path.
+  - `target` identifies the externally probed endpoint or monitor target and must remain low-cardinality.
+  - Values are boolean-like: `1` when the synthetic probe can complete the target handshake and `0` when it cannot.
+  - Canonical alerts and dashboards may aggregate across `target`, but must preserve `path`.
+- `observability_deadman_heartbeat_timestamp_seconds{source}`:
+  - Required for the independently hosted deadman/meta-monitoring path.
+  - `source` identifies the emitting in-cluster monitor instance or environment and must remain low-cardinality.
+  - The signal records the latest successful heartbeat time as observed by the independent monitor, not by Prometheus itself.
+  - Deadman paging should trigger when this timestamp becomes stale according to the environment's configured heartbeat budget.
+
+If an environment cannot emit these exact metric names because of a hosted monitoring product constraint, it must provide a documented compatibility mapping to equivalent signals and keep the canonical alert names, `path` semantics, and runbook behavior unchanged. Logging & Admin, runbooks, and smoke tests should treat the canonical names above as the default contract.
+
 For scripting and automation workloads, dashboards and alerts must include both live and dry-run activity:
 
 - Live triggers and automation work are reported via metrics such as `automation_script_triggers_total`, `automation_script_skips_total`, `automation_script_triggers_dropped_total`, `script_quota_allowed_total`, `script_quota_denied_total`, and `automation_tick_events_enqueued_total`, as described in `design/architecture/system-architecture-scripting-quotas-and-operations.md` and `design/architecture/system-architecture-scripting-observability-contract.md`.

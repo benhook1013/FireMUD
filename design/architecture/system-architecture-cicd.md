@@ -224,6 +224,7 @@ For production releases classified as `roll-forward-only`, promotion evidence mu
 - a current restore-plan or restore-drill reference suitable for the release.
 
 The canonical evidence path is `design/operations/deployments/production/backup-readiness/<deployment-ref>.json`, and production CI/preflight must reject `roll-forward-only` promotions when that evidence is missing, stale, or not bound to the attestation/digest set being promoted.
+Traffic-open readiness for first-live or reopen events uses the same `design/operations/deployments/production/backup-readiness/` artifact family with the specialized naming pattern `first-live-<deployment-ref>.json` defined in `system-architecture-backup-recovery.md`; this is distinct by purpose, not by schema lineage.
 
 Pre-apply policy checks for staging and production must run through the canonical preflight contract in `system-architecture-deploy-preflight-policy.md`. Static checks run in overlay PR CI, and resolved-manifest/runtime checks run in operator preflight execution. Both use the same policy IDs and evidence shape.
 
@@ -247,6 +248,35 @@ Lifecycle rules:
 - Re-applying the same overlay commit does not create a second competing promotion record; operators update the same deployment record with a new apply event timestamp, new live-state evidence, and the outcome of the latest smoke checks.
 - A promotion attestation is valid only if its referenced staging deployment record remains the latest successful apply record for that staging overlay commit.
 - Rollback uses the deployment record and original attestation lineage for the digest set being restored.
+
+Illustrative deployment record shape:
+
+```json
+{
+  "environment": "staging",
+  "overlayCommitSha": "<git-sha>",
+  "appliedAt": "2026-03-13T10:15:00Z",
+  "appliedBy": "operator@example",
+  "deployStatus": "pass",
+  "smokeStatus": "pass",
+  "serviceDigests": {
+    "spring-cloud-gateway": "ghcr.io/example/spring-cloud-gateway@sha256:...",
+    "game-session-service": "ghcr.io/example/game-session-service@sha256:..."
+  },
+  "preflightReportPath": "design/operations/deployments/staging/preflight/<git-sha>.json",
+  "liveStateEvidence": [
+    "namespace annotation firemud.io/overlay-sha=<git-sha>",
+    "rollout digests matched reviewed overlay"
+  ],
+  "secretComplianceStatus": "pass",
+  "secretComplianceEvidenceRef": "design/operations/secret-compliance/staging.yaml",
+  "smokeEvidence": [
+    "design/operations/deployments/staging/smoke/<git-sha>.json"
+  ]
+}
+```
+
+Exact field requirements for promotion remain the canonical contract defined in this section and in `system-architecture-promotion-attestation.md`; the example exists only to make producer implementations consistent.
 
 ## Secret Compliance Gate
 

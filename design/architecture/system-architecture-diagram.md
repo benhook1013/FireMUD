@@ -58,7 +58,7 @@ flowchart TD
     TCPProxy -. NotifyDisconnect gRPC (at-least-once, advisory) .-> SessionFE
 
     Admin -- gRPC mgmt (infra) --> Gateway
-    Admin -- admin APIs (via Gateway allowlist) --> Gateway
+    Admin -- HTTP(S) admin APIs (via Gateway allowlist) --> Gateway
     Gateway -- routed admin API --> Logging
     Gateway -- routed admin API --> Account
     Gateway -- routed admin API --> SessionFE
@@ -157,7 +157,7 @@ Only the **TCP Proxy Service** and **Spring Cloud Gateway** are reachable from t
 
 All internal synchronous communication from the **Game Session Service** to downstream microservices uses **gRPC** for high performance and strict schema enforcement. Asynchronous signaling flows (for example, `NotifyDisconnect`, lifecycle metrics/events, and audit/saga event streams) are documented separately and use explicit idempotency/ownership contracts. Stateful domain microservices persist data in PostgreSQL and use Redis for transient state; DMZ components such as the TCP Proxy Service and Spring Cloud Gateway remain stateless with respect to PostgreSQL but use Redis for rate limiting and caches. All services emit metrics to Prometheus and send structured logs to Elasticsearch.
 
-Coordination Redis arrows in this diagram follow ownership boundaries from ADR 0009: Game Session owns gameplay coordination prefixes (for example `session:game:*`, `coord:*`, and `tick:*`), Account owns `session:auth:*`, Automation & Scripting owns `automation:*`, and non-owner services (for example Entity) participate only through approved shared-helper contracts rather than ad hoc key ownership.
+Coordination Redis arrows in this diagram follow ownership boundaries from ADR 0009: Game Session owns gameplay coordination prefixes (for example `session:game:*`, `tick:*`, `timer:*`, `retry:*`, and `tick-executor-lease:*`), Account owns `session:auth:*`, Automation & Scripting owns `automation:*`, and non-owner services (for example Entity) participate only through approved shared-helper contracts rather than ad hoc key ownership.
 
 ## Datastore Layer
 

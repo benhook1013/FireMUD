@@ -224,6 +224,7 @@ Runtime population materialization must be documented separately from published 
   - `InstanceTermination` hard-deletes schedule rows for the terminating instance after any bounded diagnostic export has completed;
   - optional diagnostics for failed activation or failed termination must live in separate bounded-retention diagnostic tables or exports, not by retaining active schedule rows indefinitely.
 - World Management must expose the owning runtime table names and cleanup ordering for these schedules in implementation docs so termination, backup, and replay tooling use the same lifecycle.
+- Those implementation docs must be maintained as the canonical operator/developer reference for this runtime slice and kept in sync with any schema or saga-step changes that affect instance-scoped schedule retention or teardown.
 
 ### LOOK snapshot contract
 

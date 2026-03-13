@@ -121,6 +121,25 @@ Ownership and usage rules:
 - World creation, Game Session admission, and script-patch pinning consume this descriptor as input; they must not fetch "latest READY patch" or re-parse template JSON mid-flight.
 - If descriptor resolution fails because a dependency is missing, not `READY`, not attested, or not enforceable under `GetTemplateReferencePhase`, the launch fails before any instance rows are created.
 
+Illustrative control-plane schema:
+
+- Request: `ResolveLaunchDescriptorRequest { tenantId, gameTemplateId, requestedRuntimeFlags?, requestedScriptPatchVersion?, sourceVersionId?, targetVersionId? }`
+- Response: `ResolveLaunchDescriptorResponse { launchDescriptorId, tenantId, gameTemplateId, versionId, scriptPatchVersion, runtimeFlags, generationConfigRevision, versionStateEpoch, remapSetId?, releaseBundleRef }`
+
+The exact transport schema may evolve, but every implementation must preserve the same contract shape:
+
+- request fields identify the template and any caller-supplied runtime overrides that are allowed to participate in deterministic resolution;
+- response fields are the immutable resolved values consumed by launch-time workflows;
+- `releaseBundleRef` (or equivalent attestation identity) must let downstream workflows prove they are using the same published release attestation that supplied `generationConfigRevision`.
+
+Illustrative startup sequence:
+
+1. The instance-creation orchestrator calls `GetTemplateReferencePhase(tenantId)` and fails fast unless the result is `ENFORCED`.
+2. The orchestrator calls `ResolveLaunchDescriptor(...)` for the selected `gameTemplateId` and receives immutable resolved values including `versionId`, `scriptPatchVersion`, `generationConfigRevision`, `versionStateEpoch`, and `releaseBundleRef`.
+3. The orchestrator verifies `releaseBundleRef` by reading `GetPublishedReleaseBundle(tenantId, versionId)` and confirms the attested `generationConfigRevision` matches the resolved descriptor.
+4. World creation starts using only the resolved descriptor fields and persists instance rows under `(tenantId, gameInstanceId)` without re-reading mutable template defaults.
+5. Game Session opens admission only after World reports successful activation for that same resolved descriptor.
+
 ### Interaction with Version Lifecycle
 
 Game templates participate in the same version lifecycle as the domain templates they reference:

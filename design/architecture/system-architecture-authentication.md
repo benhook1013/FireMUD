@@ -222,10 +222,13 @@ To avoid introducing a second independent end-user login model for first-party g
 - Bootstrap issuance API: Account Service endpoint (for example `POST /auth/player-bootstrap`) that authenticates the player account for first-party gameplay bootstrap only and returns one short-lived bootstrap token plus expiry metadata.
 - Issuer: Account/authentication control-plane only, after account authentication. Tenant membership and entitlement checks do not occur here because no gameplay tenant has been selected yet.
 - Connect-token issuance API: control-plane endpoint (for example `POST /auth/connect-token`) that returns exactly one short-lived token per request and logs `accountId`, `tenantId`, `gameInstanceId`, `jti`, and issuance timestamp.
+  - Minimum request fields: `tenantId`, `gameInstanceId`, `requestId`.
+  - Minimum response fields: `connectToken`, `expiresAt`, `accountId`, `tenantId`, `gameInstanceId`, `jti`, `issuedAt`.
   - Before issuance, Account Service must perform a live membership check for `{accountId, tenantId}`, a live runtime entitlement check for `tenantId`, and a live admission-pointer read for `tenantId` via the Game Session control-plane API.
   - If admission pointer state is unavailable or ambiguous, connect-token issuance fails closed with `ADMISSION_POINTER_UNAVAILABLE`.
   - If the requested `gameInstanceId` does not equal the current `admissibleGameInstanceId`, connect-token issuance fails closed with `CONNECT_SCOPE_MISMATCH`; it must not mint a token for a non-admissible instance and rely on `PLAY` to correct it later.
   - In the current single-admissible-instance design, clients should normally request the current gameplay-admissible instance (`"primary"` unless a future lobby protocol introduces explicit instance selection).
+  - Missing required request/response fields are contract violations and must fail closed rather than being defaulted by callers.
 - Transport: `X-Firemud-Connect-Token` header on `/ws/game/**` handshake.
 - Required claims: `accountId`, `tenantId`, `gameInstanceId`, `exp`, `jti`.
 - Lifetime: short-lived (target <= 30 seconds).
@@ -278,6 +281,7 @@ Normative constraints:
 - Game Session must bind the verified connect context to the authenticated gameplay login: if `LOGIN` resolves to an `accountId` different from the connect-context `accountId`, the session fails closed with a canonical account-mismatch error and no gameplay scope is bound.
 - For first-party clients on `/ws/game/**`, the `PLAY` selection must match the connect-token scope `{tenantId, gameInstanceId}`. Scope mismatch is rejected with canonical error `CONNECT_SCOPE_MISMATCH`; clients must request a fresh connect token for the intended target and reconnect.
 - Because `/auth/connect-token` already validates against the authoritative admission pointer, `CONNECT_SCOPE_MISMATCH` at `PLAY` is treated as drift between issuance and admission (for example pointer movement during reconnect), not as normal stale-client correction.
+- When FireMUD introduces a player-facing instance-selection protocol, the bootstrap/connect-token contract and the lobby `PLAY` contract must be revised in the same change so there remains one canonical player-selected `{tenantId, gameInstanceId}` path. Implementations must not add a second independent instance selector only to one side of the flow.
 
 ### Mapping to the Account Service
 

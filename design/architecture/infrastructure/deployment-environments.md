@@ -21,6 +21,12 @@ This document outlines how FireMUD is deployed across environments including loc
 - Use **Kubernetes (dev/stage/prod clusters)** for any shared or player-facing environment where autoscaling, high availability, and full observability are required.
 - Prefer **staging** for playtests that should mirror production routing, TLS, and Redis/Postgres topologies before promoting changes. Treat PR preview stacks as fast functional review environments, not as a substitute for prod-like validation.
 
+## Terms
+
+- `player-facing`: any environment that may accept real player traffic or is used to validate player-visible operational correctness. In FireMUD this includes `hobby-self-hosted`, `staging`, and `production`.
+- `production`: the primary player-facing environment with the strictest change gates and mandatory scheduled backup posture.
+- `shared prod-profile Kubernetes environments`: Kubernetes-backed environments that run the shared Spring `prod` profile and Kubernetes Secret delivery model. This includes `dev-demo-cluster`, `hobby-self-hosted`, `staging`, and `production`, though only the player-facing subset inherits the stricter traffic-open controls.
+
 ---
 
 ## Canonical Environment Classes

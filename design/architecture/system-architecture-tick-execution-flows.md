@@ -93,6 +93,9 @@ Ingress deduplication is not sufficient on its own: every accepted command must 
 
 Command outcome convergence must be externally observable through one canonical status surface. Whether this is implemented as an API, event stream, or both, the contract is:
 
+- Canonical control-plane surfaces:
+  - `GetCommandStatus(tenantId, gameInstanceId, commandId)` for authoritative lookup.
+  - Optional `StreamCommandOutcomes` (or equivalent) for lower-latency observation of the same lifecycle.
 - Lookup key:
   - `(tenantId, gameInstanceId, commandId)`
 - Minimum returned fields:
@@ -108,7 +111,8 @@ Command outcome convergence must be externally observable through one canonical 
   - `ABANDONED` – command reached a terminal failure after being durably bound to a batch.
   - `LOST_BEFORE_STAGING` – command never became batch-bound and was terminated by reconcile/reset handling.
 - Delivery rules:
-  - Synchronous status lookups and any emitted status events must expose the same terminal outcome vocabulary.
+  - `GetCommandStatus` is the authoritative source for the fields above.
+  - `StreamCommandOutcomes`, if implemented, must expose the same lifecycle and terminal outcome vocabulary as `GetCommandStatus`.
   - Events are advisory for latency; the durable status surface is authoritative.
   - Clients must not infer command success from ingress acknowledgement alone.
 

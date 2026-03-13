@@ -418,7 +418,7 @@ This section summarizes common failure and rollback scenarios and how operators 
     - For a given `<tenantId, scriptPatchVersion>`, audit entries with `eventType=onLoad` and `finalStage=DSL_EVAL`, `finalOutcome=sandbox_error` (or other logical failures) so you can distinguish `onLoad` evaluation failures from downstream persistence/handoff problems.
     - Triggers referencing that patch produce `finalStage=ADMISSION`, `finalOutcome=version_unavailable` (or a more specific variant) and drop metrics such as `automation_script_triggers_dropped_total{reason="version_unavailable"}`.
   - Behavior:
-    - The Automation & Scripting Service marks the patch `FAILED` for that tenant; the previous `activePatchVersion` remains in use.
+    - The Automation & Scripting Service marks the patch `FAILED` for that tenant; running instances remain on their previously pinned patch.
     - No automatic rollback beyond “keep the last known good patch active” occurs.
   - Operator actions:
     - Use Game Design tooling to inspect and fix the script configuration, then publish a new patch.

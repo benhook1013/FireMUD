@@ -62,6 +62,7 @@ Stripe integration must preserve tenant isolation while allowing platform-level 
 - Stripe customer IDs are per-account, not per-tenant, to reduce duplication; per-tenant subscriptions are differentiated by products/prices and metadata. This makes payment instruments an **account-owned shared resource** even when a caller is operating through a tenant-scoped billing-safe surface.  
 - Tenant-scoped billing-safe APIs that mutate payment methods must therefore follow an explicit shared-instrument contract:
   - The mutation request must carry an acknowledgement field (for example `acknowledgeSharedInstrumentImpact=true`) so callers cannot accidentally apply an account-wide billing instrument change through a tenant-scoped route.
+  - If the acknowledgement field is missing or false, the mutation must be rejected with canonical error `BILLING_SHARED_INSTRUMENT_ACK_REQUIRED`.
   - The response must include `sharedInstrumentImpact=true` and `affectedTenantIds[]` listing the other tenant subscriptions for the same `accountId` that are expected to observe the changed payment instrument.
   - Audit records must capture `actorAccountId`, `initiatingTenantId`, mutation type, the stable billing-customer reference, and the full `affectedTenantIds[]` set derivable at mutation time.
   - If the service cannot determine the affected tenant set at mutation time, the mutation must fail closed rather than silently applying an account-wide change with incomplete audit scope.

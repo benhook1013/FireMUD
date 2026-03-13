@@ -1,4 +1,4 @@
-version: 1
+version: 2
 updated_by: "platform-security+account-service"
 default_classification: tenant_regular
 classifications:
@@ -30,36 +30,51 @@ routes:
     route: CHARS
     scope: tenant
     classification: tenant_regular
+    tenant_billing_watermark_applies: true
+    membership_watermark_applies: true
     roles:
       any_of: [player, moderator, designer, tenantAdmin, platformAdmin]
   - service: game-session-service
     route: PLAY
     scope: tenant
     classification: tenant_regular
+    tenant_billing_watermark_applies: true
+    membership_watermark_applies: true
     roles:
       any_of: [player, moderator, designer, tenantAdmin, platformAdmin]
   - service: game-session-service
     route: StartSession
     scope: tenant
     classification: tenant_regular
+    tenant_billing_watermark_applies: true
+    membership_watermark_applies: true
+    required_live_checks: [runtime_entitlements]
     roles:
       any_of: [tenantAdmin, platformAdmin]
   - service: game-session-service
     route: RestartSession
     scope: tenant
     classification: tenant_regular
+    tenant_billing_watermark_applies: true
+    membership_watermark_applies: true
+    required_live_checks: [runtime_entitlements]
     roles:
       any_of: [tenantAdmin, platformAdmin]
   - service: game-session-service
     route: StopSession
     scope: tenant
     classification: tenant_regular
+    tenant_billing_watermark_applies: true
+    membership_watermark_applies: true
+    required_live_checks: [runtime_entitlements]
     roles:
       any_of: [tenantAdmin, platformAdmin]
   - service: game-session-service
     route: RefreshRoles
     scope: tenant
     classification: tenant_regular
+    tenant_billing_watermark_applies: true
+    membership_watermark_applies: true
     roles:
       any_of: [tenantAdmin, platformAdmin]
   - service: account-service
@@ -122,6 +137,11 @@ routes:
     scope: tenant
     classification: player_bootstrap_tenant
     auth_path: player_bootstrap
+    tenant_billing_watermark_applies: false
+    membership_watermark_applies: false
+    required_live_checks: [membership, runtime_entitlements, admission_pointer]
+    canonical_errors:
+      any_of: [ADMISSION_POINTER_UNAVAILABLE, CONNECT_SCOPE_MISMATCH, ENTITLEMENT_UNAVAILABLE]
     roles:
       any_of: [player, moderator, designer, tenantAdmin, platformAdmin]
   - service: account-service
@@ -129,6 +149,8 @@ routes:
     scope: tenant
     classification: tenant_regular
     auth_path: internal_service
+    tenant_billing_watermark_applies: true
+    membership_watermark_applies: true
     response_profile: runtime_admission
     allowed_callers:
       any_of: [game-session-service, logging-admin-service, platform-runtime]
@@ -136,6 +158,9 @@ routes:
     route: GetTenantEntitlementsTenant
     scope: tenant
     classification: billing_safe_tenant
+    tenant_billing_watermark_applies: false
+    membership_watermark_applies: true
+    required_live_checks: [membership]
     response_profile: high_level_only
     roles:
       any_of: [tenantAdmin]
@@ -150,6 +175,9 @@ routes:
     route: GetSubscriptionTenantHighLevel
     scope: tenant
     classification: billing_safe_tenant
+    tenant_billing_watermark_applies: false
+    membership_watermark_applies: true
+    required_live_checks: [membership]
     response_profile: high_level_only
     roles:
       any_of: [tenantAdmin]
@@ -164,6 +192,9 @@ routes:
     route: ListSubscriptionsTenantHighLevel
     scope: tenant
     classification: billing_safe_tenant
+    tenant_billing_watermark_applies: false
+    membership_watermark_applies: true
+    required_live_checks: [membership]
     response_profile: high_level_only
     roles:
       any_of: [tenantAdmin]
@@ -185,6 +216,9 @@ routes:
     route: GetCallerTenantMembershipTenant
     scope: tenant
     classification: billing_safe_tenant
+    tenant_billing_watermark_applies: false
+    membership_watermark_applies: true
+    required_live_checks: [membership]
     response_profile: membership_self_only
     roles:
       any_of: [tenantAdmin]
@@ -199,6 +233,12 @@ routes:
     route: BillingArtifactsTenant
     scope: tenant
     classification: billing_safe_tenant
+    tenant_billing_watermark_applies: false
+    membership_watermark_applies: true
+    required_live_checks: [membership]
+    mutation_contract: shared_instrument_ack_required
+    canonical_errors:
+      any_of: [BILLING_SHARED_INSTRUMENT_ACK_REQUIRED, MEMBERSHIP_AUTH_UNAVAILABLE]
     roles:
       any_of: [tenantAdmin]
   - service: account-service

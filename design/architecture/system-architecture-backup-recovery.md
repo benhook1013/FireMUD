@@ -273,10 +273,10 @@ Prometheus and Alertmanager should expose and alert on these metrics using rules
   - Labels similar to the backup alert, with a clear `runbook` annotation.
 - **Backup pause too long (P0 for player-facing scopes)**
   - Expression: pause wait or pause duration exceeds the emitted per-scope budget (for example `backup_tick_pause_wait_seconds > backup_tick_pause_wait_budget_seconds` or `backup_tick_pause_duration_seconds > backup_tick_pause_duration_budget_seconds`).
-  - Labels: `service="postgres-backup"`, `severity="P0"` when the affected scope is player-facing, `owner="infra"`, `runbook="design/architecture/system-architecture-backup-recovery.md#backup-verification-restoration-testing"`.
+  - Labels: `service="postgres-backup"`, `severity="P0"` when the affected scope is player-facing and `severity="P1"` otherwise, `owner="infra"`, `runbook="design/architecture/system-architecture-backup-recovery.md#backup-verification-restoration-testing"`.
 - **Backup scope stuck paused (P0 for player-facing scopes)**
   - Expression: a pause gauge remains asserted after the emitted pause-duration budget has been exceeded (for example `backup_ticks_paused == 1 and backup_tick_pause_duration_seconds > backup_tick_pause_duration_budget_seconds`).
-  - Labels: `service="postgres-backup"`, `severity="P0"` when the affected scope is player-facing, `owner="infra"`, `runbook="design/architecture/system-architecture-backup-recovery.md#backup-verification-restoration-testing"`.
+  - Labels: `service="postgres-backup"`, `severity="P0"` when the affected scope is player-facing and `severity="P1"` otherwise, `owner="infra"`, `runbook="design/architecture/system-architecture-backup-recovery.md#backup-verification-restoration-testing"`.
 - **Legacy alias-scope usage (P2)**
   - Expression: `increase(backup_pause_scope_alias_requests_total[24h]) > 0` in production-like environments after canonical region scope is expected.
   - Labels: `service="postgres-backup"`, `severity="P2"`, `owner="infra"`, `runbook="design/architecture/system-architecture-backup-recovery.md#tick-pause-scope-migration-plan-normative"`.
@@ -300,6 +300,11 @@ Until `region_id` is enforced end-to-end, backup dashboards and alerts must make
   - `backup_pause_scope_alias_requests_total` must increment for every alias-scoped attempt.
   - Traces should set `alias_scope_used=true` when `game_instance_id` was used instead of `region_id`.
 - Grafana and Logging & Admin should group alias-scoped backup activity separately from canonical region-scoped activity so operators can distinguish “legacy scope still in use” from “missing labels due to broken instrumentation”.
+- Severity routing for pause-budget alerts is based on whether the paused scope blocks live player command processing:
+  - Player-facing scopes use `P0`.
+  - Non-player-facing or isolated maintenance scopes use `P1`.
+  - Example non-player-facing maintenance scopes include restore rehearsals in quarantined staging, offline verification jobs that pause an isolated admin-only environment, or other backup drills against traffic-detached environments where no live player command path is available.
+  - Environment overlays may route both severities to the same operator in a single-admin deployment, but they must preserve the severity distinction in labels and docs.
 
 ---
 

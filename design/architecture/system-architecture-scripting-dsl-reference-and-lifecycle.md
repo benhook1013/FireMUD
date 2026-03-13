@@ -164,7 +164,7 @@ The pointer/index format must be forward-compatible (versioned envelope) so it c
 The DSL supports a variety of **built-in lifecycle events** and **custom events**. The exact set of events and their payload schemas are defined in the Automation & Scripting Service and domain service contracts; this section summarizes the main categories and how they behave.
 
 - **Script lifecycle events**
-  - `onLoad` is a **script-level lifecycle event** that runs once per `<tenantId, scriptId, scriptPatchVersion>` when a script becomes active for a tenant under a given patch. It is designed for initializing script-global state (for example, loading lookups, seeding script-local caches, writing initial audit markers) rather than per-entity setup.
+  - `onLoad` is a **script-level lifecycle event** that runs once per `<tenantId, scriptId, scriptPatchVersion>` while that patch is becoming tenant-`READY`. It is designed for initializing script-global state (for example, loading lookups, seeding script-local caches, writing initial audit markers) rather than per-entity setup.
 
 - **Spawn and destruction events**
   - `onSpawn` events fire when an entity (such as an NPC) is created or enters a relevant region.
@@ -302,7 +302,7 @@ Two services collaborate to deliver scripting and automation:
     - Writes the final, validated script graphs and bindings into its own tables.
     - Validates that referenced runtime assets such as abilities and actions are compatible with the target game version; if mismatches are detected, the Saga marks the publish as `FAILED` and the affected `scriptPatchVersion` is never eligible to become `READY` for that tenant.
     - Starts a Saga that upserts the compiled script definitions, event bindings, and any world-generation hooks into the Automation & Scripting Service schema for the target `<tenantId, scriptPatchVersion>`.
-    - On success, marks the version as `PUBLISHED` and calls `NotifyScriptVersionUpdate` so the Automation & Scripting Service reloads runtime state.
+    - On success, marks the version as `PUBLISHED` and calls `NotifyScriptVersionUpdate` so the Automation & Scripting Service starts tenant-readiness ingestion for that patch.
     - On failure, rolls back or marks the publish as `FAILED`, keeping the prior `scriptPatchVersion` as the active one for that game.
 
 - **Automation & Scripting Service**
@@ -318,7 +318,7 @@ Because script definitions are stored in the Automation & Scripting Service data
 - Script definitions are stored in the **Automation & Scripting Service** database and versioned alongside other game assets. Publishing updates from the Game Design Service is supported.
 - Designers can deploy updated scripts without redeploying code. The Automation & Scripting Service retrieves the current live versions as needed.
 - Script-only patches create a `scriptPatchVersion` (the logical/API name) tied to a `baseVersionId` so new behaviors can be loaded on the fly. In the Game Session Service database this is persisted as `script_patch_version`. See [System Architecture: Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md#script-only-patch-versions) for how these patch versions work.
-- The Game Session Service stores the active `scriptPatchVersion` for each running game. When a new patch is published, the Game Design Service calls `NotifyScriptVersionUpdate`, allowing the Automation & Scripting Service to reload updated scripts via its versioning and hot-reload flow without downtime.
+- The Game Session Service stores the active `scriptPatchVersion` for each running game. When a new patch is published, the Game Design Service calls `NotifyScriptVersionUpdate`, allowing the Automation & Scripting Service to ingest and validate the patch for tenant readiness before any later pin-driven instance reload.
 - Timer events and scheduled evaluations always reference the version pinned by the Game Session Service at the moment they run.
 - Older versions remain in the database for auditing or rollback, but only the pinned version is executed.
 
@@ -361,13 +361,13 @@ The canonical states are:
 - `PENDING_VALIDATION` – the Game Design Service has published a script-only patch version and the Automation & Scripting Service has accepted the compiled graphs and bindings, but `onLoad` initialization has not yet completed for the tenant.
 - `ONLOAD_RUNNING` – `onLoad` handlers for scripts in the patch are executing for the tenant. These executions are keyed by `<tenantId, scriptId, scriptPatchVersion>` and must be idempotent.
 - `READY` – all `onLoad` handlers for the patch have completed successfully for the tenant. The patch is eligible to become the `activePatchVersion` for games in that tenant, and Game Session may pin it as the current `scriptPatchVersion`.
-- `FAILED` – one or more `onLoad` handlers for the patch have failed for the tenant with a logical, sandbox, or infrastructure error after retries are exhausted. The previous `activePatchVersion` remains in use, and the failed patch is not eligible to be pinned.
+- `FAILED` – one or more `onLoad` handlers for the patch have failed for the tenant with a logical, sandbox, or infrastructure error after retries are exhausted. The previous instance-observed pin remains in use for running games, and the failed patch is not eligible to be pinned.
 
 Typical transitions are:
 
 1. `PENDING_VALIDATION → ONLOAD_RUNNING` when Automation & Scripting begins `onLoad` initialization for the tenant after successfully ingesting a published patch from Game Design. Patches whose publish Saga fails in Game Design (for example, ability schema mismatches) never enter this lifecycle; from Automation’s perspective they do not exist or remain invisible runtime-only.
 2. `ONLOAD_RUNNING → READY` when all `onLoad` executions for scripts in the patch succeed for the tenant.
-3. `ONLOAD_RUNNING → FAILED` when any `onLoad` execution fails fatally after bounded retries; the previous `activePatchVersion` remains in effect.
+3. `ONLOAD_RUNNING → FAILED` when any `onLoad` execution fails fatally after bounded retries; running instances continue using their previously pinned patch.
 
 Per-instance rollout state is tracked separately (for example `PINNED`, `ROLLED_BACK`, `REPINNED`) and is driven by control-plane APIs/events (`SetPinnedScriptPatchVersion`, `RollbackScriptPatchVersion`, `ScriptPatchPinChanged`). An instance rollback does not imply tenant patch state transition away from `READY`.
 
@@ -647,12 +647,12 @@ Failure handling:
 - This publish-time budget must be deterministic and operator-visible: implementations must define bounded concurrency, timeout, and retry ceilings for `onLoad`, reserve capacity so normal live traffic cannot starve patch readiness forever, and surface exhaustion with explicit reasons.
 - If `onLoad` completes successfully for a tenant, the Automation & Scripting Service may mark the patch as `READY` for that tenant and allow Game Session to pin it for specific instances during later rollout.
 - If `onLoad` fails with a logical or sandbox-level error (for example, misconfiguration, quota denial, sandbox guard), the patch is marked `FAILED` for that tenant:
-  - The previous `activePatchVersion` remains in use for live execution.
+  - Running instances remain on their previously pinned patch for live execution.
   - Events referencing the failed patch are rejected explicitly at admission with `script_event_audit.finalStage=ADMISSION`, `finalOutcome=version_unavailable` (or a more specific variant such as `onload_failed`), and corresponding metrics.
   - No automatic retries of the `onLoad` handler occur; an operator or designer must fix the underlying configuration and republish.
 - If the dedicated `onLoad` initialization budget is exhausted before completion, the patch must fail deterministically with an explicit bounded reason (for example `onload_budget_exceeded`) rather than consuming arbitrary live runtime quota or waiting indefinitely behind ordinary trigger traffic.
 - If `onLoad` fails with `infrastructure_error`, the service may optionally retry the initialization a bounded number of times using the same `scriptEventId` and idempotent operations. If retries are exhausted, the patch is treated as `FAILED` for that tenant as above.
 
-All `onLoad` runs are recorded in `script_event_audit` with `eventType=onLoad`, the target `scriptPatchVersion`, and their final stage-aware outcome (`finalStage`, `finalOutcome`, `finalReason`), so operators can verify initialization state for each patch and tenant.
+All `onLoad` runs are recorded in `script_event_audit` with `eventType=onLoad`, the target `scriptPatchVersion`, and their final stage-aware outcome (`finalStage`, `finalOutcome`, `finalReason`), so operators can verify tenant readiness state for each patch and tenant.
 
-Patch-level readiness for `<tenantId, scriptPatchVersion>` is derived from the aggregate of per-script `onLoad` runs: a patch becomes `READY` for a tenant only after all `onLoad` handlers for scripts in that patch have completed successfully, and any script-level `onLoad` failure leaves the patch in a `FAILED` state with the previous `activePatchVersion` remaining in use.
+Patch-level readiness for `<tenantId, scriptPatchVersion>` is derived from the aggregate of per-script `onLoad` runs: a patch becomes `READY` for a tenant only after all `onLoad` handlers for scripts in that patch have completed successfully, and any script-level `onLoad` failure leaves the patch in a `FAILED` state while running instances continue on their previously pinned patch.

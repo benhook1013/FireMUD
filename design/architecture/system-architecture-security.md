@@ -59,7 +59,7 @@ Rotation is handled by a Kubernetes `CronJob` template (for example `jwt-rotatio
 Environment behavior:
 
 - Production: the `jwt-rotation` CronJob is defined with `spec.suspend: true`. Rotation is triggered by creating a one-off Job from this template as part of an explicit operator runbook.
-- Staging: the same CronJob may be enabled on a low-frequency schedule (for example monthly) to exercise the rotation path.
+- Staging: the same CronJob template may be enabled on a low-frequency schedule (for example monthly) to exercise the rotation path; leaving it operator-triggered is also acceptable when staging is being kept closer to production change control than to rotation-path testing.
 - Development: rotation may be disabled or configured to run frequently with throwaway keys, depending on how closely the environment mirrors production.
 
 Operations requirements for this workflow:
@@ -236,7 +236,7 @@ This section is the authoritative reference for plaintext Telnet security invari
 | --- | --- | --- | --- | --- |
 | `true` (default) | `false` | either | ❌ | Safe default; plaintext logins are disabled for this account. |
 | `true` (default) | `true` | `false` | ❌ | Misconfigured account; UI should prevent enabling this combination. |
-| `true` (default) | `true` | `true` | ✅ | Only this combination is permitted for plaintext Telnet in production. |
+| `true` (default) | `true` | `true` | ✅ | Only this combination is permitted for plaintext Telnet in player-facing environments. |
 | `false` (override) | `false` | either | ❌ | Telnet plaintext remains disabled for this account even if the env guard is relaxed. |
 | `false` (override) | `true` | `true` | ✅ | Permitted but less strict; acceptable only in tightly controlled or non-production environments. |
 | `false` (override) | `true` | `false` | ❌ (design intent) | Implementations should continue to reject this combination to avoid silently weakening the 2FA requirement. |
@@ -250,7 +250,7 @@ In other words:
 Putting this together:
 
 - Local dev and single-operator hobby environments may temporarily relax `FIREMUD_AUTH_REQUIRE_2FA_FOR_PLAINTEXT_TCP` while flows are being built, but should still require the per-account “allow plaintext Telnet login” flag for any plaintext use.
-- Player-facing staging/production environments should treat plaintext Telnet as a hardened legacy channel: keep `FIREMUD_AUTH_REQUIRE_2FA_FOR_PLAINTEXT_TCP=true`, require both the per-account flag and 2FA for plaintext logins, and prefer Telnet-over-TLS or the web client for normal play.
+- Player-facing environments should treat plaintext Telnet as a hardened legacy channel: keep `FIREMUD_AUTH_REQUIRE_2FA_FOR_PLAINTEXT_TCP=true`, require both the per-account flag and 2FA for plaintext logins, and prefer Telnet-over-TLS or the web client for normal play.
 - Recommended Telnet deployment modes by environment (including the Telnet edge proxy and PROXY-protocol expectations) are summarized in [Protocol Bridging](./system-architecture-protocol-bridging.md#recommended-telnet-deployment-modes); this section remains the canonical source for the safety invariants that all implementations must enforce.
 
 ---

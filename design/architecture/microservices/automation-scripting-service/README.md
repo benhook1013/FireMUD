@@ -45,10 +45,11 @@ An OpenAPI specification for the REST endpoints is available at `src/main/resour
   See also the detailed sandbox and loop safety design in
   [Script Sandbox & Resource Limits](./sandbox-runtime-design.md).
 - The service listens for a `NotifyScriptVersionUpdate` event and reloads the
-  specified scripts in memory, validating compatibility before updating the
-  runtime registry. See [Hot Reload & Failure Handling](#hot-reload--failure-handling)
-  for how `activePatchVersion`, `pendingPatchVersion`, and `reloadState` are
-  managed.
+  specified patch into tenant-readiness state, validating compatibility and
+  running `onLoad` before any running instance is allowed to switch to it. See
+  [Hot Reload & Failure Handling](#hot-reload--failure-handling) for how
+  tenant readiness and instance-scoped `activePatchVersion`,
+  `pendingPatchVersion`, and `reloadState` are managed.
 - Runtime execution is instance-aware even when patch readiness is tenant-scoped: a tenant-level `READY` patch is only eligible for pinning, while admission, timer scheduling, rollback pause, and plugin activation are evaluated per `<tenantId, gameInstanceId>`.
   Runtime patch state therefore cannot rely on one mutable tenant-wide `activePatchVersion`; implementations must track `activePatchVersion`, `pendingPatchVersion`, and `reloadState` per instance or per explicit pin cohort.
 - Direct script upload/update APIs (for example `UpdateScript`) are limited to bootstrap/dev tooling and must not be used as a production runtime publish path. Production patch rollout uses the Game Design–driven publish Saga and `NotifyScriptVersionUpdate` lifecycle (`PENDING_VALIDATION` -> `ONLOAD_RUNNING` -> `READY`/`FAILED`) so all runtime gating, audit, and rollback contracts are preserved.
@@ -62,8 +63,9 @@ The Automation & Scripting Service uses the shared Saga library as follows:
 
 - **Script patch consumption** – when a script-only patch version is published,
   the Game Design Service drives the Saga; this service participates as a
-  consumer via `NotifyScriptVersionUpdate`, reloading scripts in memory without
-  coordinating its own Saga steps.
+  consumer via `NotifyScriptVersionUpdate`, ingesting the patch for tenant
+  readiness without coordinating its own Saga steps. Running instances reload
+  only after a later pin change to that tenant-`READY` patch.
 - **Bootstrap/dev-only upload path** – if `UpdateScript` exists in an environment, it must be explicitly marked non-production and must not bypass patch lifecycle gates, readiness checks, or control-plane events.
 
 Tick-driven automation and event handling never use Sagas; they follow the
@@ -211,7 +213,10 @@ This behavior ensures that a script patch either becomes the new active version 
 - `GetScriptStatus` – queries whether a script is queued or running for a given
   entity.
 - `NotifyScriptVersionUpdate` – informs the service that a new `script_patch_version`
-  is available; the service reloads affected scripts and updates its registry.
+  is available for tenant-readiness ingestion; the service validates and stages
+  the patch for `PENDING_VALIDATION -> ONLOAD_RUNNING -> READY/FAILED`, while
+  running instances reload only after a later pin change to that tenant-`READY`
+  patch.
 - **Event ingress RPCs** – domain services such as the Game Session Service and Game Logic Service call event-ingress methods (for example, `TriggerScriptEvent` or a batch equivalent defined in `automation_scripting_service.proto`) to deliver script events. These RPCs carry:
   - `tenantId`, `gameInstanceId`, `regionId`, and `entityId` for the target context.
   - `regionEpoch` for gameplay/runtime triggers and scheduler triggers so Trigger Identity is fenced across scoped coordination resets (see the normative Trigger Identity table in `design/architecture/system-architecture-scripting-normative-contract-tables.md`).

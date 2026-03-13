@@ -8,7 +8,10 @@ Every protected route must be listed here with:
 - classification (`public`, `account_scoped`, `player_bootstrap_tenant`, `pre_tenant_discovery`, `tenant_regular`, `billing_safe_tenant`, `cross_tenant_support_safe`, `cross_tenant_billing_safe`, `cross_tenant_data_bearing`),
 - required allowlist scope,
 - required role checks,
-- tenant watermark applicability.
+- tenant-billing watermark applicability,
+- caller-bound membership watermark applicability where relevant,
+- required live authority checks for the route class,
+- any response-profile or mutation-contract requirements needed for CI/security enforcement.
 
 Services must enforce these classifications through shared middleware annotations/interceptors and CI policy checks. Routes that are protected but missing from this matrix are considered an architectural violation.
 
@@ -56,10 +59,10 @@ Critical-domain inventory artifacts (required):
 | --- | --- | --- | --- |
 | `public` | none | No | No JWT required |
 | `account_scoped` | `account` | No | Account-level control-plane routes with subject binding (`accountId == caller`), plus explicit route-level admin overrides |
-| `player_bootstrap_tenant` | `account` | No | Player-bootstrap-authenticated routes targeting a tenant before gameplay socket auth is complete (for example `POST /auth/connect-token`) |
+| `player_bootstrap_tenant` | `account` | No tenant-billing watermark; No membership watermark | Player-bootstrap-authenticated routes targeting a tenant before gameplay socket auth is complete (for example `POST /auth/connect-token`); must declare live membership, entitlement, and admission-pointer checks |
 | `pre_tenant_discovery` | `account` | No | Authenticated discovery surfaces that run before a single `tenantId` is selected (for example `WORLDS`) |
-| `tenant_regular` | `account` + `tenant` | Yes | Gameplay-affecting and regular tenant control-plane operations |
-| `billing_safe_tenant` | `account` | No | Must remain reachable during `suspended`/`canceled` |
+| `tenant_regular` | `account` + `tenant` | Tenant-billing watermark: Yes; membership watermark: Yes | Gameplay-affecting and regular tenant control-plane operations |
+| `billing_safe_tenant` | `account` | Tenant-billing watermark: No; membership watermark: Yes | Must remain reachable during `suspended`/`canceled`, but must fail immediately after caller-bound membership/role revocation |
 | `cross_tenant_support_safe` | `account` + `global` | No | High-level troubleshooting only |
 | `cross_tenant_billing_safe` | `account` + `global` | No | Billing operations for global billing roles |
 | `cross_tenant_data_bearing` | `account` + `global` | Yes when operation targets tenant-scoped data | Platform-admin-only data-bearing operations |
@@ -71,6 +74,16 @@ Internal-service routes must additionally declare their **service caller policy*
 - which token profile/audience the caller must present.
 
 Without these fields, a route classification is incomplete for internal-only APIs.
+
+Critical routes may also require explicit machine-readable fields for:
+
+- `membership_watermark_applies`
+- `tenant_billing_watermark_applies`
+- `required_live_checks` such as `membership`, `runtime_entitlements`, `admission_pointer`
+- `mutation_contract` such as `shared_instrument_ack_required`
+- `canonical_errors` that CI and contract tests must expect for route-specific security rejections
+
+Without these fields where applicable, a route entry is incomplete for governance and CI enforcement.
 
 ## Seed Matrix (Current Required Entries)
 
@@ -85,7 +98,7 @@ Without these fields, a route classification is incomplete for internal-only API
 | Account Service | `AuthLogout` / `AuthLogoutAll` | `account_scoped` | Authenticated account scope |
 | Account Service | `GetProfile` / `UpdateProfile` (`/profiles/{accountId}`) | `account_scoped` | Subject-bound to caller `accountId`; `platformAdmin` override only |
 | Account Service | `ExportAccount` / `DeleteAccount` / `LinkExternalAccount` (`/accounts/{accountId}/...`) | `account_scoped` | Subject-bound to caller `accountId`; `platformAdmin` override only |
-| Account Service | `IssueConnectToken` | `player_bootstrap_tenant` | Caller-bound player-bootstrap auth, live tenant membership/entitlement checks required |
+| Account Service | `IssueConnectToken` | `player_bootstrap_tenant` | Caller-bound player-bootstrap auth; live tenant membership, runtime entitlement, and admission-pointer checks required |
 | Account Service | `GetTenantEntitlementsForRuntime` | `tenant_regular` | Internal gameplay/runtime caller only; not edge exposed |
 | Account Service | `GetTenantEntitlementsTenant` | `billing_safe_tenant` | `tenantAdmin` (tenant-scoped) |
 | Account Service | `GetTenantEntitlementsCrossTenantSupportSafe` | `cross_tenant_support_safe` | `support`/`platformAdmin` |
@@ -94,9 +107,9 @@ Without these fields, a route classification is incomplete for internal-only API
 | Account Service | `ListSubscriptionsTenantHighLevel` | `billing_safe_tenant` | `tenantAdmin` (tenant-scoped) |
 | Account Service | `ListSubscriptionsCrossTenantSupportSafe` | `cross_tenant_support_safe` | `support`/`platformAdmin` |
 | Account Service | `ListSubscriptionsCrossTenantBillingSafeReports` | `cross_tenant_billing_safe` | `billingAdmin`/`platformAdmin` |
-| Account Service | `GetCallerTenantMembershipTenant` | `billing_safe_tenant` | `tenantAdmin` (subject bound to caller) |
+| Account Service | `GetCallerTenantMembershipTenant` | `billing_safe_tenant` | `tenantAdmin` (subject bound to caller); caller-bound membership watermark applies |
 | Account Service | `GetTenantMembershipForAccountCrossTenant` | `cross_tenant_billing_safe` | `billingAdmin`/`platformAdmin` |
-| Account Service | invoice/payment method APIs tenant-scoped variant | `billing_safe_tenant` | `tenantAdmin` (tenant-scoped) |
+| Account Service | invoice/payment method APIs tenant-scoped variant | `billing_safe_tenant` | `tenantAdmin` (tenant-scoped); shared-instrument acknowledgement contract required when mutation affects account-wide payment instrument |
 | Account Service | invoice/payment method APIs cross-tenant variant | `cross_tenant_billing_safe` | `billingAdmin`/`platformAdmin` |
 
 The matrix should be expanded as service API surfaces evolve. Service docs may include local excerpts, but this file is the canonical list used by governance checks.

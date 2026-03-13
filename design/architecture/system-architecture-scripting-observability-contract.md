@@ -59,6 +59,8 @@ For output-budget failures, writers must use bounded canonical `finalReason` val
 
 Dry-run/test executions must use a separate idempotency namespace from live traffic. A dry-run record must never dedupe or overwrite a live trigger with the same `scriptEventId`.
 
+Any API, proto, or query surface that exposes `script_event_audit` records must include `sourceService` whenever it presents custom/service-specific events. External tooling must not assume a smaller audit schema than this contract.
+
 ### Stage Model (Required)
 
 `script_event_audit` outcomes must be **stage-aware** so operators can answer: “Did the trigger fail before evaluation, during evaluation, during persistence, or during tick handoff?”

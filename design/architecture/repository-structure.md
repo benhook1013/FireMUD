@@ -71,7 +71,7 @@ root
 - `docker/` – Base Dockerfiles and Docker Compose stack for local development.
 - `gradle/` – Gradle version catalog, build conventions, and wrapper binaries.
 - `k8s/` – Kubernetes manifests, per-service Helm charts, monitoring configs, network policies, and sample Terraform modules for local and production clusters.
-- `protos/` – Versioned gRPC definitions for every service, organized by service and version as described in the [gRPC API Style & Versioning Guidelines](./system-architecture-grpc.md).
+- `protos/` – Versioned gRPC definitions for every service, organized by service and version as described in this directory’s [gRPC API Style & Versioning Guidelines](./system-architecture-grpc.md).
 - `services/` – Spring Boot microservices plus the shared `common-library` Gradle module, including Flyway database migration scripts under `services/<service>/src/main/resources/db/migration/`.
 - `web-client/` – React web application.
 - `.editorconfig` – Consistent indentation and newline settings across editors.

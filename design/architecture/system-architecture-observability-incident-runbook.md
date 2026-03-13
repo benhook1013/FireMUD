@@ -18,6 +18,16 @@ It complements the degraded-mode expectations in `design/architecture/system-arc
   - External blackbox checks for public observability entrypoints and public gameplay entrypaths.
 - During an incident, treat these external checks as the source of truth for “is the monitoring stack itself alive?” and “is the public edge reachable at all?” when in-cluster telemetry is missing.
 
+### Deadman Freshness Contract
+
+- The canonical independent heartbeat signal is `observability_deadman_heartbeat_timestamp_seconds{source}` as defined in `design/architecture/system-architecture-logging-monitoring.md#external-probe-and-deadman-contract-normative`.
+- `source` should identify the emitting environment or monitor instance and remain low-cardinality.
+- Deadman paging should treat the signal as stale when the externally observed timestamp is older than `3 * heartbeat_interval_seconds`.
+- Default target-state guidance for prod-like environments:
+  - `heartbeat_interval_seconds = 60`
+  - page when the heartbeat age exceeds `180` seconds
+- If an environment uses a hosted monitoring product that cannot expose the canonical metric name directly, it must document an equivalent query and threshold that preserves the same semantics: “page when the independently observed in-cluster heartbeat has been missing for more than three expected heartbeat intervals.”
+
 ## Common Fallbacks (When Dashboards Are Unavailable)
 
 - **Service health**
@@ -61,6 +71,8 @@ It complements the degraded-mode expectations in `design/architecture/system-arc
 4. Confirm alerts re-evaluate and resolve/firing states change as expected.
 5. Confirm the canonical tail-loss and entry-path recording rules are evaluating again (`redis_coordination_tail_loss_budget_ms`, `redis_coordination_tail_loss_slo_breached`, short-window entry-path availability, and 1-day entry-path availability), since operator fallback depends on them.
 6. Confirm the independent deadman/heartbeat monitor recovers so future total-Prometheus outages will page again.
+   - Verify that `observability_deadman_heartbeat_timestamp_seconds{source=...}` (or the documented equivalent external signal) advances again.
+   - Verify that the external monitor’s staleness threshold still matches the `3 * heartbeat_interval_seconds` contract for the environment.
 
 ## Alertmanager Down or Not Routing
 

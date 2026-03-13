@@ -47,9 +47,10 @@ This document gives a high-level view of how FireMUD's clients, gateways, intern
       |                                           | Metrics/ |                                             |
       | - PostgreSQL (shared cluster; per-service | Traces   | - Prometheus (metrics)                      |
       |   schemas, tenant-scoped tables)          |          |                                             |
-      | - Redis (coordination: sessions, ticks,   |          | - OpenTelemetry Collector (traces)          |
-      |   locks, timers; production: separate     |          | - Jaeger (trace UI)                         |
-      |   cluster)                                |          | - Grafana (metrics dashboards)              |
+      | - Redis (coordination: gameplay session   |          | - OpenTelemetry Collector (traces)          |
+      |   bindings, ticks, locks, timers,         |          | - Jaeger (trace UI)                         |
+      |   retries, leases; production: separate   |          | - Grafana (metrics dashboards)              |
+      |   cluster)                                |          |                                             |
       | - Redis (cache/rate limits: caches,       |          | - Kibana (log UI)                           |
       |   quotas, rate limiting; production:      |          | - Alertmanager (alerts, email notifications)|
       |   separate cluster)                       |          |                                             |

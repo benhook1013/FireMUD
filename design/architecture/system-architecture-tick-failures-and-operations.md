@@ -82,6 +82,7 @@ To make replays observable and bounded, Game Session maintains a **tick effect l
   - `retry`: retry member/effect identity, `retry_count`, `next_eligible_tick_id`
   - `remote_followup`: durable follow-up row ID, `target_region_epoch`, `due_tick_id`
 - Recovery tooling may store and inspect richer per-source payloads, but deterministic replay and cleanup must remain possible from the documented fields above.
+- Any service-level schema or storage doc that introduces the concrete `tick_batch` / manifest tables must mirror these minimum fields explicitly rather than redefining a narrower contract locally.
 - For commands, the same durable transaction that creates the tick batch and selected-work manifest also advances the command record to `BOUND_TO_BATCH`; commands that never reach that state must still converge to a terminal command outcome during recovery or reset handling.
 - For any `(tenant_id, region_id, region_epoch, tick_id, effect_key)` there must eventually be **exactly one terminal state**:
   - `status = APPLIED` – effect successfully committed to domain state.
@@ -135,6 +136,9 @@ Minimum command-status surface for operators and clients:
   - `terminalOutcome`
   - `tickBatchId`
   - bound tick coordinates when present (`regionId`, `regionEpoch`, `tickId`)
+- Canonical control-plane naming for first implementation is:
+  - `GetCommandStatus` for authoritative lookup
+  - optional `StreamCommandOutcomes` for advisory event delivery
 - `LOST_BEFORE_STAGING` is a first-class terminal outcome, not an internal-only repair code.
 
 ### EffectId, Ledger Rows, and Guard Keys
