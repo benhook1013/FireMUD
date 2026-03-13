@@ -20,12 +20,12 @@ Then:
 - Review observability and operations as a unified design: metrics, logs, traces, dashboards, alerts, and runbooks across the platform.
 - Do not summarize what already works well or restate basic descriptions of dashboards or metrics.
 - Focus on observability and operations gaps that would leave the first implementation unsafe to operate or impossible to debug.
-- Ignore dashboard polish, extra nice-to-have metrics, and distant maturity improvements unless they block safe rollout or recovery.
+- Do not let dashboard polish, extra nice-to-have metrics, and distant maturity improvements crowd out blockers. Once blockers are cleared, list the highest-value non-blocking improvements if they would materially improve operability.
 - Return at most 5 issues, ordered by severity.
 - For each issue, include:
   - `Severity`: `blocking` or `important`
   - `Why it matters now`
   - `Docs involved`
   - `Suggested decision or spec change`
-- If no implementation-blocking issues remain, say `No implementation-blocking issues found.` and optionally list up to 3 deferred follow-ups.
-- Stop once only non-blocking refinement remains.
+- If no implementation-blocking issues remain, say `No implementation-blocking issues found.` and include a `Suggested follow-ups` section with any worthwhile non-blocking improvements, ordered by leverage and not capped at 3.
+- Stop once you have either identified the remaining blockers or captured the worthwhile non-blocking follow-ups.

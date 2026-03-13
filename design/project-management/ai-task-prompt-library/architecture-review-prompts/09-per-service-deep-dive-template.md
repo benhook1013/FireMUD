@@ -18,12 +18,12 @@ Then:
 - Review the chosen service’s responsibilities, interfaces, and data flows in the context of the whole system.
 - Do not summarize the service or describe what is already working well.
 - Focus on issues that would cause implementers of this service or its neighbors to make incompatible decisions.
-- Ignore non-blocking cleanup, local wording improvements, and future enhancement ideas unless they alter the first implementation path.
+- Do not let non-blocking cleanup, local wording improvements, and future enhancement ideas crowd out blockers. Once blockers are cleared, list the highest-value non-blocking improvements, whether small or substantial.
 - Return at most 5 issues, ordered by severity.
 - For each issue, include:
   - `Severity`: `blocking` or `important`
   - `Why it matters now`
   - `Docs involved`
   - `Suggested decision or spec change`
-- If no implementation-blocking issues remain, say `No implementation-blocking issues found.` and optionally list up to 3 deferred follow-ups.
-- Stop once only non-blocking refinement remains.
+- If no implementation-blocking issues remain, say `No implementation-blocking issues found.` and include a `Suggested follow-ups` section with any worthwhile non-blocking improvements, ordered by leverage and not capped at 3.
+- Stop once you have either identified the remaining blockers or captured the worthwhile non-blocking follow-ups.

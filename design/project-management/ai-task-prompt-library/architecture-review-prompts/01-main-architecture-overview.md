@@ -15,12 +15,12 @@ Then:
 - Evaluate the overall system architecture, service boundaries, and high-level data and traffic flows described in these documents.
 - Do not summarize or praise what is already clear or working well.
 - Focus on implementation-blocking issues first: missing decisions, contradictory statements between docs, unclear or overlapping service responsibilities, undocumented assumptions, or architecture choices that would cause different teams to implement different behavior.
-- Do not try to exhaustively enumerate every possible improvement. Ignore minor wording cleanup, optional future-scale refinements, and speculative edge cases unless they block the first implementation slice.
+- Do not try to exhaustively enumerate every possible improvement while blockers remain. Once blockers are cleared, list the highest-value non-blocking improvements, whether they are minor clarifications or larger refactors.
 - Return at most 5 issues, ordered by severity. If there are more than 5, include only the highest-leverage ones.
 - For each issue, include:
   - `Severity`: `blocking` or `important`
   - `Why it matters now`
   - `Docs involved`
   - `Suggested decision or spec change`
-- If no blocking issues remain, say `No implementation-blocking issues found.` and optionally list up to 3 deferred follow-ups.
-- Stop once only non-blocking polish remains.
+- If no blocking issues remain, say `No implementation-blocking issues found.` and include a `Suggested follow-ups` section with any worthwhile non-blocking improvements you found, ordered by leverage and not capped at 3.
+- Stop once you have either identified the remaining blockers or captured the worthwhile non-blocking follow-ups.

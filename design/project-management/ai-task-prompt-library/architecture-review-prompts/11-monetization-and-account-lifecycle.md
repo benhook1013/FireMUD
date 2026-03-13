@@ -16,12 +16,12 @@ Then:
 - Review monetization, billing, and account lifecycle as a unified design: onboarding, subscription purchase and renewal, entitlement management, downgrade or cancellation, and account deactivation or deletion.
 - Do not summarize the happy-path billing flows or restate API details that are already clear.
 - Focus on issues that would block correct implementation of billing, entitlement enforcement, or account lifecycle transitions.
-- Ignore non-blocking policy refinement and future business-model ideas unless they materially affect the first implementation path.
+- Do not let non-blocking policy refinement and future business-model ideas crowd out blockers. Once blockers are cleared, list the highest-value non-blocking improvements if they would materially improve the design or future implementation safety.
 - Return at most 5 issues, ordered by severity.
 - For each issue, include:
   - `Severity`: `blocking` or `important`
   - `Why it matters now`
   - `Docs involved`
   - `Suggested decision or spec change`
-- If no implementation-blocking issues remain, say `No implementation-blocking issues found.` and optionally list up to 3 deferred follow-ups.
-- Stop once only non-blocking refinement remains.
+- If no implementation-blocking issues remain, say `No implementation-blocking issues found.` and include a `Suggested follow-ups` section with any worthwhile non-blocking improvements, ordered by leverage and not capped at 3.
+- Stop once you have either identified the remaining blockers or captured the worthwhile non-blocking follow-ups.

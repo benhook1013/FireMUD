@@ -18,12 +18,12 @@ Then:
 - Review environments, secrets management, CI or CD, and deployment or recovery flows as a single, end-to-end design.
 - Do not summarize the environment matrix or restate how CI or CD is generally supposed to work.
 - Focus on gaps that would block safe first deployment, secret handling, promotion, rollback, or incident recovery.
-- Ignore non-blocking process refinement, future compliance enhancements, and optional platform hardening unless they materially affect the current implementation path.
+- Do not let non-blocking process refinement, future compliance enhancements, and optional platform hardening crowd out blockers. Once blockers are cleared, list the highest-value non-blocking improvements if they would materially improve the design.
 - Return at most 5 issues, ordered by severity.
 - For each issue, include:
   - `Severity`: `blocking` or `important`
   - `Why it matters now`
   - `Docs involved`
   - `Suggested decision or spec change`
-- If no implementation-blocking issues remain, say `No implementation-blocking issues found.` and optionally list up to 3 deferred follow-ups.
-- Stop once only non-blocking refinement remains.
+- If no implementation-blocking issues remain, say `No implementation-blocking issues found.` and include a `Suggested follow-ups` section with any worthwhile non-blocking improvements, ordered by leverage and not capped at 3.
+- Stop once you have either identified the remaining blockers or captured the worthwhile non-blocking follow-ups.

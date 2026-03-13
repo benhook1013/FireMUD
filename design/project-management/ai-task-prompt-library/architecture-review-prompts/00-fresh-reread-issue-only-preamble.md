@@ -18,9 +18,10 @@ Termination rules:
 Output rules:
 
 - Do not summarize or praise what already looks good.
-- Report only implementation-blocking issues by default.
+- Report implementation-blocking issues first.
 - If there are no implementation-blocking issues, say that explicitly.
-- Optionally include a short `Deferred follow-ups` section with at most 3 non-blocking items.
+- When no blockers remain, include a `Suggested follow-ups` section with the most useful non-blocking improvements you can find. Do not artificially cap this list; include as many items as are genuinely worthwhile.
+- `Suggested follow-ups` may include small clarifications, cleanup, missing examples, sharper contracts, or larger refactors if they would materially improve the design or implementation path.
 - For each blocking issue, include:
   - `Severity`: `blocking`
   - `Why it blocks implementation`
@@ -31,4 +32,4 @@ Stop condition:
 
 - End the review once you have either:
   - identified the remaining implementation-blocking issues, or
-  - concluded that no implementation-blocking design issues remain.
+  - concluded that no implementation-blocking design issues remain and listed any worthwhile non-blocking follow-ups.

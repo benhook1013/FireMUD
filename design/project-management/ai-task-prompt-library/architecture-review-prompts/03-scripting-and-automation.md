@@ -19,12 +19,12 @@ Then:
 - Review the scripting DSL, automation-scripting service, and related game-design tooling as a single, end-to-end system (authoring to validation to deployment to execution to monitoring to rollback).
 - Do not summarize behavior or call out what is already good.
 - Focus on gaps that would force implementers to invent lifecycle semantics, sandbox boundaries, quota policy, rollback behavior, or observability contracts.
-- Ignore nice-to-have DSL ergonomics, future expansion ideas, and edge-case tooling improvements unless they block the first implementation slice.
+- Do not let nice-to-have DSL ergonomics, future expansion ideas, and edge-case tooling improvements crowd out blockers. Once blockers are cleared, list the highest-value non-blocking improvements if they would materially improve the design.
 - Return at most 5 issues, ordered by severity.
 - For each issue, include:
   - `Severity`: `blocking` or `important`
   - `Why it matters now`
   - `Docs involved`
   - `Suggested decision or spec change`
-- If no implementation-blocking issues remain, say `No implementation-blocking issues found.` and optionally list up to 3 deferred follow-ups.
-- Stop once only non-blocking refinement remains.
+- If no implementation-blocking issues remain, say `No implementation-blocking issues found.` and include a `Suggested follow-ups` section with any worthwhile non-blocking improvements, ordered by leverage and not capped at 3.
+- Stop once you have either identified the remaining blockers or captured the worthwhile non-blocking follow-ups.
