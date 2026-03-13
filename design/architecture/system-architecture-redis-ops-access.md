@@ -102,6 +102,39 @@ Operators interact with coordination state through **supported tools**, not raw 
     - Node-level operations such as `FLUSHALL`/AOF reset during a coordinated reset (already covered by the Redis Operations doc).
     - Read-only inspection via the ops user.
 
+### Canonical Control-Plane and CLI Contract
+
+To keep reset/replay behavior implementation-safe, the maintenance/tooling surface is not left to per-runbook invention. The first implementation must expose one canonical control-plane contract, whether that is delivered as a CLI, an admin API, or both:
+
+- Required control-plane operations:
+  - `PauseTicks(scope)`
+  - `ResumeTicks(scope)`
+  - `GetRegionTickStatus(scope)`
+  - `RunScopedCoordinationReset(scope)`
+  - `ReconcileTickLedger(scope, oldRegionEpoch)`
+  - `ConvergeCommandRecords(scope, oldRegionEpoch)`
+  - `InitializeRegionMeta(scope, regionEpoch, currentTickId)`
+  - `RunPostResetSmokeCheck(scope)`
+- Required CLI verbs:
+  - `coordination-maintenance pause`
+  - `coordination-maintenance status`
+  - `coordination-maintenance reset`
+  - `coordination-maintenance reconcile-ledger`
+  - `coordination-maintenance converge-commands`
+  - `coordination-maintenance init-meta`
+  - `coordination-maintenance smoke-check`
+  - `coordination-maintenance resume`
+- Scope grammar:
+  - `--scope region --tenant <tenantId> --region <regionId>`
+  - `--scope tenant --tenant <tenantId>`
+  - `--scope cluster`
+- Required execution rule:
+  - The CLI subcommands above are the only supported write-path entrypoints for coordinated reset/recovery flows. Helm hooks, Jobs, and admin dashboards call these verbs rather than re-encoding reset logic themselves.
+- Required version rule:
+  - The CLI and control-plane implementation must ship from the same build/version set as the services and Lua registry they operate on. Mixed-version reset orchestration is unsupported.
+
+Runbooks may compose these verbs, but they must not invent alternate write paths or omit required steps such as command-record convergence.
+
 Direct `redis-cli` writes to coordination prefixes are reserved for **break-glass scenarios** and must follow the incident guidelines in `system-architecture-redis.md` (auditing, post-incident reset, and verification). As an additional guardrail:
 
 - Any break-glass write that mutates `tick:*`, `timer:*`, `retry:*`, `remote:*`, `session:*`, or `tick-executor-lease:*` must be followed by a reset/cleanup scope that actually covers the mutated prefix before normal tick processing resumes:
@@ -137,7 +170,7 @@ This ensures that operators use the same abstractions as application code and re
 
 ## Discovery and Version Discipline
 
-- The coordination maintenance CLI is shipped as part of the normal build/release pipeline (for example as a small JVM application or script under `dev-tools/`); runbooks and Helm hooks should reference its **concrete entrypoint** (for example, `dev-tools/coord-maintenance.sh` or the corresponding Gradle task) so operators do not need to guess how to invoke it.
+- The coordination maintenance CLI is shipped as part of the normal build/release pipeline under the canonical command name `coordination-maintenance`; environment packaging may wrap that command in a Gradle task, container entrypoint, or `dev-tools/` script, but runbooks and Helm hooks should reference the canonical command/verb names above so operators do not need to guess how to invoke it.
 - Operators must only use a CLI version that matches the deployed services and Lua registry:
   - If the CLI build version does **not** match the image tag or Git commit used for the running deployment, do not attempt coordination repairs; instead, run the CLI from the same artifact version that produced the deployment or perform a coordinated upgrade.
   - Break-glass or manual `redis-cli` operations are not an acceptable substitute for a mismatched maintenance CLI; they still require a scoped coordination reset afterwards and should be treated as incident-only paths.

@@ -78,6 +78,16 @@ Ambient world mutations (doors, hazards, weather) follow the same rule: they are
 
 Concrete per-effect required writes and reconciliation rules live in `design/architecture/system-architecture-spatial-and-ambient-effects-catalog.md`.
 
+### Derived World Artifact Publication
+
+Derived world artifacts such as navmesh/path graph bundles need one canonical publication path.
+
+- World Management owns derivation, validation, and semantic versioning of these artifacts for `(tenantId, versionId)`.
+- Game Design Service remains the sole writer to the shared object store. World Management must not publish derived world artifacts by writing directly to object storage.
+- If derived world artifacts are exported outside World Management storage, they must be handed to the Game Design publish workflow as explicit publish inputs so Game Design can write them, attest them in `published_release_bundle`, and expose them through the same release bundle used by activation and repair tooling.
+- If a deployment keeps these artifacts only in World Management storage, the read path must remain World-owned via gRPC or database-backed APIs and must not rely on unpublished object-store conventions.
+- Implementations must choose one of those two paths per artifact family and document the consumer read path. Mixing direct World writes to object storage with Game Design-managed asset publication is not allowed.
+
 ## Architecture / Design Notes
 
 - World data is stored in PostgreSQL. Redis holds only transient active state used during gameplay.
@@ -189,6 +199,30 @@ World Management owns the lifecycle of `gameInstanceId` rows, but teardown is a 
 - Scheduled expiry jobs must enqueue this Saga and must not directly delete world rows for a still-unconfirmed termination.
 - Lifecycle fencing is mandatory: termination acquires the same per-instance lifecycle fence used by activation. If activation and termination race, termination is authoritative unless admission has already opened (`ACTIVE` committed).
 - Game Session finalizes runtime `game_instances` termination only after World reports `TERMINATED`.
+
+### Replacement-Instance State Classification
+
+World Management must classify its runtime persistence surface for cutover and migration tooling:
+
+- `S2` world-owned durable state:
+  - world-bound metadata that survives outside a single room-instance layout and references versioned world templates, if such rows exist in the current slice;
+  - any future persistent world-bound housing, ownership, or quest-anchor rows keyed to template identifiers.
+- `S3` world-owned ephemeral state:
+  - `region_instance`, `zone_instance`, `room_instance`, and other topology rows keyed by `(tenantId, gameInstanceId)`;
+  - `character_location`, `npc_location`, and occupancy rows bound to the source instance;
+  - ambient runtime state such as weather, door state, hazard state, instanced events, and instance-scoped population schedules/materializations;
+  - `world_event` rows whose lifecycle is tied to a specific `gameInstanceId`.
+
+Initial-slice rule:
+
+- Unless a world-owned row family is explicitly documented as `S2`, treat it as `S3` and discard it during replacement-instance cutover.
+- World Management must not silently copy room ambient state, occupancy, scheduled world events, or generated instance topology into the target instance.
+
+`ValidateWorldUpgradeMappings` minimum contract:
+
+- Input must identify `tenantId`, `sourceGameInstanceId`, `targetVersionId`, and optional `remapSetId`.
+- Response must enumerate the world-owned row families checked, the template identifiers referenced by each family, whether each family is `COMPATIBLE`, `REQUIRES_MAPPING`, or `INCOMPATIBLE`, and whether the supplied `remapSetId` satisfied all required mappings.
+- If the service currently has no `S2` row families for a tenant/version pair, it must report that explicitly rather than implying compatibility from an empty response.
 
 ### Digest Input Manifest
 

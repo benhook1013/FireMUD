@@ -168,10 +168,10 @@ Tick incidents often benefit from trace-level diagnosis, but mitigation must not
 
 - Dashboards and metrics show:
   - `tick_effects_pending_total{tenantId,regionId}` remaining high for specific regions even after coordination and domain metrics suggest normal operation.
-  - Individual `(tenantId, regionId, region_epoch, tickId, effectKey)` rows staying in `SCHEDULED` status beyond the grace window defined in the tick architecture docs.
-  - Alerts firing when `SCHEDULED` rows exceed this grace window.
+  - `tick_effects_pending_oldest_age_seconds{tenantId,regionId}` exceeding `tick_effects_replay_convergence_budget_seconds{tenantId,regionId}`.
+  - `tick_effects_replay_slo_breached{tenantId,regionId}` indicating replay is outside the normative convergence budget.
   - Replay fairness signals distinguish two failure shapes:
-    - `tick_effects_pending_total > 0` while `tick_effects_replay_batches_total` does not advance for the same region.
+    - `tick_effects_pending_total > 0` while `tick_effects_replay_batches_total` does not advance for the same region, or `tick_effects_replay_starved{tenantId,regionId}` becomes `1`.
     - `tick_effects_replay_scan_lag_ms{tenantId,regionId}` grows for a subset of regions even though the controller is still making progress elsewhere.
 - Logs and traces:
   - Game Session logs may show repeated attempts to process the same effects or gaps in processing for certain tick IDs.
@@ -190,6 +190,7 @@ Tick incidents often benefit from trace-level diagnosis, but mitigation must not
 1. **Inspect ledger and domain state**
    - Use SQL or service-level admin APIs to query `tick_effects` (or the equivalent ledger table) for the affected `<tenantId, regionId>`:
      - Identify the oldest `SCHEDULED` entries and their associated `tickId` and `effectKey`.
+   - Compare `tick_effects_pending_oldest_age_seconds` with `tick_effects_replay_convergence_budget_seconds` to distinguish “brief replay delay” from “budget breach that requires active remediation”.
    - For a small sample, inspect domain state (for example entity HP, inventory, room state) to determine whether the effects have already been applied.
 2. **Classify outcomes**
    - If domain state clearly reflects the intended effect:
@@ -200,7 +201,7 @@ Tick incidents often benefit from trace-level diagnosis, but mitigation must not
        - Mark them `ABANDONED` if the effect is no longer valid (expired sessions, deleted entities, or invalid commands).
    - Inspect replay fairness before choosing remediation:
      - If `tick_effects_replay_batches_total` is flat for the affected region, treat the controller as not servicing that region at all.
-     - If replay batches are increasing elsewhere but `tick_effects_replay_scan_lag_ms` continues rising for the affected region, treat the controller as unfair/starved rather than idle.
+     - If replay batches are increasing elsewhere but `tick_effects_replay_scan_lag_ms` continues rising for the affected region, or `tick_effects_replay_starved` is asserted, treat the controller as unfair/starved rather than idle.
 3. **Apply targeted remediation**
    - For “applied but not marked” rows:
      - Use a small, scripted Job or administrative endpoint to update their status to `APPLIED` with an appropriate `outcome`/`reason`, keeping a record of the correction.

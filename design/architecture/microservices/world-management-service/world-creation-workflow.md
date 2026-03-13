@@ -22,7 +22,7 @@ World creation consumes a previously resolved immutable launch descriptor for th
 - any approved `remapSetId`
 - resolved runtime flags/defaults needed by downstream services
 
-The implementation uses the published world topology for the chosen `tenantId` and `version_id`, inserts a starter region instance, schedules initial events, and can generate terrain chunks and materialize instance-scoped population schedules for expansive worlds. Throughout the workflow, the Saga:
+The implementation uses the published world topology for the chosen `tenantId` and `version_id`, inserts a starter region instance, schedules initial events, and can generate terrain chunks and materialize instance-scoped population schedules for expansive worlds. Activation-time topology must be derived only from the attested published template graph plus runtime generation runs whose canonical inputs are covered by the same published `generationConfigRevision`. Throughout the workflow, the Saga:
 
 - Reads only **template/topology** rows keyed by `(tenantId, versionId)` (for example `region_template`, `room_template`, or authored generation metadata); and
 - Writes only **instance** rows keyed by `(tenantId, gameInstanceId)` (for example `region_instance`, `room_instance`, `world_event`) plus optional **instance-scoped population schedules/materializations** derived from already-published spawn bindings, rather than directly creating live entities.
@@ -37,6 +37,12 @@ These fields are sourced from the resolved launch descriptor and must remain imm
 It never mutates template rows for Published versions; any structural changes to the world layout must occur through design-time workflows on Draft versions before publishing a new `versionId`. More broadly, world creation is allowed to invoke procedural generators only in **runtime/instance** mode as described in [Procedural Generation](../../system-architecture-procedural-generation.md); any attempt to write template rows from this Saga, even for non-Published versions, must be rejected by World Management validation. All template edits must flow through Game Design Service design-time APIs.
 
 World creation uses **Class A (pre-activation) rollback semantics** from [Transaction Strategies](../../system-architecture-transactions.md#rollback-boundaries-by-operation-class): compensation is allowed until the instance is admitted for gameplay. Once admission opens, runtime mutations move to Class B retry/reconciliation semantics and are no longer rolled back through this Saga.
+
+Activation-time input invariants:
+
+- World creation must not consult mutable service defaults, tenant-scoped runtime knobs, feature flags, or hard-coded generator parameter sets when deciding the topology or semantic generation inputs for a published version.
+- Any runtime generation that affects persisted instance topology must be driven from version-scoped published design inputs and the frozen `expectedGenerationConfigRevision`.
+- Operational inputs such as shard placement or worker sizing may influence execution placement only; they must not change the generated room graph, room metadata, exits, or other persisted world semantics for a given launch descriptor.
 
 The Class A/Class B boundary is persisted explicitly through a monotonic instance lifecycle state in World Management:
 
@@ -54,7 +60,7 @@ Initial NPC and item presence is modeled declaratively:
 
 ## Steps
 
-1. **Create Starter Region Instance** – uses the published world topology for the chosen `tenantId` and `version_id` and inserts initial regions or instances using the local shard configuration (`WORLD_LOCAL_SHARD_ID`). Default `SimpleDungeonGenerator` parameters populate the initial "Starter Region" as instance records associated with `gameInstanceId`; the underlying template graph remains unchanged.
+1. **Create Starter Region Instance** – uses the published world topology for the chosen `tenantId` and `version_id` and inserts initial regions or instances using the local shard configuration (`WORLD_LOCAL_SHARD_ID`) for placement only. If startup requires runtime generation, the generator type, seed, and semantic config must be resolved from version-scoped published design inputs covered by `expectedGenerationConfigRevision`; the service must not fall back to default `SimpleDungeonGenerator` parameters or other mutable local defaults.
 2. **Schedule Initial Events** – inserts world events such as an initial weather state so `WorldEventService` can apply them after the world starts.
 3. **Generate Terrain & Materialize Population Schedules** – optional stages that create terrain chunks and materialize instance-scoped spawn schedules for expansive worlds from already-published bindings. These stages must persist the `generationConfigRevision` actually used on each `generation_run` and fail if it differs from `expectedGenerationConfigRevision`.
 4. **Activate Instance** – acquires the per-instance lifecycle fence, re-validates `expectedVersionStateEpoch`, verifies that all generation runs for this workflow resolved to `expectedGenerationConfigRevision`, and performs the one-way transition from `PREPARING` to `ACTIVE` after all required pre-activation writes succeed.

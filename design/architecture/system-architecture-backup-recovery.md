@@ -18,6 +18,7 @@ The main body of this document describes the target-state backup workflow. Curre
 
 - `PauseTicksForScope` / `ResumeTicksForScope` support pausing by `tenant_id` + `game_instance_id` today; `region_id` scoping exists in the proto contract but is not yet enforced end-to-end.
 - Backup-related spans and metrics should still use the target-state names and units documented here so dashboards and alert rules remain stable as scope support is expanded.
+- Automated coordinated backups for player-facing prod-like environments must converge on canonical `tenant_id + region_id` scope before those environments are considered fully backup-ready. Alias scope remains a migration aid, not a steady-state operating mode.
 
 ## PostgreSQL Logical Backups
 
@@ -67,6 +68,7 @@ Operational constraints:
   - Backup tooling should expose pause metrics with unambiguous units (for example `backup_tick_pause_wait_seconds` and `backup_tick_pause_duration_seconds`) and include `tenantId`/`regionId` labels only when the pause scope is already bounded to avoid high cardinality.
 - Backup tooling should also expose matching budget gauges (`backup_tick_pause_wait_budget_seconds` and `backup_tick_pause_duration_budget_seconds`) as first-class emitted metrics for each backup attempt/scope so alert rules do not hardcode thresholds that can drift from the documented cadence-derived budgets.
   - These gauges must already carry the same scope labels as the observed pause metrics (`scope_type`, `tenantId`, `regionId` when bounded). Prometheus rules may derive fallback breach indicators from them, but should not try to reconstruct scoped budget gauges from `tick_interval_ms` alone because that loses alias-scope context and can break label matching.
+  - Manual alias-scoped maintenance operations must also write an audit record with the requested alias scope and the resolved region set. That audit record is the authoritative locator for an individual alias-scoped pause/resume action; metrics remain intentionally low-cardinality.
 
 For convenience, `dev-tools/backups/firemud-backup.sh` automates these steps by pausing ticks, waiting until the service is paused, running `pg_dump`, and then calling `ResumeTicks`.
 
@@ -86,6 +88,23 @@ Tick pause/resume APIs support multiple ways to identify scope. To keep operator
 
 Backups should use `region_id` scoping wherever possible to minimize blast radius; use the alias only when the deployment does not yet expose region-scoped pause controls end-to-end.
 
+##### Player-Facing Coordinated Backup Gating (Normative)
+
+To keep backup alerts actionable and blast radius explicit:
+
+- Automated coordinated backups in production and other player-facing prod-like environments must use canonical `tenant_id + region_id` scope.
+- Alias-scoped `game_instance_id` pause/resume is allowed only for:
+  - non-player-facing restore drills,
+  - quarantined staging rehearsals,
+  - manual operator workflows that record explicit scope-resolution evidence.
+- If an environment cannot pause by `region_id` end-to-end, it must fail coordinated-backup readiness for player-facing use rather than page operators with an unresolved alias-scoped `P0`.
+- Manual alias-scoped operations must write an audit record that includes:
+  - the requested alias scope,
+  - the resolved `tenant_id`,
+  - the resolved `region_id` set,
+  - the actor or job identity,
+  - start and end timestamps.
+
 #### Tick Pause Scope Migration Plan (Normative)
 
 To remove long-term ambiguity between alias and canonical scope, the control-plane migration should follow explicit phases:
@@ -93,6 +112,7 @@ To remove long-term ambiguity between alias and canonical scope, the control-pla
 1. **Phase A (current): dual accept**
    - Accept `region_id` and `game_instance_id` (exactly one).
    - Emit usage metrics/counters for alias-scope requests and include a deprecation warning in control-plane logs for `game_instance_id` requests.
+   - Restriction: automated coordinated backups for player-facing prod-like environments must already use `region_id`; alias acceptance in this phase is only for detached maintenance and migration support.
 2. **Phase B: dual accept + warning enforcement**
    - Keep request acceptance unchanged.
    - Require dashboards/alerts for alias-scope usage so operators can verify clients and jobs are migrating.
@@ -370,6 +390,47 @@ Post-restore hardening is performed by a dedicated Kubernetes Job (for example `
      - `design/operations/deployments/staging/recovery/<recovery-ref>.json`
      - Export `SANITIZATION_EVIDENCE_REF` with that in-repo evidence path so `validate-external-credentials.sh staging` can enforce the gate.
 
+## Canonical Recovery Record
+
+Every player-facing restore must produce one canonical recovery record before quarantine is lifted:
+
+- `production`: `design/operations/deployments/production/recovery/<recovery-ref>.json`
+- `staging`: `design/operations/deployments/staging/recovery/<recovery-ref>.json`
+- `hobby-self-hosted`: `design/operations/deployments/hobby-self-hosted/recovery/<recovery-ref>.json`
+
+Required fields:
+
+- `environment`
+- `recoveryRef`
+- `restoreSource` (backup/snapshot identifier)
+- `quarantineStartedAt`
+- `quarantineReleasedAt`
+- `restoredAt`
+- `restoredBy`
+- `preflightReportPath` when a traffic-reopen preflight gate ran for the same event
+- `expectedBindingsRef`
+- `jwtHardening`
+- `databaseCredentialRotation`
+- `certificateReissuance`
+- `externalCredentialValidation`
+- `sanitizationEvidenceRef` when staging is restored from production-origin data
+- `smokeStatus`
+- `smokeEvidence`
+- `reopenApprovedBy`
+
+Nested control-group requirements:
+
+- `jwtHardening` must include rotation job reference, resulting key IDs, revocation watermark evidence, and validator-convergence evidence.
+- `databaseCredentialRotation` must include rotation job reference, affected Secret refs, and rollout-restart completion evidence.
+- `certificateReissuance` must include workload, bridge, and operator leaf identity evidence plus peer-convergence evidence.
+- `externalCredentialValidation` must include one result per credential class (`backup-storage`, `asset-storage`, `outbound-comms`, `operator-credentials`) with `validationMethod`, `validatedAt`, `validatedBy`, `observedValue` or fingerprint, environment-isolation assertion, and immutable evidence reference.
+
+Validation rules:
+
+- Quarantine must remain in place until the record is complete and all required control groups show `pass`.
+- `quarantineReleasedAt` must be later than the completion times for hardening, external credential validation, and smoke checks.
+- Traffic reopen is non-compliant if this record is missing, incomplete, or inconsistent with the restore event.
+
 The `post-restore-secret-hardening` Job runs after PostgreSQL and core services have been restored and basic health checks pass, but **before** the restored environment is considered player-facing. It uses least-privilege service accounts:
 
 - JWT rotation service accounts can only read/update the `jwt-signing-keys` Secret, the `jwt-jwks` Secret for player-facing environments (`hobby-self-hosted`, staging, production), and, optionally, the Account Service Deployment. Non-player-facing environments may use a JWKS ConfigMap.
@@ -387,7 +448,7 @@ Runbooks should treat this Job (or equivalent operator automation for hobby/self
 7. Confirm application health checks, login/session flows, and JWT validation.
 8. Only then remove quarantine and route external or player traffic to the restored cluster.
 
-For hobby/self-hosted environments that do not use the Kubernetes Job template directly, operators must run an equivalent one-shot restore-hardening automation that performs the same four control groups (JWT/JWKS rotation, DB credential rotation, certificate reissuance, external credential validation) and writes evidence to `design/operations/deployments/hobby-self-hosted/recovery/<recovery-ref>.json` before reopening player traffic.
+For hobby/self-hosted environments that do not use the Kubernetes Job template directly, operators must run an equivalent one-shot restore-hardening automation that performs the same four control groups (JWT/JWKS rotation, DB credential rotation, certificate reissuance, external credential validation) and writes the canonical recovery record to `design/operations/deployments/hobby-self-hosted/recovery/<recovery-ref>.json` before reopening player traffic.
 
 ---
 
@@ -476,6 +537,28 @@ Validation rules:
 - `evidenceRefs[]`
 
 Restore hardening for hobby/self-hosted must fail closed for player-traffic reopen if this record is missing, stale, or below baseline (`>=1` backup/24h, `>=7` daily retention points, `>=1` restore drill/30d).
+
+## Hobby Traffic-Open Evidence
+
+Before opening `hobby-self-hosted` to player traffic for the first time, or reopening it after a restore, operators must record traffic-open evidence at:
+
+- `design/operations/deployments/hobby-self-hosted/traffic-open/<deployment-ref>.json`
+
+Required fields:
+
+- `environment` (`hobby-self-hosted`)
+- `deploymentRef`
+- `assessedAt`
+- `assessedBy`
+- `backupComplianceRef`
+- `preflightReportPath`
+- `evidenceRefs[]`
+
+Validation rules:
+
+- `backupComplianceRef` must point to a current `design/operations/deployments/hobby-self-hosted/backup-compliance.yaml` record that satisfies the minimum baseline.
+- `preflightReportPath` must show `PREFLIGHT-BACKUP-003=pass` for first-live and reopen events.
+- Hobby player traffic must not open when this evidence is missing, stale, or bound to a failed preflight run.
 
 ---
 

@@ -212,8 +212,8 @@ FireMUD uses a simple promotion flow from pull requests through staging to produ
 Rollbacks are handled by resuming a previously known-good image digest set and re-applying the staging or production manifests with those digests. See the Deployment Runbook for the step-by-step operator flow.
 Before approving a production promotion, deployment evidence must classify rollback mode as either:
 
-- `rollback-compatible` (previous digest set remains safe to re-apply), or
-- `roll-forward-only` (schema or contract change requires forward remediation and/or restore-point recovery rather than old-binary rollback).
+- `rollback-compatible` (previous digest set remains safe to re-apply against the current database schema, secret/config contract, mounted file-path contract, and external-binding contract), or
+- `roll-forward-only` (schema, secret/config, file-path, or external-binding change requires forward remediation and/or restore-point recovery rather than old-binary rollback).
 
 Production promotions lacking this explicit rollback-mode classification are non-compliant.
 

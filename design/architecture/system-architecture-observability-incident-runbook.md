@@ -14,9 +14,10 @@ It complements the degraded-mode expectations in `design/architecture/system-arc
 
 - Prod-like environments must not rely solely on Prometheus + Alertmanager to detect failure of that same observability stack.
 - Required independent detection:
-  - A deadman/heartbeat path from the in-cluster monitoring stack to an external sink, or an equivalent independently hosted monitor.
-  - External blackbox checks for public observability entrypoints and public gameplay entrypaths.
+  - An authoritative externally hosted deadman/heartbeat pager for the in-cluster monitoring stack.
+  - Authoritative externally hosted blackbox checks for public observability entrypoints and public gameplay entrypaths.
 - During an incident, treat these external checks as the source of truth for “is the monitoring stack itself alive?” and “is the public edge reachable at all?” when in-cluster telemetry is missing.
+- Mirrored Prometheus metrics for those checks are useful for dashboards and smoke tests, but they do not satisfy the independent detection requirement by themselves. See `design/observability/external-monitoring/README.md`.
 
 ### Deadman Freshness Contract
 
@@ -27,6 +28,7 @@ It complements the degraded-mode expectations in `design/architecture/system-arc
   - `heartbeat_interval_seconds = 60`
   - page when the heartbeat age exceeds `180` seconds
 - If an environment uses a hosted monitoring product that cannot expose the canonical metric name directly, it must document an equivalent query and threshold that preserves the same semantics: “page when the independently observed in-cluster heartbeat has been missing for more than three expected heartbeat intervals.”
+- The authoritative external monitor must also retain its own native check definition and paging rule; the Prometheus mirror is only a secondary representation of that state.
 
 ## Common Fallbacks (When Dashboards Are Unavailable)
 
@@ -140,6 +142,7 @@ It complements the degraded-mode expectations in `design/architecture/system-arc
 - Query Prometheus directly for a small set of critical “is it healthy?” checks:
   - login success ratio (`login_success_ratio_gateway_15m`, `login_success_ratio_tcpproxy_15m` or equivalent expressions),
   - command latency (`command_latency_ms_p99_gateway_5m`, `command_latency_ms_p99_tcpproxy_5m`) broken down by the bounded core-command label set (`move`, `look`, `combat`),
+  - synthetic player-flow canaries (`playerflow_canary_success{flow="login",path=...}`, `playerflow_canary_success{flow="command",path=...}`, `playerflow_canary_latency_ms{flow="command",path=...}`),
   - entry-path availability (`entrypath_availability_gateway_5m`, `entrypath_availability_tcpproxy_5m`, plus `entrypath_availability_gateway_1d` / `entrypath_availability_tcpproxy_1d` for compliance context),
   - entry-path blackbox reachability (`entrypath_blackbox_probe_success{path=...}` or the environment-equivalent external probe metric) so total edge failures that never reached Gateway/TCP Proxy are still visible,
   - chat latency (`chat_delivery_latency_ms_p99_5m`),

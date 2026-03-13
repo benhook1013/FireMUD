@@ -18,6 +18,7 @@ manifest files.
   `manifest.json` so runtime clients can load themes and logos without calling
   this service.
 - Act as the sole owner of game asset publishing to the S3-compatible object store; downstream services and clients read published assets via configured URLs and do not write directly to the asset store. Logical world and entity templates remain in PostgreSQL schemas owned by World Management, Entity Management, and related domain services and are not stored as blobs in the asset store.
+- When publish workflows need to expose derived domain artifacts outside their owning service storage (for example world navmesh/path graph bundles), Game Design remains the sole object-store writer. Owning domain services hand those artifacts to the publish workflow as explicit inputs; they do not bypass the publish workflow with direct object-store writes.
 - Own version lifecycle state and CAS epoch metadata (`versionState`, `versionStateEpoch`) and expose control-plane APIs for activation/retirement-safe transitions.
 - Expose control-plane integrity APIs such as `GetDesignControlPlaneDigest` and `CanDeleteVersionAssets` used by publish gating and asset-retention workflows.
 - Expose CAS-guarded asset purge APIs (`BeginPurgeVersionAssets`, `FinalizePurgeVersionAssets`) so purge eligibility re-check and artifact-state transitions are race-safe.
@@ -48,6 +49,7 @@ The Game Design Service owns the **authoring** view of script patches, while the
 
 - When `PublishScriptPatchVersion` is called, the Game Design Service:
   - Validates and persists the new script graphs, bindings, and metadata, including cross-asset compatibility checks against the pinned `baseVersionId` (for example, ensuring referenced ability identifiers exist and match the ability schema for that base version).
+  - Compiles stable runtime identities needed for reconciliation, including a `scheduleDefinitionId` for each logical timer/interval definition so Automation & Scripting can preserve or tombstone schedules deterministically across patch changes.
   - Computes or reads an immutable `abilitySchemaDigest` for the pinned `baseVersionId` and records it with the patch metadata used for runtime validation.
   - Starts a Saga that upserts compiled definitions and bindings into the Automation & Scripting Service schema for the target `<tenantId, scriptPatchVersion>`.
   - Treats the publish as **asynchronous** from a runtime perspective: the version is recorded as published in design-time tables, but its readiness for execution is determined by the Automation & Scripting Service.

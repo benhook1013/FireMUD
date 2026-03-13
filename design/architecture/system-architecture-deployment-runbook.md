@@ -44,6 +44,7 @@ If production must be opened before the normal schedules have accumulated histor
    - Ensure the GitHub Actions pipeline for the target branch and tag is green.
    - Check that container image digests are available in the configured registry.
    - Confirm deployment evidence includes rollback-mode classification (`rollback-compatible` or `roll-forward-only`) for the release candidate.
+   - Treat rollback compatibility as broader than binary compatibility alone: previous digests must remain safe to re-apply against the current database schema, secret/config contract, mounted file-path contract, and expected external bindings.
 3. **Run Preflight Policy Checks**
    - Validate the target overlay before apply and fail fast on policy violations.
    - Evaluate policy IDs from `design/architecture/system-architecture-deploy-preflight-policy.md` (for example `PREFLIGHT-DIGEST-001`, `PREFLIGHT-SECRETS-001`, `PREFLIGHT-JWT-001`, `PREFLIGHT-JWKS-001`, `PREFLIGHT-BRIDGE-001`, `PREFLIGHT-REDIS-001`, `PREFLIGHT-BOOTSTRAP-001`, `PREFLIGHT-EXTERNAL-001`, and `PREFLIGHT-PROMOTION-001` for production).
@@ -81,8 +82,8 @@ If production must be opened before the normal schedules have accumulated histor
    - Run smoke tests and login/session checks as described in `design/developer-workflows/login-session-smoke-tests.md`.
    - Confirm that the game session tick loop is running and that players can connect via both Web client and Telnet.
 9. **Record Rollback Classification**
-   - Mark the deployment evidence as `rollback-compatible` when previous digests are safe to re-apply.
-   - Mark as `roll-forward-only` when schema/contract changes make old-binary rollback unsafe; include the forward-remediation or restore-point path.
+   - Mark the deployment evidence as `rollback-compatible` when previous digests are safe to re-apply against the current schema, secret/config contract, mounted file-path contract, and external bindings.
+   - Mark as `roll-forward-only` when schema, secret/config, file-path, or external-binding changes make old-binary rollback unsafe; include the forward-remediation or restore-point path.
    - For `roll-forward-only` production releases, attach the fresh backup-readiness evidence record from `design/operations/deployments/production/backup-readiness/<deployment-ref>.json`.
    - Ensure the backup-readiness record is explicitly bound to the production attestation path and promoted digest set before attach.
 10. **Record Deployment State Authoritatively**
@@ -97,6 +98,7 @@ If production must be opened before the normal schedules have accumulated histor
 2. **Run Operator Preflight**
    - Run `./dev-tools/deploy/preflight.sh hobby-self-hosted`.
    - Treat required preflight checks as blocking for player-facing traffic.
+   - For first-live opens and reopen-after-restore events, require `PREFLIGHT-BACKUP-003=pass` before player traffic is opened.
    - Store preflight report and optional waiver artifacts using the same evidence path contract: `design/operations/deployments/hobby-self-hosted/preflight/<deployment-ref>.json` and `.../<deployment-ref>.waiver.json`.
 3. **Apply Manifests/Charts**
    - Apply from a secure operator environment using the chosen manifest/chart input.
@@ -120,7 +122,7 @@ For higher-risk changes:
 If a deployment causes instability:
 
 - Evaluate rollback mode from deployment evidence before taking action:
-  - `rollback-compatible`: roll back to the previous known-good digest set for affected services.
+  - `rollback-compatible`: roll back to the previous known-good digest set for affected services only when that release is still compatible with the current schema, secret/config contract, mounted file-path contract, and external bindings.
   - `roll-forward-only`: do not re-apply old binaries; execute the documented forward remediation or restore-point recovery path.
 - If database schema changes were applied, follow the guidance in `design/architecture/system-architecture-database-migrations.md` for downgrade or compatibility handling.
 - Use the Redis and tick system runbooks to recover any affected coordination state, ensuring idempotent replay where required.
@@ -140,6 +142,6 @@ If a deployment causes instability:
 | --- | --- | --- |
 | **Staging** | Ensure CI is green → run preflight policy checks (including bootstrap and external-binding checks for player-facing invariants) → open/merge PR that updates image digests in `k8s/overlays/stage` → apply overlay: `kubectl apply -k k8s/overlays/stage` → verify live state matches the merged overlay → monitor rollout and run smoke tests → write/update the canonical deployment record | Open/merge PR that reverts `k8s/overlays/stage` to the last known-good digest set → re-apply overlay → verify live state → monitor rollout |
 | **Production** | Merge the `release-please` release PR to `main` and confirm the release tag (for example `v1.2.3`) exists → ensure CI and security scans are green → verify staging attestation for the exact digest set → run preflight policy checks → for `roll-forward-only` releases attach fresh backup-readiness evidence → for first-live or reopen events require proven backup upload + verification evidence → open/merge PR that updates `k8s/overlays/prod` to the approved digests → apply overlay: `kubectl apply -k k8s/overlays/prod` → verify live state matches the merged overlay → monitor rollout and run smoke tests → write/update the canonical deployment record | Open/merge PR that reverts `k8s/overlays/prod` to the last known-good digest set → re-apply overlay → verify live state → monitor rollout; follow database migration downgrade guidance when schema changes are involved |
-| **Hobby / Self-Hosted** | Resolve target manifests/charts → run operator preflight (`./dev-tools/deploy/preflight.sh hobby-self-hosted`) and capture report → apply manifests/charts from operator environment → verify live state → monitor rollout and run smoke tests → record canonical deployment evidence (`manifestRef`/`chartVersion`, preflight report, rollback reference) | Re-apply previously known-good manifest/chart reference and confirm health; if schema changed, follow migration compatibility guidance |
+| **Hobby / Self-Hosted** | Resolve target manifests/charts → run operator preflight (`./dev-tools/deploy/preflight.sh hobby-self-hosted`) and capture report → for first-live or reopen events require backup-baseline compliance evidence (`PREFLIGHT-BACKUP-003`) before opening traffic → apply manifests/charts from operator environment → verify live state → monitor rollout and run smoke tests → record canonical deployment evidence (`manifestRef`/`chartVersion`, preflight report, rollback reference) | Re-apply previously known-good manifest/chart reference and confirm health only when the prior release remains compatible with the current schema, secret/config contract, mounted file-path contract, and external bindings; if not, follow the documented forward remediation path |
 
 Overlay PRs should include a clear deployment intent payload: target environment, service image digests, source commit/tag, rollback digest set (or explicit `roll-forward-only` marker), and (for production) an attestation reference under `design/operations/deployments/production/attestations/`. Attestation schema and validation requirements are defined in `design/architecture/system-architecture-promotion-attestation.md`. CI validates overlay images and preflight policy contracts via [`.github/workflows/validate-kustomize-overlays.yml`](../../.github/workflows/validate-kustomize-overlays.yml) before merge.

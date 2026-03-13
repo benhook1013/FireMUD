@@ -15,13 +15,14 @@ Accounts span multiple hosted games. The [Multi-Tenancy](./system-architecture-m
 - [Goals](#goals)
 - [Quick Reference](#quick-reference)
 - [1. Sign Up](#1-sign-up)
-- [2. Character Creation & Selection](#2-character-creation--selection)
-- [3. Player Login and Gameplay](#3-player-login-and-gameplay)
-- [4. Social Interaction](#4-social-interaction)
-- [5. Purchases and Subscriptions](#5-purchases-and-subscriptions)
-- [6. Password Resets & Account Recovery](#6-password-resets--account-recovery)
-- [7. Switch Games or Manage Multiple Games](#7-switch-games-or-manage-multiple-games)
-- [8. Account Data Export & Deletion](#8-account-data-export--deletion)
+- [2. Join a Game for the First Time](#2-join-a-game-for-the-first-time)
+- [3. Character Creation & Selection](#3-character-creation--selection)
+- [4. Player Login and Gameplay](#4-player-login-and-gameplay)
+- [5. Social Interaction & Safety](#5-social-interaction--safety)
+- [6. Purchases and Subscriptions](#6-purchases-and-subscriptions)
+- [7. Password Resets & Account Recovery](#7-password-resets--account-recovery)
+- [8. Switch Games or Manage Multiple Games](#8-switch-games-or-manage-multiple-games)
+- [9. Account Data Export & Deletion](#9-account-data-export--deletion)
 - [Related Documentation](#related-documentation)
 
 ---
@@ -37,13 +38,14 @@ Accounts span multiple hosted games. The [Multi-Tenancy](./system-architecture-m
 ## Quick Reference
 
 - [Sign Up](#1-sign-up) – Create a platform account and enable auth options.
-- [Character Creation & Selection](#2-character-creation--selection) – Create and choose characters per game.
-- [Player Login and Gameplay](#3-player-login-and-gameplay) – Connect to running game instances and play.
-- [Social Interaction](#4-social-interaction) – Chat, groups, and social systems.
-- [Purchases and Subscriptions](#5-purchases-and-subscriptions) – Manage subscriptions and in-game purchases.
-- [Password Resets & Account Recovery](#6-password-resets--account-recovery) – Recover access when credentials are lost.
-- [Switch Games or Manage Multiple Games](#7-switch-games-or-manage-multiple-games) – Move between games under one account.
-- [Account Data Export & Deletion](#8-account-data-export--deletion) – Request exports or complete account deletion.
+- [Join a Game for the First Time](#2-join-a-game-for-the-first-time) – Discover a world, choose a realm, and reach the lobby.
+- [Character Creation & Selection](#3-character-creation--selection) – Create and choose characters per game and realm.
+- [Player Login and Gameplay](#4-player-login-and-gameplay) – Connect to running realms and play.
+- [Social Interaction & Safety](#5-social-interaction--safety) – Chat, groups, reports, and moderation outcomes.
+- [Purchases and Subscriptions](#6-purchases-and-subscriptions) – Manage subscriptions and in-game purchases.
+- [Password Resets & Account Recovery](#7-password-resets--account-recovery) – Recover access when credentials are lost.
+- [Switch Games or Manage Multiple Games](#8-switch-games-or-manage-multiple-games) – Move between games under one account.
+- [Account Data Export & Deletion](#9-account-data-export--deletion) – Request exports or complete account deletion.
 
 Creator-focused design flows are described in the [Creator Journeys](./user-journeys-creators.md). Operational and moderation flows are described in the [Operator Journeys](./user-journeys-operators.md), including how outages and recoveries surface to players.
 
@@ -59,7 +61,27 @@ Player → Account Service
 
 ---
 
-## 2. Character Creation & Selection
+## 2. Join a Game for the First Time
+
+The first successful session for a new player follows a single canonical onboarding flow regardless of client type:
+
+1. **Authenticate the Platform Account**
+   - **First-party web client** – Obtains a short-lived player bootstrap token and connect token through the [Account Service](./microservices/account-service/README.md), then opens the gameplay WebSocket through the [Spring Cloud Gateway](./microservices/spring-cloud-gateway/README.md).
+   - **Telnet / MCP client** – Connects through the [TCP Proxy Service](./microservices/tcp-proxy-service/README.md) and authenticates in-band with `LOGIN`.
+2. **Discover Accessible Worlds** – After `LOGIN`, the player uses `WORLDS` to list only the tenants the account is allowed to enter. Responses use world slugs and friendly names rather than raw IDs, as defined in [Authentication & Authorization](./system-architecture-authentication.md) and [Multi-Tenancy](./system-architecture-multi-tenancy.md).
+3. **Choose a Realm** – If the selected world exposes more than one visible realm, the player uses `REALMS <world>` to choose between the default production realm and any explicitly authorized additional realms such as a playtest fork. Hidden or unauthorized realms are never disclosed.
+4. **List Characters or Create New** – The player uses `CHARS <world> [realm]` to view existing characters. If none exist, the client offers the world's character-creation flow before `PLAY`.
+5. **Bind to Gameplay** – `PLAY <world> [realm] [character]` resolves to canonical `{tenantId, gameInstanceId, characterId}` values and binds the session to the selected realm. After this step, normal gameplay commands become available.
+
+This onboarding flow is the only supported way to discover and enter a realm. Transport-level hints such as Telnet `SESSION` and first-party WebSocket connect tokens may narrow the target realm, but they never replace the authenticated lobby contract.
+
+```plaintext
+Player → LOGIN → WORLDS → REALMS → CHARS / Create Character → PLAY
+```
+
+---
+
+## 3. Character Creation & Selection
 
 Character definitions and selection are scoped per game (tenant) using the [Entity Management Service](./microservices/entity-management-service/README.md) and [Game Session Service](./microservices/game-session-service/README.md). Creation flows are coordinated with the [Game Design Service](./microservices/game-design-service/README.md) to ensure race, class, and ability choices match the published game configuration. See [World and Entity Design](./user-journeys-creators.md#world-and-entity-design) for creator-side details on how these options are defined.
 
@@ -71,7 +93,7 @@ Behind the scenes:
 
 ---
 
-## 3. Player Login and Gameplay
+## 4. Player Login and Gameplay
 
 Players connect using either a web client or a traditional Telnet client:
 
@@ -82,13 +104,15 @@ Gameplay sessions are managed by the [Game Session Service](./microservices/game
 
 Game actions are resolved on a fixed tick loop as outlined in the [Tick System](./system-architecture-ticks.md). Players can reconnect seamlessly thanks to the layered approach described in [Reconnection Strategy](./system-architecture-reconnection.md).
 
+If a tenant is temporarily unavailable because billing or entitlements block gameplay, the player sees a clear tenant-scoped error before `PLAY` succeeds. If a creator or operator cuts a realm over to a replacement instance, reconnect follows the same lobby and admission flow and lands on the currently routable realm target.
+
 ```plaintext
 Player → TCP Proxy / Gateway → Game Session Service → Backend Services
 ```
 
 ---
 
-## 4. Social Interaction
+## 5. Social Interaction & Safety
 
 Players communicate and coordinate through the [Social & Groups Service](./microservices/social-groups-service/README.md):
 
@@ -98,6 +122,11 @@ Players communicate and coordinate through the [Social & Groups Service](./micro
 
 4. **Chat Validation** – In-game chat commands (say, tell, guild chat, mail) are first validated by the [Game Logic Service](./microservices/game-logic-service/README.md) against the [World Management Service](./microservices/world-management-service/README.md) and [Entity Management Service](./microservices/entity-management-service/README.md) to ensure they respect world and entity state.
 5. **Profanity & Friends** – The Social & Groups Service performs profanity checks, logs communication, and delivers messages. Account-level friends automatically appear in-game when the feature is enabled.
+6. **Player Reporting** – Players can submit an in-game abuse report through the shared moderation/reporting surface. Reports are recorded by the [Logging & Admin Service](./microservices/logging-admin-service/README.md) with the relevant tenant, realm, reported subject, and transcript metadata for operator review.
+7. **Moderation Outcomes** – Moderation actions surface as specific player-visible outcomes rather than a generic "ban" message:
+   - `account_security_ban` blocks account authentication and recovery to the normal account-security path.
+   - `gameplay_ban` blocks `PLAY` for the affected tenant/realm scope with a canonical gameplay denial.
+   - `chat_mute` / `chat_ban` allow gameplay to continue but reject affected messaging commands with canonical chat errors.
 
 ```plaintext
 Player → Game Session Service → Social & Groups Service → Logging & Admin Service
@@ -105,12 +134,13 @@ Player → Game Session Service → Social & Groups Service → Logging & Admin 
 
 ---
 
-## 5. Purchases and Subscriptions
+## 6. Purchases and Subscriptions
 
 1. **Payment Processing** – The [Account Service](./microservices/account-service/README.md) handles subscriptions, one-time purchases, and optional donations via Stripe.
 2. **Platform Fee & Restrictions** – A small platform fee applies to each transaction and external payment methods are not allowed, per the [Core Requirements](../project-management/core-requirements.md#2.8-moderation-administration--monetization).
 3. **Audit and Compliance** – Transactions are logged through the [Logging & Admin Service](./microservices/logging-admin-service/README.md) for reporting and refunds.
 4. **Tenant Availability & Limits** – Whether a game can start new instances or accept new logins depends on the tenant’s subscription state and plan entitlements as described in the [Subscription Management Design](./microservices/account-service/subscription-management.md) and [Multi-Tenancy](./system-architecture-multi-tenancy.md#tenant-configuration--scaling). When a tenant is suspended for billing, login attempts fail with clear errors until billing is resolved.
+5. **Billing Recovery** – Billing-safe management actions stay reachable even when gameplay is suspended so creators can resolve payment issues without operator intervention. Players see tenant-scoped unavailability errors until the creator restores service.
 
 ```plaintext
 Player → Account Service → Logging & Admin Service
@@ -118,7 +148,7 @@ Player → Account Service → Logging & Admin Service
 
 ---
 
-## 6. Password Resets & Account Recovery
+## 7. Password Resets & Account Recovery
 
 Players occasionally lose access to their accounts. Recovery is performed through the [Account Service](./microservices/account-service/README.md), which issues password reset emails and temporary login tokens. Suspicious attempts are logged by the [Logging & Admin Service](./microservices/logging-admin-service/README.md). If two-factor authentication was enabled, the service validates the TOTP code before issuing a new password.
 
@@ -130,9 +160,16 @@ Operational recovery flows (for example, restoring services after outages) are d
 
 ---
 
-## 7. Switch Games or Manage Multiple Games
+## 8. Switch Games or Manage Multiple Games
 
 Players can participate in multiple games using the same platform account. The [Multi-Tenancy](./system-architecture-multi-tenancy.md) model stores character progress per `tenantId`. Account selection and tenant setup are managed through the [Account Service](./microservices/account-service/README.md) and [Game Design Service](./microservices/game-design-service/README.md).
+
+Switching now follows the same lobby contract used during onboarding:
+
+1. `WORLDS` lists accessible worlds.
+2. `REALMS <world>` lists visible realms for that world when more than one exists.
+3. `CHARS <world> [realm]` shows characters scoped to the selected world/realm.
+4. `PLAY <world> [realm] [character]` rebinds gameplay to the new target.
 
 ```plaintext
 Account Service → Game Design Service (select tenant) → Game Session Service
@@ -140,7 +177,7 @@ Account Service → Game Design Service (select tenant) → Game Session Service
 
 ---
 
-## 8. Account Data Export & Deletion
+## 9. Account Data Export & Deletion
 
 Players may request a full data export or permanently delete an account through the [Account Service](./microservices/account-service/README.md). Exported data is provided in JSON format for portability. Deletions require confirmation and are recorded by the [Logging & Admin Service](./microservices/logging-admin-service/README.md) for audit purposes.
 

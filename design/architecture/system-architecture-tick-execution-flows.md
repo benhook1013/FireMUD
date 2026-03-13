@@ -102,17 +102,22 @@ Command outcome convergence must be externally observable through one canonical 
   - `commandId`
   - `ackLevel`
   - `ingressStatus`
-  - `terminalOutcome` (nullable until terminal)
+  - `executionOutcome` (nullable until terminal)
+  - `gameplayResult` (nullable until terminal command result is known)
   - `tickBatchId` (nullable until `BOUND_TO_BATCH`)
   - `regionId`, `regionEpoch`, `tickId` (nullable until bound)
   - `updatedAt`
 - Terminal outcome semantics:
-  - `APPLIED` – command effects converged to a successful terminal result.
-  - `ABANDONED` – command reached a terminal failure after being durably bound to a batch.
-  - `LOST_BEFORE_STAGING` – command never became batch-bound and was terminated by reconcile/reset handling.
+  - `executionOutcome = APPLIED` – command effects reached a terminal execution state and at least one batch-bound effect converged successfully enough that the command is no longer replay-pending.
+  - `executionOutcome = ABANDONED` – command reached a terminal execution failure after being durably bound to a batch.
+  - `executionOutcome = LOST_BEFORE_STAGING` – command never became batch-bound and was terminated by reconcile/reset handling.
+  - `gameplayResult` is a separate player-facing/result-facing projection derived from the command type’s documented semantics:
+    - Minimum shared vocabulary: `SUCCESS`, `PARTIAL`, `FAILED`, `TIMEOUT`.
+    - `gameplayResult` may remain `null` until the command reaches terminal state.
+    - `gameplayResult` must not be inferred solely from `executionOutcome`; cross-region and multi-leg commands may legitimately end as `executionOutcome = APPLIED` with `gameplayResult = PARTIAL`.
 - Delivery rules:
   - `GetCommandStatus` is the authoritative source for the fields above.
-  - `StreamCommandOutcomes`, if implemented, must expose the same lifecycle and terminal outcome vocabulary as `GetCommandStatus`.
+  - `StreamCommandOutcomes`, if implemented, must expose the same lifecycle plus the same `executionOutcome` and `gameplayResult` vocabulary as `GetCommandStatus`.
   - Events are advisory for latency; the durable status surface is authoritative.
   - Clients must not infer command success from ingress acknowledgement alone.
 
@@ -191,8 +196,13 @@ Conceptually, tick commit proceeds through these phases:
 
 1. **Durable batch creation**
    - Before Redis `pending` is treated as authoritative for a tick, Game Session creates a durable tick-batch record in PostgreSQL for `(tenantId, regionId, region_epoch, tickId)`.
+   - Exactly one durable tick batch may exist for a given `(tenantId, regionId, region_epoch, tickId)`:
+     - PostgreSQL enforces a unique key on `(tenantId, regionId, region_epoch, tickId)`.
+     - Batch allocation is lease-fenced: the creating transaction records the current region lease token (or an equivalent fencing token) on the batch row.
+     - If a competing executor loses the insert/update race or observes a different fencing token on the existing row, it must treat the existing batch as authoritative and must not create a second manifest, second set of `SCHEDULED` rows, or alternate selection for the same tick coordinates.
    - The tick-batch record stores at minimum:
      - `tick_batch_id`
+     - `lease_token` (or equivalent fencing token)
      - `expected_effect_count`
      - `status` (`CREATED`, `REDIS_STAGED`, `COMMITTED`, `ABANDONED`)
      - the selected-work manifest for this batch
@@ -227,6 +237,9 @@ Conceptually, tick commit proceeds through these phases:
      - Any selected command/timer/retry/remote follow-up must remain discoverable from its source structure until it is durably tied to the `tick_batch_id`.
      - Implementations may satisfy this either by leaving source entries in place until `tick_batch.status = REDIS_STAGED`, or by creating durable claim rows tied to `tick_batch_id` before removing the source entry.
      - Removing selected work from its source queue/index before one of those durable conditions is met is not allowed.
+   - Duplicate-allocation recovery rule (required):
+     - If recovery finds more than one durable row purporting to represent the same `(tenantId, regionId, region_epoch, tickId)`, the region is inconsistent by definition.
+     - Normal replay must not continue. The region is paused and explicit reconcile tooling chooses one survivor batch and converges the others to an audited terminal state before ticks resume.
 2. **Redis staging complete**
    - After the durable batch exists, the executor stages the selected effects into `tick:{tenantRegionTag}:pending`, carrying the `tick_batch_id` and the expected effect count (or equivalent digest) so Redis and PostgreSQL can be correlated during recovery.
    - `tick:{tenantRegionTag}:pending` is an acceleration/coordination structure. The durable tick-batch plus ledger rows are the authoritative record of what the tick intended to stage.

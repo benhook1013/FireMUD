@@ -114,11 +114,11 @@ Global roles must not be interpreted as broad tenant access shortcuts. Authoriza
 
 | Global role | Allowed route classifications | Explicitly disallowed |
 | --- | --- | --- |
-| `platformAdmin` | `tenant_regular`, `cross_tenant_support_safe`, `cross_tenant_billing_safe`, `cross_tenant_data_bearing` | `billing_safe_tenant` caller-bound variants |
+| `platformAdmin` | `tenant_regular` (operational/control-plane only), `cross_tenant_support_safe`, `cross_tenant_billing_safe`, `cross_tenant_data_bearing` | `billing_safe_tenant` caller-bound variants; gameplay admission/switching |
 | `billingAdmin` | `cross_tenant_billing_safe` | `tenant_regular`, `billing_safe_tenant`, `cross_tenant_data_bearing`, gameplay admission/switching |
 | `support` | `cross_tenant_support_safe` | `tenant_regular`, `billing_safe_tenant` mutations, `cross_tenant_billing_safe`, `cross_tenant_data_bearing`, gameplay admission/switching |
 
-Tenant-scoped gameplay/design/runtime actions (`tenant_regular`) require tenant-scoped roles from `scopedRoles[tenantId]` or `platformAdmin`. `billingAdmin` and `support` must never gain gameplay/design authority by virtue of being global roles.
+Tenant-scoped operational/design/runtime actions may allow `platformAdmin` per the route-class matrix, but gameplay admission and gameplay switching must not. Gameplay entry (`WORLDS`/`REALMS`/`CHARS`/`PLAY`) requires caller-bound tenant gameplay authority from authoritative membership data for the target tenant/realm; global roles alone must never grant gameplay access. `billingAdmin` and `support` must never gain gameplay/design authority by virtue of being global roles.
 `account_scoped` routes are authorized by authenticated account context and explicit subject-binding rules; global roles do not broaden `account_scoped` access unless a specific route explicitly allows a `platformAdmin` override.
 
 ### Tenant Authorization Contract
@@ -127,7 +127,7 @@ All meta/control services (Account, Game Design, Logging & Admin, and similar HT
 
 - Each incoming request is authenticated to a single `accountId` using a JWT validated against the Account Service JWKS.
 - The effective tenant set for the request is derived from the token:
-  - For tenant-scoped operations, the service computes the set of `tenantId` values from `scopedRoles` plus explicit global-role allowances from the route-class matrix above (for example `platformAdmin` may act on all tenants for `tenant_regular`; billing-related global access must use explicitly cross-tenant billing-safe route variants).
+  - For tenant-scoped operations, the service computes the set of `tenantId` values from `scopedRoles` plus explicit global-role allowances from the route-class matrix above. Gameplay lobby/admission routes are stricter: they must derive authority from caller-bound tenant membership and `gameplayAdmissionAllowed`, not from global-role shortcuts. Billing-related global access must use explicitly cross-tenant billing-safe route variants.
   - For cross-tenant operations, the service must explicitly check that the caller has a `globalRole` that authorizes cross-tenant access for the specific API category (for example, only `platformAdmin` for gameplay- or data-bearing operations, `billingAdmin` or `platformAdmin` for billing-safe control-plane operations, and `support` or `platformAdmin` only for explicitly designated support-safe troubleshooting surfaces). Tenant-scoped roles must never implicitly grant cross-tenant privileges.
 - For account-scoped operations, authorization must bind to authenticated `accountId` and route-level subject-binding rules, without deriving or requiring tenant scope.
 - If an API accepts a `tenantId` (path, query parameter, or body field), the service must validate that:
@@ -154,9 +154,9 @@ Any HTTP/gRPC route that depends on identity, roles, or tenant scoping must be p
 | --- | --- | --- | --- | --- |
 | Public | *(none)* | *(none)* | No | *(none)* |
 | Account-scoped | `session:auth:account:<accountId>:<tokenHash>` | Require authenticated caller; enforce subject binding (`accountId` path/body must match caller) unless route explicitly allows `platformAdmin` override | No | No tenant scope for auth; never require `session:auth:tenant:*` for account-scoped routes |
-| Player-bootstrap (tenant-targeted) | `session:auth:account:<accountId>:<tokenHash>` | Require a valid player-bootstrap token profile for the authenticated account | No | Used only for gameplay bootstrap routes such as `POST /auth/connect-token`; tenant access is established by live membership, entitlement, and admission-pointer checks during connect-token issuance, not by `session:auth:tenant:*` alone |
-| Pre-tenant discovery | `session:auth:account:<accountId>:<tokenHash>` | Require authenticated caller; no caller-supplied `tenantId` is trusted yet | No | Used only for authenticated lobby/discovery surfaces such as `WORLDS`; services must derive visible tenants by filtering authoritative membership/entitlement data server-side |
-| Tenant-scoped (regular) | `session:auth:account:<accountId>:<tokenHash>` + `session:auth:tenant:<tenantId>:<tokenHash>` | Require a tenant role in `scopedRoles[tenantId]` that authorizes the operation (for example `tenantAdmin`, `designer`, `moderator`, `player`) or `platformAdmin` | Yes | `tenantId` must be in `scopedRoles` for tenant-role callers; `platformAdmin` may target any tenant. `billingAdmin` and `support` must be rejected for `tenant_regular`. Enforce DB query scoping by `tenantId`. |
+| `player_bootstrap_tenant` | `session:auth:account:<accountId>:<tokenHash>` | Require a valid player-bootstrap token profile for the authenticated account | No | Used only for gameplay bootstrap routes such as `POST /auth/connect-token`; tenant access is established by live membership, entitlement, and admission-pointer checks during connect-token issuance, not by `session:auth:tenant:*` alone |
+| Pre-tenant discovery | `session:auth:account:<accountId>:<tokenHash>` | Require authenticated caller; no caller-supplied `tenantId` is trusted yet | No | Used only for authenticated lobby/discovery surfaces such as `WORLDS`; services must derive visible tenants by filtering authoritative membership/entitlement data server-side. Global roles do not widen gameplay discovery. |
+| Tenant-scoped (regular) | `session:auth:account:<accountId>:<tokenHash>` + `session:auth:tenant:<tenantId>:<tokenHash>` | Require a tenant role in `scopedRoles[tenantId]` that authorizes the operation (for example `tenantAdmin`, `designer`, `moderator`, `player`) or an explicitly documented route-level `platformAdmin` allowance | Yes | `tenantId` must be in `scopedRoles` for tenant-role callers unless a specific route explicitly allows a global-role override. `billingAdmin` and `support` must be rejected for `tenant_regular`. Gameplay admission/switching routes must not use `platformAdmin` as an implicit override and must enforce caller-bound gameplay membership plus DB/query scoping by `tenantId`. |
 | Billing-safe (tenant-scoped) | `session:auth:account:<accountId>:<tokenHash>` | Require caller-bound tenant membership with `tenantAdmin` for the target tenant | No tenant-billing watermark; yes membership watermark | `tenantId` must be validated against caller tenant scope; services must perform a live caller-bound membership/role check against authoritative account-tenant membership data (for example `GetCallerTenantMembership(tenantId)`) before allowing billing-safe mutations; this route must remain reachable even when the tenant is `suspended`/`canceled` for gameplay, but it must fail immediately after caller membership/role revocation via the membership watermark or the live membership check |
 | Cross-tenant (support-safe) | `session:auth:account:<accountId>:<tokenHash>` + `session:auth:global:<accountId>:<tokenHash>` | Require `support` or `platformAdmin` | No | Tenant parameters are allowed only because the caller holds a cross-tenant support role; responses must be limited to high-level, troubleshooting-safe data (for example derived entitlements and subscription status, not invoices/payment methods); log/audit the target tenant |
 | Cross-tenant (billing-safe) | `session:auth:account:<accountId>:<tokenHash>` + `session:auth:global:<accountId>:<tokenHash>` | Require `billingAdmin` or `platformAdmin` | No | Tenant parameters are allowed only because the caller holds a global billing role; log/audit the target tenant |
@@ -203,7 +203,7 @@ All clients — whether connecting via Telnet or WebSocket — authenticate usin
 
 Telnet-specific behaviors (such as the optional `SESSION <gameInstanceId> <tenantId>` envelope used by advanced clients) reuse this same canonical login flow. The envelope is an advisory attach hint captured by the TCP Proxy Service and forwarded as gateway-owned headers; it is not authentication material and never bypasses the canonical `LOGIN` + lobby selection (`WORLDS`/`CHARS`/`PLAY`) authorization and entitlement checks. The TCP Proxy Service and Spring Cloud Gateway docs describe only their **transport responsibilities** and defer to this section for `LOGIN`/`LOGON` semantics and example transcripts.
 
-When gameplay admission is in single-instance-per-tenant mode, non-`primary` `gameInstanceId` values from Telnet `SESSION` hints are advisory-noop context only. They must be ignored for admission decisions, with a low-cardinality metric and audit log entry emitted so stale clients are detectable.
+Telnet `SESSION` hints may include a target `{gameInstanceId, tenantId}` for advanced clients, but the canonical source of realm selection remains the authenticated lobby/admission flow. Clients must not rely on unauthenticated transport hints to bypass membership, entitlement, or realm-visibility checks.
 
 ### WebSocket Connect Token Contract (`/ws/game/**`)
 
@@ -217,7 +217,7 @@ To avoid introducing a second independent end-user login model for first-party g
 - Audience/scope is limited to player bootstrap functions such as `POST /auth/connect-token`.
 - Lifetime is intentionally short (target <= 5 minutes), stored in memory only, and cleared on tab reload/logout.
 - `POST /auth/connect-token` must derive caller identity from this bootstrap token; clients must not supply an arbitrary `accountId`.
-- The subsequent gameplay `LOGIN` remains mandatory and must resolve to the same `accountId` as the bootstrap context. A mismatch is a hard failure and the connect context must not be honored.
+- The subsequent gameplay `LOGIN` remains mandatory but, for first-party `/ws/game/**` clients, it must complete using the already-verified bootstrap/connect context rather than requiring the browser to re-submit account credentials. A mismatch between the verified bootstrap identity and the gameplay login result is a hard failure and the connect context must not be honored.
 
 - Bootstrap issuance API: Account Service endpoint (for example `POST /auth/player-bootstrap`) that authenticates the player account for first-party gameplay bootstrap only and returns one short-lived bootstrap token plus expiry metadata.
 - Issuer: Account/authentication control-plane only, after account authentication. Tenant membership and entitlement checks do not occur here because no gameplay tenant has been selected yet.
@@ -227,7 +227,7 @@ To avoid introducing a second independent end-user login model for first-party g
   - Before issuance, Account Service must perform a live membership check for `{accountId, tenantId}`, a live runtime entitlement check for `tenantId`, and a live admission-pointer read for `tenantId` via the Game Session control-plane API.
   - If admission pointer state is unavailable or ambiguous, connect-token issuance fails closed with `ADMISSION_POINTER_UNAVAILABLE`.
   - If the requested `gameInstanceId` does not equal the current `admissibleGameInstanceId`, connect-token issuance fails closed with `CONNECT_SCOPE_MISMATCH`; it must not mint a token for a non-admissible instance and rely on `PLAY` to correct it later.
-  - In the current single-admissible-instance design, clients should normally request the current gameplay-admissible instance (`"primary"` unless a future lobby protocol introduces explicit instance selection).
+  - Clients should normally request a realm that was surfaced by the authenticated lobby/discovery flow for that account and tenant. For first-party playtest access, this may be a non-production fork realm rather than the tenant's default production realm.
   - Missing required request/response fields are contract violations and must fail closed rather than being defaulted by callers.
 - Transport: `X-Firemud-Connect-Token` header on `/ws/game/**` handshake.
 - Required claims: `accountId`, `tenantId`, `gameInstanceId`, `exp`, `jti`.
@@ -278,53 +278,69 @@ Normative constraints:
 
 - First-party clients must not treat successful handshake as gameplay authentication; gameplay remains unauthenticated until `LOGIN` succeeds.
 - `/ws/game/**` requires a valid connect token for non-proxy clients and rejects missing tokens with `403`.
-- Game Session must bind the verified connect context to the authenticated gameplay login: if `LOGIN` resolves to an `accountId` different from the connect-context `accountId`, the session fails closed with a canonical account-mismatch error and no gameplay scope is bound.
+- For first-party `/ws/game/**` clients, bare `LOGIN` (or `LOGON`) must complete gameplay authentication by consuming the verified connect context plus the bootstrap identity already bound to that context. Browsers must not be required to replay username/password/OTP after bootstrap.
+- Third-party clients and non-bootstrap transports continue to use credential-bearing `LOGIN <username> <password> [otp]` or the prompt flow.
+- Game Session must bind the verified connect context to the authenticated gameplay login: if bootstrap-backed `LOGIN` resolves to an `accountId` different from the connect-context `accountId`, the session fails closed with a canonical account-mismatch error and no gameplay scope is bound.
 - For first-party clients on `/ws/game/**`, the `PLAY` selection must match the connect-token scope `{tenantId, gameInstanceId}`. Scope mismatch is rejected with canonical error `CONNECT_SCOPE_MISMATCH`; clients must request a fresh connect token for the intended target and reconnect.
-- Because `/auth/connect-token` already validates against the authoritative admission pointer, `CONNECT_SCOPE_MISMATCH` at `PLAY` is treated as drift between issuance and admission (for example pointer movement during reconnect), not as normal stale-client correction.
-- When FireMUD introduces a player-facing instance-selection protocol, the bootstrap/connect-token contract and the lobby `PLAY` contract must be revised in the same change so there remains one canonical player-selected `{tenantId, gameInstanceId}` path. Implementations must not add a second independent instance selector only to one side of the flow.
+- Because `/auth/connect-token` validates against the authoritative realm-selection state for the caller, `CONNECT_SCOPE_MISMATCH` at `PLAY` is treated as drift between issuance and admission (for example realm visibility or routing changed during reconnect), not as normal stale-client correction.
+- The bootstrap/connect-token contract and the lobby `PLAY` contract together form the canonical player-selected `{tenantId, gameInstanceId}` path. New realm types, including playtest forks, must extend this single path rather than introducing a separate side-channel selector.
 
 ### Mapping to the Account Service
 
 #### Plain-text `LOGIN`/`LOGON` command mapping
 
-1. The Telnet and WebSocket client emits `LOGIN <username> <password> [otp]` (or the `LOGON` alias).
-2. The Game Session Service parses the line, normalizes casing, and issues a synchronous call to the Account Service `Authenticate` gRPC method (internal-only, mTLS-protected) with a payload containing `username`, `password`, the optional `otp`, and connection metadata indicating the **transport security** (for example `transportSecurity=PLAINTEXT_TELNET` vs `transportSecurity=TLS_TELNET` / `WEB_TLS`). This metadata is derived from the TCP Proxy and Gateway handshake so the Account Service can enforce deployment-wide and per-account policies for plaintext Telnet logins. Gameplay `LOGIN` must not call the public `/auth/login` browser endpoint; `/auth/login` is reserved for first-party control-plane UIs.
-3. The Account Service validates credentials (including the OTP when present) and returns either a JWT + account metadata or a canonical error code such as `AUTH_INVALID_CREDENTIALS`, `AUTH_OTP_REQUIRED`, `AUTH_ACCOUNT_LOCKED`, `AUTH_2FA_REQUIRED_FOR_PLAINTEXT_TCP`, `AUTH_PLAINTEXT_TCP_NOT_PERMITTED`, or `AUTH_UPSTREAM_FAILURE`. The Game Session Service translates these codes into the text-protocol equivalents (`ERROR INVALID_CREDENTIALS`, `ERROR OTP_REQUIRED`, `ERROR 2FA_REQUIRED_FOR_PLAINTEXT_TCP`, `ERROR PLAINTEXT_TCP_NOT_PERMITTED`, etc.) so WebSocket and Telnet clients always see the same response format regardless of how the upstream message is worded. For plaintext Telnet logins, the combination of `FIREMUD_AUTH_REQUIRE_2FA_FOR_PLAINTEXT_TCP` and the per-account “allow plaintext Telnet login” flag follows the safety matrix defined in the Security Architecture’s **Plaintext Telnet safety matrix** section; implementations must treat any combination outside the allowed cells as a hard denial (`AUTH_PLAINTEXT_TCP_NOT_PERMITTED` or `AUTH_2FA_REQUIRED_FOR_PLAINTEXT_TCP`) rather than silently weakening security.
-4. Success responses cause the Game Session Service to create/refresh Redis-backed gameplay session bindings and the Account Service to create the corresponding `session:auth:*` allowlist entries. The Game Session Service binds the socket to an authenticated account context and emits `OK LOGIN Logged in as <username>` on the wire. Error responses are translated to the shared `ERROR <CODE> <message>` format so protocol clients see consistent codes regardless of transport.
+1. The client emits one of the canonical gameplay-login forms:
+   - `LOGIN <username> <password> [otp]` (or `LOGON ...`) for Telnet, generic WebSocket, and any non-bootstrap transport.
+   - bare `LOGIN` / `LOGON` on first-party `/ws/game/**` after Gateway has validated a connect token and attached a signed connect context. In this case, the browser is completing gameplay auth from the previously established bootstrap identity rather than sending credentials a second time.
+2. For credential-bearing login, the Game Session Service parses the line, normalizes casing, and issues a synchronous call to the Account Service `Authenticate` gRPC method (internal-only, mTLS-protected) with a payload containing `username`, `password`, the optional `otp`, and connection metadata indicating the **transport security** (for example `transportSecurity=PLAINTEXT_TELNET` vs `transportSecurity=TLS_TELNET` / `WEB_TLS`). This metadata is derived from the TCP Proxy and Gateway handshake so the Account Service can enforce deployment-wide and per-account policies for plaintext Telnet logins. Gameplay `LOGIN` must not call the public `/auth/login` browser endpoint; `/auth/login` is reserved for first-party control-plane UIs.
+3. For bootstrap-backed first-party login, Game Session validates the signed connect context, binds it to the bootstrap-authenticated account identity established before `/auth/connect-token`, and obtains/refreshes the backend token material needed for subsequent internal calls. This path must not prompt for or require replay of account credentials from the browser.
+4. The Account Service-backed credential path validates credentials (including the OTP when present) and returns either a JWT + account metadata or a canonical error code such as `AUTH_INVALID_CREDENTIALS`, `AUTH_OTP_REQUIRED`, `AUTH_ACCOUNT_LOCKED`, `AUTH_2FA_REQUIRED_FOR_PLAINTEXT_TCP`, `AUTH_PLAINTEXT_TCP_NOT_PERMITTED`, or `AUTH_UPSTREAM_FAILURE`. The Game Session Service translates these codes into the text-protocol equivalents (`ERROR INVALID_CREDENTIALS`, `ERROR OTP_REQUIRED`, `ERROR 2FA_REQUIRED_FOR_PLAINTEXT_TCP`, `ERROR PLAINTEXT_TCP_NOT_PERMITTED`, etc.) so WebSocket and Telnet clients always see the same response format regardless of how the upstream message is worded. For plaintext Telnet logins, the combination of `FIREMUD_AUTH_REQUIRE_2FA_FOR_PLAINTEXT_TCP` and the per-account “allow plaintext Telnet login” flag follows the safety matrix defined in the Security Architecture’s **Plaintext Telnet safety matrix** section; implementations must treat any combination outside the allowed cells as a hard denial (`AUTH_PLAINTEXT_TCP_NOT_PERMITTED` or `AUTH_2FA_REQUIRED_FOR_PLAINTEXT_TCP`) rather than silently weakening security.
+5. Success responses cause the Game Session Service to create/refresh Redis-backed gameplay session bindings and the Account Service to create or refresh the corresponding `session:auth:*` allowlist entries for backend use. The Game Session Service binds the socket to an authenticated account context and emits `OK LOGIN Logged in` (or equivalent account-confirming text) on the wire. Error responses are translated to the shared `ERROR <CODE> <message>` format so protocol clients see consistent codes regardless of transport.
 
 Gameplay commands such as `LOOK` and `SAY` are gated by both the authentication handshake (`LOGIN`) and the lobby selection step (`PLAY`). Any text command received before a session is authenticated is rejected with `ERROR NOT_AUTHENTICATED`, and any gameplay command received before a world is selected is rejected with a dedicated error (for example `ERROR WORLD_NOT_SELECTED Use WORLDS/PLAY first`). Except in explicitly documented development/test bypass modes that grant temporary access, these commands are not processed for anonymous or unscoped sessions, keeping the gameplay queue free of unauthenticated traffic.
 
-Login commands only carry account credentials (plus optional OTP). Accounts are platform-wide and not tied to a single game or tenant; the same account is used across all worlds as described in [Multi-Tenancy](./system-architecture-multi-tenancy.md#identity--tenant-model).
+Credential-bearing login commands carry account credentials (plus optional OTP). Bootstrap-backed first-party `LOGIN` carries no credentials because it consumes the already verified bootstrap/connect context. Accounts are platform-wide and not tied to a single game or tenant; the same account is used across all worlds as described in [Multi-Tenancy](./system-architecture-multi-tenancy.md#identity--tenant-model).
 
 ### Tenant Selection for Gameplay (Lobby Selection)
 
-FireMUD uses a **single shared entrypoint** for many worlds (tenants). After `LOGIN`, clients complete a lobby selection step that binds the authenticated connection to a specific world (`tenantId`) and gameplay identity (`characterId` / `playerId`) before gameplay commands are accepted.
+FireMUD uses a **single shared entrypoint** for many worlds (tenants). After `LOGIN`, clients complete a lobby selection step that binds the authenticated connection to a specific world (`tenantId`), realm (`gameInstanceId`), and gameplay identity (`characterId` / `playerId`) before gameplay commands are accepted.
 
-Players must never be asked to type raw internal identifiers such as `tenantId` GUIDs or `characterId` values. Lobby selection accepts human-friendly inputs (world slugs, world names, or numbered menu indices; character names or indices) and resolves them server-side into stable internal identifiers.
+Players must never be asked to type raw internal identifiers such as `tenantId` GUIDs, `gameInstanceId` values, or `characterId` values. Lobby selection accepts human-friendly inputs (world slugs, realm labels, world/realm menu indices, character names or indices) and resolves them server-side into stable internal identifiers.
 
 After `LOGIN` succeeds, the Game Session Service requires an explicit lobby selection flow using these canonical commands:
 
 - `WORLDS` – list worlds the authenticated account can enter (a numbered menu plus a stable world slug for each entry).
-- `CHARS <world>` – list characters for the selected world (`<world>` is a world index from `WORLDS` or a world slug).
-- `PLAY <world> [character]` – enter gameplay by selecting a world and optional character.
+- `REALMS <world>` – list player-addressable realms for the selected world, filtered by the caller's access and labeled by type (for example `production`, `playtest-fork`).
+- `CHARS <world> [realm]` – list characters for the selected world/realm combination (`<world>` is a world index from `WORLDS` or a world slug; `<realm>` is a realm label or index from `REALMS` when the world exposes more than one visible realm).
+- `PLAY <world> [realm] [character]` – enter gameplay by selecting a world, optional realm, and optional character.
+
+Realm-selection contract:
+
+- Every player-addressable realm belongs to exactly one tenant and is identified internally by `gameInstanceId`.
+- A tenant may expose one default production realm and zero or more additional explicitly addressed realms.
+- Playtest forks are canonical additional realms: they are isolated, non-production gameplay environments, typically derived from a snapshot of another realm's live state, and visible only to authorized testers, creators, and operators.
+- When a world has exactly one realm visible to the caller, `PLAY <world> [character]` may continue to resolve that realm implicitly for convenience.
+- When a world exposes more than one visible realm to the caller, the server must require an unambiguous realm selection or present a numbered realm menu; it must not silently guess.
 
 Lobby discovery source-of-truth contract:
 
 - `WORLDS` must be sourced from Account Service tenant-membership and entitlement state (not from opportunistic local caches alone) so world visibility and billing state cannot drift across services.
-- `CHARS <world>` must be sourced from the authoritative character store for the resolved tenant and filtered to `{accountId, tenantId}` ownership before any character names are returned.
-- `WORLDS` and `CHARS` responses must not leak inaccessible tenants or characters; unresolved selectors return canonical errors (`WORLD_NOT_FOUND`, `WORLD_ACCESS_DENIED`, `CHARACTER_NOT_FOUND`, `CHARACTER_ACCESS_DENIED`) without exposing whether a hidden tenant exists.
+- `REALMS <world>` must be sourced from authoritative realm metadata plus caller access rules so production realms, private forks, and expired forks are filtered consistently.
+- `CHARS <world> [realm]` must be sourced from the authoritative character store for the resolved tenant/realm scope and filtered to `{accountId, tenantId, gameInstanceId}` ownership/eligibility before any character names are returned.
+- `WORLDS`, `REALMS`, and `CHARS` responses must not leak inaccessible tenants, realms, or characters; unresolved selectors return canonical errors (`WORLD_NOT_FOUND`, `WORLD_ACCESS_DENIED`, `REALM_NOT_FOUND`, `REALM_ACCESS_DENIED`, `CHARACTER_NOT_FOUND`, `CHARACTER_ACCESS_DENIED`) without exposing whether a hidden resource exists.
 
 Lobby command classification contract:
 
 - `WORLDS` is an authenticated **pre-tenant discovery** operation, not a normal tenant-scoped route. It runs after account authentication but before a single `tenantId` has been selected.
-- `CHARS <world>` and `PLAY <world> [character]` become tenant-scoped only after `<world>` is resolved server-side to a canonical `tenantId`.
+- `REALMS <world>` is a tenant-bound discovery operation after `<world>` resolves to `tenantId`, but before a specific `gameInstanceId` is bound for gameplay.
+- `CHARS <world> [realm]` and `PLAY <world> [realm] [character]` become realm-scoped only after the server resolves both selectors to canonical `{tenantId, gameInstanceId}` values.
 - Shared auth middleware and route-matrix entries must not model all lobby commands as one undifferentiated tenant-scoped surface.
 
 The `PLAY` flow:
 
 - Resolves `<world>` to a canonical `tenantId` (opaque GUID) and validates it exists.
-- Verifies that the account is authorized to act on that `tenantId` using the Tenant Authorization Contract (roles from `globalRoles` and `scopedRoles`).
-- Performs an authoritative internal membership read for `{accountId, tenantId}` and persists the returned `membershipVersion` into the gameplay session binding on successful admission. Gameplay admission must not source `membershipVersion` from JWT claims or local caches.
+- Verifies that the account is authorized to play in that `tenantId` using caller-bound gameplay membership authority. Global roles alone must not satisfy gameplay admission.
+- Performs an authoritative internal membership read for `{accountId, tenantId}` and persists the returned `membershipVersion` into the gameplay session binding on successful admission. The membership response must also assert `gameplayAdmissionAllowed=true`; gameplay admission must not source `membershipVersion` or gameplay authority from JWT claims or local caches.
 - Consults the runtime entitlement contract `GetTenantEntitlementsForRuntime(tenantId)` to confirm that the tenant is currently available for gameplay (for example, subscription state is not `suspended` or `canceled` and hard quotas are not violated).
 - Resolves `[character]` to a canonical `characterId` scoped to `{accountId, tenantId}`. Until character selection ships, the service may bind to a default character identity derived from `accountId`, but the binding model must still treat `characterId` as a distinct identifier for forward compatibility.
 - Records a `gameInstanceId` in the binding. In the current architecture, gameplay lobby flow is single-instance-per-tenant and always binds to `"primary"` after entitlement checks.

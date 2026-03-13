@@ -278,7 +278,7 @@ At the protocol level, commands are split into two groups:
 
 | Command | Purpose | Example |
 | ------- | ------- | ------- |
-| `LOGIN <username> <password> [otp]` | Authenticates a session and binds it to an account; append an OTP when two-factor auth is enabled. | `LOGIN demo@example.com swordfish 123456` |
+| `LOGIN <username> <password> [otp]` | Authenticates a session and binds it to an account on credential-bearing transports; append an OTP when two-factor auth is enabled. First-party `/ws/game/**` may instead use bare `LOGIN` after bootstrap/connect-token validation. | `LOGIN demo@example.com swordfish 123456` |
 | `LOGON <username> <password> [otp]` | Exact alias for `LOGIN`; Telnet users often prefer the shorter name when typing from prompts. | `LOGON demo@example.com swordfish` |
 | `WORLDS` | Lists worlds the authenticated account can enter (numbered menu + stable world slug) from Account Service membership + entitlement state. | `WORLDS` |
 | `CHARS <world>` | Lists characters for a world (`<world>` is a world slug or a menu index from `WORLDS`) from the authoritative character store, filtered to `{accountId, tenantId}` ownership. | `CHARS demo` |
@@ -305,9 +305,9 @@ This small command table defines the initial MVP gameplay command set delivered 
 
 ### Login / Logon semantics
 
-Telnet and WebSocket clients share this line-based syntax, but Telnet sessions frequently rely on prompt-driven exchanges while WebSocket clients typically send whole commands at once. Sending `LOGIN` (or the alias `LOGON`) with no arguments is intended to start the prompt flow, whereas `LOGIN <username> <password> [otp]` (or `LOGON ...`) performs an immediate authentication attempt. OTP values are passed through verbatim to the Account Service so two-factor accounts get the same experience. The same `OK <COMMAND>` / `ERROR <CODE> <message>` response format applies to both transports so clients can react consistently, and the examples below demonstrate at least one success and one failure path per transport.
+Telnet and WebSocket clients share this line-based syntax, but transport context determines which `LOGIN` form is valid. For Telnet and generic WebSocket clients, sending `LOGIN` (or the alias `LOGON`) with no arguments is intended to start the prompt flow, whereas `LOGIN <username> <password> [otp]` (or `LOGON ...`) performs an immediate authentication attempt. For first-party `/ws/game/**` sessions that already carry a validated Gateway connect context, bare `LOGIN` completes gameplay authentication from the pre-established bootstrap identity instead of prompting for or replaying credentials. OTP values on credential-bearing logins are passed through verbatim to the Account Service so two-factor accounts get the same experience. The same `OK <COMMAND>` / `ERROR <CODE> <message>` response format applies to all transports so clients can react consistently, and the examples below demonstrate at least one success and one failure path per transport.
 
-**Note:** Prompt-based exchanges are planned but not implemented in this slice. Sending bare `LOGIN` currently returns `ERROR PROMPT_LOGIN_UNSUPPORTED Prompt-based login is not implemented yet; send LOGIN <username> <password>.` so Telnet clients should use the parameterized form until the prompt flow lands. Gameplay commands such as `LOOK` require a successful `PLAY` after `LOGIN`/`LOGON`; unauthenticated attempts still receive `ERROR NOT_AUTHENTICATED`, and the most recent successful room snapshot is cached per session so reconnecting clients can immediately redraw the world before pending commands replay.
+**Note:** Prompt-based exchanges are planned but not implemented in this slice for Telnet and non-bootstrap clients. On those transports, bare `LOGIN` currently returns `ERROR PROMPT_LOGIN_UNSUPPORTED Prompt-based login is not implemented yet; send LOGIN <username> <password>.` First-party `/ws/game/**` sessions with a validated connect context are the exception: bare `LOGIN` consumes the bootstrap-backed context and must not ask the browser to resend credentials. Gameplay commands such as `LOOK` require a successful `PLAY` after `LOGIN`/`LOGON`; unauthenticated attempts still receive `ERROR NOT_AUTHENTICATED`, and the most recent successful room snapshot is cached per session so reconnecting clients can immediately redraw the world before pending commands replay.
 
 After `LOGIN` succeeds, clients must issue `PLAY <world> [character]` before any gameplay commands (such as `LOOK` or `SAY`). This play step binds the authenticated connection to a world-scoped gameplay session and enforces tenant authorization and entitlements as defined in the Authentication & Authorization design.
 
@@ -326,7 +326,7 @@ The Account Service returns canonical `AUTH_*` error codes (`AUTH_INVALID_CREDEN
 
 Additional Game Session-specific login failures cover parsing and session-state issues before the Account Service call:
 
-- `PROMPT_LOGIN_UNSUPPORTED` – prompt-based LOGIN/LOGON exchanges are planned but not implemented yet, so clients must send `LOGIN <username> <password>`.
+- `PROMPT_LOGIN_UNSUPPORTED` – prompt-based LOGIN/LOGON exchanges are planned but not implemented yet on non-bootstrap transports, so those clients must send `LOGIN <username> <password>`.
 - `INVALID_ACCOUNT` – the Account Service returned an account identifier that could not be parsed into the expected format.
 - `ACCOUNT_MISMATCH` – the authenticated account is not permitted to attach to the requested game instance or tenant context.
 - `SESSION_NOT_FOUND` – the supplied game instance identifier has no corresponding `GameInstance`.

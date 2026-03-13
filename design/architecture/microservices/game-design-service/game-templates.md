@@ -41,11 +41,22 @@ The Game Design Service therefore stores normalized reference rows alongside the
 
 Administrative tooling and lifecycle checks (retirement eligibility, “list templates referencing version”, bulk migrations) operate on these normalized tables. The JSON config remains the user-facing payload and can be reconstructed or validated against normalized rows, but it is not the only queryable representation of dependencies.
 
+### Single Base-Version Invariant
+
+Launchable game templates must resolve to exactly one base design bundle version.
+
+- `game_template_version_ref` is not advisory metadata; it identifies the single canonical `versionId` used to resolve the launch descriptor for that template.
+- Every normalized world/entity/script reference row for the template must use that same `versionId`.
+- Mixed-version template composition is not allowed for launchable templates. A template update that would produce reference rows spanning multiple base `versionId` values must fail validation rather than relying on runtime resolution heuristics.
+- `game_template_script_patch_ref` is the only supported patch-level override and must reference the same `baseVersionId` as the template’s canonical `game_template_version_ref`.
+- If future workflows need cross-version migration planning, they must represent that as an explicit control-plane migration artifact, not as a launchable template with mixed-version dependencies.
+
 Normalized reference invariants:
 
 - The normalized reference tables are authoritative for dependency queries (retirement eligibility checks, “list templates referencing version”, bulk migration planning). The system must not rely on best-effort parsing of arbitrary JSON to determine dependencies.
 - Create/update operations must update `game_templates.config` and all corresponding `game_template_*_ref` rows in the same database transaction. Partial updates are not allowed.
 - If reference derivation fails (for example malformed config), the template write must fail; the service must not persist a config that cannot be represented in normalized reference rows.
+- If derivation yields more than one base `versionId`, the template write must fail with a clear validation error explaining that launchable templates must resolve to one version bundle.
 - Introducing normalized reference tables requires a one-time backfill migration/job for existing templates. Backfill must validate consistency and mark templates `INVALID` if dependencies cannot be derived or resolved.
 
 ### Backfill, Validation, and Runtime Usage
@@ -67,6 +78,7 @@ Normalized reference storage is only safe if it is operationally enforced:
   - Validates that every referenced `(tenantId, versionId, templateId)` exists in the owning domain service and that the referenced `versionId` is not Retired.
   - Marks the template as `INVALID` (and blocks instance creation) if references cannot be derived, cannot be resolved, or violate lifecycle constraints.
 - **Strict create/update enforcement** – create/update of a template must be rejected if normalized references cannot be derived and written in the same transaction as the JSON config.
+- **Single-version launch enforcement** – instance creation and `ResolveLaunchDescriptor` must reject any template not marked `VALID` with exactly one canonical base `versionId`.
 - **Instance creation enforcement** – the Game Session Service (or the instance-creation orchestrator) must validate template dependencies using normalized tables before creating any `gameInstanceId` rows:
   - Fail fast if any referenced version is Retired, missing, or out of sync with its domain templates.
   - If the template pins a `scriptPatchVersion`, fail fast unless Automation & Scripting reports that patch is `READY` for the tenant.
@@ -113,6 +125,12 @@ Canonical minimum fields:
 - `generationConfigRevision` taken from the target version’s `published_release_bundle`
 - `versionStateEpoch` used for CAS-safe activation checks
 - any approved `remapSetId` required by the launch path
+
+Resolution invariants:
+
+- `resolved versionId` is derived from the template’s single canonical `game_template_version_ref`; it is never inferred by choosing one of several referenced versions at launch time.
+- `resolved scriptPatchVersion`, when present, must be validated against that same base `versionId`.
+- Runtime services must treat any mixed-version template as invalid configuration and fail before any instance rows are created.
 
 Ownership and usage rules:
 

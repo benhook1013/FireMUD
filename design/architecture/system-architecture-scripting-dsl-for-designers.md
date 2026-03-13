@@ -73,7 +73,7 @@ When designing scripts, it helps to think in terms of a few core ideas:
     - `onLoad` is a **gate**: if it fails for a tenant (for example, misconfiguration or sandbox errors), the new patch will **not** go live there and the previous patch continues to run instead.
     - You fix `onLoad` failures by correcting the script or configuration and publishing a new patch; there is no automatic retry for logical failures.
     - Tooling in the Game Design and Logging & Admin services surfaces `onLoad` status per tenant (for example, `READY` vs `FAILED`), and runtime failures appear in `script_event_audit`. See the reference doc for the full `onLoad` lifecycle semantics and the quotas/operations doc for where to inspect audit records.
-    - `onLoad` is only for **replaceable shared initialization** such as warming caches or preparing lookups. It is not a safe place to create durable gameplay state that would need to be undone during rollback, because the current architecture does not define an `onUnload` cleanup hook.
+    - `onLoad` is only for **ephemeral readiness work** such as validating configuration and warming recomputable caches. It must not create durable records, Redis structures, or other shared artifacts that outlive the current process, because the current architecture does not define an `onUnload` cleanup hook.
 
 - **Conditions and actions**
   - **Condition nodes** check world state or inputs, then branch via labeled outputs such as `onTrue` / `onFalse` or `onBelowThreshold` / `onAboveThreshold`.
@@ -146,6 +146,7 @@ The platform performs **extensive validation** at design time and at publish tim
   - The Game Design Service highlights invalid wiring (for example, missing connections, incompatible types, or unbounded cycles) directly in the visual editor.
   - Errors point to the specific nodes and edges that must change before publish, including loops rejected by the loop safety analysis.
   - Scripts with unsafe or deprecated components (for example, components marked `UNSAFE`) appear in a dedicated “requires migration” view. They must be migrated and republished before they are eligible to run again.
+  - Reclassifying a component as `UNSAFE` blocks future publish/readiness of scripts that still depend on it, but it does not automatically stop a patch that is already live. If a live script must be stopped immediately, operators use the normal disable or rollback workflows.
 
 - **Loop safety rules**
   - Loops must always be bounded: use timers and counters to express “repeat every N ticks” or “do this up to N times,” rather than wiring a pure cycle with no guard.

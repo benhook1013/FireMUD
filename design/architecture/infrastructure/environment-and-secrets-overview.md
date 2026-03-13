@@ -185,6 +185,8 @@ Before the first deployment into `hobby-self-hosted`, `staging`, or `production`
 
 Bootstrap resources must be unique to the environment boundary. Shared namespace names such as `firemud` do not relax the requirement for separate staging and production secret sources, bucket bindings, or operator trust bindings.
 
+Expected external bindings for player-facing deployment and recovery checks must be declared once per environment in `design/operations/environments/<environment>/expected-bindings.yaml`. Deploy preflight and restore validation both consume this same manifest so backup storage, asset storage, outbound communications, and operator credential bindings do not drift between deployment and recovery procedures.
+
 Player-facing preflight must fail when this bootstrap set is incomplete or when an external binding resolves to another environment’s target. The authoritative preflight policy IDs and evidence contract for these checks are defined in `../system-architecture-deploy-preflight-policy.md`.
 
 ---

@@ -27,6 +27,7 @@ Trace-driven triage is optional but often decisive for command-latency incidents
 ### Detect (Login success ratio)
 
 - Alert: `LoginSuccessRatioLowGateway` or `LoginSuccessRatioLowTcpProxy` fires (for example, success ratio < 99.5% over 15 minutes).
+- Independent canary alerts for `playerflow_canary_success{flow="login",path=...}` may fire before live-traffic SLIs move materially in low-traffic environments.
 - Player reports: widespread login failures or timeouts.
 - Metrics:
   - Player Experience dashboard shows a drop in the login success panel.
@@ -48,6 +49,7 @@ Trace-driven triage is optional but often decisive for command-latency incidents
    - Compare Telnet vs WebSocket/HTTPS behavior:
      - If only Telnet is affected, follow the Telnet degraded runbook (`system-architecture-telnet-degraded-runbook.md`) and TCP Proxy dashboards.
      - If both are affected, continue below.
+   - Check the synthetic login canary first. If canaries are failing while live login-volume SLIs are flat, treat the issue as a real outage with insufficient live traffic, not as “no incident”.
 2. **Inspect Gateway and Account Service**
    - Use service-specific dashboards/logs to check:
      - Error rate and latency on login routes.
@@ -68,7 +70,7 @@ Trace-driven triage is optional but often decisive for command-latency incidents
    - Ensure `LoginSuccessRatioLowGateway` and/or `LoginSuccessRatioLowTcpProxy` clear (as applicable) and player reports subside.
    - Use the `player-incident-drilldown.json` Kibana saved search to spot-check representative player logs by `playerId`, `tenantId`, and `traceId` to confirm that errors have returned to normal levels.
 6. **Degraded-mode branch (if observability backends are unavailable)**
-   - If Grafana is down: query Prometheus directly for login success ratio by ingress path and tenant.
+   - If Grafana is down: query Prometheus directly for login success ratio by ingress path and tenant, plus `playerflow_canary_success{flow="login",path=...}`.
    - If Kibana is down: use service logs from Gateway/TCP Proxy/Account pods filtered by `tenantId` and `correlationId`.
    - If Prometheus is down: prioritize service health endpoints and dependency health (Postgres/Redis), and use conservative ingress mitigation (rollback/scale) based on authoritative service signals.
 
@@ -77,6 +79,7 @@ Trace-driven triage is optional but often decisive for command-latency incidents
 ### Detect (Command latency)
 
 - Alert: `CommandLatencyP99HighGateway` or `CommandLatencyP99HighTcpProxy` fires (p99 command latency > 250ms over 5 minutes).
+- Independent canary alerts for `playerflow_canary_success{flow="command",path=...}` or `playerflow_canary_latency_ms{flow="command",path=...}` may fire before traffic-derived latency panels move in low-volume periods.
 - Player reports: perceived lag or delayed command responses in game.
 - Metrics:
   - Player Experience dashboard shows elevated command p99 latency for one or more bounded core commands (`move`, `look`, `combat`).
@@ -95,6 +98,7 @@ Trace-driven triage is optional but often decisive for command-latency incidents
    - Use the Tick Health & Ledger dashboard:
      - Inspect `tick_execution_time_ms_p99 / tick_lock_ttl_ms` for affected regions.
      - Inspect `tick_retry_queue_depth` and `tick_command_queue_depth`.
+   - If the representative command canary is failing or slow while the live-traffic SLI is quiet, use the canary result as the trigger to continue triage rather than waiting for more user traffic.
    - If tick execution is also degraded:
      - Follow the scaling runbook (`system-architecture-scaling-runbook.md`) to adjust Game Session region density or add replicas before touching tick cadence.
 2. **Check Redis coordination**
@@ -116,7 +120,7 @@ Trace-driven triage is optional but often decisive for command-latency incidents
    - Confirm tick health metrics return to normal envelopes.
    - Use the `player-incident-drilldown.json` and `tick-region-logs.json` Kibana saved searches to correlate any remaining slow commands with specific `tenantId`/`regionId` and to verify that logs no longer show systemic timeouts or retries for hot commands.
 6. **Degraded-mode branch (if observability backends are unavailable)**
-   - If Grafana is down: run direct PromQL checks for command p99 latency, tick safety ratio, Redis tail-loss, and queue depth per affected tenant/region.
+   - If Grafana is down: run direct PromQL checks for command p99 latency, synthetic command-canary success/latency, tick safety ratio, Redis tail-loss, and queue depth per affected tenant/region.
    - If Jaeger is down or sampling is insufficient: skip span-based narrowing and classify bottlenecks from metrics + structured logs only.
    - If Kibana is down: inspect Game Session and hot domain-service logs directly for timeout/retry spikes by `tenantId`/`regionId`.
 
@@ -203,6 +207,6 @@ Trace-driven triage is optional but often decisive for command-latency incidents
    - Confirm the short-window detection view recovers quickly for affected `{tenantId,path}` combinations and the dominant failure outcomes subside.
    - Confirm the 1-day compliance view trends back toward SLO after the acute incident is resolved.
 4. **Degraded-mode branch (if observability backends are unavailable)**
-   - If Grafana is down: query Prometheus directly for both `entrypath_connection_attempts_total` success/total ratios by `{tenantId,path}` and the external synthetic-probe metric for each public path.
+   - If Grafana is down: query Prometheus directly for both `entrypath_connection_attempts_total` success/total ratios by `{tenantId,path}`, the external synthetic-probe metric for each public path, and the mirrored login/command canary metrics where relevant.
    - If Kibana is down: use Gateway/TCP Proxy logs directly to classify failures (`limit_exceeded`, `protocol_error`, `upstream_unreachable`, `auth_failed`).
    - If Prometheus is down: rely on edge health, pod events, and direct ingress error logs to guide rollback/scale/cap actions.

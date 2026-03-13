@@ -47,7 +47,7 @@ For any shared or player-facing environment, operators should ensure at least:
 
 - `GATEWAY_WS_URL` points at the Spring Cloud Gateway WebSocket mTLS listener (`wss://.../ws/game`) as described in **WebSocket mTLS to Spring Cloud Gateway**, with `FIREMUD_GATEWAY_WS_*` variables configured so the proxy both authenticates the gateway and presents its own client certificate.
 - `TCP_PROXY_MAX_CONNECTIONS` and `TCP_PROXY_MAX_CONNECTIONS_PER_IP` are set to non-zero values sized for expected load and NAT patterns, following the guidance in **Tuning TCP Proxy for Different Environments**; the `0` defaults are reserved for local/dev and CI.
-- Telnet is fronted by a Telnet edge proxy with PROXY protocol enabled into `TCP_PROXY_PROXY_PROTOCOL_PORT`, or source IPs are otherwise preserved; in all cases, the PROXY-protocol listener remains internal-only and is never exposed directly as a public `LoadBalancer` port.
+- In all shared and player-facing environments, Telnet is fronted by a Telnet edge proxy with PROXY protocol enabled into `TCP_PROXY_PROXY_PROTOCOL_PORT`; the PROXY-protocol listener remains internal-only and is never exposed directly as a public `LoadBalancer` port. Source-IP-preservation alternatives are limited to local/dev or tightly controlled self-hosted deployments and do not provide the canonical player-facing trust model.
 - Plaintext Telnet on `TCP_PROXY_PORT` is treated as a legacy channel governed by the Telnet hardening rules in the Security Architecture (2FA requirements, per-account “allow plaintext Telnet login” flag, and landing-menu warning), and TLS Telnet plus the web client are preferred for general use.
 
 ### Responsibilities
@@ -254,13 +254,14 @@ and [Authentication & Authorization](../../system-architecture-authentication.md
 
 - TCP connections are accepted on a dedicated port and proxied to Spring Cloud Gateway
   using a lightweight WebSocket bridge.
+- For each Telnet socket, the proxy may read and validate an optional initial `SESSION <gameInstanceId> <tenantId>` envelope before opening the bridge so those values can be included in the authenticated Proxy → Gateway handshake headers. The bridge must be established before the first non-`SESSION` line is forwarded upstream.
 - Incoming bytes are queued and forwarded to the gateway in order.
 - If the proxy cannot establish the WebSocket bridge to Spring Cloud Gateway because gameplay upstream is unavailable, it fail-closes the Telnet socket with a clear user-facing message (for example “Gateway link unavailable; please reconnect”) and a Telnet disconnect reason of `backend_unavailable` as defined in the Telnet disconnect taxonomy in [Protocol Bridging](../../system-architecture-protocol-bridging.md#telnet-disconnect-reasons).
 - If bridge establishment fails because trust/policy checks fail (for example `cert_validation`, client-certificate mismatch, handshake policy deny), the proxy fail-closes with `policy_violation`, not `backend_unavailable`.
-- If the WebSocket bridge drops after the Telnet connection is established, the proxy applies the established-session bridge state machine: it enters `unreachable`, retries bridge recovery for up to `TCP_PROXY_GATEWAY_RECONNECT_WINDOW_MS`, and fail-closes immediately with `backend_unavailable` if a gameplay line arrives while the connection is already in `unreachable`. If recovery does not succeed within the window, the proxy closes with `backend_unavailable` even for otherwise idle sockets. For unauthenticated/pre-admission sockets where initial bridge establishment fails due to upstream unavailability, the proxy fail-closes immediately with `backend_unavailable`.
+- If the WebSocket bridge drops after the Telnet connection is established, the proxy closes the Telnet socket immediately according to the established-session bridge state machine: planned drains preserve `logout` with `gateway_restart` context, and all other established-session bridge loss is surfaced as `backend_unavailable`. The proxy does not keep the client TCP socket open while attempting a hidden gameplay-bridge reattach. For pre-admission sockets where initial bridge establishment fails due to upstream unavailability, the proxy fail-closes with `backend_unavailable`.
 - During sustained Gateway gameplay unreachability, proxy admission uses a bridge-availability circuit-breaker model: new Telnet sockets are rejected quickly with `backend_unavailable` instead of being held while repeated bridge attempts fail. Admission resumes only after bridge-health recovery criteria are met (`TCP_PROXY_GATEWAY_CIRCUIT_RECOVERY_SUCCESS_COUNT` consecutive successful probes) so reconnect storms do not amplify edge resource pressure.
 - If upstream backpressure causes the Telnet → Gateway buffered-line ceiling to be exceeded while upstream is still reachable, the proxy closes the Telnet connection with `policy_violation` and emits `edge_backpressure` context in structured logs/metrics rather than using `backend_unavailable`, so client behavior and outage dashboards remain distinguishable. If upstream is already in `unreachable`, `backend_unavailable` takes precedence as the terminal reason.
-- If the upstream bridge closes cleanly because Gateway is performing a planned drain and the proxy receives the canonical deterministic bridge-drain signal defined in [Gateway Architecture](../../system-architecture-gateway.md#websocket-liveness-and-idle-timeouts) (`1000/logout;subreason=gateway_restart` on the internal bridge), the proxy preserves the Telnet-side disconnect category as `logout` rather than translating that clean restart into `backend_unavailable`. If that signal is absent, the proxy treats the loss as an unattributed bridge failure and follows the normal `unreachable` / recovery-window rules. Both sides should log and metricize the outcome using a bounded class such as `bridge_shutdown_class=planned_drain|unattributed_failure`.
+- If the upstream bridge closes cleanly because Gateway is performing a planned drain and the proxy receives the canonical deterministic bridge-drain signal defined in [Gateway Architecture](../../system-architecture-gateway.md#websocket-liveness-and-idle-timeouts) (`1000/logout;subreason=gateway_restart` on the internal bridge), the proxy preserves the Telnet-side disconnect category as `logout` rather than translating that clean restart into `backend_unavailable`. If that signal is absent, the proxy treats the loss as an unattributed bridge failure and closes the Telnet session with `backend_unavailable`. Both sides should log and metricize the outcome using a bounded class such as `bridge_shutdown_class=planned_drain|unattributed_failure`.
 - If the connection is lost, the in-memory queue is cleared and no Telnet
   commands are replayed by the proxy. Reconnection hooks notify downstream
   services so the Game Session Service can resume gameplay from Redis-backed
@@ -278,13 +279,11 @@ and [Authentication & Authorization](../../system-architecture-authentication.md
 For already-established Telnet sessions, the proxy uses an explicit per-connection bridge state machine:
 
 - `healthy` – upstream bridge established and forwarding.
-- `unreachable` – upstream bridge cannot be maintained; per-connection unreachability timer starts.
-- `reject_input_while_unreachable` – if a gameplay line arrives while the bridge is already `unreachable`, fail-close immediately with `backend_unavailable` rather than continuing to accept opaque buffered input.
-- `close_due_to_unreachable` – if continuous unreachability exceeds `TCP_PROXY_GATEWAY_RECONNECT_WINDOW_MS`, close with `backend_unavailable`.
+- `close_due_to_planned_drain` – if the proxy receives the deterministic bridge-drain signal (`1000/logout;subreason=gateway_restart`) on the authenticated internal bridge, close the Telnet session as `logout` with `gateway_restart` context.
+- `close_due_to_unreachable` – if the established upstream gameplay WebSocket cannot be maintained for any other reason, close immediately with `backend_unavailable`.
 - `close_due_to_edge_backpressure` – if queued lines exceed `TCP_PROXY_GATEWAY_MAX_BUFFERED_LINES` while upstream is reachable, close with `policy_violation` and record `edge_backpressure` context in structured logs/metrics.
-- `recovered` – return to `healthy` only after proxy-level recovery hysteresis is met (`TCP_PROXY_GATEWAY_CIRCUIT_RECOVERY_SUCCESS_COUNT` consecutive successful probes).
 
-This state machine is distinct from the proxy-wide open/half-open/closed admission breaker and defines the deterministic behavior for active Telnet sockets during partial disconnects and upstream flap windows.
+This state machine is distinct from the proxy-wide open/half-open/closed admission breaker and defines the deterministic behavior for active Telnet sockets during upstream loss. Hidden bridge reattachment behind an already-open client TCP socket is not part of the design.
 
 ### Service Interactions
 
@@ -714,7 +713,7 @@ The full variable list is (treat this table as the canonical source of defaults 
 | `TCP_PROXY_MAX_OVERSIZE_LINES` | Maximum oversized lines per connection before hard close | `10` |
 | `TCP_PROXY_MAX_MALFORMED_ENVELOPES` | Maximum malformed `SESSION` envelopes per connection before hard close (see **Telnet Session Envelope & Event Metrics** for how this counter is applied) | `5` |
 | `TCP_PROXY_NOTIFY_DISCONNECT_MAX_RETRY_MS` | Maximum total time after Telnet socket close during which the proxy retries failed `NotifyDisconnect` calls before giving up | `5000` |
-| `TCP_PROXY_GATEWAY_RECONNECT_WINDOW_MS` | Maximum time to retry bridge recovery before closing with `backend_unavailable` (applies to initial bridge establishment and established-session `unreachable` state) | `5000` |
+| `TCP_PROXY_GATEWAY_RECONNECT_WINDOW_MS` | Maximum time to keep retrying the initial Proxy → Gateway gameplay bridge establishment for a new Telnet admission before failing closed with `backend_unavailable`; this does not apply after the gameplay bridge has already been established for that Telnet socket | `5000` |
 | `TCP_PROXY_GATEWAY_CIRCUIT_OPEN_MS` | Continuous upstream-unreachable duration required to open the bridge-availability circuit breaker and fast-reject new Telnet admissions with `backend_unavailable`; set equal to `firemud.gateway.backendUnavailableGraceMs` | `5000` |
 | `TCP_PROXY_GATEWAY_CIRCUIT_HALF_OPEN_MAX_PROBES` | Maximum concurrent bridge probe attempts while the circuit breaker is half-open before returning to open on failure | `3` |
 | `TCP_PROXY_GATEWAY_CIRCUIT_RECOVERY_SUCCESS_COUNT` | Consecutive successful half-open bridge probes required before returning to closed admission; set equal to `firemud.gateway.backendUnavailableRecoverySuccessCount` | `3` |
@@ -775,7 +774,7 @@ The WebSocket client certificate must include the `clientAuth` extended key usag
 TLS handshake failures are fail-closed: the proxy does not fall back to
 plaintext. Instead it logs errors and increments a dedicated metric
 (for example `tcpproxy.gateway.handshake.failures{reason="cert_validation"}`),
-and Telnet connections fail-close if the proxy cannot establish the initial Proxy → Gateway bridge within `TCP_PROXY_GATEWAY_RECONNECT_WINDOW_MS`. For established sessions where the bridge drops, the proxy applies the bridge state machine and closes with `backend_unavailable` if recovery does not complete within that window. See
+and Telnet connections fail-close if the proxy cannot establish the initial Proxy → Gateway bridge within `TCP_PROXY_GATEWAY_RECONNECT_WINDOW_MS`. For established sessions where the bridge drops, the proxy applies the bridge state machine and closes the Telnet session immediately according to the canonical disconnect taxonomy instead of attempting a hidden bridge reattach. See
 [System Architecture: Security](../../system-architecture-security.md) for
 certificate issuance and rotation details, and
 [Environment & Secrets – TLS & Certificates](../../infrastructure/environment-and-secrets-catalog.md#tls--certificates)
@@ -823,9 +822,9 @@ The connection and envelope limits exposed via `TCP_PROXY_MAX_CONNECTIONS`,
 `TCP_PROXY_MAX_CONNECTIONS_PER_IP`, and `TCP_PROXY_MAX_MALFORMED_ENVELOPES`
 are intended to be tuned per environment.
 
-The Proxy → Gateway WebSocket bridge retry budget and input buffer depth (`TCP_PROXY_GATEWAY_RECONNECT_WINDOW_MS` and `TCP_PROXY_GATEWAY_MAX_BUFFERED_LINES`) should be sized to match expected gateway availability characteristics and typical player command rates:
+The initial Proxy → Gateway WebSocket bridge retry budget and input buffer depth (`TCP_PROXY_GATEWAY_RECONNECT_WINDOW_MS` and `TCP_PROXY_GATEWAY_MAX_BUFFERED_LINES`) should be sized to match expected gateway availability characteristics and typical player command rates:
 
-- Shorter retry budgets (for example `1000`–`3000` ms) minimize how long Telnet sockets wait for the proxy to establish the initial WebSocket bridge when Gateway is unavailable, but will drop clients more aggressively during deploys or outages. Longer retry budgets reduce “connection refused” flaps at the cost of holding the Telnet socket open slightly longer before failing closed.
+- Shorter retry budgets (for example `1000`–`3000` ms) minimize how long new Telnet sockets wait for the proxy to establish the initial WebSocket bridge when Gateway is unavailable, but will drop clients more aggressively during deploys or outages. Longer retry budgets reduce “connection refused” flaps at the cost of holding a not-yet-admitted Telnet socket open slightly longer before failing closed.
 - `TCP_PROXY_GATEWAY_MAX_BUFFERED_LINES` should reflect how many recent gameplay commands you are willing to queue at the DMZ edge when the upstream WebSocket send path is backpressured (for example 32–128 lines), balanced against memory usage and the requirement that gameplay commands are not dropped silently while a connection remains open. If the buffer fills while upstream is reachable, the proxy closes the Telnet connection with `policy_violation`, emits `edge_backpressure` context, and increments `tcpproxy.telnet.discarded{reason="gateway_buffer_full"}` so buffer-driven disconnects appear explicitly in dashboards and the Telnet degraded runbook. If upstream is already in `unreachable`, close with `backend_unavailable` instead.
 - When tuning these values, watch `tcpproxy.websocket.reconnects`, `tcpproxy.websocket.reconnect.delay`, and `tcpproxy.telnet.discarded` (including the `gateway_buffer_full` breakdown) over a few releases to ensure you are not either buffering too aggressively or disconnecting legitimate players too often during normal deploy cycles.
 
@@ -834,7 +833,7 @@ Bridge-availability circuit-breaker settings should also be tuned explicitly:
 - `TCP_PROXY_GATEWAY_CIRCUIT_OPEN_MS` (recommended default `5000`) controls how long upstream gameplay unreachability must persist before the breaker opens and new Telnet admissions are fast-rejected as `backend_unavailable`. Keep this equal to `firemud.gateway.backendUnavailableGraceMs`.
 - `TCP_PROXY_GATEWAY_CIRCUIT_HALF_OPEN_MAX_PROBES` (recommended default `3`) controls how many concurrent bridge probe attempts are allowed while half-open.
 - `TCP_PROXY_GATEWAY_CIRCUIT_RECOVERY_SUCCESS_COUNT` (default `3`) controls how many consecutive successful half-open probe bridge establishments are required before returning to closed admission. Keep this equal to `firemud.gateway.backendUnavailableRecoverySuccessCount`.
-- Startup must fail fast when `TCP_PROXY_GATEWAY_RECONNECT_WINDOW_MS <= 0`, `TCP_PROXY_GATEWAY_CIRCUIT_OPEN_MS <= 0`, or `TCP_PROXY_GATEWAY_CIRCUIT_RECOVERY_SUCCESS_COUNT <= 0`, and when `TCP_PROXY_GATEWAY_RECONNECT_WINDOW_MS != TCP_PROXY_GATEWAY_CIRCUIT_OPEN_MS`.
+- Startup must fail fast when `TCP_PROXY_GATEWAY_RECONNECT_WINDOW_MS <= 0`, `TCP_PROXY_GATEWAY_CIRCUIT_OPEN_MS <= 0`, or `TCP_PROXY_GATEWAY_CIRCUIT_RECOVERY_SUCCESS_COUNT <= 0`.
 
 ### Recommended Dev Defaults
 

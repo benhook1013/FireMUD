@@ -53,6 +53,12 @@ Scripts execute inside a **sandboxed runtime** owned by the Automation & Scripti
   - Execution budgets bound CPU and time per script run.
   - Dangerous components can be flagged as `UNSAFE` and enforced via migration and deprecation flows.
 
+For **core scripts**, `UNSAFE` is a publish/readiness classification, not a live runtime policy rollout:
+
+- New publishes or readiness transitions that reference an `UNSAFE` component must fail deterministically with `validation_error` / `unsafe_component`.
+- Already-`READY` or already-pinned patches do not become implicitly disabled just because a component was reclassified later.
+- Immediate containment of a live script that uses a newly `UNSAFE` component is an operator action through the existing disable/rollback controls, not a separate implicit admission policy.
+
 For lower-level sandbox and runtime internals, see `design/architecture/microservices/automation-scripting-service/sandbox-runtime-design.md`.
 
 Dry-run and test execution paths exposed by the Automation & Scripting Service share the same sandbox and guardrails as live traffic:
@@ -117,6 +123,7 @@ Patch readiness initialization uses a separate admission class from ordinary liv
 
 - `onLoad` is part of the publish/readiness lifecycle for `<tenantId, scriptPatchVersion>`, not part of steady-state gameplay traffic.
 - `onLoad` must **not** consume ordinary live-trigger quota windows or compete indefinitely in the same admission queues as `onEnterRegion`, `onInterval`, or other runtime events.
+- In the first implementation slice, `onLoad` capacity exists only for **ephemeral readiness work**. Durable or semi-durable artifact creation is not part of the `onLoad` contract and must be rejected at design/runtime review until a dedicated cleanup lifecycle exists.
 - Implementations must reserve bounded publish-time capacity for `onLoad`, including:
   - explicit concurrency ceilings,
   - explicit timeout/CPU/memory ceilings, and

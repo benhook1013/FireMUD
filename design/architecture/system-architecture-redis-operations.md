@@ -275,9 +275,13 @@ To make coordination and tick health observable in a consistent way across servi
   - `tick_effects_pending_total{tenantId,regionId}` – count of ledger rows with `status=SCHEDULED`.
   - `tick_effects_applied_total{tenantId,regionId}` – cumulative applied effects.
   - `tick_effects_abandoned_total{tenantId,regionId,reason}` – cumulative abandoned effects by reason (for example `RESET_REGION_SCOPED`, `RESET_TENANT_SCOPED`, `RESET_CLUSTER_SCOPED`, `EXPIRED`, `INVALID_TARGET`).
-  - `tick_effects_pending_oldest_scheduled_timestamp_seconds{tenantId,regionId}` – helper metric recording the oldest `created_at` timestamp among SCHEDULED ledger rows for each region, used to detect when pending work has exceeded the configured grace window.
+  - `tick_effects_pending_oldest_scheduled_timestamp_seconds{tenantId,regionId}` – helper metric recording the oldest `created_at` timestamp among SCHEDULED ledger rows for each region.
+  - `tick_effects_pending_oldest_age_seconds{tenantId,regionId}` – recording rule for the current age of the oldest `SCHEDULED` row.
+  - `tick_effects_replay_convergence_budget_seconds{tenantId,regionId}` – emitted replay-convergence budget for the region. Default formula: `max(60, ceil(20 * tick_interval_ms / 1000))`.
+  - `tick_effects_replay_slo_breached{tenantId,regionId}` – recording rule indicating replay age has exceeded the emitted convergence budget.
   - `tick_effects_replay_scan_lag_ms{tenantId,regionId}` – replay-controller lag between “oldest replay-eligible `SCHEDULED` row” and latest replay scan for the region.
   - `tick_effects_replay_batches_total{tenantId,regionId}` – replay-controller batch executions used to verify fairness across regions and detect starvation.
+  - `tick_effects_replay_starved{tenantId,regionId}` – recording rule indicating replay batches are not advancing despite pending work for longer than the emitted convergence budget.
 - **Service-level tick replay metrics**
   - `gamesession_tick_replayed_total{tenantId,regionId}` – count of ticks that were replayed by the Game Session Service for each region (used to monitor how often idempotent recovery paths are exercised).
   - `gamesession_tick_executed_total{tenantId,regionId}` – count of ticks executed by the Game Session Service (denominator for replay ratios).
@@ -555,9 +559,11 @@ The steps mirror the “AOF too large” runbook but are driven by operator inte
    - Use scoped reset by default. Use full wipe only when scope cannot be safely isolated or when `requires_cluster_reset` compatibility demands it.
    - For reset-sensitive prefixes (for example `session:*`), require explicit operator sign-off and player-impact communication before proceeding.
    - Verify that **Coordination Redis and Cache/Rate-Limit Redis are distinct deployments**. Coordination reset tooling and jobs must refuse to run if `FIREMUD_REDIS_COORD_HOST:PORT == FIREMUD_REDIS_CACHE_HOST:PORT`, since a reset in that topology would also discard cache/rate-limit state and violate the role separation guarantees.
-2. **Quiesce gameplay**
-   - Pause ticks and stop accepting new gameplay commands for the affected scope using the Game Session admin/control APIs (or by shutting down dependent services for small/self-hosted installs).
-   - Wait for in-flight requests to drain; regions should stop advancing and no new `pending` entries should be created.
+2. **Fence the timeline before any Redis wipe**
+   - Execute the first two steps of the authoritative reset handshake from `system-architecture-redis-reset-and-recovery.md`:
+     - Pause ticks and stop accepting new gameplay commands for the affected scope using the Game Session admin/control APIs.
+     - Bump `region_epoch` in PostgreSQL for the affected scope so any surviving executors are stale by definition.
+   - Wait until no executor in the target scope is allowed to create new durable tick batches or new coordination keys under the old epoch.
 3. **Run reset tooling (storage-level wipe)**
    - For Kubernetes/Helm deployments:
      - Run the coordination-reset Job or script provided with the charts (for example, the `redis-aof-reset` Job under `charts/firemud/templates/redis-aof-reset-job.yaml`), which:
@@ -569,11 +575,10 @@ The steps mirror the “AOF too large” runbook but are driven by operator inte
        - Stops the dev stack.
        - Clears the Redis data directory/volume used for Coordination Redis.
        - Restarts the stack so Redis comes up with an empty coordination keyspace.
-4. **Execute the tick reset handshake**
-   - Before resuming gameplay, run the control-plane reset handshake for the affected scope:
-     - Pause ticks for the selected scope (if not already paused).
-     - Bump `region_epoch` in PostgreSQL for affected regions.
+4. **Complete the remaining reset handshake**
+   - Before resuming gameplay, run the remaining control-plane reset steps for the affected scope:
      - Reconcile old-epoch `SCHEDULED` ledger rows to terminal `APPLIED`/`ABANDONED`.
+     - Converge accepted-but-unbound command records to `TERMINAL` with `executionOutcome = LOST_BEFORE_STAGING`.
      - Reinitialize `tick:{tenantRegionTag}:meta` (`region_epoch`, `current_tick_id`) from durable baselines.
 5. **Verify health**
    - Ensure Coordination Redis is reachable and scripts preload successfully (no persistent `NOSCRIPT` errors).
@@ -583,6 +588,8 @@ The steps mirror the “AOF too large” runbook but are driven by operator inte
 6. **Resume gameplay**
    - Unpause ticks and re-enable command intake for the affected tenants/regions.
    - Expect players to re-login or restart games where reset-sensitive prefixes were dropped; coordination state (locks, queues, timers, and possibly sessions) is rebuilt from PostgreSQL and fresh tick activity.
+
+This runbook intentionally reuses the same order as the authoritative reset handshake. Any storage-level wipe that occurs before pause + epoch fencing is considered an invalid reset sequence and must not be used in production-like environments.
 
 Normal Helm upgrades and restarts **do not** run this reset by default. The reset is always an explicit, operator-driven action guarded by this runbook so that “AOF persists across rollouts” remains the common case.
 

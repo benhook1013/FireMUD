@@ -176,6 +176,32 @@ Semantics:
 - Idempotent.
 - `PAUSED_FOR_ROLLBACK` prevents admission of new external and scheduler triggers for the scope while allowing already-admitted work to be drained or canceled.
 - During pause, ingress calls return explicit rollback backpressure outcomes (`finalOutcome=skipped_rollback_pause`) and remain audit-visible.
+- Entering `PAUSED_FOR_ROLLBACK` must also advance a scope-local **admission epoch**. Every already-admitted execution carries the epoch under which it was accepted, and any later outbox-persist or tick-handoff attempt must re-check that epoch before committing side effects.
+- If an execution admitted under an earlier epoch reaches persist or handoff after the scope has advanced to a newer rollback epoch, it must not create new live work. The execution transitions to a non-success canceled outcome and remains visible in `script_event_audit`.
+
+#### `GetAutomationDrainStatus`
+
+Inputs:
+
+- `tenantId`
+- `gameInstanceId`
+- Optional narrower scope: `regionId`
+
+Outputs:
+
+- `tenantId`, `gameInstanceId`
+- Optional `regionId`
+- `admissionEpoch`
+- `activeExecutionCount`
+- `oldestActiveExecutionStartedAt` (nullable)
+- `pendingCancelableWorkItemCount`
+- `observedAt`
+
+Semantics:
+
+- Read-only.
+- Reports whether any pre-pause executions or already-persisted work remain in the rollback scope after the current `admissionEpoch` took effect.
+- Rollback orchestration uses this API together with cancel/purge hooks to decide when it is safe to resume normal admission.
 
 ### Rollback Convergence Readiness (Required)
 
@@ -509,8 +535,14 @@ Required enum values:
 Contract rules:
 
 - Backpressure outcomes (`*_BACKPRESSURE_*`) must include bounded `retryAfterMs`.
-- `admissionOutcome` and `admissionReason` must map 1:1 to `script_event_audit.finalOutcome` and `finalReason`.
+- `admissionOutcome` and `admissionReason` describe the **event-scope ingress decision** only. They must not be interpreted as a summary of all handler-scoped outcomes created after binding resolution.
+- Event-scope `admissionOutcome` and `admissionReason` must map 1:1 to the ingress-time admission result recorded in ingress audit/logging surfaces for that request.
 - Admission failures are application-level outcomes and must not be surfaced as transport errors.
+- For events that fan out to multiple handlers:
+  - `admitted=true` means the request passed ingress-time fences and was accepted for handler resolution.
+  - Per-handler Trigger Identities and outcomes are recorded asynchronously in `script_event_audit` (one row per resolved handler).
+  - If all handlers later fail individually, the ingress response still remains `admitted=true`; callers do not retry based on those handler-level outcomes.
+- Implementations may expose optional informational fields such as `resolvedHandlerCount`, but those fields must not replace per-handler audit records as the source of truth.
 
 #### `ReplayDeadLetteredWorkItems`
 
@@ -743,12 +775,11 @@ Fields:
    - schedules that still exist may be carried forward only through explicit reconciliation to the new version identity;
    - displaced patch/plugin versions must not be able to generate new `scriptEventId` values after promotion.
 7. Wait for pin-convergence acknowledgments from both Automation & Scripting and Game Session for the requested `controlPlaneRequestId`.
-8. Automation & Scripting observes the committed pin event for visibility (not for authority) and treats the pinned patch as the expected active one for tick handoffs.
-9. Schedulers use a bounded-staleness pin cache for admission and timer firing decisions:
-   - If cached pin data is stale beyond the configured max-age, they must refresh from authoritative control-plane APIs/events before admitting new work.
-   - If fresh authoritative pin data cannot be obtained, admission must fail closed with `finalStage=ADMISSION`, `finalOutcome=pin_state_unavailable`, and an explicit `finalReason`.
-   - If fresh authoritative pin data is available but differs from the request version for the instance, admission must fail closed with `finalOutcome=version_unavailable` and a bounded mismatch reason; Automation must not silently substitute a patch.
-10. Operators monitor `script_event_audit` and automation metrics; per-event correlation uses `scriptEventId` in audit/logs/traces, not metric labels.
+8. Wait for `GetAutomationDrainStatus` to report `activeExecutionCount=0` and `pendingCancelableWorkItemCount=0` for the promotion scope under the current `admissionEpoch`.
+9. Automation & Scripting observes the committed pin event for visibility (not for authority) and treats the pinned patch as the expected active one for tick handoffs.
+10. Schedulers use a bounded-staleness pin cache for admission and timer firing decisions. If cached pin data is stale beyond the configured max-age, they must refresh from authoritative control-plane APIs/events before admitting new work. If fresh authoritative pin data cannot be obtained, admission must fail closed with `finalStage=ADMISSION`, `finalOutcome=pin_state_unavailable`, and an explicit `finalReason`. If fresh authoritative pin data is available but differs from the request version for the instance, admission must fail closed with `finalOutcome=version_unavailable` and a bounded mismatch reason; Automation must not silently substitute a patch.
+
+11. Operators monitor `script_event_audit` and automation metrics; per-event correlation uses `scriptEventId` in audit/logs/traces, not metric labels.
 
 ### Patch Rollback (Operator-Driven, Required)
 
@@ -763,8 +794,9 @@ Fields:
    - only schedules present in the rollback target may survive reconciliation;
    - cancellation of outbox work alone is not sufficient rollback cleanup.
 8. Wait for pin-convergence acknowledgments from both Automation & Scripting and Game Session for the new pin (`controlPlaneRequestId` must match).
-9. Call `SetAutomationAdmissionMode(..., mode=NORMAL)` once convergence and cleanup complete.
-10. Resume ticks with `ResumeTicks`.
+9. Wait for `GetAutomationDrainStatus` to report `activeExecutionCount=0` and `pendingCancelableWorkItemCount=0` for the rollback scope under the current `admissionEpoch`.
+10. Call `SetAutomationAdmissionMode(..., mode=NORMAL)` once convergence and cleanup complete.
+11. Resume ticks with `ResumeTicks`.
 
 ### Rollback Orchestration State Machine (Required)
 
@@ -778,7 +810,7 @@ Ownership and source-of-truth requirements:
 
 Required states:
 
-- `PAUSING` -> `REPINNING` -> `CANCELING` -> `PURGING` -> `CONVERGING` -> `RESUMING` -> `COMPLETED`
+- `PAUSING` -> `REPINNING` -> `CANCELING` -> `PURGING` -> `CONVERGING` -> `DRAINING` -> `RESUMING` -> `COMPLETED`
 - Terminal failure state: `TIMED_OUT`
 
 State rules:
@@ -788,6 +820,7 @@ State rules:
 - Failures in `CANCELING` or `PURGING` must not auto-resume admission or ticks.
 - Operator retries must continue from the last durable state.
 - `TIMED_OUT` keeps admission and ticks paused until explicit operator action.
+- `DRAINING` is required. Rollback must not resume admission or ticks until the current rollback-scope `admissionEpoch` has no active pre-pause executions and no remaining cancelable outbox work according to `GetAutomationDrainStatus`.
 
 Convergence timeout semantics (required):
 

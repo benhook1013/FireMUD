@@ -25,7 +25,7 @@ Required fields:
 - `smokeEvidence` – list of URLs or artifact IDs for smoke-test results.
 - `generatedAt` – UTC timestamp in ISO-8601 format.
 - `approvedBy` – human approver identity (or approved automation identity plus change ticket).
-- `rollbackMode` – `rollback-compatible` or `roll-forward-only` classification for the promoted digest set.
+- `rollbackMode` – `rollback-compatible` or `roll-forward-only` classification for the promoted digest set. `rollback-compatible` is allowed only when the previous known-good release remains safe to re-apply against the currently bound database schema, secret/config contract, file-path contract, and external-binding contract. Any release that requires new secret formats, new mounted resource shapes, changed credential semantics, or new external target bindings must be classified as `roll-forward-only` unless the prior release is explicitly proven compatible with those bindings.
 - `productionOverlayRef` – target production overlay change identifier (for example the overlay PR deployment-ref or intended overlay commit token).
 
 Optional fields:

@@ -64,15 +64,42 @@ Every run must emit one result per policy ID below, with status `pass`, `fail`, 
 - `PREFLIGHT-PROMOTION-001` – production promotions reference a valid staging attestation with matching digests.
 - `PREFLIGHT-BACKUP-001` – production `roll-forward-only` promotions include fresh backup-readiness evidence.
 - `PREFLIGHT-BACKUP-002` – production first-live or traffic-reopen events verify at least one successful logical backup upload and one successful backup verification result for the environment before traffic is opened.
+- `PREFLIGHT-BACKUP-003` – hobby/self-hosted first-live or traffic-reopen events verify current backup-baseline compliance evidence before player traffic is opened.
 
 Policy applicability:
 
 - `PREFLIGHT-PROMOTION-001` is required for `production` and `not_applicable` for `staging` and `hobby-self-hosted`.
 - `PREFLIGHT-BACKUP-001` is required for `production` when the referenced attestation classifies the release as `roll-forward-only`, and `not_applicable` otherwise.
 - `PREFLIGHT-BACKUP-002` is required for `production` on first-live opens and reopen-after-restore events, and `not_applicable` for routine steady-state rollouts that do not change traffic-open status.
+- `PREFLIGHT-BACKUP-003` is required for `hobby-self-hosted` on first-live opens and reopen-after-restore events, and `not_applicable` otherwise.
 - `PREFLIGHT-DIGEST-001` is required for any flow using Kustomize overlays (`staging`, `production`) and `not_applicable` for `hobby-self-hosted`.
 - `PREFLIGHT-DIGEST-002` is recommended/advisory for `hobby-self-hosted` and `not_applicable` for `staging`/`production`.
 - `PREFLIGHT-BOOTSTRAP-001` and `PREFLIGHT-EXTERNAL-001` are required for all player-facing environments.
+
+## Canonical Expected-Binding Inputs
+
+`PREFLIGHT-EXTERNAL-001` must validate the target environment against one canonical expected-binding input set so deployment preflight and restore validation use the same contract.
+
+Canonical source:
+
+- `design/operations/environments/<environment>/expected-bindings.yaml`
+
+Minimum required keys:
+
+- `backupStorage.bucket`
+- `backupStorage.endpoint` when using a non-default S3-compatible endpoint
+- `assetStorage.bucket`
+- `assetStorage.endpoint`
+- `outboundComms.smtpHost` and/or environment-classified webhook target identifiers
+- `operatorCredentials.bindingRef` or `operatorCredentials.fingerprint`
+
+Validation contract:
+
+- Preflight fails if the manifest is missing for a player-facing environment.
+- The resolved deployment inputs must match the manifest for the target environment.
+- The manifest must prove environment isolation. Staging and production cannot share bucket names, endpoints, SMTP targets, webhook target classes, or operator credential bindings unless the field is explicitly documented as non-sensitive shared infrastructure.
+- Restore validation tooling may derive shell environment variables such as `EXPECTED_PG_DUMP_BUCKET`, `EXPECTED_ASSET_STORE_BUCKET`, `EXPECTED_ASSET_STORE_ENDPOINT`, `EXPECTED_SMTP_HOST`, and operator-binding fingerprints from this manifest rather than maintaining a second source of truth.
+- Deployment and recovery evidence must reference the same manifest path so auditors can answer “what binding did we expect?” from one record family.
 
 ## Evidence Contract
 
@@ -83,6 +110,7 @@ The report artifact must include:
   - `overlayCommitSha` for overlay-driven deployments (`staging`, `production`), or
   - `manifestRef` / `chartVersion` for hobby/self-hosted deployments.
 - `checkResults[]` with `policyId`, `status`, `message`
+- `expectedBindingsRef` for player-facing environments
 - `startedAt` and `completedAt` timestamps
 - `toolVersion`
 

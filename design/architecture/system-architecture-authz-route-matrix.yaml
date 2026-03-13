@@ -24,24 +24,36 @@ routes:
     route: WORLDS
     scope: account
     classification: pre_tenant_discovery
+    required_live_checks: [membership, runtime_entitlements]
     roles:
-      any_of: [player, moderator, designer, tenantAdmin, platformAdmin]
+      any_of: [player, moderator, designer, tenantAdmin]
+  - service: game-session-service
+    route: REALMS
+    scope: tenant
+    classification: tenant_regular
+    tenant_billing_watermark_applies: true
+    membership_watermark_applies: true
+    required_live_checks: [membership, runtime_entitlements]
+    roles:
+      any_of: [player, moderator, designer, tenantAdmin]
   - service: game-session-service
     route: CHARS
     scope: tenant
     classification: tenant_regular
     tenant_billing_watermark_applies: true
     membership_watermark_applies: true
+    required_live_checks: [membership, runtime_entitlements]
     roles:
-      any_of: [player, moderator, designer, tenantAdmin, platformAdmin]
+      any_of: [player, moderator, designer, tenantAdmin]
   - service: game-session-service
     route: PLAY
     scope: tenant
     classification: tenant_regular
     tenant_billing_watermark_applies: true
     membership_watermark_applies: true
+    required_live_checks: [membership, runtime_entitlements]
     roles:
-      any_of: [player, moderator, designer, tenantAdmin, platformAdmin]
+      any_of: [player, moderator, designer, tenantAdmin]
   - service: game-session-service
     route: StartSession
     scope: tenant

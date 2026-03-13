@@ -134,6 +134,28 @@ The metrics below are treated as the canonical Prometheus-facing shapes for play
 - Chat:
   - `chat_delivery_latency_ms_bucket{tenantId,channel_type,le}` with `channel_type` drawn from a bounded enum (global/zone/party/system, etc.).
 
+### Synthetic Player-Flow Canaries (Normative)
+
+Live-traffic SLIs remain the authoritative compliance view for player experience, but they are not sufficient to detect outages in low-traffic periods or low-volume environments. Prod-like environments must also run **independent synthetic canaries** for the most critical player flows:
+
+- Required flows:
+  - `flow="login"` for an end-to-end login through each public entry path.
+  - `flow="command"` for one bounded representative gameplay command after login. The starting canonical command is `command="look"`.
+- Required paths:
+  - `path="websocket"` for the browser/Gateway path.
+  - `path="telnet"` for the TCP Proxy path when that path is exposed in the environment.
+- Metric mirror contract:
+  - `playerflow_canary_success{flow,path,target}` – boolean-like result for the most recent synthetic run as mirrored into Prometheus.
+  - `playerflow_canary_latency_ms{flow,path,target}` – latency of the synthetic run in milliseconds, mirrored into Prometheus as a gauge or histogram-derived recording.
+- Cardinality constraints:
+  - `flow` and `path` are bounded enums.
+  - `target` identifies the monitored environment endpoint and must remain low-cardinality.
+  - Do not label these metrics with canary account IDs, character IDs, tenant IDs, or trace IDs.
+- Operational contract:
+  - The canary must use a dedicated non-player identity and data set that is safe to exercise continuously.
+  - These canaries are an outage-detection path, not the primary SLO compliance metric. They complement, but do not replace, `login_requests_total` and `command_end_to_end_latency_ms_bucket`.
+  - The canary execution system should live outside the normal player request path failure domain where practical, and must alert independently from live-traffic volume.
+
 ### Degraded Modes and Observability Dependencies
 
 Moderation and admin workflows should remain usable even when parts of the observability stack are degraded. To avoid coupling core actions to non‑authoritative systems:
@@ -248,9 +270,11 @@ Fallback recording rules must be installed as part of the Prometheus ruleset for
 Observability backends are best-effort enrichments for gameplay and moderation workflows, but they still require first-class alerts because their failure can mask player-visible incidents and break operator triage.
 
 - Prod-like environments must also provide an **independent meta-monitoring path** outside the Prometheus + Alertmanager failure domain:
-  - A deadman/heartbeat signal from the in-cluster monitoring stack to an external notification sink, or an equivalent externally hosted monitor.
-  - External liveness checks for Prometheus, Alertmanager, Grafana, Elasticsearch/Kibana, and Jaeger/OpenTelemetry Collector entrypoints.
+  - An authoritative externally hosted pager for deadman/heartbeat freshness.
+  - Authoritative externally hosted liveness checks for Prometheus, Alertmanager, Grafana, Elasticsearch/Kibana, and Jaeger/OpenTelemetry Collector entrypoints.
+  - Authoritative externally hosted reachability checks for the public gameplay entry paths.
   - This independent path is required because Prometheus cannot reliably page on its own total outage.
+- The authoritative external path and the Prometheus-facing metric mirror are separate contracts. The external pager is the source of truth during total in-cluster observability outages; Prometheus may mirror the same state for dashboards and runbooks when healthy. See [`design/observability/external-monitoring/README.md`](../observability/external-monitoring/README.md).
 - Prod-like environments must install a canonical `platform`-owned alert set for:
   - Prometheus rule evaluation or scrape health problems.
   - Alertmanager routing/configuration failures.
@@ -282,19 +306,26 @@ Observability backends are best-effort enrichments for gameplay and moderation w
 
 To keep overlays, smoke tests, dashboards, and runbooks aligned, prod-like environments must expose a small canonical contract for signals that originate outside the Prometheus + Alertmanager failure domain:
 
+- **Authoritative external monitor**
+  - Must page using its own native checks and thresholds even when Prometheus is fully unavailable.
+  - Must not depend on Prometheus alert evaluation to turn external probes or deadman freshness into pages.
+- **Prometheus mirror**
+  - May ingest or mirror the external-monitor state using the metric names below so dashboards, Prometheus rules, and smoke tests can refer to a stable vocabulary.
+  - The mirrored metrics are not sufficient by themselves to satisfy the independent detection requirement.
+
 - `entrypath_blackbox_probe_success{path,target}`:
-  - Required for each public player entry path.
+  - Required as the Prometheus-facing mirror for each public player entry path.
   - `path` is a bounded enum and must use `websocket` for the browser/Gateway path and `telnet` for the TCP Proxy path.
   - `target` identifies the externally probed endpoint or monitor target and must remain low-cardinality.
   - Values are boolean-like: `1` when the synthetic probe can complete the target handshake and `0` when it cannot.
   - Canonical alerts and dashboards may aggregate across `target`, but must preserve `path`.
 - `observability_deadman_heartbeat_timestamp_seconds{source}`:
-  - Required for the independently hosted deadman/meta-monitoring path.
+  - Required as the Prometheus-facing mirror for the independently hosted deadman/meta-monitoring path.
   - `source` identifies the emitting in-cluster monitor instance or environment and must remain low-cardinality.
   - The signal records the latest successful heartbeat time as observed by the independent monitor, not by Prometheus itself.
   - Deadman paging should trigger when this timestamp becomes stale according to the environment's configured heartbeat budget.
 
-If an environment cannot emit these exact metric names because of a hosted monitoring product constraint, it must provide a documented compatibility mapping to equivalent signals and keep the canonical alert names, `path` semantics, and runbook behavior unchanged. Logging & Admin, runbooks, and smoke tests should treat the canonical names above as the default contract.
+If an environment cannot emit these exact metric names because of a hosted monitoring product constraint, it must provide a documented compatibility mapping to equivalent mirrored signals and keep the canonical alert names, `path` semantics, authoritative external paging behavior, and runbook behavior unchanged. Logging & Admin, runbooks, and smoke tests should treat the canonical names above as the default contract.
 
 For scripting and automation workloads, dashboards and alerts must include both live and dry-run activity:
 

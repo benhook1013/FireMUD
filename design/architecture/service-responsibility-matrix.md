@@ -42,6 +42,7 @@ Checkmarks in this table indicate **participation** in a workflow. Rows prefixed
 | Version-state CAS APIs ownership/invocation for activation/rollback (`versionStateEpoch`) | ✔ | | | ✔ | | | | | ✔ | | |
 | Runtime feature flag overrides | | | | ✔ | | | | | | | |
 | Tick & coordination health metrics (per region) | | | | ✔ | | | | | | | |
+| Canonical room-state read fence minting | | | | ✔ | ✔ | ✔ | | | | | |
 | Entity definition and persistence | | | | | ✔ | | | | | | |
 | NPC state, inventory, and stats | | | | | ✔ | | | | | | |
 | Player inventory and stats | | | | | ✔ | | | | | | |
@@ -62,7 +63,7 @@ Checkmarks in this table indicate **participation** in a workflow. Rows prefixed
 | Guilds and group discovery | | | | | | | | ✔ | | | |
 | Social network graph (friends/blocks/etc.) | | | | | | | | ✔ | | | |
 | Centralized observability dashboards and moderation analytics (logs/metrics/traces) | | | | | | | | | ✔ | | |
-| Admin panel and feature flag toggling | | | | | | | | | ✔ | | |
+| Admin panel and feature flag toggling | | | | ✔ | | | | | ✔ | | |
 | Game moderation tools | | | | | | | | | ✔ | | |
 | Game moderation policy definition | | | | | | | | | ✔ | | |
 | Moderation policy propagation contract (versioning, invalidation, and audit context) | | | | ✔ | | | | ✔ | ✔ | | |
@@ -85,7 +86,10 @@ Checkmarks in this table indicate **participation** in a workflow. Rows prefixed
 | Dynamic route management and gateway configuration | | | | | | | | | | | ✔ |
 | Authoritative owner: edge admin/creator API allowlist policy | | | | | | | | | | | ✔ |
 | Admin/creator API participation (edge-routable domain APIs) | ✔ | | ✔ | ✔ | | | | ✔ | ✔ | | ✔ |
+| External operator write ingress for moderation, quota overrides, runtime feature flags, and tick remediation | | | | | | | | | ✔ | | ✔ |
 | API gateway rate limiting and abuse filters | | | | | | | | | | | ✔ |
+
+For the edge-routable services in this matrix, participation does not imply that every mutation may be called directly by external tools. Per the overview’s canonical operator write ingress policy, external mutating operator workflows for moderation, quota overrides, runtime feature-flag overrides, and tick remediation must enter through Logging & Admin. Direct external writes on other edge-routable services require an explicit bypass-safe designation in the owning service contract.
 
 ## Notes on Redis Ownership and Participation
 
@@ -102,13 +106,15 @@ These ownership boundaries are normative per `design/architecture/decisions/adr-
 
 ## Notes on Movement and Moderation Contracts
 
-- **Movement/location write contract orchestration** – Game Session orchestrates movement under tick/effect identity, Game Logic computes deterministic movement outcomes, World Management commits authoritative room occupancy/location, and Entity Management applies entity-side consequences without owning occupancy indexes.
+- **Movement/location write contract orchestration** – Game Session orchestrates movement under tick/effect identity, mints the room-read fence, and owns per-session sequencing plus the current execution-region pointer; Game Logic computes deterministic movement outcomes, World Management commits authoritative room occupancy/location, and Entity Management applies entity-side consequences without owning occupancy indexes.
+- **Canonical room-state read fence minting** – Game Session owns fence minting and room-view assembly orchestration; World Management and Entity Management participate by serving or rejecting the requested fence; Game Logic may participate when room-view computation is part of a tick-owned command evaluation but does not own the fence contract.
 - **Tick remediation split** – Logging & Admin owns operator-facing remediation APIs, automation policy, and audit trail; Game Session owns all tick/coordination state mutation and executes pause/resume/remediation control actions through its control-plane APIs.
 - **Replacement-instance compatibility preflight** – Game Session owns `ValidateInstanceCutoverCompatibility` orchestration and result semantics; Game Design, World, Entity, Automation, and Logging/Admin participate as dependency and policy providers for checks.
-- **Moderation policy propagation** – Logging & Admin owns gameplay/chat moderation policy definition and audit trail; Game Session and Social & Groups enforce policy using versioned policy snapshots/events with bounded cache staleness and explicit invalidation semantics.
+- **Moderation policy propagation** – Logging & Admin owns gameplay/chat moderation policy definition and audit trail; Game Session and Social & Groups enforce policy using versioned policy snapshots/events with monotonic invalidation per `{tenantId, policyScope}`, bounded cache staleness, pull-on-miss refresh, and fail-closed behavior for `gameplay_ban` and `chat_ban` when no fresh snapshot is available within the allowed window.
 - **Ban taxonomy** – Account owns account-security bans and revocation watermark writes; Logging & Admin owns gameplay/chat moderation ban policy definitions; Game Session and Social & Groups are enforcement owners for gameplay and chat scopes respectively.
 - **Admin/creator API allowlist policy** – Gateway owns the edge-route allowlist policy; domain services own only the API contracts behind allowlisted routes.
-- **Edge admin/creator protocol** – External admin/creator APIs are HTTP(S) only at the Gateway edge unless a dedicated design update explicitly adds an edge gRPC contract. Internal service-to-service gRPC remains direct.
+- **External operator write ingress** – Logging & Admin is the mandatory external ingress for operator writes covering moderation, quota overrides, runtime feature flags, and tick remediation; Gateway participates only as the edge routing and coarse protection layer for those writes.
+- **Edge admin/creator protocol** – External admin/creator APIs are HTTP(S) only at the Gateway edge unless a dedicated design update explicitly adds an edge gRPC contract. Internal service-to-service gRPC remains direct. External mutating operator workflows defined in the overview’s canonical operator action table must enter through Logging & Admin rather than directly through another edge-routable service.
 - **Edge exposure default** – Unless a service is explicitly marked as participating in edge-routable domain APIs, its APIs are internal-only and reached through service-to-service contracts, not directly from external tools via Gateway.
 
 ## Related Documentation

@@ -131,9 +131,9 @@ Note on gateway listener surfaces: the gateway has a public ingress surface (typ
 
 Gameplay WebSocket route policy is canonicalized on `/ws/game/**` for player-facing gameplay admission.
 
-Admin and creator API exposure is intentionally allowlisted: external tools call domain admin APIs only through Gateway-routed HTTP(S) routes for owning services (for example Logging & Admin, Account, Game Session, Social & Groups, and Game Design). External domain gRPC is not part of the edge contract unless a dedicated design update explicitly introduces it. Internal service-to-service gRPC remains direct and does not traverse Gateway.
+Admin and creator API exposure is intentionally allowlisted: external tools call domain admin APIs only through Gateway-routed HTTP(S) routes for owning services (for example Logging & Admin, Account, Game Session, Social & Groups, and Game Design). External mutating operator workflows for moderation, quota overrides, runtime feature-flag overrides, and tick remediation must enter through Logging & Admin; direct domain-admin routes are reserved for reads and explicitly documented bypass-safe workflows. External domain gRPC is not part of the edge contract unless a dedicated design update explicitly introduces it. Internal service-to-service gRPC remains direct and does not traverse Gateway.
 
-Within the Game Session layer, the stable `/ws/game/**` edge surface maps to a session front-end pod plus lease-owner execution model: the connected pod owns socket I/O, while region-scoped tick execution remains fenced to the current `<tenantId, regionId>` lease owner and may be reached through internal gRPC forwarding. The separate nodes in the diagram represent runtime roles, not separate products or independently exposed edge surfaces. See [System Architecture Overview](./system-architecture-overview.md#session-sharding--routing).
+Within the Game Session layer, the stable `/ws/game/**` edge surface maps to a session front-end pod plus lease-owner execution model: the connected pod owns socket I/O, per-session sequencing, and the current execution-region pointer, while region-scoped tick execution remains fenced to the current `<tenantId, regionId>` lease owner and may be reached through internal gRPC forwarding. The separate nodes in the diagram represent runtime roles, not separate products or independently exposed edge surfaces. See [System Architecture Overview](./system-architecture-overview.md#session-sharding--routing).
 
 For Gateway control-plane behavior in production-like environments (including the dynamic-route override dev/test scope), see the canonical [Gateway Management Plane Capability Matrix](./system-architecture-overview.md#gateway-management-plane-capability-matrix-canonical).
 
@@ -158,6 +158,8 @@ Only the **TCP Proxy Service** and **Spring Cloud Gateway** are reachable from t
 All internal synchronous communication from the **Game Session Service** to downstream microservices uses **gRPC** for high performance and strict schema enforcement. Asynchronous signaling flows (for example, `NotifyDisconnect`, lifecycle metrics/events, and audit/saga event streams) are documented separately and use explicit idempotency/ownership contracts. Stateful domain microservices persist data in PostgreSQL and use Redis for transient state; DMZ components such as the TCP Proxy Service and Spring Cloud Gateway remain stateless with respect to PostgreSQL but use Redis for rate limiting and caches. All services emit metrics to Prometheus and send structured logs to Elasticsearch.
 
 Coordination Redis arrows in this diagram follow ownership boundaries from ADR 0009: Game Session owns gameplay coordination prefixes (for example `session:game:*`, `tick:*`, `timer:*`, `retry:*`, and `tick-executor-lease:*`), Account owns `session:auth:*`, Automation & Scripting owns `automation:*`, and non-owner services (for example Entity) participate only through approved shared-helper contracts rather than ad hoc key ownership.
+
+Canonical room-state assembly is intentionally not shown as a direct World-to-Entity join: Game Session mints the read fence for gameplay-driven room views, and World Management plus Entity Management must each satisfy that same fence or reject the read so mixed-tick room state is never composed as canonical output.
 
 ## Datastore Layer
 
@@ -201,6 +203,7 @@ The mermaid graph includes representative async/event edges that are architectur
 - Game Session emits lifecycle and coordination health signals consumed by Logging & Admin for operator workflows.
 - Account emits audit/account-domain events consumed by Logging & Admin using idempotent event identifiers (for example `{tenantId, eventType, eventId}`) so retries are replay-safe and deduplicable.
 - Logging & Admin is a control-plane sink for these async flows and does not take ownership of runtime enforcement decisions from domain services.
+- Moderation policy propagation from Logging & Admin to Game Session and Social & Groups uses versioned snapshots plus monotonic invalidation per `{tenantId, policyScope}`; enforcement services use bounded-staleness caches and fail-closed behavior for `gameplay_ban` and `chat_ban` when they cannot obtain a fresh snapshot within the allowed window.
 
 Durable business events and saga updates in this architecture are implemented using service-local transactional outbox patterns plus background consumers, not an implicit shared event bus; see [Transaction Strategies](./system-architecture-transactions.md#tick-adjacent-workflows-outbox-boundary).
 

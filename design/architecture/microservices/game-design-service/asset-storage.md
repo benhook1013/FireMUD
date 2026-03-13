@@ -16,6 +16,12 @@ isolated per game.
 
 Logical world and entity templates (regions, rooms, items, NPCs, loot tables, scripts, etc.) remain stored in PostgreSQL schemas owned by the corresponding domain services and are not persisted as blobs in the asset store. The asset store is strictly for binary design assets plus version-scoped manifests exported by the Game Design Service.
 
+Derived runtime-consumed artifacts produced by domain services follow the same writer rule:
+
+- Domain services may own the semantics and generation of derived artifacts such as navmesh/path graph bundles.
+- If those artifacts are exported to the shared object store for runtime consumption, Game Design publishes them on behalf of the owning service as part of the version publish workflow.
+- Domain services must not write directly to the shared object store used for published version assets. A direct domain-service object-store write would bypass the artifact lifecycle, release attestation, and purge controls defined here.
+
 ## Table Structure
 
 The `game_assets` table stores metadata for design-time uploads. Columns include:

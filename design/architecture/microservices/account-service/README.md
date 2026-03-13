@@ -282,6 +282,7 @@ The `player-bootstrap` token profile is distinct from both Browser JWTs and Serv
 - It is issued only by `POST /auth/player-bootstrap` / `IssuePlayerBootstrapToken`.
 - It establishes account identity for first-party gameplay bootstrap only; tenant membership and runtime entitlement checks occur later during `POST /auth/connect-token` for the requested `{tenantId, gameInstanceId}`.
 - It is stored in memory only by first-party gameplay UIs and is accepted only on gameplay-bootstrap surfaces such as `POST /auth/connect-token`.
+- For first-party `/ws/game/**`, subsequent gameplay `LOGIN` must complete from the bootstrap/connect context already established for that socket; browser clients must not be required to replay account credentials after bootstrap.
 - It is backed by `session:auth:account:<accountId>:<tokenHash>` so account-level logout/revocation semantics remain consistent.
 - `POST /auth/logout` and `POST /auth/logout-all` must accept this profile so first-party gameplay UIs can explicitly revoke bootstrap capability on sign-out rather than waiting for expiry.
 

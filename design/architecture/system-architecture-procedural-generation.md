@@ -165,7 +165,7 @@ The following rules align generators with the core runtime and tooling:
 1. **Solo Tick Scheduling** – Runtime generation is queued like any other command but includes `requiresSoloTick: true`. The Game Session Service executes it in an isolated tick with an extended, configurable time budget.
 2. **Heavy Post‑Gen Population** – Population scripts may declare `requiresSoloTick: true`. The Game Session Service schedules these in dedicated ticks to avoid fairness regressions.
 3. **Seed & Metadata Persistence** – All generation requests include a seed. **World Management Service** persists `seed`, `generatorType`, and raw params alongside region/room records. For design-time generation this metadata is stored on template rows keyed by `(tenantId, versionId)`; for runtime/instance generation it is stored on instance rows keyed by `(tenantId, gameInstanceId)`.
-4. **Tenant Scoping** – All generation inputs/outputs are tenant‑scoped. Generators resolve tenant feature flags/config before execution.
+4. **Tenant Scoping** – All generation inputs/outputs are tenant‑scoped. For publish-affecting or activation-time generation, the effective inputs must come from version-scoped design rows and the frozen `generationConfigRevision`, not mutable tenant feature flags or operational defaults. Runtime-only operational knobs may affect scheduling or non-semantic execution details, but they must not change persisted topology semantics.
 5. **Sparse Traversal Rules** – Exit costs between sparse rooms are derived from their coordinate distance. **Game Logic** uses region `spacingMultiplier` to scale the overall pace if needed.
 6. **Post-generation Population** – After rooms are created and persisted, **World Management** may invoke population scripts in the Automation & Scripting Service based on room tags, biome, and difficulty zone. Automation scripts emit commands; they do not directly mutate world topology.
 
@@ -200,6 +200,11 @@ Procedural-generation configuration is split into two classes:
 - **Version-scoped design inputs** that affect published topology or published generation semantics. These are authored through Game Design workflows, stored in World Management-owned versioned tables, and participate in digest/publish contracts.
 - **Operational runtime defaults** that affect only non-publish runtime behavior. These are owned by World Management operations surfaces and must never change the effective inputs of an already-authored Draft or Published version.
 
+Semantic input boundary:
+
+- If changing an input can alter generated rooms, exits, tags, descriptions, coordinates, region partitioning, spawn/materialization provenance, or any other persisted topology semantics, that input is version-scoped design data and must be frozen into `generationConfigRevision`.
+- If an input is not frozen into `generationConfigRevision`, implementations must treat it as non-semantic. Such inputs are limited to execution concerns like worker routing, shard selection, or time budgets and must not affect the persisted graph.
+
 Operational provenance requirement for `generation_rule` updates:
 
 - Each update to publish-affecting generation inputs must persist audit fields (`changedBy`, `changedAt`, `changeReason`, `changeDigest`) and originating Game Design commit/revision identifiers.
@@ -211,6 +216,9 @@ For activation/runtime determinism, publish must freeze a generation config iden
 - On `PublishVersion`, the system records a `generationConfigRevision`/hash for that `(tenantId, versionId)` from the version-scoped design inputs committed for that version.
 - World creation for a published version must resolve and use the frozen generation config identity; if it cannot be resolved, activation fails closed.
 - Editing tenant defaults after publish must not change generation inputs for already published versions unless a new version is published (or an explicit version-scoped override migration is executed and republished).
+- Any implementation behavior that depends on local default generator parameters, mutable tenant feature flags, or deployment-specific configuration must either:
+  - be proven non-semantic and excluded from persisted topology output, or
+  - be moved into version-scoped design data so it contributes to `generationConfigRevision`.
 
 Each individual generation run persists an **immutable snapshot** of the configuration it actually used:
 

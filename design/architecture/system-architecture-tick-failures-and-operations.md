@@ -65,6 +65,7 @@ To make replays observable and bounded, Game Session maintains a **tick effect l
   - `created_at`, `updated_at`
 - Each `(tenantId, regionId, region_epoch, tickId)` also has a durable tick-batch record owned by Game Session that stores at minimum:
   - `tick_batch_id`
+  - `lease_token` (or equivalent fencing token captured at batch allocation time)
   - `expected_effect_count`
   - `status`
   - selected-work manifest entries for the batch
@@ -83,11 +84,32 @@ To make replays observable and bounded, Game Session maintains a **tick effect l
   - `remote_followup`: durable follow-up row ID, `target_region_epoch`, `due_tick_id`
 - Recovery tooling may store and inspect richer per-source payloads, but deterministic replay and cleanup must remain possible from the documented fields above.
 - Any service-level schema or storage doc that introduces the concrete `tick_batch` / manifest tables must mirror these minimum fields explicitly rather than redefining a narrower contract locally.
+- Exactly one durable tick batch may exist for a given `(tenantId, regionId, region_epoch, tickId)`:
+  - The tick-batch table enforces a unique key on those coordinates.
+  - Batch allocation is lease-fenced using the recorded `lease_token` (or equivalent fencing token).
+  - Recovery that observes multiple durable rows for the same coordinates treats the region as inconsistent, pauses it, and requires reconcile tooling before normal ticks resume.
 - For commands, the same durable transaction that creates the tick batch and selected-work manifest also advances the command record to `BOUND_TO_BATCH`; commands that never reach that state must still converge to a terminal command outcome during recovery or reset handling.
 - For any `(tenant_id, region_id, region_epoch, tick_id, effect_key)` there must eventually be **exactly one terminal state**:
   - `status = APPLIED` – effect successfully committed to domain state.
   - `status = ABANDONED` – effect intentionally skipped or judged unrecoverable.
-- Rows must not remain in `SCHEDULED` beyond a configured grace window; stuck rows are treated as operational smells and surfaced via metrics and alerts.
+- Rows must not remain in `SCHEDULED` beyond the emitted replay-convergence budget; stuck rows are treated as operational smells and surfaced via metrics and alerts.
+
+#### Replay Convergence Budget (Normative)
+
+To keep replay-controller alerting and runbooks deterministic, the replay path uses an explicit convergence budget:
+
+- `tick_effects_replay_convergence_budget_seconds{tenantId,regionId}` is the canonical emitted budget for each active region.
+- Default formula:
+  - `replay_convergence_budget_seconds = max(60, ceil(20 * tick_interval_ms / 1000))`
+  - For common tick cadences, this yields a practical minimum budget of `60s`.
+- Prometheus recording rules should also expose:
+  - `tick_effects_pending_oldest_age_seconds{tenantId,regionId}` = `time() - tick_effects_pending_oldest_scheduled_timestamp_seconds`
+  - `tick_effects_replay_slo_breached{tenantId,regionId}` when oldest pending age exceeds the emitted convergence budget
+  - `tick_effects_replay_starved{tenantId,regionId}` when `tick_effects_pending_total > 0` but replay batches do not advance for longer than the emitted convergence budget
+- Alerting guidance:
+  - Warning/P1 when `tick_effects_replay_slo_breached` is sustained beyond one budget window for an otherwise running region.
+  - Escalate the region to `DEGRADED` or `STALLED` and require scoped remediation when the oldest pending age exceeds multiple budget windows or when `tick_effects_replay_starved` remains true.
+- Environment overlays may raise the budget for extreme workloads, but they must emit the canonical budget metric rather than hiding the threshold inside PromQL.
 
 #### Ownership Summary
 
@@ -133,13 +155,23 @@ Minimum command-status surface for operators and clients:
 - It exposes at least:
   - `ackLevel`
   - `ingressStatus`
-  - `terminalOutcome`
+  - `executionOutcome`
+  - `gameplayResult`
   - `tickBatchId`
   - bound tick coordinates when present (`regionId`, `regionEpoch`, `tickId`)
 - Canonical control-plane naming for first implementation is:
   - `GetCommandStatus` for authoritative lookup
   - optional `StreamCommandOutcomes` for advisory event delivery
-- `LOST_BEFORE_STAGING` is a first-class terminal outcome, not an internal-only repair code.
+- `executionOutcome` uses the shared terminal vocabulary:
+  - `APPLIED`
+  - `ABANDONED`
+  - `LOST_BEFORE_STAGING`
+- `gameplayResult` uses the shared player-facing vocabulary:
+  - `SUCCESS`
+  - `PARTIAL`
+  - `FAILED`
+  - `TIMEOUT`
+- `LOST_BEFORE_STAGING` is a first-class terminal execution outcome, not an internal-only repair code.
 
 ### EffectId, Ledger Rows, and Guard Keys
 
@@ -165,6 +197,10 @@ The ledger makes replay visible operationally via metrics such as:
 - `tick_effects_abandoned_total{tenantId,regionId,reason}`
 - `tick_effects_replayed_total{tenantId,regionId}` (or, where available, `tick_effect_outcome_total{outcome="replay_ok"}` for service-level detail)
 - `tick_effects_pending_oldest_scheduled_timestamp_seconds{tenantId,regionId}` – helper metric tracking the oldest `created_at` among SCHEDULED rows for each region.
+- `tick_effects_pending_oldest_age_seconds{tenantId,regionId}` – recording rule for the current age of the oldest `SCHEDULED` row.
+- `tick_effects_replay_convergence_budget_seconds{tenantId,regionId}` – emitted budget for how long replay may take before the region is considered unhealthy.
+- `tick_effects_replay_slo_breached{tenantId,regionId}` – recording rule indicating oldest pending age has exceeded the emitted budget.
+- `tick_effects_replay_starved{tenantId,regionId}` – recording rule indicating replay batches are not advancing despite pending work.
 - `tick_durable_commit_total{tenantId,regionId}` – count of ticks that reached the durable commit boundary.
 - `tick_coordination_cleared_total{tenantId,regionId}` – count of ticks whose Redis coordination state reached the in-flight clearance boundary.
 - `tick_cleanup_lag_ms{tenantId,regionId}` – lag from durable commit to coordination-cleared for each tick.
@@ -173,7 +209,7 @@ Alerts fire when:
 
 - Pending (`SCHEDULED`) counts remain above thresholds for longer than a tick window, or
 - The abandoned ratio grows unexpectedly for a region or effect type, or
-- The oldest SCHEDULED effect in a region exceeds the configured grace window as indicated by `tick_effects_pending_oldest_scheduled_timestamp_seconds`.
+- The oldest SCHEDULED effect in a region exceeds the emitted replay budget as indicated by `tick_effects_pending_oldest_age_seconds` and `tick_effects_replay_slo_breached`.
 
 These metrics complement the Redis- and lock-level health metrics described in the Redis architecture and operations docs.
 
@@ -189,7 +225,7 @@ Replay fairness is part of the operational contract, not just an implementation 
 Responsibility for driving ledger rows to a terminal outcome lies with the Game Session Service:
 
 - A background “ledger replay controller” in Game Session:
-  - Periodically scans for `SCHEDULED` rows that have exceeded the configured grace window for a given `(tenantId, regionId, region_epoch, tickId)`.
+  - Periodically scans for `SCHEDULED` rows that have exceeded the emitted replay-convergence budget for a given `(tenantId, regionId, region_epoch, tickId)`.
   - Replays eligible effects using the same idempotent handlers the tick pipeline uses, marking rows `APPLIED` when domain state confirms success.
   - Marks rows `ABANDONED` with a precise reason when replay is no longer safe or meaningful (for example, entities removed, sessions expired, or region/tenant/cluster resets that bumped `region_epoch`).
   - Enforces bounded fairness across active scopes so replay does not starve smaller tenants/regions behind one hot backlog:
@@ -199,8 +235,8 @@ Responsibility for driving ledger rows to a terminal outcome lies with the Game 
 - The controller also runs on service startup for each region to converge any lingering `SCHEDULED` rows before normal tick processing resumes.
 - For incident handling, the same replay logic is exposed via coordination tooling (for example, an admin CLI or maintenance API) so operators can explicitly drive convergence for a selected `(tenantId, regionId)` or `region_epoch` when guided by runbooks in the Redis operations docs.
 - Convergence SLO contract (required):
-  - `SCHEDULED` rows should converge to terminal `APPLIED`/`ABANDONED` within the configured replay SLO window.
-  - If oldest `SCHEDULED` age exceeds the window for a region, the region is escalated to `DEGRADED`/`STALLED` and incident runbooks require scoped remediation.
+  - `SCHEDULED` rows should converge to terminal `APPLIED`/`ABANDONED` within the emitted `tick_effects_replay_convergence_budget_seconds` window.
+  - If oldest `SCHEDULED` age exceeds the emitted budget for a region, the region is escalated to `DEGRADED`/`STALLED` and incident runbooks require scoped remediation.
 
 Common scenarios and invariants:
 

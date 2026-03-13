@@ -77,6 +77,32 @@ missing or incompatible templates as a fatal configuration error for that
 launch; the version selection must be corrected rather than silently
 substituting defaults or partial data.
 
+### Replacement-Instance State Classification
+
+Entity Management must classify its runtime persistence surface for cutover and migration tooling:
+
+- `S1` entity-owned durable state:
+  - character identity, account ownership, progression, currencies, and other account-scoped rows that do not require version remapping when the referenced templates remain valid;
+  - stable inventory/container membership for player-owned items when the contained item instances remain valid against the target version without remapping.
+- `S2` entity-owned version-mapped durable state:
+  - equipped-item bindings, learned abilities, starter-loadout references, class/archetype assignments, and any other durable rows whose validity depends on target-version template identifiers;
+  - inventory or character rows that remain durable but reference templates requiring an approved remap to the target version.
+- `S3` entity-owned ephemeral state:
+  - synthetic room-ground containers and their contents keyed by `(tenantId, gameInstanceId, roomInstanceId)`;
+  - transient containment or encounter-specific entities whose lifecycle is tied to the source `gameInstanceId`;
+  - any row family explicitly documented as instance-scoped only.
+
+Initial-slice rule:
+
+- If a row family is not explicitly documented as `S1` or `S2`, treat it as `S3` for cutover purposes.
+- Replacement-instance workflows must not infer template remaps from names, display text, or best-effort similarity; only approved `remapSetId` mappings may satisfy `S2` compatibility.
+
+Entity upgrade validation minimum contract:
+
+- The service must expose a cutover-validation API that accepts `tenantId`, `sourceGameInstanceId`, `targetVersionId`, and optional `remapSetId`.
+- The response must enumerate the entity-owned row families checked, the referenced template identifiers, and per-family outcomes `COMPATIBLE`, `REQUIRES_MAPPING`, or `INCOMPATIBLE`.
+- If the service currently has no `S2` rows for a given source instance, it must report that explicitly rather than collapsing the result into a generic success.
+
 See [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md)
 and [Item & Equipment Balancing Tools](../game-design-service/item-equipment-balancing.md)
 for how design-time definitions flow into these versioned templates.

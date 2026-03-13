@@ -10,7 +10,8 @@ This guide helps game creators customize their worlds on the hosted FireMUD plat
    See the [Account Service](../architecture/microservices/account-service/README.md)
    documentation for registration and verification steps.
 2. **Provision a Game** – Use the Game Design Service to create your first game world.
-   This follows the [World Creation Workflow](../architecture/microservices/world-management-service/world-creation-workflow.md).
+   This creates a draft tenant first; public gameplay does not begin until you launch a production realm.
+   Initial realm launch follows the [World Creation Workflow](../architecture/microservices/world-management-service/world-creation-workflow.md).
    A default world template is available. See the
    [Game Templates](../architecture/microservices/game-design-service/game-templates.md) guide.
 3. **Open the Game Editor** – Launch the Game Editor from your dashboard to begin customizing
@@ -27,6 +28,8 @@ This guide helps game creators customize their worlds on the hosted FireMUD plat
   See the
   [Role-Based Admin UI](../architecture/microservices/logging-admin-service/admin-ui.md)
   documentation.
+- **Go-Live Prerequisites** – A tenant can remain in draft/edit-only mode while you build content. To expose a public production realm, publish a version and ensure the tenant's billing/entitlements allow gameplay.
+- **Playtest Forks** – Before cutting production over to a new version, create an isolated fork realm from a source realm snapshot, invite testers, and validate the new ruleset against realistic state. Fork writes never merge back into production automatically.
 - **Multi-Tenancy** – Each game is isolated by a unique identifier so you can manage multiple worlds from one account. See the [Multi-Tenancy design](../architecture/system-architecture-multi-tenancy.md).
 
 ## Scripting & Integration API

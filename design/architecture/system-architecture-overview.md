@@ -15,11 +15,15 @@ The documents linked from this overview describe the target-state design, but th
 - **Lease moves and reconnect behavior:** The platform favors **close-and-reconnect** over mid-connection migration. The edge contract does not define a distinct “shard handoff” close category; client-visible outcomes remain limited to the standard close taxonomy (for example `backend_unavailable` for sustained gameplay-path failures). If a future design introduces explicit handoff semantics at the edge, it must be defined as a dedicated design update and integrated into the gateway + protocol bridging contracts (see `design/architecture/decisions/adr-0007-edge-sharding-and-close-taxonomy.md`).
 - **Quotas and entitlements source of truth:** Subscription entitlements and plan-driven quota values are owned by the Account Service (for example via `GetTenantEntitlements(tenantId)`). Logging & Admin provides dashboards, audit trails, and operator UX; any operator overrides must be represented as an overlay that is merged into the Account Service entitlement contract so enforcement points consume a single canonical view.
 - **Operator control-plane availability split:** Logging & Admin may depend on Elasticsearch, Prometheus, Jaeger, Grafana, Kibana, and Alertmanager for observability-heavy experiences, but core operator actions such as moderation, feature-flag requests, quota overrides, and tick-remediation controls must remain available when those backends are degraded. Logging & Admin owns the operator UX, request validation, and audit trail for these actions, while the owning domain services remain the only components allowed to mutate runtime or policy state. Readiness, resource isolation, and degradation behavior must preserve this split.
+- **Operator write ingress policy:** External operator-initiated mutating actions for moderation, runtime feature-flag overrides, quota overrides, and tick remediation must enter through Logging & Admin APIs via Gateway so validation and audit capture are uniform. Edge-routable admin APIs exposed directly by Account, Game Session, Social & Groups, and Game Design are limited to read operations plus narrowly scoped service-owned workflows that are explicitly documented as bypass-safe; absent that explicit designation, external writes must not bypass Logging & Admin.
 - **Durable async contract:** Best-effort edge hints may use internal gRPC event sinks, but durable cross-service business events and saga updates must use the transactional outbox/background-worker pattern described in `design/architecture/system-architecture-transactions.md`. High-level docs must not imply an unspecified shared event bus.
+- **Moderation propagation contract:** Logging & Admin is the source of truth for gameplay/chat moderation policy definitions, but enforcement owners must consume a canonical versioned snapshot contract. Every propagation payload must include `{tenantId, policyScope, policyVersion, issuedAt, eventId}`, invalidation must be monotonic per `{tenantId, policyScope}`, and enforcement services must support both push invalidation and pull-on-miss refresh from Logging & Admin. `gameplay_ban` and `chat_ban` enforcement is fail-closed when no fresh policy snapshot can be obtained within the bounded staleness window; `chat_mute` may temporarily reuse the last valid snapshot within that same window but must fail closed once the window expires. The bounded staleness window is a deployment-configured maximum snapshot age sourced from one canonical environment-level configuration contract shared by all enforcement services; Game Session and Social & Groups must not use divergent values in the same environment.
 - **Edge-route exposure default:** Besides `/ws/game/**`, only explicitly allowlisted admin/creator APIs are edge-routable through Gateway. Account, Game Design, Game Session control-plane APIs, Social & Groups admin APIs, and Logging & Admin are edge-routable; World Management, Entity Management, Game Logic, and Automation & Scripting remain internal-only unless a dedicated design update expands the allowlist.
 - **Redis topology policy:** In all non-ephemeral environments, Coordination Redis and Cache/Rate-Limit Redis are separate deployments. Local development is treated as non-ephemeral and should run two Redis deployments to exercise role separation. Truly ephemeral CI/preview stacks may collapse roles into a single Redis instance only when explicitly documented and guarded as an ephemeral topology.
 - **Coordination Redis ownership boundary:** Coordination Redis prefixes are owner-governed (Game Session for gameplay coordination prefixes such as `session:game:*`, `tick:*`, `timer:*`, `retry:*`, and `tick-executor-lease:*`; Account Service for `session:auth:*`; Automation & Scripting for `automation:*`), and non-owner participation is allowed only through documented shared-helper contracts. See `design/architecture/decisions/adr-0009-coordination-redis-ownership-boundary.md`.
 - **TCP Proxy identity canonicalization:** For Gateway header trust on the TCP Proxy → Gateway mTLS hop, URI SAN identity is canonical in production; DNS SAN is transitional and fingerprint pinning is break-glass only. See `design/architecture/decisions/adr-0010-tcp-proxy-identity-canonicalization.md`.
+- **Canonical room-read fence:** Canonical room-state reads that combine occupancy from World Management with containment/entity presentation from Entity Management must be served under a shared tick/read fence minted by Game Session for the requesting gameplay action or room-view refresh. World and Entity responses must echo the fence token they satisfied; if either side cannot satisfy the requested fence, Game Session must retry with a new fence or fail the room-view refresh explicitly rather than composing mixed-tick state.
+- **Game Session region-transition contract:** The session front-end owns connection-local sequencing and the character’s current execution-region pointer, while the lease owner owns region-scoped mutation rights. Cross-region actions are serialized by the session front-end under a monotonically increasing per-session sequence; region transition commits are atomic from the caller’s perspective only after the old region owner has acknowledged release, the new region owner has accepted the fenced command, and the session front-end has durably updated the execution-region pointer. Multi-region effects must designate one primary execution region or be decomposed into ordered fenced sub-operations; they must not issue concurrent unfenced writes to multiple region owners.
 
 ## Core Architecture Principles
 
@@ -47,8 +51,23 @@ The documents linked from this overview describe the target-state design, but th
 All external admin and creator tools access the platform through the **Spring Cloud Gateway**; Logging & Admin Service is never exposed directly at the network edge.
 
 - **Control-plane API:** Admin/ops tools use an internal **gRPC management API** on the Gateway for route configuration, health checks, and runtime configuration that affects Gateway behavior itself. This path is for infrastructure and routing concerns only; it does not directly perform moderation or gameplay actions.
-- **Admin/creator data-plane APIs:** Admin and moderation UIs talk to **Logging & Admin Service and other domain services via the Gateway**, using standard HTTP(S) APIs routed through Gateway’s configuration. This path centralizes routing, coarse route protections, rate limiting, and audit/observability hooks; JWT validation and fine-grained authorization are performed by the consuming services.
+- **Admin/creator data-plane APIs:** Admin and moderation UIs talk to **Logging & Admin Service and other domain services via the Gateway**, using standard HTTP(S) APIs routed through Gateway’s configuration. Mutating operator workflows for moderation, quota overrides, runtime feature flags, and tick remediation must enter via Logging & Admin so audit capture and request validation remain canonical; direct domain-admin routes are for reads and explicitly documented bypass-safe workflows only. JWT validation and fine-grained authorization are performed by the consuming services.
 - **Internal-only dependencies:** Logging & Admin Service calls Elasticsearch, Prometheus, Jaeger, Grafana, Kibana, and Alertmanager directly from the internal network for analytics and dashboards. These observability backends are **not** exposed to clients and are treated as internal, operator-facing dependencies of Logging & Admin.
+
+`Bypass-safe workflow` has a specific meaning in this architecture: it is an externally callable domain-owned admin operation whose correctness does not depend on Logging & Admin-owned policy definition, cross-domain audit orchestration, or operator availability-split guarantees. Bypass-safe workflows must still emit domain audit records and must be explicitly named in the owning service contract before they are exposed directly through an edge-routable domain API.
+
+Examples:
+
+- `GET /admin/game-sessions/{id}` and `GET /admin/accounts/{id}` are bypass-safe reads.
+- `POST /admin/quota-overrides` and `POST /admin/tick-remediation/pause` are not bypass-safe and must enter through Logging & Admin.
+
+#### External Admin Traffic Split (Canonical)
+
+| Traffic category | Edge entry point | Allowed direct domain route behavior |
+| --- | --- | --- |
+| External admin reads | Gateway allowlisted domain/admin APIs | Allowed when the route is edge-routable and the owning service documents the read contract |
+| External operator writes for moderation, quota overrides, runtime feature flags, and tick remediation | Logging & Admin APIs via Gateway | Direct domain bypass not allowed unless a future design update explicitly amends the operator write ingress policy |
+| Internal service-to-service control APIs | Internal-only service contracts | Not an edge contract; does not traverse Gateway unless the contract is explicitly defined as Gateway-managed infrastructure control traffic |
 
 #### Edge Exposure Policy (Canonical)
 
@@ -91,6 +110,8 @@ Core operator actions must not rely on observability backends for write success.
 | Runtime feature-flag override | Logging & Admin HTTP(S) APIs via Gateway | Game Session | Logging & Admin records audit and calls Game Session `ToggleFeatureFlag`/equivalent control API | Game Session PostgreSQL plus Logging & Admin PostgreSQL audit state | No |
 | Quota override | Logging & Admin HTTP(S) APIs via Gateway | Account Service canonical entitlement contract | Logging & Admin records audit and calls Account control-plane API so the merged entitlement view remains canonical at Account | Account PostgreSQL plus Logging & Admin PostgreSQL audit state | No |
 | Tick remediation (`PauseTicks`, `ResumeTicks`, scoped remediation requests) | Logging & Admin HTTP(S) APIs via Gateway | Game Session | Logging & Admin records audit and calls Game Session control APIs; direct Redis mutation is reserved for documented runbooks, not UI/API request handlers | Game Session PostgreSQL/control-plane state plus Logging & Admin PostgreSQL audit state | No |
+
+External admin tooling must not invoke alternate direct write routes for the actions in this table. If a future design allows a direct external mutation path for one of these actions, it must define equivalent audit, validation, and availability guarantees and update this table explicitly.
 
 ### Authentication Modes and Boundaries
 
@@ -241,7 +262,17 @@ The following boundaries are canonical for first-slice implementation and are in
 - World Management is the sole owner of runtime room occupancy/location and mutable room-environment state.
 - Entity Management is the sole owner of inventories, containment, and room-ground containers keyed by `RoomInstanceRef`.
 - Game Session orchestrates movement and other tick-owned actions, but it must not maintain a competing authoritative occupancy index.
-- Room-view assembly must read occupancy from World Management and containment/entity presentation from Entity Management using a shared read fence or equivalent same-tick aggregation contract; mixed-tick best-effort joins are not allowed for canonical room state.
+- The execution-region pointer held by the session front-end is session-local coordination metadata for fenced routing; it is not an authoritative source of room occupancy or world state.
+- Game Session mints the canonical room-read fence token for gameplay-driven room views and passes it to World Management and Entity Management.
+- World Management and Entity Management must either serve the requested fence and echo it in their responses or reject the read as unsatisfied; they must not silently downgrade to best-effort snapshots.
+- If either dependency rejects the fence, Game Session may retry with a freshly minted fence when doing so preserves caller ordering semantics; otherwise it must fail the room-view refresh explicitly. Mixed-tick best-effort joins are not allowed for canonical room state.
+
+Minimal canonical room-read sequence:
+
+1. Game Session mints `roomReadFence`.
+2. Game Session requests occupancy from World Management and containment/presentation from Entity Management using that fence.
+3. Each service either returns data with the same fence echoed or rejects the request as `fence_unsatisfied`.
+4. Game Session retries with a new fence only when caller ordering semantics permit; otherwise it returns an explicit room-view failure instead of composing mixed-tick state.
 
 > 🔗 See [Redis Architecture](./system-architecture-redis.md) for key structure and durability strategies.
 
@@ -281,8 +312,23 @@ Per `design/architecture/decisions/adr-0011-gameplay-session-front-end-and-regio
 - Region-scoped execution remains fenced to the current **lease owner** for `<tenantId, regionId>`.
 - Session front-ends may forward command execution or region-owned work over internal gRPC to the lease owner.
 - Only the lease owner may mutate region-scoped coordination keys or commit tick-owned gameplay state for that region.
+- The session front-end owns the character’s current execution-region pointer and advances it only after a fenced region-transition commit succeeds end-to-end.
 
 Forwarded internal gameplay requests must include a lease/epoch fence plus session identity and sequencing metadata so stale front-ends cannot race or reorder region-owned mutations after lease loss. Stale-fence forwards are rejected at the application layer and require the front-end to refresh ownership before retrying.
+
+Cross-region commands follow these canonical rules:
+
+- The session front-end serializes forwarded work with a monotonically increasing per-session sequence so region owners observe one canonical command order.
+- A region transition is externally visible only after the previous region owner has acknowledged release, the destination region owner has accepted the fenced command, and the session front-end has durably updated the execution-region pointer.
+- Commands that touch multiple regions must either nominate one primary execution region with fenced sub-calls or be decomposed into ordered fenced sub-operations; they must not issue concurrent unfenced mutations against multiple region owners.
+- If lease ownership changes before commit, the session front-end refreshes ownership and retries only the still-uncommitted command sequence; already committed region mutations are replayed or compensated according to the owning service contract, not reissued blindly.
+
+Minimal canonical cross-region sequence:
+
+1. The session front-end assigns the next `sessionSequence`.
+2. The session front-end forwards the fenced command to the current lease owner.
+3. If the action transitions regions, the source region owner acknowledges release, the destination region owner accepts the fenced continuation, and the session front-end durably updates the execution-region pointer.
+4. If lease ownership changes before commit, the session front-end refreshes ownership and retries only the uncommitted sequence.
 
 This preserves a stable edge contract while allowing in-cluster lease rebalancing without requiring client-visible shard routing.
 
@@ -315,6 +361,20 @@ From the perspective of admin and moderation tooling there are two broad classes
 - **Observability-driven workflows** – Log search, metrics and trace dashboards, and alert-centric investigations that depend on Elasticsearch, Prometheus, Jaeger, and Alertmanager being healthy. These surfaces may degrade or become read-only during observability outages but should not block core admin actions.
 
 Implementations of Logging & Admin must preserve this separation with independent readiness/degradation behavior and resource isolation so observability outages do not take down the operator control plane.
+
+For gameplay/chat moderation specifically, the control plane and enforcement plane must remain aligned under the canonical moderation propagation contract:
+
+- Logging & Admin emits versioned moderation policy snapshots and monotonic invalidations per `{tenantId, policyScope}` using durable outbox delivery for business-significant changes.
+- Game Session and Social & Groups maintain bounded-staleness caches keyed by `{tenantId, policyScope}` and must record the `policyVersion` used for each enforcement decision that reaches an audit trail.
+- When the bounded staleness window is exceeded and a fresh snapshot cannot be obtained, `gameplay_ban` and `chat_ban` decisions fail closed, while `chat_mute` may use the last valid snapshot only until the same window expires.
+
+## Glossary
+
+- **Session front-end** – The connected Game Session pod that owns socket I/O, connection-local state, and per-session sequencing.
+- **Lease owner** – The Game Session execution owner currently holding the `<tenantId, regionId>` lease required to mutate region-scoped coordination state.
+- **Canonical room state** – A room view assembled only from same-fence World Management occupancy data and Entity Management containment/presentation data.
+- **Control-plane API** – An infrastructure or domain admin API that is not part of player gameplay traffic.
+- **Bypass-safe workflow** – An explicitly documented external admin workflow allowed to bypass Logging & Admin ingress because it does not rely on Logging & Admin-owned policy, cross-domain write orchestration, or control-plane availability guarantees.
 
 ## Gameplay Hot Path Policy
 
