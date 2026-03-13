@@ -126,6 +126,12 @@ Example audit record shape:
 }
 ```
 
+Evidence schema versions used in this document:
+
+- `backup-maintenance-record/v1` for alias-scope maintenance and pause-scope audit evidence.
+- `recovery-record/v1` for canonical player-facing restore evidence.
+- `traffic-open-record/v1` for `hobby-self-hosted` first-live and reopen evidence.
+
 #### Tick Pause Scope Migration Plan (Normative)
 
 To remove long-term ambiguity between alias and canonical scope, the control-plane migration should follow explicit phases:
@@ -457,6 +463,12 @@ Nested control-group requirements:
 - `certificateReissuance` must include workload, bridge, and operator leaf identity evidence plus peer-convergence evidence.
 - `externalCredentialValidation` must include one result per credential class (`backup-storage`, `asset-storage`, `outbound-comms`, `operator-credentials`) with `validationMethod`, `validatedAt`, `validatedBy`, `observedValue` or fingerprint, environment-isolation assertion, and immutable evidence reference.
 
+Operator credential evidence representation:
+
+- When the expected binding is a platform resource identifier, store that identifier in `observedValue` (for example `cert-manager://firemud/prod-operator-client`) and treat it as the canonical comparison target.
+- When the expected binding is a certificate or key fingerprint, store the fingerprint as `observedValue` and compare it directly to the expected manifest value.
+- Do not store both as competing canonical values in one result unless one is clearly marked as supporting detail; recovery validation should answer from the same representation that `expected-bindings.yaml` declares.
+
 Validation rules:
 
 - Quarantine must remain in place until the record is complete and all required control groups show `pass`.
@@ -611,6 +623,25 @@ Validation rules:
 - Production traffic-open preflight must fail when this evidence is missing, stale, or bound to the wrong bucket/endpoint.
 - The canonical gate for this artifact is the deployment preflight contract in `system-architecture-deploy-preflight-policy.md` (`PREFLIGHT-BACKUP-002`), and the deployment sequencing that consumes it is defined in `system-architecture-deployment-runbook.md`.
 
+Illustrative production first-live backup-readiness record:
+
+```json
+{
+  "environment": "production",
+  "deploymentRef": "2026-03-13-prod-first-live-01",
+  "assessedAt": "2026-03-13T08:45:00Z",
+  "assessedBy": "operator@example",
+  "backupStorageBinding": "firemud-production-backups",
+  "backupLastSuccessAt": "2026-03-13T08:10:00Z",
+  "backupVerifyLastSuccessAt": "2026-03-13T08:25:00Z",
+  "evidenceRefs": [
+    "pgdump-upload-2026-03-13T08:10:00Z",
+    "backup-verify-2026-03-13T08:25:00Z",
+    "scope=tenant-a:region-prod-1"
+  ]
+}
+```
+
 ## Hobby Backup Compliance Evidence
 
 `hobby-self-hosted` environments must maintain a versioned backup-compliance record at `design/operations/deployments/hobby-self-hosted/backup-compliance.yaml` with:
@@ -650,6 +681,7 @@ Illustrative hobby traffic-open record:
 
 ```json
 {
+  "schemaVersion": "traffic-open-record/v1",
   "environment": "hobby-self-hosted",
   "deploymentRef": "2026-03-13-home-cluster-01",
   "assessedAt": "2026-03-13T09:15:00Z",
@@ -666,6 +698,7 @@ Illustrative hobby traffic-open record:
 Naming rule:
 
 - `<deployment-ref>` and `<recovery-ref>` should use lowercase ASCII plus digits and `-`, and should remain stable for the single deployment or recovery event they represent.
+- `<recovery-ref>` should be normalized the same way as `<deployment-ref>` so restore tooling, recovery evidence, and follow-up incident references all point at one stable token for the same recovery event.
 
 ---
 

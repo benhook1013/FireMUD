@@ -588,6 +588,7 @@ TCP Proxy metrics follow the global Micrometer/OpenTelemetry conventions describ
 - `tcpproxy.connections.limit.exceeded` for rejected connections when global/per-IP caps are reached.
 - `tcpproxy.connection.events{type="connect"|"disconnect"}` and `tcpproxy.connection.duration` for connection lifecycle and lifetime tracking.
 - `tcpproxy.command`, `tcpproxy.heartbeat`, `tcpproxy.idleClose`, and `tcpproxy.websocket.reconnect.delay` timers, plus `tcpproxy.websocket.reconnects` counters, for Telnet → Gateway bridge behaviour.
+- `tcpproxy.websocket.reconnects` covers initial bridge-establishment retries and breaker probe/recovery attempts. It must not be interpreted as hidden recovery for already-established Telnet sessions, which fail-close when their gameplay bridge is lost.
 - `tcpproxy.tls.misconfig` and `tcpproxy.gateway.handshake.failures{reason="..."}` for TLS and mTLS failures. The `reason` label is a small, bounded enum:
   - `bad_url` – invalid `GATEWAY_WS_URL` configuration.
   - `dns` – host resolution failure.
@@ -714,7 +715,7 @@ The full variable list is (treat this table as the canonical source of defaults 
 | `TCP_PROXY_MAX_OVERSIZE_LINES` | Maximum oversized lines per connection before hard close | `10` |
 | `TCP_PROXY_MAX_MALFORMED_ENVELOPES` | Maximum malformed `SESSION` envelopes per connection before hard close (see **Telnet Session Envelope & Event Metrics** for how this counter is applied) | `5` |
 | `TCP_PROXY_NOTIFY_DISCONNECT_MAX_RETRY_MS` | Maximum total time after Telnet socket close during which the proxy retries failed `NotifyDisconnect` calls before giving up | `5000` |
-| `TCP_PROXY_GATEWAY_RECONNECT_WINDOW_MS` | Initial-admission bridge-establishment window: maximum time to keep retrying the initial Proxy → Gateway gameplay bridge establishment for a new Telnet admission before failing closed with `backend_unavailable`; this does not apply after the gameplay bridge has already been established for that Telnet socket. A future config-surface rename to reflect this meaning more directly is recommended when implementation churn is acceptable. | `5000` |
+| `TCP_PROXY_GATEWAY_RECONNECT_WINDOW_MS` | Initial-admission bridge-establishment window: maximum time to keep retrying the initial Proxy → Gateway gameplay bridge establishment for a new Telnet admission before failing closed with `backend_unavailable`; this does not apply after the gameplay bridge has already been established for that Telnet socket. A future config-surface rename to reflect this meaning more directly is recommended when implementation churn is acceptable. Do not interpret this as an established-session recovery window. | `5000` |
 | `TCP_PROXY_GATEWAY_CIRCUIT_OPEN_MS` | Continuous upstream-unreachable duration required to open the bridge-availability circuit breaker and fast-reject new Telnet admissions with `backend_unavailable`; set equal to `firemud.gateway.backendUnavailableGraceMs` | `5000` |
 | `TCP_PROXY_GATEWAY_CIRCUIT_HALF_OPEN_MAX_PROBES` | Maximum concurrent bridge probe attempts while the circuit breaker is half-open before returning to open on failure | `3` |
 | `TCP_PROXY_GATEWAY_CIRCUIT_RECOVERY_SUCCESS_COUNT` | Consecutive successful half-open bridge probes required before returning to closed admission; set equal to `firemud.gateway.backendUnavailableRecoverySuccessCount` | `3` |

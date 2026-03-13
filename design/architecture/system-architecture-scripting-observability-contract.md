@@ -163,6 +163,8 @@ The normative metric-family catalog lives in `design/architecture/system-archite
   - `automation_plugin_policy_violations_total{tenantId, pluginId, pluginVersionId, componentId, reason}`
 - Rollback convergence timeout
   - `automation_rollback_convergence_timeout_total{tenantId, gameInstanceId, reason}`
+- Rollback drain fencing
+  - `automation_rollback_drain_canceled_total{tenantId, gameInstanceId, finalStage, reason}`
 
 Label rules:
 
@@ -172,6 +174,7 @@ Label rules:
 Metric semantics:
 
 - `automation_script_triggers_total` counts all observed triggers (admitted and non-admitted), tagged with canonical final stage-aware outcomes.
+- `automation_rollback_drain_canceled_total` counts old-epoch executions intentionally fenced during rollback draining before live work could persist or hand off. It must be used for bounded rollback-drain visibility rather than a generic infrastructure failure counter.
 
 Dry-run/test traffic must not increment live-traffic counters such as `automation_script_sandbox_failures_total` or `automation_script_errors_total`. Live dashboards and SLOs must remain interpretable without privileged tooling skewing error rates.
 

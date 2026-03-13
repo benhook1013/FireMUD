@@ -265,6 +265,18 @@ Required cutover workflow additions:
   - `S3` rows that never survive cutover.
   Cutover preflight is incomplete until every owning domain has documented this mapping or explicitly declared that a class has no rows in the current slice.
 
+Initial-slice row-family references used by preflight:
+
+- World Management:
+  - `region_instance`, `zone_instance`, `room_instance`, `character_location`, `npc_location`, instance-scoped `world_event`, and instance-scoped population-materialization tables are `S3`.
+  - no mandatory World-owned `S2` rows in the initial slice.
+- Entity Management:
+  - `character` plus attached progression/currency/account-ownership rows are `S1` unless they reference templates that require remap;
+  - equipment-binding rows and durable class/archetype / learned-ability / starter-loadout references are `S2`;
+  - synthetic room-ground containers and encounter-scoped containment rows keyed to the source `gameInstanceId` are `S3`.
+
+These names are the canonical initial-slice preflight vocabulary until service implementation docs replace them with exact schema table names.
+
 Initial-slice note:
 
 - In the first implementation slice, World Management declares no mandatory `S2` row families. Cutover preflight should therefore expect World to report `hasS2Rows=false` unless later world-bound durable metadata is introduced explicitly.

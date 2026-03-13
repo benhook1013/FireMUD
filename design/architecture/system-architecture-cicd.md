@@ -254,6 +254,7 @@ Terminology note:
 - `deployment evidence` answers what was checked, applied, and verified for a concrete deployment event in one environment.
 - `promotion evidence` is the subset of evidence used to prove a staging deployment is eligible to be promoted into production, primarily the attestation plus its referenced deployment and compliance records.
 - `traffic-open evidence` is the evidence family used to prove an environment may be opened or reopened to player traffic, for example production first-live backup readiness or hobby traffic-open records.
+- `promotion candidate` means a staging deployment record that is eligible to produce production promotion evidence; quarantined or detached staging drills can remain valid deployment evidence without becoming promotion candidates.
 
 Illustrative deployment record shape:
 

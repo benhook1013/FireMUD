@@ -274,6 +274,7 @@ During operator rollback pause (`PAUSED_FOR_ROLLBACK`), ingress must return an e
 - For timer-derived scheduler events, best-effort timer semantics apply; triggers not admitted during reload are not backfilled unless explicitly covered by a bounded catch-up rule.
 - Event-ingress response fields (`admitted`, `admissionOutcome`, `admissionReason`, `retryAfterMs`) and enum values are normative API contract and must align with `design/architecture/system-architecture-scripting-control-plane-api.md`.
 - These ingress response fields are **event-scope** only. A successful ingress admission means the request was accepted for handler resolution; it does not mean every resolved script/plugin handler later succeeded. Per-handler outcomes remain authoritative in `script_event_audit`.
+  For a concrete mixed fan-out example of one admitted event producing divergent handler outcomes, see `design/architecture/system-architecture-scripting-examples-and-patterns.md#mixed-fan-out-example`.
 
 See `design/architecture/system-architecture-scripting-contracts.md#7-reload-backpressure-contract`.
 

@@ -110,6 +110,7 @@ When inspecting Telnet-side disconnects, prefer reasoning in terms of the standa
 - Treat `policy_violation` with `edge_backpressure` context (from structured logs/metrics such as `tcpproxy.telnet.discarded{reason="gateway_buffer_full"}`) as edge buffer-pressure enforcement, not as backend outage.
 - Treat `idle_timeout` and `logout` as expected lifecycle noise rather than indicators of incidents unless volumes spike unexpectedly.
 - If correlating with WebSocket dashboards, use the bounded WebSocket `subreason` taxonomy from Gateway Architecture (`user_logout`, `takeover`, `gateway_restart`, `admin_termination`, `edge_backpressure`, `none`) so planned edge restarts are not misclassified as player-driven logout volume.
+- If `gamesession.notifydisconnect.dedupe.capacity_reached` is sustained during a broad outage, treat it as pressure on the disconnect-dedupe path and verify durable dedupe-store health and partition saturation before changing retry/retention guarantees.
 
 Quick operator guide:
 
@@ -124,6 +125,7 @@ Unattributed bridge-loss example:
 
 - If the authenticated Proxy → Gateway bridge drops without `1000/logout;subreason=gateway_restart`, treat the event as `bridge_shutdown_class=unattributed_failure`.
 - For already-established Telnet sessions, expect an immediate `backend_unavailable` disconnect rather than a grace window or hidden bridge recovery attempt.
+- Investigate Gateway/Game Session/process crash timelines before tuning Telnet-side limits.
 - Investigate Gateway/Game Session/process crash timelines before tuning Telnet-side limits.
 
 ### Web-Only WebSocket Degradation Playbook

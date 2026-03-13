@@ -177,7 +177,7 @@ Illustrative `GetTenantEntitlementsForRuntime(tenantId)` response:
 ```json
 {
   "tenantId": "tenant-demo",
-  "status": "active",
+  "subscriptionStatus": "active",
   "gameplayAvailable": true,
   "allowNewInstanceStarts": true,
   "quota": {
@@ -192,6 +192,7 @@ Illustrative `GetTenantEntitlementsForRuntime(tenantId)` response:
 
 Required semantics:
 
+- `subscriptionStatus` uses the canonical billing lifecycle values (`trialing`, `active`, `past_due`, `grace`, `suspended`, `canceled`).
 - `gameplayAvailable` is the admission-critical availability flag consumed by gameplay-affecting services.
 - `entitlementVersion` identifies the evaluated entitlement snapshot.
 - `tenantBillingSequence` allows consumers to detect stale or gapped billing-event application before admitting gameplay.

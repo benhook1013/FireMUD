@@ -221,6 +221,15 @@ World Management must classify its runtime persistence surface for cutover and m
   - ambient runtime state such as weather, door state, hazard state, instanced events, and instance-scoped population schedules/materializations;
   - `world_event` rows whose lifecycle is tied to a specific `gameInstanceId`.
 
+Initial-slice row-family inventory:
+
+- `region_instance`, `zone_instance`, `room_instance` are `S3`.
+- `character_location` and `npc_location` are `S3`.
+- `world_event` rows created for a specific `gameInstanceId` are `S3`.
+- Instance-scoped population materialization tables keyed by `gameInstanceId` (for example `population_schedule_instance` or equivalent implementation tables) are `S3`.
+- `generation_run` rows tied to runtime instance creation are diagnostic/runtime provenance only and are not cutover payload rows; treat them as `S3` retention-only metadata for the source instance lifecycle.
+- No World-owned initial-slice table is classified as mandatory `S2`.
+
 Initial-slice rule:
 
 - Unless a world-owned row family is explicitly documented as `S2`, treat it as `S3` and discard it during replacement-instance cutover.
@@ -308,6 +317,7 @@ Initial-slice scope:
 
 - In the first implementation slice, instance-scoped population schedules are materialized only during world creation for the primary `gameInstanceId`.
 - Later runtime instancing or portal-driven population scheduling may reuse the same lifecycle contract, but those flows are not part of the initial persistence slice and must not be implied as already required for first delivery.
+- Until a concrete schema is published, implementation docs must use one stable row-family name for these rows and map it explicitly to the concrete table names used by the service.
 
 ### LOOK snapshot contract
 

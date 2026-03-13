@@ -63,6 +63,12 @@ Example:
 - TCP Proxy validates and captures the envelope, opens the authenticated Proxy → Gateway WebSocket, and includes `X-Proxy-Game-Instance-Id`, `X-Proxy-Tenant-Id`, and `X-Proxy-Connection-Id` in that initial handshake as applicable.
 - The next line, such as `LOGIN ...`, is the first forwarded gameplay line on the already-established bridge.
 
+Pre-admission trust/policy rejection example:
+
+- Client connects and sends `SESSION <gameInstanceId> <tenantId>`.
+- TCP Proxy attempts to open the authenticated Proxy → Gateway bridge, but the handshake fails due to trust/policy checks such as certificate validation or policy deny.
+- Because gameplay admission never succeeded, the proxy fail-closes the Telnet socket with `policy_violation`, not `backend_unavailable`.
+
 Planned Gateway drain example:
 
 - Gateway closes the authenticated internal bridge with `1000/logout;subreason=gateway_restart`.

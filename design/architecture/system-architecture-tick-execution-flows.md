@@ -142,6 +142,16 @@ Worked examples:
   - `executionOutcome = LOST_BEFORE_STAGING`
   - `gameplayResult = FAILED`
 
+Compact terminal mapping table:
+
+| Scenario | executionOutcome | gameplayResult |
+| --- | --- | --- |
+| Pure local success | `APPLIED` | `SUCCESS` |
+| Batch-bound local or same-region failure | `ABANDONED` | `FAILED` |
+| Cross-region partial success | `APPLIED` | `PARTIAL` |
+| Cross-region timeout before any successful remote leg | `ABANDONED` | `TIMEOUT` |
+| Lost before staging during reset/tail-loss reconcile | `LOST_BEFORE_STAGING` | `FAILED` |
+
 #### Ingress Deduplication Store (Required)
 
 To make the re-submission contract enforceable across failover and scoped coordination resets, ingress deduplication must use a durable record outside Redis coordination queues:
@@ -171,6 +181,13 @@ Storage rule:
   - That durable surface must expose at least: `ackLevel`, `ingressStatus`, `tickBatchId`, bound tick coordinates when present (`regionId`, `regionEpoch`, `tickId`), `executionOutcome`, `gameplayResult`, and `updatedAt`.
   - Physical storage may use snake_case column names such as `execution_outcome` / `gameplay_result`, but the logical contract above is canonical and must be documented that way in service APIs and schema docs.
   - If ingress metadata and outcome fields are split physically, the projection still behaves as one canonical record for `GetCommandStatus`; callers must not reconstruct status from Redis or by replaying effect history ad hoc.
+- Worked schema examples:
+  - Single-row ingress table shape:
+    - `command_ingress(tenant_id, game_instance_id, command_id, ack_level, ingress_status, tick_batch_id, region_id, region_epoch, tick_id, execution_outcome, gameplay_result, updated_at, ...)`
+  - Split ingress plus outcome projection:
+    - `command_ingress(tenant_id, game_instance_id, command_id, ack_level, ingress_status, tick_batch_id, region_id, region_epoch, tick_id, ...)`
+    - `command_outcome_projection(tenant_id, game_instance_id, command_id, execution_outcome, gameplay_result, updated_at, ...)`
+  - In both shapes, `GetCommandStatus` reads one authoritative durable record keyed by `(tenantId, gameInstanceId, commandId)`; Redis is not part of the lookup path.
 - Regardless of physical schema, `GetCommandStatus` must be able to return `executionOutcome` and `gameplayResult` from durable storage without re-walking Redis coordination state.
 
 ## Tick Execution Flow

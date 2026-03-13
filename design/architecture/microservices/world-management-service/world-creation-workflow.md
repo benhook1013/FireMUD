@@ -71,6 +71,48 @@ Initial-slice delivery expectation:
 - Step 3 is optional for the initial slice unless the launched version actually requires expansive-world terrain generation or instance-scoped population schedule materialization.
 - When step 3 is omitted for an initial-slice launch, the same launch descriptor and activation invariants still apply; the workflow simply records that no runtime generation/materialization step was required for that `gameInstanceId`.
 
+Required audit/output shape when optional step 3 is skipped:
+
+- The workflow must emit a durable stage outcome for the omitted step under the same `worldCreationRequestId` / `launchDescriptorId`.
+- That outcome must distinguish `SKIPPED_NOT_REQUIRED` from `FAILED` or `NOT_STARTED`.
+- Operators must be able to determine from persisted workflow state that terrain generation and/or population materialization were intentionally not required by the published launch descriptor.
+- Logging & Admin saga-status surfaces for this workflow must expose the same recorded outcome so operators do not have to inspect raw service tables to distinguish “not required” from “failed”.
+
+Illustrative stage outcome:
+
+```json
+{
+  "tenantId": "t1",
+  "gameInstanceId": "g-100",
+  "worldCreationRequestId": "wc-77",
+  "launchDescriptorId": "ld-55",
+  "stepName": "generateTerrainAndMaterializePopulationSchedules",
+  "outcome": "SKIPPED_NOT_REQUIRED",
+  "reasonCode": "LAUNCH_DESCRIPTOR_DOES_NOT_REQUIRE_RUNTIME_GENERATION",
+  "expectedGenerationConfigRevision": "genrev-2026-03-01",
+  "recordedAt": "2026-03-13T10:15:00Z"
+}
+```
+
+Illustrative operator-facing saga status fragment:
+
+```json
+{
+  "sagaName": "createWorld",
+  "sagaInstanceId": "saga-9001",
+  "tenantId": "t1",
+  "gameInstanceId": "g-100",
+  "steps": [
+    {
+      "stepName": "generateTerrainAndMaterializePopulationSchedules",
+      "status": "COMPLETED",
+      "recordedOutcome": "SKIPPED_NOT_REQUIRED",
+      "reasonCode": "LAUNCH_DESCRIPTOR_DOES_NOT_REQUIRE_RUNTIME_GENERATION"
+    }
+  ]
+}
+```
+
 ### Saga Step Idempotency
 
 World creation steps write durable instance rows and must be safely retryable. Each externally retryable step must implement a durable idempotency guard keyed by a stable business idempotency key plus step identity, at minimum:

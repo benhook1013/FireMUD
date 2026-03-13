@@ -45,6 +45,7 @@ Frontend flows are split between **player gameplay sessions** and **admin/creato
 - **Player UI (gameplay)**  
   - First-party clients must first call the dedicated player-bootstrap endpoint (`POST /auth/player-bootstrap` or equivalent) to establish short-lived account identity for gameplay bootstrap only, then obtain a short-lived connect token (`POST /auth/connect-token`) for a selected `{tenantId, gameInstanceId}` before opening `/ws/game/**`, then complete gameplay authentication by issuing `LOGIN` over the WebSocket channel using the already-verified bootstrap/connect context rather than replaying username/password/OTP from the browser, as described in [Authentication & Authorization](./system-architecture-authentication.md#login-and-session-flow).  
   - The React client does not store or expose internal control-plane JWTs for gameplay. It may hold only the short-lived, memory-only `player-bootstrap` token described in the authentication design and use it solely for gameplay bootstrap surfaces such as `POST /auth/connect-token`.  
+  - Explicit player logout must clear any in-memory `player-bootstrap` token immediately in addition to closing gameplay sockets and clearing reconnect state.
   - Tenant membership and runtime entitlement checks for first-party gameplay happen during `POST /auth/connect-token`, not during `POST /auth/player-bootstrap`. In the first implementation, the connect-token target always resolves to the tenant's single gameplay-admissible instance (`"primary"`).  
   - After login, the client participates in an explicit **lobby world-selection** step by issuing `WORLDS` / `CHARS <world>` and then `PLAY <world> [character]` as described in [Tenant Selection for Gameplay](./system-architecture-authentication.md#tenant-selection-for-gameplay-lobby-selection). The Game Session Service resolves the selected world/character into internal identifiers (`tenantId`, `gameInstanceId`, `characterId`), enforces tenant authorization and entitlements, and then binds the socket to a gameplay session in Redis.  
   - On page reload or connectivity loss, the client requests a fresh connect token, reconnects the WebSocket, then replays `LOGIN` and tenant-selection without prompting for credentials again; the Game Session Service uses Redis gameplay session bindings, current membership authority, and fresh backend token rebinding to restore gameplay state when allowed by server-side TTLs and revocation rules.
@@ -70,6 +71,8 @@ For gameplay WebSocket handshake failures on `/ws/game/**`, first-party clients 
 
 - `CONNECT_TOKEN_REJECTED`: prompt a fresh gameplay handshake token acquisition and retry with bounded backoff.
 - `POLICY_DENY`: treat as non-retriable until configuration is corrected and surface an actionable error.
+
+These handshake classes are edge-handshake outcomes, not gameplay text-protocol `ERROR <CODE>` frames. Clients only start handling protocol-level `ERROR <CODE>` responses after the WebSocket has been established and `LOGIN`/`PLAY` exchange begins.
 
 Canonical first-party browser reconnect sequence:
 

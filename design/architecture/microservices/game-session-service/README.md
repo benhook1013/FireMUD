@@ -283,7 +283,7 @@ At the protocol level, commands are split into two groups:
 | `LOGON <username> <password> [otp]` | Exact alias for `LOGIN`; Telnet users often prefer the shorter name when typing from prompts. | `LOGON demo@example.com swordfish` |
 | `WORLDS` | Lists worlds the authenticated account can enter (numbered menu + stable world slug) from Account Service membership + entitlement state. | `WORLDS` |
 | `CHARS <world>` | Lists characters for a world (`<world>` is a world slug or a menu index from `WORLDS`) from the authoritative character store, filtered to `{accountId, tenantId}` ownership. | `CHARS demo` |
-| `PLAY <world> [character]` | Binds the authenticated connection to a world and character after `LOGIN`, enforcing tenant authorization and entitlements. `<world>` is a slug or menu index; `[character]` is optional name/index. Current flow always binds `gameInstanceId=\"primary\"` per tenant. | `PLAY demo 1` |
+| `PLAY <world> [character]` | Binds the authenticated connection to a world and character after `LOGIN`, enforcing tenant authorization and entitlements. `<world>` is a slug or menu index; `[character]` is optional name/index in the first implementation, but richer multi-character UX may require explicit selection in a future protocol revision. Current flow always binds `gameInstanceId=\"primary\"` per tenant. | `PLAY demo 1` |
 | `LOOK` | Requests the current room snapshot (name, descriptions, exits, and visible entities) aggregated from Game Logic plus World and Entity services. | `LOOK` |
 | `SAY <text>` | Broadcasts chat text to everyone in the same room. | `SAY Hello travelers` |
 | `YELL <text>` | Alias for `SAY` that is rendered with higher emphasis but still delivers to the current room. | `YELL Hear me, comrades` |
@@ -309,6 +309,8 @@ This small command table defines the initial MVP gameplay command set delivered 
 Telnet and WebSocket clients share this line-based syntax, but transport context determines which `LOGIN` form is valid. For Telnet and generic WebSocket clients, sending `LOGIN` (or the alias `LOGON`) with no arguments is intended to start the prompt flow, whereas `LOGIN <username> <password> [otp]` (or `LOGON ...`) performs an immediate authentication attempt. For first-party `/ws/game/**` sessions that already carry a validated Gateway connect context, bare `LOGIN` completes gameplay authentication from the pre-established bootstrap identity instead of prompting for or replaying credentials. OTP values on credential-bearing logins are passed through verbatim to the Account Service so two-factor accounts get the same experience. The same `OK <COMMAND>` / `ERROR <CODE> <message>` response format applies to all transports so clients can react consistently, and the examples below demonstrate at least one success and one failure path per transport.
 
 **Note:** Prompt-based exchanges are planned but not implemented in this slice for Telnet and non-bootstrap clients. On those transports, bare `LOGIN` currently returns `ERROR PROMPT_LOGIN_UNSUPPORTED Prompt-based login is not implemented yet; send LOGIN <username> <password>.` First-party `/ws/game/**` sessions with a validated connect context are the exception: bare `LOGIN` consumes the bootstrap-backed context and must not ask the browser to resend credentials. Gameplay commands such as `LOOK` require a successful `PLAY` after `LOGIN`/`LOGON`; unauthenticated attempts still receive `ERROR NOT_AUTHENTICATED`, and the most recent successful room snapshot is cached per session so reconnecting clients can immediately redraw the world before pending commands replay.
+
+Handshake failures such as HTTP `403` `CONNECT_TOKEN_REJECTED` or `POLICY_DENY` occur before the gameplay protocol is established and therefore are not emitted as text-protocol `ERROR <CODE>` frames. The command examples in this section begin only after a socket is already open and the line-based gameplay protocol is active.
 
 After `LOGIN` succeeds, clients must issue `PLAY <world> [character]` before any gameplay commands (such as `LOOK` or `SAY`). This play step binds the authenticated connection to a world-scoped gameplay session and enforces tenant authorization and entitlements as defined in the Authentication & Authorization design.
 
@@ -377,6 +379,27 @@ OK PLAY Entered world: Demo World
 ```
 
 The transcript above presents the planned prompt flow. In the current implementation the same exchange is represented by a single `LOGIN <username> <password>` call because the prompt-driven handler returns `ERROR PROMPT_LOGIN_UNSUPPORTED ...`.
+
+Current implementation equivalent:
+
+```text
+LOGIN demo@example.com swordfish
+OK LOGIN Logged in as demo@example.com
+
+WORLDS
+OK WORLDS
+1) Demo World (demo)
+
+PLAY demo
+OK PLAY Entered world: Demo World
+```
+
+First-party `/ws/game/**` account-mismatch example:
+
+```text
+LOGIN
+ERROR ACCOUNT_MISMATCH Bootstrap identity does not match the validated session context
+```
 
 Telnet failure (wrong password):
 

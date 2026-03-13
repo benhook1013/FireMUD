@@ -93,6 +93,12 @@ Minimum required keys:
 - `outboundComms.smtpHost` and/or environment-classified webhook target identifiers
 - `operatorCredentials.bindingRef` or `operatorCredentials.fingerprint`
 
+Operator credential representation rule:
+
+- Use `operatorCredentials.bindingRef` when the environment binds operator access through a platform-native resource identifier (for example a cert-manager certificate binding, workload identity binding, or a named operator Secret reference).
+- Use `operatorCredentials.fingerprint` when the environment contract is anchored to a concrete certificate or key fingerprint rather than a stable platform binding identifier.
+- If both are available, `bindingRef` is the canonical expected-binding field and `fingerprint` may be included as supporting validation detail rather than a second competing source of truth.
+
 Illustrative example:
 
 ```yaml
@@ -128,6 +134,7 @@ Validation contract:
 - The manifest must prove environment isolation. Staging and production cannot share bucket names, endpoints, SMTP targets, webhook target classes, or operator credential bindings unless the field is explicitly documented as non-sensitive shared infrastructure.
 - When a field is intentionally shared, the manifest must mark it explicitly with `shared: true` plus a short `sharedRationale` string. Absence of those fields means the binding is treated as environment-unique by default.
 - Restore validation tooling may derive shell environment variables such as `EXPECTED_PG_DUMP_BUCKET`, `EXPECTED_ASSET_STORE_BUCKET`, `EXPECTED_ASSET_STORE_ENDPOINT`, `EXPECTED_SMTP_HOST`, and operator-binding fingerprints from this manifest rather than maintaining a second source of truth.
+- When validating operator-only credentials, preflight should compare like-for-like against the expected binding form: compare `bindingRef` values when the manifest declares `bindingRef`, and compare fingerprints when the manifest declares `fingerprint`. Implementations should not invent a second canonical representation during validation.
 - Deployment and recovery evidence must reference the same manifest path so auditors can answer “what binding did we expect?” from one record family.
 
 ## Evidence Contract

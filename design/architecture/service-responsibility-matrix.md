@@ -91,6 +91,11 @@ Checkmarks in this table indicate **participation** in a workflow. Rows prefixed
 
 For the edge-routable services in this matrix, participation does not imply that every mutation may be called directly by external tools. Per the overview’s canonical operator write ingress policy, external mutating operator workflows for moderation, quota overrides, runtime feature-flag overrides, and tick remediation must enter through Logging & Admin. Direct external writes on other edge-routable services require an explicit bypass-safe designation in the owning service contract.
 
+Route-review example:
+
+- Proposed route: `POST /admin/game-sessions/{id}/feature-flags/{flagKey}:toggle`. Matrix check: `Game Session` participates in `Admin/creator API participation`, but `External operator write ingress for moderation, quota overrides, runtime feature flags, and tick remediation` routes this workflow through `Logging & Admin`, so the direct external Game Session route is not allowed without a design update.
+- Proposed route: `GET /admin/accounts/{id}`. Matrix check: `Account Service` participates in `Admin/creator API participation`, and the request is an external admin read rather than an operator write covered by `External operator write ingress for moderation, quota overrides, runtime feature flags, and tick remediation`, so the route may be edge-routable when the owning service documents it as a bypass-safe read contract.
+
 ## Notes on Redis Ownership and Participation
 
 - **Authoritative owner: Coordination Redis gameplay sessions (`session:game:*`)** – Game Session Service owns gameplay session bindings, lifecycle, and reset scope expectations for these keys. Other services participate only through documented shared helper libraries and key contracts; they do not introduce new gameplay session prefixes or modify TTLs/payload semantics without Game Session ownership and Redis design review.

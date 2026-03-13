@@ -25,6 +25,8 @@ This document outlines how FireMUD is deployed across environments including loc
 
 - `player-facing`: any environment that may accept real player traffic or is used to validate player-visible operational correctness. In FireMUD this includes `hobby-self-hosted`, `staging`, and `production`.
 - `quarantined`: an environment boundary that would otherwise be player-facing by class but is temporarily prevented from serving external player traffic during restore, drill, or detached maintenance. Quarantined staging or production work does not count as player-facing for traffic-open or player-impact severity decisions until quarantine is removed.
+- `traffic-open`: the operational state in which an environment is allowed to accept external player traffic. Player-facing environments do not become traffic-open merely because workloads are healthy; they must also satisfy the applicable backup, recovery, and preflight gates for that event.
+- `promotion candidate`: a staging deployment record that is eligible to produce production promotion evidence. Detached or quarantined staging drills may be valid operational exercises without being promotion candidates.
 - `production`: the primary player-facing environment with the strictest change gates and mandatory scheduled backup posture.
 - `shared prod-profile Kubernetes environments`: Kubernetes-backed environments that run the shared Spring `prod` profile and Kubernetes Secret delivery model. This includes `dev-demo-cluster`, `hobby-self-hosted`, `staging`, and `production`, though only the player-facing subset inherits the stricter traffic-open controls.
 

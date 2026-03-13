@@ -29,6 +29,48 @@ Initial-slice discovery rule for derived world artifacts:
 - `published_release_bundle` must attest the same artifact indirectly through the attested `manifestHash`; implementations may add explicit artifact references to the bundle later, but they are not the required discovery surface for the initial slice.
 - Runtime consumers must treat those attested references as canonical and must not construct object-store paths by convention.
 
+Initial-slice manifest shape for derived world artifacts:
+
+- The required stable usage keys are `world.navmesh` and `world.pathGraph`.
+- For manifest `schemaVersion: 1`, these derived-world-artifact entries must appear under the top-level `assets` object.
+- Future manifest schema versions may extend the manifest shape, but they must either preserve these keys under `assets` or publish an explicit schema-version migration note before changing their location.
+- If a published version exports only one of those artifacts, the manifest may omit the other key.
+- Each exported derived-world-artifact entry must include at least:
+  - `url` – runtime fetch location under the published version prefix;
+  - `contentHash` – immutable digest of the artifact bytes;
+  - `contentType` – media type for the artifact payload;
+  - `artifactKind` – one of `NAVMESH` or `PATH_GRAPH`;
+  - `producerService` – `world-management-service`;
+  - `versionId` – the attested published version owning the artifact.
+- Runtime consumers must bind to the artifact by these stable usage keys rather than by filename conventions.
+- Runtime consumers for the initial slice must treat `schemaVersion: 1` plus the top-level `assets` object as the canonical discovery contract for these keys.
+
+Illustrative `manifest.json` fragment:
+
+```json
+{
+  "schemaVersion": 1,
+  "assets": {
+    "world.navmesh": {
+      "artifactKind": "NAVMESH",
+      "contentType": "application/octet-stream",
+      "contentHash": "sha256:8fd0c4...",
+      "producerService": "world-management-service",
+      "versionId": "v42",
+      "url": "https://cdn.example.invalid/t1/v42/world/navmesh.bin"
+    },
+    "world.pathGraph": {
+      "artifactKind": "PATH_GRAPH",
+      "contentType": "application/json",
+      "contentHash": "sha256:91baf2...",
+      "producerService": "world-management-service",
+      "versionId": "v42",
+      "url": "https://cdn.example.invalid/t1/v42/world/path-graph.json"
+    }
+  }
+}
+```
+
 ## Table Structure
 
 The `game_assets` table stores metadata for design-time uploads. Columns include:
