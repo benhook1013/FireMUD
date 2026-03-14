@@ -2,7 +2,7 @@
 spring-boot = "3.5.10"
 flyway = "12.0.0"
 mapstruct = "1.6.3"
-lombok = "1.18.42"
+lombok = "1.18.44"
 lombok-mapstruct-binding = "0.2.0"
 grpc = "1.79.0"
 protobuf = "4.33.5"
@@ -38,7 +38,7 @@ flyway-database-postgresql = { module = "org.flywaydb:flyway-database-postgresql
 mapstruct = { module = "org.mapstruct:mapstruct", version = "1.6.3" }
 mapstruct-processor = { module = "org.mapstruct:mapstruct-processor", version = "1.6.3" }
 
-lombok = { module = "org.projectlombok:lombok", version = "1.18.42" }
+lombok = { module = "org.projectlombok:lombok", version = "1.18.44" }
 lombok-mapstruct-binding = { module = "org.projectlombok:lombok-mapstruct-binding", version = "0.2.0" }
 
 grpc-netty-shaded = { module = "io.grpc:grpc-netty-shaded", version = "1.79.0" }
