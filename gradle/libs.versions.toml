@@ -53,8 +53,8 @@ opentelemetry-api = { module = "io.opentelemetry:opentelemetry-api", version = "
 opentelemetry-sdk = { module = "io.opentelemetry:opentelemetry-sdk", version = "1.60.1" }
 opentelemetry-exporter-otlp = { module = "io.opentelemetry:opentelemetry-exporter-otlp", version = "1.60.1" }
 
-micrometer-core = { module = "io.micrometer:micrometer-core", version = "1.16.3" }
-micrometer-registry-prometheus = { module = "io.micrometer:micrometer-registry-prometheus", version = "1.16.3" }
+micrometer-core = { module = "io.micrometer:micrometer-core", version = "1.16.4" }
+micrometer-registry-prometheus = { module = "io.micrometer:micrometer-registry-prometheus", version = "1.16.4" }
 
 jjwt-api = { module = "io.jsonwebtoken:jjwt-api", version = "0.13.0" }
 jjwt-impl = { module = "io.jsonwebtoken:jjwt-impl", version = "0.13.0" }
