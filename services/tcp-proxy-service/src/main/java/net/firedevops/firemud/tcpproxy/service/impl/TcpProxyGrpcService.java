@@ -42,10 +42,22 @@ public class TcpProxyGrpcService extends TcpProxyServiceGrpc.TcpProxyServiceImpl
   public void notifyDisconnect(
       NotifyDisconnectRequest request, StreamObserver<NotifyDisconnectResponse> responseObserver) {
     logger.info(
-        "NotifyDisconnect for session {} tenant {}", request.getSessionId(), request.getTenantId());
+        "NotifyDisconnect for session {} tenant {} proxyConnectionId {} disconnectSequence {}",
+        request.getSessionId(),
+        request.getTenantId(),
+        request.getProxyConnectionId(),
+        request.getDisconnectSequence());
     try {
+      String gameInstanceId =
+          StringUtils.hasText(request.getGameInstanceId())
+              ? request.getGameInstanceId()
+              : request.getSessionId();
       NotifyDisconnectResponse response =
-          eventService.notifyDisconnect(request.getSessionId(), request.getTenantId());
+          eventService.notifyDisconnect(
+              gameInstanceId,
+              request.getTenantId(),
+              request.getProxyConnectionId(),
+              request.getDisconnectSequence());
       NotifyDisconnectResponse normalized = ensureErrorDetail(response, "NotifyDisconnect");
       logIfError(normalized.getError(), "NotifyDisconnect");
       responseObserver.onNext(normalized);

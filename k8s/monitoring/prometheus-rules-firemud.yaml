@@ -1,0 +1,608 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: firemud-core-observability
+  labels:
+    app.kubernetes.io/name: firemud
+    app.kubernetes.io/component: observability
+spec:
+  groups:
+    - name: firemud.recording.tick
+      rules:
+        - record: tick_execution_time_ms_p95
+          expr: |
+            histogram_quantile(
+              0.95,
+              sum by (tenantId, regionId, le) (rate(tick_execution_time_ms_bucket[5m]))
+            )
+        - record: tick_execution_time_ms_p99
+          expr: |
+            histogram_quantile(
+              0.99,
+              sum by (tenantId, regionId, le) (rate(tick_execution_time_ms_bucket[5m]))
+            )
+        - record: tick_execution_safety_ratio_p99
+          expr: tick_execution_time_ms_p99 / tick_lock_ttl_ms
+        - record: command_latency_stage_ms_p99_5m
+          expr: |
+            histogram_quantile(
+              0.99,
+              sum by (service, tenantId, regionId, command, stage, le) (
+                rate(command_latency_stage_ms_bucket[5m])
+              )
+            )
+        - record: redis_coordination_tail_loss_budget_ms
+          expr: |
+            clamp_min(2000, 2 * tick_interval_ms)
+        - record: redis_coordination_tail_loss_slo_breached
+          expr: |
+            redis_coordination_tail_loss_ms > on (tenantId, regionId) redis_coordination_tail_loss_budget_ms
+    - name: firemud.recording.backup
+      rules:
+        - record: backup_pipeline_recent_backup_slo_breached
+          expr: |
+            time() - backup_last_success_timestamp_seconds > 90 * 60
+        - record: backup_pipeline_recent_verification_slo_breached
+          expr: |
+            time() - backup_verify_last_success_timestamp_seconds > 24 * 60 * 60
+        - record: backup_tick_pause_wait_budget_breached
+          expr: |
+            backup_tick_pause_wait_seconds > backup_tick_pause_wait_budget_seconds
+        - record: backup_tick_pause_duration_budget_breached
+          expr: |
+            backup_tick_pause_duration_seconds > backup_tick_pause_duration_budget_seconds
+        - record: backup_ticks_paused_budget_breached
+          expr: |
+            (backup_ticks_paused == 1)
+            and
+            (backup_tick_pause_duration_seconds > backup_tick_pause_duration_budget_seconds)
+
+    - name: firemud.recording.player_experience
+      rules:
+        - record: login_success_ratio_gateway_15m
+          expr: |
+            (
+              sum by (tenantId) (rate(login_requests_total{service="spring-cloud-gateway",outcome="success"}[15m]))
+                /
+              sum by (tenantId) (rate(login_requests_total{service="spring-cloud-gateway"}[15m]))
+            )
+        - record: login_success_ratio_tcpproxy_15m
+          expr: |
+            (
+              sum by (tenantId) (rate(login_requests_total{service="tcp-proxy-service",outcome="success"}[15m]))
+                /
+              sum by (tenantId) (rate(login_requests_total{service="tcp-proxy-service"}[15m]))
+            )
+        - record: command_latency_ms_p99_gateway_5m
+          expr: |
+            histogram_quantile(
+              0.99,
+              sum by (tenantId, regionId, command, le) (
+                rate(command_end_to_end_latency_ms_bucket{service="spring-cloud-gateway",command=~"move|look|combat"}[5m])
+              )
+            )
+        - record: command_latency_ms_p99_tcpproxy_5m
+          expr: |
+            histogram_quantile(
+              0.99,
+              sum by (tenantId, regionId, command, le) (
+                rate(command_end_to_end_latency_ms_bucket{service="tcp-proxy-service",command=~"move|look|combat"}[5m])
+              )
+            )
+        - record: chat_delivery_latency_ms_p99_5m
+          expr: |
+            histogram_quantile(
+              0.99,
+              sum by (tenantId, channel_type, le) (rate(chat_delivery_latency_ms_bucket[5m]))
+            )
+        - record: entrypath_availability_gateway_1d
+          expr: |
+            (
+              sum by (tenantId, path) (increase(entrypath_connection_attempts_total{service="spring-cloud-gateway",outcome="success"}[1d]))
+                /
+              sum by (tenantId, path) (increase(entrypath_connection_attempts_total{service="spring-cloud-gateway"}[1d]))
+            )
+        - record: entrypath_availability_gateway_5m
+          expr: |
+            (
+              sum by (tenantId, path) (increase(entrypath_connection_attempts_total{service="spring-cloud-gateway",outcome="success"}[5m]))
+                /
+              sum by (tenantId, path) (increase(entrypath_connection_attempts_total{service="spring-cloud-gateway"}[5m]))
+            )
+        - record: entrypath_availability_tcpproxy_1d
+          expr: |
+            (
+              sum by (tenantId, path) (increase(entrypath_connection_attempts_total{service="tcp-proxy-service",outcome="success"}[1d]))
+                /
+              sum by (tenantId, path) (increase(entrypath_connection_attempts_total{service="tcp-proxy-service"}[1d]))
+            )
+        - record: entrypath_availability_tcpproxy_5m
+          expr: |
+            (
+              sum by (tenantId, path) (increase(entrypath_connection_attempts_total{service="tcp-proxy-service",outcome="success"}[5m]))
+                /
+              sum by (tenantId, path) (increase(entrypath_connection_attempts_total{service="tcp-proxy-service"}[5m]))
+            )
+
+    - name: firemud.alerts.redis
+      rules:
+        - alert: RedisCoordinationTailLossSLOBreached
+          expr: redis_coordination_tail_loss_slo_breached > 0
+          for: 5m
+          labels:
+            service: redis-coordination
+            severity: P0
+            owner: infra
+            runbook: design/architecture/system-architecture-redis-incident-runbook.md#coordination-aof-tail-loss-slo-breach
+          annotations:
+            summary: Coordination Redis tail-loss SLO breached
+            description: Tail-loss exceeds the 1–2s envelope for one or more regions.
+        - alert: RedisLuaScriptLoadFailures
+          expr: increase(redis_lua_script_load_failures_total[5m]) >= 1
+          for: 5m
+          labels:
+            service: redis-coordination
+            severity: P1
+            owner: infra
+            runbook: design/architecture/system-architecture-redis-incident-runbook.md#coordination-redis-outage-or-degradation
+          annotations:
+            summary: Redis Lua script load failures detected
+            description: One or more coordination shards are failing to load required Lua scripts.
+        - alert: RedisLuaScriptMissingForRegion
+          expr: redis_lua_script_missing_for_region_total > 0
+          for: 1m
+          labels:
+            service: redis-coordination
+            severity: P0
+            owner: infra
+            runbook: design/architecture/system-architecture-redis-incident-runbook.md#coordination-redis-outage-or-degradation
+          annotations:
+            summary: Redis Lua script missing for active region
+            description: Tick scheduling should halt for affected regions until script preload is healthy.
+        - alert: RedisLuaScriptRuntimeHigh
+          expr: redis_lua_script_runtime_ms_p99 > (2 * tick_interval_ms)
+          for: 3m
+          labels:
+            service: redis-coordination
+            severity: P1
+            owner: infra
+            runbook: design/architecture/system-architecture-redis-incident-runbook.md#coordination-redis-outage-or-degradation
+          annotations:
+            summary: Redis Lua script runtime exceeds budget
+            description: Coordination script latency is beyond the runtime envelope and can degrade tick health.
+        - alert: RedisCoordinationOomErrors
+          expr: increase(redis_coordination_oom_errors_total[1m]) >= 1
+          for: 1m
+          labels:
+            service: redis-coordination
+            severity: P0
+            owner: infra
+            runbook: design/architecture/system-architecture-redis-incident-runbook.md#coordination-redis-outage-or-degradation
+          annotations:
+            summary: Coordination Redis OOM errors detected
+            description: Coordination writes are failing due to memory pressure; halt affected ticks until headroom is restored.
+        - alert: RedisTickPendingStuck
+          expr: redis_tick_pending_stuck_total > 0
+          for: 2m
+          labels:
+            service: redis-coordination
+            severity: P1
+            owner: infra
+            runbook: design/architecture/system-architecture-tick-incident-runbook.md#stalled-tick-region
+          annotations:
+            summary: Stuck tick pending state detected
+            description: One or more regions have pending entries that are not converging and may need replay/reset action.
+
+    - name: firemud.alerts.tick
+      rules:
+        - alert: TickExecutionUnsafeRatio
+          expr: tick_execution_safety_ratio_p99 > 0.75
+          for: 10m
+          labels:
+            service: game-session-service
+            severity: P1
+            owner: gameplay
+            runbook: design/architecture/system-architecture-tick-incident-runbook.md#stalled-tick-region
+          annotations:
+            summary: Tick execution time approaching unsafe fraction of lock TTL
+            description: Tick p99 execution time is nearing or exceeding the configured lock TTL for one or more regions.
+        - alert: TickEffectLedgerBacklog
+          expr: tick_effects_pending_total > 0 and (time() - tick_effects_pending_oldest_scheduled_timestamp_seconds) > 300
+          for: 10m
+          labels:
+            service: game-session-service
+            severity: P1
+            owner: gameplay
+            runbook: design/architecture/system-architecture-tick-incident-runbook.md#stuck-tick-effect-ledger-entries
+          annotations:
+            summary: Tick effect ledger has pending rows beyond grace window
+            description: One or more regions have SCHEDULED tick effects that have not converged to APPLIED or ABANDONED within the expected grace window.
+        - alert: TickCleanupLagHigh
+          expr: tick_cleanup_lag_ms > 15000
+          for: 10m
+          labels:
+            service: game-session-service
+            severity: P1
+            owner: gameplay
+            runbook: design/architecture/system-architecture-tick-incident-runbook.md#durable-commitcoordination-cleanup-divergence
+          annotations:
+            summary: Tick durable commit and coordination cleanup are diverging
+            description: Cleanup lag from durable commit to coordination-cleared is elevated for one or more regions; investigate replay pressure and coordination cleanup behavior.
+        - alert: TickReplayFairnessStarved
+          expr: tick_effects_pending_total > 0 and increase(tick_effects_replay_batches_total[15m]) == 0
+          for: 15m
+          labels:
+            service: game-session-service
+            severity: P1
+            owner: gameplay
+            runbook: design/architecture/system-architecture-tick-incident-runbook.md#stuck-tick-effect-ledger-entries
+          annotations:
+            summary: Tick replay controller is not servicing pending regions fairly
+            description: One or more regions still have pending ledger work, but replay batches are not being executed for those regions.
+        - alert: TickReplayScanLagHigh
+          expr: tick_effects_replay_scan_lag_ms > 300000
+          for: 15m
+          labels:
+            service: game-session-service
+            severity: P1
+            owner: gameplay
+            runbook: design/architecture/system-architecture-tick-incident-runbook.md#stuck-tick-effect-ledger-entries
+          annotations:
+            summary: Tick replay scan lag indicates controller starvation
+            description: Replay scan lag is growing for one or more regions even though the replay controller remains active elsewhere.
+
+    - name: firemud.alerts.backup
+      rules:
+        - alert: BackupPipelineNoRecentBackup
+          expr: backup_pipeline_recent_backup_slo_breached > 0
+          for: 5m
+          labels:
+            service: postgres-backup
+            severity: P1
+            owner: infra
+            runbook: design/architecture/system-architecture-backup-recovery.md#backup-verification-restoration-testing
+          annotations:
+            summary: PostgreSQL backups have not succeeded recently
+            description: No successful pg_dump backup has been recorded in the last 90 minutes. Investigate backup Jobs and storage endpoints.
+        - alert: BackupPipelineNoRecentVerification
+          expr: backup_pipeline_recent_verification_slo_breached > 0
+          for: 30m
+          labels:
+            service: postgres-backup
+            severity: P1
+            owner: infra
+            runbook: design/architecture/system-architecture-backup-recovery.md#backup-verification-restoration-testing
+          annotations:
+            summary: Backup verification has not succeeded recently
+            description: No successful backup verification run has been recorded in the last 24 hours. Investigate the verify-backups CronJob and storage configuration.
+        - alert: BackupTickPauseTooLongScoped
+          expr: backup_tick_pause_duration_budget_breached > 0
+          for: 5m
+          labels:
+            service: postgres-backup
+            severity: P0
+            owner: infra
+            runbook: design/architecture/system-architecture-backup-recovery.md#backup-verification-restoration-testing
+          annotations:
+            summary: Tick pause window too long during scoped backup
+            description: One or more backup scopes have exceeded the pause-duration budget. Investigate pause/resume controls and scope-specific backlog growth.
+        - alert: BackupTickPauseWaitTooLongScoped
+          expr: backup_tick_pause_wait_budget_breached > 0
+          for: 5m
+          labels:
+            service: postgres-backup
+            severity: P0
+            owner: infra
+            runbook: design/architecture/system-architecture-backup-recovery.md#backup-verification-restoration-testing
+          annotations:
+            summary: Tick pause wait exceeded budget during scoped backup
+            description: One or more backup scopes are taking too long to reach PAUSED.
+        - alert: BackupTicksPausedTooLong
+          expr: backup_ticks_paused_budget_breached > 0
+          for: 5m
+          labels:
+            service: postgres-backup
+            severity: P0
+            owner: infra
+            runbook: design/architecture/system-architecture-backup-recovery.md#backup-verification-restoration-testing
+          annotations:
+            summary: Backup scope remains paused unexpectedly
+            description: A backup scope has remained in paused state beyond the expected window. Check pause/resume API calls and backup job completion state.
+        - alert: BackupPauseAliasScopeStillUsed
+          expr: increase(backup_pause_scope_alias_requests_total[24h]) > 0
+          for: 0m
+          labels:
+            service: postgres-backup
+            severity: P2
+            owner: infra
+            runbook: design/architecture/system-architecture-backup-recovery.md#tick-pause-scope-migration-plan-normative
+          annotations:
+            summary: Backup controls still use alias scope
+            description: One or more backup pause/resume requests still relied on game_instance_id alias scope during the last 24 hours.
+
+    - name: firemud.alerts.player_experience
+      rules:
+        - alert: LoginSuccessRatioLowGateway
+          expr: login_success_ratio_gateway_15m < 0.995
+          for: 15m
+          labels:
+            service: spring-cloud-gateway
+            severity: P0
+            owner: platform
+            runbook: design/architecture/system-architecture-player-experience-incident-runbook.md#login-success-ratio-below-slo
+          annotations:
+            summary: Login success ratio below SLO
+            description: Gateway login success ratio has fallen below 99.5% over the last 15 minutes.
+        - alert: LoginSuccessRatioLowTcpProxy
+          expr: login_success_ratio_tcpproxy_15m < 0.995
+          for: 15m
+          labels:
+            service: tcp-proxy-service
+            severity: P0
+            owner: platform
+            runbook: design/architecture/system-architecture-player-experience-incident-runbook.md#login-success-ratio-below-slo
+          annotations:
+            summary: Login success ratio below SLO (TCP Proxy)
+            description: TCP Proxy login success ratio has fallen below 99.5% over the last 15 minutes.
+        - alert: CommandLatencyP99HighGateway
+          expr: command_latency_ms_p99_gateway_5m > 250
+          for: 10m
+          labels:
+            service: spring-cloud-gateway
+            severity: P1
+            owner: gameplay
+            runbook: design/architecture/system-architecture-player-experience-incident-runbook.md#command-latency-above-slo
+          annotations:
+            summary: Command p99 latency above SLO
+            description: Gateway command end-to-end p99 latency has exceeded 250ms for core commands.
+        - alert: CommandLatencyP99HighTcpProxy
+          expr: command_latency_ms_p99_tcpproxy_5m > 250
+          for: 10m
+          labels:
+            service: tcp-proxy-service
+            severity: P1
+            owner: gameplay
+            runbook: design/architecture/system-architecture-player-experience-incident-runbook.md#command-latency-above-slo
+          annotations:
+            summary: Command p99 latency above SLO (TCP Proxy)
+            description: TCP Proxy command end-to-end p99 latency has exceeded 250ms for core commands.
+        - alert: ChatDeliveryLatencyP99High
+          expr: chat_delivery_latency_ms_p99_5m > 1000
+          for: 10m
+          labels:
+            service: social-groups-service
+            severity: P1
+            owner: gameplay
+            runbook: design/architecture/system-architecture-player-experience-incident-runbook.md#chat-delivery-latency-above-slo
+          annotations:
+            summary: Chat delivery latency above SLO
+            description: Chat delivery p99 latency has exceeded 1s over the last 5 minutes for active regions.
+        - alert: EntryPathAvailabilityLowGateway
+          expr: entrypath_availability_gateway_5m < 0.995
+          for: 10m
+          labels:
+            service: spring-cloud-gateway
+            component: entrypath
+            severity: P0
+            owner: platform
+            runbook: design/architecture/system-architecture-player-experience-incident-runbook.md#telnet-and-websocket-path-availability-below-slo
+          annotations:
+            summary: Gateway entry-path availability degraded
+            description: One or more tenants have acute connection failures on a gateway-owned entry path.
+        - alert: EntryPathAvailabilityLowGatewayCompliance
+          expr: entrypath_availability_gateway_1d < 0.999
+          for: 30m
+          labels:
+            service: spring-cloud-gateway
+            component: entrypath
+            severity: P2
+            owner: platform
+            runbook: design/architecture/system-architecture-player-experience-incident-runbook.md#telnet-and-websocket-path-availability-below-slo
+          annotations:
+            summary: Gateway entry-path availability below 1-day SLO
+            description: One or more tenants have sustained connection failures on a gateway-owned entry path over the compliance window.
+        - alert: EntryPathAvailabilityLowTcpProxy
+          expr: entrypath_availability_tcpproxy_5m < 0.995
+          for: 10m
+          labels:
+            service: tcp-proxy-service
+            component: entrypath
+            severity: P0
+            owner: platform
+            runbook: design/architecture/system-architecture-player-experience-incident-runbook.md#telnet-and-websocket-path-availability-below-slo
+          annotations:
+            summary: TCP Proxy entry-path availability degraded
+            description: One or more tenants have acute connection failures on TCP Proxy entry paths.
+        - alert: EntryPathAvailabilityLowTcpProxyCompliance
+          expr: entrypath_availability_tcpproxy_1d < 0.999
+          for: 30m
+          labels:
+            service: tcp-proxy-service
+            component: entrypath
+            severity: P2
+            owner: platform
+            runbook: design/architecture/system-architecture-player-experience-incident-runbook.md#telnet-and-websocket-path-availability-below-slo
+          annotations:
+            summary: TCP Proxy entry-path availability below 1-day SLO
+            description: One or more tenants have sustained connection failures on TCP Proxy entry paths over the compliance window.
+        - alert: WebSocketEntryPathBlackboxUnavailable
+          expr: max_over_time(entrypath_blackbox_probe_success{path="websocket"}[2m]) == 0
+          for: 2m
+          labels:
+            service: spring-cloud-gateway
+            component: entrypath
+            severity: P0
+            owner: platform
+            runbook: design/architecture/system-architecture-player-experience-incident-runbook.md#telnet-and-websocket-path-availability-below-slo
+          annotations:
+            summary: WebSocket entry path unreachable from external probe
+            description: Independent blackbox probes cannot reach the public WebSocket gameplay path; this may be an LB, DNS, TLS, or ingress failure before requests reach Gateway.
+        - alert: TelnetEntryPathBlackboxUnavailable
+          expr: max_over_time(entrypath_blackbox_probe_success{path="telnet"}[2m]) == 0
+          for: 2m
+          labels:
+            service: tcp-proxy-service
+            component: entrypath
+            severity: P0
+            owner: platform
+            runbook: design/architecture/system-architecture-player-experience-incident-runbook.md#telnet-and-websocket-path-availability-below-slo
+          annotations:
+            summary: Telnet entry path unreachable from external probe
+            description: Independent blackbox probes cannot reach the public Telnet gameplay path; this may be an LB, DNS, TLS, or ingress failure before requests reach TCP Proxy.
+
+    - name: firemud.alerts.observability
+      rules:
+        - alert: AlertmanagerServiceUnavailable
+          expr: up{job="alertmanager"} == 0
+          for: 5m
+          labels:
+            service: alertmanager
+            severity: P1
+            owner: platform
+            runbook: design/architecture/system-architecture-observability-incident-runbook.md#alertmanager-down-or-not-routing
+          annotations:
+            summary: Alertmanager service unavailable
+            description: Alertmanager is unreachable from Prometheus, so notifications and alert-state visibility are impaired even if rule evaluation continues.
+        - alert: AlertmanagerNotificationsFailing
+          expr: rate(alertmanager_notifications_failed_total[5m]) > 0
+          for: 10m
+          labels:
+            service: alertmanager
+            severity: P1
+            owner: platform
+            runbook: design/architecture/system-architecture-observability-incident-runbook.md#alertmanager-down-or-not-routing
+          annotations:
+            summary: Alertmanager notifications are failing
+            description: Alertmanager is evaluating alerts but cannot deliver notifications reliably.
+        - alert: AlertmanagerConfigReloadFailed
+          expr: alertmanager_config_last_reload_successful == 0
+          for: 5m
+          labels:
+            service: alertmanager
+            severity: P1
+            owner: platform
+            runbook: design/architecture/system-architecture-observability-incident-runbook.md#alertmanager-down-or-not-routing
+          annotations:
+            summary: Alertmanager configuration reload failed
+            description: Alertmanager is running with stale or invalid routing configuration.
+        - alert: PrometheusRuleEvaluationsFailing
+          expr: increase(prometheus_rule_evaluation_failures_total[5m]) > 0
+          for: 10m
+          labels:
+            service: prometheus
+            severity: P1
+            owner: platform
+            runbook: design/architecture/system-architecture-observability-incident-runbook.md#prometheus-down-or-stale
+          annotations:
+            summary: Prometheus rule evaluations are failing
+            description: Prometheus cannot evaluate one or more rules; alerting and fallback recordings may be stale.
+        - alert: PrometheusServiceDiscoveryFailures
+          expr: increase(prometheus_sd_refresh_failures_total[5m]) > 0
+          for: 10m
+          labels:
+            service: prometheus
+            severity: P1
+            owner: platform
+            runbook: design/architecture/system-architecture-observability-incident-runbook.md#prometheus-down-or-stale
+          annotations:
+            summary: Prometheus service discovery or scrape refresh is failing
+            description: Prometheus cannot refresh one or more scrape target pools, so metrics may go stale without the server being fully down.
+        - alert: ElasticsearchClusterHealthRed
+          expr: elasticsearch_cluster_health_status{color="red"} == 1
+          for: 10m
+          labels:
+            service: elasticsearch
+            severity: P1
+            owner: platform
+            runbook: design/architecture/system-architecture-observability-incident-runbook.md#elasticsearchkibana-down-or-indexing-stalled
+          annotations:
+            summary: Elasticsearch cluster health is red
+            description: Elasticsearch cluster health is red, which can break log ingest, search, and Kibana-backed incident triage.
+        - alert: ElasticsearchIndexingFailuresHigh
+          expr: rate(elasticsearch_indices_indexing_index_failed_total[5m]) > 0
+          for: 10m
+          labels:
+            service: elasticsearch
+            severity: P1
+            owner: platform
+            runbook: design/architecture/system-architecture-observability-incident-runbook.md#elasticsearchkibana-down-or-indexing-stalled
+          annotations:
+            summary: Elasticsearch indexing failures detected
+            description: Elasticsearch is failing to index a non-zero stream of documents, so recent logs may be missing or incomplete.
+        - alert: OTelCollectorExportFailures
+          expr: rate(otelcol_exporter_send_failed_spans[5m]) > 0
+          for: 10m
+          labels:
+            service: otel-collector
+            severity: P1
+            owner: platform
+            runbook: design/architecture/system-architecture-observability-incident-runbook.md#jaeger-opentelemetry-collector-down
+          annotations:
+            summary: OpenTelemetry Collector is failing to export spans
+            description: Distributed tracing data is being dropped before it reaches Jaeger or the configured backend.
+        - alert: OTelCollectorUnavailable
+          expr: up{job="otel-collector"} == 0
+          for: 5m
+          labels:
+            service: otel-collector
+            severity: P1
+            owner: platform
+            runbook: design/architecture/system-architecture-observability-incident-runbook.md#jaeger-opentelemetry-collector-down
+          annotations:
+            summary: OpenTelemetry Collector unavailable
+            description: The collector is unreachable, so new traces cannot be received even before downstream export/storage is considered.
+        - alert: JaegerQueryUnavailable
+          expr: up{job="jaeger-query"} == 0
+          for: 10m
+          labels:
+            service: jaeger
+            severity: P1
+            owner: platform
+            runbook: design/architecture/system-architecture-observability-incident-runbook.md#jaeger-opentelemetry-collector-down
+          annotations:
+            summary: Jaeger query service unavailable
+            description: Jaeger query is unavailable, so operators cannot search or inspect traces even if spans are still being ingested.
+        - alert: JaegerStorageFailuresHigh
+          expr: increase(jaeger_collector_spans_dropped_total[5m]) > 0
+          for: 10m
+          labels:
+            service: jaeger
+            severity: P1
+            owner: platform
+            runbook: design/architecture/system-architecture-observability-incident-runbook.md#jaeger-opentelemetry-collector-down
+          annotations:
+            summary: Jaeger is dropping spans
+            description: Jaeger storage or collector paths are dropping spans, so trace data is incomplete even when services still export successfully.
+        - alert: FluentBitOutputErrorsHigh
+          expr: rate(fluentbit_output_errors_total[5m]) > 0
+          for: 10m
+          labels:
+            service: fluent-bit
+            severity: P1
+            owner: platform
+            runbook: design/architecture/system-architecture-observability-incident-runbook.md#elasticsearchkibana-down-or-indexing-stalled
+          annotations:
+            summary: Fluent Bit output errors detected
+            description: Log shipping is failing or backpressured; Kibana may lose recent log visibility.
+        - alert: GrafanaDatasourceUnavailable
+          expr: grafana_datasource_up == 0
+          for: 10m
+          labels:
+            service: grafana
+            severity: P1
+            owner: platform
+            runbook: design/architecture/system-architecture-observability-incident-runbook.md#grafana-down
+          annotations:
+            summary: Grafana datasource unavailable
+            description: Grafana cannot query one or more configured datasources, so dashboards may render incomplete or misleading incident views.
+        - alert: GrafanaServiceUnavailable
+          expr: up{job="grafana"} == 0
+          for: 10m
+          labels:
+            service: grafana
+            severity: P1
+            owner: platform
+            runbook: design/architecture/system-architecture-observability-incident-runbook.md#grafana-down
+          annotations:
+            summary: Grafana service unavailable
+            description: Grafana itself is unreachable, so dashboard-based triage is unavailable even if Prometheus and other backends are healthy.

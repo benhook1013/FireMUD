@@ -1,6 +1,6 @@
 # Architecture Review Prompt: World, Content, and Persistence
 
-Read the following documents, and follow references to any other design documents that appear relevant:
+Read the following documents. Follow references only when a listed document clearly delegates a canonical contract needed to resolve an implementation-blocking contradiction or missing rule. Do not recursively expand beyond that.
 
 - `design/architecture/microservices/world-management-service/README.md`
 - `design/architecture/microservices/world-management-service/world-creation-workflow.md`
@@ -20,5 +20,13 @@ Then:
 
 - Review the world and content model, entity model, and asset storage as a single, end-to-end persistence design (authoring, versioning, deployment, runtime updates, and migrations).
 - Do not summarize behavior or describe what is already good.
-- Only identify problems, contradictions, or gaps: unclear ownership boundaries between services, inconsistencies in how world, entity, and asset data are modeled, weak migration or rollback stories, missing rules for live content changes, or persistence patterns that are likely to cause data corruption, performance issues, or developer-experience issues.
-- For each issue, reference the specific document or documents involved and propose concrete, actionable improvements, such as clearer ownership diagrams, stronger invariants, explicit migration or rollback flows, or adjusted responsibilities between services.
+- Focus on issues that would cause incompatible implementations, unsafe data changes, or unclear ownership during the first implementation slice.
+- Do not let non-blocking polish, later-scale optimizations, and speculative live-editing edge cases crowd out blockers. Once blockers are cleared, list the highest-value non-blocking improvements if they would materially improve the design.
+- Return at most 5 issues, ordered by severity.
+- For each issue, include:
+  - `Severity`: `blocking` or `important`
+  - `Why it matters now`
+  - `Docs involved`
+  - `Suggested decision or spec change`
+- If no implementation-blocking issues remain, say `No implementation-blocking issues found.` and include a `Suggested follow-ups` section with any worthwhile non-blocking improvements, ordered by leverage and not capped at 3.
+- Stop once you have either identified the remaining blockers or captured the worthwhile non-blocking follow-ups.

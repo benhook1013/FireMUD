@@ -8,9 +8,9 @@ Centralized logging and administration tools for the platform. Collects log data
 
 - Aggregate logs from every microservice via Fluent Bit sidecars and expose search APIs.
 - Offer dashboards and search for operators and moderators by embedding Kibana and Grafana views.
-- Enforce moderation actions such as bans via secured APIs
+- Define moderation policy, issue moderation actions, and keep auditable moderation records
 - Record audit trails for feature flag changes and account events.
-- Monitor **coordination and tick health** across tenants/regions and drive automated remediation where safe (for example, pausing ticks or triggering scoped coordination resets based on Redis/DB signals exposed by the Game Session Service).
+- Monitor **coordination and tick health** across tenants/regions and drive automated remediation where safe by issuing documented Game Session control-plane requests (for example, pausing ticks or requesting scoped remediation based on Redis/DB signals exposed by the Game Session Service).
 
 ## Architecture / Design Notes
 
@@ -21,11 +21,29 @@ In addition to log and moderation tooling, the service acts as a **control-plane
 - Consumes metrics and health information published by the Game Session Service (for example, per-region status such as `HEALTHY`, `DEGRADED`, or `COORDINATION_UNTRUSTWORTHY`).
 - Exposes admin APIs and UI controls to:
   - Pause or resume tick execution for specific `<tenantId, regionId>` pairs.
-  - Trigger **scoped coordination resets** using the runbooks in [Redis Operations & Migrations](../../system-architecture-redis-operations.md) (for example, per-region or per-deployment resets).
+  - Request **scoped coordination remediation** through Game Session control APIs and operator runbooks in [Redis Operations & Migrations](../../system-architecture-redis-operations.md).
 - Implements guarded automation that:
   - Automatically pauses ticks and marks regions as unhealthy when dual-leader or split-brain signals are detected.
-  - Optionally performs safe, narrow coordination resets (such as single-region resets with clean tick ledgers) without requiring an operator to be present, while still emitting audit events for every action.
+  - May request safe, narrow remediation through Game Session-owned control APIs without requiring an operator to be present, while still emitting audit events for every action.
+Game Session remains the only service allowed to mutate gameplay coordination state or execute tick pause/resume behavior. Logging & Admin owns operator UX, automation policy, and audit only; it does not become the runtime state owner for remediation.
 All admin APIs are secured via role-based access control integrated with the Account Service.
+
+### Availability Partitioning
+
+This service has two intentionally different availability classes:
+
+- **Core operator control plane** – moderation actions, feature-flag requests, quota overrides, reports, saga inspection, and tick-remediation controls.
+- **Observability-backed experiences** – embedded dashboards, log search, metric exploration, traces, and alert-centric investigations.
+
+The core operator control plane must remain available when Elasticsearch, Prometheus, Jaeger, Grafana, Kibana, or Alertmanager are degraded. Implementations should preserve this with independent readiness/degradation behavior, resource isolation, and defensive timeouts/circuit breakers around observability backends.
+
+The architecture treats these as two runtime partitions even when they are delivered from one deployable:
+
+- **Core control-plane endpoints** include moderation actions, feature-flag and quota controls, reports, saga inspection, and tick-remediation APIs. These paths must not block on Elasticsearch, Prometheus, Jaeger, Grafana, Kibana, or Alertmanager for request success.
+- **Observability-backed endpoints** include log search, embedded dashboards, traces, metric exploration, and alert investigation views. These paths may degrade independently or return explicit backend-unavailable states.
+- Readiness and degradation reporting must distinguish these partitions so an observability outage does not mark the entire operator service unavailable.
+- Thread pools, connection pools, and timeout budgets for observability integrations must be isolated from the core control plane so expensive search/dashboard failures cannot starve moderation or remediation requests.
+- If a future implementation cannot preserve those guarantees inside one service boundary, the architecture should split the deployable into separate operator-control and observability surfaces rather than weakening the availability rule.
 
 ## Script Patch and Plugin Control Plane
 
@@ -38,8 +56,7 @@ Logging & Admin is the operator-facing control plane for:
 Logging & Admin does not write to Redis directly. It drives all runtime changes through documented service APIs and records audit trails so operators can explain why automation behavior changed.
 
 - gRPC connections to this service require mTLS. JWT validation is required for admin or user-facing endpoints; internal gameplay and system calls are authenticated solely via mTLS.
-- The security model relies solely on JWT roles; there is no additional
-  network-layer isolation for admin endpoints.
+- The security model uses JWT roles plus network-layer isolation: admin endpoints are reachable only through Gateway/internal management surfaces and namespace/network-policy controls, not direct public exposure.
 - Moderation data and log indices include a `tenantId` field so administrators
   only see information for the games they manage. Cross-tenant queries are
   rejected per the [Multi-Tenancy](../../system-architecture-multi-tenancy.md)
@@ -54,7 +71,7 @@ Logging & Admin does not write to Redis directly. It drives all runtime changes 
 - [Role-based admin UI](./admin-ui.md) for moderators.
 - Saga workflows coordinate moderation tasks across services. See [Transaction Strategies](../../system-architecture-transactions.md).
 - [Moderation policies](./moderation-policies.md) including profanity filters.
-- UI for toggling runtime feature flags. Backend APIs are available. See [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md).
+- UI for requesting runtime feature flag overrides through owning domain control-plane APIs (Game Session enforces runtime behavior). See [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md).
 - Audit trail for account actions and world changes.
 - Transaction logs for purchases and subscription events.
 - Captures failed login attempts and suspicious activity reported by the Game
@@ -64,6 +81,11 @@ Logging & Admin does not write to Redis directly. It drives all runtime changes 
 - Automated alerts for suspicious activity via Alertmanager.
 - Real-time analytics on game performance.
 - Optional TOTP-based two-factor authentication for administrator accounts.
+
+When observability backends are unavailable, these features degrade differently:
+
+- Core operator control-plane features remain writable and supported.
+- Observability-backed features may become read-only, partially unavailable, or hidden behind degraded-state messaging.
 
 ### Data Model
 
@@ -76,8 +98,11 @@ Logging & Admin does not write to Redis directly. It drives all runtime changes 
 
 - Operators review flagged logs through the web UI.
 - Actions such as bans or warnings are issued via secured API calls.
-- Events are forwarded to the Account Service for enforcement and stored for
-  compliance purposes.
+- Enforcement follows the ban taxonomy:
+  - `account_security_ban` events are applied by Account Service.
+  - `gameplay_ban` events are enforced by Game Session Service.
+  - `chat_mute` and `chat_ban` events are enforced by Social & Groups Service.
+  All moderation actions are audit-recorded for compliance.
 
 ### REST & gRPC Endpoints
 
@@ -109,6 +134,21 @@ grpcurl -plaintext localhost:6565 logging_admin.v1.LoggingAdminService/Ping
 grpcurl -plaintext -d '{"tenant_id":1,"reporter_account_id":1,"target_account_id":2,"type":"BUG","description":"example"}' \
   localhost:6565 logging_admin.v1.ReportService/CreateReport
 ```
+
+### Endpoint Authentication Classes
+
+| Surface | Examples | Required auth path | Notes |
+| --- | --- | --- | --- |
+| Public/infra health | `GET /ping`, `Ping` | Internal network + platform health policy | Not a user-authenticated business operation. |
+| Admin/operator APIs (HTTP) | `/logs`, `/moderation/actions`, `/feature-flags/toggle`, `/reports`, `/sagas*` | JWT middleware (`AuthTokenInterceptor` + route classification) | External tools must enter via Gateway allowlisted routes. |
+| Service-to-service control/ingest (gRPC internal) | Internal lifecycle/event ingestion and trusted backend calls | mTLS caller identity + explicit service authorization checks | Never exposed at public ingress; role claims are required only for user-scoped actions. |
+
+### Availability Classes by Endpoint Family
+
+| Endpoint family | Availability class | Required behavior during observability outage |
+| --- | --- | --- |
+| `/moderation/actions`, `/feature-flags/toggle`, `/reports`, `/sagas*`, tick-remediation APIs | Core operator control plane | Remain available; may use local/PostgreSQL-backed audit state and downstream domain-service APIs only |
+| `/logs`, embedded Kibana/Grafana/Jaeger/Alertmanager views | Observability-backed | May degrade, return explicit unavailable/read-only states, or be hidden behind degraded-state messaging |
 
 ## Dependencies
 
@@ -146,8 +186,9 @@ Additional variables specific to this service:
 
 | Variable | Purpose | Default |
 | -------- | ------- | ------- |
-| `FIREMUD_AUTH_JWT_SECRET` | HMAC signing key for JWT validation | *(none)* |
-| `FIREMUD_AUTH_JWT_SECRET_PATH` | Path to a file containing the JWT secret | *(none)* |
+| `FIREMUD_AUTH_JWKS_URI` | JWKS endpoint used for JWT validation (canonical) | *(none)* |
+| `FIREMUD_AUTH_JWT_SECRET` | Legacy HMAC JWT validation secret (transitional only; not for player-facing environments) | *(none)* |
+| `FIREMUD_AUTH_JWT_SECRET_PATH` | Legacy file path for HMAC JWT validation secret (transitional only; not for player-facing environments) | *(none)* |
 | `FIREMUD_AUTH_JWT_EXPIRATION_MS` | Lifetime of issued JWTs in milliseconds | `3600000` |
 | `FIREMUD_SERVICES_ACCOUNT_SERVICE` | gRPC endpoint (host:port) for the Account Service | *(none)* |
 | `FIREMUD_SERVICES_GAME_SESSION_SERVICE` | gRPC endpoint (host:port) for the Game Session Service | *(none)* |

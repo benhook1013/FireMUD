@@ -7,21 +7,35 @@ This runbook describes operator actions for **player-facing SLO breaches** on lo
 - **Login success ratio below SLO**
 - **Command end-to-end latency above SLO**
 - **Chat delivery latency above SLO**
-- **Telnet/WebSocket path availability below SLO**
+- **Telnet and WebSocket path availability below SLO**
 
-Each scenario assumes that the Player Experience, Redis & Coordination Health, and Tick Health & Ledger dashboards under `design/observability/grafana` are available.
+Use Grafana/Kibana/Jaeger when available. If any observability backend is degraded, follow the fallback procedures in `system-architecture-observability-incident-runbook.md` and the degraded-mode branches in each scenario below.
+
+Synthetic canary identities used in this runbook should be treated as operational probes, not normal players. Operator workflows should keep them out of routine moderation, behavior review, and player-facing analytics unless an incident specifically involves canary validation.
+
+## Trace Preconditions (For Latency/Tick Root Cause)
+
+Trace-driven triage is optional but often decisive for command-latency incidents. Before relying on Jaeger as a primary diagnostic:
+
+- Confirm baseline tracing is usable for the affected path (production-like default is non-zero sampling; around 1% for high-volume entry paths is the baseline usability target from `system-architecture-tracing.md`).
+- If traces are too sparse:
+  - First escalate service-scoped sampling temporarily (`OTEL_TRACES_SAMPLER=parentbased_traceidratio`, increase `OTEL_TRACES_SAMPLER_ARG`) and record start/end times in the incident timeline.
+  - If the environment supports collector tail-sampling by `tenantId`/`regionId`, prefer scoped escalation for the impacted tenant/region and remove the policy immediately after triage.
+- If the environment does not meet the collector capability contract for tenant/region-scoped sampling, treat it as service-scoped-only and do not claim scoped escalation.
+- If trace volume remains insufficient, continue with metrics + logs and do not block mitigation on trace availability.
 
 ## Login Success Ratio Below SLO
 
-### Detect
+### Detect (Login success ratio)
 
-- Alert: `LoginSuccessRatioLow` fires (for example, success ratio < 99.5% over 15 minutes).
+- Alert: `LoginSuccessRatioLowGateway` or `LoginSuccessRatioLowTcpProxy` fires (for example, success ratio < 99.5% over 15 minutes).
+- Independent canary alerts for `playerflow_canary_success{flow="login",path=...}` may fire before live-traffic SLIs move materially in low-traffic environments.
 - Player reports: widespread login failures or timeouts.
 - Metrics:
   - Player Experience dashboard shows a drop in the login success panel.
   - Gateway/TCP Proxy logs show spikes in 4xx/5xx on login routes or connection refusals.
 
-### Decide
+### Decide (Login success ratio)
 
 - Determine scope:
   - Single tenant vs all tenants.
@@ -31,12 +45,13 @@ Each scenario assumes that the Player Experience, Redis & Coordination Health, a
   - **Auth-related** (Account Service, JWT, database).
   - **Downstream capacity-related** (Game Session, Redis, Postgres).
 
-### Act
+### Act (Login success ratio)
 
 1. **Check entry paths**
    - Compare Telnet vs WebSocket/HTTPS behavior:
      - If only Telnet is affected, follow the Telnet degraded runbook (`system-architecture-telnet-degraded-runbook.md`) and TCP Proxy dashboards.
      - If both are affected, continue below.
+   - Check the synthetic login canary first. If canaries are failing while live login-volume SLIs are flat, treat the issue as a real outage with insufficient live traffic, not as “no incident”.
 2. **Inspect Gateway and Account Service**
    - Use service-specific dashboards/logs to check:
      - Error rate and latency on login routes.
@@ -54,32 +69,38 @@ Each scenario assumes that the Player Experience, Redis & Coordination Health, a
      - If a recent migration or deployment is suspected, consider rollback and run smoke tests.
 5. **Verify recovery**
    - Confirm the login success SLI panel returns to acceptable levels.
-   - Ensure `LoginSuccessRatioLow` clears and player reports subside.
+   - Ensure `LoginSuccessRatioLowGateway` and/or `LoginSuccessRatioLowTcpProxy` clear (as applicable) and player reports subside.
    - Use the `player-incident-drilldown.json` Kibana saved search to spot-check representative player logs by `playerId`, `tenantId`, and `traceId` to confirm that errors have returned to normal levels.
+6. **Degraded-mode branch (if observability backends are unavailable)**
+   - If Grafana is down: query Prometheus directly for login success ratio by ingress path and tenant, plus `playerflow_canary_success{flow="login",path=...}`.
+   - If Kibana is down: use service logs from Gateway/TCP Proxy/Account pods filtered by `tenantId` and `correlationId`.
+   - If Prometheus is down: prioritize service health endpoints and dependency health (Postgres/Redis), and use conservative ingress mitigation (rollback/scale) based on authoritative service signals.
 
 ## Command Latency Above SLO
 
-### Detect
+### Detect (Command latency)
 
-- Alert: `CommandLatencyP99High` fires (p99 command latency > 250ms over 5 minutes).
+- Alert: `CommandLatencyP99HighGateway` or `CommandLatencyP99HighTcpProxy` fires (p99 command latency > 250ms over 5 minutes).
+- Independent canary alerts for `playerflow_canary_success{flow="command",path=...}` or `playerflow_canary_latency_ms{flow="command",path=...}` may fire before traffic-derived latency panels move in low-volume periods.
 - Player reports: perceived lag or delayed command responses in game.
 - Metrics:
-  - Player Experience dashboard shows elevated command p99 latency.
+  - Player Experience dashboard shows elevated command p99 latency for one or more bounded core commands (`move`, `look`, `combat`).
   - Tick Health & Ledger dashboard shows whether tick execution or queue depth is also degraded.
 
-### Decide
+### Decide (Command latency)
 
 - Determine whether the latency is:
   - **Network/edge-bound** (Gateway/TCP Proxy queues or backpressure).
   - **Tick-bound** (tick execution p99 approaching `tick_lock_ttl_ms`).
   - **Downstream service-bound** (e.g., Entity Management, World Management, chat or automation calls from ticks).
 
-### Act
+### Act (Command latency)
 
 1. **Check tick health first**
    - Use the Tick Health & Ledger dashboard:
      - Inspect `tick_execution_time_ms_p99 / tick_lock_ttl_ms` for affected regions.
      - Inspect `tick_retry_queue_depth` and `tick_command_queue_depth`.
+   - If the representative command canary is failing or slow while the live-traffic SLI is quiet, use the canary result as the trigger to continue triage rather than waiting for more user traffic.
    - If tick execution is also degraded:
      - Follow the scaling runbook (`system-architecture-scaling-runbook.md`) to adjust Game Session region density or add replicas before touching tick cadence.
 2. **Check Redis coordination**
@@ -90,6 +111,8 @@ Each scenario assumes that the Player Experience, Redis & Coordination Health, a
 3. **Inspect downstream domains**
    - For commands dominating latency:
      - Use Jaeger and service-specific dashboards to identify slow spans (e.g., `entity_apply_damage`, `room_resolve_look`).
+     - Start with the per-command latency series from `command_latency_ms_p99_gateway_5m` / `command_latency_ms_p99_tcpproxy_5m`; do not rely on an aggregate “all core commands” rollup as the primary decision signal.
+     - Use stage-split command latency metrics (`command_latency_stage_ms_bucket`) first to determine whether the regression is in `edge_queue`, `dispatch`, `tick_wait`, or `domain_commit` before relying on trace sampling.
      - Verify database query performance and indexes for those paths.
 4. **Mitigate**
    - Scale the Game Session Service and/or hot downstream services where indicated.
@@ -98,10 +121,14 @@ Each scenario assumes that the Player Experience, Redis & Coordination Health, a
    - Ensure command p99 latency returns under the SLO threshold across core commands.
    - Confirm tick health metrics return to normal envelopes.
    - Use the `player-incident-drilldown.json` and `tick-region-logs.json` Kibana saved searches to correlate any remaining slow commands with specific `tenantId`/`regionId` and to verify that logs no longer show systemic timeouts or retries for hot commands.
+6. **Degraded-mode branch (if observability backends are unavailable)**
+   - If Grafana is down: run direct PromQL checks for command p99 latency, synthetic command-canary success/latency, tick safety ratio, Redis tail-loss, and queue depth per affected tenant/region.
+   - If Jaeger is down or sampling is insufficient: skip span-based narrowing and classify bottlenecks from metrics + structured logs only.
+   - If Kibana is down: inspect Game Session and hot domain-service logs directly for timeout/retry spikes by `tenantId`/`regionId`.
 
 ## Chat Delivery Latency Above SLO
 
-### Detect
+### Detect (Chat delivery latency)
 
 - Alert: `ChatDeliveryLatencyP99High` fires (p99 chat delivery > 1s over 5 minutes).
 - Player reports: delayed or missing chat messages.
@@ -109,14 +136,14 @@ Each scenario assumes that the Player Experience, Redis & Coordination Health, a
   - Player Experience dashboard shows elevated chat p99 latency.
   - Chat/social service dashboards show increased queue lengths or processing times.
 
-### Decide
+### Decide (Chat delivery latency)
 
 - Determine whether latency is:
   - **Ingress-bound** (Gateway/edge issues affecting chat commands).
   - **Chat service-bound** (processing pipelines, filter/moderation hooks, database/Redis calls).
   - **Downstream or cross-region-bound** (if chat relies on tick or region routing).
 
-### Act
+### Act (Chat delivery latency)
 
 1. **Inspect chat service metrics**
    - Check:
@@ -134,16 +161,22 @@ Each scenario assumes that the Player Experience, Redis & Coordination Health, a
    - Confirm chat p99 latency returns below the SLO for active channels.
    - Ensure the alert clears and player reports improve.
    - Use the `player-incident-drilldown.json` Kibana saved search to validate that chat-related errors or delays in logs have subsided for affected players and channels.
-## Telnet/WebSocket Path Availability Below SLO
+5. **Degraded-mode branch (if observability backends are unavailable)**
+   - If Grafana is down: query Prometheus directly for `chat_delivery_latency_ms_bucket` p99 by `tenantId`/`channel_type`.
+   - If Kibana is down: inspect Social/Groups service logs directly using `tenantId` and correlation identifiers.
+   - If Prometheus is down: use service health + queue/dependency indicators from application logs and reduce chat feature pressure (throttle or temporary feature disable) if needed.
 
-### Detect
+## Telnet and WebSocket Path Availability Below SLO
+
+### Detect (Entry path availability)
 
 - Player reports: failed or flaky connections on one entry path (Telnet or WebSocket/HTTPS).
 - Metrics:
   - Player Experience dashboard shows a drop in availability computed from `entrypath_connection_attempts_total{path,outcome}` for one or more tenants.
+  - External synthetic probes show whether the public Telnet or WebSocket path is reachable at all when traffic may not be reaching Gateway or TCP Proxy.
   - TCP Proxy dashboards show whether `tcpproxy_connections_limit_exceeded` or `tcpproxy_telnet_discarded` are elevated (Telnet path), and Gateway dashboards show whether WebSocket upgrade failures are elevated (WebSocket path).
 
-### Decide
+### Decide (Entry path availability)
 
 - Determine scope:
   - Single tenant vs all tenants (group by `tenantId`).
@@ -153,8 +186,10 @@ Each scenario assumes that the Player Experience, Redis & Coordination Health, a
   - `protocol_error` suggests client/edge parsing problems.
   - `upstream_unreachable` suggests Gateway or downstream availability issues.
   - `auth_failed` suggests account/JWT or session binding problems.
+- Check the external synthetic probe result first:
+  - If the blackbox probe is failing and `entrypath_connection_attempts_total` is flat or absent, treat this as an ingress/LB/TLS/DNS edge outage rather than an application-level success-ratio problem.
 
-### Act
+### Act (Entry path availability)
 
 1. **Classify by path**
    - If `path="telnet"` only:
@@ -171,4 +206,9 @@ Each scenario assumes that the Player Experience, Redis & Coordination Health, a
      - Scale or roll back Gateway/TCP Proxy if a recent change correlates with the incident.
      - Validate downstream dependencies (Redis/Postgres) and tick health for player-facing regions.
 3. **Verify recovery**
-   - Confirm availability returns above SLO for affected `{tenantId,path}` combinations and the dominant failure outcomes subside.
+   - Confirm the short-window detection view recovers quickly for affected `{tenantId,path}` combinations and the dominant failure outcomes subside.
+   - Confirm the 1-day compliance view trends back toward SLO after the acute incident is resolved.
+4. **Degraded-mode branch (if observability backends are unavailable)**
+   - If Grafana is down: query Prometheus directly for both `entrypath_connection_attempts_total` success/total ratios by `{tenantId,path}`, the external synthetic-probe metric for each public path, and the mirrored login/command canary metrics where relevant.
+   - If Kibana is down: use Gateway/TCP Proxy logs directly to classify failures (`limit_exceeded`, `protocol_error`, `upstream_unreachable`, `auth_failed`).
+   - If Prometheus is down: rely on edge health, pod events, and direct ingress error logs to guide rollback/scale/cap actions.

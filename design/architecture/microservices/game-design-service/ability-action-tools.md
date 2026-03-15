@@ -20,6 +20,9 @@ Abilities and actions defined through these tools can participate in scripted be
 - The scripting DSL exposes components that can reference abilities and action sequences (for example, nodes that conceptually “cast ability X” or “trigger action sequence Y”). These nodes emit commands into the tick system rather than bypassing Game Logic.
 - From the scripting engine’s perspective, invoking an ability is just another domain command; it is subject to the same per-entity, per-tick fairness rules and idempotency guarantees described in `design/architecture/system-architecture-ticks.md` and `design/architecture/system-architecture-scripting-dsl-reference-and-lifecycle.md`.
 - Script-side quotas and budgets, as described in `design/architecture/system-architecture-scripting-quotas-and-operations.md`, indirectly cap ability-heavy behaviors (for example, scripts that attempt to spam abilities) by limiting how often the relevant script handlers may run and how many commands they may produce.
+- Runtime output ceilings also apply here: a single handler firing must stay within explicit per-run command-count and work-item-size budgets, so ability-heavy graphs with excessive bounded fan-out must be rejected at validation time or fail as output-budget violations at runtime.
+
+Example: if an `onInterval` combat-support handler can branch into at most eight "cast ability" actions plus one follow-up emote, Game Design must validate that this bounded fan-out fits within `maxCommandsPerRun` and `maxSerializedWorkItemBytes`. If a graph revision increases the bounded fan-out beyond those ceilings, the patch should be rejected at publish time rather than relying on repeated runtime output-budget failures after deployment.
 
 ### Version Pinning with Scripts and Plugins
 
@@ -39,6 +42,7 @@ The Game Design Service’s publish workflows are responsible for enforcing thes
 
 - During `PublishVersion`, it verifies that all ability identifiers referenced by scripts and plugins targeting a given `(tenantId, versionId)` exist and are compatible with the ability schema for that version.
 - During `PublishScriptPatchVersion` and plugin bundle publication/enablement, it must re-validate that the patch/plugin remains compatible with the pinned `baseVersionId` (the underlying published game version) and its ability schema. Script-only and plugin-only patches must not introduce new dependencies that require a new `versionId`.
+- Compatibility checks must be bound to an immutable `abilitySchemaDigest` associated with `baseVersionId`. Patch/plugin validation must use that digest snapshot, and the same digest must be recorded in publish metadata so validation cannot drift due to mutable schema reads.
 
 If mismatches are detected, Game Design marks the publish/enable attempt as failed in its design-time status model (for example `PUBLISH_FAILED_DESIGN`) and does **not** hand the corresponding patch/plugin version to the Automation & Scripting Service. As a result, no `<tenantId, scriptPatchVersion>` lifecycle row is created and the patch never enters `PENDING_VALIDATION` / `ONLOAD_RUNNING` / `READY` on the runtime side; runtime handlers therefore never execute against missing or incompatible abilities.
 

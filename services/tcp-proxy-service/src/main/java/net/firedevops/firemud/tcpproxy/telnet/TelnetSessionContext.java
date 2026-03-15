@@ -11,7 +11,7 @@ import org.springframework.util.StringUtils;
 final class TelnetSessionContext {
   private static final Logger logger = LoggerFactory.getLogger(TelnetSessionContext.class);
 
-  private volatile String sessionId;
+  private volatile String gameInstanceId;
   private volatile String tenantId;
 
   boolean captureFromEnvelope(String envelope) {
@@ -30,7 +30,7 @@ final class TelnetSessionContext {
 
     if (payload.contains(":")) {
       String[] tokens = payload.split(":", 2);
-      sessionId = tokens[0];
+      gameInstanceId = tokens[0];
       tenantId = tokens.length > 1 ? tokens[1] : null;
     } else {
       String[] parts = payload.split("\\s+");
@@ -38,27 +38,27 @@ final class TelnetSessionContext {
         logger.warn("Ignoring malformed session envelope: {}", envelope);
         return false;
       }
-      sessionId = parts[0];
+      gameInstanceId = parts[0];
       tenantId = parts[1];
     }
 
-    if (!StringUtils.hasText(sessionId) || !StringUtils.hasText(tenantId)) {
-      logger.warn("Ignoring session envelope missing sessionId or tenantId: {}", envelope);
-      sessionId = null;
+    if (!StringUtils.hasText(gameInstanceId) || !StringUtils.hasText(tenantId)) {
+      logger.warn("Ignoring session envelope missing gameInstanceId or tenantId: {}", envelope);
+      gameInstanceId = null;
       tenantId = null;
       return false;
     }
 
-    logger.info("Captured Telnet session {} for tenant {}", sessionId, tenantId);
+    logger.info("Captured Telnet gameInstance {} for tenant {}", gameInstanceId, tenantId);
     return true;
   }
 
   boolean isReady() {
-    return StringUtils.hasText(sessionId) && StringUtils.hasText(tenantId);
+    return StringUtils.hasText(gameInstanceId) && StringUtils.hasText(tenantId);
   }
 
-  String sessionId() {
-    return sessionId;
+  String gameInstanceId() {
+    return gameInstanceId;
   }
 
   String tenantId() {

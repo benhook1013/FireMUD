@@ -31,6 +31,10 @@ docker run --name "$POSTGRES_CONTAINER" -e POSTGRES_USER=firemud \
   -e POSTGRES_PASSWORD=firemud -e POSTGRES_DB=firemud -p 5432:5432 -d postgres:16
 trap 'docker rm -f "$POSTGRES_CONTAINER" >/dev/null' EXIT
 
+until docker exec "$POSTGRES_CONTAINER" pg_isready -U firemud -d firemud >/dev/null 2>&1; do
+  sleep 1
+done
+
 export FIREMUD_POSTGRES_HOST=localhost
 export FIREMUD_POSTGRES_PORT=5432
 export FIREMUD_POSTGRES_DB=firemud
@@ -47,14 +51,19 @@ export FLYWAY_PASSWORD="$FIREMUD_POSTGRES_PASSWORD"
 for service in "${SERVICES[@]}"; do
   MIGRATION_DIR="services/$service/src/main/resources/db/migration"
   if [ -d "$MIGRATION_DIR" ]; then
+    docker exec "$POSTGRES_CONTAINER" psql -U firemud -d firemud -v ON_ERROR_STOP=1 -c \
+      "DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public; DROP SCHEMA IF EXISTS saga CASCADE; CREATE SCHEMA saga;"
+
     echo "Running Flyway migrations for $service"
-    ./gradlew ":$service:flywayClean" ":$service:flywayMigrate"
+    ./gradlew --no-configuration-cache ":$service:flywayMigrate"
 
     echo "Generating ERD for $service"
     docker run --rm \
       --network host \
+      --user "$(id -u):$(id -g)" \
       -v "$(pwd)/$OUT_DIR":/output \
       schemacrawler/schemacrawler:latest \
+      /opt/schemacrawler/bin/schemacrawler.sh \
       --server=postgresql \
       --host=localhost --port=5432 \
       --user=firemud --password=firemud \
@@ -70,8 +79,10 @@ done
 echo "Generating ERD for saga schema"
 docker run --rm \
   --network host \
+  --user "$(id -u):$(id -g)" \
   -v "$(pwd)/$OUT_DIR":/output \
   schemacrawler/schemacrawler:latest \
+  /opt/schemacrawler/bin/schemacrawler.sh \
   --server=postgresql \
   --host=localhost --port=5432 \
   --user=firemud --password=firemud \

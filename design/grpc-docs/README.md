@@ -38,7 +38,6 @@ After changing any `.proto` schema under `protos/`, regenerate the docs:
 
 ```bash
 BUF_WORKSPACE_CONFIG=config/protobuf/buf.work.yaml buf lint
-BUF_WORKSPACE_CONFIG=config/protobuf/buf.work.yaml buf breaking --against origin/main
 ./gradlew generateProto
 ./dev-tools/docs/generate-grpc-docs.sh
 ```

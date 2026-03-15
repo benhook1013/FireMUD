@@ -15,6 +15,66 @@ on:
         description: 'Backup name to restore (defaults to latest)'
         required: false
         default: ''
+      restore_environment:
+        description: 'Environment identity for external credential validation'
+        required: false
+        default: 'staging'
+      expected_pg_dump_bucket:
+        description: 'Expected backup bucket for validation'
+        required: false
+        default: ''
+      pg_dump_bucket:
+        description: 'Observed backup bucket bound in the restored environment'
+        required: false
+        default: ''
+      pg_dump_endpoint:
+        description: 'Observed backup endpoint bound in the restored environment'
+        required: false
+        default: ''
+      expected_asset_store_bucket:
+        description: 'Expected asset bucket for validation'
+        required: false
+        default: ''
+      asset_store_bucket:
+        description: 'Observed asset bucket bound in the restored environment'
+        required: false
+        default: ''
+      expected_asset_store_endpoint:
+        description: 'Expected asset endpoint for validation'
+        required: false
+        default: ''
+      asset_store_endpoint:
+        description: 'Observed asset endpoint bound in the restored environment'
+        required: false
+        default: ''
+      expected_smtp_host:
+        description: 'Expected SMTP host for validation'
+        required: false
+        default: ''
+      smtp_host:
+        description: 'Observed SMTP host bound in the restored environment'
+        required: false
+        default: ''
+      smtp_port:
+        description: 'Observed SMTP port bound in the restored environment'
+        required: false
+        default: ''
+      expected_operator_cert_fingerprint:
+        description: 'Expected operator certificate fingerprint for validation'
+        required: false
+        default: ''
+      operator_cert_fingerprint:
+        description: 'Observed operator certificate fingerprint for validation'
+        required: false
+        default: ''
+      external_credential_evidence_ref:
+        description: 'Required: in-repo recovery record with external credential validation evidence'
+        required: false
+        default: ''
+      sanitization_evidence_ref:
+        description: 'Required for staging restores: in-repo sanitization evidence path'
+        required: false
+        default: ''
 
 jobs:
   verify:
@@ -34,7 +94,7 @@ jobs:
           sudo mv velero-$VELERO_VERSION-linux-amd64/velero /usr/local/bin/velero
 
       - name: Verify backups
-        run: dev-tools/verify-backups.sh
+        run: dev-tools/backups/verify-backups.sh
 
       - name: Create restore namespace
         if: ${{ inputs.restore == 'true' }}
@@ -50,5 +110,24 @@ jobs:
           if [ -z "$BACKUP" ]; then
             BACKUP=$(velero backup get -n ${{ inputs.namespace }} --no-headers | awk 'END{print $1}')
           fi
-          dev-tools/restore-cluster.sh "$BACKUP"
+          dev-tools/restores/restore-cluster.sh "$BACKUP"
 
+      - name: Validate external credential bindings
+        if: ${{ inputs.restore == 'true' }}
+        env:
+          PG_DUMP_BUCKET: ${{ inputs.pg_dump_bucket }}
+          PG_DUMP_ENDPOINT: ${{ inputs.pg_dump_endpoint }}
+          ASSET_STORE_BUCKET: ${{ inputs.asset_store_bucket }}
+          ASSET_STORE_ENDPOINT: ${{ inputs.asset_store_endpoint }}
+          SMTP_HOST: ${{ inputs.smtp_host }}
+          SMTP_PORT: ${{ inputs.smtp_port }}
+          OPERATOR_CERT_FINGERPRINT: ${{ inputs.operator_cert_fingerprint }}
+          EXPECTED_PG_DUMP_BUCKET: ${{ inputs.expected_pg_dump_bucket }}
+          EXPECTED_ASSET_STORE_BUCKET: ${{ inputs.expected_asset_store_bucket }}
+          EXPECTED_ASSET_STORE_ENDPOINT: ${{ inputs.expected_asset_store_endpoint }}
+          EXPECTED_SMTP_HOST: ${{ inputs.expected_smtp_host }}
+          EXPECTED_OPERATOR_CERT_FINGERPRINT: ${{ inputs.expected_operator_cert_fingerprint }}
+          EXTERNAL_CREDENTIAL_EVIDENCE_REF: ${{ inputs.external_credential_evidence_ref }}
+          SANITIZATION_EVIDENCE_REF: ${{ inputs.sanitization_evidence_ref }}
+        run: |
+          dev-tools/restores/validate-external-credentials.sh "${{ inputs.restore_environment }}"

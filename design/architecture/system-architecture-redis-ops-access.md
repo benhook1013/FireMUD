@@ -102,9 +102,60 @@ Operators interact with coordination state through **supported tools**, not raw 
     - Node-level operations such as `FLUSHALL`/AOF reset during a coordinated reset (already covered by the Redis Operations doc).
     - Read-only inspection via the ops user.
 
+### Canonical Control-Plane and CLI Contract
+
+To keep reset/replay behavior implementation-safe, the maintenance/tooling surface is not left to per-runbook invention. The first implementation must expose one canonical control-plane contract, whether that is delivered as a CLI, an admin API, or both:
+
+- Required control-plane operations:
+  - `PauseTicks(scope)`
+  - `ResumeTicks(scope)`
+  - `GetRegionTickStatus(scope)`
+  - `RunScopedCoordinationReset(scope)`
+  - `ReconcileTickLedger(scope, oldRegionEpoch)`
+  - `ConvergeCommandRecords(scope, oldRegionEpoch)`
+  - `InitializeRegionMeta(scope, regionEpoch, currentTickId)`
+  - `RunPostResetSmokeCheck(scope)`
+- Required CLI verbs:
+  - `coordination-maintenance pause`
+  - `coordination-maintenance status`
+  - `coordination-maintenance reset`
+  - `coordination-maintenance reconcile-ledger`
+  - `coordination-maintenance converge-commands`
+  - `coordination-maintenance init-meta`
+  - `coordination-maintenance smoke-check`
+  - `coordination-maintenance resume`
+- Scope grammar:
+  - `--scope region --tenant <tenantId> --region <regionId>`
+  - `--scope tenant --tenant <tenantId>`
+  - `--scope cluster`
+- Required execution rule:
+  - The CLI subcommands above are the only supported write-path entrypoints for coordinated reset/recovery flows. Helm hooks, Jobs, and admin dashboards call these verbs rather than re-encoding reset logic themselves.
+- Required version rule:
+  - The CLI and control-plane implementation must ship from the same build/version set as the services and Lua registry they operate on. Mixed-version reset orchestration is unsupported.
+
+`RunPostResetSmokeCheck(scope)` minimum assertions:
+
+| Check | Required pass criteria |
+| --- | --- |
+| Lease | A region lease for every sampled region in the scope can be acquired and renewed without stale-epoch or lock-conflict errors that persist beyond normal retry budget. |
+| Redis metadata baseline | `tick:{tenantRegionTag}:meta` exists or is created during the smoke run with the expected `region_epoch` and baseline `current_tick_id` for the sampled region. |
+| Batch allocation | The smoke tick allocates exactly one durable batch for the sampled `(tenantId, regionId, region_epoch, tickId)` and records the expected lease/fencing token. |
+| Redis staging | The smoke tick stages at least one no-op or synthetic smoke-test effect into `pending`, and `pending` correlates back to the durable `tick_batch_id`. |
+| Ledger convergence | The staged smoke effect reaches a terminal ledger outcome (`APPLIED` or explicit smoke-test `ABANDONED`) without leaving `SCHEDULED` rows stranded. |
+| Cleanup | `pending` is cleared, per-region locks are released, and the region is no longer considered in-flight after the smoke tick completes. |
+| Durable advancement | Durable commit/cleanup counters advance as expected and no inconsistent-state alert or duplicate-batch condition is raised. |
+| Scope sampling | For tenant- or cluster-scoped resets, the smoke check samples at least one representative region per affected executor/shard group rather than only one global region. |
+
+Runbooks may compose these verbs, but they must not invent alternate write paths or omit required steps such as command-record convergence.
+
+The table above is the canonical post-reset verification checklist. Other runbooks should reference this checklist directly rather than restating a partial subset of assertions in different words.
+
 Direct `redis-cli` writes to coordination prefixes are reserved for **break-glass scenarios** and must follow the incident guidelines in `system-architecture-redis.md` (auditing, post-incident reset, and verification). As an additional guardrail:
 
-- Any break-glass write that mutates `tick:*`, `timer:*`, `retry:*`, `remote:*`, `session:*`, or `tick-executor-lease:*` for a given `<tenantId, regionId>` (or tenant) must be followed by a **scoped coordination reset** for the affected scope before normal tick processing resumes.
+- Any break-glass write that mutates `tick:*`, `timer:*`, `retry:*`, `remote:*`, `session:*`, or `tick-executor-lease:*` must be followed by a reset/cleanup scope that actually covers the mutated prefix before normal tick processing resumes:
+  - For region-scoped families (`tick:*`, `timer:*`, `retry:*`, `tick-executor-lease:*`), run a region- or tenant-scoped coordination reset as appropriate.
+  - For tenant-scoped `remote:*`, run a tenant-scoped reset or an explicit tenant-scoped `remote:<tenantId>:*` cleanup workflow (with audit trail), not a region-only reset.
+  - For session prefixes, follow session reset policy (region resets preserve `session:game:*` by default; tenant resets preserve sessions unless an explicit invalidate-sessions option is invoked; cluster resets invalidate sessions by default).
 - Operators must treat such writes as equivalent to “coordination state may be inconsistent” and use the Coordination Reset Model to bring the region/tenant/cluster back to a known-good state, rather than leaving ad-hoc edits in place as a permanent fix.
 - Break-glass flows should go through a small wrapper (CLI or Logging & Admin action) that:
   - Executes the minimal required Redis mutation.
@@ -134,7 +185,7 @@ This ensures that operators use the same abstractions as application code and re
 
 ## Discovery and Version Discipline
 
-- The coordination maintenance CLI is shipped as part of the normal build/release pipeline (for example as a small JVM application or script under `dev-tools/`); runbooks and Helm hooks should reference its **concrete entrypoint** (for example, `dev-tools/coord-maintenance.sh` or the corresponding Gradle task) so operators do not need to guess how to invoke it.
+- The coordination maintenance CLI is shipped as part of the normal build/release pipeline under the canonical command name `coordination-maintenance`; environment packaging may wrap that command in a Gradle task, container entrypoint, or `dev-tools/` script, but runbooks and Helm hooks should reference the canonical command/verb names above so operators do not need to guess how to invoke it.
 - Operators must only use a CLI version that matches the deployed services and Lua registry:
   - If the CLI build version does **not** match the image tag or Git commit used for the running deployment, do not attempt coordination repairs; instead, run the CLI from the same artifact version that produced the deployment or perform a coordinated upgrade.
   - Break-glass or manual `redis-cli` operations are not an acceptable substitute for a mismatched maintenance CLI; they still require a scoped coordination reset afterwards and should be treated as incident-only paths.

@@ -21,7 +21,8 @@ For canonical naming and scoping rules, see [Identifier Glossary](../../system-a
 - Exposes gRPC endpoints for other microservices.
 - Caches frequently accessed character data in Redis for quick lookups.
 - Applies **optimistic locking** to avoid conflicting updates on the same entity.
-- **Database writes are deferred and batched**, not triggered on every gameplay action. The Game Session Service coordinates real-time updates using Redis; the database is only updated when ticks complete.
+- **Database writes are deferred and batched** for ordinary entity updates, not triggered on every gameplay action. The Game Session Service coordinates real-time updates using Redis; the database is normally updated when ticks complete.
+- Spatial containment mutations that participate in cross-service effects are the exception: before Entity Management acknowledges a spatial `EffectId` back to Game Session, it must durably flush the effect’s idempotency guard plus the affected containment/container rows for that effect within the same local transaction. A participant acknowledgement must never be emitted for Redis-only staged state.
 - This design reduces write frequency and contention, making optimistic locking a natural fit — most entities are updated by only one process at a time, and conflicts are rare.
 - Item transfers and other gameplay actions span services but execute within ticks
   using Redis scripts for rollback. Sagas are reserved for non-gameplay
@@ -75,6 +76,100 @@ new `runtime_version`, the Game Session Service and Entity Management treat
 missing or incompatible templates as a fatal configuration error for that
 launch; the version selection must be corrected rather than silently
 substituting defaults or partial data.
+
+### Replacement-Instance State Classification
+
+Entity Management must classify its runtime persistence surface for cutover and migration tooling:
+
+- `S1` entity-owned durable state:
+  - `character` identity/account-ownership rows and equivalent progression/currency records that do not require version remapping when referenced templates remain valid;
+  - stable player-owned inventory/container membership for item instances that remain valid against the target version without remapping.
+- `S2` entity-owned version-mapped durable state:
+  - equipment-slot bindings for equipped items whose template validity depends on the target version;
+  - learned-ability, starter-loadout, class/archetype, or equivalent durable character references whose validity depends on target-version template identifiers;
+  - inventory or character rows that remain durable but reference templates requiring an approved remap to the target version.
+- `S3` entity-owned ephemeral state:
+  - synthetic room-ground containers and their contents keyed by `(tenantId, gameInstanceId, roomInstanceId)`;
+  - transient containment, encounter-specific entities, corpses, summons, or equivalent rows whose lifecycle is tied to the source `gameInstanceId`;
+  - any row family explicitly documented as instance-scoped only.
+
+Initial-slice row-family inventory:
+
+- `character` rows are `S1`.
+- Player progression/currency/account-ownership rows attached to `character` and not requiring template remap are `S1`.
+- Inventory membership / containment rows for durable player-owned containers remain `S1` when every referenced item template is still valid against the target version.
+- `equipment_bindings` rows are `S2`.
+- Durable learned-ability, class/archetype, starter-loadout, or similar template-reference rows are `S2`.
+- Durable inventory or character rows that need an approved template remap to remain valid are `S2`.
+- Synthetic room-ground containers keyed by `(tenantId, gameInstanceId, roomInstanceId)` and their containment rows are `S3`.
+- Encounter-scoped NPCs, corpses, summons, temporary containers, and any containment rows tied only to the source `gameInstanceId` are `S3`.
+
+Initial-slice rule:
+
+- If a row family is not explicitly documented as `S1` or `S2`, treat it as `S3` for cutover purposes.
+- Replacement-instance workflows must not infer template remaps from names, display text, or best-effort similarity; only approved `remapSetId` mappings may satisfy `S2` compatibility.
+
+Entity upgrade validation minimum contract:
+
+- The service must expose a cutover-validation API that accepts `tenantId`, `sourceGameInstanceId`, `targetVersionId`, and optional `remapSetId`.
+- The response must enumerate the entity-owned row families checked, the referenced template identifiers, and per-family outcomes `COMPATIBLE`, `REQUIRES_MAPPING`, or `INCOMPATIBLE`.
+- If the service currently has no `S2` rows for a given source instance, it must report that explicitly rather than collapsing the result into a generic success.
+
+Illustrative responses:
+
+- Durable rows present but no remap required:
+
+```json
+{
+  "tenantId": "t1",
+  "sourceGameInstanceId": "g-old",
+  "targetVersionId": "v2",
+  "checkedFamilies": [
+    {
+      "family": "equipment_bindings",
+      "referencedTemplateIds": ["itemTemplateId:iron-sword"],
+      "outcome": "COMPATIBLE"
+    }
+  ],
+  "hasS2Rows": true,
+  "result": "COMPATIBLE",
+  "remapSetRequired": false
+}
+```
+
+- Durable rows require remap:
+
+```json
+{
+  "tenantId": "t1",
+  "sourceGameInstanceId": "g-old",
+  "targetVersionId": "v3",
+  "checkedFamilies": [
+    {
+      "family": "class_assignment",
+      "referencedTemplateIds": ["classTemplateId:ranger-v1"],
+      "outcome": "REQUIRES_MAPPING"
+    }
+  ],
+  "hasS2Rows": true,
+  "result": "INCOMPATIBLE",
+  "remapSetRequired": true
+}
+```
+
+- No `S2` rows for a source instance:
+
+```json
+{
+  "tenantId": "t1",
+  "sourceGameInstanceId": "g-old",
+  "targetVersionId": "v2",
+  "checkedFamilies": [],
+  "hasS2Rows": false,
+  "result": "COMPATIBLE",
+  "remapSetRequired": false
+}
+```
 
 See [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md)
 and [Item & Equipment Balancing Tools](../game-design-service/item-equipment-balancing.md)
@@ -150,6 +245,15 @@ Testing expectations for these caches follow the “Class A (versioned, correctn
   Service rather than this service, but all item instances and inventories remain owned and persisted here.
 - Entity graphs cache inventory relationships for fast lookups.
 
+#### Instance termination cleanup contract
+
+Synthetic room-ground containers scoped by `(tenantId, gameInstanceId, roomInstanceId)` must be removed through the cross-service `InstanceTermination` Saga described in World Management docs:
+
+- Game Session must already have closed admissions for the target instance before cleanup starts.
+- Entity Management owns cleanup of containers and contained items for a terminating `gameInstanceId`.
+- Cleanup must be idempotent and guarded by a durable saga step key so retries converge without double-deletes.
+- Entity Management must not treat world row deletion as implicit cleanup confirmation; World Management marks an instance `TERMINATED` only after this service confirms cleanup completion.
+
 ### gRPC APIs
 
 - `CreateCharacter` – builds a new player character from a template.
@@ -157,6 +261,26 @@ Testing expectations for these caches follow the “Class A (versioned, correctn
 - `QueryInventory` – lists items for an entity with pagination.
 - `ListCharactersByAccount` – returns all characters owned by an account across tenants.
 - `ListRoomEntities` – returns players, NPCs, and visible items present in a room, scoped by `(tenantId, gameInstanceId, roomInstanceId)` (a `RoomInstanceRef`) so room presence and ground items are instance-safe.
+- `GetDraftDesignDigest` – returns publish-gating digest for Draft entity templates using typed scope request `GetDraftDesignDigestRequest { tenantId, scope: oneof { versionId, scriptPatchVersion } }`. Entity Management supports `versionId` scope only and must return `UNSUPPORTED_SCOPE` for `scriptPatchVersion`. Minimum response fields are `{tenantId, scope, appliedCommitId, contentDigest, digestSchemaVersion}`. `appliedCommitId` means the highest Game Design commit whose full revision set has been durably applied to the target Draft entity scope. `contentDigest` must cover only version-scoped entity template/binding rows (for example item/NPC templates, loot mappings, balance curves) and must exclude live runtime entities and audit/history metadata.
+
+### Digest Input Manifest
+
+Entity Management is a required publish-gate participant and must maintain a stable digest manifest for `GetDraftDesignDigest(versionId)`:
+
+- Included objects:
+  - version-scoped entity-template tables such as item, NPC, equipment, loot-table, and balance-curve definitions keyed by `(tenantId, versionId)`;
+  - normalized template-binding rows that affect published entity semantics, such as loot mappings or equipment/archetype constraints.
+- Excluded objects:
+  - all live runtime entities, inventories, containers, room-ground containers, and any rows keyed by `gameInstanceId` or `entityId`;
+  - audit/history/provenance tables and non-semantic timestamps;
+  - applied-revision ledgers when those rows do not affect entity semantics.
+- Canonicalization rules:
+  - serialize included relations in stable table order, then primary-key order;
+  - include only semantic fields plus stable identifiers referenced cross-service;
+  - normalize encoded structured fields before hashing.
+- `digestSchemaVersion` must increment whenever included objects, semantic field selection, or serialization semantics change.
+
+Publish gating must fail closed if Entity Management cannot attest a digest consistent with this manifest.
 
 ### LOOK entity listing contract
 
@@ -164,19 +288,31 @@ Testing expectations for these caches follow the “Class A (versioned, correctn
 
 - `tenantId`, `gameInstanceId`, and `roomInstanceId` (a `RoomInstanceRef`) so consumers can unambiguously scope the entity list to a running instance.
 - An `entitySnapshotId` so consumers can cache or invalidate entity lists deterministically.
+- `asOfTickId` (or equivalent monotonic read-fence token) echoing the fence used to materialize this entity list.
 - `entities[]`, each with `entityId`, `displayName`, `entityType` (`PLAYER`, `NPC`, `ITEM`), and optional `role`/`affiliation`.
 - `stateFlags` such as `isHidden`, `isInCombat`, or `isQuestTarget` so Game Logic can mask stealthy entities or highlight objectives.
 - `visionPriority` to help sort players before NPCs and list visible items at the end, keeping `LOOK` render ordering consistent.
 - `reloadHint` (enum) that signals whether the list is stable or dynamic, allowing Game Logic to decorate the `LOOK` output (for example, “Someone just entered from the east.”).
 
-Game Logic treats `entitySnapshotId` as the canonical cache key for LOOK-relevant entity presence for a specific `RoomInstanceRef`. When composing a full LOOK view, Game Logic combines:
+Game Logic treats `entitySnapshotId` as the canonical cache key for LOOK-relevant entity presence for a specific `RoomInstanceRef` at a specific read fence. When composing a full LOOK view, Game Logic combines:
 
 - `worldSnapshotId` from World Management’s `GetRoomSnapshot`, and
 - `entitySnapshotId` from `ListRoomEntities`,
 
-then returns a `lookSnapshotId` (for example `worldSnapshotId + ":" + entitySnapshotId`) alongside the rendered `LookResult` so Game Session can cache the final transcript deterministically.
+then returns a `lookSnapshotId` (for example `worldSnapshotId + ":" + entitySnapshotId + ":" + asOfTickId`) alongside the rendered `LookResult` so Game Session can cache the final transcript deterministically.
 
-Room-entity data is derived from runtime entity state plus authoritative world location. Ground items are discovered by querying items contained by the synthetic room-ground container for the target `RoomInstanceRef`. Characters and NPCs are included when their current location (owned by World Management and accessed via gRPC or a refreshed projection) matches the target `RoomInstanceRef`. Visibility and filtering rules are applied after aggregation so LOOK output remains player-correct.
+Room-entity data is derived from runtime entity state plus authoritative world location. Ground items are discovered by querying items contained by the synthetic room-ground container for the target `RoomInstanceRef`. Characters and NPCs are included when their current location (owned by World Management) matches the target `RoomInstanceRef`:
+
+- The caller obtains the authoritative occupant `entityId` set and read fence from World Management before invoking `ListRoomEntities`.
+- `ListRoomEntities` joins those caller-supplied occupant `entityId` values to its own runtime entity rows to materialize display data plus room-ground inventory state owned by Entity Management.
+- `ListRoomEntities` must accept caller-supplied occupancy references together with the World Management read fence token (`asOfTickId`); when Entity Management cannot serve the same fence it must return `STALE_READ_FENCE` / `READ_FENCE_UNAVAILABLE` instead of returning mixed-tick data.
+- The read fence is satisfied only by durable post-commit state. Redis-staged containment changes that have not yet committed the effect guard and container/item row updates for that fence are not eligible to satisfy `asOfTickId`.
+
+Entity Management must not maintain a competing “room occupancy index” that can drift from World Management’s location tables. Visibility and filtering rules are applied after aggregation so LOOK output remains player-correct.
+
+Concrete per-effect required writes and reconciliation rules live in `design/architecture/system-architecture-spatial-and-ambient-effects-catalog.md`.
+
+Cross-service retry orchestration is owned by the Game Session Service reconciliation backlog described in [Transaction Strategies](../../system-architecture-transactions.md#reconciliation-owner-of-record-spatialambient-effects). Entity Management must expose participant acknowledgements for each `EffectId`; it is not the owner of cross-service retry scheduling.
 
 Only entities approved by the `EntityVisibilityPolicy` are returned; hidden NPCs, private inventory, or offstage summons are filtered out so `LOOK` always aligns with the player’s perspective. The response deliberately omits detailed stats to keep the text output focused on presence rather than numbers.
 
@@ -277,7 +413,15 @@ Entity Management also exposes **design-time** APIs used by the Game Design Serv
 
 Entity Management must also expose a read-only design-time synchronization surface so the Game Design Service can validate convergence before publish:
 
-- `GetDraftDesignDigest(tenantId, versionId)` returns `appliedCommitId` (or last applied revision), a stable `contentDigest`, and a `digestSchemaVersion` as described in `design/architecture/microservices/game-design-service/world-editing-tools.md`.
+- `GetDraftDesignDigest(GetDraftDesignDigestRequest)` uses request shape `{tenantId, scope: oneof {versionId, scriptPatchVersion}}`. Entity Management supports `versionId` scope only and returns `UNSUPPORTED_SCOPE` otherwise.
+- Response returns `{tenantId, scope, appliedCommitId, contentDigest, digestSchemaVersion}` as described in `design/architecture/microservices/game-design-service/world-editing-tools.md`.
+
+Digest input manifest requirements (Entity Management):
+
+- Included objects: version-scoped entity/binding rows for `(tenantId, versionId)` (for example item/NPC/equipment templates, loot/balance mappings, and other publish-scoped template relations).
+- Excluded objects: live runtime entity/inventory/container rows, room-ground runtime containment, audit/history tables, and non-semantic write-time metadata fields (`created_at`, `updated_at`).
+- Canonicalization: deterministic table ordering, primary-key ordering within table, and stable field encoding.
+- `digestSchemaVersion` must be incremented when included/excluded object sets or canonicalization rules change.
 
 ### Tick Locking
 
@@ -288,7 +432,7 @@ This service participates in tick processing by acquiring Redis locks before mut
 
 Entity Management treats `lock_ttl_ms` as an opaque value supplied by shared helpers; it does not define its own lock TTL configuration. This keeps locks alive long enough for normal ticks to complete while still bounding the recovery window for stalled ticks.
 
-At runtime, the Game Session Service also compares **observed tick execution time** to `lock_ttl_ms` as described in the [Tick System design](../../system-architecture-ticks.md#timeout-and-fairness-policy). Regions whose `p99` tick runtime begins to approach or exceed a configured fraction of `lock_ttl_ms` are treated as degraded, and operators are expected to either increase the tick interval or simplify per-tick work. Entity Management does not adjust TTLs itself; it relies on the shared helpers and scheduler behavior to keep lock usage within safe bounds.
+At runtime, the Game Session Service also compares **observed tick execution time** to `tick_lock_ttl_ms` (the effective lock TTL for the region, derived from `lock_ttl_ms`) as described in the [Tick System design](../../system-architecture-ticks.md#timeout-and-fairness-policy). Regions whose `p99` tick runtime begins to approach or exceed a configured fraction of that TTL are treated as degraded, and operators are expected to either increase the tick interval or simplify per-tick work. Entity Management does not adjust TTLs itself; it relies on the shared helpers and scheduler behavior to keep lock usage within safe bounds.
 
 Entity Management assumes the **per-command execution phases** described in the [Tick System design](../../system-architecture-ticks.md#per-command-execution-phases): commands that touch multiple entities in the same region resolve their target set first (for example, the two parties in a trade or all entities in a room for AoE effects), then acquire the necessary `tick:{tenantRegionTag}:lock:<entityId>` keys in a deterministic order. If any required lock is unavailable, the command fails, staged changes are rolled back via Redis, and the Game Session Service reschedules the work using the retry mechanisms described in the Tick System and Redis designs.
 

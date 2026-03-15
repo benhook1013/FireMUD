@@ -16,7 +16,8 @@ flowchart TD
     end
 
     subgraph InternalServices["Internal Services"]
-        Session[Game Session Service]
+        SessionFE[Game Session Service - Session Front-End]
+        SessionExec[Game Session Service - Lease Owner / Executor]
         Account[Account Service]
         World[World Management Service]
         Entity[Entity Management Service]
@@ -53,26 +54,44 @@ flowchart TD
     Web -- wss/HTTP --> ExtLB
     ExtLB -- wss/HTTP (public ingress) --> Gateway
     TCPProxy -- wss (mTLS, internal-only listener) --> Gateway
-    Gateway -- ws (in-cluster) --> Session
+    Gateway -- ws (in-cluster) --> SessionFE
+    TCPProxy -. NotifyDisconnect gRPC (at-least-once, advisory) .-> SessionFE
 
     Admin -- gRPC mgmt (infra) --> Gateway
-    Admin -- admin APIs (via Gateway) --> InternalServices
+    Admin -- HTTP(S) admin APIs (via Gateway allowlist) --> Gateway
+    Gateway -- routed admin API --> Logging
+    Gateway -- routed admin API --> Account
+    Gateway -- routed admin API --> SessionFE
+    Gateway -- routed admin API --> Social
+    Gateway -- routed admin API --> Design
 
-    Session -- gRPC --> Account
-    Session -- gRPC --> World
-    Session -- gRPC --> Entity
-    Session -- gRPC --> Logic
-    Session -- gRPC --> Design
-    Session -- gRPC --> Script
-    Session -- gRPC --> Social
-    Session -- gRPC --> Logging
+    SessionFE -- internal gRPC (fenced forwarding) --> SessionExec
+    SessionFE -- gRPC --> Account
+    SessionExec -- gRPC --> World
+    SessionExec -- gRPC --> Entity
+    SessionExec -- gRPC --> Logic
+    SessionExec -- gRPC --> Design
+    SessionExec -- gRPC --> Script
+    SessionExec -- gRPC --> Social
+    SessionExec -- gRPC --> Logging
+    SessionExec -. lifecycle and coordination signals .-> Logging
+    Account -. audit and account-domain events .-> Logging
 
-    InternalServices --> DB
-    Session --> CoordRedis
-    Entity --> CoordRedis
-    Script --> CoordRedis
+    Account --> DB
+    SessionFE --> DB
+    SessionExec --> DB
+    World --> DB
+    Entity --> DB
+    Design --> DB
+    Social --> DB
+    Logging --> DB
+    SessionExec -- owner writes --> CoordRedis
+    Account -- auth-owner writes --> CoordRedis
+    Entity -- shared-helper participation --> CoordRedis
+    Script -- automation-owner writes --> CoordRedis
     TCPProxy --> CacheRedis
     Gateway --> CacheRedis
+    World --> CacheRedis
     Entity --> CacheRedis
     Script --> CacheRedis
     Social --> CacheRedis
@@ -110,6 +129,21 @@ All services run as Docker containers inside a shared Kubernetes cluster. They r
 
 Note on gateway listener surfaces: the gateway has a public ingress surface (typically behind an external load balancer) and an internal-only WebSocket mTLS listener used by the TCP Proxy Service. The diagram shows both flows terminating at the same gateway component; see [Gateway Architecture](./system-architecture-gateway.md) for the surface-level expectations.
 
+Gameplay WebSocket route policy is canonicalized on `/ws/game/**` for player-facing gameplay admission.
+
+Diagram callouts:
+
+- External operator writes for moderation, quota overrides, runtime feature flags, and tick remediation enter through Logging & Admin via Gateway; direct domain-admin routes are read-only unless explicitly documented as bypass-safe.
+- Canonical room state is not assembled by direct World ↔ Entity joins; Game Session mints the room-read fence and composes room views only from same-fence responses.
+
+Admin and creator API exposure is intentionally allowlisted: external tools call domain admin APIs only through Gateway-routed HTTP(S) routes for owning services (for example Logging & Admin, Account, Game Session, Social & Groups, and Game Design). External mutating operator workflows for moderation, quota overrides, runtime feature-flag overrides, and tick remediation must enter through Logging & Admin; direct domain-admin routes are reserved for reads and explicitly documented bypass-safe workflows. External domain gRPC is not part of the edge contract unless a dedicated design update explicitly introduces it. Internal service-to-service gRPC remains direct and does not traverse Gateway.
+
+Within the Game Session layer, the stable `/ws/game/**` edge surface maps to a session front-end pod plus lease-owner execution model: the connected pod owns socket I/O, per-session sequencing, and the current execution-region pointer, while region-scoped tick execution remains fenced to the current `<tenantId, regionId>` lease owner and may be reached through internal gRPC forwarding. The separate nodes in the diagram represent runtime roles, not separate products or independently exposed edge surfaces. See [System Architecture Overview](./system-architecture-overview.md#session-sharding--routing).
+
+The `Gateway -> SessionFE` arrow represents both gameplay socket admission on `/ws/game/**` and the separate allowlisted Game Session admin/control routes described in the overview and context docs.
+
+For Gateway control-plane behavior in production-like environments (including the dynamic-route override dev/test scope), see the canonical [Gateway Management Plane Capability Matrix](./system-architecture-overview.md#gateway-management-plane-capability-matrix-canonical).
+
 ## Core Services Shown
 
 The diagram covers every microservice in the repository:
@@ -118,7 +152,7 @@ The diagram covers every microservice in the repository:
 - **[Spring Cloud Gateway](./microservices/spring-cloud-gateway/README.md)** – Routes HTTP and WebSocket traffic to internal services.
 - **[Game Session Service](./microservices/game-session-service/README.md)** – Orchestrates sessions, ticks, and runtime configuration.
 - **[Account Service](./microservices/account-service/README.md)** – Handles accounts, authentication, and subscriptions.
-- **[World Management Service](./microservices/world-management-service/README.md)** – Stores rooms, regions, and world maps with pathfinding APIs; it does not own live entities, items, or inventories.
+- **[World Management Service](./microservices/world-management-service/README.md)** – Stores rooms, regions, and world maps plus navigation metadata; pathfinding algorithms and route computation live in the Game Logic Service. World Management does not own live entities, items, or inventories.
 - **[Entity Management Service](./microservices/entity-management-service/README.md)** – Manages players, NPCs, items, and all inventories/containment, including player gear, containers, and items on the ground.
 - **[Game Logic Service](./microservices/game-logic-service/README.md)** – Resolves commands and core gameplay mechanics.
 - **[Game Design Service](./microservices/game-design-service/README.md)** – Provides authoring tools for game data and feature flags with version publishing copy steps and a web-based editor.
@@ -128,14 +162,19 @@ The diagram covers every microservice in the repository:
 
 Only the **TCP Proxy Service** and **Spring Cloud Gateway** are reachable from the internet. They operate in the network DMZ while the remaining microservices run on the internal network. Admin and creator tools always connect to **Logging & Admin Service and other domain services via the Gateway**; Logging & Admin is not exposed directly at the edge. See [Security Architecture](./system-architecture-security.md#network-security--boundary-design) and [System Architecture Overview](./system-architecture-overview.md#admin-entry-points-and-control-plane) for details.
 
-All internal communication from the **Game Session Service** to downstream microservices uses **gRPC** for high performance and strict schema enforcement. Stateful domain microservices persist data in PostgreSQL and use Redis for transient state; DMZ components such as the TCP Proxy Service and Spring Cloud Gateway remain stateless with respect to PostgreSQL but use Redis for rate limiting and caches. All services emit metrics to Prometheus and send structured logs to Elasticsearch.
+All internal synchronous communication from the **Game Session Service** to downstream microservices uses **gRPC** for high performance and strict schema enforcement. Asynchronous signaling flows (for example, `NotifyDisconnect`, lifecycle metrics/events, and audit/saga event streams) are documented separately and use explicit idempotency/ownership contracts. Stateful domain microservices persist data in PostgreSQL and use Redis for transient state; DMZ components such as the TCP Proxy Service and Spring Cloud Gateway remain stateless with respect to PostgreSQL but use Redis for rate limiting and caches. All services emit metrics to Prometheus and send structured logs to Elasticsearch.
+
+Coordination Redis arrows in this diagram follow ownership boundaries from ADR 0009: Game Session owns gameplay coordination prefixes (for example `session:game:*`, `tick:*`, `timer:*`, `retry:*`, and `tick-executor-lease:*`), Account owns `session:auth:*`, Automation & Scripting owns `automation:*`, and non-owner services (for example Entity) participate only through approved shared-helper contracts rather than ad hoc key ownership.
+
+Canonical room-state assembly is intentionally not shown as a direct World-to-Entity join: Game Session mints the read fence for gameplay-driven room views, and World Management plus Entity Management must each satisfy that same fence or reject the read so mixed-tick room state is never composed as canonical output.
 
 ## Datastore Layer
 
 Databases and caches shared across all services capture authoritative world state, runtime entities, and observability-ready analytics:
 
 - **PostgreSQL** – Primary persistent store for world topology, entities, characters, items, and transactional metadata (tenant-scoped tables include `tenantId` so data never mixes across games).
-- Not every service writes to PostgreSQL: some services are fully stateless with respect to persistence (for example, Game Logic), and others may be read-heavy. The diagram’s DB arrows indicate “uses the shared datastore layer” rather than “owns tables”.
+- Not every service writes to PostgreSQL: some services are fully stateless with respect to persistence (for example, Game Logic), and others may be read-heavy. The diagram’s DB arrows indicate shared infrastructure only, not cross-service table ownership; services must not directly read or mutate another service’s runtime tables.
+- For Game Session specifically, the DB arrows represent durable control-plane/runtime metadata (for example game-instance records, pinned runtime version/script patch state, feature-flag overrides, and disconnect/remediation bookkeeping). Gameplay session bindings, queues, timers, retries, and lease coordination remain Redis-owned.
 - **Coordination Redis** – Volatile session and tick coordination state; Lua scripts enforce atomic command execution and reconnect recovery while TTLs keep the data transient. In production this runs as a dedicated cluster so cache and rate-limit spikes cannot interfere with gameplay coordination.
 - **Cache/Rate-Limit Redis** – Best-effort caches, quotas, and rate limiting; this runs as a separate cluster in production and is safe to evict or scale independently of Coordination Redis.
 - **Elasticsearch** – Stores structured logs emitted by every service (via Fluent Bit); the Logging & Admin Service reads directly from it for dashboards and audits.
@@ -162,6 +201,18 @@ The diagram also illustrates the monitoring stack shared by every service:
 - **Kibana** – Queries and visualizes Elasticsearch logs and exposes an API that the Logging & Admin Service uses for embedding.
 
 See [Logging & Monitoring](./system-architecture-logging-monitoring.md) for deployment details.
+
+## Asynchronous Flows
+
+The mermaid graph includes representative async/event edges that are architecture-relevant:
+
+- TCP Proxy Service emits `NotifyDisconnect` to Game Session as a best-effort, at-least-once advisory signal keyed by `{proxyConnectionId, disconnectSequence}`.
+- Game Session emits lifecycle and coordination health signals consumed by Logging & Admin for operator workflows.
+- Account emits audit/account-domain events consumed by Logging & Admin using idempotent event identifiers (for example `{tenantId, eventType, eventId}`) so retries are replay-safe and deduplicable.
+- Logging & Admin is a control-plane sink for these async flows and does not take ownership of runtime enforcement decisions from domain services.
+- Moderation policy propagation from Logging & Admin to Game Session and Social & Groups uses versioned snapshots plus monotonic invalidation per `{tenantId, policyScope}`; enforcement services use bounded-staleness caches and fail-closed behavior for `gameplay_ban` and `chat_ban` when they cannot obtain a fresh snapshot within the allowed window.
+
+Durable business events and saga updates in this architecture are implemented using service-local transactional outbox patterns plus background consumers, not an implicit shared event bus; see [Transaction Strategies](./system-architecture-transactions.md#tick-adjacent-workflows-outbox-boundary).
 
 ## Related Documentation
 

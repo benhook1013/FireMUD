@@ -4,27 +4,34 @@ This document describes how the Automation & Scripting Service enforces script s
 
 - `design/architecture/system-architecture-scripting.md`
 - `design/architecture/system-architecture-ticks.md`
+- `design/architecture/system-architecture-scripting-observability-contract.md`
+- `design/architecture/system-architecture-scripting-normative-contract-tables.md`
 
 ## Implementation Status
 
-This document describes the **target-state architecture** for script sandboxing and resource limits. Some aspects may be partially implemented or stubbed out in the current codebase. Together with `design/architecture/system-architecture-scripting-dsl-reference-and-lifecycle.md`, it is the canonical specification for sandbox semantics; the high-level hub in `design/architecture/system-architecture-scripting.md` summarizes behavior and should defer to this document when there is any conflict.
+This document describes the **target-state architecture** for script sandboxing and resource limits. Together with `design/architecture/system-architecture-scripting-dsl-reference-and-lifecycle.md`, it is the canonical specification for sandbox semantics; the high-level hub in `design/architecture/system-architecture-scripting.md` summarizes behavior and should defer to this document when there is any conflict.
 
 For the latest progress and implementation notes, see:
 
 - `design/project-management/task-list-automation-scripting-service.md`
 - `design/architecture/system-architecture-scripting.md#sandboxing--security`
 
-The table below captures the intended behavior and current implementation status of key sandbox features. Keep this matrix up to date as engine work lands so downstream docs and services can rely on it.
+Implementation-progress tracking policy:
 
-| Feature | Description | Status (as of 2025-12-04) | Notes |
-| --- | --- | --- | --- |
-| Per-run wall-clock timeout | Abort a script run that exceeds its allocated wall-clock budget and record `sandbox_error` with `reason=cpu_budget_exceeded`. | Implemented / evolving | Core timeout behavior exists; budgets may be tuned as `AUTOMATION_TICK_BUDGET_MS` and related knobs evolve. |
-| Iteration / loop guards | Enforce per-run iteration limits so even bounded loops cannot hot-loop indefinitely. | Implemented | Backed by loop-safety analysis and runtime iteration counters; see DSL reference for graph rules. |
-| Soft memory guards | Approximate tracking of script-local data sizes and early abort with `reason=memory_budget_exceeded` before JVM OOM. | Partial | Model and outcomes are defined here; enforcement thresholds and telemetry are still being tuned. |
-| Outcome taxonomy | Canonical `outcome` / `reason` pairs for sandbox failures and infrastructure errors written to `script_event_audit`. | Implemented | Must remain consistent with `design/architecture/system-architecture-scripting-quotas-and-operations.md#outcome-to-metric-mapping`. |
-| Failure-rate circuit breaker integration | Use live-traffic sandbox failures to transition scripts into `runtimeStatus=DISABLED_DUE_TO_ERRORS`. | Implemented / evolving | Core wiring is present; thresholds and disable policies are adjusted over time. Dry-run/test executions must be isolated so privileged tooling cannot disable live scripts by default. |
-| Test / dry-run parity | Dry-run executions share the same sandbox limits as live runs while being tracked separately for quotas and metrics. | Partial | Engine behavior is shared; additional dry-run–specific budgets and metrics are being added in the Automation & Scripting Service README and quotas docs. |
-| Plugin sandbox reuse | Plugins run in the same sandbox engine with component allowlists and stricter quotas. | Partial | Core reuse exists; plugin-specific component policy and observability are being expanded in the modding and quotas docs. |
+- Keep implementation-progress status in the task list, not in this normative design doc.
+- If this doc includes a status note for an incident or rollout reason, it must include `verifiedDate`, `verifiedBy`, and `verifiedCommit`.
+
+The table below captures the required sandbox behavior contract (target-state semantics), independent of current rollout phase.
+
+| Feature | Contract requirement |
+| --- | --- |
+| Per-run wall-clock timeout | Abort a script run that exceeds its allocated wall-clock budget and record `finalStage=DSL_EVAL` with `finalOutcome=sandbox_error` and `finalReason=cpu_budget_exceeded`. |
+| Iteration / loop guards | Enforce per-run iteration limits so even bounded loops cannot hot-loop indefinitely. |
+| Soft memory guards | Approximate tracking of script-local data sizes and early abort with `finalOutcome=sandbox_error` and `finalReason=memory_budget_exceeded` before JVM OOM. |
+| Outcome taxonomy | Use canonical stage-aware audit outcomes (`finalStage` + `finalOutcome` / `finalReason`) in `script_event_audit` consistent with the observability and normative contract docs. |
+| Failure-rate circuit breaker integration | Use live-traffic sandbox failures to transition scripts into `runtimeStatus=DISABLED_DUE_TO_ERRORS`, with dry-run/test isolation by default. |
+| Test / dry-run parity | Dry-run executions share the same sandbox limits as live runs while remaining isolated for quotas, budgets, and metrics. |
+| Plugin sandbox reuse | Plugins run in the same sandbox engine with component allowlists and stricter quotas where policy requires. |
 
 ---
 
@@ -65,7 +72,7 @@ Each script run follows a consistent lifecycle:
 
 1. **Trigger admission**
    - A trigger arrives from the scheduler (event, timer, interval, or manual test run).
-   - `ScriptQuotaService` checks per-script and per-tenant quotas. If the quota is exceeded, the trigger is rejected with outcome `quota_denied` and no sandbox work occurs.
+   - `ScriptQuotaService` checks per-script and per-tenant quotas. If the quota is exceeded, the trigger is rejected at admission (`finalStage=ADMISSION`, `finalOutcome=quota_denied`) and no sandbox work occurs.
 
 2. **Sandbox setup**
    - The scheduler allocates a **sandbox context** containing:
@@ -73,6 +80,7 @@ Each script run follows a consistent lifecycle:
      - The pinned `scriptPatchVersion`
      - Per-run budgets (CPU/time, memory, and concurrency)
    - The run is submitted to a **bounded thread pool** dedicated to script execution.
+   - Dry-run/test work must use isolated execution capacity (separate pool, reserved worker share, or equivalent partition) so live automation retains guaranteed worker availability under load.
 
 3. **Graph evaluation**
    - The engine evaluates the script’s component graph:
@@ -81,16 +89,15 @@ Each script run follows a consistent lifecycle:
    - If a budget check fails or a runtime guard trips (for example, too-large payload), evaluation is interrupted with a sandbox error.
 
 4. **Command staging**
-   - Successful runs emit a list of commands which are staged into the entity’s command queue via `ScriptTickService`.
-   - Staging is subject to automation tick limits (`AUTOMATION_TICK_MAX_EVENTS`, `AUTOMATION_TICK_BUDGET_MS`) and uses the same Redis Lua scripts and hash tags as described in the tick architecture.
+   - Successful runs emit a list of commands which are persisted as part of a durable work item (outbox) and then indexed for batching/draining by `ScriptTickService`.
+   - Before persistence, the engine must enforce explicit output budgets such as `maxCommandsPerRun`, `maxCommandsPerEntityPerTrigger`, and `maxSerializedWorkItemBytes`; exceeding those ceilings is a non-success outcome and must not partially commit an oversized work item.
+   - Staging is subject to automation tick limits (`AUTOMATION_TICK_MAX_EVENTS`, `AUTOMATION_TICK_BUDGET_MS`) and uses only `automation:*` Redis prefixes. The Automation & Scripting Service never writes `tick:*` keys directly; it hands off commands to Game Session over internal gRPC so Game Session can enqueue tick commands under its own tick and locking model.
 
 5. **Outcome recording**
-   - The engine records a **structured outcome** for the run:
-     - `success`
-     - `quota_denied`
-     - `sandbox_error` (with a specific reason)
-     - `infrastructure_error`
-   - Outcomes are written to the `script_event_audit` store and exposed via metrics for dashboards and alerts. Pre-admission quota denials (`quota_denied`) are handled by `ScriptQuotaService` before sandbox work begins and do **not** contribute to sandbox failure metrics; sandbox errors (for example, budget violations) do, and are considered by the failure-rate circuit breaker. See `design/architecture/system-architecture-scripting-quotas-and-operations.md#outcome-to-metric-mapping` for how these outcomes map to metrics and disable behavior.
+   - The engine records a **stage-aware outcome** for the run in `script_event_audit`:
+     - `finalStage` (`ADMISSION`, `DSL_EVAL`, `WORK_ITEM_PERSIST`, `TICK_HANDOFF`)
+     - `finalOutcome` and `finalReason`
+   - Pre-admission quota denials (`finalStage=ADMISSION`, `finalOutcome=quota_denied`) are handled by `ScriptQuotaService` before sandbox work begins and do **not** contribute to sandbox failure metrics; sandbox errors (`finalStage=DSL_EVAL`, `finalOutcome=sandbox_error`) do, and are considered by the failure-rate circuit breaker. Dry-run/test executions must emit failures via test-only metrics (for example `automation_script_test_sandbox_failures_total`) rather than incrementing live-traffic error counters. See `design/architecture/system-architecture-scripting-observability-contract.md` for the authoritative metric families and label sets.
 
 ---
 
@@ -135,8 +142,9 @@ When a script exceeds its CPU/time budget:
 - The run stops immediately; no further nodes are evaluated.
 - Any commands already staged for the current run are **discarded** before commit.
 - The `script_event_audit` record is written with:
-  - `outcome = sandbox_error`
-  - `reason = cpu_budget_exceeded`
+  - `finalStage = DSL_EVAL`
+  - `finalOutcome = sandbox_error`
+  - `finalReason = cpu_budget_exceeded`
   - The elapsed time and node count
 - Metrics are incremented:
   - `automation_script_sandbox_failures_total{reason="cpu_budget_exceeded"}`
@@ -183,8 +191,9 @@ When a script exceeds its soft memory budget:
 - The run is aborted before further allocations.
 - Any commands staged from that run are discarded prior to commit.
 - The `script_event_audit` record is written with:
-  - `outcome = sandbox_error`
-  - `reason = memory_budget_exceeded`
+  - `finalStage = DSL_EVAL`
+  - `finalOutcome = sandbox_error`
+  - `finalReason = memory_budget_exceeded`
   - Counts for nodes visited, collections sizes, and approximate bytes used (where available)
 - Metrics are incremented:
   - `automation_script_sandbox_failures_total{reason="memory_budget_exceeded"}`
@@ -193,7 +202,7 @@ If instead the JVM or container hits a hard limit and restarts:
 
 - The run, and possibly other concurrent runs, fail with `infrastructure_error`.
 - Standard platform health checks and alerts (logging, Prometheus, OpenTelemetry) report the outage.
-- Upon recovery, the scheduler continues from the next tick; at-most-once guarantees ensure the failed run is not retried automatically. In this case the `script_event_audit` record uses `outcome = infrastructure_error` to match the canonical `outcome` enum described in the scripting architecture.
+- Upon recovery, the scheduler continues from the next tick; at-most-once guarantees ensure the failed run is not retried automatically. In this case `script_event_audit.finalOutcome=infrastructure_error` (with an appropriate `finalStage`) matches the canonical taxonomy described in the observability contract.
 
 ---
 
@@ -239,8 +248,9 @@ Additional resource-related environment variables may be introduced over time. N
 When diagnosing sandbox-related issues in production, operators should:
 
 - Check `script_event_audit` records for:
-  - `outcome` (`sandbox_error`, `infrastructure_error`, `quota_denied`)
-  - `reason` fields (`cpu_budget_exceeded`, `memory_budget_exceeded`, other sandbox reasons)
+  - `finalStage` (`ADMISSION`, `DSL_EVAL`, `WORK_ITEM_PERSIST`, `TICK_HANDOFF`)
+  - `finalOutcome` (`sandbox_error`, `infrastructure_error`, `quota_denied`)
+  - `finalReason` (`cpu_budget_exceeded`, `memory_budget_exceeded`, other sandbox reasons)
   - Associated `tenantId`, `scriptId`, and `tickId`
 - Inspect metrics such as:
   - `automation_script_sandbox_failures_total` (broken down by `reason`)

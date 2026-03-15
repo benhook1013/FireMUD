@@ -51,7 +51,7 @@ To make traces consistently useful across services and runbooks, FireMUD uses a 
 
 - **Gateway and command path**
   - Gateway spans:
-    - `gateway_request` – inbound HTTP/WebSocket/Telnet-bridged request into Spring Cloud Gateway or the TCP Proxy Service, tagged with `route`, `method`, `tenantId`, and, where applicable, `playerId`.
+    - `gateway_request` – inbound HTTP and WebSocket and Telnet-bridged request into Spring Cloud Gateway or the TCP Proxy Service, tagged with `route`, `method`, `tenantId`, and, where applicable, `playerId`.
     - `gateway_command_dispatch` – dispatch from Gateway/Proxy into Game Session or other domain services, tagged with `command`, `tenantId`, `regionId`, and `playerId`.
   - Game Session and domain spans:
     - `gamesession_handle_command` – top-level span for handling a gameplay command, tagged with `command`, `tenantId`, `regionId`, `playerId`, and `instanceId`.
@@ -61,14 +61,14 @@ To make traces consistently useful across services and runbooks, FireMUD uses a 
   - `tick_execute` – execution of a single tick, tagged with `tenantId`, `regionId`, `tickId`, `region_epoch`, and a `tick_phase` attribute for major phases (for example `load_effects`, `apply_effects`, `persist_ledger`, `drain_followups`).
   - `tick_apply_effect` – per-effect spans for calls into domain services, tagged with `tenantId`, `regionId`, `tickId`, `effectKey`, `effect_type`, and `targetAggregateType`.
 - **Telnet/TCP Proxy and WebSocket bridge**
-  - `tcpproxy_connection` – lifecycle of a Telnet connection at the DMZ edge, tagged with `remote_ip`, `tenantId`, and high-level `connection_outcome` (for example `ok`, `limit_exceeded`, `malformed`).
+  - `tcpproxy_connection` – lifecycle of a Telnet connection at the DMZ edge, tagged with `remote_ip_hash` (and optionally `remote_ip_prefix`), `tenantId`, and high-level `connection_outcome` (for example `ok`, `limit_exceeded`, `malformed`).
   - `tcpproxy_command` – command forwarding from Telnet to Gateway, tagged with `command`, `tenantId`, and `playerId`.
   - `tcpproxy_notify_disconnect` – spans for `NotifyDisconnect` calls into Game Session, tagged with `tenantId`, `playerId`, and `disconnect_reason`.
 - **Cross-region and saga flows**
   - `gamesession_remote_followup_enqueue` – span for enqueuing cross-region follow-ups, tagged with origin and target `regionId`, `tenantId`, and a coarse `followup_type`.
   - `gamesession_remote_followup_drain` – span for draining remote follow-ups in the target region, tagged similarly and correlated with tick execution spans.
 - **Backup and pause/resume flows**
-  - `backup_pause_ticks` – span for pausing ticks before `pg_dump`, tagged with `tenantId` scope (for example `all` or specific tenants) and a `reason`.
+  - `backup_pause_ticks` – span for pausing ticks before `pg_dump`, tagged with `scope_type`, `tenantId`, `regionId` when bounded, `alias_scope_used` when the request still uses `game_instance_id`, and a `reason`.
   - `backup_pg_dump_snapshot` – span measuring the logical backup operation itself.
   - `backup_resume_ticks` – span for resuming ticks after the snapshot, tagged consistently with `backup_pause_ticks`.
 
@@ -88,8 +88,46 @@ All spans should include, where applicable:
 - **Sensitive attributes**
   - Attributes such as `playerId` are operationally useful but should be treated as sensitive data and kept bounded (IDs only, no message payloads).
   - `playerId` is allowed in production traces as an identifier for correlation and incident drilldown, but it must be protected by access controls and retention policies appropriate to player-linked data.
+  - Client address attributes in production traces must be privacy-safe and bounded: use `remote_ip_hash` for stable correlation and optionally `remote_ip_prefix` (`/24` for IPv4, `/56` for IPv6) for coarse network triage. Do not store raw full client IP addresses in long-retention traces.
   - Do not attach user-provided text (chat content, command payloads, free-form error messages) as span attributes; keep that data in logs with appropriate redaction and retention controls.
   - When exporting traces outside of the cluster or into shared tooling, ensure access controls and retention policies match the sensitivity of these identifiers.
+
+### Incident-Mode Sampling Procedure (Design Contract)
+
+FireMUD supports two escalation levels for “incident mode” sampling. Operators should choose the least invasive option that provides enough data and should always record start/end times and the chosen scope in the incident timeline.
+
+1. **Service-scoped sampling (fast, coarse)**
+   - Mechanism: adjust head sampling in the affected service(s) via standard OpenTelemetry env vars:
+     - `OTEL_TRACES_SAMPLER=parentbased_traceidratio`
+     - `OTEL_TRACES_SAMPLER_ARG=<ratio>` (for example `0.10` for 10%)
+   - Operational shape:
+     - Roll out a temporary configuration change to the affected Deployment(s).
+     - Verify: in Jaeger, `service.name="<service>"` should show a visibly higher trace volume within a few minutes.
+     - Revert: restore the baseline ratio after the incident.
+   - Limits: this cannot scope sampling to a specific `tenantId` or `regionId`; it increases volume for the service overall.
+
+2. **Tenant/region-scoped sampling (precise, requires collector support)**
+   - Mechanism: configure the OpenTelemetry Collector to apply tail-sampling policies based on span attributes such as `tenantId` and `regionId` (as defined in this document’s span catalog).
+   - Operational shape:
+     - Add a temporary “always sample” policy for the target `<tenantId, regionId>` (and optionally `service.name`) and a time-bound note in the collector config (for example “remove after incident X”).
+     - Verify: in Jaeger, filtering by `tenantId`/`regionId` should yield traces even when baseline sampling is low.
+     - Revert: remove the temporary policy and reload the collector configuration.
+   - Limits: this requires that the collector is deployed with tail-sampling enabled and that the relevant spans actually carry `tenantId`/`regionId` attributes.
+
+Environment defaults and the baseline sampler ratio are documented in `design/architecture/infrastructure/environment-and-secrets-catalog.md#observability`.
+
+#### Collector Capability Contract (For Scoped Incident Sampling)
+
+Environments that claim support for tenant/region-scoped incident sampling (staging and production-like) must satisfy all of the following:
+
+- OpenTelemetry Collector is deployed with tail-sampling processors enabled.
+- Tail-sampling policies can match on `tenantId` and `regionId` span attributes, and optionally `service.name`.
+- Collector config supports safe runtime update/reload for temporary incident policies.
+- Runbook-level verification exists:
+  - Positive check: traces for the scoped `<tenantId, regionId>` appear above baseline after policy enablement.
+  - Negative check: trace volume returns to baseline after policy removal.
+
+If an environment does not meet this contract, it must be documented as **service-scoped sampling only** and incident procedures must not claim tenant/region-scoped escalation there.
 
 ## Operational Playbook: Using Traces During Incidents
 

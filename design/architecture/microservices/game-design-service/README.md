@@ -18,6 +18,12 @@ manifest files.
   `manifest.json` so runtime clients can load themes and logos without calling
   this service.
 - Act as the sole owner of game asset publishing to the S3-compatible object store; downstream services and clients read published assets via configured URLs and do not write directly to the asset store. Logical world and entity templates remain in PostgreSQL schemas owned by World Management, Entity Management, and related domain services and are not stored as blobs in the asset store.
+- When publish workflows need to expose derived domain artifacts outside their owning service storage (for example world navmesh/path graph bundles), Game Design remains the sole object-store writer. Owning domain services hand those artifacts to the publish workflow as explicit inputs; they do not bypass the publish workflow with direct object-store writes.
+- In the initial slice, runtime discovery of those derived artifacts must use the version `manifest.json` attested by `published_release_bundle`. Consumers must not depend on undocumented bucket key conventions or require a separate bundle-specific artifact field.
+- Own version lifecycle state and CAS epoch metadata (`versionState`, `versionStateEpoch`) and expose control-plane APIs for activation/retirement-safe transitions.
+- Expose control-plane integrity APIs such as `GetDesignControlPlaneDigest` and `CanDeleteVersionAssets` used by publish gating and asset-retention workflows.
+- Expose CAS-guarded asset purge APIs (`BeginPurgeVersionAssets`, `FinalizePurgeVersionAssets`) so purge eligibility re-check and artifact-state transitions are race-safe.
+- Expose a deterministic launch-resolution API or equivalent control-plane workflow that produces an immutable resolved launch descriptor before instance creation begins.
 
 ## Architecture / Design Notes
 
@@ -44,19 +50,32 @@ The Game Design Service owns the **authoring** view of script patches, while the
 
 - When `PublishScriptPatchVersion` is called, the Game Design Service:
   - Validates and persists the new script graphs, bindings, and metadata, including cross-asset compatibility checks against the pinned `baseVersionId` (for example, ensuring referenced ability identifiers exist and match the ability schema for that base version).
+  - Compiles stable runtime identities needed for reconciliation, including a `scheduleDefinitionId` for each logical timer/interval definition so Automation & Scripting can preserve or tombstone schedules deterministically across patch changes.
+  - Computes or reads an immutable `abilitySchemaDigest` for the pinned `baseVersionId` and records it with the patch metadata used for runtime validation.
   - Starts a Saga that upserts compiled definitions and bindings into the Automation & Scripting Service schema for the target `<tenantId, scriptPatchVersion>`.
   - Treats the publish as **asynchronous** from a runtime perspective: the version is recorded as published in design-time tables, but its readiness for execution is determined by the Automation & Scripting Service.
-- For each `<tenantId, scriptPatchVersion>`, the Automation & Scripting Service tracks a lifecycle (`PENDING_VALIDATION`, `ONLOAD_RUNNING`, `READY`, `FAILED`, `ROLLED_BACK`) as described in `design/architecture/system-architecture-scripting-dsl-reference-and-lifecycle.md#script-patch-lifecycle`.
-- The Game Design Service queries this lifecycle via a read-only API such as `GetScriptPatchStatus(tenantId, scriptPatchVersion)` and/or subscribes to `ScriptPatchStatusChanged` events so that UIs can show:
+- For each `<tenantId, scriptPatchVersion>`, the Automation & Scripting Service tracks a tenant readiness lifecycle (`PENDING_VALIDATION`, `ONLOAD_RUNNING`, `READY`, `FAILED`) as described in `design/architecture/system-architecture-scripting-dsl-reference-and-lifecycle.md#script-patch-lifecycle`.
+- The Game Design Service queries readiness via a read-only API such as `GetScriptPatchStatus(tenantId, scriptPatchVersion)` and subscribes to tenant + instance rollout events (`ScriptPatchTenantStatusChanged`, `ScriptPatchInstanceRolloutChanged`) so that UIs can show:
   - That a patch is published but still **pending runtime validation**.
+  - The patch's `baseVersionId` and `abilitySchemaDigest` used for runtime compatibility gates and pinning checks.
   - Whether `onLoad` initialization has succeeded or failed for each tenant.
-  - When a patch has been rolled back at runtime for a tenant.
+  - When a patch has been rolled back or repinned for a specific game instance.
+  - Event-family responsibilities are explicit:
+    - `ScriptPatchTenantStatusChanged` drives readiness gates and publish validation status.
+    - `ScriptPatchInstanceRolloutChanged` drives instance rollout history and rollback audit timeline.
 
 In the design UI:
 
-- `PublishScriptPatchVersion` should surface that script patches become fully active only after the Automation & Scripting Service marks them `READY` for the tenant.
+- `PublishScriptPatchVersion` should surface that “published” means “accepted into design-time history”, not “active at runtime”.
+  - The UI must treat runtime readiness as a separate phase and should show an explicit “runtime validation pending” state until Automation & Scripting reports `READY` (or `FAILED`) for `<tenantId, scriptPatchVersion>`.
+  - Any control-plane workflow that would pin/promote a patch for a running game instance must be blocked until `READY` is observed via `GetScriptPatchStatus` and/or `ScriptPatchTenantStatusChanged`.
 - Failed `onLoad` runs that result in `FAILED` patch status should be visible to designers, with links back to `script_event_audit` entries and automation metrics for debugging.
 - Design-time publish Saga failures (for example, invalid ability references) are tracked in Game Design’s own versioning state (for example, a `PUBLISH_FAILED_DESIGN` status) and do **not** create or update patch lifecycle rows in the Automation & Scripting Service. UIs should clearly distinguish these design-time failures from runtime `FAILED` states reported by the Automation & Scripting Service so creators know whether a patch failed before or after reaching the runtime.
+
+Compatibility contract requirement:
+
+- `PublishScriptPatchVersion` and plugin enable/publish paths must validate compatibility against the immutable `abilitySchemaDigest` bound to `baseVersionId`, not against mutable live lookups.
+- The validated digest must be propagated to runtime-facing metadata/audit surfaces so operators can prove which schema snapshot a patch/plugin was validated against.
 
 ## Key Features
 
@@ -86,13 +105,20 @@ In the design UI:
 - `game_templates` table stores predefined configuration templates for new games.
 - [`runtime_flag` table](feature-flags.md) manages feature flag definitions and
   corresponding APIs expose these records.
-- `game_assets` table stores uploaded binary files such as icons or sound effects.
+- `game_assets` table stores asset metadata for uploaded binary files such as icons or sound effects; canonical bytes live in object storage referenced by this metadata.
 
 Design-time tables (such as `revision`, `version`, `game_templates`,
-`runtime_flag`, and `game_assets`) are the source of truth for world and entity
-history. Domain services (World Management, Entity Management, etc.) store the
-versioned templates they consume at runtime, but commit and revision history
-remains anchored in the Game Design Service.
+`runtime_flag`, asset metadata tables, and release-attestation tables) are the
+source of truth for world and entity history. Domain services (World Management,
+Entity Management, etc.) store the versioned templates they consume at runtime,
+but commit and revision history remains anchored in the Game Design Service.
+
+The Game Design Service must also persist an immutable `published_release_bundle`
+record per `(tenantId, versionId)` after publish gates and asset export succeed.
+This record is the canonical release attestation consumed by activation,
+rollback-preflight, and repair tooling. It contains the publish workflow
+identity, target `commitId`, required participant digests, `manifestHash`, and
+`generationConfigRevision` for that release.
 
 ### Design Workflow
 
@@ -101,7 +127,9 @@ remains anchored in the Game Design Service.
 3. Revisions are grouped into versions that can be published to runtime.
 4. For quick fixes, designers create a script-only patch version which records a
    `scriptPatchVersion` linked to an existing `baseVersionId` and notifies
-   runtime services to reload the modified scripts.
+   Automation & Scripting to ingest the patch for tenant readiness validation.
+   Running game instances reload only after a later control-plane pin change to
+   that tenant-`READY` patch.
 
 ### gRPC APIs
 
@@ -110,6 +138,10 @@ remains anchored in the Game Design Service.
 - `PublishScriptPatchVersion` – creates a script-only patch version referencing a base version.
 - `ListVersions` – enumerates published versions for selection when creating a
   game instance.
+- `GetVersionState` / `CompareAndSetVersionState` – authoritative control-plane version lifecycle reads and CAS transitions.
+- `GetDesignControlPlaneDigest` – digest surface for publish gating over normalized metadata.
+- `GetPublishedReleaseBundle` – authoritative read surface for immutable release attestation used by activation, cutover preflight, and repair workflows.
+- `CanDeleteVersionAssets` – deletion-eligibility oracle for version-scoped asset prefixes.
 
 ## Dependencies
 
@@ -117,7 +149,7 @@ remains anchored in the Game Design Service.
   - World Management Service for map data.
   - Automation & Scripting Service for scripts.
   - Logging & Admin Service records publishing audits.
-- **External:** PostgreSQL for storing design assets.
+- **External:** PostgreSQL for design metadata and object storage for asset bytes.
 
 > See [**Gateway Architecture**](../../system-architecture-gateway.md),
 [**Deployment Environments**](../../infrastructure/deployment-environments.md),
@@ -208,7 +240,7 @@ Default ports: REST on `8080`, gRPC on `6565`.
 #### REST
 
 - `GET /ping` – basic health check returning `"pong"`.
-- `POST /assets` – upload a binary asset for a tenant.
+- `POST /assets` – upload a binary asset for a tenant; the service streams bytes to object storage and persists asset metadata in PostgreSQL.
 - `POST /templates` – create a new game template.
 - `GET /templates` – list templates for a tenant.
 
@@ -226,6 +258,17 @@ Detailed request and response schemas are defined in the
 - `PublishVersion(PublishVersionRequest) returns (PublishVersionResponse)` – publishes a frozen version.
 - `PublishScriptPatchVersion(PublishScriptPatchVersionRequest) returns (PublishScriptPatchVersionResponse)` – publishes a script-only patch version.
 - `ListVersions(ListVersionsRequest) returns (ListVersionsResponse)` – lists available versions.
+- `GetVersionState(GetVersionStateRequest) returns (GetVersionStateResponse)` – reads authoritative version lifecycle state and CAS epoch.
+- `CompareAndSetVersionState(CompareAndSetVersionStateRequest) returns (CompareAndSetVersionStateResponse)` – performs CAS-guarded lifecycle transitions.
+- `GetDesignControlPlaneDigest(GetDesignControlPlaneDigestRequest) returns (GetDesignControlPlaneDigestResponse)` – returns normalized metadata digest used by publish gates.
+- `GetTemplateReferencePhase(GetTemplateReferencePhaseRequest) returns (GetTemplateReferencePhaseResponse)` – returns the persisted normalized-reference enforcement phase (`BACKFILLING`, `VALIDATED`, `ENFORCED`) used by instance-creation and retirement workflows.
+- `GetPublishedReleaseBundle(GetPublishedReleaseBundleRequest) returns (GetPublishedReleaseBundleResponse)` – returns the immutable `(tenantId, versionId)` release attestation including participant digests, `manifestHash`, and `generationConfigRevision`.
+- `ResolveLaunchDescriptor(ResolveLaunchDescriptorRequest) returns (ResolveLaunchDescriptorResponse)` – resolves template metadata and control-plane inputs into one immutable launch descriptor for a game-instance creation attempt.
+- `CanDeleteVersionAssets(CanDeleteVersionAssetsRequest) returns (CanDeleteVersionAssetsResponse)` – validates whether version-scoped assets are purge-eligible.
+- `BeginPurgeVersionAssets(BeginPurgeVersionAssetsRequest) returns (BeginPurgeVersionAssetsResponse)` – CAS-guarded purge start that atomically re-checks deletion eligibility and transitions `version_asset_artifact` into purge-in-progress state.
+- `FinalizePurgeVersionAssets(FinalizePurgeVersionAssetsRequest) returns (FinalizePurgeVersionAssetsResponse)` – CAS-guarded purge completion that transitions purge-in-progress artifacts to `PURGED` after byte-deletion confirmation.
+
+These gRPC entries are the discoverability index for the control-plane contracts described in [Game Templates and Configuration Tools](game-templates.md) and related architecture docs. When request/response schemas evolve, the proto contract and those architecture sections must be updated in the same change so launch-resolution and template-phase semantics do not drift.
 
 ```bash
 grpcurl -plaintext localhost:6565 game_design.v1.GameDesignService/Ping

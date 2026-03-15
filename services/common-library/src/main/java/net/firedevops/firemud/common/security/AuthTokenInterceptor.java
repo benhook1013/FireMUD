@@ -10,8 +10,10 @@ import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jws;
 import io.jsonwebtoken.JwtException;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /** Intercepts gRPC calls to extract and validate JWT tokens. */
 public class AuthTokenInterceptor implements ServerInterceptor {
@@ -19,14 +21,23 @@ public class AuthTokenInterceptor implements ServerInterceptor {
       Metadata.Key.of("Authorization", Metadata.ASCII_STRING_MARSHALLER);
 
   private final JwtUtil jwtUtil;
+  private final Set<String> unauthenticatedMethods;
 
   public AuthTokenInterceptor(JwtUtil jwtUtil) {
+    this(jwtUtil, Set.of());
+  }
+
+  public AuthTokenInterceptor(JwtUtil jwtUtil, Set<String> unauthenticatedMethods) {
     this.jwtUtil = jwtUtil;
+    this.unauthenticatedMethods = new HashSet<>(unauthenticatedMethods);
   }
 
   @Override
   public <ReqT, RespT> ServerCall.Listener<ReqT> interceptCall(
       ServerCall<ReqT, RespT> call, Metadata headers, ServerCallHandler<ReqT, RespT> next) {
+    if (unauthenticatedMethods.contains(call.getMethodDescriptor().getFullMethodName())) {
+      return next.startCall(call, headers);
+    }
     String authHeader = headers.get(AUTH_HEADER);
     if (authHeader == null || !authHeader.startsWith("Bearer ")) {
       call.close(Status.UNAUTHENTICATED.withDescription("Missing token"), new Metadata());
@@ -35,11 +46,12 @@ public class AuthTokenInterceptor implements ServerInterceptor {
     String token = authHeader.substring(7);
     try {
       Jws<Claims> claims = jwtUtil.parseToken(token);
-      String accountId = claims.getBody().get("accountId", String.class);
-      List<?> globalRaw = claims.getBody().get("globalRoles", List.class);
+      Claims payload = claims.getPayload();
+      String accountId = payload.get("accountId", String.class);
+      List<?> globalRaw = payload.get("globalRoles", List.class);
       List<String> globalRoles =
           globalRaw == null ? List.of() : globalRaw.stream().map(String::valueOf).toList();
-      Map<?, ?> scopedRaw = claims.getBody().get("scopedRoles", Map.class);
+      Map<?, ?> scopedRaw = payload.get("scopedRoles", Map.class);
       Map<String, List<String>> scopedRoles = new HashMap<>();
       if (scopedRaw != null) {
         for (Map.Entry<?, ?> e : scopedRaw.entrySet()) {

@@ -12,8 +12,14 @@ service WorldManagementService {
   rpc Ping(PingRequest) returns (PingResponse);
   rpc GetRoom(GetRoomRequest) returns (GetRoomResponse);
   rpc GetRoomSnapshot(GetRoomSnapshotRequest) returns (GetRoomSnapshotResponse);
-  rpc UpdateWorldState(UpdateWorldStateRequest) returns (UpdateWorldStateResponse);
+  // Deprecated: this bulk mutation surface is no longer authoritative for runtime world changes.
+  // Use effect-shaped, instance-scoped mutation RPCs such as ApplyRoomAmbientStatePatch.
+  rpc UpdateWorldState(UpdateWorldStateRequest) returns (UpdateWorldStateResponse) {
+    option deprecated = true;
+  }
   rpc GetDraftDesignDigest(GetDraftDesignDigestRequest) returns (GetDraftDesignDigestResponse);
+  rpc ListRoomOccupants(ListRoomOccupantsRequest) returns (ListRoomOccupantsResponse);
+  rpc ApplyRoomAmbientStatePatch(ApplyRoomAmbientStatePatchRequest) returns (ApplyRoomAmbientStatePatchResponse);
 }
 
 message GetRoomRequest {
@@ -45,11 +51,12 @@ message RoomSnapshot {
   string short_description = 4;
   string long_description = 5;
   repeated RoomExitSnapshot exits = 6;
-  map<string, string> ambient_state = 7;
+  map<string, string> ambient_state = 7 [deprecated = true];
   repeated string room_flags = 8;
   string game_instance_id = 9;
   string room_instance_id = 10;
   string world_snapshot_id = 11;
+  RoomAmbientState ambient_state_v2 = 12;
 }
 
 message RoomExitSnapshot {
@@ -69,6 +76,83 @@ message UpdateWorldStateRequest {
 message UpdateWorldStateResponse {
   bool success = 1;
   shared.v1.ErrorDetail error = 2;
+}
+
+message ListRoomOccupantsRequest {
+  shared.v1.RoomInstanceRef room_instance = 1;
+}
+
+message ListRoomOccupantsResponse {
+  shared.v1.RoomInstanceRef room_instance = 1;
+  // Deprecated: derived mirror of occupants.entity_id (actors only) for legacy clients.
+  // New writers must populate occupants as canonical and derive this field from it.
+  repeated string occupant_entity_ids = 2 [deprecated = true];
+  string occupant_snapshot_id = 3;
+  shared.v1.ErrorDetail error = 4;
+  repeated RoomOccupant occupants = 5;
+}
+
+message ApplyRoomAmbientStatePatchRequest {
+  shared.v1.RoomInstanceRef room_instance = 1;
+  string effect_id = 2;
+  // Deprecated: use ambient_state_patch_v2 as canonical and derive legacy map fields only for compatibility.
+  map<string, string> ambient_state_patch = 3 [deprecated = true];
+  RoomAmbientStatePatch ambient_state_patch_v2 = 4;
+}
+
+message ApplyRoomAmbientStatePatchResponse {
+  shared.v1.RoomInstanceRef room_instance = 1;
+  bool success = 2;
+  string world_snapshot_id = 3;
+  shared.v1.ErrorDetail error = 4;
+}
+
+enum RoomOccupantType {
+  ROOM_OCCUPANT_TYPE_UNSPECIFIED = 0;
+  PLAYER = 1;
+  NPC = 2;
+}
+
+message RoomOccupant {
+  string entity_id = 1;
+  RoomOccupantType occupant_type = 2;
+}
+
+message RoomAmbientState {
+  int32 schema_version = 1;
+  string weather = 2;
+  repeated DoorAmbientState doors = 3;
+  repeated HazardAmbientState hazards = 4;
+}
+
+enum DoorState {
+  DOOR_STATE_UNSPECIFIED = 0;
+  OPEN = 1;
+  CLOSED = 2;
+  LOCKED = 3;
+}
+
+message DoorAmbientState {
+  string door_id = 1;
+  DoorState state = 2;
+}
+
+enum HazardState {
+  HAZARD_STATE_UNSPECIFIED = 0;
+  ACTIVE = 1;
+  INACTIVE = 2;
+}
+
+message HazardAmbientState {
+  string hazard_id = 1;
+  HazardState state = 2;
+}
+
+message RoomAmbientStatePatch {
+  int32 schema_version = 1;
+  optional string weather = 2;
+  repeated DoorAmbientState doors = 3;
+  repeated HazardAmbientState hazards = 4;
 }
 
 message GetDraftDesignDigestRequest {

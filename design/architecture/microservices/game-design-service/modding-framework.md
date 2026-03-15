@@ -12,7 +12,7 @@ Plugin bundles are uploaded through the Game Design Service and stored in the sa
 - Enable runtime loading of approved plugins written in the same **component‑based** scripting DSL used for automation.
 - Provide a secure sandbox so plugins cannot access unauthorized data or system resources.
 - Allow plugins to hook into game events exposed by the Game Logic and World Management services.
-- Isolate plugin data per `tenantId` so multiple games can run on the same infrastructure.
+- Isolate plugin enablement and data per `tenantId` and `gameInstanceId` so a tenant can run multiple instances with different plugin selections safely.
 - Forward plugin execution metrics and error logs to the Logging & Admin Service for auditing.
 
 ## Trust Model & Roles
@@ -33,7 +33,19 @@ Minimum requirements:
 
 - **Algorithm**: plugin bundles are signed using **Ed25519**.
 - **Bundle digest**: each uploaded bundle computes a stable `bundleDigest` (for example SHA-256 over the canonical bundle bytes) which is the input to signature verification and is recorded in audit trails.
+  - **Canonicalization (required)**: the bundle format must define “canonical bundle bytes” precisely so the same logical bundle always hashes the same:
+    - Archive format is fixed (for example `tar` with deterministic headers, or `zip` with normalized timestamps).
+    - File ordering is deterministic.
+    - Timestamps/UID/GID/permissions are normalized or excluded from the digest input.
+    - The bundle digest input must exclude any transport-layer wrapper (for example HTTP multipart boundaries).
+- **Bundle ingestion safety limits (required)**:
+  - Upload and extraction must enforce bounded limits before runtime validation (for example `maxBundleBytes`, `maxExpandedBytes`, `maxFileCount`, and `maxCompressionRatio`).
+  - Extraction and manifest parsing must use bounded timeouts and memory limits; over-limit bundles must fail closed.
+  - Limits and failures must be audit-visible with deterministic bounded reason codes (for example `bundle_too_large`, `bundle_compression_ratio_exceeded`, `bundle_file_count_exceeded`, `bundle_parse_timeout`).
 - **Key identity**: every signature is tied to a `signerKeyId` (stable identifier for the public key used to verify the signature).
+- **Signature envelope (required)**:
+  - Bundles must contain a machine-readable signature manifest (for example `signatures.json`) that includes `bundleDigest`, `signerKeyId`, the `ed25519Signature` bytes, and an optional `signatureCreatedAt`.
+  - Multiple signatures may be present; verification succeeds if at least one signature is by an allowlisted `signerKeyId` and none are by explicitly revoked keys.
 - **Verification points**:
   - Game Design verifies the signature at upload time and records `bundleDigest`, `signerKeyId`, and `signatureVerifiedAt`.
   - Automation & Scripting re-verifies signatures at load/activation time (defense in depth) and rejects activation if verification fails or the signer is not allowed for the environment.
@@ -42,9 +54,17 @@ Minimum requirements:
   - Old keys may remain valid for existing bundles during a transition window, but new uploads should prefer the newest active key.
 - **Revocation**:
   - Operators can revoke a signer by removing its `signerKeyId` from the allowlist and adding it to a revocation list.
-  - When a signer is revoked, subsequent loads/activations of bundles signed by that key must fail, and already-enabled plugins must transition to a disabled state (for example `DISABLED_DUE_TO_SIGNER_REVOKED`) with triggers rejected and the reason recorded in `script_event_audit`.
+  - When a signer is revoked, subsequent loads/activations of bundles signed by that key must fail, and already-enabled plugins must transition to `pluginState=DISABLED` with mandatory `statusReason=signer_revoked`; triggers are rejected and the reason is recorded in `script_event_audit`.
+- **Propagation (required)**:
+  - The allowlist and revocation list must be distributed to runtime services as a signed configuration artifact with a bounded refresh interval.
+  - Automation & Scripting must refresh signer policy on a bounded cadence (for example every 60 seconds) and must disable affected plugins within a fixed operator SLO (for example “revocation disables affected plugins within 5 minutes”).
+  - Disablement due to revocation must emit an operator-visible control-plane event and be visible in audit tooling so operators can prove when revocation took effect.
+  - Runtime signer-policy visibility must be queryable via control-plane read APIs (for example `GetSignerPolicyConvergence`) so operators can verify policy propagation before and after revocation. Before resuming normal admission after a revocation or policy repair, operators should use those read surfaces together with the scripting control-plane convergence/drain reads for the affected scope to confirm that policy propagation, plugin disablement, and any required draining have all converged.
+  - If signer policy cannot be refreshed/verified for a scope beyond max-age, plugin admission must fail closed with `finalOutcome=signer_policy_unavailable` until policy converges.
+  - Any override that permits plugin admission while signer policy is unavailable must be explicit, time-bounded, scoped, and operator-audited, and must auto-expire back to fail-closed mode.
 
 Logging & Admin must surface signer identity and verification status (including `bundleDigest` and `signerKeyId`) so operators can explain why a plugin version was accepted or rejected.
+Logging & Admin must also surface signer-policy propagation status and revocation application events (for example `SignerPolicyVersionObserved` and `SignerRevocationApplied`) so operators can prove enforcement timing across services.
 
 ## Outline
 
@@ -54,7 +74,7 @@ Logging & Admin must surface signer identity and verification status (including 
 4. A registry tracks which plugins are active for each game instance and exposes toggle APIs via the Logging & Admin Service.
 5. Plugins can subscribe to events such as `onEnterRoom` or `onItemUse` to inject custom behavior.
 6. Execution metrics and error logs are forwarded to the Logging & Admin Service for monitoring.
-7. Plugin bundles are versioned along with other design assets and distributed when a new game version is published.
+7. Plugin bundles are versioned as design assets but are independently publishable and operator-activatable against an already published compatible base game version; a new full game-version publish is not required unless the plugin depends on changed base-version assets.
 
 ## Sandbox Capabilities & Quotas
 
@@ -91,19 +111,27 @@ Validation results for plugins surface through the same tooling as core scripts 
 
 ## Plugin Lifecycle & Rollback
 
-Plugins follow a lifecycle similar to script patches but scoped to `<tenantId, pluginId>`:
+Plugins follow a lifecycle similar to script patches but scoped to `<tenantId, gameInstanceId, pluginId>` so a tenant can run multiple game instances with different plugin selections safely.
 
-- Each plugin version is identified by `pluginVersionId`. A registry in the Automation & Scripting Service tracks, per tenant:
+- Plugins do **not** participate in the script-patch `onLoad` lifecycle. There is no plugin-scoped `onLoad` or `onUnload` contract in the first implementation slice.
+- Plugin activation therefore consists only of:
+  - signature and policy verification,
+  - graph validation and compatibility checks,
+  - loading the new plugin version into the instance-scoped runtime registry, and
+  - reconciling any plugin-owned derived scheduler state such as timers.
+- Any plugin setup that would otherwise require startup code must be expressed through normal event handlers (`onSpawn`, `onEnterRegion`, `onInterval`, custom events) or explicit operator/admin workflows. Implementations must not invent an implicit plugin initialization hook.
+
+- Each plugin version is identified by `pluginVersionId`. A registry in the Automation & Scripting Service tracks, per `<tenantId, gameInstanceId, pluginId>`:
   - `activeVersionId` – the plugin version currently enabled.
   - `pendingVersionId` – a plugin version being loaded or validated.
-  - `pluginState` – state such as `IDLE`, `ENABLED`, `DISABLED`, `RELOADING`, or `FAILED`.
-- Enabling a plugin sets `pluginState=ENABLED` for a `<tenantId, pluginId, pluginVersionId>` and allows the scheduler to admit triggers for that plugin, subject to quotas and budgets.
+  - `pluginState` – canonical runtime state: `ENABLED`, `DISABLED`, `DRAINING`, `RELOADING`, or `FAILED`.
+- Enabling a plugin sets `pluginState=ENABLED` for a `<tenantId, gameInstanceId, pluginId, pluginVersionId>` and allows the scheduler to admit triggers for that plugin, subject to quotas and budgets.
 - Disabling a plugin can follow two modes:
-  - **Hard disable** – immediately marks the plugin `DISABLED`; new triggers are rejected with a dedicated outcome (for example, `plugin_disabled`) and recorded in `script_event_audit`, while in-flight runs complete under existing budgets.
-  - **Disable after drain** – transitions the plugin through a draining state (for example, `DISABLE_AFTER_DRAIN`) until queued triggers are processed or expired, then marks it `DISABLED`. New triggers are rejected once draining begins.
-- Updating a plugin involves setting a new `pendingVersionId`, loading and validating the new plugin graphs and bindings, and then atomically switching `activeVersionId` if validation succeeds. If validation or initialization fails, the new version is marked `FAILED`, `activeVersionId` remains unchanged, and triggers for the failed version are rejected with an appropriate outcome (for example, `version_unavailable` or `plugin_version_failed`).
+  - **Hard disable** – immediately marks the plugin `DISABLED`; new triggers are rejected at admission (`finalStage=ADMISSION`, `finalOutcome=plugin_disabled`) and recorded in `script_event_audit`, while in-flight runs complete under existing budgets.
+  - **Disable after drain** – transitions the plugin to `DRAINING` until queued triggers are processed or expired, then marks it `DISABLED`. New triggers are rejected once draining begins.
+- Updating a plugin involves setting a new `pendingVersionId`, loading and validating the new plugin graphs and bindings, reconciling plugin-owned timers and other derived scheduler state, and then atomically switching `activeVersionId` if validation succeeds. If validation or activation-state reconciliation fails, the new version is marked `FAILED`, `activeVersionId` remains unchanged, and triggers for the failed version are rejected at admission with an appropriate `finalOutcome` (for example, `version_unavailable` or `plugin_version_failed`).
 
-Plugin triggers share the same `scriptEventId` lifecycle as regular scripts. Each invocation is recorded in `script_event_audit` with `eventType`, `pluginId`, `pluginVersionId`, `scriptEventId`, and a canonical `outcome` / `reason` pair, so operators can correlate plugin behavior with publish and enable/disable operations.
+Plugin triggers share the same Trigger Identity and `scriptEventId` lifecycle as regular scripts. Each invocation is recorded in `script_event_audit` with the required Trigger Identity fields (including `tenantId`, `gameInstanceId`, and for gameplay/runtime triggers `regionEpoch`) plus `pluginId` / `pluginVersionId` and stage-aware outcome fields (`finalStage`, `finalOutcome`, `finalReason`) so operators can correlate plugin behavior with publish and enable/disable operations and still distinguish “DSL evaluated” from “accepted into tick queues”.
 
 Certain safety decisions are **platform-wide and not overridable by tenant administrators**:
 
@@ -128,29 +156,46 @@ For metrics and outcome naming conventions around plugin policy enforcement, see
 To avoid unintentionally breaking large numbers of plugins when component policies change, platform operators should roll out new policies in two phases:
 
 - **Report-only phase** – a new policy version is loaded in a non-enforcing mode:
-  - Policy violations are recorded in `script_event_audit` and `automation_plugin_policy_violations_total`, but plugin triggers are still admitted and executed.
+  - Policy violations are recorded as structured metadata on `script_event_audit` rows via `policyViolations[]` using the schema and size limits defined in `design/architecture/system-architecture-scripting-observability-contract.md`, and via `automation_plugin_policy_violations_total`, but plugin triggers are still admitted and executed.
+  - In report-only mode, `policyViolations[].decision` must be `REPORT_ONLY`, and `finalOutcome` must remain the actual pipeline result (`success`, `sandbox_error`, `infrastructure_error`, and so on). `finalOutcome=plugin_component_blocked` is invalid while report-only mode is active.
   - Dashboards and alerts use these signals to show which plugins would be blocked if enforcement were enabled.
 - **Enforcing phase** – once violations are understood and unacceptable plugins have been migrated or disabled:
-  - Enforcement is enabled for the policy version; subsequent violations cause triggers to be rejected with `outcome=plugin_component_blocked`.
+  - Enforcement is enabled for the policy version; subsequent violations must set `policyViolations[].decision=BLOCKED` and cause triggers to be rejected at admission with `finalStage=ADMISSION`, `finalOutcome=plugin_component_blocked`, and a `finalReason` that identifies the blocked component/policy decision.
   - Operators continue to monitor `automation_plugin_policy_violations_total` to detect regressions.
+
+Example:
+
+- In report-only mode, a plugin trigger that references a newly discouraged `world.admin.teleport` component may still execute and finish with `finalOutcome=success`, while `policyViolations[]` records that component with `decision=REPORT_ONLY` and `automation_plugin_policy_violations_total` increments for the same component and policy version.
+- In enforcing mode for that same policy version, the same trigger must stop at admission with `finalStage=ADMISSION`, `finalOutcome=plugin_component_blocked`, and a `finalReason` that identifies the blocked `world.admin.teleport` component or policy decision. `policyViolations[]` then records `decision=BLOCKED`, and operators should see the same component reflected in `automation_plugin_policy_violations_total`.
 
 Policy configs should be versioned so operators can roll back to a previous allowlist if enforcement causes unexpected disruption. Report-only and enforcing behavior are configuration choices on the policy version and must be applied consistently across environments as part of the normal deployment pipeline.
 
 Operationally, the **Logging & Admin Service** acts as the control plane for plugin lifecycle management. Enabling, disabling, draining, and rolling back plugin versions are all performed via Logging & Admin APIs that update the registry in the Automation & Scripting Service; tenants do not manipulate `activeVersionId` or `pluginState` directly inside game traffic.
 
-To roll back a misbehaving plugin, operators promote a previously trusted `pluginVersionId` to `activeVersionId` for the affected `<tenantId, pluginId>` via Logging & Admin. The Automation & Scripting Service then resumes admitting triggers for the restored version while continuing to enforce quotas, budgets, and sandbox limits as described in `design/architecture/system-architecture-scripting-quotas-and-operations.md`.
+To roll back a misbehaving plugin, operators promote a previously trusted `pluginVersionId` to `activeVersionId` for the affected `<tenantId, gameInstanceId, pluginId>` via Logging & Admin. The Automation & Scripting Service then resumes admitting triggers for the restored version while continuing to enforce quotas, budgets, and sandbox limits as described in `design/architecture/system-architecture-scripting-quotas-and-operations.md`.
+
+Plugin rollback/disable/revocation flows must also cancel pending outbox work for the displaced plugin version (for example via `CancelPendingWorkItemsForPluginVersion`) before or alongside queue purges, so stale plugin-version work cannot continue to hand off after control-plane changes.
+
+Rollback/disable/revocation flows must also reconcile durable plugin-owned timers:
+
+- Any timer or interval owned by the displaced `pluginVersionId` must be removed or tombstoned before normal scheduling resumes for that plugin.
+- Canceling queued work items alone is insufficient; otherwise an old plugin version could continue minting new timer-driven triggers after disablement or rollback.
+- If a newer plugin version preserves the same schedule, the scheduler may carry it forward only when the old and new definitions share the same stable `scheduleDefinitionId`; reconciliation must then explicitly rewrite ownership to the new `pluginVersionId`.
+
+The normative control-plane API shapes and required events for plugin management are defined in `design/architecture/system-architecture-scripting-control-plane-api.md` (for example `SetPluginActiveVersion`, `DisablePlugin`, and `DrainPlugin`).
+For operator verification during rollback, disablement, or signer revocation, use the same control-plane read surfaces that gate scripting convergence for the affected runtime scope, including plugin-state reads and the scripting drain/convergence APIs delegated from `design/architecture/system-architecture-scripting-control-plane-api.md`.
 
 ## Monitoring & Debugging
 
 Plugin executions participate in the same observability pipeline as core scripts and use shared identifiers and metrics:
 
-- Each plugin trigger is recorded in `script_event_audit` with `tenantId`, `scriptId`, `pluginId`, `pluginVersionId`, `scriptEventId`, `eventType`, and a canonical `outcome` / `reason` pair.
+- Each plugin trigger is recorded in `script_event_audit` with the required Trigger Identity fields (including `tenantId`, `gameInstanceId`, and for gameplay/runtime triggers `regionEpoch`), plus `pluginId` / `pluginVersionId` and stage-aware outcome fields (`finalStage`, `finalOutcome`, `finalReason`).
 - Automation metrics such as:
   - `automation_script_triggers_total{tenantId, scriptId, pluginId, pluginVersionId, eventType, outcome}`
-  - `automation_script_skips_total{tenantId, pluginId, reason}`
-  - `automation_script_triggers_dropped_total{tenantId, pluginId, reason}`
-  - `automation_script_sandbox_failures_total{tenantId, pluginId, reason}`
-  - `automation_script_runtime_seconds{tenantId, scriptId, pluginId, pluginVersionId}`
+  - `automation_script_skips_total{tenantId, scriptId, pluginId, reason}`
+  - `automation_script_triggers_dropped_total{tenantId, scriptId, pluginId, reason}`
+  - `automation_script_sandbox_failures_total{tenantId, scriptId, pluginId, reason}`
+  - `automation_script_runtime_seconds{tenantId, scriptId, pluginId, eventType}`
   expose plugin behavior alongside core automation.
 
 Dashboards and Logging & Admin tooling should surface these identifiers so operators can:

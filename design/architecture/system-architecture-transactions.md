@@ -24,6 +24,7 @@ All real-time gameplay logic — movement, combat, item use, AI — is executed 
 - Staged in Redis with Lua-based staging and cleanup/abandon semantics
 - Applied via one or more **service-local transactions** guarded by effect identity
 - Automatically retried on failure (for example, lock contention or transient errors)
+- Reported through a durable command-status surface keyed by `(tenantId, gameInstanceId, commandId)` that persists both execution convergence (`executionOutcome`) and player-facing result (`gameplayResult`) independently of Redis coordination state
 
 From the player’s perspective, a command appears atomic (“either my move happens or it does not”), but the implementation relies on:
 
@@ -60,6 +61,7 @@ Tick execution is replayable: retries, failover, and Redis AOF replay can cause 
 
 - The Game Session Service computes and propagates a stable `EffectId` derived from the region-scoped tick context (`tenantId`, `regionId`, `regionEpoch`, `tickId`, `effectKey`) plus the target aggregate identity.
 - Owning services must implement durable idempotency guards (unique constraints, monotonic updates, transactional outbox) so duplicate `EffectId` attempts become OK/no-op outcomes rather than double-applying side effects.
+- For gameplay-visible mutations, `EffectId`-backed guard rows are the default idempotency boundary. Simpler `last_tick_id` watermark patterns are allowed only for aggregates explicitly documented as receiving at most one logical mutation per tick.
 - To keep this contract consistent across services, tick-driven handlers use a shared idempotency helper from `firemud-common` (for example an `IdempotentEffectExecutor`) instead of ad-hoc “check or insert” patterns. The helper:
   - Accepts `EffectId` plus callbacks for “apply-if-first” and “handle-replay”.
   - Encapsulates the canonical guard pattern (insert-if-absent, treat conflicts as replay) and throws well-defined exceptions on guard violations.
@@ -78,8 +80,69 @@ To prevent cross-instance collisions and make retries safe, spatial tick effects
 
 - Every spatial effect includes the `RoomInstanceRef` it targets (and, where applicable, `fromRoomInstanceRef` and `toRoomInstanceRef`), not a bare `roomId`.
 - The same `EffectId` is propagated to both World Management and Entity Management mutations for the effect, and both services implement durable idempotency guards so partial success can be safely retried.
+- A participant acknowledgement is emitted only after that service has durably committed the `EffectId` guard and the effect-visible rows required for its side of the contract. Redis-staged or in-memory state alone is never sufficient to acknowledge convergence.
 - Game Session persists (or can deterministically reconstruct) the intended pre/post state for the effect so a reconciliation pass can re-drive the missing side if one service commits and another fails.
 - Reconciliation behavior is documented per effect type. The default policy is “retry until convergence” using the original `EffectId`, not “best-effort compensate” with a new effect identity.
+
+Ambient world mutations (doors, hazards, weather) are treated as spatial effects for replay and idempotency purposes:
+
+- All durable ambient mutations must be issued as effect-shaped commands carrying `EffectId` plus the appropriate instance scope (`RoomInstanceRef` for room-scoped changes).
+- World Management is authoritative for ambient state used by gameplay (including hazard activation/inactivation state). Game Logic reads this state through World Management snapshot APIs and must not maintain an independent hazard-authority store.
+- Operator tooling and scripts must not bypass this contract by writing instance tables directly; they emit the same effect-shaped commands so retries and crash recovery remain safe.
+
+Concrete per-effect required writes and reconciliation rules live in `design/architecture/system-architecture-spatial-and-ambient-effects-catalog.md`. Any new effect must add an entry there before it is used by runtime gameplay.
+
+### Reconciliation Owner of Record (Spatial/Ambient Effects)
+
+Cross-service effect convergence has a single owner of record:
+
+- **Game Session Service** owns reconciliation orchestration and backlog durability for spatial/ambient effects.
+- World Management and Entity Management remain owners of their domain writes and idempotency guards, but they do not own cross-service retry scheduling.
+
+Durable backlog contract:
+
+- Game Session persists one row per logical effect in a durable backlog table (for example `effect_reconciliation_backlog`) keyed by `(tenantId, gameInstanceId, effectId)`.
+- Minimum persisted fields:
+  - `effectType`
+  - `targetScope` (`RoomInstanceRef` or region scope)
+  - `expectedParticipants` (for example `WORLD`, `ENTITY`)
+  - `participantAckState` (per participant applied/pending/final-failure)
+  - `firstObservedAt`, `lastAttemptAt`, `attemptCount`, `nextAttemptAt`
+  - `status` (`PENDING`, `CONVERGED`, `DEAD_LETTER`)
+  - `lastErrorCode` / `lastErrorMessage`
+- Inserts and status transitions must be idempotent on `(tenantId, gameInstanceId, effectId)` so duplicate scheduling does not create duplicate backlog rows.
+- Backlog rows must be indexed at minimum by `(status, nextAttemptAt)` and `(tenantId, status, firstObservedAt)` for retry scans and operator triage.
+- For participant ack semantics, `applied` means the owning service can serve the effect through its documented durable read surface for the corresponding fence token. It does not mean `accepted for later batch flush`.
+
+Retry and dead-letter policy:
+
+- Default retry strategy is bounded exponential backoff with jitter and no mutation of `EffectId`.
+- Effects remain `PENDING` until all required participants acknowledge applied/no-op for the same `EffectId`.
+- Effects move to `DEAD_LETTER` only after retry exhaustion or explicit operator action; no destructive compensation is issued from this path.
+- Dead-letter rows remain replayable via explicit operator/API actions; replay must preserve original `EffectId`.
+
+Retention and lifecycle policy:
+
+- `CONVERGED` rows are retained for 24 hours, then deleted by background GC.
+- `DEAD_LETTER` rows are retained for 30 days minimum (or longer by policy) for incident analysis.
+- GC jobs must be idempotent and rate-limited per tenant to avoid write spikes.
+
+Required control-plane interfaces:
+
+- `ListEffectReconciliationBacklog(tenantId, status, olderThan, page)` for diagnostics.
+- `RetryEffectReconciliation(tenantId, gameInstanceId, effectId)` for explicit replay from `DEAD_LETTER` or stuck `PENDING`.
+- `AcknowledgeEffectDeadLetter(tenantId, gameInstanceId, effectId, reason)` for audited operator decisions.
+- Logging & Admin dashboards should consume these APIs; operators should not mutate backlog tables directly.
+
+Operational SLOs and alerts:
+
+- Alert when `PENDING` age exceeds 60 seconds for player-visible effect types (`MOVE`, `DROP`, `PICKUP`, `AMBIENT_PATCH`).
+- Alert when backlog depth per tenant exceeds configured threshold (for example 1,000 pending rows) or dead-letter count is non-zero.
+- Expose metrics at minimum:
+  - `effect_reconciliation_pending_total{effect_type}`
+  - `effect_reconciliation_age_seconds{effect_type}`
+  - `effect_reconciliation_retries_total{effect_type}`
+  - `effect_reconciliation_dead_letter_total{effect_type}`
 
 ### Tick-Adjacent Workflows (Outbox Boundary)
 
@@ -113,6 +176,7 @@ Sagas are only used for **non-tick, multi-service workflows** involving persiste
 | --- | --- |
 | **Account Creation** | Create account → provision default character → initialize world state |
 | **Game Publishing** | Validate and persist design → push to World Service → toggle publish flags |
+| **Instance Termination** | Coordinated shutdown/expiry cleanup across World and Entity services for a `gameInstanceId` |
 | **Admin Operations** | Issue bans, content revocation, or entity cleanup with audit logging |
 | **In-Game Purchase (rare)** | Only if involving external billing or cross-service coordination beyond Redis tick safety |
 
@@ -121,6 +185,21 @@ These workflows:
 - Happen **outside the tick loop**
 - Modify **persistent storage (PostgreSQL)** across multiple services
 - Require durable coordination and rollback capabilities
+
+### Rollback Boundaries by Operation Class
+
+Cross-service workflows must explicitly choose one of the following rollback classes before implementation:
+
+- **Class A (Pre-Activation Saga Rollback):**
+  - Scope: publish-time and pre-runtime workflows where outputs are not yet active for gameplay (for example `PublishVersion` before a version is activated, or world-creation before admission opens).
+  - Contract: compensating actions are allowed; saga failure may roll back durable writes or mark the target version/workflow as `FAILED` with deterministic retry/repair.
+- **Class B (Post-Activation Runtime Convergence):**
+  - Scope: tick-driven gameplay and any mutation visible to live players (movement, containment, ambient mutations, live script-trigger side effects).
+  - Contract: no destructive cross-service rollback. Effects are retried with the same `EffectId` until convergence; partial success is resolved by reconciliation, not compensation deletes.
+
+Designs that cross this boundary (for example, activation and live mutations in one flow) must split into two phases with an explicit hand-off point from Class A to Class B.
+
+For world creation and similar activation flows, this hand-off point must be a persisted, monotonic status transition (for example `world_instance_status: PREPARING -> ACTIVE`, with `FAILED_PRE_ACTIVATION` as the non-admitted failure terminal state). Compensation is valid only before the transition commits.
 
 ### State Ownership and Mutation Boundaries
 
@@ -175,7 +254,8 @@ FireMUD uses a **shared saga orchestration library**, not a separate microservic
   - Steps are gRPC calls to owning services
   - Helper `GrpcSagaSteps.callWithRetry` wraps gRPC calls with basic retry logic
   - All steps are **idempotent**
-  - Each step uses a durable idempotency guard recorded in the owning service’s database (for example keyed by `(tenantId, sagaInstanceId, stepName)` plus any workflow-specific scope such as `gameInstanceId`) so retries can safely no-op or reconcile without duplicating persistent rows.
+  - Each step uses a durable idempotency guard recorded in the owning service’s database keyed by business identity plus step identity (for example `(tenantId, gameInstanceId, worldCreationRequestId, stepName)` or `(tenantId, gameInstanceId, terminationRequestId, stepName)`), with `sagaInstanceId` retained as execution trace only, so retries can safely no-op or reconcile without duplicating persistent rows.
+  - For externally retryable workflows (operator retries, compensating replays, or workflow restarts), services must use a stable **business idempotency key** in addition to saga execution identity. `sagaInstanceId` is an execution-trace identifier and must not be the sole dedupe key for business effects.
   - Each step runs inside a local `@Transactional` method for atomicity
   - Compensation logic is registered via hooks
   - Retried automatically or flagged for manual review

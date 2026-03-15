@@ -8,9 +8,11 @@ An OpenAPI specification for these REST endpoints lives in `services/spring-clou
 
 ## Implementation Status
 
-- **Dynamic route management (REST/gRPC):** Implemented via `GatewayController` (`/routes` REST API) and the `GatewayManagementService` gRPC API for upsert/remove operations. These APIs apply **in-memory overrides** on top of the baseline routes loaded from configuration; config files remain the canonical source of truth and dynamic changes revert on restart unless persisted by a higher-level tool.
+- **Dynamic route management (REST/gRPC):** Implemented via `GatewayController` (`/routes` REST API) and the `GatewayManagementService` gRPC API for upsert/remove operations. These APIs apply **in-memory overrides** on top of the baseline routes loaded from configuration; config files remain the canonical source of truth and dynamic changes revert on restart unless persisted by a higher-level tool. **Current scope:** dev/test only until shared persistence, multi-pod convergence, and full route-change auditing are implemented. Player-facing environments must fail startup when dynamic route mutation is enabled without those controls (for example `firemud.gateway.dynamic-routes.enabled=true` with `firemud.gateway.dynamic-routes.allow-player-facing=true`) and must expose explicit readiness predicates (`dynamic_routes.persistence_ready`, `dynamic_routes.convergence_ready`, `dynamic_routes.audit_ready`, plus aggregate `dynamic_routes_ready`) so control-plane safety is observable.
 - **Rate limiting and Redis wiring:** Implemented using Spring Cloud Gateway’s `RequestRateLimiter` filter backed by the Cache/Rate‑Limit Redis profile configured in `application.yml` for `dev` and `prod` profiles.
-- **Telnet WebSocket bridge expectations:** Implemented end‑to‑end through the `/ws/game/**` route in Spring Cloud Gateway and the TCP Proxy Service’s WebSocket bridge (`GATEWAY_WS_URL`), matching the behavior described in the reconnection and protocol bridging docs. The canonical Telnet-side protocol (including the `SESSION` envelope and header propagation rules) is defined in the TCP Proxy Service design’s **Telnet Session Envelope & Event Metrics** section.
+- **Telnet WebSocket bridge expectations:** Traffic from the TCP Proxy Service always targets `/ws/game/**` via `GATEWAY_WS_URL`, and the proxy→gateway hop is mTLS-authenticated in player-facing environments.
+- **WebSocket close/handshake observability contract:** Gateway Architecture requires `gateway.websocket.closes{reason,subreason}`, `gateway.websocket.handshake.rejected`, and `gateway.websocket.slow_client_closes`. Treat this as a required parity checklist for implementation and operations sign-off in each environment.
+- **Handshake error classification:** Non-`101` `/ws/game/**` handshake failures must emit the canonical bounded error class (for example via `X-Firemud-Handshake-Error-Class` and matching structured logs) so clients and operators can distinguish `CONNECT_TOKEN_REJECTED`, `POLICY_DENY`, `BACKEND_UNAVAILABLE`, `REPLAY_CHECK_UNAVAILABLE`, and other retry classes defined in Gateway Architecture and Reconnection Strategy.
 
 ### Responsibilities
 
@@ -25,10 +27,11 @@ An OpenAPI specification for these REST endpoints lives in `services/spring-clou
 - Handles persistent WebSocket connections and supports raw TCP through the TCP Proxy Service.
 - Forwards real-time gameplay and administrative messages between clients and backend services; game state changes and synchronization logic live in the Game Session Service and Game Logic Service.
 - Relies on the Game Session Service to restore sessions when clients reconnect as described in the [Reconnection Strategy](../../system-architecture-reconnection.md).
-- Gateway restarts disconnect gameplay WebSocket clients; clients reconnect by opening a new `/ws/game/**` WebSocket and issuing `LOGIN` again as described in [Reconnection Strategy](../../system-architecture-reconnection.md). Telnet clients are also disconnected because the TCP Proxy Service fail-closes Telnet sockets when its WebSocket bridge to Spring Cloud Gateway drops; clients reconnect and re-`LOGIN`.
+- Gateway restarts disconnect gameplay WebSocket clients; non-proxy WebSocket clients reconnect by first obtaining a fresh connect token, opening a new `/ws/game/**` WebSocket, issuing `LOGIN`, and then re-binding gameplay scope with `PLAY` as described in [Reconnection Strategy](../../system-architecture-reconnection.md). Telnet clients follow the same canonical restart taxonomy: planned Gateway drain must be surfaced by the TCP Proxy as `logout` with `gateway_restart` context when the deterministic bridge-drain signal is received, while unattributed bridge loss is surfaced immediately as `backend_unavailable`.
 - Applies rate limiting and authentication filters for admin endpoints.
 - Relies on the Game Session Service for gameplay login and session management.
-- Remains tenant-agnostic: it forwards tenant-related headers (such as `X-Tenant-Id` and `X-Game-Instance-Id`) to backend services, but only after applying the gateway’s header trust and canonicalization rules. In particular, Spring Cloud Gateway strips spoofable tenant/game-instance headers from public ingress and only forwards `X-Tenant-Id` / `X-Game-Instance-Id` when they are produced from trusted inputs (for example `X-Proxy-Tenant-Id` / `X-Proxy-Game-Instance-Id` on the authenticated TCP Proxy → Gateway hop) as described in [Multi-Tenancy at the Gateway](../../system-architecture-gateway.md#multi-tenancy-at-the-gateway) and [Header Trust Model](../../system-architecture-gateway.md#header-trust-model). All tenant isolation and quotas are enforced by domain services as described in [Multi-Tenancy](../../system-architecture-multi-tenancy.md).
+- Does not participate in gameplay shard routing. The stable `/ws/game/**` surface lands on the Game Session layer’s session front-end pods; any forwarding from session front-end to region lease owner happens inside the Game Session layer, not in Gateway.
+- Remains tenant-agnostic: it forwards tenant-related headers (such as `X-Tenant-Id` and `X-Game-Instance-Id`) to backend services, but only after applying the gateway’s header trust and canonicalization rules. In particular, Spring Cloud Gateway strips spoofable tenant/game-instance headers from public ingress and only forwards `X-Tenant-Id` / `X-Game-Instance-Id` when they are produced from trusted inputs (for example `X-Proxy-Tenant-Id` / `X-Proxy-Game-Instance-Id` on the authenticated TCP Proxy → Gateway hop) as described in [Multi-Tenancy at the Gateway](../../system-architecture-gateway.md#multi-tenancy-at-the-gateway) and [Header Trust Model](../../system-architecture-gateway.md#header-trust-model). This enforcement is implemented by `HeaderTrustFilter` and configured via `firemud.gateway.header-trust.*`. All tenant isolation and quotas are enforced by domain services as described in [Multi-Tenancy](../../system-architecture-multi-tenancy.md).
 - External TLS is terminated by the load balancer; Spring Cloud Gateway routes to backend services over in-cluster `http://` / `ws://` endpoints, while internal service-to-service traffic uses mTLS gRPC as described in the [Security Architecture](../../system-architecture-security.md).
 - Utilizes the [Shared Libraries](../../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
 - gRPC endpoints use `LoggingInterceptor`, `MetricsInterceptor`, and `TracingInterceptor` for consistent observability.
@@ -63,17 +66,17 @@ services so Docker Compose environments work out of the box.
 
 ### Key Routes
 
-- `/ws/game/**` → Game Session Service (WebSocket gameplay endpoint for both native WebSocket clients and Telnet clients bridged via the TCP Proxy Service).
+- `/ws/game/**` → Game Session Service (canonical WebSocket gameplay endpoint for first-party clients and Telnet clients bridged via the TCP Proxy Service; connect-token enforced for non-proxy clients, with trusted TCP Proxy bridge admission based on mTLS identity + header-trust checks).
+- For successful gameplay admission, Gateway emits the gateway-owned discriminator `X-Firemud-Connection-Mode`: `first_party_web` for connect-token-validated first-party WebSocket handshakes, and `trusted_tcp_proxy` for authenticated TCP Proxy bridge handshakes. Game Session must rely on this positive marker rather than inferring path type from header absence.
 - `/api/admin/**` → Logging & Admin Service (tokens are verified by the service).
 - `/api/design/**` → Game Design Service for content management.
 - `/api/account/**` → Account Service for user profiles.
-- `/api/automation/**` → Automation Scripting Service.
-- `/api/entity/**` → Entity Management Service.
-- `/api/logic/**` → Game Logic Service.
+- `/api/session/**` → Game Session Service control-plane/admin APIs.
 - `/api/social/**` → Social Groups Service.
-- `/api/world/**` → World Management Service.
 
-Telnet clients send every line through the TCP Proxy Service, which bridges the commands onto the gateway’s `/ws/game/**` route. Because of that shared pipeline, Telnet and WebSocket sessions share the same login and reconnection flow once connected: the Game Session Service sees the same gameplay command stream regardless of transport, while the Telnet path may additionally provide optional `SESSION`-derived headers as described in the TCP Proxy Service design’s **Telnet Session Envelope & Event Metrics** section.
+The canonical external allowlist stops there. World Management, Entity Management, Game Logic, and Automation & Scripting do **not** expose direct Gateway-routed external APIs in the base architecture; they are reached through owning control-plane services or internal service-to-service gRPC unless a dedicated design update extends the allowlist.
+
+Telnet clients send every line through the TCP Proxy Service, which bridges the commands onto the gateway’s `/ws/game/**` route. Because of that shared pipeline, Telnet and WebSocket sessions share the same admission and reconnection flow once connected: both use `LOGIN` followed by `PLAY` before gameplay commands, while the Telnet path may additionally provide optional `SESSION`-derived headers as described in the TCP Proxy Service design’s **Telnet Session Envelope & Event Metrics** section.
 
 ## Dependencies
 
@@ -99,7 +102,7 @@ Spring Cloud Gateway exposes both HTTP and gRPC management interfaces for operat
   - HTTP management endpoints are authenticated and authorized at the gateway boundary, not delegated to downstream services. The recommended model is mTLS client certificates (same trust root as the gRPC management plane), with `NetworkPolicy` allowlists restricting which pods/namespaces may reach the endpoint. JWT-based roles apply to product/admin APIs routed through the gateway but are not relied upon as the primary authorization mechanism for gateway-owned management endpoints.
   - Operator client certificates should be issued by cert-manager under ClusterIssuer `firemud-ca-issuer`, must include the `clientAuth` EKU, and should be distributed as a dedicated Kubernetes Secret that is readable only by operator tooling service accounts (so normal workloads cannot reuse service mTLS credentials to call management APIs).
 - **Data plane vs control plane**
-  - Port `8080` hosts the gateway HTTP/WebSocket server. Public ingress exposes only data-plane routes on this port; management endpoints on this port are reachable only via internal-only Services or a dedicated private ingress. Port `6565` is used for internal gRPC management.
+  - Port `8080` hosts the gateway HTTP and WebSocket server. Public ingress exposes only data-plane routes on this port; management endpoints on this port are reachable only via internal-only Services or a dedicated private ingress. Port `6565` is used for internal gRPC management.
   - Kubernetes `Service` and `Ingress` objects keep these planes separate so that exposing gameplay routes does not accidentally publish management endpoints.
 
 > 🔗 See [Security Architecture](../../system-architecture-security.md) for TLS, mTLS, and admin access models, and [Gateway Architecture](../../system-architecture-gateway.md#management-plane-security) for the high-level boundary design.
@@ -116,12 +119,14 @@ Spring Cloud Gateway reads its configuration from a small set of sources; the fu
 | Source | Purpose | Authority |
 | ------ | ------- | --------- |
 | `application.yml` | Base Spring profile configuration (ports, gRPC settings, default filters such as `RequestRateLimiter` and `Retry`) | Service-local; structure documented here, environment variable mapping in Env & Secrets |
-| `routes-dev.yml` / `routes-prod.yml` | Profile-specific route definitions for HTTP/WebSocket paths and backend URIs | Service-local; referenced by `spring.config.import` in `application.yml` |
+| `routes-dev.yml` / `routes-prod.yml` | Profile-specific route definitions for HTTP and WebSocket paths and backend URIs | Service-local; referenced by `spring.config.import` in `application.yml` |
 | `FIREMUD_SERVICES_*` | Service discovery overrides for backend targets reached from the gateway | Described in [Service Discovery](../../infrastructure/environment-and-secrets.md#service-discovery) |
 | `FIREMUD_REDIS_CACHE_HOST` / `FIREMUD_REDIS_CACHE_PORT` | Cache/Rate‑Limit Redis endpoint used by the gateway’s `RequestRateLimiter` filter | Described in [Redis Connection](../../infrastructure/environment-and-secrets.md#redis-connection) |
-| `FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, `FIREMUD_GRPC_CA_CERT_PATH` | TLS certificate and key paths for gRPC/mTLS and the Telnet WebSocket bridge | Described in [gRPC TLS Certificates](../../infrastructure/environment-and-secrets.md#grpc-tls-certificates) |
-| `FIREMUD_AUTH_JWT_SECRET_PATH`, `FIREMUD_AUTH_JWT_SECRET`, `FIREMUD_AUTH_JWT_EXPIRATION_MS`, `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS` | Shared authentication configuration (JWT signing and derived session TTL); not used by Spring Cloud Gateway to validate JWTs | Described in [Authentication Variables](../../infrastructure/environment-and-secrets.md#authentication-variables) |
+| `firemud.gateway.backendUnavailableGraceMs` / `firemud.gateway.backendUnavailableRecoverySuccessCount` | Gameplay-route backend-unavailable grace window and recovery hysteresis knobs; must align with TCP Proxy bridge-availability / admission-breaker settings per reconnection lockstep contract | Canonical behavior in [Gateway Architecture](../../system-architecture-gateway.md#backend-unavailable-grace-window) and [Reconnection Strategy](../../system-architecture-reconnection.md#backend-unavailable-scenarios) |
+| `FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, `FIREMUD_GRPC_CA_CERT_PATH` | TLS certificate and key paths for the gateway’s internal gRPC/mTLS management plane | Described in [gRPC TLS Certificates](../../infrastructure/environment-and-secrets.md#grpc-tls-certificates) |
 | `OTEL_ENDPOINT` | OpenTelemetry collector endpoint for traces | Described in [Observability](../../infrastructure/environment-and-secrets.md#observability) |
+
+For the TCP Proxy → Gateway WebSocket mTLS hop, the TCP Proxy client identity and trust bundle use `FIREMUD_GATEWAY_WS_*` variables on the TCP Proxy side, while the gateway listener certificate and trusted client CA are configured on the gateway TLS listener surface as described in [Gateway Architecture](../../system-architecture-gateway.md#tls-termination-for-gateway) and [Protocol Bridging](../../system-architecture-protocol-bridging.md#websocket-bridge-configuration). Do not treat `FIREMUD_GRPC_*` as the authoritative configuration for that WebSocket listener.
 
 ### Redis Role and Prefixes
 
@@ -139,7 +144,7 @@ Spring Cloud Gateway reads its configuration from a small set of sources; the fu
 > - [Redis Cache & Rate Limiting](../../system-architecture-redis-cache.md)
 > - [Redis Operations & Migrations](../../system-architecture-redis-operations.md)
 
-The HTTP server listens on `SERVER_PORT` (typically `8080`), and the gRPC server listens on port `6565` as configured in `application.yml`. The `firemud.auth` properties (JWT secret and expiration) defined in `application.yml` are part of the shared authentication configuration and are consumed by `AuthConfig` to materialize a `JwtUtil` instance and hot-reload secrets via `JwtSecretWatcher`. Spring Cloud Gateway does **not** use this utility to validate or parse JWTs for gameplay or admin traffic; admin and other meta/control services perform JWT validation themselves, while the gateway's `JwtAuthFilter` only enforces the presence of an `Authorization` header on protected routes and forwards tokens unchanged.
+The HTTP server listens on `SERVER_PORT` (typically `8080`), and the gRPC server listens on port `6565` as configured in `application.yml`. Spring Cloud Gateway does **not** validate or parse JWTs for gameplay or admin traffic and does not require JWT signing material. Admin and other meta/control services perform JWT validation themselves, while the gateway's `JwtAuthFilter` only enforces the presence of an `Authorization` header on protected routes and forwards tokens unchanged.
 
 When internal WebSocket clients such as the TCP Proxy Service connect over
 `wss://` to `/ws/game/**`, the host they use in `GATEWAY_WS_URL` must match a
@@ -201,7 +206,16 @@ curl -X DELETE http://localhost:8080/routes/demo
 - `Ping(PingRequest) returns (PingResponse)` – connectivity check defined in [`gateway_management_service.proto`](../../../../protos/spring-cloud-gateway/v1/gateway_management_service.proto).
 
 ```bash
+# Local development only (no mTLS)
 grpcurl -plaintext localhost:6565 spring_cloud_gateway.v1.GatewayManagementService/Ping
+
+# Production / operator contexts (mTLS)
+grpcurl \
+  -cacert "$FIREMUD_GRPC_CA_CERT_PATH" \
+  -cert "$FIREMUD_GRPC_CERT_CHAIN_PATH" \
+  -key "$FIREMUD_GRPC_PRIVATE_KEY_PATH" \
+  spring-cloud-gateway:6565 \
+  spring_cloud_gateway.v1.GatewayManagementService/Ping
 ```
 
 - [Logging & Monitoring](../../system-architecture-logging-monitoring.md)

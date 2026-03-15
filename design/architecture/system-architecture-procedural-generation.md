@@ -60,7 +60,7 @@ Creates compact room graphs with bidirectional exits — ideal for dungeons, int
 
 > 🔗 Ideal for quest dungeons, temples, abandoned mines, etc.
 
-Procedural generators are invoked by the World Management Service, which calls pure `Generator` implementations as library functions using a seed, parameters, and world context. The generators return an abstract room/region graph that World Management validates and persists as either versioned **template** records or per-instance **runtime** records depending on the calling context:
+Procedural generators are invoked by the World Management Service, which calls pure `Generator` implementations as library functions using a seed, parameters, and world context. The generators return an abstract room/region graph that World Management validates and persists as either versioned **template** records or per-instance **runtime** records depending on the calling context. Automation & Scripting must not execute generators or return topology graphs for persistence.
 
 - When invoked from Game Design workflows for **design templates**, results are
   persisted as template rows keyed by `(tenantId, versionId)` and become part of
@@ -78,6 +78,33 @@ For persistent instance layouts, the invariant is that all `*_instance` rows mus
 Runtime-only dungeons or short-lived instances may be treated as ephemeral data that exists only for the lifetime of a specific `gameInstanceId` and is never shared across instances or versions. Long-lived overworld-style instance layouts that need to survive restarts must persist enough generator metadata to satisfy the replayable-from-templates invariant.
 
 Optional post-generation population hooks can then run to seed NPCs, spawns, or environmental details appropriate to the template or instance context.
+
+### Deterministic Replay Contract for Design-Time Generation
+
+Design-time generation is part of publish safety and reconciliation, so retries must not depend on mutable defaults or the currently deployed generator binary alone.
+
+For each design-time generation run, World Management must persist a durable generation artifact that includes:
+
+- `generationRunId` and stable `generationRequestId`
+- `tenantId`, `versionId`, `generationMode`
+- `generatorType` and `generatorImplementationVersion` (or equivalent immutable build identifier)
+- canonicalized `configSnapshot` including explicit `schemaVersion`
+- seed and any derived deterministic inputs
+- `outputDigest` computed from a canonical serialized topology output
+
+These design-time generation artifacts are replay/reconciliation provenance, not published topology rows themselves:
+
+- The canonical publish contract is still the finalized version-scoped template rows keyed by `(tenantId, versionId)`.
+- Design-time generation artifact tables are excluded from `GetDraftDesignDigest` unless a future doc revision explicitly promotes named semantic fields into the digest manifest.
+- Retention and migration rules for these artifact rows must preserve deterministic replay for non-Retired versions, but publish gating compares only the finalized template graph plus other documented semantic inputs.
+
+Reconciliation behavior:
+
+- Replaying a previously applied design revision must either:
+  - reuse the persisted staged/finalized output artifact directly, or
+  - rerun generation and verify that the regenerated output matches the recorded `outputDigest`.
+- If regenerated output does not match the recorded digest, reconciliation must fail fast and mark the version `OUT_OF_SYNC` rather than silently accepting a drifted topology.
+- The digest for publish gating must cover the finalized template rows produced by this artifact, so replay and publish checks converge on the same canonical state.
 
 ---
 
@@ -138,31 +165,79 @@ The following rules align generators with the core runtime and tooling:
 1. **Solo Tick Scheduling** – Runtime generation is queued like any other command but includes `requiresSoloTick: true`. The Game Session Service executes it in an isolated tick with an extended, configurable time budget.
 2. **Heavy Post‑Gen Population** – Population scripts may declare `requiresSoloTick: true`. The Game Session Service schedules these in dedicated ticks to avoid fairness regressions.
 3. **Seed & Metadata Persistence** – All generation requests include a seed. **World Management Service** persists `seed`, `generatorType`, and raw params alongside region/room records. For design-time generation this metadata is stored on template rows keyed by `(tenantId, versionId)`; for runtime/instance generation it is stored on instance rows keyed by `(tenantId, gameInstanceId)`.
-4. **Tenant Scoping** – All generation inputs/outputs are tenant‑scoped. Generators resolve tenant feature flags/config before execution.
+4. **Tenant Scoping** – All generation inputs/outputs are tenant‑scoped. For publish-affecting or activation-time generation, the effective inputs must come from version-scoped design rows and the frozen `generationConfigRevision`, not mutable tenant feature flags or operational defaults. Runtime-only operational knobs may affect scheduling or non-semantic execution details, but they must not change persisted topology semantics.
 5. **Sparse Traversal Rules** – Exit costs between sparse rooms are derived from their coordinate distance. **Game Logic** uses region `spacingMultiplier` to scale the overall pace if needed.
 6. **Post-generation Population** – After rooms are created and persisted, **World Management** may invoke population scripts in the Automation & Scripting Service based on room tags, biome, and difficulty zone. Automation scripts emit commands; they do not directly mutate world topology.
 
    Failure and retry semantics:
 
    - Population is treated as a **retryable, idempotent** follow-up phase, not as part of topology persistence.
+   - Topology generation/persistence is a pre-activation workflow (Class A rollback semantics in `system-architecture-transactions.md`); post-activation population and subsequent gameplay effects follow Class B retry-until-convergence semantics.
    - Topology persistence (template or instance rows) must complete atomically in World Management before population is admitted.
    - Population commands must carry the same canonical identity used for tick idempotency (`EffectId`) plus the runtime scope (`RoomInstanceRef` for runtime, `(tenantId, versionId)` plus template ids for design-time) so downstream services can safely no-op on replays.
    - If population partially succeeds (for example some spawns created in Entity Management but later commands fail), the system retries until convergence using the original identities. It must not attempt to “undo” already-persisted topology or “roll back” created entities by issuing compensating deletes from within the tick loop.
    - The only supported destructive rollback is deleting an entire **ephemeral** instance as a unit (for example a short-lived dungeon instance), after verifying it is no longer referenced by active sessions.
-7. **Validation and Errors** – World Management validates generation requests, validates generator outputs, and persists results atomically for the affected template or instance scope. On failure it returns a `GenerationErrorDetail` and guarantees no partial persistence.
+   - Initial-slice scope is narrower: instance-scoped population schedules and follow-up population commands are required only for primary world creation of the launched `gameInstanceId`. Portal-driven or later dynamic instancing may adopt the same contract in future slices but is not required by this document for first delivery.
+7. **Validation and Errors** – World Management validates generation requests, validates generator outputs, and guarantees **no partial persistence** for the affected template or instance scope.
+
+   Persistence must use a staged/finalize model so large graphs can be written safely without relying on oversized single transactions:
+
+   - Each generation run is assigned a `generationRunId` (scoped to the caller’s target, for example `(tenantId, versionId)` or `(tenantId, gameInstanceId)`).
+   - Callers must supply (or World Management must derive deterministically) a stable `generationRequestId` so retries of “the same request” map to the same `generationRunId` and become replay-safe.
+   - `generationRequestId` must be derived from business identity rather than saga instance identity (for example hash of `tenantId`, target scope key, generation step name, and canonicalized generator config). Retries through a new `sagaInstanceId` must reuse the same `generationRequestId`.
+   - World Management must enforce a uniqueness constraint on `(tenantId, targetScopeKey, generationRequestId)` so duplicate requests converge to one run.
+   - World Management must enforce single-writer semantics per target scope (for example via a lock keyed by `(tenantId, versionId)` for design-time, or `(tenantId, gameInstanceId)` for runtime) so two concurrent runs cannot race to finalize into the same template/instance scope.
+   - World Management writes all generated rooms/exits/metadata into staging rows keyed by `(tenantId, generationRunId)` and records an immutable config snapshot (`seed`, `generatorType`, `schemaVersion`, and serialized parameters).
+   - A single finalize transaction atomically:
+     - Marks the staged run as committed (or swaps it into the active template/instance scope), and
+     - Makes the generated topology visible to readers.
+   - On failure World Management returns a `GenerationErrorDetail` and guarantees the target scope remains unchanged (staged rows may be left for diagnostics or garbage-collected by `generationRunId`).
+   - World Management must document and implement a garbage-collection policy for abandoned staging rows keyed by `(tenantId, generationRunId)` (for example time-based cleanup for `FAILED`/`ABORTED` runs, while retaining a short diagnostic window).
 8. **Editor Overlays** – Generators emit coordinates and optional map layers so the Game Editor can display a preview or dry-run JSON output.
 9. **Pluggable Interface** – Generators implement the `Generator` interface and are discovered via the `GeneratorRegistry` in the World Management Service. Discovery uses Spring bean scanning, and additional generators may be provided by shared libraries or service-local modules.
 
-Generation parameters can be tuned at runtime through the [Procedural Generation Rules API](./microservices/world-management-service/README.md#procedural-generation-rules-api). Administrators may adjust room density or terrain variation without redeploying the service. These rules are treated as **per-tenant runtime configuration** that influence **future** runs, but each individual generation run persists an **immutable snapshot** of the configuration it actually used:
+Initial-slice delivery expectation:
 
-- `generation_rule` rows are keyed by `tenantId` and updated in place via REST; they represent the *current* default tuning for a tenant rather than a versioned design artifact.
+- Primary world creation does not have to exercise every runtime-generation capability described in this document.
+- For the first implementation slice, runtime generation and instance-scoped population scheduling are required only when the published launch descriptor and version-scoped design inputs explicitly call for them.
+- If a launched version does not require those capabilities, the initial slice may omit those runtime stages without violating the persistence contract, provided the world-creation workflow still records deterministic “not required” outcomes under the same launch identity.
+- Those recorded outcomes should use a stable stage result such as `SKIPPED_NOT_REQUIRED` so operator tooling and replay/debug flows can distinguish “not part of this launch” from “step failed before execution”.
+- Operator-facing saga or admin diagnostics should surface that same recorded result without reinterpretation so the service-local workflow record and the control-plane view use identical outcome vocabulary.
+
+Procedural-generation configuration is split into two classes:
+
+- **Version-scoped design inputs** that affect published topology or published generation semantics. These are authored through Game Design workflows, stored in World Management-owned versioned tables, and participate in digest/publish contracts.
+- **Operational runtime defaults** that affect only non-publish runtime behavior. These are owned by World Management operations surfaces and must never change the effective inputs of an already-authored Draft or Published version.
+
+Semantic input boundary:
+
+- If changing an input can alter generated rooms, exits, tags, descriptions, coordinates, region partitioning, spawn/materialization provenance, or any other persisted topology semantics, that input is version-scoped design data and must be frozen into `generationConfigRevision`.
+- If an input is not frozen into `generationConfigRevision`, implementations must treat it as non-semantic. Such inputs are limited to execution concerns like worker routing, shard selection, or time budgets and must not affect the persisted graph.
+
+Operational provenance requirement for `generation_rule` updates:
+
+- Each update to publish-affecting generation inputs must persist audit fields (`changedBy`, `changedAt`, `changeReason`, `changeDigest`) and originating Game Design commit/revision identifiers.
+- If a change alters effective Draft generation inputs for a publish target, design synchronization must mark that target `OUT_OF_SYNC` until digest reconciliation re-establishes convergence.
+- Operational runtime-default updates must not alter the effective design-time graph for any `(tenantId, versionId)`.
+
+For activation/runtime determinism, publish must freeze a generation config identity per version:
+
+- On `PublishVersion`, the system records a `generationConfigRevision`/hash for that `(tenantId, versionId)` from the version-scoped design inputs committed for that version.
+- World creation for a published version must resolve and use the frozen generation config identity; if it cannot be resolved, activation fails closed.
+- Editing tenant defaults after publish must not change generation inputs for already published versions unless a new version is published (or an explicit version-scoped override migration is executed and republished).
+- Any implementation behavior that depends on local default generator parameters, mutable tenant feature flags, or deployment-specific configuration must either:
+  - be proven non-semantic and excluded from persisted topology output, or
+  - be moved into version-scoped design data so it contributes to `generationConfigRevision`.
+
+Each individual generation run persists an **immutable snapshot** of the configuration it actually used:
+
 - World creation and runtime generation calls snapshot the effective parameters
   they use (including generator type, seed, and a serialized config blob
   carrying an explicit `schemaVersion`) alongside the generated regions and
   rooms so that operators can later reconstruct the inputs used for a particular
   world or instance, even if live rules have changed since then.
-- For shards that require stricter determinism (for example competitive or audited worlds), callers may additionally persist a reference from instance metadata to the specific `generation_rule` revision that was snapshotted so it is clear which tenant-level rule state was in effect when a run was executed.
-- Installations that need different tuning per version can enable an optional **override** table (for example `generation_rule_override`) keyed by `(tenantId, versionId)`. When an override exists for a given version, world-creation and runtime generation calls for that version must use the override plus snapshotting rules above; otherwise they fall back to the tenant-global `generation_rule` row. Overrides are treated as version-scoped configuration and must follow the same lifecycle as other versioned data: overrides may exist only for non-Retired versions and must be removed or migrated before destructive generator schema changes that affect their semantics. The Version-Aware Migration Checklist in `system-architecture-database-migrations.md` applies equally to override rows.
+- Instance metadata must include the frozen `generationConfigRevision`/hash used for the run so rollback/debug tooling can verify deterministic inputs.
+- Installations that need different tuning per version must store that tuning as version-scoped design data keyed by `(tenantId, versionId)`. If legacy override tables exist, they must be treated as transitional readers only and retired in favor of version-scoped authoring. The Version-Aware Migration Checklist in `system-architecture-database-migrations.md` applies equally to these version-scoped rows.
 
 When the shape of generator configuration evolves, schema changes must follow the version-aware migration rules in `system-architecture-database-migrations.md`. New fields should be added under a new `schemaVersion`, and World Management and related services must continue to understand existing non-Retired `schemaVersion` values until the corresponding versions have been retired or explicitly migrated.
 

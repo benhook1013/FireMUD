@@ -7,6 +7,7 @@ import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
+import io.netty.channel.ChannelFutureListener;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.SimpleChannelInboundHandler;
 import java.net.URI;
@@ -16,10 +17,10 @@ import java.net.http.WebSocket.Listener;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
-import java.util.List;
 import java.util.Locale;
 import java.util.Queue;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ConcurrentHashMap;
@@ -27,6 +28,7 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import net.firedevops.firemud.cache.LookCacheService;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.tcpproxy.service.TcpProxyEventService;
@@ -37,8 +39,6 @@ import org.slf4j.LoggerFactory;
 /** Handler that forwards Telnet lines to the gateway via WebSocket. */
 public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   private static final Logger logger = LoggerFactory.getLogger(TelnetServerHandler.class);
-  private static final Duration INITIAL_RECONNECT_DELAY = Duration.ofSeconds(1);
-  private static final Duration MAX_RECONNECT_DELAY = Duration.ofSeconds(30);
   private static final Duration HEARTBEAT_INTERVAL = Duration.ofSeconds(30);
   private static final Duration IDLE_TIMEOUT = Duration.ofMinutes(5);
   private static final int MAX_BUFFER_DEPTH = 512;
@@ -56,16 +56,17 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   private final Timer commandTimer;
   private final Timer heartbeatTimer;
   private final Timer idleCloseTimer;
-  private final Timer reconnectTimer;
   private final Counter reconnectCounter;
   private final AtomicInteger bufferDepth;
   private final WebSocketConnector webSocketConnector;
   private final TcpProxyEventService eventService;
   private final TelnetSessionContext sessionContext = new TelnetSessionContext();
+  private final String proxyConnectionId = UUID.randomUUID().toString();
+  private final AtomicLong disconnectSequence = new AtomicLong();
+  private final AtomicInteger reconnectAttempts = new AtomicInteger();
   private volatile ChannelHandlerContext context;
   private volatile boolean closing;
   private volatile boolean reconnecting;
-  private volatile int reconnectAttempts;
   private volatile ScheduledFuture<?> heartbeatFuture;
   private volatile ScheduledFuture<?> idleFuture;
   private volatile long lastActivityNanos;
@@ -167,7 +168,6 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     this.commandTimer = meterRegistry.timer("tcpproxy.command");
     this.heartbeatTimer = meterRegistry.timer("tcpproxy.heartbeat");
     this.idleCloseTimer = meterRegistry.timer("tcpproxy.idleClose");
-    this.reconnectTimer = meterRegistry.timer("tcpproxy.websocket.reconnect.delay");
     this.reconnectCounter = meterRegistry.counter("tcpproxy.websocket.reconnects");
     this.reconnectCounter.increment(0.0);
     updateBufferDepthGauge();
@@ -178,20 +178,36 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   @FunctionalInterface
   interface WebSocketConnector {
     CompletableFuture<WebSocket> connect(
-        String gatewayWsUrl, String clientIp, String sessionId, String tenantId, Listener listener);
+        String gatewayWsUrl,
+        String clientIp,
+        String proxyConnectionId,
+        String gameInstanceId,
+        String tenantId,
+        Listener listener);
   }
 
   static CompletableFuture<WebSocket> createWebSocket(
-      String gatewayWsUrl, String clientIp, String sessionId, String tenantId, Listener listener) {
+      String gatewayWsUrl,
+      String clientIp,
+      String proxyConnectionId,
+      String gameInstanceId,
+      String tenantId,
+      Listener listener) {
     var builder = SHARED_HTTP_CLIENT.newWebSocketBuilder();
     if (clientIp != null) {
       builder.header("X-Client-IP", clientIp);
+      builder.header("X-Proxy-Client-IP", clientIp);
     }
-    if (sessionId != null && !sessionId.isBlank()) {
-      builder.header("X-Session-Id", sessionId);
+    if (proxyConnectionId != null && !proxyConnectionId.isBlank()) {
+      builder.header("X-Proxy-Connection-Id", proxyConnectionId);
+    }
+    if (gameInstanceId != null && !gameInstanceId.isBlank()) {
+      builder.header("X-Game-Instance-Id", gameInstanceId);
+      builder.header("X-Proxy-Game-Instance-Id", gameInstanceId);
     }
     if (tenantId != null && !tenantId.isBlank()) {
       builder.header("X-Tenant-Id", tenantId);
+      builder.header("X-Proxy-Tenant-Id", tenantId);
     }
     return builder.buildAsync(URI.create(gatewayWsUrl), listener);
   }
@@ -350,6 +366,9 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   protected void channelRead0(ChannelHandlerContext ctx, String msg) {
     Timer.Sample sample = Timer.start(meterRegistry);
     try {
+      if (closing) {
+        return;
+      }
       String sanitized = sanitize(ctx, msg);
       if (sanitized == null) {
         return;
@@ -410,7 +429,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
       connectionDuration = Duration.ofNanos(System.nanoTime() - connectionStartNanos);
     }
     eventService.recordDisconnectEvent(
-        sessionContext.sessionId(), sessionContext.tenantId(), clientIp, connectionDuration);
+        sessionContext.gameInstanceId(), sessionContext.tenantId(), clientIp, connectionDuration);
     notifyDisconnectAsync();
     buffer.clear();
     cancelOutstandingSends();
@@ -495,15 +514,15 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
         .connect(
             gatewayWsUrl,
             clientIp,
-            sessionContext.sessionId(),
+            proxyConnectionId,
+            sessionContext.gameInstanceId(),
             sessionContext.tenantId(),
             gatewayListener())
         .whenComplete(
             (socket, error) -> {
               if (error != null) {
                 logger.error("WebSocket connection to {} failed", gatewayWsUrl, error);
-                reconnecting = false;
-                scheduleReconnect();
+                failCloseBackendUnavailable("Gateway link unavailable; please reconnect");
               }
             });
   }
@@ -515,19 +534,20 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     cancelOutstandingSends();
     closeGatewayWebSocket();
     stopHeartbeat();
-    reconnecting = false;
-    scheduleReconnect();
+    failCloseBackendUnavailable("Gateway link dropped; please reconnect");
   }
 
-  private void scheduleReconnect() {
-    if (context == null || closing || reconnecting) {
+  private void failCloseBackendUnavailable(String message) {
+    if (closing) {
       return;
     }
-    reconnecting = true;
-    reconnectCounter.increment();
-    long delayMillis = backoffDelayMillis();
-    context.executor().schedule(this::connectToGateway, delayMillis, TimeUnit.MILLISECONDS);
-    reconnectTimer.record(Duration.ofMillis(delayMillis));
+    closing = true;
+    reconnecting = false;
+    if (context != null) {
+      context
+          .writeAndFlush("DISCONNECT backend_unavailable " + message + "\n")
+          .addListener(ChannelFutureListener.CLOSE);
+    }
   }
 
   private void cancelOutstandingSends() {
@@ -541,23 +561,6 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     updateBufferDepthGauge();
   }
 
-  private long backoffDelayMillis() {
-    long baseDelay = INITIAL_RECONNECT_DELAY.toMillis();
-    long delay = baseDelay * (1L << Math.min(reconnectAttempts, 10));
-    reconnectAttempts++;
-    return Math.min(delay, MAX_RECONNECT_DELAY.toMillis());
-  }
-
-  private List<String> consumeBuffer() {
-    List<String> drained = new java.util.ArrayList<>();
-    String next;
-    while ((next = buffer.poll()) != null) {
-      drained.add(next);
-    }
-    updateBufferDepthGauge();
-    return drained;
-  }
-
   private void updateBufferDepthGauge() {
     bufferDepth.set(buffer.size() + outstandingSends.size());
   }
@@ -567,7 +570,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
       return;
     }
     eventService.recordConnectEvent(
-        sessionContext.sessionId(), sessionContext.tenantId(), clientIp);
+        sessionContext.gameInstanceId(), sessionContext.tenantId(), clientIp);
     connectEventRecorded = true;
   }
 
@@ -579,7 +582,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
         || cachedLookDelivered) {
       return;
     }
-    String sessionId = sessionContext.sessionId();
+    String sessionId = sessionContext.gameInstanceId();
     String tenantId = sessionContext.tenantId();
     try {
       long tenant = Long.parseLong(tenantId);
@@ -603,25 +606,28 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     if (devIsolated || !sessionContext.isReady()) {
       return;
     }
+    long sequence = disconnectSequence.incrementAndGet();
     CompletableFuture.supplyAsync(
             () ->
                 eventService.notifyDisconnect(
-                    sessionContext.sessionId(), sessionContext.tenantId()))
+                    sessionContext.gameInstanceId(),
+                    sessionContext.tenantId(),
+                    proxyConnectionId,
+                    sequence))
         .thenAccept(
             response ->
                 handleDisconnectResponse(
-                    response, sessionContext.sessionId(), sessionContext.tenantId()))
+                    response, sessionContext.gameInstanceId(), sessionContext.tenantId()))
         .exceptionally(
             failure -> {
               logger.warn(
                   "Failed to notify Game Session Service about disconnect for session {} tenant {}",
-                  sessionContext.sessionId(),
+                  sessionContext.gameInstanceId(),
                   sessionContext.tenantId(),
                   failure);
               Status.Code status = Status.fromThrowable(failure).getCode();
               meterRegistry
-                  .counter(
-                      "tcpproxy.disconnect.notify.transport_failure", "status", status.name())
+                  .counter("tcpproxy.disconnect.notify.transport_failure", "status", status.name())
                   .increment();
               return null;
             });
@@ -703,7 +709,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
         connectedOnce = true;
         setWebSocket(webSocket, wasConnected);
         webSocket.request(1);
-        reconnectAttempts = 0;
+        reconnectAttempts.set(0);
         logger.info("WebSocket connected to {}", gatewayWsUrl);
       }
 

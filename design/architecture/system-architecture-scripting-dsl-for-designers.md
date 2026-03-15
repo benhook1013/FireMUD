@@ -73,6 +73,7 @@ When designing scripts, it helps to think in terms of a few core ideas:
     - `onLoad` is a **gate**: if it fails for a tenant (for example, misconfiguration or sandbox errors), the new patch will **not** go live there and the previous patch continues to run instead.
     - You fix `onLoad` failures by correcting the script or configuration and publishing a new patch; there is no automatic retry for logical failures.
     - Tooling in the Game Design and Logging & Admin services surfaces `onLoad` status per tenant (for example, `READY` vs `FAILED`), and runtime failures appear in `script_event_audit`. See the reference doc for the full `onLoad` lifecycle semantics and the quotas/operations doc for where to inspect audit records.
+    - `onLoad` is only for **ephemeral readiness work** such as validating configuration and warming recomputable caches. It must not create durable records, Redis structures, or other shared artifacts that outlive the current process, because the current architecture does not define an `onUnload` cleanup hook.
 
 - **Conditions and actions**
   - **Condition nodes** check world state or inputs, then branch via labeled outputs such as `onTrue` / `onFalse` or `onBelowThreshold` / `onAboveThreshold`.
@@ -80,7 +81,7 @@ When designing scripts, it helps to think in terms of a few core ideas:
   - Complex logic is built by chaining condition and action nodes rather than embedding code.
 
 - **Timers and intervals**
-  - **Timer nodes** schedule work to happen later or on a cadence (for example, every N ticks or seconds of game time, depending on the configuration).
+  - **Timer nodes** schedule work to happen later or on a cadence expressed in **game ticks** (for example, every N ticks). Designer-facing UIs may offer seconds as an input helper, but the persisted/runtime contract is tick-based.
   - Timers create **new triggers** when they fire; from your perspective, they “wake up” parts of your graph at the right times.
 
 - **Counters and bounded loops**
@@ -145,6 +146,7 @@ The platform performs **extensive validation** at design time and at publish tim
   - The Game Design Service highlights invalid wiring (for example, missing connections, incompatible types, or unbounded cycles) directly in the visual editor.
   - Errors point to the specific nodes and edges that must change before publish, including loops rejected by the loop safety analysis.
   - Scripts with unsafe or deprecated components (for example, components marked `UNSAFE`) appear in a dedicated “requires migration” view. They must be migrated and republished before they are eligible to run again.
+  - Reclassifying a component as `UNSAFE` blocks future publish/readiness of scripts that still depend on it, but it does not automatically stop a patch that is already live. If a live script must be stopped immediately, operators use the normal disable or rollback workflows.
 
 - **Loop safety rules**
   - Loops must always be bounded: use timers and counters to express “repeat every N ticks” or “do this up to N times,” rather than wiring a pure cycle with no guard.
@@ -152,15 +154,20 @@ The platform performs **extensive validation** at design time and at publish tim
   - If a graph would create an unsafe loop, the editor surfaces a clear validation error pointing at the offending nodes; fix the wiring and re-run validation before publishing.
 
 - **Runtime outcomes you may see**
-  - When a script misbehaves at runtime—exceeding quotas, hitting sandbox errors, or being disabled by the failure-rate circuit breaker—the Automation & Scripting Service records a canonical `outcome` and `reason` in `script_event_audit`.
-  - Common outcomes surfaced via tooling include `quota_denied`, `sandbox_error`, `disabled_due_to_errors`, and `skipped_disabled`.
+  - When a script misbehaves at runtime, the Automation & Scripting Service records stage-aware outcome fields in `script_event_audit` (`finalStage`, `finalOutcome`, `finalReason`) so you can distinguish “rejected before evaluation” from “failed during evaluation” from “never accepted into tick queues”.
+  - Common outcomes surfaced via tooling include `quota_denied`, `sandbox_error`, `disabled_due_to_errors`, `skipped_reloading`, `skipped_rollback_pause`, and `version_unavailable`.
+  - Use the canonical outcome taxonomy in `design/architecture/system-architecture-scripting-normative-contract-tables.md#canonical-finaloutcome-values-normative` as the source of truth for names and meanings.
   - Administrative disables and throttling (for example, `runtimeStatus=DISABLED` or `DISABLE_AFTER_DRAIN`) are reflected in script metadata and surfaced through the Game Design and Logging & Admin tools so you can see which scripts are paused, why they were disabled, and when they can be safely re-enabled.
 
 - **Where to look when debugging**
   - For **editor-time issues**, fix the graph based on validation errors in the Game Design Service UI and re-run validation before publishing.
   - For **runtime issues**, start from the script’s recent entries in `script_event_audit` and the associated metrics in `design/architecture/system-architecture-scripting-quotas-and-operations.md`, then adjust quotas or disable/throttle the script using the operational flows described there.
   - For **safe test runs**, use the dry-run or test execution tools exposed by the Game Design / Logging & Admin UIs, which call a non-committing test path in the Automation & Scripting Service. These runs exercise the same sandbox and validation logic but do not enqueue commands into tick queues; see the Automation & Scripting Service README for details. Test tools are **privileged** and subject to their own rate limits and budgets so they cannot overload the scripting cluster; avoid running unbounded batches of dry-runs against production tenants.
-  - When working with support or operators, you can use `scriptEventId` as a “debug ticket” for a single trigger: the Game Design and Logging & Admin audit/log views (for example `script_event_audit` queries and trace/log search) can be filtered by `tenantId`, `scriptId`, and `scriptEventId` to follow one event end-to-end. Plugins use the same identifiers, adding `pluginId` / `pluginVersionId` so you can distinguish plugin activity from core scripts.
+  - When working with support or operators, you can use `scriptEventId` as a “debug ticket” for a single trigger, but always pair it with the full identity scope used at runtime:
+    - Always include `tenantId` and `gameInstanceId`.
+    - Include `scriptId` and `scriptPatchVersion` (and `pluginId` / `pluginVersionId` for plugin executions).
+    - For gameplay/runtime triggers, include `regionId` and `regionEpoch` so the trigger is fenced across coordination resets.
+    The Game Design and Logging & Admin audit/log views (for example `script_event_audit` queries and trace/log search) should support filtering by these fields so a single trigger can be followed end-to-end without ambiguity.
 
 For the detailed loop safety algorithm and runtime budget enforcement, see:
 
@@ -192,6 +199,13 @@ Timer-driven handlers such as `onInterval` and `onTimerExpire` are **best-effort
 - After downtime or leader failover, the scheduler may emit a bounded “catch-up” trigger (at most one synthetic firing per cadence boundary crossed) before resuming normal cadence; this catch-up does not change the at-most-once guarantee for any already-admitted `scriptEventId`.
 - Infrastructure hiccups (for example, Redis or gRPC outages) do not cause the same timer firing to be re-executed; the engine may retry idempotent downstream effects, but it does not re-run the DSL graph for a given `scriptEventId`.
 - As a result, timers should be treated as **hints**, not guaranteed ledgers. Design timer handlers so they can tolerate missed or delayed firings and recompute from current world state instead of assuming that every interval has executed exactly once.
+
+Example pattern:
+
+- Instead of designing “every 10 ticks, apply exactly 5 damage because this firing must always happen,” design “every 10 ticks, recompute whether the target is still inside the hazard area and, if so, emit the current hazard effect.”
+- Instead of assuming a patrol timer will visit every waypoint exactly once on schedule, store the patrol’s logical destination or mode in normal game state and let each firing compute the next valid move from the entity’s current position.
+
+These patterns keep timer-driven behavior correct even when an individual firing is skipped, delayed, or fenced during reload/rollback.
 
 ---
 

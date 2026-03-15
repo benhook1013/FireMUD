@@ -41,12 +41,50 @@ The Game Design Service therefore stores normalized reference rows alongside the
 
 Administrative tooling and lifecycle checks (retirement eligibility, “list templates referencing version”, bulk migrations) operate on these normalized tables. The JSON config remains the user-facing payload and can be reconstructed or validated against normalized rows, but it is not the only queryable representation of dependencies.
 
+### Single Base-Version Invariant
+
+Launchable game templates must resolve to exactly one base design bundle version.
+
+- `game_template_version_ref` is not advisory metadata; it identifies the single canonical `versionId` used to resolve the launch descriptor for that template.
+- Every normalized world/entity/script reference row for the template must use that same `versionId`.
+- Mixed-version template composition is not allowed for launchable templates. A template update that would produce reference rows spanning multiple base `versionId` values must fail validation rather than relying on runtime resolution heuristics.
+- `game_template_script_patch_ref` is the only supported patch-level override and must reference the same `baseVersionId` as the template’s canonical `game_template_version_ref`.
+- If future workflows need cross-version migration planning, they must represent that as an explicit control-plane migration artifact, not as a launchable template with mixed-version dependencies.
+
 Normalized reference invariants:
 
 - The normalized reference tables are authoritative for dependency queries (retirement eligibility checks, “list templates referencing version”, bulk migration planning). The system must not rely on best-effort parsing of arbitrary JSON to determine dependencies.
 - Create/update operations must update `game_templates.config` and all corresponding `game_template_*_ref` rows in the same database transaction. Partial updates are not allowed.
 - If reference derivation fails (for example malformed config), the template write must fail; the service must not persist a config that cannot be represented in normalized reference rows.
+- If derivation yields more than one base `versionId`, the template write must fail with a clear validation error explaining that launchable templates must resolve to one version bundle.
 - Introducing normalized reference tables requires a one-time backfill migration/job for existing templates. Backfill must validate consistency and mark templates `INVALID` if dependencies cannot be derived or resolved.
+
+### Backfill, Validation, and Runtime Usage
+
+Normalized reference storage is only safe if it is operationally enforced:
+
+- **Cutover phases** – normalized-reference rollout is stateful and must use explicit phases:
+  - `BACKFILLING` – reference rows are being derived and validated; templates may exist that are not yet safe for runtime dependency checks.
+  - `VALIDATED` – backfill completed and consistency checks passed for all templates in scope.
+  - `ENFORCED` – runtime and control-plane reads for dependency/retirement checks use normalized tables as the sole source of truth.
+  - Instance creation must be blocked for tenants still in `BACKFILLING`.
+  - Once in `ENFORCED`, dependency checks must not fall back to best-effort JSON parsing.
+  - Phase scope is explicit and persisted per `tenantId`. Tooling must not infer phase from partial row counts.
+  - Phase must be stored in a durable control-plane row (for example `template_reference_phase`) with a monotonic epoch for CAS-safe transitions (`BACKFILLING -> VALIDATED -> ENFORCED`).
+  - A read API such as `GetTemplateReferencePhase(tenantId)` must expose the persisted phase to Game Session and retirement tooling.
+
+- **Backfill job/migration** – when normalized reference tables are introduced (or when their derivation rules change), the Game Design Service must run a backfill process that:
+  - Re-derives all `game_template_*_ref` rows from existing `game_templates.config`.
+  - Validates that every referenced `(tenantId, versionId, templateId)` exists in the owning domain service and that the referenced `versionId` is not Retired.
+  - Marks the template as `INVALID` (and blocks instance creation) if references cannot be derived, cannot be resolved, or violate lifecycle constraints.
+- **Strict create/update enforcement** – create/update of a template must be rejected if normalized references cannot be derived and written in the same transaction as the JSON config.
+- **Single-version launch enforcement** – instance creation and `ResolveLaunchDescriptor` must reject any template not marked `VALID` with exactly one canonical base `versionId`.
+- **Instance creation enforcement** – the Game Session Service (or the instance-creation orchestrator) must validate template dependencies using normalized tables before creating any `gameInstanceId` rows:
+  - Fail fast if any referenced version is Retired, missing, or out of sync with its domain templates.
+  - If the template pins a `scriptPatchVersion`, fail fast unless Automation & Scripting reports that patch is `READY` for the tenant.
+  - Fail fast if `GetTemplateReferencePhase` is not `ENFORCED` for the target scope.
+  - Fail fast if the target version does not have a valid `published_release_bundle` attestation proving the digests, `manifestHash`, and `generationConfigRevision` used for launch.
+  - If the launch path depends on cross-version durable-state remaps, fail fast unless an approved `remapSetId` exists for the source/target version pair and all required owning domains attest it as usable.
 
 > **Note**
 
@@ -68,8 +106,126 @@ Ownership can be summarized as:
 Game templates may optionally carry default runtime configuration alongside their structural wiring:
 
 - `GameTemplateDto.config` can include optional fields such as a default `scriptPatchVersion` or initial feature-flag presets that the Game Session Service uses when creating new `gameInstanceId` values from the template.
+- Templates must not implicitly promise survival of instance-scoped world state across replacement-instance upgrades. Any persistent carry-forward behavior must be defined by the runtime-state upgrade contract in `system-architecture-versioning-runtime.md`.
 - When these defaults are present, instance-creation flows should apply them explicitly; when they are absent, callers must provide the desired `scriptPatchVersion` and runtime flags at creation time. Templates must not implicitly select “latest READY patch” or other moving targets without operator input.
 - If a template pins a default `scriptPatchVersion`, instance creation must validate that Automation & Scripting has marked that patch `READY` for the tenant before pinning it for a running instance; otherwise instance creation fails with a clear error and no instance rows are created.
+
+### Resolved Launch Descriptor
+
+Template-driven instance creation must materialize one immutable resolved launch descriptor before any `gameInstanceId` rows are created. Runtime services must not independently reinterpret `GameTemplateDto.config`, re-resolve defaults, or fetch moving-target control-plane state during launch.
+
+Canonical minimum fields:
+
+- `launchDescriptorId`
+- `tenantId`
+- `gameTemplateId`
+- resolved `versionId`
+- resolved `scriptPatchVersion` (or explicit null when none is pinned)
+- resolved runtime feature flags/defaults
+- `generationConfigRevision` taken from the target version’s `published_release_bundle`
+- `versionStateEpoch` used for CAS-safe activation checks
+- any approved `remapSetId` required by the launch path
+
+Resolution invariants:
+
+- `resolved versionId` is derived from the template’s single canonical `game_template_version_ref`; it is never inferred by choosing one of several referenced versions at launch time.
+- `resolved scriptPatchVersion`, when present, must be validated against that same base `versionId`.
+- Runtime services must treat any mixed-version template as invalid configuration and fail before any instance rows are created.
+
+Ownership and usage rules:
+
+- Game Design Service owns deterministic resolution of template metadata and normalized references into this descriptor, or exposes a read API that lets the instance-creation orchestrator do so deterministically from Game Design-owned state.
+- Retries for the same launch attempt must reuse the same descriptor values.
+- World creation, Game Session admission, and script-patch pinning consume this descriptor as input; they must not fetch "latest READY patch" or re-parse template JSON mid-flight.
+- If descriptor resolution fails because a dependency is missing, not `READY`, not attested, or not enforceable under `GetTemplateReferencePhase`, the launch fails before any instance rows are created.
+
+Illustrative control-plane schema:
+
+- Request: `ResolveLaunchDescriptorRequest { tenantId, gameTemplateId, requestedRuntimeFlags?, requestedScriptPatchVersion?, sourceVersionId?, targetVersionId? }`
+- Response: `ResolveLaunchDescriptorResponse { launchDescriptorId, tenantId, gameTemplateId, versionId, scriptPatchVersion, runtimeFlags, generationConfigRevision, versionStateEpoch, remapSetId?, releaseBundleRef }`
+
+The exact transport schema may evolve, but every implementation must preserve the same contract shape:
+
+- request fields identify the template and any caller-supplied runtime overrides that are allowed to participate in deterministic resolution;
+- response fields are the immutable resolved values consumed by launch-time workflows;
+- `releaseBundleRef` (or equivalent attestation identity) must let downstream workflows prove they are using the same published release attestation that supplied `generationConfigRevision`.
+
+Normative examples:
+
+- Fresh launch from a template with no script patch pinned:
+
+```json
+{
+  "request": {
+    "tenantId": "t1",
+    "gameTemplateId": "gt-default"
+  },
+  "response": {
+    "launchDescriptorId": "ld-1001",
+    "tenantId": "t1",
+    "gameTemplateId": "gt-default",
+    "versionId": "v42",
+    "scriptPatchVersion": null,
+    "runtimeFlags": {
+      "pvpEnabled": false
+    },
+    "generationConfigRevision": "genrev-42a1",
+    "versionStateEpoch": 17,
+    "remapSetId": null,
+    "releaseBundleRef": "prb:t1:v42"
+  }
+}
+```
+
+- Replacement-instance upgrade where durable `S2` state requires an approved remap:
+
+```json
+{
+  "request": {
+    "tenantId": "t1",
+    "gameTemplateId": "gt-default",
+    "sourceVersionId": "v42",
+    "targetVersionId": "v43"
+  },
+  "response": {
+    "launchDescriptorId": "ld-2001",
+    "tenantId": "t1",
+    "gameTemplateId": "gt-default",
+    "versionId": "v43",
+    "scriptPatchVersion": "v43-script.1",
+    "runtimeFlags": {
+      "pvpEnabled": false
+    },
+    "generationConfigRevision": "genrev-43b7",
+    "versionStateEpoch": 3,
+    "remapSetId": "remap-v42-v43-r1",
+    "releaseBundleRef": "prb:t1:v43"
+  }
+}
+```
+
+- Mixed-version template rejection:
+
+```json
+{
+  "request": {
+    "tenantId": "t1",
+    "gameTemplateId": "gt-invalid-mixed"
+  },
+  "error": {
+    "code": "INVALID_TEMPLATE_CONFIGURATION",
+    "message": "Template references multiple base versionIds (world=v42, entity=v43); launchable templates must resolve to one canonical version."
+  }
+}
+```
+
+Illustrative startup sequence:
+
+1. The instance-creation orchestrator calls `GetTemplateReferencePhase(tenantId)` and fails fast unless the result is `ENFORCED`.
+2. The orchestrator calls `ResolveLaunchDescriptor(...)` for the selected `gameTemplateId` and receives immutable resolved values including `versionId`, `scriptPatchVersion`, `generationConfigRevision`, `versionStateEpoch`, and `releaseBundleRef`.
+3. The orchestrator verifies `releaseBundleRef` by reading `GetPublishedReleaseBundle(tenantId, versionId)` and confirms the attested `generationConfigRevision` matches the resolved descriptor.
+4. World creation starts using only the resolved descriptor fields and persists instance rows under `(tenantId, gameInstanceId)` without re-reading mutable template defaults.
+5. Game Session opens admission only after World reports successful activation for that same resolved descriptor.
 
 ### Interaction with Version Lifecycle
 

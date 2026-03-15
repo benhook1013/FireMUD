@@ -6,6 +6,9 @@ TCP_PORT=${TCP_PROXY_PORT:-2323}
 SMOKE_HOST=${SMOKE_TELNET_HOST:-localhost}
 SMOKE_USERNAME=${SMOKE_USERNAME:-demo@example.com}
 SMOKE_PASSWORD=${SMOKE_PASSWORD:-swordfish}
+SMOKE_SESSION_ID=${SMOKE_SESSION_ID:-1}
+SMOKE_TENANT_ID=${SMOKE_TENANT_ID:-1}
+SMOKE_ACCOUNT_API_BASE=${SMOKE_ACCOUNT_API_BASE:-http://localhost:8081}
 SMOKE_LOGIN_EXPECT=${SMOKE_LOGIN_EXPECT:-"OK LOGIN"}
 SMOKE_LOOK_EXPECT=${SMOKE_LOOK_EXPECT:-"OK LOOK"}
 SMOKE_TIMEOUT_SECONDS=${SMOKE_TIMEOUT_SECONDS:-10}
@@ -21,20 +24,30 @@ fi
 
 echo "Running Telnet LOGIN + LOOK smoke test against ${SMOKE_HOST}:${TCP_PORT}"
 echo "Using username='${SMOKE_USERNAME}' (password redacted)"
+echo "Using session='${SMOKE_SESSION_ID}' tenant='${SMOKE_TENANT_ID}'"
+echo "Using account API base '${SMOKE_ACCOUNT_API_BASE}' for smoke bootstrap"
 
 "$PYTHON" - <<'PYTHON'
+import json
 import os
 import socket
+import subprocess
 import sys
 import time
+import urllib.error
+import urllib.request
 
 host = os.environ.get("SMOKE_TELNET_HOST", "localhost")
 port = int(os.environ.get("TCP_PORT", "2323"))
 username = os.environ.get("SMOKE_USERNAME", "demo@example.com")
 password = os.environ.get("SMOKE_PASSWORD", "swordfish")
+session_id = os.environ.get("SMOKE_SESSION_ID", "1")
+tenant_id = os.environ.get("SMOKE_TENANT_ID", "1")
+account_api_base = os.environ.get("SMOKE_ACCOUNT_API_BASE", "http://localhost:8081")
 login_expect = os.environ.get("SMOKE_LOGIN_EXPECT", "OK LOGIN")
 look_expect = os.environ.get("SMOKE_LOOK_EXPECT", "OK LOOK")
 timeout_seconds = int(os.environ.get("SMOKE_TIMEOUT_SECONDS", "10"))
+startup_wait_seconds = int(os.environ.get("SMOKE_STARTUP_WAIT_SECONDS", "90"))
 
 def recv_until(sock, expected_substring, timeout):
     deadline = time.time() + timeout
@@ -53,8 +66,164 @@ def recv_until(sock, expected_substring, timeout):
             return joined
     return "".join(chunks)
 
+
+def ensure_smoke_account():
+    payload = json.dumps(
+        {
+            "username": username.split("@", 1)[0],
+            "email": username,
+            "password": password,
+        }
+    ).encode("utf-8")
+    request = urllib.request.Request(
+        f"{account_api_base}/accounts",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    last_error = None
+    for attempt in range(1, 4):
+        try:
+            with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+                body = response.read().decode("utf-8", errors="ignore").strip()
+                print("=== Account bootstrap response ===")
+                print(body or "<empty>")
+                return
+        except urllib.error.HTTPError as exc:
+            body = exc.read().decode("utf-8", errors="ignore").strip()
+            print("=== Account bootstrap response ===")
+            print(body or "<empty>")
+            return
+        except OSError as exc:
+            last_error = exc
+            if attempt < 3:
+                time.sleep(1)
+    if last_error is not None:
+        print(f"Account bootstrap skipped: {last_error}")
+
+
+def wait_for_account_schema():
+    deadline = time.time() + startup_wait_seconds
+    query = "select to_regclass('public.accounts');"
+    while time.time() < deadline:
+        try:
+            table_name = subprocess.check_output(
+                [
+                    "docker",
+                    "exec",
+                    "docker-postgres-1",
+                    "psql",
+                    "-U",
+                    "firemud",
+                    "-d",
+                    "firemud",
+                    "-tAc",
+                    query,
+                ],
+                text=True,
+                timeout=timeout_seconds,
+            ).strip()
+            if table_name == "accounts":
+                print("Confirmed account schema is ready.")
+                return
+        except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            pass
+        time.sleep(2)
+    print("Account schema readiness wait timed out; continuing anyway.")
+
+
+def wait_for_account_api():
+    deadline = time.time() + startup_wait_seconds
+    readiness_urls = (
+        f"{account_api_base}/actuator/health/readiness",
+        f"{account_api_base}/actuator/health",
+    )
+    while time.time() < deadline:
+        for url in readiness_urls:
+            try:
+                with urllib.request.urlopen(url, timeout=timeout_seconds) as response:
+                    body = response.read().decode("utf-8", errors="ignore")
+                    if response.status < 500 and "\"status\":\"UP\"" in body.replace(" ", ""):
+                        print(f"Confirmed account API is ready via {url}.")
+                        return
+            except (urllib.error.URLError, OSError):
+                continue
+        time.sleep(2)
+    print("Account API readiness wait timed out; continuing anyway.")
+
+
+def wait_for_telnet_port():
+    deadline = time.time() + startup_wait_seconds
+    while time.time() < deadline:
+        try:
+            with socket.create_connection((host, port), timeout=timeout_seconds):
+                print(f"Confirmed telnet endpoint is accepting connections on {host}:{port}.")
+                return
+        except OSError:
+            time.sleep(2)
+    print("Telnet endpoint readiness wait timed out; continuing anyway.")
+
+
+def sync_session_owner_account():
+    query = (
+        "select id from accounts "
+        f"where email = '{username}' "
+        "order by id desc limit 1;"
+    )
+    try:
+        account_id = subprocess.check_output(
+            [
+                "docker",
+                "exec",
+                "docker-postgres-1",
+                "psql",
+                "-U",
+                "firemud",
+                "-d",
+                "firemud",
+                "-tAc",
+                query,
+            ],
+            text=True,
+            timeout=timeout_seconds,
+        ).strip()
+        if not account_id:
+            print("Session-owner sync skipped: no smoke account found in postgres")
+            return
+        update = (
+            "update game_instances "
+            f"set owner_account_id = {account_id}, tenant_id = {tenant_id} "
+            f"where id = {session_id};"
+        )
+        subprocess.check_call(
+            [
+                "docker",
+                "exec",
+                "docker-postgres-1",
+                "psql",
+                "-U",
+                "firemud",
+                "-d",
+                "firemud",
+                "-c",
+                update,
+            ],
+            timeout=timeout_seconds,
+        )
+        print(f"Aligned game session {session_id} owner_account_id to {account_id}")
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+        print(f"Session-owner sync skipped: {exc}")
+
 try:
+    wait_for_account_schema()
+    wait_for_account_api()
+    wait_for_telnet_port()
+    ensure_smoke_account()
+    sync_session_owner_account()
     with socket.create_connection((host, port), timeout=timeout_seconds) as sock:
+        session_envelope = f"SESSION {session_id} {tenant_id}\r\n"
+        sock.sendall(session_envelope.encode("iso-8859-1"))
+
         # LOGIN
         login_line = f"LOGIN {username} {password}\r\n"
         sock.sendall(login_line.encode("iso-8859-1"))
@@ -84,4 +253,3 @@ except OSError as exc:
 
 print("Telnet LOGIN + LOOK smoke test passed.")
 PYTHON
-

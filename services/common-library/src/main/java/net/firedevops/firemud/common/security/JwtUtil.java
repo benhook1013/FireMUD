@@ -21,10 +21,10 @@ public class JwtUtil {
   public String generateToken(String subject, Map<String, Object> claims) {
     long now = System.currentTimeMillis();
     return Jwts.builder()
-        .setSubject(subject)
-        .addClaims(claims)
-        .setIssuedAt(new Date(now))
-        .setExpiration(new Date(now + expirationMillis))
+        .subject(subject)
+        .claims(claims)
+        .issuedAt(new Date(now))
+        .expiration(new Date(now + expirationMillis))
         .signWith(Keys.hmacShaKeyFor(key))
         .compact();
   }

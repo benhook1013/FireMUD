@@ -43,22 +43,77 @@ Application state is handled by **Redux Toolkit**, with **RTK Query** used for d
 Frontend flows are split between **player gameplay sessions** and **admin/creator tools** so that gameplay auth remains simple while control-plane operations use JWTs:
 
 - **Player UI (gameplay)**  
-  - Players authenticate to the platform by issuing the `LOGIN` command over the WebSocket gameplay channel, as described in [Authentication & Authorization](./system-architecture-authentication.md#login-and-session-flow).  
-  - The React client does not store or expose internal JWTs; instead it maintains a WebSocket connection to the Game Session Service through the Gateway, and the Game Session Service binds that socket to a gameplay session in Redis.  
-  - After login, the client participates in an explicit world-selection step that chooses a `tenantId` and character by issuing `ENTER_GAME <tenantId> [characterId]` as described in [Tenant Selection for Gameplay](./system-architecture-authentication.md#tenant-selection-for-gameplay). The Game Session Service enforces tenant authorization and entitlements for this step.  
-  - On page reload or connectivity loss, the client reconnects the WebSocket and replays the login and tenant-selection flow as needed; the Game Session Service uses Redis gameplay session bindings and auth token sessions to restore gameplay state when allowed by server-side TTLs and revocation rules.
+  - First-party clients must first call the dedicated player-bootstrap endpoint (`POST /auth/player-bootstrap` or equivalent) to establish short-lived account identity for gameplay bootstrap only, then obtain a short-lived connect token (`POST /auth/connect-token`) for a selected `{tenantId, gameInstanceId}` before opening `/ws/game/**`, then complete gameplay authentication by issuing `LOGIN` over the WebSocket channel using the already-verified bootstrap/connect context rather than replaying username/password/OTP from the browser, as described in [Authentication & Authorization](./system-architecture-authentication.md#login-and-session-flow).  
+  - The React client does not store or expose internal control-plane JWTs for gameplay. It may hold only the short-lived, memory-only `player-bootstrap` token described in the authentication design and use it solely for gameplay bootstrap surfaces such as `POST /auth/connect-token`.  
+  - Explicit player logout must clear any in-memory `player-bootstrap` token immediately in addition to closing gameplay sockets and clearing reconnect state.
+  - Tenant membership and runtime entitlement checks for first-party gameplay happen during `POST /auth/connect-token`, not during `POST /auth/player-bootstrap`. In the first implementation, the connect-token target always resolves to the tenant's single gameplay-admissible instance (`"primary"`).  
+  - After login, the client participates in an explicit **lobby world-selection** step by issuing `WORLDS` / `CHARS <world>` and then `PLAY <world> [character]` as described in [Tenant Selection for Gameplay](./system-architecture-authentication.md#tenant-selection-for-gameplay-lobby-selection). The Game Session Service resolves the selected world/character into internal identifiers (`tenantId`, `gameInstanceId`, `characterId`), enforces tenant authorization and entitlements, and then binds the socket to a gameplay session in Redis.  
+  - On page reload or connectivity loss, the client requests a fresh connect token, reconnects the WebSocket, then replays `LOGIN` and tenant-selection without prompting for credentials again; the Game Session Service uses Redis gameplay session bindings, current membership authority, and fresh backend token rebinding to restore gameplay state when allowed by server-side TTLs and revocation rules.
 
 - **Admin and creator UIs**  
   - Admin/creator interfaces authenticate through the Account Service (for example, via `/auth/login` exposed behind the Gateway). Successful login issues a short-lived JWT for control-plane APIs that represents a **control-plane browser session** for the current account.  
   - Admin JWTs are treated as **internal tokens** and are stored only in in-memory frontend state managed by the auth layer; they must not be written to `localStorage`, session storage, or exposed to third-party origins.  
   - The frontend sends these tokens on meta/control API calls by setting the `Authorization: Bearer <token>` header for RTK Query requests. Backend services validate these JWTs with the shared `AuthTokenInterceptor` and enforce tenant access via the Tenant Authorization Contract described in [Authentication & Authorization](./system-architecture-authentication.md#tenant-authorization-contract).  
-  - Logout clears the in-memory auth state and calls the Account Service logout endpoint so server-side auth token sessions are revoked; subsequent requests require re-authentication. Closing a browser tab does not revoke auth token sessions; explicit logout (or a “logout all devices” flow) is required to force server-side revocation before TTL expiry.
+  - Logout clears the in-memory auth state and calls the Account Service `POST /auth/logout` endpoint so server-side auth token sessions are revoked; subsequent requests require re-authentication. Account-wide “logout all devices” uses `POST /auth/logout-all`. Closing a browser tab does not revoke auth token sessions; explicit logout is required to force server-side revocation before TTL expiry.
 
 All new frontend features that interact with protected APIs should reuse the shared auth utilities and RTK Query base configuration so token handling, logout, and error behavior remain consistent across player, admin, and creator experiences. In particular, the RTK Query base layer should interpret canonical error codes from backend services as follows:
 
 - `AUTH_TOKEN_EXPIRED` – Clear in-memory auth state, redirect to login, and show a “Session expired” message.
 - `AUTH_SESSION_REVOKED` – Clear in-memory auth state, redirect to login, and show a security-focused message (for example, “You were signed out because your account security changed.”).
 - `TENANT_BILLING_BLOCKED` – Keep the user logged in, but mark the affected tenant as billing-blocked in UI state, show a prominent billing banner, and disable gameplay or instance-management actions for that tenant while still allowing billing-safe operations (such as viewing invoices or updating payment details).
+- `MEMBERSHIP_AUTH_UNAVAILABLE` – Keep the user logged in, surface a retriable billing-authorization availability message, and block billing-safe mutations until live membership authority recovers.
+- `ENTITLEMENT_UNAVAILABLE` – Keep the current auth state, show a retriable availability banner, and apply bounded retry/backoff rather than logging the user out.
+- `ADMISSION_POINTER_UNAVAILABLE` – Keep the current auth state, show a retriable gameplay-admission unavailable message, and retry lobby admission with bounded backoff.
+- `CONNECT_CONTEXT_INVALID` – Keep the current auth state, force gameplay reconnect flow (`connect-token` refresh + new socket + `LOGIN`), and block `PLAY` retries on the current socket.
+- `CONNECT_SCOPE_MISMATCH` – Keep the current auth state, prompt world/session re-selection, request a fresh connect token for the intended `{tenantId, gameInstanceId}`, and retry on a new socket.
+
+For gameplay WebSocket handshake failures on `/ws/game/**`, first-party clients must also differentiate HTTP `403` handshake classes:
+
+- `CONNECT_TOKEN_REJECTED`: prompt a fresh gameplay handshake token acquisition and retry with bounded backoff.
+- `POLICY_DENY`: treat as non-retriable until configuration is corrected and surface an actionable error.
+
+These handshake classes are edge-handshake outcomes, not gameplay text-protocol `ERROR <CODE>` frames. Clients only start handling protocol-level `ERROR <CODE>` responses after the WebSocket has been established and `LOGIN`/`PLAY` exchange begins.
+
+Canonical first-party browser reconnect sequence:
+
+```text
+POST /auth/player-bootstrap
+-> { bootstrapToken, expiresAt }
+
+POST /auth/connect-token
+Authorization: Bearer <bootstrapToken>
+{ tenantId: "tenant-demo", gameInstanceId: "primary", requestId: "req-reconnect-1" }
+-> { connectToken, expiresAt, tenantId: "tenant-demo", gameInstanceId: "primary" }
+
+GET /ws/game/** with X-Firemud-Connect-Token: <connectToken>
+
+LOGIN
+OK LOGIN Logged in
+WORLDS
+OK WORLDS
+1) Demo World (demo)
+PLAY demo
+OK PLAY Entered world: Demo World
+
+...socket drops...
+
+POST /auth/connect-token
+Authorization: Bearer <bootstrapToken>
+{ tenantId: "tenant-demo", gameInstanceId: "primary", requestId: "req-reconnect-2" }
+-> { connectToken, expiresAt, tenantId: "tenant-demo", gameInstanceId: "primary" }
+
+GET /ws/game/** with X-Firemud-Connect-Token: <connectToken>
+
+LOGIN
+OK LOGIN Logged in
+WORLDS
+OK WORLDS
+1) Demo World (demo)
+PLAY demo
+OK PLAY Resumed session
+```
+
+This reconnect flow assumes the player still holds a valid in-memory `player-bootstrap` token. If the bootstrap token has expired or the page was reloaded, the client must obtain a new bootstrap token first, then request a fresh connect token. In all cases, first-party reconnects must not prompt the browser to replay username/password/OTP after bootstrap has been re-established. Clients may skip a visible `WORLDS` step only when they already retain a valid world choice and still drive the same canonical `PLAY <world> [character]` selection on reconnect.
 
 ## API Usage Patterns
 

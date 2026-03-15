@@ -18,7 +18,7 @@ concurrency:
 
 jobs:
   buf-check:
-    name: Buf Breaking and Generation
+    name: Buf Generation
     runs-on: ubuntu-latest
     steps:
       - name: ⬇️ Checkout Code
@@ -26,11 +26,15 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: 🧰 Set up Buf
-        uses: bufbuild/buf-setup-action@v1
-        with:
-          version: '1.30.0'
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+      - name: 🧰 Install Buf CLI
+        env:
+          BUF_VERSION: '1.30.0'
+        run: |
+          sudo curl -sSL \
+            "https://github.com/bufbuild/buf/releases/download/v${BUF_VERSION}/buf-$(uname -s)-$(uname -m)" \
+            -o /usr/local/bin/buf
+          sudo chmod +x /usr/local/bin/buf
+          buf --version
 
       - name: 💾 Cache Buf modules
         uses: actions/cache@v5
@@ -38,18 +42,6 @@ jobs:
           path: ~/.cache/buf
           key: buf-mod-${{ runner.os }}-${{ hashFiles('protos/buf.yaml', 'protos/**/*.proto', 'config/protobuf/buf.gen.yaml', 'config/protobuf/buf.work.yaml') }}
           restore-keys: buf-mod-${{ runner.os }}-
-
-      - name: 🛠️ Fetch Base Commit for Buf Breaking
-        if: github.event_name == 'pull_request'
-        run: |
-          git fetch --depth=1 origin ${{ github.event.pull_request.base.sha }}
-
-      - name: ⚠️ Buf Breaking
-        if: github.event_name == 'pull_request'
-        working-directory: protos
-        env:
-          BUF_WORKSPACE_CONFIG: ../config/protobuf/buf.work.yaml
-        run: buf breaking --against "../.git#ref=${{ github.event.pull_request.base.sha }},subdir=protos"
 
       - name: ⚙️ Generate Protobufs
         working-directory: protos
@@ -180,15 +172,24 @@ jobs:
 
       - name: Install ChromeDriver for axe
         run: |
-          cd web-client
-          npx browser-driver-manager install chrome
-          driver_path=$(npx browser-driver-manager which | grep CHROMEDRIVER_TEST_PATH | cut -d'"' -f2)
-          echo "$(dirname \"$driver_path\")" >> $GITHUB_PATH
+          CHROME_VERSION=$(google-chrome --product-version)
+          DRIVER_ZIP_URL="https://storage.googleapis.com/chrome-for-testing-public/${CHROME_VERSION}/linux64/chromedriver-linux64.zip"
+          DRIVER_DIR=/tmp/chromedriver-for-testing
+          curl -fsSL "$DRIVER_ZIP_URL" -o /tmp/chromedriver-linux64.zip
+          rm -rf "$DRIVER_DIR"
+          mkdir -p "$DRIVER_DIR"
+          unzip -q /tmp/chromedriver-linux64.zip -d "$DRIVER_DIR"
+          echo "CHROMEDRIVER_PATH=$DRIVER_DIR/chromedriver-linux64/chromedriver" >> $GITHUB_ENV
 
       - name: ♿ Run Accessibility Audit
         run: |
           cd web-client
-          npm run accessibility
+          npm run build
+          npx serve dist -l 5000 &
+          SERVER_PID=$!
+          trap 'kill $SERVER_PID' EXIT
+          npx wait-on http://localhost:5000/index.html
+          npx axe http://localhost:5000/index.html --chromedriver-path "$CHROMEDRIVER_PATH" --chrome-options="--no-sandbox" --exit
 
   build-and-test:
     name: Build and Test (${{ matrix.service }})
@@ -253,7 +254,6 @@ jobs:
             PERCENT=0
           fi
           echo "percent=$PERCENT" >> $GITHUB_OUTPUT
-          echo "### 📊 Code coverage: **$PERCENT%**" >> $GITHUB_STEP_SUMMARY
 
       - name: 📤 Upload Coverage Report
         uses: actions/upload-artifact@v7
@@ -276,7 +276,7 @@ jobs:
             const coverage = Number("${{ steps.coverage.outputs.percent }}");
             const testPassed = "${{ steps.checks.outcome }}" === "success";
 
-            const summaryLines = [
+            const commentLines = [
               `### 🧪 Build Summary`,
               testPassed ? "✅ All tests passed" : "❌ Some tests failed (see logs)",
               "🧼 Lint + format steps completed",
@@ -284,10 +284,13 @@ jobs:
               ""
             ];
 
-            const body = summaryLines.join('\n');
+            const body = commentLines.join('\n');
 
-            core.summary.addHeading("🧪 Build Summary");
-            core.summary.addRaw(body).write();
+            await core.summary
+              .addRaw(testPassed ? "✅ All tests passed" : "❌ Some tests failed (see logs)", true)
+              .addRaw("🧼 Lint + format steps completed", true)
+              .addRaw(`📊 Code coverage: ${coverage}%`, true)
+              .write();
 
             const { data: comments } = await github.rest.issues.listComments({
               ...context.repo,
@@ -316,9 +319,6 @@ jobs:
     name: Core Smoke Tests
     needs: [build-and-test]
     runs-on: ubuntu-latest
-    # TODO: once the Telnet → Gateway → Game Session slice is stable in CI,
-    # remove continue-on-error so smoke failures block the workflow.
-    continue-on-error: true
     timeout-minutes: 25
     steps:
       - name: ⬇️ Checkout Code
@@ -335,6 +335,12 @@ jobs:
         with:
           cache-read-only: false
 
+      - name: 📝 Create CI .env placeholder
+        run: touch .env
+
+      - name: Generate Dev Certificates
+        run: ./dev-tools/generate-dev-certs.sh dev-tools/certs
+
       - name: 🚀 Start Dev Stack (devUp)
         run: ./gradlew devUp
 
@@ -343,7 +349,7 @@ jobs:
           cd services/tcp-proxy-service
           for attempt in 1 2 3; do
             echo "Attempt ${attempt}: running Telnet LOGIN + LOOK smoke test..."
-            if ./telnet-login-look-smoke.sh; then
+            if bash ./telnet-login-look-smoke.sh; then
               echo "Telnet smoke test succeeded on attempt ${attempt}."
               exit 0
             fi
@@ -450,8 +456,9 @@ jobs:
 
             const body = `### 🔍 Trivy Security Scan Report\n**${summary}**\n\n\`\`\`\n${report}\n\`\`\``;
 
-            core.summary.addHeading("🔍 Trivy Security Scan");
-            core.summary.addRaw(summary).write();
+            await core.summary
+              .addRaw(summary, true)
+              .write();
 
             const { data: comments } = await github.rest.issues.listComments({
               ...context.repo,

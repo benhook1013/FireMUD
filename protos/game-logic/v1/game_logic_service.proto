@@ -48,12 +48,14 @@ message LookResult {
   string long_description = 4;
   repeated LookExit exits = 5;
   repeated RoomEntity entities = 6;
-  map<string, string> ambient_state = 7;
+  // Deprecated: use ambient_state_v2 as canonical.
+  map<string, string> ambient_state = 7 [deprecated = true];
   repeated string room_flags = 8;
   shared.v1.RoomInstanceRef room_instance = 9;
   string world_snapshot_id = 10;
   string entity_snapshot_id = 11;
   string look_snapshot_id = 12;
+  RoomAmbientState ambient_state_v2 = 13;
 }
 
 message BroadcastSayRequest {
@@ -101,4 +103,34 @@ enum EntityType {
   PLAYER = 1;
   NPC = 2;
   ITEM = 3;
+}
+
+message RoomAmbientState {
+  int32 schema_version = 1;
+  string weather = 2;
+  repeated DoorAmbientState doors = 3;
+  repeated HazardAmbientState hazards = 4;
+}
+
+enum DoorState {
+  DOOR_STATE_UNSPECIFIED = 0;
+  OPEN = 1;
+  CLOSED = 2;
+  LOCKED = 3;
+}
+
+message DoorAmbientState {
+  string door_id = 1;
+  DoorState state = 2;
+}
+
+enum HazardState {
+  HAZARD_STATE_UNSPECIFIED = 0;
+  ACTIVE = 1;
+  INACTIVE = 2;
+}
+
+message HazardAmbientState {
+  string hazard_id = 1;
+  HazardState state = 2;
 }

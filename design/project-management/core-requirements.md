@@ -36,6 +36,7 @@ This document outlines the **core functional and non-functional requirements** f
 - Each hosted game has **separate world data, player characters, and configurations**.
 - Players have a **single platform-wide account** that allows them to join multiple games, with **separate characters per game**.
 - Game creators can **host multiple games** with independent settings.
+- Hosted games may expose multiple player-addressable realms, including a default production realm and explicit non-production playtest forks used to validate changes against copied gameplay state without mutating production.
 
 ### 2.2 Game Design & Customization
 
@@ -61,7 +62,7 @@ See [Account Service](../architecture/microservices/account-service/README.md) f
 ### 2.4 Game World & Entity Management
 
 - Support for **multi-room game worlds** with region-based navigation.
-- **Instance-based game spaces** allow separate world states (e.g., private dungeons, event-based scenarios, or personalized player housing).
+- **Instance-based game spaces** allow separate world states (e.g., public production realms, creator-managed playtest forks, private dungeons, event-based scenarios, or personalized player housing).
 - Game creators can configure **instance rules, expiration, and persistence settings**.
 - **World Persistence & Scheduled Events**:
   - The platform must support **persistent world states**, ensuring that world changes **persist beyond player sessions**.

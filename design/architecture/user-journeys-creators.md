@@ -51,7 +51,13 @@ Account creation and login flows are covered in the [Player Journeys](./user-jou
 
 After signing up, creators start a new project using the [Game Design Service](./microservices/game-design-service/README.md).
 
-Each new game maps to a tenant (`tenantId`) under the [Multi-Tenancy](./system-architecture-multi-tenancy.md#identity--tenant-model) design. Hosting and resource limits for that tenant are controlled by subscriptions as described in the [Subscription Management Design](./microservices/account-service/subscription-management.md); creators must provision an appropriate plan before running production-scale game instances.
+Each new game maps to a tenant (`tenantId`) under the [Multi-Tenancy](./system-architecture-multi-tenancy.md#identity--tenant-model) design. Hosting and resource limits for that tenant are controlled by subscriptions as described in the [Subscription Management Design](./microservices/account-service/subscription-management.md).
+
+For v1, the creator lifecycle is:
+
+1. **Create a Draft Tenant** – A creator can create and edit a tenant before paying for production gameplay. Draft tenants support authoring and internal setup but do not expose a public production realm.
+2. **Assign Roles** – `designer` authors content and publishes versions. `tenantAdmin` owns tenant runtime lifecycle for that tenant: launching the production realm, creating playtest forks, pinning script patches, initiating cutovers, and rolling back. `platformAdmin` can override these actions for platform incidents or support.
+3. **Go-Live Readiness** – Before the first public production realm is started, the tenant must satisfy plan/entitlement requirements and have at least one published version ready to launch.
 
 ```plaintext
 Account Service (user) → Game Design Service (new game)
@@ -95,11 +101,14 @@ Dynamic behavior is implemented via the [Automation & Scripting Service](./micro
 
 Once the world is ready:
 
-1. **Publish a Version** – Creators publish the current design in the Game Design Service.
-2. **Start a Game Instance** – The [Game Session Service](./microservices/game-session-service/README.md) launches a live instance using that published version. The [World Creation Workflow](./microservices/world-management-service/world-creation-workflow.md) describes how initial world state is seeded from the published world data when a brand new world is created. Cross-service steps are orchestrated with **sagas** to ensure consistency. For the full rollout process, see [Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md).
+1. **Publish a Version** – A `designer` or `tenantAdmin` publishes the current design in the Game Design Service.
+2. **Launch the Production Realm** – A `tenantAdmin` instructs the [Game Session Service](./microservices/game-session-service/README.md) to launch the tenant's default production realm on that published version. The [World Creation Workflow](./microservices/world-management-service/world-creation-workflow.md) describes how initial world state is seeded from the published world data when a brand new world is created.
+3. **Check Entitlements** – Launch fails closed unless billing and plan entitlements permit gameplay for the tenant.
+4. **Open Player Admission** – Once the realm is healthy, it becomes the default production realm surfaced to players in `WORLDS` / `REALMS` / `PLAY`.
+5. **Emergency Override** – `platformAdmin` can perform the same launch path during incident response, but creators do not depend on operators for routine tenant launches.
 
 ```plaintext
-Game Design Service (publish) → Game Session Service (start instance)
+Game Design Service (publish) → Tenant Admin / Platform Admin → Game Session Service (launch realm)
 ```
 
 ---
@@ -109,12 +118,16 @@ Game Design Service (publish) → Game Session Service (start instance)
 1. **Iterate on Content** – Creators modify worlds, items, or rules using the [Game Design Service](./microservices/game-design-service/README.md).
 2. **Publish a New Version** – The updated design is published with patch notes so players can review changes.
 3. **Publish a Script Patch** – For quick fixes, the [Game Design Service](./microservices/game-design-service/README.md) emits a `scriptPatchVersion` like `v42-script.3` linked to the current version.
-4. **Restart Game Instance** – Administrators instruct the [Game Session Service](./microservices/game-session-service/README.md) to load the new `version_id` when a full update is required. Script-only patches are applied live without restarting.
-5. **Saga Coordination** – Cross-service updates are coordinated using sagas for atomic rollbacks. See [Transaction Strategies](./system-architecture-transactions.md).
-6. **Verify Performance** – Check metrics after deployment; see [Performance Optimization Guidelines](./performance-optimization.md).
+4. **Choose the Rollout Path**
+   - **Script-only patch** – A `tenantAdmin` pins the patch to the target realm. Script-only patches apply live without replacing the realm.
+   - **Non-script change** – A `tenantAdmin` creates a replacement-instance cutover to a new published version. The Game Session Service performs compatibility checks, launches the replacement instance, and atomically shifts the realm route.
+5. **Player Experience During Cutover** – New admissions follow the new realm target once the cutover completes. Existing players may reconnect through the normal lobby flow if the old instance drains or disconnects them.
+6. **Rollback** – A `tenantAdmin` may roll back to the previous version or script patch using the same control-plane contract. `platformAdmin` is break-glass override only.
+7. **Saga Coordination** – Cross-service updates are coordinated using sagas for atomic pre-activation rollback and deterministic runtime cutover. See [Transaction Strategies](./system-architecture-transactions.md).
+8. **Verify Performance** – Check metrics after deployment; see [Performance Optimization Guidelines](./performance-optimization.md).
 
 ```plaintext
-Game Design Service (publish) → Game Session Service (restart)
+Game Design Service (publish) → Tenant Admin / Platform Admin → Script Patch Pin or Replacement-Instance Cutover
 ```
 
 ### Example Hotfix DSL
@@ -131,7 +144,7 @@ Game Design Service (publish) → Game Session Service (restart)
 
 Hotfixes follow the steps in the [Hotfix Procedure](./system-architecture-runbooks.md#-hotfix-procedure) to ensure minimal downtime.
 
-Hotfix procedures and runtime rollout steps are shared with operators; see [Testing & Continuous Delivery](./user-journeys-operators.md#testing--continuous-delivery) and [Platform Service Updates](./user-journeys-operators.md#platform-service-updates) for CI/CD details.
+Hotfix procedures and runtime rollout steps are shared with operators for auditability and incident response; see [Testing & Continuous Delivery](./user-journeys-operators.md#testing--continuous-delivery) and [Platform Service Updates](./user-journeys-operators.md#platform-service-updates) for CI/CD details.
 
 ---
 
@@ -143,7 +156,24 @@ Creators adjust the look and feel of their games through the Game Design Service
 
 ## 7. Playtesting & Analytics
 
-Before launch or after major updates, creators invite testers to staged environments. Feedback is collected per the [Playtesting & Feedback](../project-management/playtesting-feedback.md) and telemetry is reviewed using the [Analytics Dashboards](./microservices/logging-admin-service/analytics-dashboards.md).
+Before launch or after major updates, creators validate changes with **forked playtest realms**:
+
+1. **Fork a Source Realm** – A `tenantAdmin` selects a source realm, usually the live production realm, and requests a fork. The platform snapshots the source realm using the canonical v1 fork-snapshot boundary from [Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md) and creates a temporary isolated playtest realm with its own `gameInstanceId`.
+2. **Choose the Target Build** – The fork may run the same version as production for reproduction, or a newer `versionId` / `scriptPatchVersion` for validation against realistic state.
+3. **Invite Testers** – Access is explicit. The fork uses the same platform accounts as production, but only authorized testers, creators, and operators see it in `REALMS <world>`.
+4. **Collect Feedback** – Feedback is collected per the [Playtesting & Feedback](../project-management/playtesting-feedback.md) flow and correlated with the fork realm in analytics.
+5. **Reset or Expire the Fork** – Forks are time-bounded and may be reset repeatedly from source snapshots during an iteration cycle. Runtime writes remain isolated to the fork and never merge back into production automatically.
+6. **Promote by Normal Launch/Cutover** – Successful playtests inform a normal production rollout; there is no direct "promote this fork" merge path for runtime state.
+
+Common fork use cases:
+
+- **Reproduce the current live problem** – Fork the current production realm on the same `versionId` and `scriptPatchVersion` to reproduce a bug against copied live gameplay state without risking the public realm.
+- **Validate an upcoming release** – Fork the current production realm but launch the fork on a newer `versionId` or `scriptPatchVersion` so testers can evaluate the new build against realistic copied state before the production cutover.
+
+Fork lifecycle choices:
+
+- **Reset an existing fork** – Reuse the same playtest realm identity, but replace its fork-local gameplay state with a fresh application of the chosen source snapshot. Use this when the same tester group and fork purpose remain valid across iterations.
+- **Create a new fork** – Create a new playtest realm with a new identity and fresh visibility/access configuration. Use this when the next test cycle needs a separate audience, separate audit history, or side-by-side comparison with another fork.
 
 ---
 

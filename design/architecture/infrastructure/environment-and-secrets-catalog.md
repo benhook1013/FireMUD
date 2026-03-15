@@ -46,7 +46,7 @@ Services connect to the shared PostgreSQL database using the following variables
 | `FIREMUD_POSTGRES_USER` | Username | `firemud` |
 | `FIREMUD_POSTGRES_PASSWORD` | Password | `firemud` |
 
-These defaults exist only to make local development and ephemeral stacks easy to bootstrap. Any non-ephemeral Kubernetes environment (`SPRING_PROFILES_ACTIVE=prod` in staging/production) must supply real, per-environment credentials via Kubernetes Secrets and must not run with `.env.sample`-style defaults.
+These defaults exist only to make local development and ephemeral stacks easy to bootstrap. Any non-ephemeral player-facing Kubernetes environment (`SPRING_PROFILES_ACTIVE=prod` in hobby-self-hosted/staging/production) must supply real, per-environment credentials via Kubernetes Secrets and must not run with `.env.sample`-style defaults.
 
 In production, these variables are normally sourced from a Secret such as `postgres-credentials`. Higher-privilege credentials (for example in a `postgres-admin-credentials` Secret) are used by Kubernetes Jobs like `db-credential-rotation` to rotate application passwords as described in `system-architecture-backup-recovery.md#post-restore-secret-hardening` and `system-architecture-backup-recovery.md#planned-db-credential-rotation`. Routine rotation uses explicit operator runbooks rather than an automatic schedule.
 
@@ -89,7 +89,7 @@ Precedence and safety rules:
   - They require Cache/Rate‑Limit Redis but lack either `FIREMUD_REDIS_CACHE_URL` or `FIREMUD_REDIS_CACHE_HOST` / `FIREMUD_REDIS_CACHE_PORT`.
 - It is **not supported** to point Coordination and Cache/Rate‑Limit roles at the same resolved endpoint in any **non-ephemeral** environment, including local development, staging, and production. This prohibition applies regardless of whether configuration uses `*_URL` or `*_HOST`/`*_PORT`. Coordination and cache/rate‑limit roles run on separate Redis deployments (for example, two containers on the same developer machine).
 
-Player‑facing environments (production, staging, QA, and any environment used to validate performance or correctness) **must** configure Coordination Redis and Cache/Rate‑Limit Redis as **distinct logical Redis deployments**. Reusing the same host/port for both is considered non‑compliant with the Redis architecture because it reintroduces eviction and latency coupling between coordination keys and cache/rate‑limit traffic. Any ad-hoc “single Redis for all roles” topology is treated as an unsupported experiment and must not be used for shared or player-facing environments or for any cluster that runs coordination reset tooling.
+Player‑facing environments (`hobby-self-hosted`, staging, production, and any environment used to validate performance or correctness) **must** configure Coordination Redis and Cache/Rate‑Limit Redis as **distinct logical Redis deployments**. Reusing the same host/port for both is considered non‑compliant with the Redis architecture because it reintroduces eviction and latency coupling between coordination keys and cache/rate‑limit traffic. Any ad-hoc “single Redis for all roles” topology is treated as an unsupported experiment and must not be used for shared or player-facing environments or for any cluster that runs coordination reset tooling.
 
 Truly ephemeral environments (CI and short-lived preview stacks) may collapse roles into a single Redis instance only when explicitly documented and guarded as an **ephemeral topology**. These stacks are not used to validate coordination tail-loss behavior or production-like performance; they must make it obvious in dashboards/health output that roles are sharing an endpoint so it cannot be mistaken for a production-like configuration. See `../system-architecture-redis-usage-and-profiles.md#environment-mappings` for the allowed exception and guardrails.
 
@@ -121,7 +121,8 @@ For the **TCP Proxy Service → Spring Cloud Gateway WebSocket mTLS hop**, the f
 | `FIREMUD_GATEWAY_WS_CLIENT_PRIVATE_KEY_PATH` | Filesystem path to the private key matching the WebSocket client certificate chain | `certs/client.key` |
 | `FIREMUD_GATEWAY_WS_CA_CERT_PATH` | Filesystem path to the CA bundle used to validate the Gateway’s mTLS WebSocket listener certificate | `certs/ca.crt` |
 
-In development and CI environments it is acceptable to point `GATEWAY_WS_URL` at a `ws://` endpoint without configuring the `FIREMUD_GATEWAY_WS_*` variables. In any player-facing environment (staging, QA, production), `GATEWAY_WS_URL` must target the Gateway’s internal-only mTLS WebSocket listener and the `FIREMUD_GATEWAY_WS_*` paths must be set so the proxy can both authenticate the Gateway and present its own client certificate, as described in `../system-architecture-security.md#tls-termination-for-gateway` and the TCP Proxy Service design (`../microservices/tcp-proxy-service/README.md#websocket-mtls-to-spring-cloud-gateway-target-state-see-implementation-status`).
+In development and CI environments it is acceptable to point `GATEWAY_WS_URL` at a `ws://` endpoint without configuring the `FIREMUD_GATEWAY_WS_*` variables. In any player-facing environment (`hobby-self-hosted`, staging, production), `GATEWAY_WS_URL` must target the Gateway’s internal-only mTLS WebSocket listener and the `FIREMUD_GATEWAY_WS_*` paths must be set so the proxy can both authenticate the Gateway and present its own client certificate, as described in `../system-architecture-security.md#tls-termination-for-gateway` and the TCP Proxy Service design (`../microservices/tcp-proxy-service/README.md#websocket-mtls-to-spring-cloud-gateway-target-state-see-implementation-status`).
+Player-facing deployments must also enforce an explicit alignment check between `GATEWAY_WS_URL` and the expected environment listener (for example via preflight policy validation and TCP Proxy readiness checks). If the resolved `GATEWAY_WS_URL` target does not match the intended internal Gateway endpoint for that environment, deployment and readiness should fail.
 
 Avoid using dev-only diagnostic routes (for example `/dev/echo`) as the TCP Proxy bridge target except in explicitly isolated local debugging profiles; the canonical bridge target is the same gameplay entry point used by native WebSocket clients (`/ws/game/**`) so Telnet and WebSocket flows traverse the same gateway filters, metrics, and downstream routing.
 
@@ -141,8 +142,8 @@ JWT tokens secure internal service calls. Production keys are provided via Kuber
 
 | Variable | Purpose | Default |
 | -------- | ------- | ------- |
-| `FIREMUD_AUTH_JWT_SECRET` | HMAC signing key for JWTs | *(none)* |
-| `FIREMUD_AUTH_JWT_SECRET_PATH` | Path to a file containing the JWT secret; enables hot reload. In staging and production this file is typically sourced from the `jwt-signing-keys` Secret. | *(none)* |
+| `FIREMUD_AUTH_JWT_SECRET` | Inline JWT signing key material for local/dev and ephemeral stacks only (legacy compatibility mode) | *(none)* |
+| `FIREMUD_AUTH_JWT_SECRET_PATH` | Path to a file containing JWT signing key material; enables hot reload. In staging and production this file is typically sourced from the `jwt-signing-keys` Secret. | *(none)* |
 | `FIREMUD_AUTH_JWT_EXPIRATION_MS` | Lifetime of issued JWTs in milliseconds | `3600000` |
 | `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS` | Extra time added to the JWT lifetime when deriving server-side session TTL | `300000` |
 | `FIREMUD_AUTH_REQUIRE_2FA_FOR_PLAINTEXT_TCP` | When `true`, logins over **plaintext Telnet** (raw TCP via the TCP Proxy) are allowed only for accounts that have 2FA enabled and explicitly opt in to plaintext Telnet login; other accounts must use TLS or the web client | `true` |
@@ -151,15 +152,17 @@ Server-side gameplay sessions use a **derived lifetime** instead of a separately
 
 - `session_expiration_ms = FIREMUD_AUTH_JWT_EXPIRATION_MS + FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS`
 
-This value defines the maximum window during which a disconnected gameplay session can be resumed. The Game Session Service uses the derived value both for its in-memory/session bookkeeping and as the TTL for `session:game:<tenantId>:<sessionId>` keys in Redis (see `../system-architecture-redis.md#session-keys-and-gameplay-binding`). After this TTL elapses, reconnect attempts for that session are treated as expired and require a fresh `LOGIN`.
+This value defines the maximum window during which a disconnected gameplay session can be resumed. The Game Session Service uses the derived value both for its in-memory/session bookkeeping and as the TTL for `session:game:<tenantId>:<gameInstanceId>:<sessionId>` keys in Redis (see `../system-architecture-redis.md#session-keys-and-gameplay-binding`). After this TTL elapses, reconnect attempts for that session are treated as expired and require a fresh `LOGIN`.
 
 FireMUD deliberately avoids introducing a second, independent “session TTL” configuration knob. The JWT lifetime (plus the safety margin) is the single control surface for the reconnection window; additional per-session TTL tuning is considered out of scope for this hobby/self-hosted deployment model.
 
-Changing `FIREMUD_AUTH_JWT_EXPIRATION_MS` or `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS` in a running cluster only affects **new or refreshed sessions**. Existing `session:game:<tenantId>:<sessionId>` keys retain the logical expiry and Redis TTL they were created with. Tightening JWT/session lifetimes therefore takes effect immediately for new logins and reconnects (because JWT validity is checked first) but may leave some older session keys in Redis until their original TTLs expire. When making a major TTL reduction and wanting a clean cut-over, operators may optionally run a one-off session cleanup (for example, deleting `session:game:<tenantId>:*` keys for selected tenants in a low-traffic window) so all reconnects require a fresh `LOGIN`. For player-facing environments, prefer using the scoped session cleanup Job described in `../system-architecture-runbooks.md#redis-session-schema-and-ttl-cleanup` over ad-hoc `DEL` usage so cleanup remains repeatable and observable.
+Changing `FIREMUD_AUTH_JWT_EXPIRATION_MS` or `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS` in a running cluster only affects **new or refreshed sessions**. Existing `session:game:<tenantId>:<gameInstanceId>:<sessionId>` keys retain the logical expiry and Redis TTL they were created with. Tightening JWT/session lifetimes therefore takes effect immediately for new logins and reconnects (because JWT validity is checked first) but may leave some older session keys in Redis until their original TTLs expire. When making a major TTL reduction and wanting a clean cut-over, operators may optionally run a one-off session cleanup (for example, deleting `session:game:<tenantId>:*` keys for selected tenants in a low-traffic window) so all reconnects require a fresh `LOGIN`. For player-facing environments, prefer using the scoped session cleanup Job described in `../system-architecture-runbooks.md#redis-session-schema-and-ttl-cleanup` over ad-hoc `DEL` usage so cleanup remains repeatable and observable.
 
-In staging and production environments, JWT signing keys are stored in a `jwt-signing-keys` Secret and exposed to the Account Service via the file pointed to by `FIREMUD_AUTH_JWT_SECRET_PATH`. A corresponding JWKS document is served from a `jwt-jwks` ConfigMap or Secret. Rotation is handled by a dedicated `jwt-rotation` Kubernetes Job as described in `../system-architecture-security.md#jwt-key--jwks-rotation-workflow`; this Job updates both the signing key Secret and JWKS so validators always see the current public keys.
+In player-facing environments (`hobby-self-hosted`, staging, production), JWT signing keys are stored in a `jwt-signing-keys` Secret and exposed to the Account Service via the file pointed to by `FIREMUD_AUTH_JWT_SECRET_PATH`. The JWKS document is also stored in a `jwt-jwks` Secret in these environments. Rotation is handled by a dedicated `jwt-rotation` Kubernetes Job as described in `../system-architecture-security.md#jwt-key--jwks-rotation-workflow`; this Job updates both the signing key Secret and JWKS so validators always see the current public keys.
+In non-player-facing environments (`local-dev`, `ci-preview`, `dev-demo-cluster`), a JWKS ConfigMap may be used for convenience when keys are explicitly non-sensitive test material.
+In player-facing environments (`hobby-self-hosted`, staging, production), `FIREMUD_AUTH_JWT_SECRET_PATH` is required and startup should fail if the service is configured with only `FIREMUD_AUTH_JWT_SECRET`.
 
-For local development and hobby setups, it is acceptable to set `FIREMUD_AUTH_REQUIRE_2FA_FOR_PLAINTEXT_TCP=false` while iterating on Telnet tooling or before 2FA flows are configured. In any environment that hosts real players (staging, QA, production), this flag should remain `true` so plaintext Telnet access is restricted to 2FA-enabled accounts that have explicitly opted in, with all other players connecting via TLS Telnet or the web client. Recommended Telnet deployment patterns by environment are summarized in `../system-architecture-protocol-bridging.md#recommended-telnet-deployment-modes`.
+For local development and explicitly ephemeral test setups, it is acceptable to set `FIREMUD_AUTH_REQUIRE_2FA_FOR_PLAINTEXT_TCP=false` while iterating on Telnet tooling or before 2FA flows are configured. In any player-facing environment (`hobby-self-hosted`, staging, production), this flag should remain `true` so plaintext Telnet access is restricted to 2FA-enabled accounts that have explicitly opted in, with all other players connecting via TLS Telnet or the web client. Recommended Telnet deployment patterns by environment are summarized in `../system-architecture-protocol-bridging.md#recommended-telnet-deployment-modes`.
 
 ---
 
@@ -183,12 +186,19 @@ All services export OpenTelemetry spans. The collector endpoint can be overridde
 | Variable | Purpose | Default |
 | -------- | ------- | ------- |
 | `OTEL_ENDPOINT` | gRPC endpoint for the OpenTelemetry collector | `http://otel-collector:4317` |
+| `OTEL_TRACES_SAMPLER` | OpenTelemetry sampler (for example `parentbased_traceidratio`) | `parentbased_traceidratio` |
+| `OTEL_TRACES_SAMPLER_ARG` | Sampler argument (for example ratio `0.01`) | `0.01` |
 | `FLUENT_ELASTICSEARCH_HOST` | Hostname of the log storage backend | `elasticsearch` |
 | `FLUENT_ELASTICSEARCH_PORT` | Port for the log storage backend | `9200` |
 
 Local Docker Compose stacks that do not run an OpenTelemetry collector should set `OTEL_ENDPOINT` to an empty value to disable exporting spans (services still create traces, but they are not exported).
 
 Service design documents reference this table for the OpenTelemetry endpoint configuration.
+
+Scoped incident sampling support (matching by `tenantId` / `regionId`) also depends on OpenTelemetry Collector policy configuration, not only service env vars. Environments should be explicitly tagged as either:
+
+- `service-scoped-sampling-only`, or
+- `scoped-tenant-region-sampling-enabled` (tail-sampling policy support present and verified).
 
 ---
 
@@ -204,6 +214,8 @@ Published game assets are uploaded to an S3-compatible bucket. The following var
 | `ASSET_STORE_ACCESS_KEY` | Access key credential | *(none)* |
 | `ASSET_STORE_SECRET_KEY` | Secret key credential | *(none)* |
 
+In Kubernetes environments, these values should be sourced from a per-environment Secret and must not be shared between staging and production. After any cluster restore, operators should confirm the restored environment is bound to the correct asset-store credentials and that staging cannot publish to production buckets.
+
 ---
 
 ## Backup & Restore Variables
@@ -214,9 +226,18 @@ Operational scripts and CronJobs rely on the following variables when uploading 
 | -------- | ------- | ------- |
 | `PG_DUMP_BUCKET` | Object storage bucket for pg_dump files | *(none)* |
 | `PG_DUMP_ENDPOINT` | Optional S3-compatible endpoint URL | *(none)* |
-| `FIREMUD_K8S_NAMESPACE` | Target namespace for restore scripts | `firemud` |
+| `FIREMUD_K8S_NAMESPACE` | Namespace override used by restore/verification scripts for drills or non-default restores | `firemud` |
+| `EXTERNAL_CREDENTIAL_EVIDENCE_REF` | In-repo recovery record with external credential validation results (`design/operations/deployments/<environment>/recovery/<recovery-ref>.json`) | *(none)* |
+| `SANITIZATION_EVIDENCE_REF` | In-repo evidence path proving staging data sanitization after production-origin restore (`design/operations/deployments/staging/recovery/<recovery-ref>.json`) | *(none)* |
+| `EXPECTED_BINDINGS_REF` | Canonical expected-binding manifest consumed by deploy preflight and restore validation (`design/operations/environments/<environment>/expected-bindings.yaml`) | *(none)* |
+
+In Kubernetes environments, object-store credentials should be stored in per-environment Secrets and must not be shared between staging and production. `PG_DUMP_ENDPOINT` is required only for S3-compatible endpoints such as MinIO; when unset, tooling uses the AWS default endpoint behavior.
+Each environment boundary uses the standard `firemud` namespace by default (same namespace name, separate environment credentials/secrets). `FIREMUD_K8S_NAMESPACE` is primarily an explicit override for throwaway-namespace restore tests and rehearsals.
+For player-facing environments, these bindings are part of both bootstrap validation and normal deployment preflight, not just restore validation. Operators must be able to prove that backup/object-store, asset-store, outbound-communications, and operator credential bindings resolve to the intended environment before traffic is opened. The canonical enforcement point for those checks is `../system-architecture-deploy-preflight-policy.md`.
 
 See `../system-architecture-backup-recovery.md` for schedules and retention policies.
+`dev-tools/restores/validate-external-credentials.sh` supports `hobby-self-hosted`, `staging`, and `production`; all player-facing restore validations require `EXTERNAL_CREDENTIAL_EVIDENCE_REF`, and staging validations additionally require `SANITIZATION_EVIDENCE_REF` so restore hardening cannot pass without explicit sanitization evidence.
+`EXPECTED_BINDINGS_REF` should point at the same environment-specific manifest that deploy preflight uses, so deployment and recovery validate against one expected-binding source of truth.
 
 ---
 
@@ -229,7 +250,7 @@ Service-specific settings such as SMTP credentials for the Account Service or `G
 
 This catalog covers only shared configuration keys.
 
-Operational scripts like `dev-tools/restores/restore-cluster.sh` use an optional `FIREMUD_K8S_NAMESPACE` variable to target the Kubernetes namespace. It defaults to `firemud` when unset.
+Operational scripts like `dev-tools/restores/restore-cluster.sh` use an optional `FIREMUD_K8S_NAMESPACE` override to target non-default namespaces during restore drills. In normal shared-environment operations, namespace selection should stay aligned with the standard overlay namespace (`firemud`).
 
 ---
 

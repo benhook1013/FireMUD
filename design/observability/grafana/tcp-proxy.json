@@ -21,7 +21,7 @@
       "title": "Connection Limits Exceeded (rate)",
       "targets": [
         {
-          "expr": "rate(tcpproxy_connections_limit_exceeded[5m])",
+          "expr": "rate(tcpproxy_connections_limit_exceeded_total[5m])",
           "legendFormat": "limit_exceeded",
           "refId": "A"
         }
@@ -33,7 +33,7 @@
       "title": "Discarded Telnet Input (rate)",
       "targets": [
         {
-          "expr": "rate(tcpproxy_telnet_discarded[5m])",
+          "expr": "rate(tcpproxy_telnet_discarded_total[5m])",
           "legendFormat": "discarded",
           "refId": "A"
         }
@@ -45,7 +45,7 @@
       "title": "WebSocket Reconnects to Gateway (rate)",
       "targets": [
         {
-          "expr": "rate(tcpproxy_websocket_reconnects[5m])",
+          "expr": "rate(tcpproxy_websocket_reconnects_total[5m])",
           "legendFormat": "reconnects",
           "refId": "A"
         }
@@ -57,12 +57,12 @@
       "title": "TLS / mTLS Errors",
       "targets": [
         {
-          "expr": "tcpproxy_tls_misconfig",
+          "expr": "rate(tcpproxy_tls_misconfig_total[5m])",
           "legendFormat": "tls_misconfig",
           "refId": "A"
         },
         {
-          "expr": "sum by (reason) (tcpproxy_gateway_handshake_failures)",
+          "expr": "sum by (reason) (rate(tcpproxy_gateway_handshake_failures_total[5m]))",
           "legendFormat": "handshake_failures ({{reason}})",
           "refId": "B"
         }
@@ -74,8 +74,8 @@
       "title": "NotifyDisconnect Failures (rate)",
       "targets": [
         {
-          "expr": "rate(tcpproxy_disconnect_notify_failure[5m])",
-          "legendFormat": "notify_failure",
+          "expr": "sum by (status) (rate(tcpproxy_disconnect_notify_transport_failure_total[5m]))",
+          "legendFormat": "transport {{status}}",
           "refId": "A"
         }
       ],
@@ -86,7 +86,7 @@
       "title": "gRPC App Errors by Code",
       "targets": [
         {
-          "expr": "sum by (code) (rate(grpc_app_error{service=\"tcp-proxy-service\"}[5m]))",
+          "expr": "sum by (code) (rate(grpc_app_error_total{service=\"tcp-proxy-service\"}[5m]))",
           "legendFormat": "{{code}}",
           "refId": "A"
         }

@@ -1,6 +1,6 @@
 # Architecture Review Prompt: Scripting and Automation
 
-Read the following documents, and follow references to any other design documents that appear relevant:
+Read the following documents. Follow references only when a listed document explicitly delegates a canonical contract that is required to judge an implementation-blocking gap. Do not recursively fan out further.
 
 - `design/architecture/system-architecture-scripting.md`
 - `design/architecture/system-architecture-scripting-dsl-and-lifecycle.md`
@@ -18,5 +18,13 @@ Then:
 
 - Review the scripting DSL, automation-scripting service, and related game-design tooling as a single, end-to-end system (authoring to validation to deployment to execution to monitoring to rollback).
 - Do not summarize behavior or call out what is already good.
-- Only identify problems, conflicts, or gaps: unclear execution or lifecycle semantics, ambiguous trust or sandbox boundaries, missing quota or abuse controls, weak failure or rollback stories, inconsistencies between designer-facing docs and service responsibilities, or underspecified observability or operational hooks.
-- For each issue, reference the specific document or documents involved and propose concrete, actionable improvements, such as extra lifecycle steps, clearer API or contract definitions, stronger sandbox or limits, or better integration points with other services.
+- Focus on gaps that would force implementers to invent lifecycle semantics, sandbox boundaries, quota policy, rollback behavior, or observability contracts.
+- Do not let nice-to-have DSL ergonomics, future expansion ideas, and edge-case tooling improvements crowd out blockers. Once blockers are cleared, list the highest-value non-blocking improvements if they would materially improve the design.
+- Return at most 5 issues, ordered by severity.
+- For each issue, include:
+  - `Severity`: `blocking` or `important`
+  - `Why it matters now`
+  - `Docs involved`
+  - `Suggested decision or spec change`
+- If no implementation-blocking issues remain, say `No implementation-blocking issues found.` and include a `Suggested follow-ups` section with any worthwhile non-blocking improvements, ordered by leverage and not capped at 3.
+- Stop once you have either identified the remaining blockers or captured the worthwhile non-blocking follow-ups.

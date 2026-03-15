@@ -1,46 +1,48 @@
 spring:
   cloud:
     gateway:
-      routes:
-        - id: session
-          uri: ws://game-session-service:8080
-          predicates:
-            - Path=/api/session/**,/ws/game/**
-        - id: admin
-          uri: http://logging-admin-service:8080
-          predicates:
-            - Path=/api/admin/**
-        - id: design
-          uri: http://game-design-service:8080
-          predicates:
-            - Path=/api/design/**
-        - id: account
-          uri: http://account-service:8080
-          predicates:
-            - Path=/api/account/**
-        - id: entity
-          uri: http://entity-management-service:8080
-          predicates:
-            - Path=/api/entity/**
-        - id: automation
-          uri: http://automation-scripting-service:8080
-          predicates:
-            - Path=/api/automation/**
-        - id: logic
-          uri: http://game-logic-service:8080
-          predicates:
-            - Path=/api/logic/**
-        - id: social
-          uri: http://social-groups-service:8080
-          predicates:
-            - Path=/api/social/**
-        - id: world
-          uri: http://world-management-service:8080
-          predicates:
-            - Path=/api/world/**
-        - id: asset-store
-          uri: http://minio:9000
-          predicates:
-            - Path=/assets/**
-          filters:
-            - StripPrefix=1 # remove /assets before forwarding
+      server:
+        webflux:
+          routes:
+            - id: session
+              uri: ws://game-session-service:8080
+              predicates:
+                - Path=/api/session/**,/ws/game/**
+            - id: admin
+              uri: http://logging-admin-service:8080
+              predicates:
+                - Path=/api/admin/**
+            - id: design
+              uri: http://game-design-service:8080
+              predicates:
+                - Path=/api/design/**
+            - id: account
+              uri: http://account-service:8080
+              predicates:
+                - Path=/api/account/**
+            - id: entity
+              uri: http://entity-management-service:8080
+              predicates:
+                - Path=/api/entity/**
+            - id: automation
+              uri: http://automation-scripting-service:8080
+              predicates:
+                - Path=/api/automation/**
+            - id: logic
+              uri: http://game-logic-service:8080
+              predicates:
+                - Path=/api/logic/**
+            - id: social
+              uri: http://social-groups-service:8080
+              predicates:
+                - Path=/api/social/**
+            - id: world
+              uri: http://world-management-service:8080
+              predicates:
+                - Path=/api/world/**
+            - id: asset-store
+              uri: http://minio:9000
+              predicates:
+                - Path=/assets/**
+              filters:
+                - StripPrefix=1 # remove /assets before forwarding

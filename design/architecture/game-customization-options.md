@@ -7,6 +7,8 @@ This brief document summarizes optional ways a hosted game can change its look a
 - Designers upload logos, favicons, and theme JSON through the **Game Design Service** at design time. Assets are packaged when a version is published.
 - At publish time, assets are pushed to an object store (e.g., S3, MinIO, or a CDN) under a `tenantId`/`version` path. A `manifest.json` mapping asset keys to public URLs is stored alongside them.
 - Runtime clients fetch this manifest using the URL recorded in the published version metadata and load assets directly from the CDN or through the gateway's `/assets/**` route when a local MinIO instance is used. The Game Design Service is never queried during gameplay.
+- A playtest fork uses the branding/assets for the published bundle it is actually launched against. If a fork targets a new `versionId`, it loads that target version's manifest; if it reproduces the source realm's current build, it uses the source build's published manifest. Forks do not create a third independent asset-selection mode.
+- Example: if production is running `v42` with the current live logo and a playtest fork is launched on `v43` with a new theme manifest, testers in the fork see the `v43` branding while public players in production continue to see the `v42` branding.
 - A `manifest.json` is generated for every published version, even when no assets are supplied, so version metadata remains consistent.
 - If the manifest is empty or missing fields, the default platform branding is applied.
 - The manifest can be extended with optional assets such as tutorial images, UI overlays, or CSS snippets.

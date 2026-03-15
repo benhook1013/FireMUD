@@ -41,4 +41,10 @@ cp "$CERT_DIR/client.key" "$CERT_DIR/dev-key.pem"
 
 rm -f "$CERT_DIR"/*.csr "$CERT_DIR"/*.srl
 
-echo "Certificates generated in $CERT_DIR" 
+# Containers run as a non-root application user in CI and local Docker.
+# Make the generated development certificates world-readable so bind mounts
+# remain readable inside the container regardless of host UID/GID.
+chmod 755 "$CERT_DIR"
+chmod 644 "$CERT_DIR"/*.crt "$CERT_DIR"/*.key "$CERT_DIR"/*.pem
+
+echo "Certificates generated in $(cd "$CERT_DIR" && pwd)"

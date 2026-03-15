@@ -8,25 +8,32 @@ Orchestrates live game sessions, including tick execution, player input validati
 
 - **Tenant** – a hosted game world or project, identified by `tenantId`. All database rows and Redis keys include this prefix so data is isolated between games.
 - **Game instance** – a specific running instance of a tenant’s world, identified by a `gameInstanceId` in the database and runtime APIs as described in [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md#version-activation--rollback). Even if a deployment runs at most one instance per tenant, APIs and persistence models still carry `gameInstanceId` explicitly (for example using a stable default like `"primary"`) so multi-instance support does not require rewriting identifiers later.
-- **Player gameplay session** – a single player’s live connection and gameplay context bound to a specific game instance. Gameplay sessions are stored in Redis under `session:game:<tenantId>:<gameInstanceId>:<sessionId>` and are purged when the session ends.
+- **Character identity** – gameplay identity keyed by `characterId`; legacy `playerId` fields are temporary aliases and map one-to-one to `characterId`.
+- **Player gameplay session** – a single player’s live connection and gameplay context bound to a specific game instance and character identity. Gameplay sessions are stored in Redis under `session:game:<tenantId>:<gameInstanceId>:<sessionId>` and are purged when the session ends.
 - **Region / region shard** – a subdivision of the world used for tick execution and scaling. Tick coordination keys are scoped per `<tenantId, regionId>` and do not follow individual player session lifecycles.
 
 ### Responsibilities
 
 - Maintain session state and tick timing in Redis
+- Persist Game Session control-plane metadata in PostgreSQL, including game-instance rows, pinned runtime-version/script-patch selections, active runtime feature-flag overrides, and operator/audit-relevant disconnect/remediation metadata
 - Queue player commands and dispatch them to Game Logic Service
 - Broadcast lifecycle events and world updates to other services
 - Support reconnection and recovery of running games
 - Own the authoritative, pinned `scriptPatchVersion` for each running game instance and enforce version fencing for script-generated work.
 - Publish **coordination and tick health metrics** (per `<tenantId, regionId>`) and expose admin/control APIs that allow authorized services (such as Logging & Admin) to pause/resume tick execution and participate in scoped coordination resets.
 - Front gameplay login commands and session binding, calling Account Service to verify credentials and obtain JWTs/tokens while enforcing single-session control for each character.
+- For first-party `/ws/game/**`, accept bootstrap-backed bare `LOGIN` after Gateway connect-token validation and signed connect-context verification; this path is intentionally credentialless and must not prompt the browser to replay username/password/OTP.
+- Mint and attach short-lived internal `SessionAttestation` payloads on gameplay-service gRPC calls so downstream gameplay services can verify delegated player identity (`accountId`, `tenantId`, `gameInstanceId`, `characterId`, `sessionId`) in addition to mTLS caller identity.
 
 ## Architecture / Design Notes
 
 - Coordinates with Redis to store volatile session state and command queues.
 - Communicates with other microservices exclusively via gRPC.
+- For gameplay-domain gRPC calls made on behalf of a player, includes a signed `SessionAttestation` (as defined in Authentication & Authorization) and rotates it on bounded TTL; downstream gameplay services must reject calls missing valid attestation even when mTLS is present.
 - Communicates game lifecycle changes to other services via gRPC so they can react to games starting or ending.
 - Provides a single point of truth for current tick and world time.
+- Uses PostgreSQL for durable Game Session control-plane metadata and audit-relevant workflow state, while Redis remains the coordination plane for gameplay session bindings, tick queues, timers, retries, and region leases.
+- Implements the gameplay layer’s **session front-end + lease-owner execution** model: connected sockets bind to a stable session front-end pod, while region-scoped tick execution remains fenced to the current `<tenantId, regionId>` lease owner. Session front-ends may forward work to lease owners over internal gRPC, but only lease owners may mutate region-scoped coordination state.
 - Ensures atomic command execution using Redis Lua scripts for all multi-key operations; the service does not rely on Redis `MULTI`/`EXEC` for consistency. Tick-related multi-key operations (locks, pending state, queues, timers, retry metadata) are performed exclusively via the shared Lua scripts described in [Redis Architecture](../../system-architecture-redis.md#atomicity-and-concurrency-control); ad-hoc multi-key sequences against tick keys are not allowed outside these scripts.
 - Treats Redis **Coordination** and **Cache/Rate-Limit** roles as separate concerns:
   - All tick, lock, timer, retry, and session coordination keys live on Coordination Redis and are accessed only via the Lua Script Registry and shared key builders.
@@ -63,7 +70,7 @@ Orchestrates live game sessions, including tick execution, player input validati
     - `tick-executor-lease:{tenantRegionTag}`
     - `remote:<tenantId>:<entityId>` and other coordination keys listed in the prefix tables in the [Redis Cheat Sheet](../../system-architecture-redis-cheatsheet.md).
   - All multi-key coordination operations (ticks, timers, retries, locks, region leadership, and tick recovery flows) use registered Lua scripts that follow the determinism and idempotency rules in [FireMUD Redis Lua Patterns](../../system-architecture-redis-lua-patterns.md).
-  - Coordination prefixes are treated as **reset-tolerant** in line with [Redis Reset & Recovery](../../system-architecture-redis-reset-and-recovery.md): incident runbooks may clear them per region/tenant/cluster without affecting authoritative PostgreSQL state, and designs must remain safe under the documented tail-loss envelope.
+  - Coordination prefixes are treated as **reset-tolerant** in line with [Redis Reset & Recovery](../../system-architecture-redis-reset-and-recovery.md), except for reset-sensitive session bindings (`session:game:*`): incident runbooks may clear reset-tolerant prefixes per region/tenant/cluster without affecting authoritative PostgreSQL state. Region-scoped resets preserve `session:game:*` by default; tenant/cluster resets may invalidate sessions per the reset policy matrix. Designs must remain safe under the documented tail-loss envelope.
 - **Cache/Rate-Limit Redis usage**
   - Does not use Cache/Rate-Limit Redis for gameplay-critical coordination; session state, tick queues, locks, timers, and retry metadata always live on Coordination Redis so they share the same AOF and reset semantics described in [Redis Architecture – Redis Availability, Consistency, and Safety Guarantees](../../system-architecture-redis.md#redis-availability-consistency-and-safety-guarantees).
   - Uses **Cache/Rate-Limit Redis** for read-side caches that help serve hot-path session views, most notably pre-rendered room LOOK aggregates under `view:room-look:<tenantId>:<gameInstanceId>:<roomInstanceId>` as defined in [Redis Cache & Rate Limiting](../../system-architecture-redis-cache.md#cache-rate-limit-key-catalog).
@@ -148,12 +155,35 @@ The Game Session Service acts as the **authoritative tick executor** for each `<
   - Drive `tick:{tenantRegionTag}:pending` and commit/rollback flow.
   - Issue tick-scoped gRPC calls on behalf of that region’s commands.
 - On crash or deliberate handoff, another instance acquires the lease and resumes tick processing from Redis using the epoch-scoped `(regionEpoch, tickId)` timeline and EffectId/effect-guard rules from the Tick System design.
-- The executor monitors `tick.execution_time_ms` and `tick.lock_ttl_ms` for each region; when a region repeatedly produces over-TTL ticks according to the thresholds described in the Redis and Tick architecture docs, it marks that region as degraded, automatically reduces tick fan-out and/or slightly lengthens the tick interval for that region, emits explicit “region degraded” metrics, and, if the condition persists beyond a configured window, may halt new ticks and reject new commands for that region until operators intervene.
+- The executor monitors `tick_execution_time_ms_p99` and `tick_lock_ttl_ms` for each region; when a region repeatedly produces over-TTL ticks according to the thresholds described in the Redis and Tick architecture docs, it marks that region as degraded, automatically reduces tick fan-out and/or slightly lengthens the tick interval for that region, emits explicit “region degraded” metrics, and, if the condition persists beyond a configured window, may halt new ticks and reject new commands for that region until operators intervene.
   These degraded and halt transitions follow the same thresholds and policies
   captured under
   [Redis Architecture – Operational SLOs & Alert Thresholds](../../system-architecture-redis.md#operational-slos--alert-thresholds)
   so operators and implementations share a single set of “red lines” for
   coordination health.
+
+### Session Front-End and Lease-Owner Routing
+
+Game Session deliberately separates **socket ownership** from **region execution ownership**:
+
+- The pod holding a player's WebSocket or proxied Telnet bridge is the **session front-end** for that gameplay session.
+- Region-scoped command execution belongs to the current **lease owner** for the target `<tenantId, regionId>`.
+- Session front-ends may authenticate, normalize input, manage connection-local state, and stream results to the client.
+- Session front-ends must not directly stage or commit tick-owned Redis mutations for regions they do not lease.
+- When a command or follow-up targets a region owned by another pod, the session front-end forwards the request over internal gRPC to the lease owner and returns the resulting output to the client.
+
+This model keeps `/ws/game/**` stable at the edge while allowing ordinary in-cluster lease rebalancing without forcing reconnects solely because a region moved.
+
+#### Forwarding contract
+
+The internal front-end to lease-owner path is a fenced gameplay contract, not a best-effort proxy hop:
+
+- Forwarded requests include `tenantId`, `gameInstanceId`, `sessionId`, `characterId`, target `regionId`, command/action identifier, and a monotonic per-session sequencing token.
+- Forwarded requests include the current region lease/epoch fence. Lease owners reject stale or missing fences with an application-level stale-lease response rather than silently executing.
+- The session front-end preserves per-connection FIFO when emitting forwarded work. Cross-connection ordering remains undefined during takeovers as described in the reconnection and protocol-bridging docs.
+- If the lease owner rejects a stale fence before execution, the front-end refreshes ownership and may retry the request once against the new lease owner when the request is still valid.
+- If forwarding fails after the executor may already have started, the front-end must treat the result as ambiguous and use the normal structured command-failure or reconnect path; it must not re-issue potentially mutating work without an idempotency guarantee.
+- All forwarded execution attempts and stale-lease rejections must emit dedicated metrics and traces so operators can distinguish edge socket health from region-executor health.
 
 ### gRPC APIs
 
@@ -246,11 +276,14 @@ At the protocol level, commands are split into two groups:
 
 - **System commands** – session and connectivity operations fully owned by the Game Session Service (for example, `LOGIN`, `LOGON`, `PING`, and simple state/introspection queries that do not touch gameplay rules). These commands are interpreted and completed entirely within this service.
 - **Gameplay commands** – all other text commands that express in-world actions (for example, `LOOK`, `SAY`, `YELL`, `WHISPER`, movement, combat). Game Session validates the session and authorization, normalizes the input, and enqueues the action for Game Logic Service; it does not re-implement gameplay mechanics or business rules for these commands.
+
 | Command | Purpose | Example |
 | ------- | ------- | ------- |
-| `LOGIN <username> <password> [otp]` | Authenticates a session and binds it to an account; append an OTP when two-factor auth is enabled. | `LOGIN demo@example.com swordfish 123456` |
+| `LOGIN <username> <password> [otp]` | Authenticates a session and binds it to an account on credential-bearing transports; append an OTP when two-factor auth is enabled. First-party `/ws/game/**` may instead use bare `LOGIN` after bootstrap/connect-token validation. | `LOGIN demo@example.com swordfish 123456` |
 | `LOGON <username> <password> [otp]` | Exact alias for `LOGIN`; Telnet users often prefer the shorter name when typing from prompts. | `LOGON demo@example.com swordfish` |
-| `ENTER_GAME <tenantId> [characterId]` | Binds the authenticated connection to a tenant (and later a character) after `LOGIN`, enforcing tenant authorization and entitlements. | `ENTER_GAME tenant-abc` |
+| `WORLDS` | Lists worlds the authenticated account can enter (numbered menu + stable world slug) from Account Service membership + entitlement state. | `WORLDS` |
+| `CHARS <world>` | Lists characters for a world (`<world>` is a world slug or a menu index from `WORLDS`) from the authoritative character store, filtered to `{accountId, tenantId}` ownership. | `CHARS demo` |
+| `PLAY <world> [character]` | Binds the authenticated connection to a world and character after `LOGIN`, enforcing tenant authorization and entitlements. `<world>` is a slug or menu index; `[character]` is optional name/index in the first implementation, but richer multi-character UX may require explicit selection in a future protocol revision. Current flow always binds `gameInstanceId=\"primary\"` per tenant. | `PLAY demo 1` |
 | `LOOK` | Requests the current room snapshot (name, descriptions, exits, and visible entities) aggregated from Game Logic plus World and Entity services. | `LOOK` |
 | `SAY <text>` | Broadcasts chat text to everyone in the same room. | `SAY Hello travelers` |
 | `YELL <text>` | Alias for `SAY` that is rendered with higher emphasis but still delivers to the current room. | `YELL Hear me, comrades` |
@@ -273,21 +306,59 @@ This small command table defines the initial MVP gameplay command set delivered 
 
 ### Login / Logon semantics
 
-Telnet and WebSocket clients share this line-based syntax, but Telnet sessions frequently rely on prompt-driven exchanges while WebSocket clients typically send whole commands at once. Sending `LOGIN` (or the alias `LOGON`) with no arguments is intended to start the prompt flow, whereas `LOGIN <username> <password> [otp]` (or `LOGON ...`) performs an immediate authentication attempt. OTP values are passed through verbatim to the Account Service so two-factor accounts get the same experience. The same `OK <COMMAND>` / `ERROR <CODE> <message>` response format applies to both transports so clients can react consistently, and the examples below demonstrate at least one success and one failure path per transport.
+Telnet and WebSocket clients share this line-based syntax, but transport context determines which `LOGIN` form is valid. For Telnet and generic WebSocket clients, sending `LOGIN` (or the alias `LOGON`) with no arguments is intended to start the prompt flow, whereas `LOGIN <username> <password> [otp]` (or `LOGON ...`) performs an immediate authentication attempt. For first-party `/ws/game/**` sessions that already carry a validated Gateway connect context, bare `LOGIN` completes gameplay authentication from the pre-established bootstrap identity instead of prompting for or replaying credentials. OTP values on credential-bearing logins are passed through verbatim to the Account Service so two-factor accounts get the same experience. The same `OK <COMMAND>` / `ERROR <CODE> <message>` response format applies to all transports so clients can react consistently, and the examples below demonstrate at least one success and one failure path per transport.
 
-**Note:** Prompt-based exchanges are planned but not implemented in this slice. Sending bare `LOGIN` currently returns `ERROR PROMPT_LOGIN_UNSUPPORTED Prompt-based login is not implemented yet; send LOGIN <username> <password>.` so Telnet clients should use the parameterized form until the prompt flow lands. Gameplay commands such as `LOOK` require a successful `ENTER_GAME` after `LOGIN`/`LOGON`; unauthenticated attempts still receive `ERROR NOT_AUTHENTICATED`, and the most recent successful room snapshot is cached per session so reconnecting clients can immediately redraw the world before pending commands replay.
+**Note:** Prompt-based exchanges are planned but not implemented in this slice for Telnet and non-bootstrap clients. On those transports, bare `LOGIN` currently returns `ERROR PROMPT_LOGIN_UNSUPPORTED Prompt-based login is not implemented yet; send LOGIN <username> <password>.` First-party `/ws/game/**` sessions with a validated connect context are the exception: bare `LOGIN` consumes the bootstrap-backed context and must not ask the browser to resend credentials. Gameplay commands such as `LOOK` require a successful `PLAY` after `LOGIN`/`LOGON`; unauthenticated attempts still receive `ERROR NOT_AUTHENTICATED`, and the most recent successful room snapshot is cached per session so reconnecting clients can immediately redraw the world before pending commands replay.
 
-After `LOGIN` succeeds, clients must issue `ENTER_GAME <tenantId> [characterId]` before any gameplay commands (such as `LOOK` or `SAY`). This enter-game step binds the authenticated connection to a tenant-scoped gameplay session and enforces tenant authorization and entitlements as defined in the Authentication & Authorization design. If a client attempts gameplay commands before entering a game, the service returns `ERROR GAME_NOT_ENTERED Use ENTER_GAME <tenantId> first` (or the equivalent canonical code) so clients can recover deterministically.
+Handshake failures such as HTTP `403` `CONNECT_TOKEN_REJECTED` or `POLICY_DENY` occur before the gameplay protocol is established and therefore are not emitted as text-protocol `ERROR <CODE>` frames. The command examples in this section begin only after a socket is already open and the line-based gameplay protocol is active.
+
+After `LOGIN` succeeds, clients must issue `PLAY <world> [character]` before any gameplay commands (such as `LOOK` or `SAY`). This play step binds the authenticated connection to a world-scoped gameplay session and enforces tenant authorization and entitlements as defined in the Authentication & Authorization design.
+
+For first-party `/ws/game/**` sessions, `PLAY` scope checks (`tenantId`, `gameInstanceId`) must use the gateway-signed connect context (`X-Firemud-Connect-Context`) validated by Game Session, not raw forwarded headers. Missing/invalid/expired/replayed context where connect-token validation was required must fail admission with `CONNECT_CONTEXT_INVALID`. Mismatched validated scope fails with `CONNECT_SCOPE_MISMATCH`.
+
+Canonical first-party `PLAY` scope errors on `/ws/game/**`:
+
+- `CONNECT_CONTEXT_INVALID` - required gateway-signed connect context is missing or failed validation (signature, expiry, replay, or key verification).
+- `CONNECT_SCOPE_MISMATCH` - validated connect context does not match requested `{tenantId, gameInstanceId}` scope.
+
+If a gameplay session already exists for the selected `{tenantId, gameInstanceId, characterId}` and is still resumable (TTL, current membership authority, and current revocation state are valid), `PLAY` resumes it and rebinds the new socket to the existing session. On successful resume, Game Session must also rebind the session to a fresh backend token for subsequent internal calls rather than depending on the previous token to remain valid. If no resumable session exists, `PLAY` creates a new gameplay session binding. This model allows the same account to have multiple characters in multiple worlds, but requires an explicit `PLAY` selection after every reconnect so the platform never guesses which tenant/character to resume.
+
+If a client attempts gameplay commands before selecting a world, the service returns `ERROR WORLD_NOT_SELECTED Use WORLDS/PLAY first` (or the equivalent canonical code) so clients can recover deterministically.
+
+Illustrative world-selection transcript showing slug and index equivalence:
+
+```text
+WORLDS
+OK WORLDS
+1) Demo World (demo)
+2) Builder Sandbox (sandbox)
+
+CHARS 1
+OK CHARS
+1) Emberline
+2) Sora
+
+CHARS demo
+OK CHARS
+1) Emberline
+2) Sora
+
+PLAY 1 2
+OK PLAY Entered world: Demo World as Sora
+```
+
+The same resolution rules apply to `PLAY demo 2` or `PLAY 1 Sora`: menu indices and stable world slugs are equivalent player-facing selectors for the same canonical `{tenantId, gameInstanceId="primary"}` target.
 
 The Account Service returns canonical `AUTH_*` error codes (`AUTH_INVALID_CREDENTIALS`, `AUTH_OTP_REQUIRED`, `AUTH_ACCOUNT_LOCKED`, `AUTH_UPSTREAM_FAILURE`), and the Game Session Service translates them into the protocol-level responses (`ERROR INVALID_CREDENTIALS`, `ERROR OTP_REQUIRED`, etc.) so Telnet and WebSocket clients can rely on stable error semantics while the human-readable message remains flexible.
 
 Additional Game Session-specific login failures cover parsing and session-state issues before the Account Service call:
 
-- `PROMPT_LOGIN_UNSUPPORTED` – prompt-based LOGIN/LOGON exchanges are planned but not implemented yet, so clients must send `LOGIN <username> <password>`.
+- `PROMPT_LOGIN_UNSUPPORTED` – prompt-based LOGIN/LOGON exchanges are planned but not implemented yet on non-bootstrap transports, so those clients must send `LOGIN <username> <password>`.
 - `INVALID_ACCOUNT` – the Account Service returned an account identifier that could not be parsed into the expected format.
-- `ACCOUNT_MISMATCH` – the authenticated account is not permitted to attach to the requested game instance or tenant context.
+- `ACCOUNT_MISMATCH` – bootstrap-backed `LOGIN` resolved to an account different from the validated connect-context subject, or the authenticated account is otherwise not permitted to attach to the requested game instance or tenant context.
 - `SESSION_NOT_FOUND` – the supplied game instance identifier has no corresponding `GameInstance`.
 - `INVALID_ARGUMENT` – session ID parsing or other validation failed before the handler reached gameplay state.
+- `WORLD_NOT_SELECTED` – a gameplay command that requires admitted world scope was sent before `PLAY` completed successfully.
 
 Telnet success (prompt-based):
 
@@ -299,11 +370,36 @@ OK LOGIN Enter password:
 swordfish
 OK LOGIN Logged in as demo@example.com
 
-ENTER_GAME demo
-OK ENTER_GAME Entered game: demo
+WORLDS
+OK WORLDS
+1) Demo World (demo)
+
+PLAY demo
+OK PLAY Entered world: Demo World
 ```
 
 The transcript above presents the planned prompt flow. In the current implementation the same exchange is represented by a single `LOGIN <username> <password>` call because the prompt-driven handler returns `ERROR PROMPT_LOGIN_UNSUPPORTED ...`.
+
+Current implementation equivalent:
+
+```text
+LOGIN demo@example.com swordfish
+OK LOGIN Logged in as demo@example.com
+
+WORLDS
+OK WORLDS
+1) Demo World (demo)
+
+PLAY demo
+OK PLAY Entered world: Demo World
+```
+
+First-party `/ws/game/**` account-mismatch example:
+
+```text
+LOGIN
+ERROR ACCOUNT_MISMATCH Bootstrap identity does not match the validated session context
+```
 
 Telnet failure (wrong password):
 
@@ -318,8 +414,12 @@ WebSocket success (parameterized command with optional OTP omitted):
 LOGIN demo@example.com swordfish
 OK LOGIN Logged in as demo@example.com
 
-ENTER_GAME demo
-OK ENTER_GAME Entered game: demo
+WORLDS
+OK WORLDS
+1) Demo World (demo)
+
+PLAY demo
+OK PLAY Entered world: Demo World
 ```
 
 WebSocket failure (account locked):
@@ -331,11 +431,11 @@ ERROR ACCOUNT_LOCKED Account locked after repeated failures
 
 ### LOOK transcripts
 
-Telnet `LOOK` (after `ENTER_GAME`):
+Telnet `LOOK` (after `PLAY`):
 
 ```text
-ENTER_GAME demo
-OK ENTER_GAME Entered game: demo
+PLAY demo
+OK PLAY Entered world: Demo World
 
 LOOK
 OK LOOK
@@ -351,8 +451,8 @@ Entities:
 WebSocket `LOOK` (same authenticated player, different transport):
 
 ```text
-ENTER_GAME demo
-OK ENTER_GAME Entered game: demo
+PLAY demo
+OK PLAY Entered world: Demo World
 
 LOOK
 OK LOOK
@@ -395,7 +495,7 @@ For the current Telnet-to-gameplay vertical slice, the implementation intentiona
 ### LOOK slice status
 
 - **Live:** Data-driven `LOOK` flows now route through Game Logic's `ResolveLook`; Game Session renders the canonical text, caches the last snapshot per session, and emits the instrumentation metrics/logs documented in `../../../project-management/look-instrumentation.md` before replying over Telnet or WebSocket.
-- **Stubbed:** Room/exit metadata and visible entities still derive from the seeded demo world migration and the `firemud.look.rooms` fixtures so transcripts and regression tests stay stable while the cross-service WebSocket/Telnet flows rely on the shared stub utilities.
+- **Stubbed:** Room/exit metadata and visible entities still derive from the seeded demo world migration and the `firemud.look.rooms` fixtures so transcripts and regression tests stay stable while the cross-service WebSocket and Telnet flows rely on the shared stub utilities.
 - **Deferred:** Dynamic lighting, line-of-sight filtering, script-driven room prose, and the optional reconnection replay of cached snapshots remain future work once instrumentation, metrics, and cross-service regression coverage stabilize.
 
 ### LOOK request flow
@@ -428,8 +528,8 @@ Examples:
 LOGIN demo@example.com swordfish
 OK LOGIN Logged in as demo@example.com
 
-ENTER_GAME demo
-OK ENTER_GAME Entered game: demo
+PLAY demo
+OK PLAY Entered world: Demo World
 
 LOOK
 OK LOOK
@@ -507,7 +607,6 @@ grpcurl -plaintext -d '{"tenantId":"demo","runtimeVersion":"v42","scriptPatchVer
 
 ### Additional Notes
 
-- See [Cross-Region Sharding and Session Handoff](#cross-region-sharding-and-session-handoff) for how sessions migrate between clusters.
 - Metrics emitted by this service feed the operator [Analytics Dashboards](../logging-admin-service/analytics-dashboards.md). Prometheus scrapes metrics from `/actuator/prometheus`.
 - Logs and metrics include a `script_patch_version` label so operators know which
   hotfix revision is active.
@@ -535,6 +634,14 @@ Game startup and shutdown are coordinated using the shared `Saga` helpers from `
 ### Redis Keys
 
 Session state needed for reconnect recovery is stored under `session:game:<tenantId>:<gameInstanceId>:<sessionId>`. These **per-session** keys (including any session-scoped command queues or metadata) are removed when the corresponding session stops or expires.
+
+Gameplay session bindings must include the server-side auth token identity used for backend calls on behalf of the session (for example `authTokenHash` and `authTokenIssuedAt`) plus authoritative membership freshness metadata (for example `membershipVersion`) so resume logic can validate current identity, current membership authority, and current revocation state before rebinding to a fresh backend token:
+
+- Current caller identity matches the stored gameplay binding subject,
+- Membership authority still allows gameplay admission for the tenant, and
+- Bulk revocation watermarks (`session:auth:revoked_after:*`) do not block the account or tenant
+
+as defined in `design/architecture/system-architecture-authentication.md#session-and-identity-management`.
 
 Tick coordination is **region-scoped**, not session-scoped. Tick queues, locks, timers, retry metadata, and the `tick:{tenantRegionTag}:pending` key use the `tick:{tenantRegionTag}:...` prefix described in the [Redis Architecture](../../system-architecture-redis.md#tick-integration-resilience-locking-staging). Region keys follow region lifecycle and crash-recovery rules:
 
@@ -568,26 +675,13 @@ details.
 
 ## Additional Features
 
-- Cross-region sharding for massive worlds.
 - Built-in analytics for player behavior.
 
-### Cross-Region Sharding and Session Handoff
+### Multi-Cluster Sharding (Out of Scope)
 
-Massive games may outgrow a single Kubernetes cluster. To support global player
-bases, sessions can be sharded across regions using consistent hashing on the
-`tenantId`. Each shard runs an independent **Coordination Redis cluster**, an
-independent **Cache/Rate-Limit Redis deployment**, and its own database pair.
-Coordination and cache roles remain separated inside each shard exactly as
-described in [Redis Architecture](../../system-architecture-redis.md); shards
-do not reuse a single Redis instance for both roles even when they are hosted
-on the same nodes.
+The core FireMUD architecture assumes a single Kubernetes cluster per deployment, with horizontal scaling achieved via **tick-region leasing** and executor rebalancing inside the Game Session layer (see **Scaling and Region Rebalancing** earlier in this document, plus `design/architecture/decisions/adr-0007-edge-sharding-and-close-taxonomy.md` for the edge scope decision and `design/architecture/decisions/adr-0008-multi-cluster-gameplay-sharding-scope.md` for multi-cluster adoption scope).
 
-When a player travels to a region hosted elsewhere, the session state is
-serialized to a compact protobuf and transferred via gRPC to the target
-cluster. The source cluster marks the session as handed off and clients
-reconnect using the new endpoint. This strategy minimizes latency while
-keeping per-region failure domains isolated and ensures that Redis coordination
-and cache workloads scale with the shard topology.
+If multi-cluster gameplay sharding is introduced in the future, it must be captured as a dedicated design update (routing-key transport, trust model, reconnection/backoff policy) and must not conflict with the current edge contract (no client-visible shard handoff signal; close-and-reconnect remains the default).
 
 ### Gameplay Analytics
 

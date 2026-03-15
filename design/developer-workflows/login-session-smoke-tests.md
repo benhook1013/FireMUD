@@ -12,12 +12,12 @@ These steps exercise the same `LOGIN` + `LOOK` flow that users take over both We
 Use `websocat` (or your favorite WebSocket client) to connect directly to Game Session:
 
 ```bash
-websocat -H "X-Session-Id: 00000000-0000-0000-0000-000000000001" -H "X-Tenant-Id: 00000000-0000-0000-0000-000000000001" ws://localhost:8080/ws/game
+websocat -H "X-Game-Instance-Id: 00000000-0000-0000-0000-000000000001" -H "X-Tenant-Id: 00000000-0000-0000-0000-000000000001" ws://localhost:8080/ws/game
 LOGIN demo@example.com swordfish
 LOOK
 ```
 
-Replace the `X-Session-Id` and `X-Tenant-Id` header values with the session and tenant identifiers for your environment.
+Replace the `X-Game-Instance-Id` and `X-Tenant-Id` header values with the game instance and tenant identifiers for your environment. `X-Session-Id` is a deprecated alias and should not be used in new tooling.
 
 Expected output (two newline-separated responses):
 

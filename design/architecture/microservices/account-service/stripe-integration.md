@@ -20,7 +20,7 @@ The Account Service owns billing records and maps them to Stripe resources while
 
 - `subscription`  
   - Represents a recurring billing agreement between a creator (platform account) and the platform for a specific tenant’s hosting plan.  
-  - Key fields: internal ID, `accountId`, `tenantId`, `plan_code`, `status` (`trialing`, `active`, `past_due`, `grace`, `canceled`), current period start/end, `provider_subscription_id` (Stripe `subscription` ID), and `provider_customer_id` (Stripe `customer` ID).  
+  - Key fields: internal ID, `accountId`, `tenantId`, `plan_code`, `status` (`trialing`, `active`, `past_due`, `grace`, `suspended`, `canceled`), current period start/end, `provider_subscription_id` (Stripe `subscription` ID), and `provider_customer_id` (Stripe `customer` ID).  
   - Plan metadata defines quota-related attributes (for example, maximum active sessions, world size tiers) that the platform uses to drive per-tenant resource limits as described in [Multi-Tenancy](../../system-architecture-multi-tenancy.md#tenant-configuration--scaling).
 
 - `billing_customer` (optional)  
@@ -48,22 +48,29 @@ Refunds call Stripe’s `Refund` API and update the `payment_transaction` `statu
 
 Subscription creation, lifecycle, and entitlements are covered in more detail in the [Subscription Management Design](./subscription-management.md). At a high level:
 
-1. A creator chooses a hosting plan for a tenant in the admin UI; the UI calls `CreateSubscription` with `accountId`, `tenantId`, and `plan_code`.  
+1. A creator chooses a hosting plan for a tenant in the admin UI; the caller-bound tenant variant of `CreateSubscription` derives actor identity from auth context and accepts `tenantId` plus `plan_code` only. Cross-tenant billing/admin workflows use separate admin variants when acting on another account or tenant.  
 2. The Account Service ensures a Stripe customer exists for the account, then creates or updates a Stripe `subscription` using the configured Stripe product/price for `plan_code`.  
 3. An internal `subscription` row is created or updated with `status` based on the Stripe subscription’s state and linked to the Stripe `subscription` ID.  
 4. Stripe webhooks (`invoice.payment_succeeded`, `invoice.payment_failed`, `customer.subscription.updated`, `customer.subscription.deleted`) drive subsequent state transitions and keep the internal `subscription` table in sync.  
-5. Changes to `subscription.status` are propagated to tenant-management and quota-enforcement components so that tenant availability and resource limits reflect the current billing state. For transitions into hard cutoff states such as `suspended` or `canceled`, the webhook pipeline drives `SubscriptionStatusChanged` and `TenantBillingStateChanged` domain events that downstream services consume to revoke gameplay sessions and tenant-scoped auth allowlist entries as described in [Subscription Management](./subscription-management.md#tenant-availability-and-quota-enforcement) and [Authentication & Authorization](../../system-architecture-authentication.md#session-and-identity-management).
+5. Changes to `subscription.status` are propagated to tenant-management and quota-enforcement components so that tenant availability and resource limits reflect the current billing state. For transitions into hard cutoff states such as `suspended` or `canceled`, the webhook pipeline drives `SubscriptionStatusChanged` and `TenantBillingStateChanged` domain events that downstream services consume to revoke gameplay sessions and bulk-revoke tenant-scoped authorization (for example via the revocation watermark mechanism) as described in [Subscription Management](./subscription-management.md#tenant-availability-and-quota-enforcement) and [Authentication & Authorization](../../system-architecture-authentication.md#session-and-identity-management).
 
 ## Multi-Tenancy and Security
 
 Stripe integration must preserve tenant isolation while allowing platform-level reporting:
 
 - Each hosted game (`tenantId`) that requires billing has exactly one primary subscription record linking `accountId` and `tenantId`.  
-- Stripe customer IDs are per-account, not per-tenant, to reduce duplication; per-tenant subscriptions are differentiated by products/prices and metadata.  
+- Stripe customer IDs are per-account, not per-tenant, to reduce duplication; per-tenant subscriptions are differentiated by products/prices and metadata. This makes payment instruments an **account-owned shared resource** even when a caller is operating through a tenant-scoped billing-safe surface.  
+- Tenant-scoped billing-safe APIs that mutate payment methods must therefore follow an explicit shared-instrument contract:
+  - The mutation request must carry an acknowledgement field (for example `acknowledgeSharedInstrumentImpact=true`) so callers cannot accidentally apply an account-wide billing instrument change through a tenant-scoped route.
+  - If the acknowledgement field is missing or false, the mutation must be rejected with canonical error `BILLING_SHARED_INSTRUMENT_ACK_REQUIRED`.
+  - The response must include `sharedInstrumentImpact=true` and `affectedTenantIds[]` listing the other tenant subscriptions for the same `accountId` that are expected to observe the changed payment instrument.
+  - Audit records must capture `actorAccountId`, `initiatingTenantId`, mutation type, the stable billing-customer reference, and the full `affectedTenantIds[]` set derivable at mutation time.
+  - If the service cannot determine the affected tenant set at mutation time, the mutation must fail closed rather than silently applying an account-wide change with incomplete audit scope.
+- If a future product requirement needs tenant-isolated payment instruments, the platform must move to tenant-scoped billing customers rather than treating the current shared-customer model as implicitly tenant-safe.  
 - Internal queries always filter billing records by both `accountId` and `tenantId` when operating on tenant-specific subscriptions or transactions. Cross-tenant reports are restricted to roles with appropriate `globalRoles` as defined in the shared role model:
   - `platformAdmin` for full cross-tenant reporting, and
   - `billingAdmin` for billing-focused reporting surfaces.
-  These rules are enforced by the Tenant Authorization Contract.  
+  Cross-tenant support troubleshooting is exposed only through explicitly support-safe variants (`cross_tenant_support_safe`) with high-level redacted fields. These rules are enforced by the Tenant Authorization Contract.  
 - Stripe API keys, webhook secrets, and any PCI-relevant configuration remain confined to the Account Service. Other services never communicate with Stripe directly.
 
 ## Service APIs
@@ -73,7 +80,7 @@ The Account Service exposes gRPC and REST endpoints for initiating and inspectin
 - `CreatePaymentIntent` – Initiate a one-time payment or donation and return the client-facing Stripe Payment Intent details.  
 - `RefundPayment` – Issue a refund for an existing `payment_transaction` and update its status.  
 - `CreateSubscription` – Start or update a recurring hosting subscription for a specific `tenantId` and `plan_code`.  
-- Subscription and transaction query APIs – Allow authorized roles to view their billing history, constrained by tenant and account authorization. Per-tenant billing history is visible to the `tenantAdmin` for that `tenantId` and to global `platformAdmin` and `billingAdmin` roles as defined in the shared role model.
+- Subscription and transaction query APIs – Must be split into explicit tenant-scoped billing-safe, cross-tenant support-safe, and cross-tenant billing-safe variants (no mixed-mode endpoint behavior). Per-tenant caller-bound billing history is visible to `tenantAdmin`; global `platformAdmin`/`billingAdmin` access uses cross-tenant billing-safe variants only.
 
 All endpoints are protected by JWT-based auth, and tenant-scoped operations must validate that the caller is allowed to act on the specified `tenantId` using the Tenant Authorization Contract from [Authentication & Authorization](../../system-architecture-authentication.md#tenant-authorization-contract).
 

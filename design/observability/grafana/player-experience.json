@@ -18,6 +18,18 @@
     },
     {
       "type": "graph",
+      "title": "Login Success Ratio by Service",
+      "targets": [
+        {
+          "expr": "sum by (tenantId, service) (rate(login_requests_total{outcome=\"success\"}[5m])) / sum by (tenantId, service) (rate(login_requests_total[5m]))",
+          "legendFormat": "{{tenantId}} {{service}}",
+          "refId": "A"
+        }
+      ],
+      "id": 6
+    },
+    {
+      "type": "graph",
       "title": "Command Latency (p99)",
       "targets": [
         {
@@ -30,7 +42,31 @@
     },
     {
       "type": "graph",
-      "title": "Telnet/WebSocket Path Availability",
+      "title": "Command Latency (p99) by Service",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum by (tenantId, service, le, command) (rate(command_end_to_end_latency_ms_bucket[5m])))",
+          "legendFormat": "{{tenantId}} {{service}} {{command}}",
+          "refId": "A"
+        }
+      ],
+      "id": 7
+    },
+    {
+      "type": "graph",
+      "title": "Command Latency (p99) by Region",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum by (tenantId, regionId, le, command) (rate(command_end_to_end_latency_ms_bucket[5m])))",
+          "legendFormat": "{{tenantId}} {{regionId}} {{command}}",
+          "refId": "A"
+        }
+      ],
+      "id": 5
+    },
+    {
+      "type": "graph",
+      "title": "Telnet/WebSocket Path Availability (5m Trend)",
       "targets": [
         {
           "expr": "sum by (tenantId, path) (rate(entrypath_connection_attempts_total{outcome=\"success\"}[5m])) / sum by (tenantId, path) (rate(entrypath_connection_attempts_total[5m]))",
@@ -39,6 +75,18 @@
         }
       ],
       "id": 3
+    },
+    {
+      "type": "graph",
+      "title": "Telnet/WebSocket Path Availability (1d SLO)",
+      "targets": [
+        {
+          "expr": "sum by (tenantId, path) (increase(entrypath_connection_attempts_total{outcome=\"success\"}[1d])) / sum by (tenantId, path) (increase(entrypath_connection_attempts_total[1d]))",
+          "legendFormat": "{{tenantId}} {{path}}",
+          "refId": "A"
+        }
+      ],
+      "id": 8
     },
     {
       "type": "graph",
@@ -51,18 +99,6 @@
         }
       ],
       "id": 4
-    },
-    {
-      "type": "graph",
-      "title": "Entry Path Outcomes (rate)",
-      "targets": [
-        {
-          "expr": "sum by (tenantId, path, outcome) (rate(entrypath_connection_attempts_total[5m]))",
-          "legendFormat": "{{tenantId}} {{path}} {{outcome}}",
-          "refId": "A"
-        }
-      ],
-      "id": 5
     }
   ]
 }

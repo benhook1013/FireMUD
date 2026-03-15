@@ -1,5 +1,6 @@
 package net.firedevops.firemud.tcpproxy.telnet;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.Gauge;
@@ -7,10 +8,11 @@ import io.micrometer.core.instrument.MeterRegistry;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelHandlerContext;
-import io.netty.channel.ChannelInitializer;
 import io.netty.channel.ChannelInboundHandlerAdapter;
+import io.netty.channel.ChannelInitializer;
 import io.netty.channel.EventLoopGroup;
-import io.netty.channel.nio.NioEventLoopGroup;
+import io.netty.channel.MultiThreadIoEventLoopGroup;
+import io.netty.channel.nio.NioIoHandler;
 import io.netty.channel.socket.SocketChannel;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
 import io.netty.handler.codec.LineBasedFrameDecoder;
@@ -30,6 +32,7 @@ import net.firedevops.firemud.tcpproxy.service.TcpProxyEventService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
@@ -37,6 +40,21 @@ import org.springframework.util.StringUtils;
 @Component
 public final class TelnetServer {
   private static final Logger logger = LoggerFactory.getLogger(TelnetServer.class);
+  private static final LookCacheService NOOP_LOOK_CACHE_SERVICE =
+      new LookCacheService() {
+        @Override
+        public void cache(
+            long tenantId,
+            long sessionId,
+            String roomId,
+            String renderedText,
+            String protocolText) {}
+
+        @Override
+        public java.util.Optional<CachedLook> get(long tenantId, long sessionId) {
+          return java.util.Optional.empty();
+        }
+      };
 
   private final int port;
   private final String gatewayWsUrl;
@@ -64,12 +82,17 @@ public final class TelnetServer {
   private volatile int boundPort;
   private final LookCacheService lookCacheService;
 
-  private final EventLoopGroup bossGroup = new NioEventLoopGroup(1);
-  private final EventLoopGroup workerGroup = new NioEventLoopGroup();
+  private final EventLoopGroup bossGroup =
+      new MultiThreadIoEventLoopGroup(1, NioIoHandler.newFactory());
+  private final EventLoopGroup workerGroup =
+      new MultiThreadIoEventLoopGroup(NioIoHandler.newFactory());
   private Channel serverChannel;
   private final AtomicBoolean running = new AtomicBoolean(false);
   private SslContext sslContext;
 
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "MeterRegistry is a shared Spring singleton used to register proxy metrics")
   public TelnetServer(
       @Value("${TCP_PROXY_PORT:2323}") int port,
       @Value("${GATEWAY_WS_URL:ws://spring-cloud-gateway:8080/ws/game}") String gatewayWsUrl,
@@ -84,7 +107,7 @@ public final class TelnetServer {
       @Value("${TCP_PROXY_MAX_MALFORMED_ENVELOPES:5}") int maxMalformedSessionEnvelopes,
       MeterRegistry meterRegistry,
       TcpProxyEventService eventService,
-      LookCacheService lookCacheService) {
+      @Nullable LookCacheService lookCacheService) {
     this.port = port;
     this.boundPort = port;
     this.gatewayWsUrl = gatewayWsUrl;
@@ -104,7 +127,7 @@ public final class TelnetServer {
     this.connectionLimitExceededCounter =
         meterRegistry.counter("tcpproxy.connections.limit.exceeded");
     this.eventService = eventService;
-    this.lookCacheService = lookCacheService;
+    this.lookCacheService = lookCacheService != null ? lookCacheService : NOOP_LOOK_CACHE_SERVICE;
     Gauge.builder(
             "tcpproxy.connections.active",
             activeConnections,
@@ -117,7 +140,7 @@ public final class TelnetServer {
     if (tlsEnabled) {
       validateTlsConfiguration();
       try {
-        sslContext = SslContextBuilder.forServer(new File(certPath), new File(keyPath)).build();
+        sslContext = buildServerSslContext();
       } catch (SSLException e) {
         tlsMisconfigCounter.increment();
         String message = "TCP proxy TLS configuration failed to load";
@@ -125,6 +148,10 @@ public final class TelnetServer {
         throw new IllegalStateException(message, e);
       }
     }
+  }
+
+  private SslContext buildServerSslContext() throws SSLException {
+    return SslContextBuilder.forServer(new File(certPath), new File(keyPath)).build();
   }
 
   private void validateTlsConfiguration() {
@@ -268,7 +295,8 @@ public final class TelnetServer {
     }
     if (maxConnectionsPerIp > 0) {
       java.util.concurrent.atomic.AtomicInteger perIpCount =
-          connectionsByIp.computeIfAbsent(ipKey, key -> new java.util.concurrent.atomic.AtomicInteger());
+          connectionsByIp.computeIfAbsent(
+              ipKey, key -> new java.util.concurrent.atomic.AtomicInteger());
       int ipTotal = perIpCount.incrementAndGet();
       if (ipTotal > maxConnectionsPerIp) {
         perIpCount.decrementAndGet();

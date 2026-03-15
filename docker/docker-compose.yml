@@ -1,11 +1,11 @@
-version: '3.9'
-
 x-service-environment: &service-env
   FIREMUD_POSTGRES_HOST: ${FIREMUD_POSTGRES_HOST:-postgres}
   FIREMUD_POSTGRES_PORT: ${FIREMUD_POSTGRES_PORT:-5432}
   FIREMUD_POSTGRES_DB: ${FIREMUD_POSTGRES_DB:-firemud}
   FIREMUD_POSTGRES_USER: ${FIREMUD_POSTGRES_USER:-firemud}
   FIREMUD_POSTGRES_PASSWORD: ${FIREMUD_POSTGRES_PASSWORD:-firemud}
+  FIREMUD_REDIS_HOST: ${FIREMUD_REDIS_HOST:-redis-cache}
+  FIREMUD_REDIS_PORT: ${FIREMUD_REDIS_PORT:-6379}
   FIREMUD_REDIS_COORD_HOST: ${FIREMUD_REDIS_COORD_HOST:-redis-coord}
   FIREMUD_REDIS_COORD_PORT: ${FIREMUD_REDIS_COORD_PORT:-6379}
   FIREMUD_REDIS_CACHE_HOST: ${FIREMUD_REDIS_CACHE_HOST:-redis-cache}
@@ -21,13 +21,22 @@ x-service-environment: &service-env
   ASSET_STORE_SECRET_KEY: ${ASSET_STORE_SECRET_KEY:-minio123}
 
 x-service-healthcheck: &service-health
-  test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
+  test:
+    [
+      "CMD",
+      "/layers/paketo-buildpacks_bellsoft-liberica/jre/bin/java",
+      "-cp",
+      "/workspace/BOOT-INF/classes:/workspace/BOOT-INF/lib/*",
+      "net.firedevops.firemud.common.health.HttpHealthcheck",
+      "http://localhost:8080/actuator/health/readiness"
+    ]
+  start_period: 90s
   interval: 10s
   timeout: 5s
   retries: 5
 
 x-service-volumes: &service-vols
-  - ./dev-tools/certs:/app/certs:ro
+  - ../dev-tools/certs:/app/certs:ro
 
 x-service-resources: &service-resources
   cpus: "0.5"
@@ -38,7 +47,9 @@ x-service-env-file: &service-env-file
 
 services:
   account-service:
-    build: ./services/account-service
+    build:
+      context: ..
+      dockerfile: services/account-service/Dockerfile
     ports:
       - "8081:8080"
     <<: *service-resources
@@ -57,7 +68,9 @@ services:
     healthcheck:
       <<: *service-health
   gateway:
-    build: ./services/spring-cloud-gateway
+    build:
+      context: ..
+      dockerfile: services/spring-cloud-gateway/Dockerfile
     ports:
       - "8080:8080"
     <<: *service-resources
@@ -76,7 +89,9 @@ services:
     healthcheck:
       <<: *service-health
   automation-scripting-service:
-    build: ./services/automation-scripting-service
+    build:
+      context: ..
+      dockerfile: services/automation-scripting-service/Dockerfile
     ports:
       - "8082:8080"
     <<: *service-resources
@@ -95,7 +110,9 @@ services:
     healthcheck:
       <<: *service-health
   entity-management-service:
-    build: ./services/entity-management-service
+    build:
+      context: ..
+      dockerfile: services/entity-management-service/Dockerfile
     ports:
       - "8083:8080"
     <<: *service-resources
@@ -114,7 +131,9 @@ services:
     healthcheck:
       <<: *service-health
   game-design-service:
-    build: ./services/game-design-service
+    build:
+      context: ..
+      dockerfile: services/game-design-service/Dockerfile
     ports:
       - "8084:8080"
     <<: *service-resources
@@ -133,7 +152,9 @@ services:
     healthcheck:
       <<: *service-health
   game-logic-service:
-    build: ./services/game-logic-service
+    build:
+      context: ..
+      dockerfile: services/game-logic-service/Dockerfile
     ports:
       - "8085:8080"
     <<: *service-resources
@@ -152,12 +173,21 @@ services:
     healthcheck:
       <<: *service-health
   game-session-service:
-    build: ./services/game-session-service
+    build:
+      context: ..
+      dockerfile: services/game-session-service/Dockerfile
     ports:
       - "8086:8080"
     <<: *service-resources
     environment:
       <<: *service-env
+      FIREMUD_DATABASE_ENABLED: "true"
+      GAME_SESSION_DEV_ISOLATED: "false"
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/firemud
+      SPRING_DATASOURCE_DRIVER_CLASS_NAME: org.postgresql.Driver
+      SPRING_DATASOURCE_USERNAME: firemud
+      SPRING_DATASOURCE_PASSWORD: firemud
+      SPRING_FLYWAY_ENABLED: "true"
     env_file: *service-env-file
     volumes: *service-vols
     restart: unless-stopped
@@ -171,7 +201,9 @@ services:
     healthcheck:
       <<: *service-health
   logging-admin-service:
-    build: ./services/logging-admin-service
+    build:
+      context: ..
+      dockerfile: services/logging-admin-service/Dockerfile
     ports:
       - "8087:8080"
     <<: *service-resources
@@ -190,7 +222,9 @@ services:
     healthcheck:
       <<: *service-health
   social-groups-service:
-    build: ./services/social-groups-service
+    build:
+      context: ..
+      dockerfile: services/social-groups-service/Dockerfile
     ports:
       - "8088:8080"
     <<: *service-resources
@@ -209,7 +243,9 @@ services:
     healthcheck:
       <<: *service-health
   tcp-proxy-service:
-    build: ./services/tcp-proxy-service
+    build:
+      context: ..
+      dockerfile: services/tcp-proxy-service/Dockerfile
     ports:
       - "2323:2323"
     <<: *service-resources
@@ -228,7 +264,9 @@ services:
     healthcheck:
       <<: *service-health
   world-management-service:
-    build: ./services/world-management-service
+    build:
+      context: ..
+      dockerfile: services/world-management-service/Dockerfile
     ports:
       - "8089:8080"
     <<: *service-resources
@@ -249,6 +287,7 @@ services:
 
   postgres:
     image: postgres:16
+    command: ["postgres", "-c", "max_connections=200"]
     restart: unless-stopped
     env_file: *service-env-file
     environment:
@@ -321,11 +360,11 @@ services:
       - sh
       - -c
       - |
-        mc alias set local http://minio:9000 $ASSET_STORE_ACCESS_KEY $ASSET_STORE_SECRET_KEY &&
-        mc mb --ignore-existing local/$ASSET_STORE_BUCKET &&
-        mc anonymous set download local/$ASSET_STORE_BUCKET &&
-        printf '[{"AllowedMethods":["GET"],"AllowedOrigins":["%s"],"AllowedHeaders":["*"]}]' "$ASSET_STORE_CORS_ORIGIN" > /tmp/cors.json &&
-        mc cors set local/$ASSET_STORE_BUCKET /tmp/cors.json
+        mc alias set local http://minio:9000 $$ASSET_STORE_ACCESS_KEY $$ASSET_STORE_SECRET_KEY &&
+        mc mb --ignore-existing local/$$ASSET_STORE_BUCKET &&
+        mc anonymous set download local/$$ASSET_STORE_BUCKET &&
+        printf '<CORSConfiguration><CORSRule><AllowedOrigin>%s</AllowedOrigin><AllowedMethod>GET</AllowedMethod><AllowedHeader>*</AllowedHeader></CORSRule></CORSConfiguration>' "$$ASSET_STORE_CORS_ORIGIN" > /tmp/cors.xml &&
+        mc cors set local/$$ASSET_STORE_BUCKET /tmp/cors.xml || echo "Skipping MinIO CORS setup in compose bootstrap"
     environment:
       ASSET_STORE_ACCESS_KEY: ${ASSET_STORE_ACCESS_KEY:-minio}
       ASSET_STORE_SECRET_KEY: ${ASSET_STORE_SECRET_KEY:-minio123}
@@ -334,7 +373,7 @@ services:
 
   pg-dump-cron:
     build:
-      context: .
+      context: ..
       dockerfile: docker/pg-dump-cron.Dockerfile
     cpus: "0.5"
     mem_limit: 256m

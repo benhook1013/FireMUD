@@ -47,13 +47,24 @@ Content and world-design changes are described in the [Creator Journeys](./user-
 
 Operators monitor the game and enforce rules using the [Logging & Admin Service](./microservices/logging-admin-service/README.md). Logs, metrics, and traces flow into **Elasticsearch**, **Prometheus**, and **Jaeger** as described in [Logging & Monitoring](./system-architecture-logging-monitoring.md) and [Tracing](./system-architecture-tracing.md). For usage examples see the [Analytics Dashboards](./microservices/logging-admin-service/analytics-dashboards.md).
 
-The service also exposes moderation tools such as bans and runtime feature toggles. Administrators review logs and configure these options through the [Admin UI](./microservices/logging-admin-service/admin-ui.md). Policies are summarized in the [Moderation Policies](./microservices/logging-admin-service/moderation-policies.md) document. Complex moderation workflows are coordinated using saga patterns as described in [Transaction Strategies](./system-architecture-transactions.md). Review these guides alongside the [Security Architecture](./system-architecture-security.md) to ensure moderation actions follow platform rules.
+The service also exposes moderation tools such as reports, bans, and runtime feature toggles. Administrators review logs and configure these options through the [Admin UI](./microservices/logging-admin-service/admin-ui.md). Policies are summarized in the [Moderation Policies](./microservices/logging-admin-service/moderation-policies.md) document. Complex moderation workflows are coordinated using saga patterns as described in [Transaction Strategies](./system-architecture-transactions.md). Review these guides alongside the [Security Architecture](./system-architecture-security.md) to ensure moderation actions follow platform rules.
+
+Canonical moderation journey:
+
+1. **Player Report Arrives** – A player submits an in-game report, which the Logging & Admin Service records with tenant, realm, subject, and supporting evidence.
+2. **Operator Reviews Evidence** – Moderators inspect the report, associated chat logs, and related account/gameplay context.
+3. **Operator Chooses Enforcement Type** – Enforcement uses the canonical taxonomy from the system overview:
+   - `account_security_ban` for account-wide auth/security suspension,
+   - `gameplay_ban` for tenant gameplay denial,
+   - `chat_mute` / `chat_ban` for communication restrictions.
+4. **Owning Service Enforces** – Account Service, Game Session Service, or Social & Groups Service applies the effect while Logging & Admin remains the policy/audit entry point.
+5. **Player Sees Specific Outcome** – The affected user sees canonical account, gameplay, or chat errors rather than a generic moderation failure.
 
 ```plaintext
 Operator → Logging & Admin Service → Observability Stack / Admin UI
 ```
 
-Chat and social flows that feed into moderation are described in [Social Interaction](./user-journeys-players.md#4-social-interaction).
+Chat and social flows that feed into moderation are described in [Social Interaction & Safety](./user-journeys-players.md#5-social-interaction--safety).
 
 Admin and operator access to tenant-scoped tools is governed by the JWT-based role and tenant model. See the [Tenant Authorization Contract](./system-architecture-authentication.md#tenant-authorization-contract) and [Multi-Tenancy](./system-architecture-multi-tenancy.md#identity--tenant-model) for how `globalRoles` and `scopedRoles` determine which tenants an operator can act on.
 
@@ -81,6 +92,10 @@ GitHub → CI Workflow → Container Registry → Kubernetes
 ```
 
 These steps apply both to game-specific services and to the FireMUD platform itself. Content-focused update flows are described in [Patch and Update a Live Game](./user-journeys-creators.md#5-patch-and-update-a-live-game).
+
+For tenant-scoped runtime lifecycle, operators are not the routine owners of creator realm launches. `tenantAdmin` handles normal realm launch, playtest-fork creation, cutover, script-patch pinning, and rollback for that tenant. Operators retain break-glass and platform-wide override authority when incidents, abuse, or entitlement failures require intervention.
+
+At minimum, operator tooling should expose enough fork metadata to reason about support and incident response safely: realm type, source snapshot identity, target build (`versionId` / `scriptPatchVersion`), reset/expiry status, and whether the fork is currently player-admissible.
 
 ---
 

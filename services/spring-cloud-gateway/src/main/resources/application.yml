@@ -1,6 +1,8 @@
 spring:
   application:
     name: spring-cloud-gateway
+  main:
+    web-application-type: reactive
   flyway:
     enabled: true
     schemas: ${SERVICE_SCHEMA:public},saga
@@ -28,8 +30,6 @@ firemud:
     cert-chain: ${FIREMUD_GRPC_CERT_CHAIN_PATH:certs/client.crt}
     private-key: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:certs/client.key}
     ca-cert: ${FIREMUD_GRPC_CA_CERT_PATH:certs/ca.crt}
-  auth:
-    jwt-expiration-ms: 3600000
 
 management:
   endpoints:
@@ -47,84 +47,81 @@ spring:
   config:
     activate:
       on-profile: dev
-  redis:
-    host: ${FIREMUD_REDIS_CACHE_HOST:redis}
-    port: ${FIREMUD_REDIS_CACHE_PORT:6379}
+  data:
+    redis:
+      host: ${FIREMUD_REDIS_CACHE_HOST:redis}
+      port: ${FIREMUD_REDIS_CACHE_PORT:6379}
   cloud:
     gateway:
-      metrics:
-        enabled: true
-      default-filters:
-        - name: RequestRateLimiter
-          args:
-            redis-rate-limiter.replenishRate: 20
-            redis-rate-limiter.burstCapacity: 40
-        - name: Retry
-          args:
-            retries: 3
-            statuses: BAD_GATEWAY,GATEWAY_TIMEOUT
-            series: SERVER_ERROR
-            methods: GET,POST
-            backoff:
-              firstBackoff: 50ms
-              maxBackoff: 500ms
-              factor: 2
-              basedOnPreviousValue: false
-      httpclient:
-        pool:
-          type: fixed
-          maxConnections: 500
-          acquireTimeout: 5000
+      server:
+        webflux:
+          metrics:
+            enabled: true
+          default-filters:
+            - name: Retry
+              args:
+                retries: 3
+                statuses: BAD_GATEWAY,GATEWAY_TIMEOUT
+                series: SERVER_ERROR
+                methods: GET,POST
+                backoff:
+                  firstBackoff: 50ms
+                  maxBackoff: 500ms
+                  factor: 2
+                  basedOnPreviousValue: false
+          httpclient:
+            pool:
+              type: fixed
+              maxConnections: 500
+              acquireTimeout: 5000
 
 firemud:
   grpc:
     cert-chain: ${FIREMUD_GRPC_CERT_CHAIN_PATH:certs/client.crt}
     private-key: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:certs/client.key}
     ca-cert: ${FIREMUD_GRPC_CA_CERT_PATH:certs/ca.crt}
-  auth:
-    # Leave secret empty in dev so AuthConfig generates a random value
 ---
 
 spring:
   config:
     activate:
       on-profile: prod
-  redis:
-    host: ${FIREMUD_REDIS_CACHE_HOST:redis}
-    port: ${FIREMUD_REDIS_CACHE_PORT:6379}
+  data:
+    redis:
+      host: ${FIREMUD_REDIS_CACHE_HOST:redis}
+      port: ${FIREMUD_REDIS_CACHE_PORT:6379}
   cloud:
     gateway:
-      metrics:
-        enabled: true
-      default-filters:
-        - name: RequestRateLimiter
-          args:
-            redis-rate-limiter.replenishRate: 20
-            redis-rate-limiter.burstCapacity: 40
-        - name: Retry
-          args:
-            retries: 3
-            statuses: BAD_GATEWAY,GATEWAY_TIMEOUT
-            series: SERVER_ERROR
-            methods: GET,POST
-            backoff:
-              firstBackoff: 50ms
-              maxBackoff: 500ms
-              factor: 2
-              basedOnPreviousValue: false
-      httpclient:
-        pool:
-          type: fixed
-          maxConnections: 500
-          acquireTimeout: 5000
+      server:
+        webflux:
+          metrics:
+            enabled: true
+          default-filters:
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 20
+                redis-rate-limiter.burstCapacity: 40
+            - name: Retry
+              args:
+                retries: 3
+                statuses: BAD_GATEWAY,GATEWAY_TIMEOUT
+                series: SERVER_ERROR
+                methods: GET,POST
+                backoff:
+                  firstBackoff: 50ms
+                  maxBackoff: 500ms
+                  factor: 2
+                  basedOnPreviousValue: false
+          httpclient:
+            pool:
+              type: fixed
+              maxConnections: 500
+              acquireTimeout: 5000
 firemud:
   grpc:
     cert-chain: ${FIREMUD_GRPC_CERT_CHAIN_PATH:certs/client.crt}
     private-key: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:certs/client.key}
     ca-cert: ${FIREMUD_GRPC_CA_CERT_PATH:certs/ca.crt}
-  auth:
-    jwt-secret-path: ${FIREMUD_AUTH_JWT_SECRET_PATH:}
-    jwt-secret: ${FIREMUD_AUTH_JWT_SECRET}
 
 ---
 

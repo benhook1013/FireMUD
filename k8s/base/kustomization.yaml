@@ -1,0 +1,21 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - firemud-db-env.yaml
+  - service-account.yaml
+  - firemud-grpc-certificate.yaml
+  - firemud-grpc-tls.yaml
+  - account-service.yaml
+  - automation-scripting-service.yaml
+  - entity-management-service.yaml
+  - game-design-service.yaml
+  - game-logic-service.yaml
+  - game-session-service.yaml
+  - logging-admin-service.yaml
+  - social-groups-service.yaml
+  - spring-cloud-gateway.yaml
+  - tcp-proxy-service.yaml
+  - world-management-service.yaml
+  - internal-services-network-policy.yaml
+  - internal-services-egress-network-policy.yaml

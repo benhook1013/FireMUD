@@ -26,7 +26,7 @@ FireMUD runs two logical Redis roles in all non‑trivial environments:
     - Automation coordination structures that participate in tick timelines.
   - Characteristics:
     - Treated as a long-running **coordination buffer with bounded tail-loss** in persistent environments; durable history for tick effects and gameplay outcomes lives in PostgreSQL tick effect ledgers and domain stores.
-    - Owned by the **Game Session Service** for coordination and session prefixes such as `tick:*`, `timer:*`, `retry:*`, `tick-executor-lease:*`, and `session:*`; Automation & Scripting Service owns automation-specific coordination prefixes as documented below.
+    - Owned by the **Game Session Service** for gameplay coordination and gameplay session prefixes such as `tick:*`, `timer:*`, `retry:*`, `tick-executor-lease:*`, and `session:game:*`; Account Service owns `session:auth:*`; Automation & Scripting Service owns automation-specific coordination prefixes as documented below.
     - AOF enabled in `dev_local`, `hobby_self_hosted`, and `production_clustered`–like profiles.
     - Subject to tail‑loss SLOs and replay guarantees described in the Redis hub doc.
   - Example prefixes:
@@ -34,7 +34,7 @@ FireMUD runs two logical Redis roles in all non‑trivial environments:
     - `timer:{tenantRegionTag}`
     - `retry:{tenantRegionTag}`
     - `tick-executor-lease:{tenantRegionTag}`
-    - `session:game:<tenantId>:<sessionId>`
+    - `session:game:<tenantId>:<gameInstanceId>:<sessionId>`
     - Automation coordination prefixes that follow shard‑local rules.
 
 - **Cache/Rate‑Limit Redis**
@@ -71,14 +71,19 @@ A small set of automation/scheduler-specific prefixes live on Coordination Redis
   - Role: Coordination Redis.
   - Owner: Automation & Scripting Service.
   - Purpose: per-region checkpoint for “every N ticks” schedulers tied to the canonical `(regionEpoch, tickId)` timeline.
-  - Reset behavior: classified as reset-tolerant in the reset policy matrix; region/tenant/cluster resets may drop this key. After resets or data loss, Automation & Scripting recomputes due work from PostgreSQL schedules and the tick heartbeat as described in the tick and scripting docs.
+  - Reset behavior: classified as reset-tolerant in the reset policy matrix; region/tenant/cluster resets may drop this key. After resets or data loss, Automation & Scripting recomputes due work from PostgreSQL schedules and the tick heartbeat as described in the tick and scripting docs. Duplicate trigger prevention comes from a durable PostgreSQL trigger-instance or outbox key such as `(scheduleId, gameInstanceId, regionEpoch, dueTickId, triggerKind)` (or another explicitly instance-aware uniqueness projection), not from this Redis checkpoint.
+- `automation:timer:{tenantRegionTag}`
+  - Role: Coordination Redis.
+  - Owner: Automation & Scripting Service.
+  - Purpose: per-region timer/index structure for script intervals and timer-driven triggers; stored entries remain instance-aware via payload identity such as `gameInstanceId`.
+  - Reset behavior: classified as reset-tolerant in the reset policy matrix; keys may be dropped by scoped coordination resets and are rebuilt from PostgreSQL-backed schedules, trigger-instance rows, and heartbeat progress.
 - `automation:tick:{tenantScriptTag}:*`
   - Role: Coordination Redis.
   - Owner: Automation & Scripting Service.
   - Purpose: shard-local automation tick locks and staging structures that participate directly in tick timelines.
   - Reset behavior: classified as reset-tolerant in the reset policy matrix; keys may be dropped by scoped coordination resets and are rebuilt from durable automation state and fresh tick activity.
 
-Durable automation schedules, quotas, and script configuration live in PostgreSQL; these coordination prefixes are latency and progress hints only and must not be treated as the primary record of “which scripts should run”. Designs that introduce new automation-related coordination prefixes must register them in the reset policy matrix and document how they recover from resets.
+Durable automation schedules, quotas, script configuration, and trigger-instance de-duplication live in PostgreSQL; these coordination prefixes are latency and progress hints only and must not be treated as the primary record of “which scripts should run”. Designs that introduce new automation-related coordination prefixes must register them in the reset policy matrix and document how they recover from resets.
 
 ### Automation Routing: Coordination vs Cache/Rate-Limit
 
@@ -205,7 +210,7 @@ Coordination and Cache/Rate‑Limit Redis are sized and configured differently.
 
 - **Goal:** predictable restart behavior and bounded memory usage for coordination keys.
 - **Recommendations:**
-  - Keep peak memory for coordination prefixes (`tick:*`, `timer:*`, `retry:*`, `session:*`, `tick-executor-lease:*`, etc.) well below available RAM (for example **≤ 50–60%** of memory).
+  - Keep peak memory for coordination prefixes (`tick:*`, `timer:*`, `retry:*`, `session:game:*`, `session:auth:*`, `tick-executor-lease:*`, etc.) within the canonical Coordination Redis budget from `system-architecture-redis-operations.md` (normally **≤ 30–40% of `maxmemory`**).
   - Use AOF preamble and rewrite settings that keep AOF size within the budgets described in **Redis Operations & Migrations**.
   - Avoid eviction for coordination keys whenever possible; if `maxmemory` is configured with eviction, treat eviction events as incidents rather than normal operation.
 

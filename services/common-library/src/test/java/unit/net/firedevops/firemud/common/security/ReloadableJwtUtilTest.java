@@ -18,6 +18,6 @@ class ReloadableJwtUtilTest {
     assertThrows(JwtException.class, () -> util.parseToken(token1));
 
     String token2 = util.generateToken("demo", Map.of());
-    assertEquals("demo", util.parseToken(token2).getBody().getSubject());
+    assertEquals("demo", util.parseToken(token2).getPayload().getSubject());
   }
 }

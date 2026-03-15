@@ -57,7 +57,7 @@ Only after these workflow steps are accounted for should a change be considered 
 
 ## Coordination Prefix Checklist
 
-Use this when adding or changing coordination prefixes (for example `tick:*`, `timer:*`, `retry:*`, `session:*`, `tick-executor-lease:*`).
+Use this when adding or changing coordination prefixes (for example `tick:*`, `timer:*`, `retry:*`, `session:game:*`, `session:auth:*`, `tick-executor-lease:*`).
 
 ### Role and Scope
 
@@ -74,20 +74,21 @@ Use this when adding or changing coordination prefixes (for example `tick:*`, `t
 - [ ] Multi‑key scripts operating on this prefix:
   - [ ] Only touch keys that share the same hash tag and slot.
   - [ ] Do not mix coordination and cache prefixes in one invocation.
- - [ ] For tick-region coordination, epoch/tick metadata is read and written through the canonical `tick:{tenantRegionTag}:meta` hash key defined in the Redis architecture doc, not via ad-hoc per-script metadata keys.
+- [ ] For tick-region coordination, epoch/tick metadata is read and written through the canonical `tick:{tenantRegionTag}:meta` hash key defined in the Redis architecture doc, not via ad-hoc per-script metadata keys.
 
 ### Tail-Loss and Reset Behavior
 
 - [ ] The design explicitly states:
   - [ ] Whether the prefix is **reset‑tolerant**, **reset‑sensitive**, or **reset‑forbidden**.
-  - [ ] How losing up to **1–2 seconds** of entries per region affects gameplay.
+  - [ ] How losing up to `tail_loss_budget_ms = max(2000, 2 * tick_interval_ms)` of entries per region affects gameplay.
   - [ ] Whether tail‑loss is acceptable for all flows that depend on this prefix.
+- [ ] The design defines a hard growth bound for the prefix and how it is enforced (`TTL`, `MAXLEN`, max cardinality, or equivalent), including default values for new deployments.
 - [ ] Flows that are **not** tail‑loss compatible (for example, real‑money or cross‑tenant transfers) use durable domain mechanisms and do not rely solely on Redis.
 - [ ] The appropriate reset scope (region/tenant/cluster) is documented in the service design and referenced from **Redis Reset & Recovery**.
 
 ### Observability
 
-- [ ] Metrics exist or are planned to track:
+- [ ] Metrics exist to track:
   - [ ] Key counts or approximate size for this prefix by tenant/region.
   - [ ] Error or outcome codes from relevant Lua scripts.
   - [ ] Any important watermarks (for example, tick IDs, backlog depths).
@@ -156,6 +157,10 @@ Use this when adding or changing Lua scripts that operate on coordination or cac
 - [ ] Re‑running the script with the same `KEYS`/`ARGV` in the same state does not apply additional logical effects.
 - [ ] Script uses set‑style semantics, version checks, or membership checks to avoid duplicate entries on replay.
 - [ ] Error outcomes (`STALE_LEASE`, `STALE_LOCK`, `UNSUPPORTED_SCHEMA_VERSION`, etc.) are explicit and non‑mutating.
+- [ ] Registry entry defines an explicit, low-cardinality outcome enum for the script and classifies each outcome as one of: success/applied, replay/no-op, stale-timeline, validation-failure, contention/capacity.
+- [ ] Caller contract for outcomes is explicit:
+  - [ ] Unknown outcomes are treated as fatal (log + metric + alert), not inferred as success.
+  - [ ] Retryable outcomes are explicitly listed; callers do not blind-retry validation failures.
 
 ### Schema Versioning
 
@@ -175,6 +180,7 @@ Use this when adding or changing Lua scripts that operate on coordination or cac
   - [ ] Initial run from a clean state.
   - [ ] Pure replay with identical `KEYS`/`ARGV`.
   - [ ] Replay after partial success (keys pre‑populated).
+  - [ ] For outcomes documented as non-mutating, tests prove zero writes (including no TTL refresh side effects).
 
 ---
 

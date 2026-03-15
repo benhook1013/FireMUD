@@ -2,7 +2,7 @@
 
 This document is the **hub** for FireMUD’s scripting and automation architecture. It outlines how custom in-game behavior is executed through a sandboxed scripting framework and points to focused reference docs for details. It is intentionally high level: for precise DSL semantics and sandbox behavior, treat `design/architecture/system-architecture-scripting-dsl-reference-and-lifecycle.md` and `design/architecture/microservices/automation-scripting-service/sandbox-runtime-design.md` as the canonical specifications.
 
-For cross-service invariants (especially tick queue ownership and rollback safety), also treat `design/architecture/system-architecture-scripting-contracts.md` as a tie-breaker when other docs disagree.
+Document conflict resolution order is defined in `design/architecture/system-architecture-scripting-normative-contract-tables.md#document-precedence-normative`.
 
 For control-plane operations (pinning/rollback of `scriptPatchVersion`, pause/resume, and required status events), see `design/architecture/system-architecture-scripting-control-plane-api.md`.
 
@@ -14,9 +14,7 @@ It complements:
 
 ## Implementation Status
 
-This section summarizes where the scripting and automation framework stands relative to the target-state design as of 2025-12-04. For fine-grained sandbox semantics and their implementation status, refer to the matrix in `design/architecture/microservices/automation-scripting-service/sandbox-runtime-design.md#implementation-status`.
-
-For the most accurate, fine-grained status, refer to the [Automation & Scripting Service Task List](../project-management/task-list-automation-scripting-service.md).
+This section is a high-level snapshot. For the current implementation ledger and fine-grained progress, use `design/project-management/task-list-automation-scripting-service.md` as the source of truth. For sandbox-specific status, see `design/architecture/microservices/automation-scripting-service/sandbox-runtime-design.md#implementation-status`.
 
 - **Implemented and in active use**
   - Sandboxed script runtime and core Automation & Scripting Service, including quota enforcement via `ScriptQuotaService` and Redis-backed `ScriptTickService` staging.
@@ -24,10 +22,10 @@ For the most accurate, fine-grained status, refer to the [Automation & Scripting
   - Visual DSL editor for script creation and testing in the Game Design Service, mapping component graphs to Automation & Scripting Service definitions.
   - Advanced NPC behavior modules (morale, PvE encounters, formations) and state-driven / event-driven NPC behaviors integrated with the tick system.
 
-- **Planned or partially implemented**
-  - Copying published version data into the Automation & Scripting Service schema via Saga, and broader script-driven world generation flows (runtime generation requests via isolated ticks, generation seed persistence, and script-driven population triggers).
-  - Expansion of the PvE encounter library, biome-specific events, and world generation features called out in the Automation & Scripting Service and world generation task lists.
-- Scheduler leadership leases and per-region tick-stream consumption for `script-leader:{<tenantId>}` are implemented; sharded leases, `automation:timer:{tenantRegionTag}` indexing, and long-term audit-retention jobs continue to evolve (see **Scheduler Leadership & Coordination** in `design/architecture/system-architecture-scripting-dsl-reference-and-lifecycle.md` and the Automation & Scripting Service README for current behavior).
+- **Implemented and evolving**
+  - Script publish lifecycle integrates Game Design publish workflows with Automation runtime reload and readiness gating (`PENDING_VALIDATION` -> `ONLOAD_RUNNING` -> `READY`/`FAILED`).
+  - World generation and PvE behavior libraries continue to expand; feature-level progress is tracked in service task lists rather than this hub.
+  - Scheduler leadership leases and per-region tick-stream consumption are implemented; sharding/indexing and long-term retention jobs continue to evolve (see **Scheduler Leadership & Coordination** in `design/architecture/system-architecture-scripting-dsl-reference-and-lifecycle.md` and the Automation & Scripting Service README for current behavior).
 
 Operators looking for **runtime knobs and environment variables** should now primarily consult `design/architecture/system-architecture-scripting-quotas-and-operations.md` and the Automation & Scripting Service README (`design/architecture/microservices/automation-scripting-service/README.md#environment-variables`), which are the authoritative sources for current settings and defaults.
 
@@ -35,14 +33,14 @@ Maintainers should update this section whenever major scripting features land or
 
 ### Area Status Snapshot
 
-The table below summarizes the high-level implementation status of major areas in the scripting and automation stack:
+The table below summarizes high-level implementation status categories; verify current state against the implementation ledger linked above:
 
-| Area | Status (as of 2025-12-04) | Notes |
+| Area | Status | Notes |
 | --- | --- | --- |
 | Script runtime & DSL | Implemented | Sandbox execution, core Automation & Scripting Service, and visual DSL editor are in active use, including basic quotas. |
-| Automation queues & script ticks | Implemented | `automation:queue:<tenantId>:<entityId>` and `automation:tick:{tenantScriptTag}:...` staging are implemented; script work items flow into tick commands as described under [TL;DR Flow](#tldr-flow). |
+| Automation queues & script ticks | Implemented | Instance-aware automation queue indexes (for example `automation:queue:{tenantInstanceTag}:<entityId>`) and `automation:tick:{tenantInstanceScriptTag}:...` staging are implemented; script work items flow into tick commands as described under [TL;DR Flow](#tldr-flow). |
 | Integration with tick commands | Implemented | Script-generated tick commands are enqueued into the same per-entity tick queues used by Game Session, and participate in the normal lock/idempotency model. |
-| Scheduler leadership & timers | Designed / partial | Per-tenant `script-leader:{<tenantId>}` leases and heartbeat-driven interval scheduling are implemented; sharded leases, `automation:timer:{tenantRegionTag}` indexing, and long-term audit-retention jobs are tracked in the Automation & Scripting Service README and task list. |
+| Scheduler leadership & timers | Implemented / evolving | Scheduler leases and heartbeat-driven interval scheduling are implemented; region-scoped Redis timer/checkpoint coordination (for example `automation:timer:{tenantRegionTag}`) with instance-aware stored identities, and long-term audit-retention jobs are tracked in the Automation & Scripting Service README and task list. |
 | Quotas & fairness | Implemented / evolving | Per-script quotas (`ScriptQuotaService`) and basic fairness rules are implemented; multi-level budgets and advanced throttling controls continue to evolve. |
 | Audit & metrics | Implemented / evolving | `script_event_audit` and core automation metrics exist; retention policies and additional dashboards are being refined. |
 
@@ -104,9 +102,10 @@ At a high level, a script (or plugin) must pass through several stages before it
    - When designers publish a new script patch, the Game Design Service drives a Saga that compiles the editor graph into the runtime DSL representation and persists it in the Automation & Scripting Service schema.
    - The Automation & Scripting Service revalidates the compiled graph (for example, type checks, guard-node presence in loops, supported component versions) and will reject or mark the patch as `FAILED` if compilation or validation fails.
 
-3. **`onLoad` initialization (Automation & Scripting Service, per tenant)**
-   - For each `<tenantId, scriptPatchVersion>`, the Automation & Scripting Service runs any configured `onLoad` handlers after static validation succeeds but **before** the patch is marked `READY` for that tenant.
-   - `onLoad` is a **mandatory gate**: if it fails with a logical or sandbox-level error, the patch is marked `FAILED` for that tenant, the previous `activePatchVersion` remains in use, and events referencing the failed patch are rejected with outcomes such as `version_unavailable`. Only transient infrastructure errors are retried a bounded number of times, and even those retries must remain idempotent.
+3. **`onLoad` initialization (Automation & Scripting Service, per tenant patch)**
+   - For each `<tenantId, scriptPatchVersion>`, the Automation & Scripting Service runs any configured `onLoad` handlers after static validation succeeds but **before** the patch is marked `READY` for that tenant. `READY` only means the patch is eligible for pinning; runtime admission, timers, reload pause, and rollback remain instance-scoped.
+   - In the first implementation slice, `onLoad` is limited to **ephemeral readiness work** such as validating configuration and warming recomputable in-process caches. It is not a hook for creating durable shared state.
+   - `onLoad` is a **mandatory gate**: if it fails with a logical or sandbox-level error, the patch is marked `FAILED` for that tenant, running instances remain on their previously pinned patch, and events referencing the failed patch are rejected with outcomes such as `version_unavailable`. Only transient infrastructure errors are retried a bounded number of times, and even those retries must remain idempotent.
 
 4. **Version pinning (Game Session Service)**
    - Once a patch is `READY` for a tenant, the Game Session Service may pin it as the active `scriptPatchVersion` for a game. All script events emitted by Game Session include that pinned version and the upstream-generated `scriptEventId`.
@@ -114,13 +113,15 @@ At a high level, a script (or plugin) must pass through several stages before it
 
 5. **Quota and budget admission (Automation & Scripting Service)**
    - Only after a trigger passes version checks does `ScriptQuotaService` and the multi-level budgeting model decide whether it is allowed to run. Quota denials (`quota_denied`) happen **before** any sandbox work and do not consume CPU/memory budgets.
+   - Ingress admission is evaluated first at the event scope. If the event is accepted for handler resolution, each resolved handler then records its own stage-aware outcome independently in `script_event_audit`; one inbound event can therefore yield a mixed set of handler-level success, quota, disable, or policy outcomes.
 
 6. **Sandbox execution (Automation & Scripting Service)**
    - Admitted triggers run in the sandboxed DSL engine with per-run CPU/iteration and memory budgets as described in `design/architecture/microservices/automation-scripting-service/sandbox-runtime-design.md`.
    - Runtime guard violations are recorded as `sandbox_error` outcomes with specific reasons (for example, `cpu_budget_exceeded`, `memory_budget_exceeded`) and feed into failure-rate circuit breakers.
 
 7. **Command staging and tick execution**
-   - Successful runs produce commands that are staged into `automation:queue:<tenantId>:<entityId>`, processed by `ScriptTickService`, and then handed off to the Game Session Service for enqueue into tick queues, where they follow the standard tick idempotency and replay semantics.
+   - Successful runs produce commands that are staged into `automation:queue:{tenantInstanceTag}:<entityId>`, processed by `ScriptTickService` under `automation:tick:{tenantInstanceScriptTag}:...`, and then handed off to the Game Session Service for enqueue into tick queues, where they follow the standard tick idempotency and replay semantics.
+   - Before persistence/handoff, explicit output ceilings cap the number of emitted commands and the serialized work-item size so one admitted trigger cannot create an unbounded backlog.
 
 All stages emit metrics and audit records (especially `script_event_audit`) so designers and operators can see where a script failed to progress. The quotas and operations document (`design/architecture/system-architecture-scripting-quotas-and-operations.md`) is the primary reference for interpreting these outcomes in production.
 
@@ -148,8 +149,8 @@ At a high level, scripting follows this pipeline:
 1. **Event fires** – Game Session or another service emits a standard or custom event for an entity.
 2. **Bindings & quotas** – The Automation & Scripting Service looks up bound handlers for that `<tenantId, eventType>` and applies per-script and per-tenant limits via `ScriptQuotaService`.
 3. **Sandboxed DSL execution** – Allowed handlers run in the sandboxed DSL runtime, reading world state via gRPC and producing domain commands rather than mutating state directly.
-4. **Automation queue staging** – After sandbox execution, the resulting **script work items** (domain commands plus metadata) are indexed into Redis-backed automation queues under keys such as `automation:queue:<tenantId>:<entityId>`, along with `scriptEventId`, `scriptId`, and version metadata. These queues are best-effort derived coordination indexes whose loss/reset is acceptable, because admitted work items are persisted durably (outbox) and the indexes can be rebuilt; loss/reset must still be observable. Region-scoped tick keys remain the responsibility of the Game Session Service.
-5. **Script ticks & handoff** – `ScriptTickService` drains automation work items from `automation:queue:<tenantId>:<entityId>` entries, batches automation events into `automation:tick:{tenantScriptTag}:...` staging with quotas and budgets, and then hands the resulting **domain commands** to the Game Session Service over internal gRPC so Game Session can enqueue them into per-entity tick queues using its own Redis Lua registry and tick invariants.
+4. **Automation queue staging** – After sandbox execution, the resulting **script work items** (domain commands plus metadata) are indexed into Redis-backed automation queues under keys such as `automation:queue:{tenantInstanceTag}:<entityId>`, along with `scriptEventId`, `scriptId`, `gameInstanceId`, and version metadata. These queues are best-effort derived coordination indexes whose loss/reset is acceptable, because admitted work items are persisted durably (outbox) and the indexes can be rebuilt; loss/reset must still be observable. Region-scoped tick keys remain the responsibility of the Game Session Service.
+5. **Script ticks & handoff** – `ScriptTickService` drains automation work items from `automation:queue:{tenantInstanceTag}:<entityId>` entries, batches automation events into `automation:tick:{tenantInstanceScriptTag}:...` staging with quotas and budgets, and then hands the resulting **domain commands** to the Game Session Service over internal gRPC so Game Session can enqueue them into per-entity tick queues using its own Redis Lua registry and tick invariants.
 6. **Game tick execution** – The Game Session Service consumes at most one command per entity per tick from the combined player-and-automation queues and applies effects under the normal lock and replay rules.
 
 ```mermaid
@@ -163,8 +164,9 @@ sequenceDiagram
     Player->>GameSession: Command / world event
     GameSession-->>Scripting: Script trigger (event + metadata)
     Scripting->>Scripting: Run sandboxed DSL handler
-    Scripting->>Redis: Enqueue script work to automation:queue:<tenantId>:<entityId>
-    Scripting->>Redis: ScriptTickService stages automation:tick:{tenantScriptTag}:*
+    Scripting->>Scripting: Persist work item (outbox)
+    Scripting->>Redis: Index work-item pointer to automation:queue:{tenantInstanceTag}:<entityId>
+    Scripting->>Redis: ScriptTickService stages automation:tick:{tenantInstanceScriptTag}:*
     Scripting->>GameSession: Enqueue automation commands (internal gRPC)
     GameSession->>Redis: Append into tick:{tenantRegionTag}:queue:<entityId> (Lua)
     GameSession->>Redis: Read per-entity tick queue on tick
@@ -180,10 +182,10 @@ sequenceDiagram
 This hub intentionally keeps only high-level flows and routing; detailed topics live in focused documents:
 
 - **DSL semantics, terminology, lifecycle, determinism**
-  - `design/architecture/system-architecture-scripting-dsl-and-lifecycle.md`
+  - `design/architecture/system-architecture-scripting-dsl-reference-and-lifecycle.md`
 
 - **Deployment & versioning for scripts**
-  - `design/architecture/system-architecture-scripting-dsl-and-lifecycle.md` (see **Deployment & Versioning** and **Hot Reload & Resume Behavior**)
+  - `design/architecture/system-architecture-scripting-dsl-reference-and-lifecycle.md` (see **Script Patch Lifecycle** and **Hot Reload & Resume Behavior**)
   - `design/architecture/system-architecture-versioning-runtime.md` (see **Script-only patch versions**)
 
 - **Examples and common patterns**
@@ -202,3 +204,5 @@ This hub intentionally keeps only high-level flows and routing; detailed topics 
   - `design/architecture/microservices/automation-scripting-service/README.md`
 
 For logging, metrics, and observability, see `design/architecture/system-architecture-logging-monitoring.md` and `design/architecture/system-architecture-scripting-observability-contract.md`. For Redis keys and tick system behavior, see `design/architecture/system-architecture-redis.md` and `design/architecture/system-architecture-ticks.md`.
+
+For normative contract tables that other docs must not drift from (Trigger Identity required fields, audit stages/outcomes, timer semantics, and metric label sets), see `design/architecture/system-architecture-scripting-normative-contract-tables.md`.

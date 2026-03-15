@@ -11,7 +11,7 @@ buildscript {
     }
     dependencies {
         classpath("com.fasterxml.jackson.core:jackson-databind:2.21.1")
-        classpath("org.flywaydb:flyway-database-postgresql:12.1.0")
+        classpath("org.flywaydb:flyway-database-postgresql:11.7.2")
         classpath("org.postgresql:postgresql:42.7.10")
     }
 }
@@ -61,11 +61,23 @@ subprojects {
 
     plugins.withId("java") {
         the<JavaPluginExtension>().toolchain.languageVersion.set(JavaLanguageVersion.of(21))
+        val categorizedTestRoots = listOf("src/test/java/unit", "src/test/java/integration", "src/test/java/crossservice")
+            .map(::file)
+            .filter(File::exists)
+        the<SourceSetContainer>()["test"].java.setSrcDirs(
+            categorizedTestRoots.ifEmpty { listOf(file("src/test/java")) }
+        )
         tasks.withType<JavaCompile>().configureEach {
             options.release.set(21)
             if (name.contains("Test")) {
                 // Ignore the current @MockBean removal warnings until Spring Boot 4.0 lands so tests stay clean.
                 options.compilerArgs.add("-Xlint:-removal")
+            }
+        }
+        if (categorizedTestRoots.isNotEmpty()) {
+            tasks.named<JavaCompile>("compileTestJava").configure {
+                // Categorized test roots have produced stale cache hits where selectors miss real test classes.
+                outputs.cacheIf { false }
             }
         }
     }
@@ -202,9 +214,15 @@ tasks.register<Exec>("linkCheck") {
     environment("CHECK_EXTERNAL_LINKS", if (fullCheck) "1" else "0")
 }
 
+tasks.register<Exec>("validateObservabilityContract") {
+    group = "verification"
+    description = "Validates the design-level observability contract (metric names/labels) against dashboards and snippets."
+    commandLine("python3", "dev-tools/observability/validate-observability-contract.py")
+}
+
 tasks.named("check") {
     // Always run Markdown lint and link checks; they are relatively fast.
-    dependsOn("lintMarkdown", "linkCheck")
+    dependsOn("lintMarkdown", "linkCheck", "validateObservabilityContract")
     if (fullCheck) {
         dependsOn(
             "checkstyleMain",
@@ -232,9 +250,22 @@ tasks.register<Exec>("buildBaseImage") {
     )
 }
 
+tasks.register<Exec>("buildPgDumpCronImage") {
+    commandLine(
+        "docker",
+        "build",
+        "-f",
+        "docker/pg-dump-cron.Dockerfile",
+        "-t",
+        "pg-dump-cron:0.1.0",
+        "."
+    )
+}
+
 tasks.register("buildDockerImages") {
     dependsOn(
         "buildBaseImage",
+        "buildPgDumpCronImage",
         ":account-service:bootBuildImage",
         ":automation-scripting-service:bootBuildImage",
         ":entity-management-service:bootBuildImage",
@@ -251,7 +282,7 @@ tasks.register("buildDockerImages") {
 
 tasks.register<Exec>("generateDevCerts") {
     workingDir("dev-tools")
-    commandLine("bash", "generate-dev-certs.sh")
+    commandLine("bash", "generate-dev-certs.sh", "certs")
 }
 
 tasks.register<Exec>("devUp") {
@@ -263,8 +294,31 @@ tasks.register<Exec>("devUp") {
         "docker/docker-compose.yml",
         "-f",
         "docker/docker-compose.override.yml",
+        "-f",
+        "docker/docker-compose.local-images.override.yml",
         "up",
-        "--build"
+        "-d",
+        "--wait",
+        "--wait-timeout",
+        "180",
+        "--no-build",
+        "postgres",
+        "redis-coord",
+        "redis-cache",
+        "minio",
+        "redisinsight",
+        "pg-dump-cron",
+        "account-service",
+        "gateway",
+        "automation-scripting-service",
+        "entity-management-service",
+        "game-design-service",
+        "game-logic-service",
+        "game-session-service",
+        "logging-admin-service",
+        "social-groups-service",
+        "tcp-proxy-service",
+        "world-management-service"
     )
 }
 
@@ -276,6 +330,8 @@ tasks.register<Exec>("devDown") {
         "docker/docker-compose.yml",
         "-f",
         "docker/docker-compose.override.yml",
+        "-f",
+        "docker/docker-compose.local-images.override.yml",
         "down"
     )
 }

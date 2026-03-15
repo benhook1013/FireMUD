@@ -1,13 +1,14 @@
 # Environment Variables & Secrets Overview
 
-This document explains how configuration values and sensitive secrets are supplied to FireMUD services in both development and production. It is the conceptual overview and operator starting point for environment variables and secrets.
+This document explains how configuration values and sensitive secrets are supplied to FireMUD services across FireMUD environment classes. It is the conceptual overview and operator starting point for environment variables and secrets.
 
 For the full catalog of environment variables (including defaults and detailed rotation notes), see `environment-and-secrets-catalog.md`. For a minimal entry point and links, see `environment-and-secrets.md`.
 
 ## Table of Contents
 
 - [Operator Quick Reference](#operator-quick-reference)
-- [Local Development vs Production](#local-development-vs-production)
+- [Local Development vs Kubernetes Environments](#local-development-vs-kubernetes-environments)
+- [Secret Governance Tiers](#secret-governance-tiers)
 - [Configuration vs Secrets](#configuration-vs-secrets)
 - [Certificate Management & Watchers](#certificate-management--watchers)
 - [How to Use the Catalog](#how-to-use-the-catalog)
@@ -53,6 +54,7 @@ Operational notes:
 ### TCP Proxy → Gateway Bridge (Telnet)
 
 The TCP Proxy Service uses `GATEWAY_WS_URL` to connect to Spring Cloud Gateway over WebSocket. This endpoint is configured independently of the `FIREMUD_SERVICES_*` service discovery overrides: changing `FIREMUD_SERVICES_SPRING_CLOUD_GATEWAY_SERVICE` does not automatically update the Telnet bridge. Operators must keep `GATEWAY_WS_URL` aligned with the Gateway’s intended internal WebSocket listener for the environment as described in `system-architecture-protocol-bridging.md` and the TCP Proxy Service design.
+In all player-facing classes (`hobby-self-hosted`, staging, production), this alignment is treated as a deployment preflight invariant: release tooling and readiness checks should fail when `GATEWAY_WS_URL` does not target the expected internal listener for the active environment.
 
 ### Secrets & Certificates
 
@@ -73,7 +75,7 @@ For full descriptions of the variables and their defaults, open `environment-and
 
 ---
 
-## Local Development vs Production
+## Local Development vs Kubernetes Environments
 
 ### Local Development
 
@@ -82,12 +84,15 @@ For full descriptions of the variables and their defaults, open `environment-and
 - Docker Compose passes these variables to each container so Spring Boot can connect to the databases.
 - Secrets such as JWT signing keys are not required in development; random keys are generated on startup.
 
-### Production
+### Shared and Player-Facing Kubernetes Environments
+
+This section describes the Kubernetes-backed environments that use the shared `prod` application profile and Kubernetes Secrets delivery model. Unless a bullet explicitly says `production` only, the rules here apply to `hobby-self-hosted`, `staging`, and `production`.
 
 - Kubernetes `ConfigMap` objects store non‑secret configuration values like host names or feature flags.
 - Sensitive values (database passwords, JWT signing keys, TLS certificates) are stored in Kubernetes `Secret` objects.
 - TLS certificates are issued by **cert-manager** and rotated automatically; services reload updated certificates using `TlsCertificateWatcher` / `GrpcServerTlsReloader`.
 - JWT signing keys are stored in Secrets and rotated by dedicated Kubernetes Jobs (for example `jwt-rotation`) that update both the signing key Secret and the JWKS document served by the Account Service. See `system-architecture-security.md#jwt-key--jwks-rotation-workflow` for details.
+- In player-facing environments (`hobby-self-hosted`, staging, production), JWT signing material must be consumed from a mounted file via `FIREMUD_AUTH_JWT_SECRET_PATH`; inline-only JWT secret configuration is non-compliant in those environments.
 - Database credentials are stored in Secrets and rotated via explicit operational Jobs and runbooks (for example `db-credential-rotation` in `system-architecture-backup-recovery.md#post-restore-secret-hardening`); there is no fully automatic cadence today.
 - The manifests in `k8s/base/` demonstrate loading Secrets and ConfigMaps via `envFrom` so that services receive the same variables as in development.
 - Services reload TLS certificates for gRPC client and server channels and JWT secrets when these Secrets update using the `TlsCertificateWatcher`, `JwtSecretWatcher`, and `GrpcServerTlsReloader` utilities from the shared library.
@@ -103,13 +108,91 @@ JWT signing key and JWKS behavior differs slightly by environment to balance saf
   - Environment variables are loaded from `.env`, and secrets such as JWT signing keys may be generated randomly on startup for convenience.
   - Cross-service JWT validation is best-effort when random keys are used; operators should not assume that tokens remain valid across service restarts unless a persistent signing key Secret is configured.
 - **Staging / Non-production clusters**
-  - Recommended to mirror production: use a persistent `jwt-signing-keys` Secret and `jwt-jwks` ConfigMap/Secret, with the Account Service serving JWKS from the mounted file.
-  - The `jwt-rotation` CronJob may be enabled on a low-frequency schedule to exercise the rotation path.
+  - Recommended to mirror production: use a persistent `jwt-signing-keys` Secret and `jwt-jwks` Secret, with the Account Service serving JWKS from the mounted file.
+  - The same `jwt-rotation` CronJob template used in production may be enabled on a low-frequency schedule (for example monthly) to exercise the rotation path; leaving it operator-triggered is also acceptable when staging is being kept closer to production change control than to rotation-path testing.
 - **Production**
   - Required to use a persistent `jwt-signing-keys` Secret and JWKS document; JWKS is the canonical trust source for all validating services.
   - The `jwt-rotation` CronJob is defined with `spec.suspend: true` and is triggered explicitly by operators as part of a rotation runbook.
 
 For guidance on how to respond to a suspected JWT signing key compromise (as opposed to planned rotation), see the “JWT Key Compromise Response” section in `system-architecture-security.md`.
+
+---
+
+## Secret Governance Tiers
+
+FireMUD applies a tiered governance model so the highest-risk credentials have explicit controls even while Kubernetes Secrets remains the storage backend:
+
+- **Tier A (high impact)**
+  - Includes JWT signing keys/JWKS, PostgreSQL application/admin credentials, object-store credentials used for backup and restore, and operator-only control-plane credentials.
+  - Required controls:
+    - Defined rotation SLA per credential family (for example monthly or quarterly based on risk/compliance needs).
+    - Alerting on credential age or missed rotation windows.
+    - Explicit incident-response runbook links for emergency rotation.
+    - Post-restore validation before the environment is considered player-facing.
+- **Tier B (lower impact)**
+  - Includes lower-risk integration credentials and service-level secrets where compromise blast radius is narrower.
+  - Rotation cadence may be manual and less frequent, but owners must still document current age, intended cadence, and emergency rotation path.
+
+This model is designed to reduce risk now without introducing unnecessary operational complexity. If operational burden or compliance requirements increase, environments can migrate selected Tier A credential classes to external secret orchestration later without changing application-level environment variable contracts.
+
+### Secret Compliance Controls
+
+Tier A controls must be measurable, not policy-only. Each player-facing environment (`hobby-self-hosted`, staging, production) maintains a secret compliance record with:
+
+- Credential class owner (for example platform/security owner role).
+- Maximum credential age target.
+- Alert rule ID for age/SLA breach.
+- Last successful rotation evidence reference.
+
+The secret compliance record must be stored as versioned environment metadata in Git (for example under `design/operations/secret-compliance/<environment>.yaml`) so CI and reporting jobs can detect missing or stale records before promotion.
+Each credential record must also point to immutable rotation evidence in-repo (`evidenceRef` + `evidenceKey`) whose referenced payload includes an `immutableArtifactId` value (for example a job/run identifier that embeds a content digest such as `sha256:...`). Promotion/DR-readiness checks must fail when evidence is missing or cannot be tied to an immutable artifact identifier.
+
+Minimum credential classes to track (canonical record keys shown in parentheses):
+
+| Credential Class | Required Evidence |
+| --- | --- |
+| JWT signing keys / JWKS (`jwt-signing-keys-jwks`) | Last rotation timestamp, key IDs, rotation job outcome |
+| PostgreSQL application credentials (`postgres-application-credentials`) | Last rotation timestamp, rollout restart completion evidence |
+| Backup/object-store credentials (`backup-object-store-credentials`) | Validation of expected bucket/endpoint and non-production isolation |
+| Operator credentials (`operator-credentials`) | Last issuance/rotation timestamp and revocation traceability |
+
+If a required compliance record is missing or stale, the environment is treated as non-compliant for promotion and DR-readiness reporting.
+
+Promotion gating policy:
+
+- `production`: non-compliant secret records are a hard block for promotion.
+- `staging`: non-compliant records are warnings through **June 30, 2026** and become a hard promotion gate on **July 1, 2026**. This cutover applies to staging promotion/deployment evidence and any staging deployment intended to serve as production-promotion evidence; it does not mean every detached or quarantined staging drill must be treated as a promotion candidate.
+- `hobby-self-hosted`: operators must validate records before opening player-facing traffic.
+
+Promotion-evidence exception:
+
+- Even before **July 1, 2026**, a staging deployment record that will be referenced by a production promotion attestation must show `secretComplianceStatus=pass` at deployment time and include a `secretComplianceEvidenceRef`. A warning-only staging deployment may still exist for playtesting, but it is not eligible to produce production promotion evidence.
+
+Illustrative distinction:
+
+- A staging playtest deployment with `deployStatus=pass`, `smokeStatus=pass`, and `secretComplianceStatus=warning` may remain valid for detached or non-promotion playtesting before the cutover date.
+- That same deployment is invalid as production-promotion evidence; production attestation requires the referenced staging deployment to show `secretComplianceStatus=pass` and a valid `secretComplianceEvidenceRef`.
+
+## Player-Facing Environment Bootstrap Requirements
+
+Before the first deployment into `hobby-self-hosted`, `staging`, or `production`, operators must provision a minimum bootstrap set of secrets and trust resources. This is the canonical bootstrap contract for environment and secret readiness:
+
+- `postgres-credentials`
+- `postgres-admin-credentials` when rotation Jobs are used
+- `jwt-signing-keys`
+- `jwt-jwks`
+- cert-manager issuer or issuer reference used by workload and bridge certificates
+- registry pull credential secret
+- backup/object-store credentials when the environment requires backups
+- asset-store credentials when the environment publishes or serves assets from external object storage
+- outbound communications credentials when email or webhook integrations are enabled
+- operator credential binding used for environment-scoped control-plane access
+
+Bootstrap resources must be unique to the environment boundary. Shared namespace names such as `firemud` do not relax the requirement for separate staging and production secret sources, bucket bindings, or operator trust bindings.
+
+Expected external bindings for player-facing deployment and recovery checks must be declared once per environment in `design/operations/environments/<environment>/expected-bindings.yaml`. Deploy preflight and restore validation both consume this same manifest so backup storage, asset storage, outbound communications, and operator credential bindings do not drift between deployment and recovery procedures.
+
+Player-facing preflight must fail when this bootstrap set is incomplete or when an external binding resolves to another environment’s target. The authoritative preflight policy IDs and evidence contract for these checks are defined in `../system-architecture-deploy-preflight-policy.md`.
 
 ---
 

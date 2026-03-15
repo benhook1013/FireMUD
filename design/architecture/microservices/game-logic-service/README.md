@@ -48,6 +48,19 @@ the Game Design and Game Session services; this service simply reads the
 already-published, versioned rule data for the active `runtime_version` and
 does not participate directly in the publish Saga.
 
+### Digest Input Manifest Requirements
+
+For full-version publish gating, this service is still a required digest participant even though it does not orchestrate Saga steps. It must expose `GetDraftDesignDigest(tenantId, versionId)` and publish a service-local digest input manifest with:
+
+- Included objects (for example version-scoped rule/config tables this service owns that affect runtime command behavior).
+- Excluded objects (for example runtime queues/caches, telemetry tables, and other non-launchability data).
+- Canonicalization rules (stable ordering, normalization, and null/default handling before hashing).
+- `digestSchemaVersion` bump criteria (any include/exclude/canonicalization change requires an explicit schema bump and replay/re-record workflow).
+
+Publish gating must fail closed if this service cannot attest a digest under its documented manifest for the reported `digestSchemaVersion`.
+
+Role classification: Game Logic is a **digest-gate participant** for full publishes, not a **saga-step participant**, unless future publish workflows add explicit finalize/compensation steps owned by this service.
+
 ### Redis Role and Prefixes
 
 - **Coordination Redis**
@@ -78,9 +91,10 @@ does not participate directly in the publish Saga.
 
 ### LOOK aggregation & formatting
 
-- `ResolveLook` orchestrates World Management and Entity Management: World provides room topology and ambient world state, while Entity provides the live entities and items (including room/ground inventory from room-ground container entities belonging to that room/instance) to build a deterministic `LookResult` that Game Session renders for clients.
+- `ResolveLook` orchestrates World Management and Entity Management: World provides room topology, ambient state, and the authoritative occupant set for the target room/instance, while Entity enriches those caller-supplied occupant/entity references with live entity and ground-item display data to build a deterministic `LookResult` that Game Session renders for clients.
 - A dedicated `LookResultRenderer` keeps the canonical textual output in sync with the documented protocol transcripts (room name/desc/exits/entities) so the service can log or inspect the text while keeping the structured DTO clean.
-- Downstream errors from World or Entity services are labeled (`WorldManagement`, `EntityManagement`) so they surface as precise error codes (`ROOM_NOT_FOUND`, `WORLD_UNAVAILABLE`, `ENTITY_UNAVAILABLE`) when Game Session formats replies for Telnet/WebSocket clients.
+- Downstream errors from World or Entity services are labeled (`WorldManagement`, `EntityManagement`) so they surface as precise error codes (`ROOM_NOT_FOUND`, `WORLD_UNAVAILABLE`, `ENTITY_UNAVAILABLE`) when Game Session formats replies for Telnet and WebSocket clients.
+- Game Logic is the orchestration boundary for these gameplay reads; downstream services on the hot path should answer from owned state, caches, or caller-supplied references rather than recursively building additional cross-service fan-out trees for steady-state command handling.
 
 ### Implementation status (LOOK slice)
 
@@ -91,7 +105,7 @@ does not participate directly in the publish Saga.
 ### Implementation status (chat slice)
 
 - **Live:** `BroadcastSay` accepts authenticated `SAY`/`YELL`/`WHISPER` payloads, validates length, aggregates recipient/NPC metadata, and forwards the normalized message to the Social & Groups Service stub. The API returns delivery metadata and `shared.v1.ErrorDetail` codes so Game Session can render the canonical transcript and surface `gamesession.command.say.*` instrumentation.
-- **Stubbed:** Delivery currently uses the regression stubbed Social & Groups Service that records `SendMessage` calls and echoes success while the cross-service WebSocket/Telnet tests assert the structured response before adding a narrative layer for listeners.
+- **Stubbed:** Delivery currently uses the regression stubbed Social & Groups Service that records `SendMessage` calls and echoes success while the cross-service WebSocket and Telnet tests assert the structured response before adding a narrative layer for listeners.
 - **Deferred:** Richer behavior (NPC roleplay replies, localized listening areas, channel filters, profanity escalation) will arrive in later slices once the foundational flow proves stable and the instrumentation captures both success and failure paths.
 
 ### SAY broadcast flow
@@ -110,9 +124,11 @@ This service is largely stateless. It relies on:
 ### Command Flow
 
 1. Commands are queued in Redis by the Game Session Service.
-2. This service fetches the next command, loads the required context, and
-   resolves the action to a rule engine module.
-3. Results are pushed back to the session queue for delivery to players.
+2. The lease-owning Game Session executor invokes this service over gRPC with
+   the queued command plus tick/session context, and this service loads the
+   required world/entity context to resolve the action.
+3. The gRPC response returns the structured result to Game Session for commit
+   and delivery to players.
 
 ### gRPC APIs
 
@@ -188,6 +204,11 @@ the generated code with `./gradlew generateProto` after making changes.
 ## Additional Details
 
 ### REST & gRPC Endpoints
+
+### Exposure Class
+
+- gRPC gameplay APIs are **internal-only** service-to-service contracts invoked from Game Session and other trusted backend services.
+- The documented REST endpoints are **local-dev/test conveniences only** and are not part of the Gateway allowlist or the production external API surface.
 
 #### REST
 

@@ -10,6 +10,7 @@ import java.util.Optional;
 import net.firedevops.firemud.common.LoggingUtil;
 import org.lognet.springboot.grpc.GRpcServerRunner;
 import org.slf4j.Logger;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.stereotype.Component;
 
 /**
@@ -17,6 +18,7 @@ import org.springframework.stereotype.Component;
  * is stopped and restarted gracefully so active calls finish before shutdown.
  */
 @Component
+@ConditionalOnBean(GRpcServerRunner.class)
 public class GrpcServerTlsReloader {
   private static final Logger logger = LoggingUtil.getLogger(GrpcServerTlsReloader.class);
   private static final String CERT_CHAIN_ENV = "FIREMUD_GRPC_CERT_CHAIN_PATH";

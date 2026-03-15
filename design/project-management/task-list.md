@@ -218,6 +218,7 @@ Service-specific tasks are tracked in separate files within this folder. Quick l
   - [x] Add root `buf.yaml` and `config/protobuf/buf.gen.yaml` for protobuf linting and generation
 - [x] Add CI steps for:
   - [x] Protobuf generation and schema checking
+  - [ ] Investigate slow Docker Compose startup in GitHub Actions smoke runs, reduce avoidable service boot overhead, and replace the current shared Compose healthcheck grace tuning with service-specific readiness/start-period settings once the slowest services are understood
   - [x] Lint `.proto` files with `buf`
   - [x] Include `buf breaking` tests in CI for backward compatibility
   - [x] Generate gRPC stubs for each service via Gradle plugin

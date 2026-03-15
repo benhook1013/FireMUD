@@ -1,6 +1,6 @@
 # Architecture Review Prompt: Observability and Operations
 
-Read the following documents, and follow references to any other design documents that appear relevant:
+Read the following documents. Follow references only when a listed document points to another canonical source needed to judge an implementation-blocking gap in signals, alerts, or runbooks. Do not recursively traverse the full operations doc tree.
 
 - `design/architecture/system-architecture-logging-monitoring.md`
 - `design/architecture/system-architecture-tracing.md`
@@ -19,5 +19,13 @@ Then:
 
 - Review observability and operations as a unified design: metrics, logs, traces, dashboards, alerts, and runbooks across the platform.
 - Do not summarize what already works well or restate basic descriptions of dashboards or metrics.
-- Only identify problems, contradictions, or gaps: missing signals for critical flows, unclear ownership of alerts, runbooks that do not map cleanly to the described failure modes, inconsistent use of tracing or logging across services, or operational scenarios that are not covered.
-- For each issue, reference the specific document or documents involved and propose concrete, actionable improvements, such as stronger SLOs or SLIs, additional metrics or spans, clearer alert routing, or more complete, step-by-step runbooks.
+- Focus on observability and operations gaps that would leave the first implementation unsafe to operate or impossible to debug.
+- Do not let dashboard polish, extra nice-to-have metrics, and distant maturity improvements crowd out blockers. Once blockers are cleared, list the highest-value non-blocking improvements if they would materially improve operability.
+- Return at most 5 issues, ordered by severity.
+- For each issue, include:
+  - `Severity`: `blocking` or `important`
+  - `Why it matters now`
+  - `Docs involved`
+  - `Suggested decision or spec change`
+- If no implementation-blocking issues remain, say `No implementation-blocking issues found.` and include a `Suggested follow-ups` section with any worthwhile non-blocking improvements, ordered by leverage and not capped at 3.
+- Stop once you have either identified the remaining blockers or captured the worthwhile non-blocking follow-ups.

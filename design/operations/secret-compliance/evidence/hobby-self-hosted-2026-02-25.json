@@ -1,0 +1,26 @@
+{
+  "environment": "hobby-self-hosted",
+  "generatedAt": "2026-03-13T00:00:00Z",
+  "records": {
+    "jwt-signing-keys-jwks": {
+      "immutableArtifactId": "operator-note:hobby-rotation-2026-03-08:sha256:9c6a2be1",
+      "source": "operator-notes",
+      "recordedBy": "operator"
+    },
+    "postgres-application-credentials": {
+      "immutableArtifactId": "operator-note:hobby-db-rotation-2026-02-27:sha256:1e7c4ab6",
+      "source": "operator-notes",
+      "recordedBy": "operator"
+    },
+    "backup-object-store-credentials": {
+      "immutableArtifactId": "operator-note:hobby-backup-creds-2026-02-12:sha256:43b0fc2a",
+      "source": "operator-notes",
+      "recordedBy": "operator"
+    },
+    "operator-credentials": {
+      "immutableArtifactId": "operator-note:hobby-operator-credentials-2026-01-25:sha256:6df842ce",
+      "source": "operator-notes",
+      "recordedBy": "operator"
+    }
+  }
+}

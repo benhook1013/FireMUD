@@ -1,0 +1,69 @@
+package net.firedevops.firemud.tcpproxy;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+import io.micrometer.prometheusmetrics.PrometheusConfig;
+import io.micrometer.prometheusmetrics.PrometheusMeterRegistry;
+import java.util.Properties;
+import net.firedevops.firemud.tcpproxy.service.TcpProxyEventClient;
+import org.junit.jupiter.api.Test;
+import org.lognet.springboot.grpc.GRpcServerRunner;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.actuate.metrics.export.prometheus.PrometheusScrapeEndpoint;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.boot.test.web.client.TestRestTemplate;
+import org.springframework.boot.test.web.server.LocalServerPort;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Import;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+
+@SpringBootTest(
+    webEnvironment = WebEnvironment.RANDOM_PORT,
+    classes = TcpProxyServiceApplication.class,
+    properties = {
+      "TCP_PROXY_PORT=0",
+      "TCP_PROXY_TLS_ENABLED=false",
+      "GATEWAY_WS_URL=ws://localhost/ws",
+      "spring.flyway.enabled=false",
+      "spring.autoconfigure.exclude=org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration,org.springframework.boot.autoconfigure.orm.jpa.HibernateJpaAutoConfiguration,org.springframework.boot.autoconfigure.flyway.FlywayAutoConfiguration,org.springframework.boot.autoconfigure.data.jpa.JpaRepositoriesAutoConfiguration",
+      "management.endpoints.web.exposure.include=health,prometheus",
+      "management.endpoint.prometheus.enabled=true"
+    })
+@Import(PrometheusMetricsIntegrationTest.MetricsTestConfig.class)
+class PrometheusMetricsIntegrationTest {
+
+  @LocalServerPort private int port;
+
+  @Autowired private TestRestTemplate restTemplate;
+
+  @MockitoBean private TcpProxyEventClient tcpProxyEventClient;
+  @MockitoBean private GRpcServerRunner grpcServerRunner;
+
+  @Test
+  void prometheusEndpointExposesTcpProxyMetrics() {
+    String body =
+        restTemplate.getForObject(
+            "http://localhost:" + port + "/actuator/prometheus", String.class);
+
+    assertThat(body)
+        .contains("tcpproxy_buffer_depth")
+        .contains("tcpproxy_websocket_reconnects_total")
+        .contains("tcpproxy_connection_duration_seconds")
+        .contains("tcpproxy_tls_misconfig_total");
+  }
+
+  @TestConfiguration(proxyBeanMethods = false)
+  static class MetricsTestConfig {
+    @Bean
+    PrometheusMeterRegistry prometheusMeterRegistry() {
+      return new PrometheusMeterRegistry(PrometheusConfig.DEFAULT);
+    }
+
+    @Bean
+    PrometheusScrapeEndpoint prometheusScrapeEndpoint(PrometheusMeterRegistry registry) {
+      return new PrometheusScrapeEndpoint(registry.getPrometheusRegistry(), new Properties());
+    }
+  }
+}

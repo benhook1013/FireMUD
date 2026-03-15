@@ -9,7 +9,7 @@ The World Management Service stores and manages game world topology and content 
 - Persist region, zone, and room data with tenant isolation
 - Execute scheduled world events.
 - Provide procedural generation support.
-- Expose geometry and region metadata; pathfinding is handled by the Movement/Travel subsystem (Game Logic Service) via gRPC with navmesh support.
+- Expose geometry and region metadata; pathfinding algorithms are handled by the Movement/Travel subsystem (Game Logic Service) via gRPC. World Management stores and publishes versioned navmesh/path graph artifacts as part of the `(tenantId, versionId)` template bundle so Game Logic can load consistent inputs.
 - Notify Game Session and Automation services when the world changes
 - Track character locations and instance occupancy
 - Do not store or manage live item or inventory state; room inventory and ground items are derived from Entity Management queries scoped by room/instance identifiers.
@@ -72,6 +72,29 @@ Movement, drops, pickups, and room presence are cross-service by design:
 
 All spatial effects must carry the target `RoomInstanceRef` and a canonical tick `EffectId`. Both services must implement durable idempotency guards so partial success can be retried safely until convergence. See [Transaction Strategies](../../system-architecture-transactions.md) and [Identifier Glossary](../../system-architecture-identifier-glossary.md).
 
+Cross-service retry orchestration is owned by the Game Session Service reconciliation backlog described in [Transaction Strategies](../../system-architecture-transactions.md#reconciliation-owner-of-record-spatialambient-effects). World Management must expose participant acknowledgements for each `EffectId`; it is not the owner of cross-service retry scheduling.
+
+Ambient world mutations (doors, hazards, weather) follow the same rule: they are applied only via effect-shaped commands carrying `EffectId` + `RoomInstanceRef`. Operators and scripts must not write World Management instance tables directly.
+
+Concrete per-effect required writes and reconciliation rules live in `design/architecture/system-architecture-spatial-and-ambient-effects-catalog.md`.
+
+### Derived World Artifact Publication
+
+Derived world artifacts such as navmesh/path graph bundles need one canonical publication path.
+
+- World Management owns derivation, validation, and semantic versioning of these artifacts for `(tenantId, versionId)`.
+- Game Design Service remains the sole writer to the shared object store. World Management must not publish derived world artifacts by writing directly to object storage.
+- If derived world artifacts are exported outside World Management storage, they must be handed to the Game Design publish workflow as explicit publish inputs so Game Design can write them, attest them in `published_release_bundle`, and expose them through the same release bundle used by activation and repair tooling.
+- If a deployment keeps these artifacts only in World Management storage, the read path must remain World-owned via gRPC or database-backed APIs and must not rely on unpublished object-store conventions.
+- Implementations must choose one of those two paths per artifact family and document the consumer read path. Mixing direct World writes to object storage with Game Design-managed asset publication is not allowed.
+
+Initial-slice decision:
+
+- For the first implementation slice, navmesh/path graph artifacts use the Game Design-managed object-store publication path.
+- World Management derives and validates the artifact payload for `(tenantId, versionId)`, then hands it to the publish workflow as an explicit publish input.
+- Game Design writes the artifact under the version-scoped published prefix, records it in the attested version `manifest.json`, and attests that manifest through the immutable `published_release_bundle`.
+- Game Logic and any other runtime consumer must discover the artifact through the attested version manifest for that release; they must not rely on ad hoc World-local storage conventions for this artifact family in the initial slice.
+
 ## Architecture / Design Notes
 
 - World data is stored in PostgreSQL. Redis holds only transient active state used during gameplay.
@@ -125,16 +148,15 @@ All spatial effects must carry the target `RoomInstanceRef` and a canonical tick
 
 ## Key Features
 
-- Region and location management with shard support. Each region stores a
-  `shard_id` value so the world can span multiple servers.
-- Automated region redistribution balances shard load when cluster capacity changes.
+- Region and location management for each running game instance (`tenantId`, `gameInstanceId`), including authoritative occupant/location tables owned by this service.
+- Horizontal scaling via stateless replicas and stable in-cluster service discovery (no per-region shard routing plane or cross-cluster handoff contract in the core architecture).
 - Instance-based zones are treated as regular rooms; this service records which
   characters occupy each instance so private dungeons or housing do not affect
   the shared world map.
 - Persistent world state with incremental saves (rooms, regions, instances, and environmental state), excluding live entities, item instances, and inventories which are persisted by the Entity Management Service.
 - Procedural generation tools for rooms and terrain.
 - Region metadata persists `seed`, `generatorType`, and raw parameters for every generated region so maps can be re-created or inspected later.
-- The Movement/Travel subsystem in the Game Logic Service performs Dijkstra-based pathfinding using the `room_exit` table and exposes results via gRPC.
+- The Movement/Travel subsystem in the Game Logic Service performs pathfinding using the `room_exit` graph (and, where applicable, precomputed navmesh artifacts stored and published by World Management) and exposes results via gRPC.
 - Event scheduling for world-wide holidays or timed modifiers. A `world_event` table
   stores pending events and a scheduled task processes them, updating regional weather
   or other state. Emitting gRPC notifications keeps other services synchronized.
@@ -147,32 +169,155 @@ All spatial effects must carry the target `RoomInstanceRef` and a canonical tick
   - `terrain_template` and related tables capture generator outputs or authored terrain data where it is part of the versioned topology.
 - **Instance tables** (keyed by `(tenantId, gameInstanceId)` and referring back to the active `versionId`):
   - `region_instance`, `zone_instance`, and `room_instance` materialize the topology for a running game instance based on the chosen version and any runtime procedural generation.
-  - `instance` table tracks temporary copies of zones for instanced gameplay, with an `expires_at` column defining when instances are cleaned up by a scheduled job.
+  - `instance` table tracks temporary copies of zones for instanced gameplay, with an `expires_at` column defining when instances enter the `InstanceTermination` workflow.
+  - `world_instance_status` (or equivalent lifecycle column) tracks monotonic lifecycle transitions: `PREPARING` → (`ACTIVE` | `FAILED_PRE_ACTIVATION`) and `ACTIVE` → `TERMINATING` → `TERMINATED`.
+  - `FAILED_PRE_ACTIVATION` is terminal for that `gameInstanceId`; recovery is modeled as provisioning a new `gameInstanceId` and rerunning world creation.
+  - `world_instance_lifecycle_lock` (or equivalent fenced token) enforces single-writer lifecycle transitions per `(tenantId, gameInstanceId)` so activation and termination workflows cannot commit concurrently.
   - `character_location` table records the current room for each character, including which instance they are in; item locations and containment are modeled and stored by the Entity Management Service rather than this table.
 - **Runtime configuration and events**:
-  - `generation_rule` table stores per-tenant procedural generation parameters used by the [Procedural Generation Rules API](#procedural-generation-rules-api). These rules are runtime configuration defaults, not versioned design data; each generation run snapshots the effective rule set (including `schemaVersion`) alongside the affected template or instance records so that the inputs for that run remain reconstructable even if live rules are later updated.
-  - An optional `generation_rule_override` table may store version-specific overrides keyed by `(tenantId, versionId)` for tenants that require different tuning per version; when present for a given version, overrides are applied instead of the tenant-global defaults when running generators for that version. Overrides may exist only for non-Retired versions and must be kept consistent with the version lifecycle and migration rules described in [Database Migrations](../../system-architecture-database-migrations.md).
+  - `generation_rule_template` (or equivalent version-scoped table) stores publish-affecting procedural generation inputs keyed by `(tenantId, versionId)` for Draft/Published design data. These rows are versioned design artifacts even though they live in the World Management schema.
+  - World Management may also maintain a separate tenant-scoped `generation_runtime_default` table for operational-only runtime knobs that do not affect publishable template output. These defaults must never be consulted when deriving a published version’s `generationConfigRevision`.
+  - Writes to publish-affecting generation inputs must flow only through Game Design-controlled design APIs for Draft versions and must capture provenance (`changedBy`, `changedAt`, `changeReason`, `changeDigest`, originating `commitId`/`revisionId`).
+  - Installations that require per-version tuning use the version-scoped design rows above rather than ad hoc mutable overrides. If legacy override tables exist, they must be documented as transitional readers only and must not remain the canonical authoring path.
+  - Published versions must carry a frozen generation config identity (`generationConfigRevision`/hash) derived from the version-scoped design inputs committed at publish time; world creation for that `(tenantId, versionId)` must use this frozen identity and fail closed if it is unavailable.
+  - `generation_run` (or equivalent) persists deterministic generation artifacts for replay-safe publish/reconciliation (`generationRunId`, `generationRequestId`, `generatorImplementationVersion`, canonical `configSnapshot`, and `outputDigest`).
   - `world_event` table stores timed changes such as weather updates.
   - `region_instance.weather` (or equivalent) records the current weather state for live regions; template rows may include default weather or climate metadata but are not updated during gameplay.
-  - `region_instance.shard_id` indicates which server shard hosts the region at runtime.
 - Redis caches hot rooms for active sessions to speed up lookups.
 - Cached rooms use keys `room:<tenantId>:<gameInstanceId>:<roomInstanceId>` and expire after `world.room.cache-ttl-seconds`. Caches must never be keyed by template identifiers because instance rows may differ due to runtime generation, instancing, or transient ambient state.
-
-### Multi-Server Shards
-
-Large worlds can span multiple server clusters. Each `region` is assigned a
-`shard_id` so the Game Session Service knows which cluster hosts the active
-state for that region. When a player crosses into a region on another shard the
-session handoff flow described in the Game Session Service design is invoked.
-Administrators can reassign regions between shards using the `RegionController`
-endpoint `POST /regions/{id}/move`, which updates the `shard_id` column for the
-specified region.
 
 ### gRPC APIs
 
 - `GetRoom` – retrieves room data including exits and environmental effects.
 - `GetRoomSnapshot` – returns a minimal, `LOOK`-focused view (room identity, names, descriptions, exit metadata, ambient state) scoped by `RoomInstanceRef`.
-- `UpdateWorldState` – applies pending world updates and notifies other services.
+- `ListRoomOccupants` – returns the authoritative typed occupant list (`occupants`) for actors in a room, scoped by `RoomInstanceRef`. The legacy `occupantEntityIds` list is a derived compatibility mirror only.
+- `ApplyRoomAmbientStatePatch` – applies an ambient state patch to the target `RoomInstanceRef`, guarded by `EffectId`.
+- `GetDraftDesignDigest` – returns publish-gating digest for Draft world templates using a typed scope request. Request shape is `GetDraftDesignDigestRequest { tenantId, scope: oneof { versionId, scriptPatchVersion } }`; World Management supports `versionId` scope only and must return `UNSUPPORTED_SCOPE` for `scriptPatchVersion`. Minimum response fields are `{tenantId, scope, appliedCommitId, contentDigest, digestSchemaVersion}`. `appliedCommitId` means the highest Game Design commit whose complete revision set has been durably applied to the target Draft world scope. `contentDigest` must cover only version-scoped template/binding rows (for example region/zone/room templates and spawn bindings) and must exclude runtime/instance rows and audit metadata.
+- `ValidateWorldUpgradeMappings` – validates world-owned durable references and approved remap sets for replacement-instance cutover to a target `(tenantId, versionId)`.
+- `UpdateWorldState` – legacy bulk update surface scheduled for removal on **June 30, 2026**. Effective immediately, runtime mutation requests on this RPC must return `UNSUPPORTED_OPERATION` and callers must use effect-shaped mutation RPCs (`ApplyRoomAmbientStatePatch` and related effect APIs).
+
+### Instance termination contract (World ↔ Entity)
+
+World Management owns the lifecycle of `gameInstanceId` rows, but teardown is a cross-service workflow:
+
+- Game Session must first mark the instance non-admissible/draining before World transitions lifecycle.
+- Expiry or operator shutdown transitions the instance to `TERMINATING` and starts an `InstanceTermination` Saga.
+- Entity Management must acknowledge idempotent cleanup of containment and room-ground containers scoped to the same `(tenantId, gameInstanceId)` before World marks the instance `TERMINATED`.
+- Scheduled expiry jobs must enqueue this Saga and must not directly delete world rows for a still-unconfirmed termination.
+- Lifecycle fencing is mandatory: termination acquires the same per-instance lifecycle fence used by activation. If activation and termination race, termination is authoritative unless admission has already opened (`ACTIVE` committed).
+- Game Session finalizes runtime `game_instances` termination only after World reports `TERMINATED`.
+
+### Replacement-Instance State Classification
+
+World Management must classify its runtime persistence surface for cutover and migration tooling:
+
+- `S2` world-owned durable state:
+  - no mandatory `S2` rows in the initial implementation slice;
+  - world-bound metadata that survives outside a single room-instance layout and references versioned world templates, if such rows are introduced in a later slice;
+  - any future persistent world-bound housing, ownership, or quest-anchor rows keyed to template identifiers.
+- `S3` world-owned ephemeral state:
+  - `region_instance`, `zone_instance`, `room_instance`, and other topology rows keyed by `(tenantId, gameInstanceId)`;
+  - `character_location`, `npc_location`, and occupancy rows bound to the source instance;
+  - ambient runtime state such as weather, door state, hazard state, instanced events, and instance-scoped population schedules/materializations;
+  - `world_event` rows whose lifecycle is tied to a specific `gameInstanceId`.
+
+Initial-slice row-family inventory:
+
+- `region_instance`, `zone_instance`, `room_instance` are `S3`.
+- `character_location` and `npc_location` are `S3`.
+- `world_event` rows created for a specific `gameInstanceId` are `S3`.
+- `population_schedule_instance` rows keyed by `gameInstanceId` are `S3`.
+- `generation_run` rows tied to runtime instance creation are diagnostic/runtime provenance only and are not cutover payload rows; treat them as `S3` retention-only metadata for the source instance lifecycle.
+- No World-owned initial-slice table is classified as mandatory `S2`.
+
+Initial-slice rule:
+
+- Unless a world-owned row family is explicitly documented as `S2`, treat it as `S3` and discard it during replacement-instance cutover.
+- World Management must not silently copy room ambient state, occupancy, scheduled world events, or generated instance topology into the target instance.
+
+`ValidateWorldUpgradeMappings` minimum contract:
+
+- Input must identify `tenantId`, `sourceGameInstanceId`, `targetVersionId`, and optional `remapSetId`.
+- Response must enumerate the world-owned row families checked, the template identifiers referenced by each family, whether each family is `COMPATIBLE`, `REQUIRES_MAPPING`, or `INCOMPATIBLE`, and whether the supplied `remapSetId` satisfied all required mappings.
+- If the service currently has no `S2` row families for a tenant/version pair, it must report that explicitly rather than implying compatibility from an empty response.
+
+Illustrative responses:
+
+- No `S2` rows in initial slice:
+
+```json
+{
+  "tenantId": "t1",
+  "sourceGameInstanceId": "g-old",
+  "targetVersionId": "v2",
+  "checkedFamilies": [],
+  "hasS2Rows": false,
+  "result": "COMPATIBLE",
+  "remapSetRequired": false
+}
+```
+
+- Future durable world-bound metadata requiring approved mappings:
+
+```json
+{
+  "tenantId": "t1",
+  "sourceGameInstanceId": "g-old",
+  "targetVersionId": "v3",
+  "checkedFamilies": [
+    {
+      "family": "housing_anchor",
+      "referencedTemplateIds": ["roomTemplateId:starter-house-01"],
+      "outcome": "REQUIRES_MAPPING"
+    }
+  ],
+  "hasS2Rows": true,
+  "result": "INCOMPATIBLE",
+  "remapSetRequired": true
+}
+```
+
+### Digest Input Manifest
+
+World Management is a required publish-gate participant and must maintain a stable digest manifest for `GetDraftDesignDigest(versionId)`:
+
+- Included objects:
+  - version-scoped topology tables such as `region_template`, `zone_template`, `room_template`, `terrain_template`, `room_exit_template`, and equivalent normalized topology relations keyed by `(tenantId, versionId)`;
+  - version-scoped declarative spawn and population binding tables that define where entity templates may appear;
+  - version-scoped generation design inputs such as `generation_rule_template` that affect published topology output.
+- Excluded objects:
+  - all runtime/instance tables keyed by `gameInstanceId`;
+  - `generation_run` rows created for runtime instances;
+  - design-time generation artifact/provenance rows such as staged `generation_run`, `generation_output_artifact`, or equivalent records that exist only to prove replayability and deterministic reconciliation rather than published topology semantics;
+  - audit/provenance columns such as `created_at`, `updated_at`, `changedAt`, workflow ids, and applied-revision ledgers when those values do not affect semantics.
+- Canonicalization rules:
+  - serialize included objects in stable table order, then primary-key order within each table;
+  - include only semantic fields and normalized identifiers;
+  - use deterministic encoding for maps/JSON payloads.
+- `digestSchemaVersion` must increment whenever included tables, field-selection rules, or canonical serialization semantics change.
+
+Publish gating must fail closed if World Management cannot attest a digest consistent with this manifest.
+
+### Instance-Scoped Population Schedule Contract
+
+Runtime population materialization must be documented separately from published spawn bindings:
+
+- Version-scoped spawn bindings are publish-time design data and are the only population records included in `GetDraftDesignDigest`.
+- Instance-scoped population schedules/materializations are runtime rows keyed by `(tenantId, gameInstanceId, scheduleId or roomInstanceId, sourceBindingId)` derived from published bindings during world creation or runtime instancing.
+- These runtime schedule rows must record provenance back to the published binding and, when relevant, the `generationRunId` that materialized them.
+- Runtime schedules are not part of publish digests and must be recreated or restored only through runtime workflows, never by mutating version-scoped bindings.
+- Runtime schedule lifecycle is fixed:
+  - active schedule rows are durable for the life of the instance and survive normal restarts of that same `(tenantId, gameInstanceId)`;
+  - `InstanceTermination` hard-deletes schedule rows for the terminating instance after any bounded diagnostic export has completed;
+  - optional diagnostics for failed activation or failed termination must live in separate bounded-retention diagnostic tables or exports, not by retaining active schedule rows indefinitely.
+- World Management must expose the owning runtime table names and cleanup ordering for these schedules in implementation docs so termination, backup, and replay tooling use the same lifecycle.
+- Those implementation docs must be maintained as the canonical operator/developer reference for this runtime slice and kept in sync with any schema or saga-step changes that affect instance-scoped schedule retention or teardown.
+
+Initial-slice scope:
+
+- In the first implementation slice, instance-scoped population schedules are materialized only during world creation for the primary `gameInstanceId`.
+- Later runtime instancing or portal-driven population scheduling may reuse the same lifecycle contract, but those flows are not part of the initial persistence slice and must not be implied as already required for first delivery.
+- Until a concrete schema is published, implementation docs must use one stable row-family name for these rows and map it explicitly to the concrete table names used by the service.
 
 ### LOOK snapshot contract
 
@@ -180,22 +325,31 @@ specified region.
 
 - `tenantId`, `gameInstanceId`, and `roomInstanceId` (a `RoomInstanceRef`) so the caller can unambiguously scope the snapshot to a running instance.
 - A stable `worldSnapshotId` (monotonic or content-hash) for this room’s LOOK-relevant world data so callers can cache or invalidate snapshots deterministically.
+- `asOfTickId` (or equivalent monotonic room/read fence token) that identifies the tick fence used to materialize this snapshot. This fence token is required for cross-service LOOK composition.
 - A stable `roomName` (plus optional slug) suitable for UI display.
 - `shortDescription` and `longDescription` text; descriptions longer than the `LOOK_MAX_DESCRIPTION_CHARS` config should be truncated with an ellipsis so clients don’t wrap aggressively.
 - `exits`, each annotated with `label` (e.g., `NORTH`), `targetRoomInstanceId` (within the same `gameInstanceId`), and a human-friendly direction string (e.g., “arched passage toward the cavern mouth”). Game Logic renders this list into the `LOOK` exits line.
 - `ambientState` fields such as `lighting`, `weather`, or `hazardLevel` to enrich the narrative without extra queries.
+- `ambientStateV2` (typed, schema-versioned ambient state) as the canonical representation used by gameplay logic and cache keys.
+- Legacy `ambientState` map support only as a derived compatibility payload for old clients; new runtime logic must not treat it as canonical.
 - Optional `roomFlags` (for example `isQuestArea` or `isInstanceEntry`) so `LOOK` can warn players before they step into special zones.
 
 Game Logic caches snapshots for the duration of a tick but refreshes them after movement. World Management publishes change events when rooms mutate so downstream caches remain consistent and `LOOK` clients never read stale text.
 
 Room snapshots deliberately exclude live entities, items, and inventory contents; those are retrieved from the Entity Management Service using room- and instance-scoped queries when composing `LOOK` results.
 
-Game Logic treats `worldSnapshotId` as the canonical cache key for LOOK-relevant world data for a specific `RoomInstanceRef`. When composing a full LOOK view, Game Logic combines:
+Cross-service LOOK read consistency is fence-based:
+
+- Game Logic must send the same `asOfTickId` fence token from `GetRoomSnapshot` when calling Entity Management `ListRoomEntities`.
+- Entity Management must either answer from the same fence token or return `STALE_READ_FENCE` / `READ_FENCE_UNAVAILABLE`.
+- If fences do not match, Game Logic retries composition instead of returning mixed-state output.
+
+Game Logic treats `worldSnapshotId` as the canonical cache key for LOOK-relevant world data for a specific `RoomInstanceRef` at a specific fence. When composing a full LOOK view, Game Logic combines:
 
 - `worldSnapshotId` from `GetRoomSnapshot`, and
 - `entitySnapshotId` from Entity Management’s `ListRoomEntities`,
 
-then returns a `lookSnapshotId` (for example `worldSnapshotId + ":" + entitySnapshotId`) alongside the rendered `LookResult` so Game Session can cache the final transcript deterministically.
+then returns a `lookSnapshotId` (for example `worldSnapshotId + ":" + entitySnapshotId + ":" + asOfTickId`) alongside the rendered `LookResult` so Game Session can cache the final transcript deterministically without cross-service skew.
 
 The `V10__seed_demo_world.sql` migration seeds the demo rooms referenced by this lifecycle (Candle-lit Antechamber and Crafting Hall of Ember) so integration tests and the LOOK transcripts stay stable. Developers can locate and extend that migration when the sample world needs more exits or environmental trivia.
 
@@ -203,7 +357,7 @@ The `V10__seed_demo_world.sql` migration seeds the demo rooms referenced by this
 
 - **Live:** `GetRoomSnapshot` returns the room metadata, descriptions, and exit labels that Game Logic needs to render the canonical `LOOK` transcript, and the telemetry for this pipeline is documented in `../../../project-management/look-instrumentation.md`.
 - **Stubbed:** The current snapshot data comes from the seeded demo rooms so scripted room events, line-of-sight lighting, and procedural text remain deterministic for regression tests.
-- **Deferred:** Future work will enrich snapshots with ambient metadata (weather, hazard warnings) and push updates through `/ws/game/**` so Gateway/TCP Proxy clients can react to world changes as soon as they happen.
+- **Deferred:** Future work will push live snapshot updates through `/ws/game/**` so Gateway/TCP Proxy clients can react to world changes as soon as they happen.
 
 ### `/ws/game/**` LOOK contract and local overrides
 
@@ -223,7 +377,7 @@ The `V10__seed_demo_world.sql` migration seeds the demo rooms referenced by this
 ## Dependencies
 
 - **Internal:**
-  - Game Design Service supplies generation rules and versioned world data.
+  - Game Design Service supplies versioned world design inputs and orchestrates Draft template writes/publish flows; procedural generation rules are owned by World Management.
   - Game Session Service queries rooms and receives world event updates.
   - Automation & Scripting Service reacts to scheduled world changes.
 - **External:** PostgreSQL for world data, Redis for transient active state.
@@ -247,11 +401,10 @@ and [Redis connection](../../infrastructure/environment-and-secrets.md#redis-con
 TLS certificates are supplied via [`FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, `FIREMUD_GRPC_CA_CERT_PATH`](../../infrastructure/environment-and-secrets.md#grpc-tls-certificates). Peer services can be discovered using variables prefixed `FIREMUD_SERVICES_`.
 The OpenTelemetry collector endpoint can be overridden via `OTEL_ENDPOINT` (see [Environment Variables & Secrets Management](../../infrastructure/environment-and-secrets.md)).
 
-Additional variables configure world data caching and sharding:
+Additional variables configure world data caching and housekeeping:
 
 | Variable | Purpose | Default |
 | -------- | ------- | ------- |
-| `WORLD_LOCAL_SHARD_ID` | Numeric identifier for this shard instance | `0` |
 | `WORLD_ROOM_CACHE_TTL_SECONDS` | Seconds to retain room data in the cache | `60` |
 | `WORLD_INSTANCE_EXPIRATION_HOURS` | Hours before a transient instance expires | `24` |
 | `WORLD_EVENT_CHECK_DELAY_MS` | Delay between event processing checks (ms) | `60000` |
@@ -283,7 +436,7 @@ Run `./gradlew generateProto` to regenerate sources after editing these files.
 
 ## Additional Details
 
-The service creates temporary **instances** of zones for dungeons or housing. Instances expire automatically based on the `world.instance.expiration-hours` property and a scheduled cleanup task removes expired records hourly.
+The service creates temporary **instances** of zones for dungeons or housing. Instances expire automatically based on the `world.instance.expiration-hours` property. Expiry processing enqueues `InstanceTermination` workflows; direct periodic deletion of instance rows is not a valid cleanup path.
 
 ### REST & gRPC Endpoints
 
@@ -291,7 +444,6 @@ The service creates temporary **instances** of zones for dungeons or housing. In
 
 - `GET /ping` – basic health check returning `"pong"`.
 - `GET /regions?tenantId=...` – list regions for a tenant.
-- `POST /regions/{id}/move` – change a region's shard assignment.
 
 The service exposes an OpenAPI specification under `/v3/api-docs` with a Swagger UI at `/swagger-ui.html` when running locally.
 
@@ -308,7 +460,9 @@ the [Security Architecture](../../system-architecture-security.md) for details.
 - `Ping(PingRequest) returns (PingResponse)` – basic connectivity check defined in [`world_management_service.proto`](../../../../protos/world-management/v1/world_management_service.proto).
 - `GetRoom(GetRoomRequest) returns (GetRoomResponse)` – fetches a room's JSON representation. The legacy `room_id` field is deprecated; callers should provide a `RoomInstanceRef`.
 - `GetRoomSnapshot(GetRoomSnapshotRequest) returns (GetRoomSnapshotResponse)` – returns the minimal, LOOK-focused snapshot scoped by `RoomInstanceRef`.
-- `UpdateWorldState(UpdateWorldStateRequest) returns (UpdateWorldStateResponse)` – applies pending world updates and notifies other services.
+- `ListRoomOccupants(ListRoomOccupantsRequest) returns (ListRoomOccupantsResponse)` – returns canonical typed occupants for a `RoomInstanceRef`.
+- `ApplyRoomAmbientStatePatch(ApplyRoomAmbientStatePatchRequest) returns (ApplyRoomAmbientStatePatchResponse)` – applies effect-idempotent ambient mutations to a room instance.
+- `UpdateWorldState(UpdateWorldStateRequest) returns (UpdateWorldStateResponse)` – removal deadline June 30, 2026. Runtime mutation requests must already be rejected with `UNSUPPORTED_OPERATION`; this endpoint exists only to support migration telemetry and controlled caller cleanup.
 
 Call the `Ping` method with:
 
@@ -334,7 +488,15 @@ World Management also exposes **design-time** APIs used by the Game Design Servi
 
 World Management must also expose a read-only design-time synchronization surface so the Game Design Service can validate convergence before publish:
 
-- `GetDraftDesignDigest(tenantId, versionId)` returns `appliedCommitId` (or last applied revision), a stable `contentDigest`, and a `digestSchemaVersion` as described in `design/architecture/microservices/game-design-service/world-editing-tools.md`.
+- `GetDraftDesignDigest(GetDraftDesignDigestRequest)` uses request shape `{tenantId, scope: oneof {versionId, scriptPatchVersion}}`. World Management supports `versionId` scope only and returns `UNSUPPORTED_SCOPE` otherwise.
+- Response returns `{tenantId, scope, appliedCommitId (or lastAppliedRevisionId), contentDigest, digestSchemaVersion}` as described in `design/architecture/microservices/game-design-service/world-editing-tools.md`.
+
+Digest input manifest requirements (World Management):
+
+- Included objects: version-scoped topology/binding rows for `(tenantId, versionId)` (for example `region_template`, `zone_template`, `room_template`, spawn/population binding tables, and any version-scoped generation artifacts used for publish).
+- Excluded objects: runtime/instance tables keyed by `gameInstanceId`, audit/history tables, and non-semantic write-time metadata fields (`created_at`, `updated_at`).
+- Canonicalization: deterministic table ordering, primary-key ordering within table, and stable field encoding.
+- `digestSchemaVersion` must be incremented when included/excluded object sets or canonicalization rules change.
 
 ### World Events
 
@@ -345,6 +507,7 @@ World event invariants:
 - Events are runtime-only and must be keyed by `(tenantId, gameInstanceId)` (they must not be stored as `(tenantId, versionId)` template artifacts).
 - Event application must be idempotent. Each event carries a stable event identity (or derives one from `(tenantId, gameInstanceId, eventId, eventType, scheduledTickId)`), and World Management must guard against double-application on retries or restarts.
 - A weather change event updates the runtime weather field (for example `region_instance.weather`) for the affected `(tenantId, gameInstanceId)` before notifying other services.
+- Event application must use the same effect-shaped ambient mutation contract used by tick execution: durable mutations to ambient world state must be guarded by an `EffectId` and scoped by instance identifiers (for example `RoomInstanceRef` or `(tenantId, gameInstanceId, regionInstanceId)`).
 
 ### Saga Participation
 
@@ -353,14 +516,24 @@ World creation for a new game instance runs as a Saga using the helper utilities
 - [System Architecture Diagram](../../system-architecture-diagram.md)
 - [System Context Diagram](../../system-context-diagram.md)
 
-## Procedural Generation Rules API
+## Procedural Generation Control APIs
 
-Administrators can tweak procedural generation without redeploying the service.
-Rules are stored in the `generation_rule` table and managed over REST:
+Procedural-generation control surfaces are split by ownership and persistence scope:
 
-- `POST /generation/rules` – create or update a rule for a tenant
-- `GET /generation/rules?tenantId=...` – list rules for a tenant
+- **Design-time generation-input APIs** are owned by Game Design workflows and mutate version-scoped generation design rows in World Management only for Draft versions.
+- **Operational runtime-default APIs** are owned by World Management and mutate only tenant-scoped `generation_runtime_default` rows that are explicitly excluded from publish inputs and draft digests.
 
-These endpoints allow live tuning of parameters such as room density or terrain
-variation. Updates are persisted immediately and picked up by the procedural
-generation engine on the next run.
+Operational runtime-default API:
+
+- `POST /generation/runtime-defaults` – create or update runtime-only defaults for a tenant
+- `GET /generation/runtime-defaults?tenantId=...` – list runtime-only defaults for a tenant
+
+These endpoints are limited to live operational tuning for future runtime-only generation runs. They must not mutate `generation_rule_template`, any other version-scoped design rows, or any input that contributes to `generationConfigRevision`.
+
+Ownership note: publish-affecting generation inputs are stored in World Management but are authored only through Game Design-controlled design workflows. World Management remains the schema owner and runtime executor, not the independent authority for publishable generation history.
+
+Audit and publish-gating note:
+
+- Every publish-affecting generation-input update must persist provenance fields (`changedBy`, `changedAt`, `changeReason`, `changeDigest`, source `commitId`/`revisionId`) so operators can explain draft drift.
+- When draft generation inputs change for a version, that version’s `designSyncStatus` must transition to `OUT_OF_SYNC` until publish-gate digests are recomputed and converged.
+- Operational runtime-default changes must never mutate or reinterpret already-published generation inputs and must never be read by publish, activation, or draft-digest workflows.

@@ -1,5 +1,56 @@
 {
-  "title": "Log Volume",
-  "panels": [],
-  "version": 1
+  "type": "dashboard",
+  "id": "firemud-log-volume",
+  "attributes": {
+    "title": "FireMUD Log Volume",
+    "description": "Log volume and severity distribution by service with tenant/region drilldown.",
+    "kibanaSavedObjectMeta": {
+      "searchSourceJSON": "{\"indexRefName\":\"kibanaSavedObjectMeta.searchSourceJSON.index\",\"query\":{\"language\":\"kuery\",\"query\":\"service:*\"},\"filter\":[]}"
+    },
+    "panelsJSON": "[{\"version\":\"8.0.0\",\"type\":\"search\",\"gridData\":{\"x\":0,\"y\":0,\"w\":24,\"h\":10},\"panelIndex\":\"1\",\"embeddableConfig\":{\"title\":\"Recent Logs by Service\"},\"panelRefName\":\"panel_1\"}]",
+    "optionsJSON": "{\"useMargins\":true,\"syncColors\":false,\"syncCursor\":true,\"syncTooltips\":true}",
+    "version": 1
+  },
+  "references": [
+    {
+      "name": "kibanaSavedObjectMeta.searchSourceJSON.index",
+      "type": "index-pattern",
+      "id": "firemud-logs-*"
+    },
+    {
+      "name": "panel_1",
+      "type": "search",
+      "id": "firemud-log-volume-search"
+    }
+  ],
+  "savedSearch": {
+    "type": "search",
+    "id": "firemud-log-volume-search",
+    "attributes": {
+      "title": "FireMUD Log Volume Search",
+      "description": "Operational search for service-level volume and error spikes.",
+      "columns": [
+        "@timestamp",
+        "service",
+        "tenantId",
+        "regionId",
+        "level",
+        "message"
+      ],
+      "sort": [
+        "@timestamp",
+        "desc"
+      ],
+      "kibanaSavedObjectMeta": {
+        "searchSourceJSON": "{\"indexRefName\":\"searchSourceJSON.index\",\"query\":{\"language\":\"kuery\",\"query\":\"service:*\"},\"filter\":[]}"
+      }
+    },
+    "references": [
+      {
+        "name": "searchSourceJSON.index",
+        "type": "index-pattern",
+        "id": "firemud-logs-*"
+      }
+    ]
+  }
 }

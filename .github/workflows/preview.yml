@@ -4,13 +4,18 @@ on:
   pull_request:
     types: [opened, synchronize, reopened]
     branches:
+      - develop
       - main
       - 'release/**'
   workflow_dispatch:
 
+permissions:
+  contents: read
+  packages: read
+
 jobs:
   preview:
-    if: github.base_ref == 'main' || startsWith(github.base_ref, 'release/')
+    if: github.base_ref == 'develop' || github.base_ref == 'main' || startsWith(github.base_ref, 'release/')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -39,18 +44,23 @@ jobs:
       - name: Enable BuildKit
         run: echo "DOCKER_BUILDKIT=1" >> $GITHUB_ENV
 
+      - name: Resolve published base image tag
+        run: echo "FIREMUD_BASE_IMAGE=ghcr.io/benhook1013/firemud-base:latest" >> $GITHUB_ENV
+
       - name: Prepare environment file
         run: cp .env.sample .env
 
       - name: Generate Dev Certificates
-        run: ./dev-tools/generate-dev-certs.sh
+        run: ./dev-tools/generate-dev-certs.sh dev-tools/certs
 
       - name: Build service images with cache
         run: |
           services="account-service automation-scripting-service entity-management-service game-design-service game-logic-service game-session-service logging-admin-service social-groups-service spring-cloud-gateway tcp-proxy-service world-management-service"
+          docker pull "$FIREMUD_BASE_IMAGE"
           for service in $services; do
             docker pull ghcr.io/benhook1013/$service:latest || true
             docker buildx build \
+              --build-arg BASE_IMAGE=$FIREMUD_BASE_IMAGE \
               --cache-from type=registry,ref=ghcr.io/benhook1013/$service:buildcache \
               --cache-from type=registry,ref=ghcr.io/benhook1013/$service:latest \
               --cache-from type=gha \
@@ -58,7 +68,8 @@ jobs:
               --cache-to type=gha,mode=max \
               --load \
               -t firemud-$service \
-              ./services/$service
+              -f ./services/$service/Dockerfile \
+              .
           done
 
       - name: Start preview

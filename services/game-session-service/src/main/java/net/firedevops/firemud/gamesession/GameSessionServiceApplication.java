@@ -1,0 +1,31 @@
+package net.firedevops.firemud.gamesession;
+
+import net.firedevops.firemud.common.config.CommonAutoConfiguration;
+import net.firedevops.firemud.common.config.DatabaseAutoConfiguration;
+import net.firedevops.firemud.common.saga.persistence.SagaInstance;
+import net.firedevops.firemud.common.saga.persistence.SagaStep;
+import net.firedevops.firemud.gamesession.config.GameLogicProperties;
+import net.firedevops.firemud.gamesession.config.GameSessionProperties;
+import net.firedevops.firemud.gamesession.config.GrpcClientProperties;
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.boot.autoconfigure.domain.EntityScan;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.context.annotation.Import;
+import org.springframework.scheduling.annotation.EnableScheduling;
+
+@SpringBootApplication
+@EntityScan(
+    basePackageClasses = {GameSessionServiceApplication.class, SagaInstance.class, SagaStep.class})
+@EnableScheduling
+@EnableConfigurationProperties({
+  GrpcClientProperties.class,
+  GameSessionProperties.class,
+  GameLogicProperties.class
+})
+@Import({DatabaseAutoConfiguration.class, CommonAutoConfiguration.class})
+public class GameSessionServiceApplication {
+  public static void main(String[] args) {
+    SpringApplication.run(GameSessionServiceApplication.class, args);
+  }
+}

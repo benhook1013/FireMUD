@@ -18,17 +18,32 @@ Leaving the gameplay protocol ambiguous creates interoperability problems for cl
 
 ## Decision
 
-The gameplay text protocol uses `tenantId` only:
+FireMUD uses a single shared gameplay entrypoint for many worlds. The gameplay text protocol must therefore support a player-friendly world selection flow without requiring humans to type opaque GUIDs.
 
-- Canonical command: `ENTER_GAME <tenantId> [characterId]`.
-- Any UX-friendly identifier (slug/name) must be resolved to `tenantId` by first-party tools using explicit APIs before issuing gameplay commands.
+The gameplay protocol uses two distinct identifier layers:
 
-If a slug/alias is introduced in the future, it must be defined as a separate, explicit contract (owner service, stability rules, resolution API, audit rules) and must not silently change gameplay command parsing.
+- **Internal identifiers (authoritative):** `tenantId` (opaque GUID) and `characterId` (opaque).
+- **Player-facing selectors (lobby only):** `tenantSlug` (stable, human-friendly) plus numbered menu indices returned by `WORLDS`/`CHARS`.
+
+The canonical lobby flow after `LOGIN` is:
+
+- `WORLDS` returns a numbered list of worlds, including each world’s stable `tenantSlug`.
+- `CHARS <world>` accepts either a world menu index or a `tenantSlug`.
+- `PLAY <world> [character]` accepts either a world menu index or a `tenantSlug`, and an optional character menu index/name, then resolves those selectors to `{tenantId, characterId}` server-side and binds the gameplay session.
+
+Outside of lobby selection, services and persistence models use `tenantId` exclusively. No gameplay command other than the lobby selection commands may accept `tenantSlug` as a substitute for `tenantId`.
+
+### Slug Ownership and Stability (Required)
+
+- The Game Design Service owns `tenantSlug` generation and uniqueness at tenant creation time.
+- `tenantSlug` is stable for the lifetime of the tenant; renaming a world changes display name, not slug.
+- If operators ever need to change a slug, it must be implemented as an explicit alias/redirect contract (old slug continues to resolve for a bounded period) and must be auditable. Silent slug changes are not permitted.
 
 ## Consequences
 
-- All docs and examples must use `tenantId`, not `tenantIdOrSlug`.
-- Clients that want human-friendly selection must call a control-plane API to list/resolve tenants and then use the returned `tenantId` in gameplay commands.
+- Docs and examples must not describe humans typing `tenantId` GUIDs into the gameplay protocol.
+- Lobby commands (`WORLDS`/`CHARS`/`PLAY`) are the only place where `tenantSlug` is accepted.
+- All non-lobby gameplay commands continue to rely on server-side session bindings and do not accept tenant identifiers in their arguments.
 
 ## References
 
@@ -36,4 +51,3 @@ If a slug/alias is introduced in the future, it must be defined as a separate, e
 - `design/architecture/system-architecture-authentication.md`
 - `design/architecture/system-architecture-frontend.md`
 - `design/architecture/microservices/game-session-service/README.md`
-

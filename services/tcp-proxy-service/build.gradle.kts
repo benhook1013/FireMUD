@@ -10,6 +10,7 @@ dependencies {
     annotationProcessor(libs.mapstruct.processor)
     annotationProcessor(libs.lombok)
     annotationProcessor(libs.lombok.mapstruct.binding)
+    compileOnly("com.github.spotbugs:spotbugs-annotations:4.9.8")
     compileOnly(libs.lombok)
     implementation(libs.mapstruct)
     implementation(libs.spring.boot.starter)
@@ -18,7 +19,6 @@ dependencies {
     implementation(libs.spring.boot.starter.websocket)
     implementation(libs.spring.boot.starter.data.redis)
     implementation(project(":common-library"))
-    implementation(project(":game-session-service"))
     implementation(libs.grpc.spring.boot.starter)
     implementation(libs.micrometer.core)
     implementation(libs.micrometer.registry.prometheus)
@@ -39,6 +39,7 @@ dependencies {
     testImplementation(testFixtures(project(":game-session-service")))
     testImplementation(project(":game-logic-service"))
     testImplementation(project(":spring-cloud-gateway"))
+    testCompileOnly("com.github.spotbugs:spotbugs-annotations:4.9.8")
     testRuntimeOnly(libs.postgresql)
 }
 

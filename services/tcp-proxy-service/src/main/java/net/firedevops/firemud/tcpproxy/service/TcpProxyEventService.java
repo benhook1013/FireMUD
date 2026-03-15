@@ -1,5 +1,6 @@
 package net.firedevops.firemud.tcpproxy.service;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
@@ -23,6 +24,9 @@ public class TcpProxyEventService {
   private final Counter connectCounter;
   private final Counter disconnectCounter;
 
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "MeterRegistry is a shared Spring singleton used to record proxy metrics")
   public TcpProxyEventService(TcpProxyEventClient client, MeterRegistry meterRegistry) {
     this.client = client;
     this.meterRegistry = meterRegistry;
@@ -61,14 +65,17 @@ public class TcpProxyEventService {
         .log("Telnet disconnect event");
   }
 
-  public NotifyDisconnectResponse notifyDisconnect(String sessionId, String tenantId) {
-    if (!StringUtils.hasText(sessionId) || !StringUtils.hasText(tenantId)) {
+  public NotifyDisconnectResponse notifyDisconnect(
+      String gameInstanceId, String tenantId, String proxyConnectionId, long disconnectSequence) {
+    if (!StringUtils.hasText(proxyConnectionId) || disconnectSequence <= 0) {
       return NotifyDisconnectResponse.newBuilder()
-          .setError(error("INVALID_ARGUMENT", "sessionId and tenantId are required"))
+          .setError(
+              error("INVALID_ARGUMENT", "proxyConnectionId and disconnectSequence are required"))
           .build();
     }
     try {
-      NotifyDisconnectResponse response = client.notifyDisconnect(sessionId, tenantId);
+      NotifyDisconnectResponse response =
+          client.notifyDisconnect(gameInstanceId, tenantId, proxyConnectionId, disconnectSequence);
       return normalize(response, "Disconnect notification delivered");
     } catch (RuntimeException ex) {
       logger.warn("Failed to notify Game Session Service about disconnect", ex);

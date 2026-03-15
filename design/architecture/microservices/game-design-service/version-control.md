@@ -61,16 +61,89 @@ services as the source of truth for the current Draft template graphs:
 - A periodic reconciler in the Game Design Service replays the canonical
   revision set into domain services until their Draft templates converge on the
   expected state. Convergence is validated using a domain-owned digest contract:
-  each participating domain service exposes a read-only `GetDraftDesignDigest(tenantId, versionId)` API returning `appliedCommitId` (or `lastAppliedRevisionId`) plus a stable `contentDigest` and `digestSchemaVersion`. The reconciler updates `designSyncStatus` back to `IN_SYNC` once all participating services report digests matching the commit being published.
+  each participating domain service exposes a read-only `GetDraftDesignDigest`
+  API with typed scope (`oneof {versionId, scriptPatchVersion}`) returning
+  `appliedCommitId` plus a stable `contentDigest` and `digestSchemaVersion`.
+  `appliedCommitId` is the highest commit whose complete revision set has been
+  durably applied for that scope. Services may keep revision-level ledgers
+  internally, but publish gates and reconciler comparisons must use
+  commit-level convergence only. The reconciler updates `designSyncStatus` back
+  to `IN_SYNC` once all participating services report digests matching the
+  commit being published.
 - The `PublishVersion` workflow must verify that `designSyncStatus == IN_SYNC`
   before starting the publish Saga. Versions that are out of sync cannot be
   published until reconciliation succeeds.
+- Reconciliation does not authorize silently broken drafts:
+  - commits introducing unresolved cross-service references must move the version into explicit invalid state (`UNRESOLVED_REFERENCE` or equivalent) rather than leaving it as a normal Draft;
+  - replay workers may retry delivery, but they must not invent identifier rewrites or downgrade hard validation failures into generic `OUT_OF_SYNC`.
+
+In addition to domain-service digests, publish safety requires a Game Design control-plane digest:
+
+- Game Design computes a canonical digest over normalized dependency rows that affect launchability and publish immutability (for example `game_template_*_ref`, `version_asset`, and related version wiring metadata).
+- This control-plane digest is recorded per commit/version scope and validated in the same gating pass as domain-service digests.
+- Control-plane digest mismatch is treated exactly like a domain digest mismatch (`OUT_OF_SYNC`, publish blocked).
+- The control-plane digest surface should be exposed through a read-only API (for example `GetDesignControlPlaneDigest`) so publish tooling uses a uniform participant contract.
+- `GetDesignControlPlaneDigest` should return at minimum `{tenantId, versionId or scriptPatchVersion scope, appliedCommitId, contentDigest, digestSchemaVersion}` so publish gates compare like-for-like payloads across all participants.
+- After all digest gates and asset export succeed, Game Design must persist a single immutable `published_release_bundle` attestation for `(tenantId, versionId)` that captures the final participant digests plus `manifestHash` and `generationConfigRevision`.
+- Game Design must expose the attestation through `GetPublishedReleaseBundle(tenantId, versionId)` with deterministic response fields at minimum:
+  - `tenantId`, `versionId`, `commitId`, `publishWorkflowId`, `publishedAt`
+  - `participantDigests[] { serviceName, appliedCommitId, contentDigest, digestSchemaVersion }`
+  - `manifestHash`, `manifestSchemaVersion`
+  - `generationConfigRevision`
+  - attestation schema/version fields for future evolution
+  - Error semantics: `NOT_FOUND` means not publish-complete; `SCHEMA_VERSION_UNSUPPORTED` means fail closed until callers support the attestation schema.
+  - Cache semantics: publish gates, activation, cutover preflight, and repair must read fresh attestation state rather than reusing stale cached payloads.
 
 Digest comparison rules:
 
 - The Game Design Service records the per-domain-service `{commitId, contentDigest, digestSchemaVersion}` it observed when a commit was last applied successfully.
 - Reconciliation and publish-time checks compare the current digest reported by each service against the recorded digest for the target commit.
 - If `digestSchemaVersion` differs, publish must fail fast and require an explicit migration of digest semantics (for example by bumping `digestSchemaVersion` and replaying commits to record new digests), rather than silently comparing incompatible hashes.
+- Digest request/response payloads are canonical across participants:
+  - `GetDraftDesignDigestRequest { tenantId, scope: oneof {versionId, scriptPatchVersion} }`
+  - `GetDraftDesignDigestResponse { tenantId, scope, appliedCommitId, contentDigest, digestSchemaVersion }`
+  - Unsupported scopes must fail with `UNSUPPORTED_SCOPE`; publish orchestration must treat this as a hard mismatch for required participants.
+
+### Digest Participants by Publish Type
+
+Publish workflows must use an explicit participant matrix so digest gating is deterministic:
+
+| Publish Type | Required domain digests (`GetDraftDesignDigest`) | Required Game Design control-plane digest (`GetDesignControlPlaneDigest`) | Not part of digest gate |
+| --- | --- | --- | --- |
+| `PublishVersion` (full version) | World Management, Entity Management, Game Logic, Automation & Scripting (for version-scoped script/binding templates) | Required for normalized references and publish-critical metadata (for example `game_template_*_ref`, `version_asset`) | Asset export/object-store bytes (validated by `manifestHash` in publish saga), Game Design internal history/audit tables that do not affect launchability |
+| `PublishScriptPatchVersion` (script-only) | Automation & Scripting (for the target `<tenantId, scriptPatchVersion>` design graph) | Required for patch metadata/wiring for the same base version scope | World Management, Entity Management, Game Logic template digests (must remain unchanged for base version) |
+
+Rules:
+
+- The publish request type determines the participant set; do not infer participants dynamically from transient service availability.
+- Participant roles are explicit per publish type:
+  - `saga-step participant`: executes durable finalize/validation work inside the publish Saga.
+  - `digest-gate participant`: supplies digest attestation used to block/allow publish but does not necessarily execute a Saga step.
+  For full publishes, Game Logic is digest-gate only unless/until it owns explicit publish-time finalize steps.
+- A service outside the matrix for the current publish type may be validated separately, but must not block digest gating for that publish type.
+- Orchestrator routing is strict by publish type/scope:
+  - Full publish requests (`scope.versionId`) call only participants in the full-publish matrix.
+  - Script-only publish requests (`scope.scriptPatchVersion`) call only script-patch participants.
+  - Services outside the active participant set are not called; `UNSUPPORTED_SCOPE` from an out-of-scope service is informational only.
+  - `UNSUPPORTED_SCOPE` from an in-scope required participant is a hard gate failure.
+- Changes to this matrix require an explicit doc + migration update in both `version-control.md` and `world-editing-tools.md`.
+- Every service listed in this matrix must maintain a service-local digest input manifest documenting included/excluded objects, canonicalization, and `digestSchemaVersion` bump criteria. Publish gating should fail closed when a participant cannot attest a digest under its documented manifest for the reported schema version.
+- Full publish additionally requires that the final immutable release attestation row be written successfully; a version is not publish-complete until `published_release_bundle` exists for the target `(tenantId, versionId)`, and version asset artifacts must not transition to terminal `PUBLISHED` state before that attestation write succeeds.
+
+### Digest Schema Migration
+
+Digest semantics are part of the publish safety contract. Changing which rows/fields participate in a domain digest, or how they are canonicalized, requires an explicit migration plan:
+
+1. **Introduce the new digest semantics**
+   - Bump `digestSchemaVersion` in every participating domain service whose digest rules changed.
+   - Deploy readers/reconcilers that understand both old and new schema versions before enabling new writers (follow the “readers first, writers second” rollout rule).
+2. **Re-record digests for existing commits**
+   - The Game Design Service must replay commits (or a designated “recompute digests” workflow) so it can record the `{commitId, contentDigest, digestSchemaVersion}` values observed under the new rules.
+   - During this phase, `PublishVersion` must reject any attempt to compare digests across different schema versions.
+3. **Enforce the new schema version**
+   - Once all participating services and the Game Design Service have recorded new digests, publish gating switches to require the new `digestSchemaVersion` for all participating domains.
+
+Any attempt to ship a digest semantics change without this workflow risks false “OUT_OF_SYNC” states or, worse, publishing versions whose Draft templates were not actually converged under a consistent digest definition.
 
 Future implementations may replace the reconciler with a dedicated design-time
 Saga or outbox-driven workflow that provides stronger atomicity for commits
@@ -103,13 +176,13 @@ opaque JSON blobs or service-specific payloads.
 Script-only fixes are tracked as `scriptPatchVersion` values attached to a `baseVersionId`. Together, `(versionId, scriptPatchVersion)` define the effective script bundle for a game:
 
 - The Game Session Service records the `scriptPatchVersion` that is currently pinned for each `gameInstanceId` and includes it in the context for every tick effect and script trigger.
-- The Automation & Scripting Service owns the runtime lifecycle (`PENDING_VALIDATION`, `READY`, `FAILED`, `ROLLED_BACK`) of each `<tenantId, scriptPatchVersion>` as described in `system-architecture-scripting-dsl-reference-and-lifecycle.md`. A patch may only be pinned for an instance once Automation & Scripting has marked it `READY` for that tenant.
+- The Automation & Scripting Service owns the tenant readiness lifecycle (`PENDING_VALIDATION`, `ONLOAD_RUNNING`, `READY`, `FAILED`) of each `<tenantId, scriptPatchVersion>` as described in `system-architecture-scripting-dsl-reference-and-lifecycle.md`. A patch may only be pinned for an instance once Automation & Scripting has marked it `READY` for that tenant.
 - Runtime services load and cache scripts based on the `(versionId, scriptPatchVersion)` that Game Session supplies for each effect; Automation & Scripting must not silently substitute a different patch if the supplied one is unknown or `FAILED`—such triggers are rejected and surfaced in audit logs and metrics.
 
 Rollouts and rollbacks:
 
 - Rolling out a new script patch for a game consists of publishing the patch in Game Design Service, allowing Automation & Scripting Service to validate and mark it `READY`, and then having Game Session update the pinned `scriptPatchVersion` for one or more `gameInstanceId` values. Existing effects remain tied to the `(versionId, scriptPatchVersion)` pair recorded when they were applied; future effects observe the new patch.
-- Rolling back a script patch means pinning an earlier `scriptPatchVersion` for the same `baseVersionId` on the affected instances. Historical records for prior effects remain associated with the `(versionId, scriptPatchVersion)` values that were in effect at the time, even after instances start using a different patch level.
+- Rolling back a script patch means pinning an earlier `scriptPatchVersion` for the same `baseVersionId` on the affected instances. This is an instance rollout/control-plane action, not a tenant lifecycle state transition. Historical records for prior effects remain associated with the `(versionId, scriptPatchVersion)` values that were in effect at the time, even after instances start using a different patch level.
 
 Game Design Service owns the history and metadata for script revisions and patch versions; Automation & Scripting Service owns runtime readiness and execution; Game Session Service owns which `scriptPatchVersion` is pinned per instance and must record that choice alongside each effect for determinism and auditability.
 

@@ -15,10 +15,15 @@ dependencies {
     implementation(libs.spring.cloud.gateway)
     implementation(libs.grpc.spring.boot.starter)
     implementation(libs.spring.boot.starter.data.redis.reactive)
-    implementation(project(":common-library"))
+    implementation(project(":common-library")) {
+        exclude(group = "org.springframework.boot", module = "spring-boot-starter-web")
+        exclude(group = "org.springframework.boot", module = "spring-boot-starter-tomcat")
+        exclude(group = "org.springframework", module = "spring-webmvc")
+    }
     implementation(libs.jjwt.api)
     runtimeOnly(libs.jjwt.impl)
     runtimeOnly(libs.jjwt.jackson)
+    runtimeOnly("io.grpc:grpc-netty:${libs.versions.grpc.get()}")
     implementation(libs.opentelemetry.api)
     implementation(libs.opentelemetry.sdk)
     implementation(libs.opentelemetry.exporter.otlp)
@@ -41,7 +46,7 @@ tasks.named<BootRun>("bootRun") {
 tasks.register<BootRun>("bootRunDevIsolated") {
     group = "application"
     description = "Start the gateway in dev with dev-isolated WebSocket handling"
-    mainClass.set("net.firedevops.firemud.SpringCloudGatewayApplication")
+    mainClass.set("net.firedevops.firemud.springcloudgateway.SpringCloudGatewayApplication")
     classpath = sourceSets.main.get().runtimeClasspath
     systemProperty("spring.profiles.active", "dev")
     environment("TCP_PROXY_DEV_ISOLATED", "true")

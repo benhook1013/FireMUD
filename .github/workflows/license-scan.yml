@@ -41,6 +41,7 @@ jobs:
           cache: npm
           cache-dependency-path: |
             package-lock.json
+            config/openapi/package-lock.json
             web-client/package-lock.json
 
       - name: ⚙️ Set Up Gradle
@@ -50,6 +51,7 @@ jobs:
         id: ort
         uses: oss-review-toolkit/ort-ci-github-action@v1
         with:
+          ort-cli-args: '-P ort.analyzer.enabledPackageManagers=Gradle,NPM'
           fail-on: policy-violation
 
       - name: Upload ORT results

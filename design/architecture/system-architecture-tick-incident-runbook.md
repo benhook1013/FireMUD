@@ -1,6 +1,6 @@
 # FireMUD Tick Incident Runbook
 
-This runbook describes operator actions for **tick-related incidents**, including stalled regions, replay storms, and stuck tick effect ledger entries.
+This runbook describes operator actions for **tick-related incidents**, including stalled regions, replay storms, durable commit/coordination cleanup divergence, and stuck tick effect ledger entries.
 
 For the detailed tick design, see:
 
@@ -14,17 +14,35 @@ Redis coordination behavior and reset flows are defined in:
 - `design/architecture/system-architecture-redis-operations.md`
 - `design/architecture/system-architecture-redis-reset-and-recovery.md`
 
+## Implementation Notes
+
+This runbook is written for the target tick/region model (`tenantId` + `regionId`). If your current deployment only exposes coarser tick pause controls (for example pausing by `tenantId` + `game_instance_id`), follow the same decision logic but apply it at the closest available scope and record the scope mismatch in the incident timeline for follow-up.
+
+When applying scope substitution, use a deterministic mapping source (control-plane lookup or game-instance registry), record the resolved region set, and include the mapping evidence in the incident notes so post-incident reconciliation is auditable.
+
 ## Incident Types
 
 - **Stalled tick region** (lease held but no forward progress)
 - **Tick replay storm or excessive replays**
+- **Durable commit/coordination cleanup divergence**
 - **Stuck tick effect ledger entries** (`SCHEDULED` rows that never converge)
 
-Each scenario below assumes that Redis and database metrics are wired according to the Redis and tick operations docs, and that the tick dashboards under `design/observability/grafana` are available.
+Each scenario below assumes Redis/database metrics are wired according to the Redis and tick operations docs. If Grafana/Prometheus/Kibana/Jaeger is degraded, use fallback procedures from `system-architecture-observability-incident-runbook.md` and prioritize authoritative tick controls and service logs.
+
+## Trace Preconditions (For Tick Root Cause)
+
+Tick incidents often benefit from trace-level diagnosis, but mitigation must not block on trace availability.
+
+- Baseline expectation: production-like environments keep non-zero trace sampling (the tracing contract uses ~1% as the common usability baseline for high-volume paths).
+- If `tick_execute` / `tick_apply_effect` traces are too sparse:
+  - First apply temporary service-scoped sampling escalation for affected services and record start/end times.
+  - If collector tail-sampling by `tenantId`/`regionId` is supported, prefer scoped escalation for the impacted region and remove it after triage.
+- If the environment does not satisfy collector capability requirements for scoped escalation, treat it as service-scoped-only.
+- If traces remain unavailable, continue with metrics + logs and proceed with region/tenant reset decisions using runbook thresholds.
 
 ## Stalled Tick Region
 
-### Detect
+### Detect (Stalled tick region)
 
 - Alerts fire on tick health, for example:
   - `tick_status{tenantId,regionId,status="STALLED"}` or `tick_status{tenantId,regionId,status="DEGRADED"}` being `1` for a sustained window.
@@ -36,13 +54,16 @@ Each scenario below assumes that Redis and database metrics are wired according 
   - Game Session logs show repeated retries or warnings for the affected region.
   - Jaeger traces for `tick_execute` or equivalent spans show long durations or repeated retries for the same region.
 
-### Decide
+### Decide (Stalled tick region)
 
 - If the stall is brief and metrics already show recovery (status returns to `RUNNING`, queues drain, execution time ratios return to healthy ranges), continue to monitor without intervention.
-- If the region remains stalled or degraded beyond the documented grace window, plan a **region-scoped** coordination reset for the affected `<tenantId, regionId>` as described in `system-architecture-redis-reset-and-recovery.md`.
+- If the region remains stalled or degraded long enough that the shared tick-health paging conditions would still be firing for that scope, plan a **region-scoped** coordination reset for the affected `<tenantId, regionId>` as described in `system-architecture-redis-reset-and-recovery.md`.
+  - In shared rulesets, this means the same conditions that would keep the canonical per-region tick-health paging alert active for that region, starting with sustained `tick_status{tenantId,regionId,status="STALLED"} == 1` and any environment overlay that pages on prolonged `DEGRADED` state.
+  - Treat `tick_status{tenantId,regionId,status="STALLED"} == 1` sustained through the environment’s alert hold time as an intervention threshold by itself.
+  - Also treat sustained `tick_status{tenantId,regionId,status="DEGRADED"} == 1` together with continued over-threshold `tick_execution_time_ms_p95` / `tick_execution_time_ms_p99` ratios versus `tick_lock_ttl_ms`, or continued growth in `tick_retry_queue_depth` / `tick_command_queue_depth`, as sufficient to intervene before the region flips fully to `STALLED`.
 - Only escalate to a **tenant-scoped** or **cluster-wide** reset if multiple regions for the same tenant show similar symptoms or if Redis incident runbooks indicate broader coordination corruption.
 
-### Act
+### Act (Stalled tick region)
 
 1. **Quiesce tick work for the region**
    - Pause tick scheduling for the affected `<tenantId, regionId>` using the Game Session controls described in the tick architecture and Redis reset docs.
@@ -69,7 +90,7 @@ Each scenario below assumes that Redis and database metrics are wired according 
 
 ## Tick Replay Storm or Excessive Replays
 
-### Detect
+### Detect (Tick replay storm)
 
 - Metrics and dashboards show:
   - Elevated `gamesession_tick_replayed_total` relative to `gamesession_tick_executed_total` (or equivalent service-specific counters) for one or more regions.
@@ -79,14 +100,14 @@ Each scenario below assumes that Redis and database metrics are wired according 
   - Game Session and domain services log frequent idempotent replays or guard conflicts.
   - Jaeger traces for tick-driven flows show the same effect identities being attempted repeatedly.
 
-### Decide
+### Decide (Tick replay storm)
 
 - If replays are elevated only during a short-lived Redis incident already covered by the Redis incident runbook, prioritize resolving the underlying Redis problem and accept a temporary increase in replays.
 - If replay rates remain high after Redis metrics and tail-loss have returned to normal:
   - Treat this as a domain-level idempotency or design issue in the services contributing the most `replay_ok` outcomes.
   - Focus on those services and effect types first; do not attempt broad coordination resets unless the ledger or coordination metrics also indicate corruption.
 
-### Act
+### Act (Tick replay storm)
 
 1. **Identify hot services and effect types**
    - Use `tick_effect_outcome_total` dashboards to find:
@@ -107,19 +128,59 @@ Each scenario below assumes that Redis and database metrics are wired according 
      - Fix idempotency guards, error classification, or handler logic so that effects converge to `first_apply` with fewer retries.
    - Consider temporarily reducing tick fan-out or region density for heavily affected regions until replay rates normalize.
 
+## Durable Commit/Coordination Cleanup Divergence
+
+### Detect (durable commit/coordination cleanup divergence)
+
+- Alert: `TickCleanupLagHigh` fires (`tick_cleanup_lag_ms` sustained above the configured threshold).
+- Metrics and dashboards show:
+  - `tick_durable_commit_total` continues increasing, but `tick_coordination_cleared_total` lags for the same regions.
+  - `tick_cleanup_lag_ms` remains elevated for affected `<tenantId, regionId>` scopes.
+- Logs and traces:
+  - Game Session logs show repeated cleanup retries or failed transitions from durable commit to coordination-cleared.
+  - `tick_execute` traces show long or repeated cleanup-related phases after durable state has been committed.
+
+### Decide (durable commit/coordination cleanup divergence)
+
+- If lag clears quickly and counters re-align, continue monitoring without intervention.
+- If lag persists:
+  - Treat as a coordination cleanup incident first (not a domain correctness incident) unless ledger/backlog signals also indicate stuck effects.
+  - Prefer region-scoped remediation before tenant- or cluster-scoped actions.
+- If cleanup lag is coupled with growing ledger backlog (`tick_effects_pending_total`) and stale `SCHEDULED` age, run replay-controller and ledger remediation flow in parallel.
+
+### Act (durable commit/coordination cleanup divergence)
+
+1. **Scope affected regions**
+   - Identify regions where `tick_durable_commit_total - tick_coordination_cleared_total` stays non-zero and growing.
+   - Correlate with `tick_cleanup_lag_ms` to confirm sustained divergence.
+2. **Inspect cleanup path**
+   - Check Game Session logs and traces for cleanup-token mismatches, Redis write failures, or retry exhaustion in cleanup phases.
+   - Validate Redis health (latency, memory pressure, tail-loss) using Redis coordination dashboards.
+3. **Apply scoped remediation**
+   - For isolated regions, pause and resume tick scheduling to force a clean cleanup cycle.
+   - If a region remains stuck, execute the region-scoped coordination reset flow in `system-architecture-redis-reset-and-recovery.md`.
+   - If ledger backlog also accumulates, trigger ledger replay-controller remediation for the same scope.
+4. **Verify convergence**
+   - Confirm `tick_cleanup_lag_ms` returns to normal envelope.
+   - Confirm `tick_coordination_cleared_total` catches up with durable commits for affected regions.
+   - Ensure no sustained growth remains in `tick_effects_pending_total` for the remediated scope.
+
 ## Stuck Tick Effect Ledger Entries
 
-### Detect
+### Detect (Stuck tick effect ledger entries)
 
 - Dashboards and metrics show:
   - `tick_effects_pending_total{tenantId,regionId}` remaining high for specific regions even after coordination and domain metrics suggest normal operation.
-  - Individual `(tenantId, regionId, region_epoch, tickId, effectKey)` rows staying in `SCHEDULED` status beyond the grace window defined in the tick architecture docs.
-  - Alerts firing when `SCHEDULED` rows exceed this grace window.
+  - `tick_effects_pending_oldest_age_seconds{tenantId,regionId}` exceeding `tick_effects_replay_convergence_budget_seconds{tenantId,regionId}`.
+  - `tick_effects_replay_slo_breached{tenantId,regionId}` indicating replay is outside the normative convergence budget.
+  - Replay fairness signals distinguish two failure shapes:
+    - `tick_effects_pending_total > 0` while `tick_effects_replay_batches_total` does not advance for the same region, or `tick_effects_replay_starved{tenantId,regionId}` becomes `1`.
+    - `tick_effects_replay_scan_lag_ms{tenantId,regionId}` grows for a subset of regions even though the controller is still making progress elsewhere.
 - Logs and traces:
   - Game Session logs may show repeated attempts to process the same effects or gaps in processing for certain tick IDs.
   - Traces for those tick IDs show missing or incomplete spans for expected domain calls.
 
-### Decide
+### Decide (Stuck tick effect ledger entries)
 
 - Determine whether:
   - The ledger reflects truly stuck work (the domain effects have not been applied), or
@@ -127,11 +188,12 @@ Each scenario below assumes that Redis and database metrics are wired according 
 - If the backlog is confined to a single region and limited to a small number of tick IDs, prefer targeted remediation over broad resets.
 - If many ticks across multiple regions share the same symptoms, consider whether a schema, deployment, or coordination issue is preventing ledger updates, and consult the Redis and tick architecture docs before taking action.
 
-### Act
+### Act (Stuck tick effect ledger entries)
 
 1. **Inspect ledger and domain state**
    - Use SQL or service-level admin APIs to query `tick_effects` (or the equivalent ledger table) for the affected `<tenantId, regionId>`:
      - Identify the oldest `SCHEDULED` entries and their associated `tickId` and `effectKey`.
+   - Compare `tick_effects_pending_oldest_age_seconds` with `tick_effects_replay_convergence_budget_seconds` to distinguish “brief replay delay” from “budget breach that requires active remediation”.
    - For a small sample, inspect domain state (for example entity HP, inventory, room state) to determine whether the effects have already been applied.
 2. **Classify outcomes**
    - If domain state clearly reflects the intended effect:
@@ -140,17 +202,23 @@ Each scenario below assumes that Redis and database metrics are wired according 
      - Treat those rows as genuinely stuck and decide whether to:
        - Re-enqueue work by re-running the appropriate tick flows, or
        - Mark them `ABANDONED` if the effect is no longer valid (expired sessions, deleted entities, or invalid commands).
+   - Inspect replay fairness before choosing remediation:
+     - If `tick_effects_replay_batches_total` is flat for the affected region, treat the controller as not servicing that region at all.
+     - If replay batches are increasing elsewhere but `tick_effects_replay_scan_lag_ms` continues rising for the affected region, or `tick_effects_replay_starved` is asserted, treat the controller as unfair/starved rather than idle.
 3. **Apply targeted remediation**
    - For “applied but not marked” rows:
      - Use a small, scripted Job or administrative endpoint to update their status to `APPLIED` with an appropriate `outcome`/`reason`, keeping a record of the correction.
    - For genuinely stuck rows:
      - If it is safe to re-run the effects, enqueue follow-up commands or trigger replay using the same idempotent handlers that tick execution uses.
      - If effects are no longer valid, mark rows `ABANDONED` with precise reasons (for example `EXPIRED`, `INVALID_TARGET`, `REGION_RESET_SCOPED`) so they stop appearing as pending.
+   - For replay-controller starvation:
+     - Reduce per-region replay batch monopolization or other hot-region pressure first.
+     - If the region remains starved, run scoped replay-controller remediation for the affected `<tenantId,regionId>` before escalating to broader reset actions.
 4. **Prevent recurrence**
    - Review Game Session and domain handlers to ensure:
      - Ledger status transitions happen atomically with domain commits where required.
      - Errors that prevent ledger updates are surfaced clearly via logs, metrics, and traces.
-   - Add or tighten alerts on `tick_effects_pending_total` and related gauges so future accumulations are detected earlier.
+   - Add or tighten alerts on `tick_effects_pending_total`, `tick_effects_replay_batches_total`, and `tick_effects_replay_scan_lag_ms` so both idle and unfair replay-controller behavior are detected earlier.
 
 ## Using Traces During Tick Incidents
 

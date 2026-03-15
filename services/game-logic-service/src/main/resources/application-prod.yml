@@ -35,6 +35,10 @@ grpc:
       clientAuth: REQUIRE
 
 firemud:
+  services:
+    world-management-service: ${FIREMUD_SERVICES_WORLD_MANAGEMENT_SERVICE:world-management-service:6565}
+    entity-management-service: ${FIREMUD_SERVICES_ENTITY_MANAGEMENT_SERVICE:entity-management-service:6565}
+    social-groups-service: ${FIREMUD_SERVICES_SOCIAL_GROUPS_SERVICE:social-groups-service:6565}
   grpc:
     cert-chain: ${FIREMUD_GRPC_CERT_CHAIN_PATH:certs/client.crt}
     private-key: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:certs/client.key}

@@ -39,8 +39,12 @@ When designing new tick-driven features, keep these invariants in mind:
 The tick system adopts the same **coordination timeline** concept as the Redis architecture: for each `<tenantId, regionId>` there is a canonical timeline defined by `(region_epoch, tickId)`. Within a given `region_epoch`:
 
 - `tickId` is monotonic and uniquely identifies each committed tick for that region.
-- All **region-scoped tick coordination keys** in Redis (for example `tick:{tenantRegionTag}:*`, `timer:{tenantRegionTag}`, `retry:{tenantRegionTag}`, `tick-executor-lease:{tenantRegionTag}`) and all tick effect ledger rows in PostgreSQL conceptually belong to exactly one `(region_epoch, tickId)` pair.
-- Tenant-scoped coordination such as gameplay session keys (`session:game:<tenantId>:<sessionId>`) live on Coordination Redis but are **not** bound to a single region epoch; they follow the authentication/reconnection contracts and reset behavior described in the Redis hub and usage/profile docs rather than the per-region epoch model.
+- All **staged tick coordination state** in Redis (for example `tick:{tenantRegionTag}:pending` entries and other data created for a specific in-flight tick) and all tick effect ledger rows in PostgreSQL conceptually belong to exactly one `(region_epoch, tickId)` pair.
+- Region-scoped source structures such as `tick:{tenantRegionTag}:queue:*`, `timer:{tenantRegionTag}`, `retry:{tenantRegionTag}`, and `tick-executor-lease:{tenantRegionTag}` are primarily **epoch-scoped** rather than tick-scoped:
+  - They belong to the current `region_epoch`.
+  - They carry eligibility/order metadata that later maps selected work into a specific `(region_epoch, tickId)` when the tick batch is formed.
+  - Reset/replay tooling must therefore distinguish “epoch-scoped source state” from “tick-scoped staged state” rather than treating every region key as already owned by one committed or in-flight tick.
+- Tenant-scoped coordination such as gameplay session keys (`session:game:<tenantId>:<gameInstanceId>:<sessionId>`) live on Coordination Redis but are **not** bound to a single region epoch; they follow the authentication/reconnection contracts and reset behavior described in the Redis hub and usage/profile docs rather than the per-region epoch model.
 - When a scoped coordination reset occurs (or a topology/maintenance operation explicitly severs the old region timeline), the tick control plane bumps `region_epoch` and ensures that subsequent tick work for that `<tenantId, regionId>` is scheduled only on the new timeline; survivors from older epochs in region-scoped Redis keys are treated as stale and either ignored or explicitly reconciled via the tick effect ledger and reset tooling.
 
 The main tick document contains the detailed rules and Redis key shapes behind each of these points.
@@ -59,7 +63,8 @@ Conceptually, domain services treat Redis locks and leases as **opaque tick-engi
 
 Redis coordination state is subject to a bounded tail-loss envelope (see `system-architecture-redis.md` and `system-architecture-redis-operations.md`). From the tick system’s perspective:
 
-- A normal failover or restart may drop or replay the last `N` ticks for a `<tenantId, regionId>`, where `N` corresponds roughly to **≤ 2 × `tick_interval_ms`** in production-like profiles.
+- A normal failover or restart may drop or replay the last `N` ticks for a `<tenantId, regionId>`, where the loss window is bounded by the canonical Redis SLO formula:
+  - `tail_loss_budget_ms = max(2000, 2 * tick_interval_ms)` (see `system-architecture-redis-operations.md`).
 - Tick-driven designs must tolerate:
   - Some commands and timers near the tail of the timeline being lost, re-ordered slightly, or replayed.
   - Region leases being briefly lost and re-acquired under the same or a new `region_epoch`.
@@ -118,6 +123,7 @@ Tick timers (cooldowns, regeneration, delayed effects) are:
 
 - Stored in per-region sorted sets such as `timer:{tenantRegionTag}`, where the score is an absolute millisecond timestamp and each member encodes the target entity/effect.
 - Evaluated using a single, consistent application time source (NTP-synchronized wall clock); Redis server time is not used for timer comparisons.
+- Treated as absolute wall-clock due times: changing `tick_interval_ms` does not rescale existing timer scores, and any time-scaling logic must be applied when scheduling (producing a new `due_ms`), not by rewriting past timers.
 - Drained with bounded work per tick (for example, up to `game.tick-max-timers` timers per region per tick) so delayed or bursty timers do not turn a single tick into unbounded work.
 - Implemented using deterministic, idempotent Lua scripts that accept `now_ms` as a caller-supplied `ARGV` value; scripts must not call Redis `TIME`, and AOF replay reuses the same `ARGV` values.
 
@@ -153,13 +159,20 @@ Two related configuration concepts control how long tick work is allowed to run 
 
 These formulas are implemented once in shared tick/Redis helpers and consumed by Game Session and participating services; individual services must not define their own alternative lock/budget formulas. The defaults are chosen to give generous headroom for GC pauses and hiccups without requiring per-environment tuning; in most deployments, operators primarily adjust `tick_interval_ms`.
 
-At runtime, observed tick durations are compared against lock TTLs using histograms such as `tick.execution_time_ms_p95` and `tick.execution_time_ms_p99`. Ratios like `tick.execution_time_ms_p99 / lock_ttl_ms` drive a simple health model for each `<tenantId, regionId>`:
+At runtime, observed tick durations are compared against lock TTLs using Prometheus-facing series such as `tick_execution_time_ms_p95` and `tick_execution_time_ms_p99` (derived from `tick_execution_time_ms_bucket` recording rules). Ratios like `tick_execution_time_ms_p99 / tick_lock_ttl_ms` drive region health for each `<tenantId, regionId>`.
 
-- **Healthy** – p99 execution time comfortably below the lock TTL.
-- **Degraded** – p99 execution time approaching the TTL; regions may emit warnings and metrics recommending configuration or design changes.
-- **Unsafe** – p99 execution time close to or exceeding the TTL over a sustained window; the scheduler treats this as a configuration or architecture error and may slow or temporarily halt ticks for the affected region until configuration or workload is adjusted.
+### Canonical Region Health States and Threshold Source
 
-Region health transitions (`HEALTHY` → `DEGRADED` → `HALTED`) and the exact thresholds are defined in `system-architecture-redis.md` under Redis availability and safety guarantees. This document captures only the conceptual relationship between tick budgets, TTLs, and region health.
+This table is the single source of truth for region health state names and threshold intent across tick, Redis, and scaling docs:
+
+| State | Meaning | Primary triggers |
+| --- | --- | --- |
+| `RUNNING` | Region is making normal forward progress. | `tick_execution_time_ms_p99 / tick_lock_ttl_ms` remains below the degraded threshold and commit progress is advancing. |
+| `DEGRADED` | Region is still progressing but close to safety limits. | `tick_execution_time_ms_p99 / tick_lock_ttl_ms` is near or above the degraded threshold over a sustained window, or remote/retry backlog exceeds budget. |
+| `STALLED` | Region lease may still be held but progress has stopped. | No successful commits for multiple `tick_interval_ms` windows, repeated failed ticks, or persistent stuck cleanup/ledger signals. |
+| `PAUSED` | Region is intentionally paused by control plane or maintenance flow. | Operator/control-plane pause for reset, migration, or incident mitigation. |
+
+Threshold values and alert windows are defined by this document’s ratio formulas plus the concrete metric thresholds in `system-architecture-redis-operations.md` and enforced through `tick_status{status="RUNNING|DEGRADED|STALLED|PAUSED"}`.
 
 In addition to timing-based health, Game Session tracks **forward progress** for each `<tenantId, regionId>`:
 
@@ -173,13 +186,13 @@ Conceptually:
 - Lease ownership indicates **who** is allowed to coordinate work for a region.
 - Progress signals indicate whether that owner is actually advancing game state.
 
-Downstream behavior for stalled regions (rejecting new commands, marking instances unhealthy, and so on) is described in the failures and operations doc; this section captures only the invariants that distinguish “lease held but stalled” from both healthy and fully halted regions.
+Downstream behavior for stalled regions (rejecting new commands, marking instances unhealthy, and so on) is described in the failures and operations doc; this section captures only the invariants that distinguish “lease held but stalled” from `RUNNING`, `DEGRADED`, and intentionally `PAUSED` regions.
 
 ## Retry and Backoff Invariants
 
 Lock contention and transient failures are handled by a bounded retry and backoff policy that preserves fairness:
 
-- Each rescheduled action carries a per-command retry counter and a `next-eligible-tick` value; retries are delayed using an exponential backoff in ticks, for example `nextTick = currentTick + min(2^retryCount, MAX_BACKOFF_TICKS)`.
+- Each rescheduled action carries a per-command retry counter and a `next_eligible_tick_id` value; retries are delayed using an exponential backoff in ticks, for example `nextTick = currentTick + min(2^retryCount, MAX_BACKOFF_TICKS)`.
 - Retries are appended to the back of the originating entity’s queue and are scheduled **no earlier than a future tick**; the executor never spins inside a single tick waiting for locks.
 - After a bounded number of failed attempts (for example `MAX_RETRIES`), the command is marked permanently failed, a player-visible error is emitted, and metrics/logs capture the contention so operators can see hotspots.
 - Fairness is guaranteed per entity: within a given entity’s queue, commands are processed FIFO; cross-entity fairness is best-effort and driven by normal tick scheduling plus the backoff rules.
@@ -194,12 +207,13 @@ At the configuration level:
   - `automation.tick-max-events`
 - These caps exist so no single player or script can monopolize the tick loop, even if they enqueue many actions; excess work spills into subsequent ticks according to the same fairness rules.
 
-Runtime health is also expressed via ratios such as `tick.execution_time_ms_p95` or `tick.execution_time_ms_p99` over `lock_ttl_ms`:
+Runtime health is also expressed via ratios such as `tick_execution_time_ms_p95` or `tick_execution_time_ms_p99` over `tick_lock_ttl_ms`:
 
-- **Healthy** – p99 execution time well below `lock_ttl_ms` (for example, < 0.5 × `lock_ttl_ms`).
-- **Degraded / Unsafe** – p99 execution time approaching or exceeding `lock_ttl_ms` over a sustained window; affected regions surface warnings and may be slowed or temporarily halted until configuration or workloads are adjusted.
+- `RUNNING` – p99 execution time is well below `tick_lock_ttl_ms` (for example, < 0.5 × `tick_lock_ttl_ms`).
+- `DEGRADED` – p99 execution time is approaching or exceeding `tick_lock_ttl_ms` over a sustained window.
+- `STALLED` – forward progress has stopped even if timing ratios are noisy or unavailable.
 
-The precise thresholds and recommended operator actions are defined in the Redis operations and incident runbook docs; this section records that tick fairness and safety are enforced both through bounded per-tick work and through these timing-based health checks.
+This keeps fairness and safety enforceable through bounded per-tick work and timing-based health checks without introducing alternate state names in other docs.
 
 ## Tick Regions, Global Effects, and Idle Background Ticks
 

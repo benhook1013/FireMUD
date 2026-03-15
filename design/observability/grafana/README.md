@@ -6,13 +6,15 @@ These JSON files can be imported into a Grafana instance connected to the projec
 
 ## Dashboards
 
-- [backups.json](./backups.json) – Backup pipeline dashboard with “time since last backup/verification” and tick pause duration signals for coordinated backups.
+- [backups.json](./backups.json) – Backup pipeline dashboard with “time since last backup/verification”, tick pause wait/duration, alias-scope usage, and queue growth signals for coordinated backups.
 - [service-overview.json](./service-overview.json) – High-level service overview with status panels and charts for request rates, error rates, and latency broken down by microservice.
 - [tcp-proxy-alerts-snippets.md](./tcp-proxy-alerts-snippets.md) – Reference PromQL and Alertmanager rule snippets for TCP Proxy ingress metrics (Telnet connection limits, discarded input, TLS/mTLS and WebSocket reconnect behaviour). Import these into your environment-specific dashboards and rulesets as needed.
+- [tcp-proxy.json](./tcp-proxy.json) – TCP Proxy service dashboard (Telnet connection limits, discarded Telnet input, WebSocket reconnects, and NotifyDisconnect transport/app errors).
 - [core-alerts-snippets.md](./core-alerts-snippets.md) – Reference Alertmanager rule snippets for core Redis, tick, and backup pipeline alerts (tail-loss SLO breaches, unsafe tick runtime ratios, tick ledger backlogs, and backup/verification health).
-- [player-experience.json](./player-experience.json) – Canonical player experience dashboard with SLIs for login success ratio, command end-to-end latency, Telnet/WebSocket path availability, and chat delivery latency.
-- [redis-coordination-health.json](./redis-coordination-health.json) – Redis and coordination health dashboard, including tail-loss, AOF size/restart, coordination memory and key counts, and per-prefix coordination metrics.
-- [tick-health-ledger.json](./tick-health-ledger.json) – Tick health and ledger dashboard, including tick status, execution-time histograms and ratios, retry and command queue depths, and ledger pending/applied/abandoned metrics.
+- [player-experience.json](./player-experience.json) – Canonical player experience SLO dashboard with login success ratio, command end-to-end latency (p99), stage-split command latency drilldowns, mirrored synthetic canary signals for low-traffic outage detection, external blackbox outage detection plus in-service fast-detection/compliance views for Telnet/WebSocket path availability, and chat delivery latency (p99).
+- [player-experience-drilldown.json](./player-experience-drilldown.json) – Player incident drilldown dashboard with outcome breakdowns and per-command/per-channel latency views for triage after an SLO breach.
+- [redis-coordination-health.json](./redis-coordination-health.json) – Redis and coordination health dashboard, including tail-loss vs dynamic budget, AOF size/restart, coordination memory and key counts, and per-prefix coordination metrics.
+- [tick-health-ledger.json](./tick-health-ledger.json) – Tick health and ledger dashboard, including tick status, execution-time histograms and ratios, retry and command queue depths, ledger pending/applied/abandoned metrics, replay-convergence budget/breach signals, replay fairness signals, and the canonical replay alert states `TickEffectsReplaySloBreached` / `TickEffectsReplayStarved`.
 
 To import a dashboard, use Grafana’s “Import dashboard” feature and either upload the JSON file directly or paste its contents into the “Import via panel JSON” field, then bind it to the correct Prometheus data source.
 
@@ -22,3 +24,6 @@ To import a dashboard, use Grafana’s “Import dashboard” feature and either
 - Shared PromQL expressions must respect metric units. If a metric name contains `_ms`, comparisons must use millisecond thresholds (for example `> 250`, not `> 0.25`).
 - Player experience SLIs/SLOs are evaluated per `tenantId` (and `regionId` where applicable). Dashboards may include global rollups, but they should preserve per-tenant visibility so operators can see blast radius quickly.
 - Entry-path availability panels should be computed from explicit attempts counters (for example `entrypath_connection_attempts_total{tenantId,path,outcome}`), not from a single failure-mode proxy like “connection limits exceeded”.
+- `player-experience.json` should preserve the distinction between authoritative externally hosted edge/canary checks and their mirrored Prometheus views. This applies to `entrypath_blackbox_probe_success{...}`, `playerflow_canary_success{...}`, and `playerflow_canary_latency_ms{...}`; dashboard wording should not imply that Grafana or Prometheus is the only paging path for those signals.
+- For player-entry-path dashboards, external blackbox reachability (`entrypath_blackbox_probe_success{path,target}` or a documented equivalent mapping) is the primary outage-detection signal for total edge-path failures. Attempts-based availability panels remain required as the in-service diagnostic and compliance view after traffic is reaching Gateway/TCP Proxy.
+- External blackbox and deadman signals shown in Grafana are mirrored views of the authoritative external monitoring system. Dashboard authors should preserve that distinction and should not imply Grafana or Prometheus is the only paging path for those checks.

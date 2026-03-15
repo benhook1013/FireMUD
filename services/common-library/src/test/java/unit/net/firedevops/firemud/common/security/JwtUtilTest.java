@@ -14,8 +14,9 @@ class JwtUtilTest {
     String token = util.generateToken("demo", Map.of("role", "admin"));
 
     Jws<Claims> parsed = util.parseToken(token);
+    Claims payload = parsed.getPayload();
 
-    assertEquals("demo", parsed.getBody().getSubject());
-    assertEquals("admin", parsed.getBody().get("role"));
+    assertEquals("demo", payload.getSubject());
+    assertEquals("admin", payload.get("role"));
   }
 }

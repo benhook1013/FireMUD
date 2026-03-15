@@ -1,0 +1,300 @@
+package net.firedevops.firemud.gamesession.service.impl;
+
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import io.grpc.stub.StreamObserver;
+import io.micrometer.core.annotation.Timed;
+import io.micrometer.core.instrument.MeterRegistry;
+import java.time.Instant;
+import net.firedevops.firemud.gamesession.entity.GameInstance;
+import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
+import net.firedevops.firemud.gamesession.service.TickService;
+import net.firedevops.firemud.gamesession.v1.GameSessionControlPlaneServiceGrpc;
+import net.firedevops.firemud.gamesession.v1.GetPinnedScriptPatchVersionRequest;
+import net.firedevops.firemud.gamesession.v1.GetPinnedScriptPatchVersionResponse;
+import net.firedevops.firemud.gamesession.v1.PauseTicksForScopeRequest;
+import net.firedevops.firemud.gamesession.v1.PauseTicksForScopeResponse;
+import net.firedevops.firemud.gamesession.v1.ResumeTicksForScopeRequest;
+import net.firedevops.firemud.gamesession.v1.ResumeTicksForScopeResponse;
+import net.firedevops.firemud.gamesession.v1.RollbackScriptPatchVersionRequest;
+import net.firedevops.firemud.gamesession.v1.RollbackScriptPatchVersionResponse;
+import net.firedevops.firemud.gamesession.v1.SetPinnedScriptPatchVersionRequest;
+import net.firedevops.firemud.gamesession.v1.SetPinnedScriptPatchVersionResponse;
+import net.firedevops.firemud.shared.v1.ErrorDetail;
+import org.lognet.springboot.grpc.GRpcService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+@GRpcService
+public final class GameSessionControlPlaneGrpcService
+    extends GameSessionControlPlaneServiceGrpc.GameSessionControlPlaneServiceImplBase {
+  private static final Logger logger =
+      LoggerFactory.getLogger(GameSessionControlPlaneGrpcService.class);
+
+  private final GameInstanceRepository gameInstanceRepository;
+  private final TickService tickService;
+  private final MeterRegistry meterRegistry;
+
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "Injected repository/services are internal Spring collaborators")
+  public GameSessionControlPlaneGrpcService(
+      GameInstanceRepository gameInstanceRepository,
+      TickService tickService,
+      MeterRegistry meterRegistry) {
+    this.gameInstanceRepository = gameInstanceRepository;
+    this.tickService = tickService;
+    this.meterRegistry = meterRegistry;
+  }
+
+  private ErrorDetail error(String code, String message) {
+    meterRegistry.counter("grpc.app_error", "code", code).increment();
+    return ErrorDetail.newBuilder().setCode(code).setMessage(message).build();
+  }
+
+  private long parseTenantId(String tenantId) {
+    if (tenantId == null || tenantId.isBlank()) {
+      throw new IllegalArgumentException("tenant_id is required");
+    }
+    try {
+      return Long.parseLong(tenantId);
+    } catch (NumberFormatException ex) {
+      throw new IllegalArgumentException("tenant_id must be a number");
+    }
+  }
+
+  private long parseGameInstanceId(String gameInstanceId) {
+    if (gameInstanceId == null || gameInstanceId.isBlank()) {
+      throw new IllegalArgumentException("game_instance_id is required");
+    }
+    try {
+      return Long.parseLong(gameInstanceId);
+    } catch (NumberFormatException ex) {
+      throw new IllegalArgumentException("game_instance_id must be a number");
+    }
+  }
+
+  private GameInstance getInstanceOrThrow(long gameInstanceId) {
+    return gameInstanceRepository
+        .findById(gameInstanceId)
+        .orElseThrow(() -> new IllegalArgumentException("Game instance not found"));
+  }
+
+  @Override
+  @Timed(value = "gamesessionGrpc.controlPlane.getPinnedScriptPatchVersion")
+  public void getPinnedScriptPatchVersion(
+      GetPinnedScriptPatchVersionRequest request,
+      StreamObserver<GetPinnedScriptPatchVersionResponse> responseObserver) {
+    try {
+      long tenantId = parseTenantId(request.getTenantId());
+      long gameInstanceId = parseGameInstanceId(request.getGameInstanceId());
+      GameInstance instance = getInstanceOrThrow(gameInstanceId);
+      if (instance.getTenantId() != tenantId) {
+        throw new IllegalArgumentException("tenant_id does not own game_instance_id");
+      }
+      GetPinnedScriptPatchVersionResponse response =
+          GetPinnedScriptPatchVersionResponse.newBuilder()
+              .setPinnedScriptPatchVersion(
+                  instance.getScriptPatchVersion() == null ? "" : instance.getScriptPatchVersion())
+              .setPinnedAtMs(
+                  instance.getScriptPatchPinnedAt() == null
+                      ? 0
+                      : instance.getScriptPatchPinnedAt().toEpochMilli())
+              .setPinnedBy(
+                  instance.getScriptPatchPinnedBy() == null
+                      ? ""
+                      : instance.getScriptPatchPinnedBy())
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      GetPinnedScriptPatchVersionResponse response =
+          GetPinnedScriptPatchVersionResponse.newBuilder()
+              .setError(error("INVALID_ARGUMENT", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      logger.error("GetPinnedScriptPatchVersion failed", ex);
+      GetPinnedScriptPatchVersionResponse response =
+          GetPinnedScriptPatchVersionResponse.newBuilder()
+              .setError(error("INTERNAL", "Internal error"))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    }
+  }
+
+  @Override
+  @Timed(value = "gamesessionGrpc.controlPlane.setPinnedScriptPatchVersion")
+  public void setPinnedScriptPatchVersion(
+      SetPinnedScriptPatchVersionRequest request,
+      StreamObserver<SetPinnedScriptPatchVersionResponse> responseObserver) {
+    try {
+      long tenantId = parseTenantId(request.getTenantId());
+      long gameInstanceId = parseGameInstanceId(request.getGameInstanceId());
+      GameInstance instance = getInstanceOrThrow(gameInstanceId);
+      if (instance.getTenantId() != tenantId) {
+        throw new IllegalArgumentException("tenant_id does not own game_instance_id");
+      }
+
+      String previous = instance.getScriptPatchVersion();
+      instance.setScriptPatchVersion(request.getTargetScriptPatchVersion());
+      instance.setScriptPatchPinnedAt(Instant.now());
+      instance.setScriptPatchPinnedBy(request.getActorPrincipal());
+      instance.setScriptPatchPinnedReason(request.getReason());
+      gameInstanceRepository.save(instance);
+
+      SetPinnedScriptPatchVersionResponse response =
+          SetPinnedScriptPatchVersionResponse.newBuilder()
+              .setPreviousScriptPatchVersion(previous == null ? "" : previous)
+              .setPinnedScriptPatchVersion(
+                  instance.getScriptPatchVersion() == null ? "" : instance.getScriptPatchVersion())
+              .setControlPlaneRequestId(request.getControlPlaneRequestId())
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      SetPinnedScriptPatchVersionResponse response =
+          SetPinnedScriptPatchVersionResponse.newBuilder()
+              .setError(error("INVALID_ARGUMENT", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      logger.error("SetPinnedScriptPatchVersion failed", ex);
+      SetPinnedScriptPatchVersionResponse response =
+          SetPinnedScriptPatchVersionResponse.newBuilder()
+              .setError(error("INTERNAL", "Internal error"))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    }
+  }
+
+  @Override
+  @Timed(value = "gamesessionGrpc.controlPlane.rollbackScriptPatchVersion")
+  public void rollbackScriptPatchVersion(
+      RollbackScriptPatchVersionRequest request,
+      StreamObserver<RollbackScriptPatchVersionResponse> responseObserver) {
+    try {
+      long tenantId = parseTenantId(request.getTenantId());
+      long gameInstanceId = parseGameInstanceId(request.getGameInstanceId());
+      GameInstance instance = getInstanceOrThrow(gameInstanceId);
+      if (instance.getTenantId() != tenantId) {
+        throw new IllegalArgumentException("tenant_id does not own game_instance_id");
+      }
+
+      String previous = instance.getScriptPatchVersion();
+      instance.setScriptPatchVersion(request.getTargetScriptPatchVersion());
+      instance.setScriptPatchPinnedAt(Instant.now());
+      instance.setScriptPatchPinnedBy(request.getActorPrincipal());
+      instance.setScriptPatchPinnedReason(request.getReason());
+      gameInstanceRepository.save(instance);
+
+      RollbackScriptPatchVersionResponse response =
+          RollbackScriptPatchVersionResponse.newBuilder()
+              .setPreviousScriptPatchVersion(previous == null ? "" : previous)
+              .setPinnedScriptPatchVersion(
+                  instance.getScriptPatchVersion() == null ? "" : instance.getScriptPatchVersion())
+              .setControlPlaneRequestId(request.getControlPlaneRequestId())
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      RollbackScriptPatchVersionResponse response =
+          RollbackScriptPatchVersionResponse.newBuilder()
+              .setError(error("INVALID_ARGUMENT", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      logger.error("RollbackScriptPatchVersion failed", ex);
+      RollbackScriptPatchVersionResponse response =
+          RollbackScriptPatchVersionResponse.newBuilder()
+              .setError(error("INTERNAL", "Internal error"))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    }
+  }
+
+  @Override
+  @Timed(value = "gamesessionGrpc.controlPlane.pauseTicksForScope")
+  public void pauseTicksForScope(
+      PauseTicksForScopeRequest request,
+      StreamObserver<PauseTicksForScopeResponse> responseObserver) {
+    try {
+      long tenantId = parseTenantId(request.getTenantId());
+      if (!request.getRegionId().isBlank()) {
+        throw new IllegalArgumentException("region_id is not supported; set it empty");
+      }
+      long gameInstanceId = parseGameInstanceId(request.getGameInstanceId());
+      GameInstance instance = getInstanceOrThrow(gameInstanceId);
+      if (instance.getTenantId() != tenantId) {
+        throw new IllegalArgumentException("tenant_id does not own game_instance_id");
+      }
+      tickService.pauseTicksForGameInstance(gameInstanceId, request.getReason());
+      PauseTicksForScopeResponse response =
+          PauseTicksForScopeResponse.newBuilder().setSuccess(true).build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      PauseTicksForScopeResponse response =
+          PauseTicksForScopeResponse.newBuilder()
+              .setSuccess(false)
+              .setError(error("INVALID_ARGUMENT", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      logger.error("PauseTicksForScope failed", ex);
+      PauseTicksForScopeResponse response =
+          PauseTicksForScopeResponse.newBuilder()
+              .setSuccess(false)
+              .setError(error("INTERNAL", "Internal error"))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    }
+  }
+
+  @Override
+  @Timed(value = "gamesessionGrpc.controlPlane.resumeTicksForScope")
+  public void resumeTicksForScope(
+      ResumeTicksForScopeRequest request,
+      StreamObserver<ResumeTicksForScopeResponse> responseObserver) {
+    try {
+      long tenantId = parseTenantId(request.getTenantId());
+      if (!request.getRegionId().isBlank()) {
+        throw new IllegalArgumentException("region_id is not supported; set it empty");
+      }
+      long gameInstanceId = parseGameInstanceId(request.getGameInstanceId());
+      GameInstance instance = getInstanceOrThrow(gameInstanceId);
+      if (instance.getTenantId() != tenantId) {
+        throw new IllegalArgumentException("tenant_id does not own game_instance_id");
+      }
+      tickService.resumeTicksForGameInstance(gameInstanceId, request.getReason());
+      ResumeTicksForScopeResponse response =
+          ResumeTicksForScopeResponse.newBuilder().setSuccess(true).build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      ResumeTicksForScopeResponse response =
+          ResumeTicksForScopeResponse.newBuilder()
+              .setSuccess(false)
+              .setError(error("INVALID_ARGUMENT", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      logger.error("ResumeTicksForScope failed", ex);
+      ResumeTicksForScopeResponse response =
+          ResumeTicksForScopeResponse.newBuilder()
+              .setSuccess(false)
+              .setError(error("INTERNAL", "Internal error"))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    }
+  }
+}

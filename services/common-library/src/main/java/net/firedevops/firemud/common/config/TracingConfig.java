@@ -10,6 +10,7 @@ import io.opentelemetry.sdk.resources.Resource;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import io.opentelemetry.sdk.trace.export.BatchSpanProcessor;
 import java.util.Locale;
+import java.util.Objects;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -25,27 +26,37 @@ public class TracingConfig {
   private String serviceName;
 
   @Bean
+  @SuppressWarnings("null")
   public OpenTelemetry openTelemetry() {
-    if (isDisabledEndpoint(otelEndpoint)) {
+    String endpoint = Objects.requireNonNullElse(otelEndpoint, "");
+    if (isDisabledEndpoint(endpoint)) {
       return OpenTelemetry.noop();
     }
+    String applicationName = Objects.requireNonNullElse(serviceName, "unknown-service");
 
     OtlpGrpcSpanExporter exporter =
-        OtlpGrpcSpanExporter.builder().setEndpoint(otelEndpoint).build();
+        Objects.requireNonNull(OtlpGrpcSpanExporter.builder().setEndpoint(endpoint).build());
+    BatchSpanProcessor spanProcessor =
+        Objects.requireNonNull(BatchSpanProcessor.builder(exporter).build());
+    Attributes resourceAttributes =
+        Objects.requireNonNull(
+            Attributes.of(AttributeKey.stringKey("service.name"), applicationName));
+    Resource resource = Objects.requireNonNull(Resource.create(resourceAttributes));
 
     SdkTracerProvider tracerProvider =
-        SdkTracerProvider.builder()
-            .addSpanProcessor(BatchSpanProcessor.builder(exporter).build())
-            .setResource(
-                Resource.create(Attributes.of(AttributeKey.stringKey("service.name"), serviceName)))
-            .build();
+        Objects.requireNonNull(
+            SdkTracerProvider.builder()
+                .addSpanProcessor(spanProcessor)
+                .setResource(resource)
+                .build());
 
     return OpenTelemetrySdk.builder().setTracerProvider(tracerProvider).build();
   }
 
   @Bean
+  @SuppressWarnings("null")
   public Tracer tracer(OpenTelemetry openTelemetry) {
-    return openTelemetry.getTracer(serviceName);
+    return openTelemetry.getTracer(Objects.requireNonNullElse(serviceName, "unknown-service"));
   }
 
   private static boolean isDisabledEndpoint(String endpoint) {
