@@ -54,6 +54,13 @@ check_images_exist() {
   while IFS= read -r image; do
     [ -n "$image" ] || continue
     echo "Inspecting $image"
+    if [[ "$image" == ghcr.io/benhook1013/* ]]; then
+      if docker image inspect "$image" >/dev/null 2>&1; then
+        echo "Found local PR-built image for $image"
+        continue
+      fi
+    fi
+
     docker buildx imagetools inspect "$image" >/dev/null
   done <<<"$images"
   echo "::endgroup::"
