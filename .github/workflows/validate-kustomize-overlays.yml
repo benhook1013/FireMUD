@@ -37,6 +37,18 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: ⚙️ Set Up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: ⚙️ Set Up Gradle
+        uses: gradle/actions/setup-gradle@v5
+
+      - name: 🏗️ Build service jars for overlay validation
+        run: ./gradlew :account-service:bootJar :automation-scripting-service:bootJar :entity-management-service:bootJar :game-design-service:bootJar :game-logic-service:bootJar :game-session-service:bootJar :logging-admin-service:bootJar :social-groups-service:bootJar :spring-cloud-gateway:bootJar :tcp-proxy-service:bootJar :world-management-service:bootJar
+
       - name: 🏗️ Build PR images for overlay validation
         run: |
           docker build \
