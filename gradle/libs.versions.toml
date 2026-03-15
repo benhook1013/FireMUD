@@ -1,8 +1,8 @@
 [versions]
-spring-boot = "4.0.3"
-flyway = "12.1.0"
+spring-boot = "3.5.10"
+flyway = "11.7.2"
 mapstruct = "1.6.3"
-lombok = "1.18.44"
+lombok = "1.18.42"
 lombok-mapstruct-binding = "0.2.0"
 grpc = "1.79.0"
 protobuf = "4.33.5"
@@ -53,8 +53,8 @@ opentelemetry-api = { module = "io.opentelemetry:opentelemetry-api", version = "
 opentelemetry-sdk = { module = "io.opentelemetry:opentelemetry-sdk", version = "1.60.1" }
 opentelemetry-exporter-otlp = { module = "io.opentelemetry:opentelemetry-exporter-otlp", version = "1.60.1" }
 
-micrometer-core = { module = "io.micrometer:micrometer-core", version = "1.16.4" }
-micrometer-registry-prometheus = { module = "io.micrometer:micrometer-registry-prometheus", version = "1.16.4" }
+micrometer-core = { module = "io.micrometer:micrometer-core", version = "1.16.3" }
+micrometer-registry-prometheus = { module = "io.micrometer:micrometer-registry-prometheus", version = "1.16.3" }
 
 jjwt-api = { module = "io.jsonwebtoken:jjwt-api", version = "0.13.0" }
 jjwt-impl = { module = "io.jsonwebtoken:jjwt-impl", version = "0.13.0" }
@@ -63,11 +63,12 @@ argon2 = { module = "de.mkammerer:argon2-jvm", version = "2.12" }
 
 grpc-spring-boot-starter = { module = "io.github.lognet:grpc-spring-boot-starter", version = "5.2.0" }
 postgresql = { module = "org.postgresql:postgresql", version = "42.7.10" }
-aws-sdk-s3 = { module = "software.amazon.awssdk:s3", version = "2.42.13" }
+aws-sdk-s3 = { module = "software.amazon.awssdk:s3", version = "2.42.8" }
 h2 = { module = "com.h2database:h2", version = "2.4.240" }
 
-# Keep Springdoc aligned with the Spring Boot 4.x line in this catalog.
-springdoc-openapi = { module = "org.springdoc:springdoc-openapi-starter-webmvc-ui", version = "3.0.2" }
+# Keep Springdoc on 2.x until we migrate to Spring Boot 4.x. Springdoc 3.x depends on Spring Boot 4.x artifacts,
+# which causes classpath skew and breaks Spring Boot 3.x test slices (e.g., @WebMvcTest / spring-boot-test-autoconfigure).
+springdoc-openapi = { module = "org.springdoc:springdoc-openapi-starter-webmvc-ui", version = "2.5.0" }
 stripe-java = { module = "com.stripe:stripe-java", version = "31.4.1" }
 otp-java = { module = "com.github.bastiaanjansen:otp-java", version = "2.1.0" }
 slf4j-api = { module = "org.slf4j:slf4j-api", version = "2.0.17" }
@@ -78,5 +79,5 @@ testcontainers-postgresql = { module = "org.testcontainers:postgresql", version 
 
 [plugins]
 spring-boot = { id = "org.springframework.boot", version.ref = "spring-boot" }
-flyway = { id = "org.flywaydb.flyway", version.ref = "flyway" }
+flyway = { id = "org.flywaydb.flyway", version = "12.0.3" }
 protobuf = { id = "com.google.protobuf", version = "0.9.6" }
