@@ -22,7 +22,7 @@ x-service-environment: &service-env
 
 x-service-healthcheck: &service-health
   test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health/readiness"]
-  start_period: 60s
+  start_period: 90s
   interval: 10s
   timeout: 5s
   retries: 5
