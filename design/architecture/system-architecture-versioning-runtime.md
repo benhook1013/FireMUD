@@ -357,6 +357,47 @@ Illustrative compatibility responses:
 }
 ```
 
+- Compatible cutover with explicit per-domain attestations and an approved remap:
+
+```json
+{
+  "result": "COMPATIBLE",
+  "reasons": [],
+  "checkedParticipants": ["GAME_DESIGN", "WORLD", "ENTITY"],
+  "checkedAt": "2026-03-13T10:17:00Z",
+  "remapSetId": "remap-v42-v43-r1",
+  "participantResults": [
+    {
+      "participant": "WORLD",
+      "stateClassesChecked": ["S3"],
+      "checkedFamilies": [
+        "region_instance",
+        "zone_instance",
+        "room_instance",
+        "character_location",
+        "npc_location",
+        "world_event",
+        "population_schedule_instance"
+      ],
+      "hasS2Rows": false,
+      "result": "COMPATIBLE"
+    },
+    {
+      "participant": "ENTITY",
+      "stateClassesChecked": ["S1", "S2", "S3"],
+      "checkedFamilies": [
+        "character",
+        "equipment_bindings",
+        "class_assignment",
+        "room_ground_container"
+      ],
+      "hasS2Rows": true,
+      "result": "COMPATIBLE"
+    }
+  ]
+}
+```
+
 ## Version Activation & Rollback
 
 The **Game Session Service** controls which published version is active for each live game instance. See [User Journeys – Publish and Start a Game Instance](./user-journeys-creators.md#4-publish-and-start-a-game-instance) for the high level flow.
@@ -386,7 +427,7 @@ Termination requires ordered handoff across runtime and domain owners:
 
 If any step after step 1 fails, admission remains closed and the same termination workflow identity must retry until convergence.
 
-Before any operation that changes whether a tenant is actively serving gameplay through its single gameplay-admissible instance (for example, starting that instance, cutting over to a replacement instance with a different `runtime_version`, or rolling back to a previous version), the Game Session Service must consult the runtime entitlement contract:
+Before any operation that changes whether a tenant is actively serving gameplay through one of its player-addressable realms (for example, starting the default production realm, creating a playtest fork, cutting a realm over to a replacement instance with a different `runtime_version`, or rolling a realm back to a previous version), the Game Session Service must consult the runtime entitlement contract:
 
 - Call `GetTenantEntitlementsForRuntime(tenantId)` in the Account Service and enforce that:
   - The tenant is currently **available for gameplay** under its subscription and billing state (for example, not `suspended` or `canceled`).  
@@ -394,37 +435,51 @@ Before any operation that changes whether a tenant is actively serving gameplay 
 - If entitlements indicate that the tenant is unavailable for gameplay or that quotas would be exceeded, the operation fails with a clear, tenant-scoped error and no instance-level changes are applied.
 - Entitlement snapshots used by these admission/control operations must be no older than 15 seconds. If a fresh snapshot cannot be obtained (for example due to event lag or Account Service uncertainty), operations fail closed with canonical error `ENTITLEMENT_UNAVAILABLE` (or protocol-mapped equivalent).
 - Entitlement snapshots must include `evaluatedAt`, `entitlementVersion`, and `tenantBillingSequence`; runtime operations must reject stale time/sequence data and reconcile via fresh `GetTenantEntitlementsForRuntime(tenantId)` reads.
-- Runtime operations must enforce the single-admissible-instance contract exposed to players: player admission targets exactly one gameplay-admissible instance per tenant, and control-plane workflows must not create ambiguity about which instance is admissible.
+- Runtime operations must enforce the realm-routing contract exposed to players: each player-addressable realm resolves to exactly one gameplay-admissible instance at a time, and control-plane workflows must not create ambiguity about which instance is admissible for a given realm.
 
-### Version Cutover Contract Under The Single-Admissible-Instance Invariant
+### Realm Routing Contract For Player-Addressable Realms
 
-Version cutover contract for the gameplay-admissible instance:
+Version cutover contract for a player-addressable realm:
 
 1. Prepare the replacement instance as non-admissible (`PREPARING`/draining-safe) and run world creation to completion.
 2. Run compatibility preflight for source instance -> target version and fail closed on mismatch.
-3. Perform one atomic admission-pointer swap so the tenant resolves to exactly one admissible `gameInstanceId` at any instant.
+3. Perform one atomic realm-route swap so the selected realm resolves to exactly one admissible `gameInstanceId` at any instant.
 4. Keep the old instance non-admissible and drain/terminate it through the standard `InstanceTermination` workflow.
-5. If swap fails, keep old instance as sole admissible instance and retry; do not open dual admission.
+5. If swap fails, keep the previously routed instance as the sole admissible target for that realm and retry; do not open dual admission for the same realm.
 
-Admission-pointer contract (required):
+Realm-routing contract (required):
 
-- Each tenant must have exactly one authoritative gameplay-admission pointer record managed by Game Session.
-- Each pointer record must contain at minimum:
+- Each player-addressable realm must have exactly one authoritative routing record managed by Game Session.
+- Each routing record must contain at minimum:
   - `tenantId`,
+  - `realmSlug` (or equivalent stable player-facing realm selector),
   - `admissibleGameInstanceId`,
+  - `isDefaultProductionRealm`,
   - `pointerVersion` (monotonic CAS version),
   - `updatedAt`,
   - `updatedBy` / change reason for audit.
-- Admission (`PLAY`) and runtime control-plane operations must read this record as the source of truth for gameplay-admissible instance selection.
-- Pointer updates use compare-and-set semantics on `pointerVersion`; failed CAS must not admit or expose dual-admissible state.
-- Ownership: Game Session Service is the sole writer and system of record for gameplay admission-pointer state; other services consume via API/read models and must not write pointer state directly.
-- API surface: Game Session exposes control-plane APIs for reading/updating the gameplay admission pointer. All cutover workflows must use these APIs rather than direct table writes.
-- If pointer state is unavailable or ambiguous, admission fails closed with `ADMISSION_POINTER_UNAVAILABLE` (or protocol-mapped equivalent) until reconciled.
+- `REALMS`, connect-token issuance, admission (`PLAY`), and runtime control-plane operations must read these records as the source of truth for realm selection and gameplay-admissible instance routing.
+- Routing updates use compare-and-set semantics on `pointerVersion`; failed CAS must not admit or expose dual-admissible state for the same realm.
+- Ownership: Game Session Service is the sole writer and system of record for gameplay realm-routing state; other services consume via API/read models and must not write routing state directly.
+- API surface: Game Session exposes control-plane APIs for reading/updating realm-routing state. All launch, cutover, rollback, and fork lifecycle workflows must use these APIs rather than direct table writes.
+- If routing state for a selected realm is unavailable or ambiguous, admission fails closed with `ADMISSION_POINTER_UNAVAILABLE` (or protocol-mapped equivalent) until reconciled.
+- One realm may be marked as the default production realm. Additional realms, including playtest forks, are valid first-class player-addressable realms when they are intentionally exposed through the authenticated discovery contract.
 
-Future multi-realm note:
+### Fork-Snapshot Boundary For Playtest Realms
 
-- Additional player-addressable realms, including playtest forks, are out of scope for the first implementation.
-- If FireMUD later introduces player-selectable additional realms, that design must add a separate canonical routing/discovery contract instead of weakening the single-admissible-instance invariant by implication.
+Creator-managed playtest forks are temporary player-addressable realms derived from a source realm snapshot. The fork-snapshot boundary is normative for v1:
+
+- **Source identity** – A fork is created from a specific `{tenantId, sourceRealmSlug, sourceGameInstanceId}` plus the resolved source build identity (`runtimeVersionId` and optional `scriptPatchVersion`) captured at snapshot time.
+- **Account model** – Forks reuse the same platform `accountId` identities as production. Visibility is controlled by explicit tester/creator/operator access grants; unauthorized accounts must not see the fork in `REALMS <world>`.
+- **Copied gameplay state** – The snapshot copies the source realm's player gameplay state needed for realistic validation, including character progression, inventory, learned abilities, and other realm-scoped runtime/world state required to reproduce gameplay behavior.
+- **Fork-local identity** – Copied gameplay state becomes fork-local runtime state keyed to the fork's `gameInstanceId`. A copied character in the fork remains associated with the same platform account, but it is a separate fork-local gameplay record, not a live reference back to production rows.
+- **Build selection** – A fork may launch on the source realm's current build for reproduction or on a different published `versionId` and optional `scriptPatchVersion` for validation. Published/runtime version pointers are copied from source only when they are also the chosen target build.
+- **Excluded state** – Billing records, invoices, payment methods, live auth sessions, connect-token replay state, and source moderation/audit cases are never cloned as active source records into the fork.
+- **Fork-generated records** – Analytics, moderation reports, audit entries, and similar operational data created during the playtest are written as new fork-scoped records tagged to the fork realm rather than appended to the source realm's production history.
+- **External side effects** – Fork gameplay must not emit production-side effects. Outbound integrations, monetization effects, and any other irreversible external actions must be suppressed, redirected to test sinks, or otherwise isolated so the fork cannot mutate production state outside the fork-local datastore boundary.
+- **No merge-back** – Runtime writes from a fork never merge automatically into production. Promotion from a successful playtest occurs only through the normal launch/cutover workflow against the target production realm.
+- **Reset semantics** – Resetting a fork replaces its fork-local gameplay state with a fresh application of the chosen source snapshot and preserves only the control-plane identity and audit history needed to track the fork lifecycle.
+
 When entitlements transition to hard-cutoff states (`suspended` or `canceled`) after an instance is already running, runtime behavior is deterministic:
 
 - New admissions are blocked immediately.

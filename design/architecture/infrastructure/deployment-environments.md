@@ -18,7 +18,7 @@ This document outlines how FireMUD is deployed across environments including loc
 ## Quick Environment Decision Guide
 
 - Use **Docker Compose** when developing locally or running short-lived preview stacks from pull requests.
-- Use **Kubernetes (dev/stage/prod clusters)** for any shared or player-facing environment where autoscaling, high availability, and full observability are required.
+- Use **Kubernetes shared or player-facing environment classes** (`dev-demo-cluster`, `staging`, `production`, or `hobby-self-hosted`) where autoscaling, high availability, and full observability are required.
 - Prefer **staging** for playtests that should mirror production routing, TLS, and Redis/Postgres topologies before promoting changes. Treat PR preview stacks as fast functional review environments, not as a substitute for prod-like validation.
 
 ## Terms

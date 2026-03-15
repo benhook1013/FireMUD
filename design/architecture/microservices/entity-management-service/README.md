@@ -98,7 +98,7 @@ Initial-slice row-family inventory:
 - `character` rows are `S1`.
 - Player progression/currency/account-ownership rows attached to `character` and not requiring template remap are `S1`.
 - Inventory membership / containment rows for durable player-owned containers remain `S1` when every referenced item template is still valid against the target version.
-- Equipment-binding rows (for example `equipment_bindings` or equivalent join tables) are `S2`.
+- `equipment_bindings` rows are `S2`.
 - Durable learned-ability, class/archetype, starter-loadout, or similar template-reference rows are `S2`.
 - Durable inventory or character rows that need an approved template remap to remain valid are `S2`.
 - Synthetic room-ground containers keyed by `(tenantId, gameInstanceId, roomInstanceId)` and their containment rows are `S3`.

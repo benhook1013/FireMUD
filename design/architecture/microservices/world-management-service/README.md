@@ -226,7 +226,7 @@ Initial-slice row-family inventory:
 - `region_instance`, `zone_instance`, `room_instance` are `S3`.
 - `character_location` and `npc_location` are `S3`.
 - `world_event` rows created for a specific `gameInstanceId` are `S3`.
-- Instance-scoped population materialization tables keyed by `gameInstanceId` (for example `population_schedule_instance` or equivalent implementation tables) are `S3`.
+- `population_schedule_instance` rows keyed by `gameInstanceId` are `S3`.
 - `generation_run` rows tied to runtime instance creation are diagnostic/runtime provenance only and are not cutover payload rows; treat them as `S3` retention-only metadata for the source instance lifecycle.
 - No World-owned initial-slice table is classified as mandatory `S2`.
 

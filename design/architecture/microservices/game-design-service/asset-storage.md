@@ -71,6 +71,34 @@ Illustrative `manifest.json` fragment:
 }
 ```
 
+Negative consumer examples:
+
+- Unsupported manifest schema version:
+
+```json
+{
+  "error": {
+    "code": "UNSUPPORTED_MANIFEST_SCHEMA_VERSION",
+    "message": "manifest schemaVersion=2 is not supported by this runtime consumer; launch must fail closed until the consumer understands that schema."
+  }
+}
+```
+
+- Missing required derived-world-artifact entry for a release that expects it:
+
+```json
+{
+  "error": {
+    "code": "REQUIRED_RELEASE_ARTIFACT_MISSING",
+    "message": "Expected manifest.assets[\"world.navmesh\"] for this release, but no attested entry was present."
+  }
+}
+```
+
+Fail-closed reader rule:
+
+- If a runtime consumer does not understand the manifest `schemaVersion`, or if a required derived-world-artifact key is missing for the release it is trying to start, launch must fail before gameplay admission rather than guessing fallback paths or object keys.
+
 ## Table Structure
 
 The `game_assets` table stores metadata for design-time uploads. Columns include:

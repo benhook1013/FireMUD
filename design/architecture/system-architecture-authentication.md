@@ -231,10 +231,10 @@ To avoid introducing a second independent end-user login model for first-party g
 - Connect-token issuance API: control-plane endpoint (for example `POST /auth/connect-token`) that returns exactly one short-lived token per request and logs `accountId`, `tenantId`, `gameInstanceId`, `jti`, and issuance timestamp.
   - Minimum request fields: `tenantId`, `gameInstanceId`, `requestId`.
   - Minimum response fields: `connectToken`, `expiresAt`, `accountId`, `tenantId`, `gameInstanceId`, `jti`, `issuedAt`.
-  - Before issuance, Account Service must perform a live membership check for `{accountId, tenantId}`, a live runtime entitlement check for `tenantId`, and a live admission-pointer read for `tenantId` via the Game Session control-plane API.
-  - If admission-pointer state is unavailable or ambiguous, connect-token issuance fails closed with `ADMISSION_POINTER_UNAVAILABLE`.
-  - If the requested `gameInstanceId` is not the current admissible target for the tenant, connect-token issuance fails closed with `CONNECT_SCOPE_MISMATCH`; it must not mint a token for a stale or non-admissible target and rely on `PLAY` to correct it later.
-  - In the first implementation, clients should request the tenant's single gameplay-admissible instance (`"primary"`). Alternate player-addressable realms are out of scope until the lobby protocol and discovery surfaces are revised together.
+  - Before issuance, Account Service must perform a live membership check for `{accountId, tenantId}`, a live runtime entitlement check for `tenantId`, and a live realm-routing read for the requested realm target via the Game Session control-plane API.
+  - If realm-routing state is unavailable or ambiguous, connect-token issuance fails closed with `ADMISSION_POINTER_UNAVAILABLE`.
+  - If the requested `gameInstanceId` is not the current admissible target for the selected realm, connect-token issuance fails closed with `CONNECT_SCOPE_MISMATCH`; it must not mint a token for a stale or non-admissible target and rely on `PLAY` to correct it later.
+  - Clients may request connect tokens only for realm targets returned by the canonical lobby/discovery contract for that caller; hidden or unauthorized realms must not be inferable by probing connect-token issuance directly.
   - Missing required request/response fields are contract violations and must fail closed rather than being defaulted by callers.
 - Transport: `X-Firemud-Connect-Token` header on `/ws/game/**` handshake.
 - Required claims: `accountId`, `tenantId`, `gameInstanceId`, `exp`, `jti`.
@@ -277,7 +277,7 @@ To remove ambiguity between connect-token admission and `LOGIN`, first-party web
 
 1. Call the dedicated first-party player bootstrap endpoint (for example `POST /auth/player-bootstrap`) and establish a short-lived player bootstrap identity.
 2. Request a short-lived gameplay connect token for one target `{tenantId, gameInstanceId}`. This call performs the live membership and runtime entitlement checks for that target.
-   - The issuance path must also validate the target against the authoritative admission pointer. If the target is no longer admissible, the request fails before socket open rather than issuing a stale token.
+   - The issuance path must also validate the target against the authoritative realm-routing record. If the target is no longer admissible for the selected realm, the request fails before socket open rather than issuing a stale token.
 3. Open gameplay WebSocket on `/ws/game/**` with `X-Firemud-Connect-Token`.
 4. Complete gameplay authentication in-band using `LOGIN` (or `LOGON`) and then lobby binding with `PLAY`.
 
@@ -290,7 +290,7 @@ Normative constraints:
 - Game Session must bind the verified connect context to the authenticated gameplay login: if bootstrap-backed `LOGIN` resolves to an `accountId` different from the connect-context `accountId`, the session fails closed with canonical error `ACCOUNT_MISMATCH` and no gameplay scope is bound.
 - For first-party clients on `/ws/game/**`, the `PLAY` selection must match the connect-token scope `{tenantId, gameInstanceId}`. Scope mismatch is rejected with canonical error `CONNECT_SCOPE_MISMATCH`; clients must request a fresh connect token for the intended target and reconnect.
 - Because `/auth/connect-token` validates against the authoritative admission-pointer state for the caller, `CONNECT_SCOPE_MISMATCH` at `PLAY` is treated as drift between issuance and admission (for example pointer movement during reconnect), not as normal stale-client correction.
-- The bootstrap/connect-token contract and the lobby `PLAY` contract together form the canonical player-selected `{tenantId, gameInstanceId}` path. The first implementation supports exactly one player-addressable gameplay instance per tenant. Any future multi-realm design must revise bootstrap, discovery, and `PLAY` in the same change rather than introducing a side-channel selector.
+- The bootstrap/connect-token contract and the lobby `PLAY` contract together form the canonical player-selected `{tenantId, gameInstanceId}` path. Players may select from any realms they are authorized to see through `REALMS <world>`, and connect tokens must be issued only for a concrete target returned by the same realm-routing contract rather than via a side-channel selector.
 
 Canonical first-party browser sequence (example):
 
@@ -300,16 +300,18 @@ POST /auth/player-bootstrap
 
 POST /auth/connect-token
 Authorization: Bearer <bootstrapToken>
-{ tenantId: "tenant-demo", gameInstanceId: "primary", requestId: "req-123" }
--> { connectToken, accountId, tenantId: "tenant-demo", gameInstanceId: "primary", expiresAt }
+{ tenantId: "tenant-demo", gameInstanceId: "production", requestId: "req-123" }
+-> { connectToken, accountId, tenantId: "tenant-demo", gameInstanceId: "production", expiresAt }
 
 GET /ws/game/** with X-Firemud-Connect-Token: <connectToken>
 
 LOGIN
 OK LOGIN Logged in
 WORLDS
-PLAY demo
-OK PLAY Entered world: Demo World
+REALMS demo
+CHARS demo production
+PLAY demo production Mara
+OK PLAY Entered Demo World / Live Realm as Mara
 ```
 
 ### Mapping to the Account Service
@@ -337,14 +339,15 @@ Players must never be asked to type raw internal identifiers such as `tenantId` 
 After `LOGIN` succeeds, the Game Session Service requires an explicit lobby selection flow using these canonical commands:
 
 - `WORLDS` – list worlds the authenticated account can enter (a numbered menu plus a stable world slug for each entry).
-- `CHARS <world>` – list characters for the selected world (`<world>` is a world index from `WORLDS` or a world slug).
-- `PLAY <world> [character]` – enter gameplay by selecting a world and optional character.
+- `REALMS <world>` – list the visible realms for the selected world (`<world>` is a world index from `WORLDS` or a world slug). Responses include the default production realm plus any explicitly authorized additional realms such as playtest forks.
+- `CHARS <world> [realm]` – list characters for the selected world and optional realm.
+- `PLAY <world> [realm] [character]` – enter gameplay by selecting a world, an optional realm, and an optional character.
 
-Single-admissible-instance contract:
+Realm discovery and routing contract:
 
-- In the first implementation, each tenant has exactly one player-addressable gameplay-admissible instance, identified internally by `gameInstanceId="primary"`.
-- Additional running instances may exist for operator workflows, but they are not player-selectable and must not appear in the lobby flow.
-- Introducing additional player-addressable realms is a future protocol change and must revise bootstrap, discovery, route-matrix entries, and `PLAY` semantics together.
+- A tenant may expose multiple player-addressable realms. Each visible realm resolves to exactly one admissible `gameInstanceId` at a time through the authoritative realm-routing records owned by Game Session.
+- One realm may be designated as the default public production realm. Additional realms may be public or access-controlled according to tenant policy, but unauthorized or hidden realms must not appear in discovery.
+- Connect-token issuance, `REALMS`, `CHARS`, and `PLAY` must all consume the same realm-routing state so clients never infer realm identity from transport-side hints alone.
 
 Lobby discovery source-of-truth contract:
 
@@ -356,19 +359,21 @@ Lobby discovery source-of-truth contract:
 Lobby command classification contract:
 
 - `WORLDS` is an authenticated **pre-tenant discovery** operation, not a normal tenant-scoped route. It runs after account authentication but before a single `tenantId` has been selected.
-- `CHARS <world>` and `PLAY <world> [character]` become tenant-scoped only after `<world>` is resolved server-side to canonical `{tenantId, gameInstanceId="primary"}`.
+- `REALMS <world>` is a tenant-scoped discovery operation after `<world>` resolves to a canonical `tenantId`, but before the client is bound to one `gameInstanceId`.
+- `CHARS <world> [realm]` and `PLAY <world> [realm] [character]` become tenant/realm-scoped only after `<world>` and optional `[realm]` are resolved server-side to canonical `{tenantId, gameInstanceId}`.
 - Shared auth middleware and route-matrix entries must not model all lobby commands as one undifferentiated tenant-scoped surface.
 
 The `PLAY` flow:
 
 - Resolves `<world>` to a canonical `tenantId` (opaque GUID) and validates it exists.
+- Resolves optional `[realm]` to a canonical realm for that tenant. If no realm is supplied, the tenant's default production realm is selected.
 - Verifies that the account is authorized to play in that `tenantId` using caller-bound gameplay membership authority. Global roles alone must not satisfy gameplay admission.
 - Performs an authoritative internal membership read for `{accountId, tenantId}` and persists the returned `membershipVersion` into the gameplay session binding on successful admission. The membership response must also assert `gameplayAdmissionAllowed=true`; gameplay admission must not source `membershipVersion` or gameplay authority from JWT claims or local caches.
 - Consults the runtime entitlement contract `GetTenantEntitlementsForRuntime(tenantId)` to confirm that the tenant is currently available for gameplay (for example, subscription state is not `suspended` or `canceled` and hard quotas are not violated).
-- Resolves `[character]` to a canonical `characterId` scoped to `{accountId, tenantId}`. Until character selection ships, the service may bind to a default character identity derived from `accountId`, but the binding model must still treat `characterId` as a distinct identifier for forward compatibility.
-- Resolves the tenant's gameplay-admissible instance and records that `gameInstanceId` in the gameplay binding.
+- Resolves `[character]` to a canonical `characterId` scoped to `{accountId, tenantId, gameInstanceId}` according to the selected realm's character policy. Until character selection ships, the service may bind to a default character identity derived from `accountId`, but the binding model must still treat `characterId` as a distinct identifier for forward compatibility.
+- Resolves the selected realm's gameplay-admissible instance and records that `gameInstanceId` in the gameplay binding.
   - First-party `/ws/game/**` contract: if a validated connect token is present, resolved `tenantId` and `gameInstanceId` must match token claims. On mismatch, reject admission with `CONNECT_SCOPE_MISMATCH` and do not bind session scope.
-  - Runtime control-plane and admission flows use the admission-pointer contract from [Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md#version-cutover-contract-under-the-single-admissible-instance-invariant) as the source of truth for which concrete `gameInstanceId` is admissible.
+  - Runtime control-plane and admission flows use the realm-routing contract from [Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md#realm-routing-contract-for-player-addressable-realms) as the source of truth for which concrete `gameInstanceId` is admissible for the selected realm.
 - Binds the socket to a gameplay session key for the chosen world/instance/character identity under `session:game:<tenantId>:<gameInstanceId>:<sessionId>` as described in [Multi-Tenancy](./system-architecture-multi-tenancy.md#identity--tenant-model) and [Redis Architecture](./system-architecture-redis.md#session-keys-and-gameplay-binding).
 - Ensures the gameplay session binding is consistent with the tick/lease ownership model for the character’s current `<tenantId, regionId>`. Per `design/architecture/decisions/adr-0007-edge-sharding-and-close-taxonomy.md`, `/ws/game/**` is routed to a stable Game Session service endpoint and the edge does not implement a lease-aware shard routing plane.
 
@@ -381,7 +386,7 @@ The `PLAY` flow:
 - `CONNECT_CONTEXT_INVALID` – first-party `/ws/game/**` admission is missing or has invalid/expired gateway-signed connect context for the handshake that required connect-token verification.
 - `CONNECT_SCOPE_MISMATCH` – first-party `/ws/game/**` reconnect/admission attempted `PLAY` scope that does not match the connect-token `{tenantId, gameInstanceId}`.
 - `ACCOUNT_MISMATCH` – bootstrap-backed `LOGIN` resolved to an account different from the validated connect-context subject, so no gameplay scope may be bound.
-- `ADMISSION_POINTER_UNAVAILABLE` – gameplay-admissible instance pointer state is unavailable/ambiguous; admission is denied until pointer reconciliation succeeds.
+- `ADMISSION_POINTER_UNAVAILABLE` – realm-routing state is unavailable or ambiguous for the selected realm; admission is denied until routing reconciliation succeeds.
 - `WORLD_NOT_SELECTED` – a gameplay command requiring an admitted world was issued before `PLAY` completed successfully.
 - `CHARACTER_NOT_FOUND` / `CHARACTER_ACCESS_DENIED` – character selection is requested but the character cannot be found or is not owned by the account (reserved for when character selection ships).
 - Any subsequent attempt to switch tenants or characters for a socket must go through the same tenant-selection flow so that role checks and entitlements are re-evaluated; there is no implicit cross-tenant switching based solely on the initial `LOGIN`.
@@ -398,9 +403,9 @@ First-party gameplay admission and reconnect clients should treat the following 
 | `PLAY` | `WORLD_ACCESS_DENIED` | Caller-bound membership authority does not allow gameplay admission for the resolved tenant | Keep auth state, surface an authorization error, and do not infer hidden-tenant existence beyond the canonical code. |
 | `PLAY` | `TENANT_BILLING_BLOCKED` | Tenant entitlement state is `suspended` or `canceled` for gameplay | Keep auth state, surface a billing-blocked state for that tenant, and disable gameplay admission flows. |
 | `PLAY`, new admission, restart/rollback | `ENTITLEMENT_UNAVAILABLE` | No entitlement snapshot fresh enough for the 15-second admission SLA can be established | Keep auth state, retry with bounded backoff, and avoid admitting based on stale entitlement cache state. |
-| Gameplay command before `PLAY` | `WORLD_NOT_SELECTED` | Client issued a world-scoped gameplay command before lobby admission completed | Keep auth state and route the client back through `WORLDS` / `PLAY`. |
+| Gameplay command before `PLAY` | `WORLD_NOT_SELECTED` | Client issued a world-scoped gameplay command before lobby admission completed | Keep auth state and route the client back through `WORLDS` / `REALMS` / `PLAY`. |
 
-Clients re-authenticate **only after disconnecting** (TCP or WebSocket loss) or when server-side auth state has expired or been revoked. After a reconnect, clients always issue a fresh `LOGIN` and then complete lobby selection again (`PLAY <world> [character]`). If a resumable gameplay session exists for the selected `{tenantId, gameInstanceId, characterId}`, the Game Session Service resumes it; otherwise it creates a fresh gameplay session binding.
+Clients re-authenticate **only after disconnecting** (TCP or WebSocket loss) or when server-side auth state has expired or been revoked. After a reconnect, clients always issue a fresh `LOGIN` and then complete lobby selection again (`PLAY <world> [realm] [character]`). If a resumable gameplay session exists for the selected `{tenantId, gameInstanceId, characterId}`, the Game Session Service resumes it; otherwise it creates a fresh gameplay session binding.
 
 In the target design, `playerId` represents a **character-level identity** within a tenant. All Redis key formats and Game Session Service APIs must treat `playerId` as an abstract character identifier so sessions bind sockets to characters rather than raw accounts. Canonical takeover and resume identity is `{tenantId, gameInstanceId, characterId}`; docs or APIs that still mention `{accountId, playerId}` are legacy wording only.
 

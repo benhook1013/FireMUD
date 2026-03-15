@@ -126,7 +126,6 @@ Unattributed bridge-loss example:
 - If the authenticated Proxy → Gateway bridge drops without `1000/logout;subreason=gateway_restart`, treat the event as `bridge_shutdown_class=unattributed_failure`.
 - For already-established Telnet sessions, expect an immediate `backend_unavailable` disconnect rather than a grace window or hidden bridge recovery attempt.
 - Investigate Gateway/Game Session/process crash timelines before tuning Telnet-side limits.
-- Investigate Gateway/Game Session/process crash timelines before tuning Telnet-side limits.
 
 ### Web-Only WebSocket Degradation Playbook
 
