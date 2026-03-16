@@ -447,9 +447,6 @@ jobs:
             const report = fs.existsSync(path)
               ? fs.readFileSync(path, 'utf8')
               : 'Trivy report not available.';
-            const displayReport = report
-              .replace("- '-': Not scanned", "- '-': No secret-scan result is shown for this target row")
-              .replace("- '0': Clean (no security findings detected)", "- '0': Secret scan result shown and no findings detected");
 
             const hasVulnerabilities =
               /Total:\s+[1-9]/.test(report) || /CRITICAL|HIGH/.test(report);
@@ -458,7 +455,7 @@ jobs:
               ? "❌ Critical/High vulnerabilities detected"
               : "✅ No critical/high vulnerabilities found";
 
-            const body = `### 🔍 Trivy Security Scan Report\n**${summary}**\n\n\`\`\`\n${displayReport}\n\`\`\``;
+            const body = `### 🔍 Trivy Security Scan Report\n**${summary}**\n\n\`\`\`\n${report}\n\`\`\``;
 
             await core.summary
               .addRaw(summary, true)
