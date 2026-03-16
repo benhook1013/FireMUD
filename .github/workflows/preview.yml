@@ -53,6 +53,9 @@ jobs:
       - name: Generate Dev Certificates
         run: ./dev-tools/generate-dev-certs.sh dev-tools/certs
 
+      - name: Build service jars
+        run: ./gradlew :account-service:bootJar :automation-scripting-service:bootJar :entity-management-service:bootJar :game-design-service:bootJar :game-logic-service:bootJar :game-session-service:bootJar :logging-admin-service:bootJar :social-groups-service:bootJar :spring-cloud-gateway:bootJar :tcp-proxy-service:bootJar :world-management-service:bootJar
+
       - name: Build service images with cache
         run: |
           services="account-service automation-scripting-service entity-management-service game-design-service game-logic-service game-session-service logging-admin-service social-groups-service spring-cloud-gateway tcp-proxy-service world-management-service"
