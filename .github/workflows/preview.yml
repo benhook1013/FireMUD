@@ -1,120 +1,33 @@
 name: PR Preview Environment
 
 on:
-  pull_request:
-    types: [opened, synchronize, reopened]
-    branches:
-      - develop
-      - main
-      - 'release/**'
   workflow_dispatch:
 
 permissions:
   contents: read
-  issues: write
   packages: read
-  pull-requests: write
 
 jobs:
-  preview:
-    if: github.base_ref == 'develop' || github.base_ref == 'main' || startsWith(github.base_ref, 'release/')
+  preview-disabled:
+    name: Preview Disabled
     runs-on: ubuntu-latest
-    timeout-minutes: 30
     steps:
-      - name: ⬇️ Checkout Code
-        uses: actions/checkout@v6
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-
-      - name: Login to GHCR
-        uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: ⚙️ Set Up Java
-        uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: '21'
-
-      - name: ⚙️ Set Up Gradle
-        uses: gradle/actions/setup-gradle@v5
-
-      - name: Enable BuildKit
-        run: echo "DOCKER_BUILDKIT=1" >> $GITHUB_ENV
-
-      - name: Resolve published base image tag
-        run: echo "FIREMUD_BASE_IMAGE=ghcr.io/benhook1013/firemud-base:latest" >> $GITHUB_ENV
-
-      - name: Prepare environment file
-        run: cp .env.sample .env
-
-      - name: Generate Dev Certificates
-        run: ./dev-tools/generate-dev-certs.sh dev-tools/certs
-
-      - name: Build service jars
-        run: ./gradlew :account-service:bootJar :automation-scripting-service:bootJar :entity-management-service:bootJar :game-design-service:bootJar :game-logic-service:bootJar :game-session-service:bootJar :logging-admin-service:bootJar :social-groups-service:bootJar :spring-cloud-gateway:bootJar :tcp-proxy-service:bootJar :world-management-service:bootJar
-
-      - name: Build service images with cache
+      - name: Explain current state
         run: |
-          services="account-service automation-scripting-service entity-management-service game-design-service game-logic-service game-session-service logging-admin-service social-groups-service spring-cloud-gateway tcp-proxy-service world-management-service"
-          docker pull "$FIREMUD_BASE_IMAGE"
-          for service in $services; do
-            docker pull ghcr.io/benhook1013/$service:latest || true
-            docker buildx build \
-              --build-arg BASE_IMAGE=$FIREMUD_BASE_IMAGE \
-              --cache-from type=registry,ref=ghcr.io/benhook1013/$service:latest \
-              --cache-from type=gha \
-              --cache-to type=gha,mode=max \
-              --load \
-              -t firemud-$service \
-              -f ./services/$service/Dockerfile \
-              .
-          done
+          cat <<'EOF'
+          PR preview deployments are intentionally disabled.
 
-      - name: Start preview
-        run: |
-          COMPOSE_PROJECT_NAME=firemud docker compose -f docker/docker-compose.yml -f docker/docker-compose.override.yml up -d
+          Reason:
+          - The main CI workflow already provides stack startup and smoke coverage.
+          - This workflow should be reserved for a real reviewer-accessible preview deployment,
+            not another CI-only Docker Compose boot path.
 
-      - name: Check Gateway Health
-        run: |
-          for i in {1..30}; do
-            if curl -fs http://localhost:8080/actuator/health >/dev/null; then
-              echo "Gateway healthy" && break
-            fi
-            sleep 5
-          done
-          curl -fs http://localhost:8080/actuator/health
+          Intended future design:
+          1. Build PR-tagged service images.
+          2. Push those images to a registry.
+          3. Deploy them to an external preview host or platform.
+          4. Emit a reviewer-accessible preview URL.
+          5. Tear the preview down when the PR closes.
 
-      - name: Post Preview Summary
-        if: github.event_name == 'pull_request'
-        uses: actions/github-script@v8
-        with:
-          script: |
-            const body = `### ✨ Preview environment up\nAll services started via Docker Compose.`;
-            await core.summary.addHeading('Preview Environment').addRaw(body).write();
-            const { data: comments } = await github.rest.issues.listComments({
-              ...context.repo,
-              issue_number: context.issue.number
-            });
-            const existing = comments.find(c => c.body.startsWith('### ✨ Preview environment'));
-            if (existing) {
-              await github.rest.issues.updateComment({
-                ...context.repo,
-                comment_id: existing.id,
-                body
-              });
-            } else {
-              await github.rest.issues.createComment({
-                ...context.repo,
-                issue_number: context.issue.number,
-                body
-              });
-            }
-
-      - name: Tear Down Stack
-        if: always()
-        run: COMPOSE_PROJECT_NAME=firemud docker compose -f docker/docker-compose.yml -f docker/docker-compose.override.yml down
+          Re-enable this workflow only after an external preview target is available.
+          EOF
