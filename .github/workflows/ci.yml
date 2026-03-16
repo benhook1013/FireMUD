@@ -274,12 +274,14 @@ jobs:
         with:
           script: |
             const coverage = Number("${{ steps.coverage.outputs.percent }}");
-            const testPassed = "${{ steps.checks.outcome }}" === "success";
+            const checksPassed = "${{ steps.checks.outcome }}" === "success";
+            const statusLine = checksPassed
+              ? "✅ Build, test, and verification checks passed"
+              : "❌ Build, test, or verification checks failed (see logs)";
 
             const commentLines = [
               `### 🧪 Build Summary`,
-              testPassed ? "✅ All tests passed" : "❌ Some tests failed (see logs)",
-              "🧼 Lint + format steps completed",
+              statusLine,
               `📊 Code coverage: **${coverage}%**`,
               ""
             ];
@@ -287,8 +289,7 @@ jobs:
             const body = commentLines.join('\n');
 
             await core.summary
-              .addRaw(testPassed ? "✅ All tests passed" : "❌ Some tests failed (see logs)", true)
-              .addRaw("🧼 Lint + format steps completed", true)
+              .addRaw(statusLine, true)
               .addRaw(`📊 Code coverage: ${coverage}%`, true)
               .write();
 
