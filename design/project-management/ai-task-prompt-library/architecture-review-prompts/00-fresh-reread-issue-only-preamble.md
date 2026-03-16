@@ -20,8 +20,8 @@ Output rules:
 - Do not summarize or praise what already looks good.
 - Report implementation-blocking issues first.
 - If there are no implementation-blocking issues, say that explicitly.
-- When no blockers remain, include a `Suggested follow-ups` section with the most useful non-blocking improvements you can find. Do not artificially cap this list; include as many items as are genuinely worthwhile.
-- `Suggested follow-ups` may include small clarifications, cleanup, missing examples, sharper contracts, or larger refactors if they would materially improve the design or implementation path.
+- When no blockers remain, include a `Suggested follow-ups` section with only the highest-value non-blocking improvements.
+- `Suggested follow-ups` may include small clarifications, cleanup, missing examples, sharper contracts, or larger refactors if they would materially improve the design or implementation path. Do not include minor wording nits unless they materially improve implementation clarity.
 - For each blocking issue, include:
   - `Severity`: `blocking`
   - `Why it blocks implementation`

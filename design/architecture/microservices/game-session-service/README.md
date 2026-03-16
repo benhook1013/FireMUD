@@ -401,6 +401,15 @@ LOGIN
 ERROR ACCOUNT_MISMATCH Bootstrap identity does not match the validated session context
 ```
 
+First-party `/ws/game/**` successful bootstrap-backed login and world entry:
+
+```text
+LOGIN
+OK LOGIN Logged in
+PLAY demo
+OK PLAY Entered world: Demo World
+```
+
 Telnet failure (wrong password):
 
 ```text

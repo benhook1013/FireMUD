@@ -15,7 +15,7 @@ This document is the **hub/entry point** for environment variables and secrets i
 
 ## Overview
 
-FireMUD relies on environment variables and Kubernetes Secrets to configure services across local development, CI, and production. This hub document is intentionally short; it exists to route readers to the right level of detail:
+FireMUD relies on environment variables and Kubernetes Secrets to configure services across local development, CI, and shared or player-facing Kubernetes environments. This hub document is intentionally short; it exists to route readers to the right level of detail:
 
 - Use the **overview** document for conceptual understanding and on-call triage.
 - Use the **catalog** document when you need exact variable names, defaults, and rotation behavior.
@@ -30,7 +30,7 @@ For a narrative explanation of how configuration and secrets flow through FireMU
 
 - The Operator Quick Reference for core PostgreSQL, Redis, and TLS/JWT variables.
 - How `.env` is used in local development.
-- How Kubernetes `ConfigMap` and `Secret` objects are used in production.
+- How Kubernetes `ConfigMap` and `Secret` objects are used in shared or player-facing Kubernetes environments.
 - The distinction between configuration and secrets.
 - How cert-manager, Kubernetes Secrets, and watchers like `TlsCertificateWatcher`, `JwtSecretWatcher`, and `GrpcServerTlsReloader` fit together.
 

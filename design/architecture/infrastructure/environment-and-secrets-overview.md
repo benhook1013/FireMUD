@@ -202,11 +202,11 @@ FireMUD distinguishes between **configuration** and **secrets** but delivers bot
 
 - **Configuration (non‑secret)**:
   - Examples: service hostnames, ports, feature flags, environment profile (`SPRING_PROFILES_ACTIVE`).
-  - Typically sourced from `.env` in development and from Kubernetes `ConfigMap` objects in production.
+  - Typically sourced from `.env` in development and from Kubernetes `ConfigMap` objects in shared or player-facing Kubernetes environments.
   - Changes may be applied by restarting pods or reloading configuration where supported.
 - **Secrets**:
   - Examples: database passwords, JWT signing keys, TLS private keys, S3 access keys.
-  - Always stored in Kubernetes `Secret` objects in production.
+  - Always stored in Kubernetes `Secret` objects in shared or player-facing Kubernetes environments.
   - May be generated or randomized automatically for local development.
   - Rotation is performed by updating the backing Secret via the appropriate automation:
     - TLS certificates are rotated automatically by cert-manager.

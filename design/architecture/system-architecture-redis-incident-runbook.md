@@ -37,7 +37,7 @@ When Coordination Redis recovers after an outage or severe degradation:
   - If `pending` survives for a region, the next executor correlates it to the durable `tick_batch_id` and then replays the tick as described in the tick system design.
   - If `pending` is missing (for example due to AOF tail loss), treat this as “coordination state may have been partially lost” rather than silently skipping work:
     - Advance to the next `tickId` only after running the tick effect ledger replay controller / reconcile tooling for the affected scope so any lingering `SCHEDULED` effects converge to `APPLIED` or `ABANDONED` with an explicit tail-loss reason.
-    - Converge accepted command records that were never durably bound to a surviving batch to terminal command status fields such as `executionOutcome = LOST_BEFORE_STAGING` and the command-type-appropriate `gameplayResult` (shared default `FAILED`); do not leave dedupe-only command records stranded. See `system-architecture-tick-execution-flows.md` for the canonical command terminal mapping examples.
+    - Converge accepted command records that were never durably bound to a surviving batch to terminal command status fields such as `executionOutcome = LOST_BEFORE_STAGING` and the command-type-appropriate `gameplayResult` (shared default `FAILED`); do not leave dedupe-only command records stranded. See `system-architecture-tick-execution-flows.md` under `Canonical Command Terminal Mapping Table` for the canonical shared mapping.
     - Use the resulting ledger outcomes plus service-level idempotency guards to validate that no effect remains indefinitely half-applied.
 - **Leases**
   - Discard any in-memory lease tokens; executors must reacquire `tick-executor-lease:{tenantRegionTag}` in Redis and treat previously held leases as invalid.
@@ -103,7 +103,7 @@ The following Redis-focused incident flows build on the general recovery steps a
 3. **Act**
    1. Pause tick scheduling for affected `<tenantId, regionId>` scopes.
    2. Run the corresponding coordination reset Job (region or tenant scope) as described in [Coordination Reset Model](./system-architecture-redis-reset-and-recovery.md#coordination-reset-model).
-   3. Trigger the ledger replay controller for the same scope to drive stale `SCHEDULED` tick effects to terminal `APPLIED` or `ABANDONED` outcomes based on idempotent domain state, and converge any accepted-but-unbound command records to `TERMINAL` with `executionOutcome = LOST_BEFORE_STAGING`.
+   3. Trigger the ledger replay controller for the same scope to drive stale `SCHEDULED` tick effects to terminal `APPLIED` or `ABANDONED` outcomes based on idempotent domain state, and converge any accepted-but-unbound command records to `TERMINAL` with `executionOutcome = LOST_BEFORE_STAGING` and the command-type-appropriate `gameplayResult` from the canonical mapping table in `system-architecture-tick-execution-flows.md`.
    4. Verify region health returns to `RUNNING` or bounded `DEGRADED` and `tail_loss_ms` drops back into the SLO envelope before resuming ticks.
 
 Alerts based on `redis_coordination_tail_loss_ms` should follow the conventions in `design/observability/grafana/core-alerts-snippets.md` so they carry `owner` and `runbook` annotations that point back to this section.

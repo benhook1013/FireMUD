@@ -1,4 +1,4 @@
-# Architecture Review Prompt: Scripting and Automation
+# Architecture Review Prompt: Scripting DSL and Runtime
 
 Read the following documents. Follow references only when a listed document explicitly delegates a canonical contract that is required to judge an implementation-blocking gap. Do not recursively fan out further.
 
@@ -10,16 +10,13 @@ Read the following documents. Follow references only when a listed document expl
 - `design/architecture/system-architecture-scripting-quotas-and-operations.md`
 - `design/architecture/microservices/automation-scripting-service/README.md`
 - `design/architecture/microservices/automation-scripting-service/sandbox-runtime-design.md`
-- `design/architecture/microservices/game-design-service/README.md`
-- `design/architecture/microservices/game-design-service/ability-action-tools.md`
-- `design/architecture/microservices/game-design-service/modding-framework.md`
 
 Then:
 
-- Review the scripting DSL, automation-scripting service, and related game-design tooling as a single, end-to-end system (authoring to validation to deployment to execution to monitoring to rollback).
+- Review the scripting DSL and runtime as a single end-to-end system from authoring and validation through deployment, execution, and rollback.
 - Do not summarize behavior or call out what is already good.
 - Focus on gaps that would force implementers to invent lifecycle semantics, sandbox boundaries, quota policy, rollback behavior, or observability contracts.
-- Do not let nice-to-have DSL ergonomics, future expansion ideas, and edge-case tooling improvements crowd out blockers. Once blockers are cleared, list the highest-value non-blocking improvements if they would materially improve the design.
+- Do not let nice-to-have DSL ergonomics and future expansion ideas crowd out blockers. Once blockers are cleared, list the highest-value non-blocking improvements if they would materially improve the design.
 - Return at most 5 issues, ordered by severity.
 - For each issue, include:
   - `Severity`: `blocking` or `important`

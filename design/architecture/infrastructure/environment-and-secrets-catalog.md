@@ -36,7 +36,7 @@ Kubernetes manifests and any shared environment must set `SPRING_PROFILES_ACTIVE
 
 ## PostgreSQL Credentials
 
-Services connect to the shared PostgreSQL database using the following variables. These values are typically provided via Kubernetes Secrets in production.
+Services connect to the shared PostgreSQL database using the following variables. These values are typically provided via Kubernetes Secrets in shared or player-facing Kubernetes environments.
 
 | Variable | Purpose | Default |
 | -------- | ------- | ------- |

@@ -19,6 +19,7 @@ The main body of this document describes the target-state backup workflow. Curre
 - `PauseTicksForScope` / `ResumeTicksForScope` support pausing by `tenant_id` + `game_instance_id` today; `region_id` scoping exists in the proto contract but is not yet enforced end-to-end.
 - Backup-related spans and metrics should still use the target-state names and units documented here so dashboards and alert rules remain stable as scope support is expanded.
 - Automated coordinated backups for player-facing prod-like environments must converge on canonical `tenant_id + region_id` scope before those environments are considered fully backup-ready. Alias scope remains a migration aid, not a steady-state operating mode.
+- The alias-scope migration notes in this document are temporary implementation-bridge guidance. Once canonical `tenant_id + region_id` pause scope is enforced end-to-end, these migration-only notes and phase descriptions should be removed so the architecture returns to one steady-state scope contract.
 
 ## PostgreSQL Logical Backups
 
@@ -662,6 +663,7 @@ Before opening `hobby-self-hosted` to player traffic for the first time, or reop
 
 Required fields:
 
+- `schemaVersion` (`traffic-open-record/v1` for the current canonical shape)
 - `environment` (`hobby-self-hosted`)
 - `deploymentRef`
 - `assessedAt`

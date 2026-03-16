@@ -289,7 +289,7 @@ Normative constraints:
 - Third-party clients and non-bootstrap transports continue to use credential-bearing `LOGIN <username> <password> [otp]` or the prompt flow.
 - Game Session must bind the verified connect context to the authenticated gameplay login: if bootstrap-backed `LOGIN` resolves to an `accountId` different from the connect-context `accountId`, the session fails closed with canonical error `ACCOUNT_MISMATCH` and no gameplay scope is bound.
 - For first-party clients on `/ws/game/**`, the `PLAY` selection must match the connect-token scope `{tenantId, gameInstanceId}`. Scope mismatch is rejected with canonical error `CONNECT_SCOPE_MISMATCH`; clients must request a fresh connect token for the intended target and reconnect.
-- Because `/auth/connect-token` validates against the authoritative admission-pointer state for the caller, `CONNECT_SCOPE_MISMATCH` at `PLAY` is treated as drift between issuance and admission (for example pointer movement during reconnect), not as normal stale-client correction.
+- Because `/auth/connect-token` validates against the authoritative realm-routing state for the caller, `CONNECT_SCOPE_MISMATCH` at `PLAY` is treated as drift between issuance and admission (for example route movement during reconnect), not as normal stale-client correction.
 - The bootstrap/connect-token contract and the lobby `PLAY` contract together form the canonical player-selected `{tenantId, gameInstanceId}` path. Players may select from any realms they are authorized to see through `REALMS <world>`, and connect tokens must be issued only for a concrete target returned by the same realm-routing contract rather than via a side-channel selector.
 
 Canonical first-party browser sequence (example):
@@ -312,6 +312,32 @@ REALMS demo
 CHARS demo production
 PLAY demo production Mara
 OK PLAY Entered Demo World / Live Realm as Mara
+```
+
+Example first-party browser sequence for a playtest fork:
+
+```text
+POST /auth/player-bootstrap
+-> { bootstrapToken, expiresAt }
+
+WORLDS
+1) demo  Demo World
+REALMS demo
+1) production  Live Realm
+2) playtest-docks  Playtest Fork
+
+POST /auth/connect-token
+Authorization: Bearer <bootstrapToken>
+{ tenantId: "tenant-demo", gameInstanceId: "playtest-docks", requestId: "req-456" }
+-> { connectToken, accountId, tenantId: "tenant-demo", gameInstanceId: "playtest-docks", expiresAt }
+
+GET /ws/game/** with X-Firemud-Connect-Token: <connectToken>
+
+LOGIN
+OK LOGIN Logged in
+CHARS demo playtest-docks
+PLAY demo playtest-docks Mara
+OK PLAY Entered Demo World / Playtest Fork as Mara
 ```
 
 ### Mapping to the Account Service
@@ -353,6 +379,7 @@ Lobby discovery source-of-truth contract:
 
 - `WORLDS` must be sourced from Account Service tenant-membership and entitlement state (not from opportunistic local caches alone) so world visibility and billing state cannot drift across services.
 - If fresh enough entitlement state cannot be established to build the visible-world set safely, `WORLDS` must fail closed with canonical error `ENTITLEMENT_UNAVAILABLE` rather than listing worlds from stale discovery data (for example text rendering `ERROR ENTITLEMENT_UNAVAILABLE Entitlement state is temporarily unavailable; retry discovery.`).
+- `WORLDS` discovery does not need to reuse the full 15-second admission SLA verbatim, but it must still be based on entitlement state fresh enough to avoid exposing worlds that are no longer gameplay-available. If that freshness bar cannot be met safely, discovery fails closed with `ENTITLEMENT_UNAVAILABLE`.
 - `CHARS <world>` must be sourced from the authoritative character store for the resolved tenant and filtered to `{accountId, tenantId}` ownership before any character names are returned.
 - `WORLDS` and `CHARS` responses must not leak inaccessible tenants or characters; unresolved selectors return canonical errors (`WORLD_NOT_FOUND`, `WORLD_ACCESS_DENIED`, `CHARACTER_NOT_FOUND`, `CHARACTER_ACCESS_DENIED`) without exposing whether a hidden tenant exists.
 

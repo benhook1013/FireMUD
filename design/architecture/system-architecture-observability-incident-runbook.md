@@ -184,7 +184,9 @@ It complements the degraded-mode expectations in `design/architecture/system-arc
 
 ## Fallback Query Cheat Sheet
 
-When Grafana is unavailable but Prometheus is healthy, operators should start with the canonical recording-rule names already referenced in this runbook:
+When Grafana is unavailable but Prometheus is healthy, operators should start with the canonical recording-rule names already referenced in this runbook.
+
+Recording rules:
 
 - `login_success_ratio_gateway_15m`
 - `login_success_ratio_tcpproxy_15m`
@@ -208,10 +210,14 @@ When Grafana is unavailable but Prometheus is healthy, operators should start wi
 - `tick_effects_replay_slo_breached`
 - `tick_effects_replay_starved`
 
+Alert names:
+
 The following are canonical alert names. Use them when checking alert state in Prometheus or Alertmanager, not when querying for the underlying time-series values:
 
 - `TickEffectsReplaySloBreached`
 - `TickEffectsReplayStarved`
+
+Mirrored external signals:
 
 When external reachability or total monitoring-stack failure is in question, also check the mirrored external signals:
 

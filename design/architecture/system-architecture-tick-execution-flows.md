@@ -142,7 +142,11 @@ Worked examples:
   - `executionOutcome = LOST_BEFORE_STAGING`
   - `gameplayResult = FAILED`
 
-Compact terminal mapping table:
+#### Canonical Command Terminal Mapping Table
+
+This table is the canonical shared reference for command terminal mappings used by
+status APIs, replay/reset handling, and operator runbooks. Other architecture and
+operations docs should link here instead of restating partial mappings in prose.
 
 | Scenario | executionOutcome | gameplayResult |
 | --- | --- | --- |

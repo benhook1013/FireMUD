@@ -1,12 +1,7 @@
-# Architecture Review Prompt: Environments, Secrets, and Deployment
+# Architecture Review Prompt: Deployment, CI/CD, and Platform Security
 
-Read the following documents. Follow references only when a listed document clearly delegates a canonical contract needed to resolve an implementation-blocking deployment, secrets, or recovery question. Do not recursively fan out through the whole infrastructure corpus.
+Read the following documents. Follow references only when a listed document clearly delegates a canonical contract needed to resolve an implementation-blocking deployment, CI/CD, or platform-security question. Do not recursively fan out through the whole infrastructure corpus.
 
-- `design/architecture/infrastructure/README.md`
-- `design/architecture/infrastructure/deployment-environments.md`
-- `design/architecture/infrastructure/environment-and-secrets-overview.md`
-- `design/architecture/infrastructure/environment-and-secrets.md`
-- `design/architecture/infrastructure/environment-and-secrets-catalog.md`
 - `design/architecture/infrastructure/schedule.md`
 - `design/architecture/system-architecture-cicd.md`
 - `design/architecture/system-architecture-deployment-runbook.md`
@@ -15,9 +10,9 @@ Read the following documents. Follow references only when a listed document clea
 
 Then:
 
-- Review environments, secrets management, CI or CD, and deployment or recovery flows as a single, end-to-end design.
-- Do not summarize the environment matrix or restate how CI or CD is generally supposed to work.
-- Focus on gaps that would block safe first deployment, secret handling, promotion, rollback, or incident recovery.
+- Review deployment flow, CI or CD, platform security, and recovery behavior as a single end-to-end design.
+- Do not summarize the pipeline stages or restate how deployment is generally supposed to work.
+- Focus on gaps that would block safe promotion, rollback, security posture, or incident recovery.
 - Do not let non-blocking process refinement, future compliance enhancements, and optional platform hardening crowd out blockers. Once blockers are cleared, list the highest-value non-blocking improvements if they would materially improve the design.
 - Return at most 5 issues, ordered by severity.
 - For each issue, include:

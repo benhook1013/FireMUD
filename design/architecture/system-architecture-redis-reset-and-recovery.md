@@ -64,7 +64,7 @@ Because ticks treat `(region_epoch, tickId)` as the canonical coordination timel
 4. **Reconcile durable tick and command state**
    - For the affected scope, `SCHEDULED` ledger rows tied to the old `region_epoch` converge to terminal outcomes (typically `ABANDONED` with a reset-specific reason) via a scoped tick-effect-ledger reconcile step in the reset tooling, as described in `system-architecture-tick-failures-and-operations.md`.
    - New executors do not resume old-epoch `SCHEDULED` rows; any re-drive or migration across epochs is performed only by dedicated maintenance tooling that explicitly re-creates effects in the new epoch.
-   - In the same reset scope, accepted command records that never became durably tied to a surviving `tick_batch_id` converge to `TERMINAL` with `executionOutcome = LOST_BEFORE_STAGING` and the command-type-appropriate `gameplayResult` (shared default `FAILED`); reset tooling must not leave dedupe rows stranded in `RECEIVED` or `ENQUEUED`. For canonical examples of command terminal mappings, see `system-architecture-tick-execution-flows.md`.
+   - In the same reset scope, accepted command records that never became durably tied to a surviving `tick_batch_id` converge to `TERMINAL` with `executionOutcome = LOST_BEFORE_STAGING` and the command-type-appropriate `gameplayResult` (shared default `FAILED`); reset tooling must not leave dedupe rows stranded in `RECEIVED` or `ENQUEUED`. For the canonical shared command terminal mapping table, see `system-architecture-tick-execution-flows.md` under `Canonical Command Terminal Mapping Table`.
 5. **Reset per-region metadata keys**
    - Using the same maintenance CLI and key-builder helpers, initialize or update `tick:{tenantRegionTag}:meta` for each affected `<tenantId, regionId>` so that:
      - `region_epoch` reflects the new epoch recorded in PostgreSQL.
@@ -130,6 +130,15 @@ Do not collapse all Redis events into “Redis repopulates from PostgreSQL.” F
   - Keys such as `tick:{tenantRegionTag}:pending` and timers may survive.
   - Tick executors can replay or complete in‑flight ticks using idempotent domain logic and PostgreSQL guards.
   - This is the normal “Redis recovered” path; tail‑loss is bounded by the configured SLO.
+
+Worked example: normal failover for `<tenantId=T1, regionId=R7>`
+
+1. Redis leader fails, but the replacement node replays intact AOF state and restores `tick:{tenantRegionTag}:pending`, `tick:{tenantRegionTag}:meta`, and the region lease key.
+2. The old executor loses its lease heartbeat and stops acting on in-memory state.
+3. A new executor reacquires `tick-executor-lease:{tenantRegionTag}`, reads PostgreSQL `RegionStatus(regionEpoch=13, lastCommittedTickId=41)`, and inspects surviving coordination state only as residue to correlate against the durable `tick_batch_id`.
+4. If `pending` still matches the surviving durable batch, the executor replays or completes that batch under normal idempotent rules.
+5. If `pending` is missing or inconsistent despite the intact failover, the executor does not guess from Redis alone; it runs the normal ledger replay/reconcile path for the affected scope, then advances the region using the durable timeline.
+6. No epoch bump or explicit reset is required unless the incident escalates into an actual cold start or corruption event.
 
 - **Cold start** (empty Coordination Redis because the data directory/PVC is missing, wiped, or corrupted)
   - Treat as a **coordination reset event**, not a normal failover.
