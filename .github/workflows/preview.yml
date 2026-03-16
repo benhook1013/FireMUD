@@ -64,10 +64,8 @@ jobs:
             docker pull ghcr.io/benhook1013/$service:latest || true
             docker buildx build \
               --build-arg BASE_IMAGE=$FIREMUD_BASE_IMAGE \
-              --cache-from type=registry,ref=ghcr.io/benhook1013/$service:buildcache \
               --cache-from type=registry,ref=ghcr.io/benhook1013/$service:latest \
               --cache-from type=gha \
-              --cache-to type=registry,ref=ghcr.io/benhook1013/$service:buildcache,mode=max \
               --cache-to type=gha,mode=max \
               --load \
               -t firemud-$service \
