@@ -18,6 +18,7 @@ permissions:
 jobs:
   validate-overlays:
     runs-on: ubuntu-latest
+    if: ${{ github.actor != 'dependabot[bot]' }}
     steps:
       - name: ⬇️ Checkout Code
         uses: actions/checkout@v6
