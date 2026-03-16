@@ -1,0 +1,27 @@
+{{- if and .Values.previewStack.enabled .Values.previewStack.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: firemud-preview
+  labels:
+{{ include "firemud.commonLabels" . | indent 4 }}
+  annotations:
+    cert-manager.io/cluster-issuer: {{ .Values.previewStack.ingress.clusterIssuer | quote }}
+spec:
+  ingressClassName: {{ .Values.previewStack.ingress.className | quote }}
+  tls:
+    - hosts:
+        - {{ .Values.preview.hostname | quote }}
+      secretName: {{ .Values.previewStack.ingress.tlsSecretName | quote }}
+  rules:
+    - host: {{ .Values.preview.hostname | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: spring-cloud-gateway
+                port:
+                  number: 80
+{{- end }}

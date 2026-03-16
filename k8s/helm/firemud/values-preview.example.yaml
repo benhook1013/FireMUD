@@ -1,0 +1,216 @@
+preview:
+  prNumber: 123
+  namespace: pr-123
+  releaseName: pr-123
+  hostname: pr-123.preview.firedevops.net
+  seedOnFirstDeploy: true
+  maxConcurrentEnforced: false
+
+previewStack:
+  enabled: true
+  defaultImageTag: pr-123-deadbeef
+  imagePullSecrets:
+    - ghcr-preview-pull
+  ingress:
+    enabled: true
+    className: traefik
+    clusterIssuer: letsencrypt-prod
+    tlsSecretName: pr-123-preview-firedevops-net-tls
+
+  seed:
+    enabled: false
+    image: postgres:16
+
+  grpcTls:
+    createSecret: false
+    secretName: firemud-grpc-tls
+    clientCrt: ""
+    clientKey: ""
+    caCrt: ""
+
+  postgres:
+    image: postgres:16
+    database: firemud
+
+  redis:
+    image: redis:7.4.3
+
+  minio:
+    image: minio/minio:RELEASE.2024-05-10T01-41-38Z
+    accessKey: minio
+    secretKey: minio123
+
+  persistence:
+    postgres:
+      size: 5Gi
+      storageClassName: local-path
+    minio:
+      size: 5Gi
+      storageClassName: local-path
+    redisCoord:
+      size: 1Gi
+      storageClassName: local-path
+    redisCache:
+      size: 1Gi
+      storageClassName: local-path
+
+  sharedConfig:
+    FIREMUD_POSTGRES_HOST: postgres
+    FIREMUD_POSTGRES_PORT: "5432"
+    FIREMUD_POSTGRES_DB: firemud
+    FIREMUD_REDIS_COORD_HOST: redis-coord
+    FIREMUD_REDIS_COORD_PORT: "6379"
+    FIREMUD_REDIS_CACHE_HOST: redis-cache
+    FIREMUD_REDIS_CACHE_PORT: "6379"
+    OTEL_ENDPOINT: http://otel-collector:4317
+    FLUENT_ELASTICSEARCH_HOST: elasticsearch
+    FLUENT_ELASTICSEARCH_PORT: "9200"
+    ASSET_STORE_ENDPOINT: http://minio:9000
+    ASSET_STORE_ACCESS_KEY: minio
+    ASSET_STORE_SECRET_KEY: minio123
+
+  sharedSecret:
+    FIREMUD_POSTGRES_USER: firemud
+    FIREMUD_POSTGRES_PASSWORD: firemud
+    FIREMUD_AUTH_JWT_SECRET: changeit-changeit-changeit-changeit
+
+  seedSql: |
+    -- Preview seed SQL is intentionally stubbed for now.
+    -- The preview workflow and chart reserve a seed hook path, but the
+    -- application schema/content is still under active implementation.
+    -- Replace this stub with canonical preview bootstrap data once the
+    -- runtime data model and seed contract stabilize.
+
+  services:
+    - name: account-service
+      image:
+        repository: ghcr.io/benhook1013/account-service
+      springProfile: true
+      envFromShared: true
+      mountGrpcTls: true
+      healthPort: 8080
+      ports:
+        - port: 8080
+          targetPort: 8080
+        - port: 6565
+          targetPort: 6565
+    - name: automation-scripting-service
+      image:
+        repository: ghcr.io/benhook1013/automation-scripting-service
+      springProfile: true
+      envFromShared: true
+      mountGrpcTls: true
+      healthPort: 8080
+      ports:
+        - port: 8080
+          targetPort: 8080
+        - port: 6565
+          targetPort: 6565
+    - name: entity-management-service
+      image:
+        repository: ghcr.io/benhook1013/entity-management-service
+      springProfile: true
+      envFromShared: true
+      mountGrpcTls: true
+      healthPort: 8080
+      ports:
+        - port: 8080
+          targetPort: 8080
+        - port: 6565
+          targetPort: 6565
+    - name: game-design-service
+      image:
+        repository: ghcr.io/benhook1013/game-design-service
+      springProfile: true
+      envFromShared: true
+      mountGrpcTls: true
+      healthPort: 8080
+      ports:
+        - port: 8080
+          targetPort: 8080
+        - port: 6565
+          targetPort: 6565
+    - name: game-logic-service
+      image:
+        repository: ghcr.io/benhook1013/game-logic-service
+      springProfile: true
+      envFromShared: true
+      mountGrpcTls: true
+      healthPort: 8080
+      ports:
+        - port: 8080
+          targetPort: 8080
+        - port: 6565
+          targetPort: 6565
+    - name: game-session-service
+      image:
+        repository: ghcr.io/benhook1013/game-session-service
+      springProfile: true
+      envFromShared: true
+      mountGrpcTls: true
+      healthPort: 8080
+      ports:
+        - port: 8080
+          targetPort: 8080
+        - port: 6565
+          targetPort: 6565
+    - name: logging-admin-service
+      image:
+        repository: ghcr.io/benhook1013/logging-admin-service
+      springProfile: true
+      envFromShared: true
+      mountGrpcTls: true
+      healthPort: 8080
+      ports:
+        - port: 8080
+          targetPort: 8080
+        - port: 6565
+          targetPort: 6565
+    - name: social-groups-service
+      image:
+        repository: ghcr.io/benhook1013/social-groups-service
+      springProfile: true
+      envFromShared: true
+      mountGrpcTls: true
+      healthPort: 8080
+      ports:
+        - port: 8080
+          targetPort: 8080
+        - port: 6565
+          targetPort: 6565
+    - name: spring-cloud-gateway
+      image:
+        repository: ghcr.io/benhook1013/spring-cloud-gateway
+      springProfile: true
+      envFromShared: false
+      mountGrpcTls: true
+      healthPort: 8080
+      ports:
+        - port: 80
+          targetPort: 8080
+        - port: 6565
+          targetPort: 6565
+    - name: tcp-proxy-service
+      image:
+        repository: ghcr.io/benhook1013/tcp-proxy-service
+      springProfile: false
+      envFromShared: false
+      mountGrpcTls: true
+      healthPort: 8080
+      extraEnv:
+        GATEWAY_WS_URL: wss://pr-123.preview.firedevops.net/ws/game
+      ports:
+        - port: 2323
+          targetPort: 2323
+    - name: world-management-service
+      image:
+        repository: ghcr.io/benhook1013/world-management-service
+      springProfile: true
+      envFromShared: true
+      mountGrpcTls: true
+      healthPort: 8080
+      ports:
+        - port: 8080
+          targetPort: 8080
+        - port: 6565
+          targetPort: 6565

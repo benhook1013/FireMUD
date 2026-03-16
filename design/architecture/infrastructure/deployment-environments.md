@@ -1,6 +1,6 @@
 # Deployment Environments
 
-This document outlines how FireMUD is deployed across environments including local Docker Compose, ephemeral CI/preview stacks, self-hosted hobby deployments, and Kubernetes-backed shared environments (dev/demo, staging, production). It includes discovery mechanisms, health check strategies, and environment-specific control expectations.
+This document outlines how FireMUD is deployed across environments including local Docker Compose, hosted pull-request preview environments, self-hosted hobby deployments, and Kubernetes-backed shared environments (dev/demo, staging, production). It includes discovery mechanisms, health check strategies, and environment-specific control expectations.
 
 ## Table of Contents
 
@@ -17,9 +17,10 @@ This document outlines how FireMUD is deployed across environments including loc
 
 ## Quick Environment Decision Guide
 
-- Use **Docker Compose** when developing locally or running short-lived preview stacks from pull requests.
+- Use **Docker Compose** for local development only.
 - Use **Kubernetes shared or player-facing environment classes** (`dev-demo-cluster`, `staging`, `production`, or `hobby-self-hosted`) where autoscaling, high availability, and full observability are required.
-- Prefer **staging** for playtests that should mirror production routing, TLS, and Redis/Postgres topologies before promoting changes. Treat PR preview stacks as fast functional review environments, not as a substitute for prod-like validation.
+- Use **`pr-preview`** for reviewer-accessible pull-request environments that must expose the full stack over HTTPS for the lifetime of the PR.
+- Prefer **staging** for playtests that should mirror production routing, TLS, and Redis/Postgres topologies before promoting changes. `pr-preview` is for isolated PR validation, not for canonical creator playtests or promotion evidence.
 
 ## Terms
 
@@ -39,7 +40,7 @@ Use these classes as the source of truth for environment roles and control expec
 | Class | Typical Topology | Secret Source | Rotation/Hardening | Backup/Restore Posture | Deploy Path |
 | --- | --- | --- | --- | --- | --- |
 | `local-dev` | Docker Compose on a developer machine | `.env` plus local files; generated certs/keys allowed | Convenience-first; manual | Local snapshots/ad hoc restore | `./gradlew devUp` / `devDown` |
-| `ci-preview` | Short-lived CI runner stacks, usually Docker Compose | Ephemeral CI secrets and sample defaults | Short-lived; no long-term rotation guarantees | Disposable | GitHub Actions preview workflows |
+| `pr-preview` | Hosted single-node Kubernetes preview cluster with one namespace per PR | Kubernetes Secrets/ConfigMaps plus registry pull credentials | Production-like for HTTPS, auth, and session flows; simplified operator controls acceptable | Per-PR state persists for PR lifetime; no backup/restore guarantee | GitHub Actions deploys PR-tagged images via Helm |
 | `dev-demo-cluster` | Shared but non-player-facing Kubernetes cluster | Kubernetes Secrets/ConfigMaps | Basic hardening; can prioritize iteration speed | Ad hoc unless explicitly scheduled | Helm/manual workflows (`manual-helm-deploy.yml`) |
 | `hobby-self-hosted` | Small player-facing deployment with production-like roles at low scale | Kubernetes Secrets/ConfigMaps | Production-like for Tier A credentials; simplified ops acceptable | Operator-managed backups expected | Operator-applied manifests/charts |
 | `staging` | Prod-like Kubernetes cluster with smaller sizing | Kubernetes Secrets/ConfigMaps | Production-like controls; required post-restore secret hardening before playtests | Disposable by default unless explicitly enabling schedules | Git-tracked Kustomize overlays + operator `kubectl apply -k` |
@@ -47,12 +48,12 @@ Use these classes as the source of truth for environment roles and control expec
 
 Cross-document rules:
 
-- Canonical class names are exactly: `local-dev`, `ci-preview`, `dev-demo-cluster`, `hobby-self-hosted`, `staging`, `production`. Terms such as `qa` are aliases only and must be mapped explicitly to one of these classes in environment documentation and automation.
+- Canonical class names are exactly: `local-dev`, `pr-preview`, `dev-demo-cluster`, `hobby-self-hosted`, `staging`, `production`. Terms such as `qa` are aliases only and must be mapped explicitly to one of these classes in environment documentation and automation.
 - Staging and production overlay updates must use immutable image digests and follow the promotion/attestation model defined in `system-architecture-cicd.md`.
 - Player-facing classes (`hobby-self-hosted`, `staging`, `production`) must treat JWT secret files (`FIREMUD_AUTH_JWT_SECRET_PATH`) and TCP Proxy `GATEWAY_WS_URL` listener alignment as required preflight invariants.
 - Player-facing classes (`hobby-self-hosted`, `staging`, `production`) must complete environment bootstrap before first deploy: baseline secrets, JWT/JWKS resources, certificate issuer bindings, registry pull credentials, and environment-specific external integration credentials must exist and pass preflight before workloads are applied.
 - Player-facing classes (`hobby-self-hosted`, `staging`, `production`) must keep a single expected-binding manifest at `design/operations/environments/<environment>/expected-bindings.yaml` so deployment preflight and restore validation use the same environment-isolation contract for backup, asset, outbound-communications, and operator bindings.
-- Classes documented as disposable (`ci-preview`, default `staging`) must not be used as evidence for backup/SLO guarantees unless their controls are explicitly upgraded.
+- Classes documented without backup/SLO guarantees (`pr-preview`, default `staging`) must not be used as evidence for backup/SLO guarantees unless their controls are explicitly upgraded.
 - Staging and production deployments must run the canonical preflight policy gate defined in `system-architecture-deploy-preflight-policy.md`; production promotions must satisfy the attestation contract in `system-architecture-promotion-attestation.md`.
 - `hobby-self-hosted` deployments are also player-facing and must run equivalent checks for player-facing invariants (JWT file-path contract, JWKS resource contract, Redis role split, and `GATEWAY_WS_URL` alignment) before opening traffic, even when not using the staging/production Kustomize overlay workflow. In this class, operator preflight is mandatory while overlay PR CI checks are optional/recommended.
 - `hobby-self-hosted` first-live and post-restore reopen events must also prove backup-baseline compliance before player traffic opens, using the canonical traffic-open evidence defined in `system-architecture-backup-recovery.md`.
@@ -206,7 +207,7 @@ Select the desired profile via the `SPRING_PROFILES_ACTIVE` environment variable
 
 ## Staging Environment for Playtesting
 
-A dedicated staging cluster mirrors production using smaller node sizes. Pull requests spin up a short-lived Docker Compose stack via [preview.yml](../../../.github/workflows/preview.yml) so reviewers can do fast functional checks; staging is the intended environment for prod-like playtests and routing/TLS validation.
+A dedicated staging cluster mirrors production using smaller node sizes. Pull requests may also deploy a hosted [`pr-preview`](#canonical-environment-classes) environment through [preview.yml](../../../.github/workflows/preview.yml), but those previews remain isolated per PR and are not promotion candidates; staging is the intended environment for prod-like playtests and routing/TLS validation.
 Staging test data may be reset on a schedule once operators explicitly install staging-specific automation; by default staging is not scheduled (see `schedule.md`).
 For details on collecting tester feedback see [Playtesting & Feedback](../../project-management/playtesting-feedback.md).
 
@@ -220,6 +221,19 @@ When staging is restored from production-origin snapshots, operators must also r
 
 Staging does not run the production backup CronJobs listed in `schedule.md` unless staging-specific schedules are explicitly installed.
 PRs that modify `k8s/` are checked by [`.github/workflows/validate-kustomize-overlays.yml`](../../../.github/workflows/validate-kustomize-overlays.yml), which blocks staging backup schedules unless operators intentionally add `k8s/overlays/stage/STAGING_BACKUPS_ENABLED`.
+
+## PR Preview Environment
+
+FireMUD's preview environment is a hosted single-node k3s cluster intended for reviewer-accessible pull-request validation, not a CI-only Docker Compose smoke stack.
+
+- Same-repo pull requests may deploy one Helm release into namespace `pr-<PR_NUMBER>` with matching hostname `https://pr-<PR_NUMBER>.preview.<DOMAIN>`.
+- The preview deployment uses the full application stack, including the frontend, gateway, backend microservices, and stateful supporting services required for normal gameplay flows.
+- GitHub Actions builds PR-tagged images, pushes them to private GHCR, and deploys or upgrades the preview release via Helm. The cluster authenticates to GHCR using image pull credentials.
+- Preview state is seeded once when the namespace is first created. PostgreSQL, MinIO/object storage, and any other stateful preview components persist across pod restarts, Helm upgrades, and normal VM reboot for the lifetime of the PR.
+- Preview state is not backed up and is not durable beyond the single preview node. If the node or its attached storage is lost, preview state is lost.
+- The initial Hetzner/k3s sizing target is one reliably usable full-stack preview on an 8 GB shared-CPU x86 VM. A second concurrent preview is best-effort only and may fail to deploy if capacity is exhausted.
+- When capacity is exhausted, existing previews remain in place and the new preview deployment fails rather than evicting older namespaces.
+- Preview namespaces are removed when the PR closes or merges.
 
 ---
 

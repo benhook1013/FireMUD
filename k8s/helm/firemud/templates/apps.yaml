@@ -1,0 +1,128 @@
+{{- if .Values.previewStack.enabled }}
+{{- range $service := .Values.previewStack.services }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $service.name }}
+  labels:
+{{ include "firemud.commonLabels" $ | indent 4 }}
+spec:
+  replicas: {{ default 1 $service.replicaCount }}
+  selector:
+    matchLabels:
+      app: {{ $service.name }}
+  template:
+    metadata:
+      labels:
+        app: {{ $service.name }}
+    spec:
+      serviceAccountName: firemud-app
+      {{- with $.Values.previewStack.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range $secret := . }}
+        {{- if kindIs "string" $secret }}
+        - name: {{ $secret }}
+        {{- else }}
+{{ toYaml (list $secret) | indent 8 }}
+        {{- end }}
+        {{- end }}
+      {{- end }}
+      containers:
+        - name: {{ $service.name }}
+          image: "{{ $service.image.repository }}:{{ default $.Values.previewStack.defaultImageTag $service.image.tag }}"
+          imagePullPolicy: Always
+          {{- if $service.springProfile }}
+          env:
+            - name: SPRING_PROFILES_ACTIVE
+              value: "prod"
+            {{- if $service.mountGrpcTls }}
+            - name: FIREMUD_GRPC_CERT_CHAIN_PATH
+              value: /tls/client.crt
+            - name: FIREMUD_GRPC_PRIVATE_KEY_PATH
+              value: /tls/client.key
+            - name: FIREMUD_GRPC_CA_CERT_PATH
+              value: /tls/ca.crt
+            {{- end }}
+            {{- range $key, $value := $service.extraEnv }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+          {{- else }}
+          env:
+            {{- if $service.mountGrpcTls }}
+            - name: FIREMUD_GRPC_CERT_CHAIN_PATH
+              value: /tls/client.crt
+            - name: FIREMUD_GRPC_PRIVATE_KEY_PATH
+              value: /tls/client.key
+            - name: FIREMUD_GRPC_CA_CERT_PATH
+              value: /tls/ca.crt
+            {{- end }}
+            {{- range $key, $value := $service.extraEnv }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+          {{- end }}
+          {{- if $service.envFromShared }}
+          envFrom:
+            - configMapRef:
+                name: firemud-config
+            - secretRef:
+                name: firemud-secret
+          {{- end }}
+          {{- if $service.mountGrpcTls }}
+          volumeMounts:
+            - name: grpc-tls
+              mountPath: /tls
+              readOnly: true
+          {{- end }}
+          ports:
+            {{- range $port := $service.ports }}
+            - containerPort: {{ $port.targetPort }}
+            {{- end }}
+          readinessProbe:
+            httpGet:
+              path: {{ default "/actuator/health" $service.readinessPath }}
+              port: {{ $service.healthPort }}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: {{ default "/actuator/health" $service.livenessPath }}
+              port: {{ $service.healthPort }}
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "256Mi"
+            limits:
+              cpu: "400m"
+              memory: "512Mi"
+      {{- if $service.mountGrpcTls }}
+      volumes:
+        - name: grpc-tls
+          secret:
+            secretName: {{ include "firemud.grpcSecretName" $ }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $service.name }}
+  labels:
+{{ include "firemud.commonLabels" $ | indent 4 }}
+spec:
+  selector:
+    app: {{ $service.name }}
+  ports:
+    {{- range $port := $service.ports }}
+    {{- $portName := default (printf "tcp-%v" $port.port) $port.name }}
+    - port: {{ $port.port }}
+      name: {{ $portName }}
+      targetPort: {{ $port.targetPort }}
+      protocol: TCP
+    {{- end }}
+  type: {{ default "ClusterIP" $service.serviceType }}
+{{- end }}
+{{- end }}
