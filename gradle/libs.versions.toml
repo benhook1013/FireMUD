@@ -68,7 +68,7 @@ h2 = { module = "com.h2database:h2", version = "2.4.240" }
 
 # Keep Springdoc on 2.x until we migrate to Spring Boot 4.x. Springdoc 3.x depends on Spring Boot 4.x artifacts,
 # which causes classpath skew and breaks Spring Boot 3.x test slices (e.g., @WebMvcTest / spring-boot-test-autoconfigure).
-springdoc-openapi = { module = "org.springdoc:springdoc-openapi-starter-webmvc-ui", version = "2.5.0" }
+springdoc-openapi = { module = "org.springdoc:springdoc-openapi-starter-webmvc-ui", version = "3.0.2" }
 stripe-java = { module = "com.stripe:stripe-java", version = "31.4.1" }
 otp-java = { module = "com.github.bastiaanjansen:otp-java", version = "2.1.0" }
 slf4j-api = { module = "org.slf4j:slf4j-api", version = "2.0.17" }
