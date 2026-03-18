@@ -1,6 +1,7 @@
 
 plugins {
     `java-library`
+    `java-test-fixtures`
     alias(libs.plugins.spring.boot) apply false
     `maven-publish`
 }
@@ -34,6 +35,9 @@ dependencies {
 
     api(libs.spring.boot.starter.web)
     api(libs.spring.boot.starter.validation)
+
+    testFixturesImplementation(libs.spring.boot.starter.test)
+    testFixturesCompileOnly(libs.grpc.spring.boot.starter)
 }
 
 

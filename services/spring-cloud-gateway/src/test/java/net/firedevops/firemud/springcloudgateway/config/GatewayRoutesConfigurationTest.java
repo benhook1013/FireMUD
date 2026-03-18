@@ -5,6 +5,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.net.URI;
 import java.util.Map;
 import net.firedevops.firemud.springcloudgateway.SpringCloudGatewayApplication;
+import net.firedevops.firemud.test.GatewayTestProperties;
+import net.firedevops.firemud.test.NoGrpcServerTestConfiguration;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -12,26 +14,19 @@ import org.springframework.cloud.gateway.config.GatewayProperties;
 import org.springframework.cloud.gateway.route.RouteDefinition;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.ActiveProfiles;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 @SpringBootTest(
     classes = SpringCloudGatewayApplication.class,
     properties = {
       "spring.flyway.enabled=false",
       "firemud.database.enabled=false",
-      "spring.grpc.server.port=0",
-      "spring.main.web-application-type=reactive",
-      "spring.autoconfigure.exclude=org.springframework.cloud.gateway.config.GatewayClassPathWarningAutoConfiguration,org.springframework.boot.grpc.server.autoconfigure.GrpcServerAutoConfiguration,org.springframework.boot.grpc.server.autoconfigure.GrpcServerFactoryAutoConfiguration,org.springframework.boot.grpc.server.autoconfigure.health.GrpcServerHealthAutoConfiguration"
+      GatewayTestProperties.SPRING_GRPC_SERVER_RANDOM_PORT,
+      GatewayTestProperties.REACTIVE_WEB_APPLICATION,
+      GatewayTestProperties.DISABLE_GATEWAY_WARNING_AND_GRPC_SERVER
     })
 @ActiveProfiles("dev")
-@Import(TestGatewayRateLimiterConfig.class)
+@Import({NoGrpcServerTestConfiguration.class, TestGatewayRateLimiterConfig.class})
 class GatewayRoutesConfigurationTest {
-
-  @MockitoBean
-  private org.springframework.grpc.server.lifecycle.GrpcServerLifecycle grpcServerLifecycle;
-
-  @MockitoBean
-  private org.springframework.grpc.server.service.GrpcServiceDiscoverer grpcServiceDiscoverer;
 
   @Autowired private GatewayProperties gatewayProperties;
 

@@ -9,29 +9,27 @@ import java.io.PrintWriter;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import net.firedevops.firemud.tcpproxy.telnet.TelnetServer;
+import net.firedevops.firemud.test.NoGrpcServerTestConfiguration;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
-import org.springframework.grpc.server.lifecycle.GrpcServerLifecycle;
-import org.springframework.grpc.server.service.GrpcServiceDiscoverer;
+import org.springframework.context.annotation.Import;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.util.TestSocketUtils;
 
 @SpringBootTest(
     classes = TcpProxyServiceApplication.class,
     webEnvironment = WebEnvironment.DEFINED_PORT)
 @ActiveProfiles("dev")
+@Import(NoGrpcServerTestConfiguration.class)
 class DevEchoTelnetIntegrationTest {
   private static final int WEB_SERVER_PORT = allocatePort();
   private static final int TELNET_SERVER_PORT = allocatePort();
 
   @Autowired private TelnetServer telnetServer;
-  @MockitoBean private GrpcServerLifecycle grpcServerLifecycle;
-  @MockitoBean private GrpcServiceDiscoverer grpcServiceDiscoverer;
 
   @DynamicPropertySource
   static void registerProperties(DynamicPropertyRegistry registry) {

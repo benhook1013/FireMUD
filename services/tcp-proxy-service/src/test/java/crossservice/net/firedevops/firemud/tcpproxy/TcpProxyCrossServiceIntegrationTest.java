@@ -6,12 +6,9 @@ import com.github.dockerjava.api.exception.NotFoundException;
 import java.io.OutputStreamWriter;
 import java.io.PrintWriter;
 import java.net.Socket;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import net.firedevops.firemud.tcpproxy.telnet.TelnetServer;
+import net.firedevops.firemud.test.HttpTestSupport;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
@@ -122,11 +119,7 @@ class TcpProxyCrossServiceIntegrationTest {
       writer.println("look");
     }
 
-    HttpClient httpClient = HttpClient.newHttpClient();
-    HttpRequest request =
-        HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/ping")).GET().build();
-    HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-    String body = response.body();
+    String body = HttpTestSupport.getBody("http://localhost:" + port + "/ping");
     assertThat(body).contains("pong");
   }
 }

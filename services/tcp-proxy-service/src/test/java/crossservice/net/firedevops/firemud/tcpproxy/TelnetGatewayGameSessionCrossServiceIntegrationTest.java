@@ -10,8 +10,6 @@ import java.io.PrintWriter;
 import java.net.Socket;
 import java.net.URI;
 import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.net.http.WebSocket;
 import java.net.http.WebSocket.Listener;
 import java.nio.charset.StandardCharsets;
@@ -29,6 +27,8 @@ import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.gamesession.test.LookTestFixtures;
 import net.firedevops.firemud.tcpproxy.stub.GatewayStubApplication;
 import net.firedevops.firemud.tcpproxy.telnet.TelnetServer;
+import net.firedevops.firemud.test.HttpTestSupport;
+import net.firedevops.firemud.test.NoGrpcServerTestConfiguration;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -42,10 +42,8 @@ import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
-import org.springframework.grpc.server.lifecycle.GrpcServerLifecycle;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.util.TestSocketUtils;
 import org.springframework.util.StringUtils;
 import org.springframework.web.reactive.HandlerMapping;
@@ -63,6 +61,7 @@ import reactor.core.publisher.Mono;
 @SpringBootTest(
     webEnvironment = WebEnvironment.RANDOM_PORT,
     classes = TcpProxyServiceApplication.class)
+@Import(NoGrpcServerTestConfiguration.class)
 class TelnetGatewayGameSessionCrossServiceIntegrationTest {
 
   private static GameSessionStubHolder GAME_SESSION_STUB;
@@ -79,8 +78,6 @@ class TelnetGatewayGameSessionCrossServiceIntegrationTest {
   @LocalServerPort private int port;
 
   @Autowired private TelnetServer telnetServer;
-
-  @MockitoBean private GrpcServerLifecycle grpcServerLifecycle;
 
   @AfterAll
   static synchronized void stopTestServices() {
@@ -99,14 +96,7 @@ class TelnetGatewayGameSessionCrossServiceIntegrationTest {
   @Test
   void telnetCommandFlowsThroughGatewayToGameSession() throws Exception {
     ensureTestServicesStarted();
-    HttpResponse<String> pingResponse =
-        HttpClient.newHttpClient()
-            .send(
-                HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/ping"))
-                    .GET()
-                    .build(),
-                HttpResponse.BodyHandlers.ofString());
-    String body = pingResponse.body();
+    String body = HttpTestSupport.getBody("http://localhost:" + port + "/ping");
     assertThat(body).contains("pong");
 
     try (Socket socket = new Socket("localhost", telnetServer.getPort());
