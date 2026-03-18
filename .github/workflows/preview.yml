@@ -137,8 +137,14 @@ jobs:
       - name: Set up Helm
         run: |
           if ! command -v helm >/dev/null 2>&1; then
-            curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+            HELM_VERSION="v3.20.1"
+            INSTALL_DIR="$HOME/.local/bin"
+            mkdir -p "$INSTALL_DIR"
+            curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz" -o /tmp/helm.tgz
+            tar -xzf /tmp/helm.tgz -C /tmp
+            install /tmp/linux-amd64/helm "$INSTALL_DIR/helm"
           fi
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           helm version
 
       - name: Use local preview kubeconfig
@@ -248,8 +254,14 @@ jobs:
       - name: Set up Helm
         run: |
           if ! command -v helm >/dev/null 2>&1; then
-            curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+            HELM_VERSION="v3.20.1"
+            INSTALL_DIR="$HOME/.local/bin"
+            mkdir -p "$INSTALL_DIR"
+            curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz" -o /tmp/helm.tgz
+            tar -xzf /tmp/helm.tgz -C /tmp
+            install /tmp/linux-amd64/helm "$INSTALL_DIR/helm"
           fi
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           helm version
 
       - name: Use local preview kubeconfig
