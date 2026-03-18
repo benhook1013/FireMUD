@@ -84,9 +84,11 @@ jobs:
           cat <<'EOF'
           Hosted PR preview deployments are partially wired.
 
-          The preview cluster, DNS, TLS, and CI credential model exist.
+          The preview cluster, DNS, TLS, and self-hosted preview runner exist.
           Main CI still covers stack startup, smoke, and cross-service verification.
-          This workflow currently prepares the target namespace, required secrets,
+          GitHub-hosted CI currently handles planning and orchestration only.
+          Cluster-touching preview steps run on the Hetzner self-hosted runner,
+          where the workflow prepares the target namespace, required secrets,
           and validates the preview manifests against the live cluster API.
           The final Helm apply is still gated because the application/database bootstrap
           and frontend delivery path are still under active implementation.
