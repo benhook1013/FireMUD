@@ -121,19 +121,26 @@ jobs:
           preview_max_active=${PREVIEW_MAX_ACTIVE:-2}
           EOF
 
-  preview-access:
-    name: Preview Cluster Access
-    runs-on: ubuntu-latest
+  preview-deploy-disabled:
+    name: Deploy Preview Release
+    runs-on:
+      - self-hosted
+      - Linux
+      - X64
+      - preview
     needs: preview-plan
-    if: ${{ needs.preview-plan.outputs.action == 'deploy' || needs.preview-plan.outputs.action == 'destroy' }}
+    if: ${{ needs.preview-plan.outputs.action == 'deploy' }}
+    environment: pr-preview
     steps:
       - uses: actions/checkout@v6
 
-      - name: Write preview kubeconfig
-        env:
-          PREVIEW_KUBECONFIG: ${{ secrets.PREVIEW_KUBECONFIG }}
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+
+      - name: Use local preview kubeconfig
         run: |
-          KUBECONFIG_PATH="$(./dev-tools/preview/write-kubeconfig.sh)"
+          KUBECONFIG_PATH="$HOME/.kube/firemud-preview-ci.yaml"
+          test -f "$KUBECONFIG_PATH"
           echo "KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"
 
       - name: Verify preview cluster access
@@ -141,23 +148,6 @@ jobs:
           kubectl get namespace kube-system >/dev/null
           kubectl auth can-i get clusterissuers.cert-manager.io
           kubectl auth can-i list namespaces
-
-  preview-prepare:
-    name: Prepare Preview Namespace
-    runs-on: ubuntu-latest
-    needs:
-      - preview-plan
-      - preview-access
-    if: ${{ needs.preview-plan.outputs.action == 'deploy' }}
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Write preview kubeconfig
-        env:
-          PREVIEW_KUBECONFIG: ${{ secrets.PREVIEW_KUBECONFIG }}
-        run: |
-          KUBECONFIG_PATH="$(./dev-tools/preview/write-kubeconfig.sh)"
-          echo "KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"
 
       - name: Enforce preview capacity
         env:
@@ -189,27 +179,6 @@ jobs:
           kubectl get namespace "${{ needs.preview-plan.outputs.namespace }}"
           kubectl -n "${{ needs.preview-plan.outputs.namespace }}" get secret ghcr-preview-pull
           kubectl -n "${{ needs.preview-plan.outputs.namespace }}" get secret firemud-grpc-tls
-
-  preview-deploy-disabled:
-    name: Deploy Preview Release
-    runs-on: ubuntu-latest
-    needs:
-      - preview-plan
-      - preview-prepare
-    if: ${{ needs.preview-plan.outputs.action == 'deploy' }}
-    environment: pr-preview
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Set up Helm
-        uses: azure/setup-helm@v4
-
-      - name: Write preview kubeconfig
-        env:
-          PREVIEW_KUBECONFIG: ${{ secrets.PREVIEW_KUBECONFIG }}
-        run: |
-          KUBECONFIG_PATH="$(./dev-tools/preview/write-kubeconfig.sh)"
-          echo "KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"
 
       - name: Render preview values
         run: |
@@ -249,6 +218,7 @@ jobs:
           - the target namespace exists
           - the GHCR pull secret exists
           - the preview gRPC TLS secret exists
+          - cluster access is performed from the self-hosted preview runner
           - preview values can be generated from CI inputs
           - the current preview chart renders successfully
           - the rendered manifests pass server-side Kubernetes validation on the preview cluster
@@ -260,10 +230,12 @@ jobs:
 
   preview-destroy:
     name: Destroy Preview Release
-    runs-on: ubuntu-latest
-    needs:
-      - preview-plan
-      - preview-access
+    runs-on:
+      - self-hosted
+      - Linux
+      - X64
+      - preview
+    needs: preview-plan
     if: ${{ needs.preview-plan.outputs.action == 'destroy' }}
     environment: pr-preview
     steps:
@@ -272,11 +244,10 @@ jobs:
       - name: Set up Helm
         uses: azure/setup-helm@v4
 
-      - name: Write preview kubeconfig
-        env:
-          PREVIEW_KUBECONFIG: ${{ secrets.PREVIEW_KUBECONFIG }}
+      - name: Use local preview kubeconfig
         run: |
-          KUBECONFIG_PATH="$(./dev-tools/preview/write-kubeconfig.sh)"
+          KUBECONFIG_PATH="$HOME/.kube/firemud-preview-ci.yaml"
+          test -f "$KUBECONFIG_PATH"
           echo "KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"
 
       - name: Uninstall preview release if present

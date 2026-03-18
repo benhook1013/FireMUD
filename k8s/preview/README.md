@@ -8,7 +8,8 @@ The target platform is a single-node k3s cluster on Hetzner with:
 - Traefik ingress
 - cert-manager with Let's Encrypt issuers
 - one namespace per pull request
-- a dedicated CI deployer identity separate from the default k3s admin kubeconfig
+- a dedicated preview deployer identity separate from the default k3s admin kubeconfig
+- a self-hosted GitHub Actions runner on the preview host for cluster-touching preview jobs
 
 These manifests are intentionally cluster-scoped. They are installed once per preview cluster, not once per preview namespace.
 
@@ -26,11 +27,14 @@ This installs:
 
 ## CI credential model
 
-The preview GitHub Actions workflow should use a dedicated kubeconfig derived from the `preview-deployer` ServiceAccount rather than the raw k3s admin kubeconfig.
+The preview GitHub Actions workflow should not expose the cluster API publicly to GitHub-hosted runners. Instead:
+
+- GitHub-hosted jobs handle orchestration and any future image build/push work
+- the self-hosted `preview` runner on the Hetzner host handles namespace prep, secret creation, manifest validation, and eventual Helm apply/destroy
+- that self-hosted runner uses a dedicated kubeconfig derived from the `preview-deployer` ServiceAccount rather than the raw k3s admin kubeconfig
 
 Recommended GitHub secrets:
 
-- `PREVIEW_KUBECONFIG`
 - `PREVIEW_GHCR_USERNAME`
 - `PREVIEW_GHCR_TOKEN`
 
@@ -45,7 +49,7 @@ Recommended GitHub Actions variables:
 
 These manifests prepare the preview cluster itself. The repository now also contains a preview workflow and chart path that can:
 
-- authenticate to the cluster from GitHub Actions
+- reach the cluster from the self-hosted preview runner without exposing the Kubernetes API broadly
 - create preview namespaces
 - create/update GHCR pull secrets
 - create/update preview gRPC TLS secrets
