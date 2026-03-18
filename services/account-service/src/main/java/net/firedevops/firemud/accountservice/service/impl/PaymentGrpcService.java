@@ -14,9 +14,9 @@ import net.firedevops.firemud.account.v1.RefundPaymentResponse;
 import net.firedevops.firemud.accountservice.dto.PaymentIntentDto;
 import net.firedevops.firemud.accountservice.dto.SubscriptionDto;
 import net.firedevops.firemud.accountservice.service.PaymentService;
-import org.lognet.springboot.grpc.GRpcService;
+import org.springframework.grpc.server.service.GrpcService;
 
-@GRpcService
+@GrpcService
 public class PaymentGrpcService extends PaymentServiceGrpc.PaymentServiceImplBase {
   private final PaymentService paymentService;
 

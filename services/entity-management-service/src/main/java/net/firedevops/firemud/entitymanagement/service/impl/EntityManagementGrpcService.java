@@ -28,11 +28,11 @@ import net.firedevops.firemud.entitymanagement.v1.RoomEntity;
 import net.firedevops.firemud.entitymanagement.v1.UpdateEntityRequest;
 import net.firedevops.firemud.entitymanagement.v1.UpdateEntityResponse;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
-import org.lognet.springboot.grpc.GRpcService;
 import org.springframework.data.domain.Pageable;
+import org.springframework.grpc.server.service.GrpcService;
 
 /** Simple gRPC service exposing the Ping RPC. */
-@GRpcService
+@GrpcService
 public class EntityManagementGrpcService
     extends EntityManagementServiceGrpc.EntityManagementServiceImplBase {
   private final PingService pingService;

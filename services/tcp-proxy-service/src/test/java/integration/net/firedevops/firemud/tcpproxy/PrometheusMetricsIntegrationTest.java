@@ -4,19 +4,22 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import io.micrometer.prometheusmetrics.PrometheusConfig;
 import io.micrometer.prometheusmetrics.PrometheusMeterRegistry;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.util.Properties;
 import net.firedevops.firemud.tcpproxy.service.TcpProxyEventClient;
 import org.junit.jupiter.api.Test;
-import org.lognet.springboot.grpc.GRpcServerRunner;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.actuate.metrics.export.prometheus.PrometheusScrapeEndpoint;
+import org.springframework.boot.micrometer.metrics.autoconfigure.export.prometheus.PrometheusScrapeEndpoint;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.boot.test.context.TestConfiguration;
-import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
+import org.springframework.grpc.server.lifecycle.GrpcServerLifecycle;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 @SpringBootTest(
@@ -27,7 +30,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
       "TCP_PROXY_TLS_ENABLED=false",
       "GATEWAY_WS_URL=ws://localhost/ws",
       "spring.flyway.enabled=false",
-      "spring.autoconfigure.exclude=org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration,org.springframework.boot.autoconfigure.orm.jpa.HibernateJpaAutoConfiguration,org.springframework.boot.autoconfigure.flyway.FlywayAutoConfiguration,org.springframework.boot.autoconfigure.data.jpa.JpaRepositoriesAutoConfiguration",
+      "spring.autoconfigure.exclude=org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration,org.springframework.boot.autoconfigure.orm.jpa.HibernateJpaAutoConfiguration,org.springframework.boot.autoconfigure.flyway.FlywayAutoConfiguration,org.springframework.boot.autoconfigure.data.jpa.JpaRepositoriesAutoConfiguration,org.springframework.cloud.gateway.config.GatewayClassPathWarningAutoConfiguration",
       "management.endpoints.web.exposure.include=health,prometheus",
       "management.endpoint.prometheus.enabled=true"
     })
@@ -36,16 +39,19 @@ class PrometheusMetricsIntegrationTest {
 
   @LocalServerPort private int port;
 
-  @Autowired private TestRestTemplate restTemplate;
-
   @MockitoBean private TcpProxyEventClient tcpProxyEventClient;
-  @MockitoBean private GRpcServerRunner grpcServerRunner;
+  @MockitoBean private GrpcServerLifecycle grpcServerLifecycle;
 
   @Test
-  void prometheusEndpointExposesTcpProxyMetrics() {
+  void prometheusEndpointExposesTcpProxyMetrics() throws Exception {
+    HttpRequest request =
+        HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/actuator/prometheus"))
+            .GET()
+            .build();
     String body =
-        restTemplate.getForObject(
-            "http://localhost:" + port + "/actuator/prometheus", String.class);
+        HttpClient.newHttpClient()
+            .send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8))
+            .body();
 
     assertThat(body)
         .contains("tcpproxy_buffer_depth")

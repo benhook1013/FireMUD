@@ -22,9 +22,8 @@ import reactor.test.StepVerifier;
     properties = {
       "spring.flyway.enabled=false",
       "firemud.database.enabled=false",
-      "grpc.server.security.enabled=false",
-      "grpc.server.port=0",
-      "spring.autoconfigure.exclude=org.springframework.cloud.gateway.config.GatewayClassPathWarningAutoConfiguration,org.lognet.springboot.grpc.autoconfigure.GRpcAutoConfiguration,org.lognet.springboot.grpc.autoconfigure.actuate.GRpcActuateAutoConfiguration,org.springframework.boot.autoconfigure.web.servlet.ServletWebServerFactoryAutoConfiguration,org.springframework.boot.autoconfigure.web.servlet.WebMvcAutoConfiguration",
+      "spring.grpc.server.port=0",
+      "spring.autoconfigure.exclude=org.springframework.cloud.gateway.config.GatewayClassPathWarningAutoConfiguration,org.springframework.boot.grpc.server.autoconfigure.GrpcServerAutoConfiguration,org.springframework.boot.grpc.server.autoconfigure.GrpcServerFactoryAutoConfiguration,org.springframework.boot.grpc.server.autoconfigure.health.GrpcServerHealthAutoConfiguration,org.springframework.boot.autoconfigure.web.servlet.ServletWebServerFactoryAutoConfiguration,org.springframework.boot.autoconfigure.web.servlet.WebMvcAutoConfiguration",
       "spring.main.web-application-type=reactive"
     })
 @ActiveProfiles("test")
@@ -32,11 +31,11 @@ class DevEchoWebSocketIntegrationTest {
 
   @LocalServerPort private int port;
 
-  @MockitoBean private org.lognet.springboot.grpc.GRpcServerRunner grpcServerRunner;
-  @MockitoBean private org.lognet.springboot.grpc.GRpcServicesRegistry grpcServicesRegistry;
+  @MockitoBean
+  private org.springframework.grpc.server.lifecycle.GrpcServerLifecycle grpcServerLifecycle;
 
   @MockitoBean
-  private org.lognet.springboot.grpc.health.ManagedHealthStatusService managedHealthStatusService;
+  private org.springframework.grpc.server.service.GrpcServiceDiscoverer grpcServiceDiscoverer;
 
   @Autowired private ReactorNettyWebSocketClient client;
 

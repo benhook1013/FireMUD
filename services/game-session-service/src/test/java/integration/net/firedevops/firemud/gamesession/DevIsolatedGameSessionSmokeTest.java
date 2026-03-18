@@ -9,23 +9,21 @@ import net.firedevops.firemud.gamesession.dto.StartSessionRequest;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.lognet.springboot.grpc.GRpcServerRunner;
-import org.lognet.springboot.grpc.GRpcServicesRegistry;
-import org.lognet.springboot.grpc.autoconfigure.GRpcServerProperties;
-import org.lognet.springboot.grpc.health.ManagedHealthStatusService;
 import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.resttestclient.TestRestTemplate;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
-import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.grpc.server.lifecycle.GrpcServerLifecycle;
+import org.springframework.grpc.server.service.GrpcServiceDiscoverer;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -47,8 +45,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
       "spring.profiles.active=dev",
       "game-session.dev-isolated=true",
       "game-session.require-authenticated-commands=false",
-      "grpc.server.enabled=false",
-      "spring.autoconfigure.exclude=org.lognet.springboot.grpc.autoconfigure.GRpcAutoConfiguration,org.lognet.springboot.grpc.autoconfigure.actuate.GRpcActuateAutoConfiguration"
+      "spring.autoconfigure.exclude=org.springframework.boot.grpc.server.autoconfigure.GrpcServerAutoConfiguration,org.springframework.boot.grpc.server.autoconfigure.GrpcServerFactoryAutoConfiguration,org.springframework.boot.grpc.server.autoconfigure.health.GrpcServerHealthAutoConfiguration"
     })
 @Import(DevIsolatedGameSessionSmokeTest.DisabledGrpcTestConfig.class)
 class DevIsolatedGameSessionSmokeTest {
@@ -92,23 +89,13 @@ class DevIsolatedGameSessionSmokeTest {
   @Configuration
   static class DisabledGrpcTestConfig {
     @Bean
-    GRpcServerRunner grpcServerRunner() {
-      return Mockito.mock(GRpcServerRunner.class);
+    GrpcServerLifecycle grpcServerLifecycle() {
+      return Mockito.mock(GrpcServerLifecycle.class);
     }
 
     @Bean
-    GRpcServicesRegistry grpcServicesRegistry() {
-      return Mockito.mock(GRpcServicesRegistry.class);
-    }
-
-    @Bean
-    GRpcServerProperties grpcServerProperties() {
-      return new GRpcServerProperties();
-    }
-
-    @Bean
-    ManagedHealthStatusService managedHealthStatusService() {
-      return Mockito.mock(ManagedHealthStatusService.class);
+    GrpcServiceDiscoverer grpcServiceDiscoverer() {
+      return Mockito.mock(GrpcServiceDiscoverer.class);
     }
   }
 }

@@ -1,6 +1,5 @@
 package net.firedevops.firemud.gamedesign.service.impl;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.annotation.Timed;
 import java.nio.charset.StandardCharsets;
@@ -16,6 +15,7 @@ import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
+import tools.jackson.databind.ObjectMapper;
 
 @Service
 public class AssetExportServiceImpl implements AssetExportService {

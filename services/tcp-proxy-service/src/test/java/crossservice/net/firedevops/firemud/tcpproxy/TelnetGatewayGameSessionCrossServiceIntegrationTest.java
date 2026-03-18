@@ -29,22 +29,22 @@ import net.firedevops.firemud.tcpproxy.stub.GatewayStubApplication;
 import net.firedevops.firemud.tcpproxy.telnet.TelnetServer;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
-import org.lognet.springboot.grpc.GRpcServerRunner;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
 import org.springframework.boot.builder.SpringApplicationBuilder;
+import org.springframework.boot.resttestclient.TestRestTemplate;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
-import org.springframework.boot.test.mock.mockito.MockBean;
-import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.boot.test.web.server.LocalServerPort;
-import org.springframework.boot.web.context.WebServerApplicationContext;
+import org.springframework.boot.web.server.context.WebServerApplicationContext;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
+import org.springframework.grpc.server.lifecycle.GrpcServerLifecycle;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.util.TestSocketUtils;
 import org.springframework.util.StringUtils;
 import org.springframework.web.reactive.HandlerMapping;
@@ -81,9 +81,7 @@ class TelnetGatewayGameSessionCrossServiceIntegrationTest {
 
   @Autowired private TelnetServer telnetServer;
 
-  @SuppressWarnings("removal")
-  @MockBean
-  private GRpcServerRunner grpcServerRunner;
+  @MockitoBean private GrpcServerLifecycle grpcServerLifecycle;
 
   @AfterAll
   static synchronized void stopTestServices() {
@@ -188,9 +186,7 @@ class TelnetGatewayGameSessionCrossServiceIntegrationTest {
               .properties(
                   "server.port=0",
                   "spring.main.web-application-type=reactive",
-                  "grpc.server.enabled=false",
-                  "grpc.server.security.enabled=false",
-                  "grpc.server.port=" + grpcPort)
+                  "spring.grpc.server.port=0")
               .run();
       int port = ((WebServerApplicationContext) context).getWebServer().getPort();
       return new GameSessionStubHolder(context, port, context.getBean(GameSessionStub.class));
@@ -259,7 +255,9 @@ class TelnetGatewayGameSessionCrossServiceIntegrationTest {
   @Configuration(proxyBeanMethods = false)
   @EnableAutoConfiguration(
       excludeName = {
-        "org.lognet.springboot.grpc.autoconfigure.GRpcAutoConfiguration",
+        "org.springframework.boot.grpc.server.autoconfigure.GrpcServerAutoConfiguration",
+        "org.springframework.boot.grpc.server.autoconfigure.GrpcServerFactoryAutoConfiguration",
+        "org.springframework.boot.grpc.server.autoconfigure.health.GrpcServerHealthAutoConfiguration",
         "org.springframework.cloud.gateway.config.GatewayRedisAutoConfiguration"
       })
   @Import(GameSessionStubConfiguration.class)

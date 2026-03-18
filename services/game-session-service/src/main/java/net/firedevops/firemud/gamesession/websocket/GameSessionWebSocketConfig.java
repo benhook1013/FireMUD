@@ -10,13 +10,20 @@ import org.springframework.web.socket.config.annotation.WebSocketHandlerRegistry
 @EnableWebSocket
 public class GameSessionWebSocketConfig implements WebSocketConfigurer {
   private final GameSessionWebSocketHandler handler;
+  private final GameSessionWebSocketHandshakeInterceptor handshakeInterceptor;
 
-  public GameSessionWebSocketConfig(GameSessionWebSocketHandler handler) {
+  public GameSessionWebSocketConfig(
+      GameSessionWebSocketHandler handler,
+      GameSessionWebSocketHandshakeInterceptor handshakeInterceptor) {
     this.handler = handler;
+    this.handshakeInterceptor = handshakeInterceptor;
   }
 
   @Override
   public void registerWebSocketHandlers(WebSocketHandlerRegistry registry) {
-    registry.addHandler(handler, "/ws/game", "/ws/game/**").setAllowedOrigins("*");
+    registry
+        .addHandler(handler, "/ws/game", "/ws/game/**")
+        .addInterceptors(handshakeInterceptor)
+        .setAllowedOrigins("*");
   }
 }

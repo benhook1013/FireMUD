@@ -18,12 +18,12 @@ import net.firedevops.firemud.tcpproxy.v1.NotifyDisconnectResponse;
 import net.firedevops.firemud.tcpproxy.v1.PingRequest;
 import net.firedevops.firemud.tcpproxy.v1.PingResponse;
 import net.firedevops.firemud.tcpproxy.v1.TcpProxyServiceGrpc;
-import org.lognet.springboot.grpc.GRpcService;
 import org.slf4j.Logger;
+import org.springframework.grpc.server.service.GrpcService;
 import org.springframework.util.StringUtils;
 
 /** gRPC hooks used by the TcpProxyService to coordinate disconnects and buffered input. */
-@GRpcService
+@GrpcService
 public final class TcpProxyServiceImpl extends TcpProxyServiceGrpc.TcpProxyServiceImplBase {
   private static final Logger logger = LoggingUtil.getLogger(TcpProxyServiceImpl.class);
   private static final String OK_CODE = "OK";

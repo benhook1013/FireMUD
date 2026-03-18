@@ -28,6 +28,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
+import org.springframework.grpc.server.lifecycle.GrpcServerLifecycle;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketHttpHeaders;
@@ -46,8 +47,7 @@ import org.springframework.web.socket.handler.TextWebSocketHandler;
       "game-session.require-authenticated-commands=false",
       "firemud.database.enabled=false",
       "spring.application.name=game-session-service",
-      "grpc.server.port=0",
-      "grpc.server.enabled=false"
+      "spring.grpc.server.port=0"
     })
 class GameSessionLoginIntegrationTest {
   @LocalServerPort private int port;
@@ -57,7 +57,7 @@ class GameSessionLoginIntegrationTest {
   @MockitoBean private SessionContextService sessionContextService;
   @MockitoBean private SessionAuthenticationService sessionAuthenticationService;
   @MockitoBean private CommandService commandService;
-  @MockitoBean private org.lognet.springboot.grpc.GRpcServerRunner grpcServerRunner;
+  @MockitoBean private GrpcServerLifecycle grpcServerLifecycle;
 
   @BeforeEach
   void setUp() {
@@ -84,7 +84,7 @@ class GameSessionLoginIntegrationTest {
     headers.add("X-Game-Instance-Id", "1");
 
     var future =
-        client.doHandshake(
+        client.execute(
             new TextWebSocketHandler() {
               @Override
               protected void handleTextMessage(WebSocketSession session, TextMessage message) {

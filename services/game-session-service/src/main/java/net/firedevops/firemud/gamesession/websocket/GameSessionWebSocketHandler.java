@@ -21,10 +21,6 @@ import org.springframework.web.socket.handler.TextWebSocketHandler;
 @Component
 public class GameSessionWebSocketHandler extends TextWebSocketHandler {
   private static final Logger logger = LoggerFactory.getLogger(GameSessionWebSocketHandler.class);
-  private static final String GAME_INSTANCE_HEADER = "X-Game-Instance-Id";
-  private static final String LEGACY_SESSION_HEADER = "X-Session-Id";
-  private static final String TENANT_HEADER = "X-Tenant-Id";
-  private static final String SOLO_TICK_HEADER = "X-Requires-Solo-Tick";
 
   private final TextCommandInterpreter interpreter;
   private final LookCommandHandler lookHandler;
@@ -39,9 +35,10 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
   @Override
   public void afterConnectionEstablished(WebSocketSession session) {
     logger.debug(
-        "WebSocket session {} established with headers {}",
+        "WebSocket session {} established with sessionId={} tenantId={}",
         session.getId(),
-        session.getHandshakeHeaders());
+        resolveSessionId(session),
+        resolveTenantId(session));
     String sessionId = resolveSessionId(session);
     String tenantId = resolveTenantId(session);
     if (StringUtils.hasText(sessionId) && StringUtils.hasText(tenantId)) {
@@ -69,20 +66,22 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
   }
 
   private boolean parseSoloTick(WebSocketSession session) {
-    String value = session.getHandshakeHeaders().getFirst(SOLO_TICK_HEADER);
+    Object cached =
+        session.getAttributes().get(GameSessionWebSocketHandshakeInterceptor.SOLO_TICK_ATTR);
+    String value = cached instanceof String text ? text : null;
     return value != null && value.equalsIgnoreCase("true");
   }
 
   private String resolveSessionId(WebSocketSession session) {
-    String gameInstanceId = session.getHandshakeHeaders().getFirst(GAME_INSTANCE_HEADER);
-    if (StringUtils.hasText(gameInstanceId)) {
-      return gameInstanceId;
-    }
-    return session.getHandshakeHeaders().getFirst(LEGACY_SESSION_HEADER);
+    Object cached =
+        session.getAttributes().get(GameSessionWebSocketHandshakeInterceptor.SESSION_ID_ATTR);
+    return cached instanceof String text ? text : null;
   }
 
   private String resolveTenantId(WebSocketSession session) {
-    return session.getHandshakeHeaders().getFirst(TENANT_HEADER);
+    Object cached =
+        session.getAttributes().get(GameSessionWebSocketHandshakeInterceptor.TENANT_ID_ATTR);
+    return cached instanceof String text ? text : null;
   }
 
   private String formatResponse(

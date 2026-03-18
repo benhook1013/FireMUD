@@ -7,34 +7,34 @@ import net.firedevops.firemud.common.grpc.MetricsInterceptor;
 import net.firedevops.firemud.common.grpc.TracingInterceptor;
 import net.firedevops.firemud.common.security.AuthTokenInterceptor;
 import net.firedevops.firemud.common.security.JwtUtil;
-import org.lognet.springboot.grpc.GRpcGlobalInterceptor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.grpc.server.GlobalServerInterceptor;
 
 /** Configuration for gRPC interceptors and OpenTelemetry. */
 @Configuration
 public class GrpcConfig {
 
   @Bean
-  @GRpcGlobalInterceptor
+  @GlobalServerInterceptor
   public LoggingInterceptor loggingInterceptor() {
     return new LoggingInterceptor();
   }
 
   @Bean
-  @GRpcGlobalInterceptor
+  @GlobalServerInterceptor
   public MetricsInterceptor metricsInterceptor(MeterRegistry registry) {
     return new MetricsInterceptor(registry);
   }
 
   @Bean
-  @GRpcGlobalInterceptor
+  @GlobalServerInterceptor
   public TracingInterceptor tracingInterceptor(Tracer tracer) {
     return new TracingInterceptor(tracer);
   }
 
   @Bean
-  @GRpcGlobalInterceptor
+  @GlobalServerInterceptor
   public AuthTokenInterceptor authTokenInterceptor(JwtUtil jwtUtil) {
     return new AuthTokenInterceptor(jwtUtil);
   }

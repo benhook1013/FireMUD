@@ -1,5 +1,5 @@
 [versions]
-spring-boot = "3.5.10"
+spring-boot = "4.0.3"
 flyway = "12.1.1"
 mapstruct = "1.6.3"
 lombok = "1.18.42"
@@ -21,16 +21,21 @@ spring-boot-starter-actuator = { module = "org.springframework.boot:spring-boot-
 spring-boot-starter-data-jpa = { module = "org.springframework.boot:spring-boot-starter-data-jpa", version.ref = "spring-boot" }
 spring-boot-starter-data-redis = { module = "org.springframework.boot:spring-boot-starter-data-redis", version.ref = "spring-boot" }
 spring-boot-starter-data-redis-reactive = { module = "org.springframework.boot:spring-boot-starter-data-redis-reactive", version.ref = "spring-boot" }
-spring-boot-starter-aop = { module = "org.springframework.boot:spring-boot-starter-aop", version.ref = "spring-boot" }
 spring-boot-starter-mail = { module = "org.springframework.boot:spring-boot-starter-mail", version.ref = "spring-boot" }
 spring-boot-starter-web = { module = "org.springframework.boot:spring-boot-starter-web", version.ref = "spring-boot" }
 spring-boot-starter-validation = { module = "org.springframework.boot:spring-boot-starter-validation", version.ref = "spring-boot" }
 spring-boot-starter-jdbc = { module = "org.springframework.boot:spring-boot-starter-jdbc", version.ref = "spring-boot" }
 spring-boot-starter-cache = { module = "org.springframework.boot:spring-boot-starter-cache", version.ref = "spring-boot" }
 spring-boot-starter-test = { module = "org.springframework.boot:spring-boot-starter-test", version.ref = "spring-boot" }
+spring-boot-starter-restclient-test = { module = "org.springframework.boot:spring-boot-starter-restclient-test", version.ref = "spring-boot" }
+spring-boot-resttestclient = { module = "org.springframework.boot:spring-boot-resttestclient", version.ref = "spring-boot" }
+spring-boot-starter-webmvc-test = { module = "org.springframework.boot:spring-boot-starter-webmvc-test", version.ref = "spring-boot" }
 spring-boot-starter-websocket = { module = "org.springframework.boot:spring-boot-starter-websocket", version.ref = "spring-boot" }
 spring-boot-starter-webflux = { module = "org.springframework.boot:spring-boot-starter-webflux", version.ref = "spring-boot" }
 spring-boot-configuration-processor = { module = "org.springframework.boot:spring-boot-configuration-processor", version.ref = "spring-boot" }
+spring-boot-dependencies = { module = "org.springframework.boot:spring-boot-dependencies", version.ref = "spring-boot" }
+spring-aop = { module = "org.springframework:spring-aop" }
+aspectjweaver = { module = "org.aspectj:aspectjweaver" }
 
 flyway-core = { module = "org.flywaydb:flyway-core", version.ref = "flyway" }
 flyway-database-postgresql = { module = "org.flywaydb:flyway-database-postgresql", version.ref = "flyway" }
@@ -44,6 +49,7 @@ lombok-mapstruct-binding = { module = "org.projectlombok:lombok-mapstruct-bindin
 grpc-netty-shaded = { module = "io.grpc:grpc-netty-shaded", version = "1.80.0" }
 grpc-protobuf = { module = "io.grpc:grpc-protobuf", version = "1.80.0" }
 grpc-stub = { module = "io.grpc:grpc-stub", version = "1.80.0" }
+grpc-inprocess = { module = "io.grpc:grpc-inprocess", version = "1.80.0" }
 protoc-gen-grpc-java = { module = "io.grpc:protoc-gen-grpc-java", version = "1.80.0" }
 
 protobuf-java = { module = "com.google.protobuf:protobuf-java", version = "4.34.0" }
@@ -61,13 +67,11 @@ jjwt-impl = { module = "io.jsonwebtoken:jjwt-impl", version = "0.13.0" }
 jjwt-jackson = { module = "io.jsonwebtoken:jjwt-jackson", version = "0.13.0" }
 argon2 = { module = "de.mkammerer:argon2-jvm", version = "2.12" }
 
-grpc-spring-boot-starter = { module = "io.github.lognet:grpc-spring-boot-starter", version = "5.2.0" }
+grpc-spring-boot-starter = { module = "org.springframework.grpc:spring-grpc-spring-boot-starter", version = "1.0.2" }
 postgresql = { module = "org.postgresql:postgresql", version = "42.7.10" }
 aws-sdk-s3 = { module = "software.amazon.awssdk:s3", version = "2.42.14" }
 h2 = { module = "com.h2database:h2", version = "2.4.240" }
 
-# Keep Springdoc on 2.x until we migrate to Spring Boot 4.x. Springdoc 3.x depends on Spring Boot 4.x artifacts,
-# which causes classpath skew and breaks Spring Boot 3.x test slices (e.g., @WebMvcTest / spring-boot-test-autoconfigure).
 springdoc-openapi = { module = "org.springdoc:springdoc-openapi-starter-webmvc-ui", version = "3.0.2" }
 stripe-java = { module = "com.stripe:stripe-java", version = "31.4.1" }
 otp-java = { module = "com.github.bastiaanjansen:otp-java", version = "2.1.0" }

@@ -4,7 +4,6 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import net.firedevops.firemud.gamesession.command.text.LoginCommandHandler;
 import net.firedevops.firemud.gamesession.command.text.LookCommandHandler;
 import net.firedevops.firemud.gamesession.command.text.SayCommandHandler;
@@ -14,11 +13,12 @@ import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.GameInstanceService;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import org.junit.jupiter.api.Test;
-import org.lognet.springboot.grpc.GRpcServerRunner;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.grpc.server.lifecycle.GrpcServerLifecycle;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import tools.jackson.databind.ObjectMapper;
 
 @GameSessionIntegrationTest
 class GameInstanceControllerTest {
@@ -27,7 +27,7 @@ class GameInstanceControllerTest {
   @Autowired private ObjectMapper objectMapper;
 
   @MockitoBean private GameInstanceService gameInstanceService;
-  @MockitoBean private GRpcServerRunner grpcServerRunner;
+  @MockitoBean private GrpcServerLifecycle grpcServerLifecycle;
   @MockitoBean private LoginCommandHandler loginCommandHandler;
   @MockitoBean private LookCommandHandler lookCommandHandler;
   @MockitoBean private SayCommandHandler sayCommandHandler;

@@ -1,8 +1,8 @@
 package net.firedevops.firemud.gamesession.health;
 
 import net.firedevops.firemud.gamesession.service.PingService;
-import org.springframework.boot.actuate.health.Health;
-import org.springframework.boot.actuate.health.HealthIndicator;
+import org.springframework.boot.health.contributor.Health;
+import org.springframework.boot.health.contributor.HealthIndicator;
 import org.springframework.stereotype.Component;
 
 /**
@@ -11,7 +11,7 @@ import org.springframework.stereotype.Component;
  * <p>This keeps the actuator health endpoint in sync with the REST and gRPC ping endpoints so the
  * gateway can determine service availability without extra calls.
  */
-@Component
+@Component("servicePingHealthIndicator")
 public class PingHealthIndicator implements HealthIndicator {
   private final PingService pingService;
 

@@ -150,7 +150,7 @@ class AccountGrpcServiceTest {
 
     assertEquals(
         "demo",
-        com.fasterxml.jackson.databind.json.JsonMapper.builder()
+        tools.jackson.databind.json.JsonMapper.builder()
             .build()
             .readTree(ref.get().getProfileJson())
             .get("displayName")

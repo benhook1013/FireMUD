@@ -11,9 +11,9 @@ import net.firedevops.firemud.loggingadmin.v1.CreateReportRequest;
 import net.firedevops.firemud.loggingadmin.v1.CreateReportResponse;
 import net.firedevops.firemud.loggingadmin.v1.ReportServiceGrpc;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
-import org.lognet.springboot.grpc.GRpcService;
+import org.springframework.grpc.server.service.GrpcService;
 
-@GRpcService
+@GrpcService
 public class ReportGrpcService extends ReportServiceGrpc.ReportServiceImplBase {
 
   private final ReportService reportService;

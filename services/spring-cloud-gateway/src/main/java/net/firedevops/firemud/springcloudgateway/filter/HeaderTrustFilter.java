@@ -133,10 +133,10 @@ public class HeaderTrustFilter implements WebFilter, Ordered {
   }
 
   private static boolean presentsProxyHeaders(HttpHeaders headers) {
-    return headers.containsKey(HDR_PROXY_CLIENT_IP)
-        || headers.containsKey(HDR_PROXY_CONNECTION_ID)
-        || headers.containsKey(HDR_PROXY_GAME_INSTANCE_ID)
-        || headers.containsKey(HDR_PROXY_TENANT_ID);
+    return headers.getFirst(HDR_PROXY_CLIENT_IP) != null
+        || headers.getFirst(HDR_PROXY_CONNECTION_ID) != null
+        || headers.getFirst(HDR_PROXY_GAME_INSTANCE_ID) != null
+        || headers.getFirst(HDR_PROXY_TENANT_ID) != null;
   }
 
   private void stripGatewayOwnedHeaders(HttpHeaders headers) {

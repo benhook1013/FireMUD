@@ -10,10 +10,11 @@ import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import net.firedevops.firemud.tcpproxy.telnet.TelnetServer;
 import org.junit.jupiter.api.Test;
-import org.lognet.springboot.grpc.GRpcServerRunner;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
+import org.springframework.grpc.server.lifecycle.GrpcServerLifecycle;
+import org.springframework.grpc.server.service.GrpcServiceDiscoverer;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -29,14 +30,15 @@ class DevEchoTelnetIntegrationTest {
   private static final int TELNET_SERVER_PORT = allocatePort();
 
   @Autowired private TelnetServer telnetServer;
-  @MockitoBean private GRpcServerRunner grpcServerRunner;
+  @MockitoBean private GrpcServerLifecycle grpcServerLifecycle;
+  @MockitoBean private GrpcServiceDiscoverer grpcServiceDiscoverer;
 
   @DynamicPropertySource
   static void registerProperties(DynamicPropertyRegistry registry) {
     registry.add("server.port", () -> WEB_SERVER_PORT);
     registry.add("GATEWAY_WS_URL", () -> "ws://localhost:" + WEB_SERVER_PORT + "/dev/echo");
     registry.add("TCP_PROXY_PORT", () -> TELNET_SERVER_PORT);
-    registry.add("grpc.server.port", () -> 0);
+    registry.add("spring.grpc.server.port", () -> 0);
   }
 
   @Test

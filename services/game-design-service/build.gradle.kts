@@ -11,7 +11,8 @@ dependencies {
     implementation(libs.spring.boot.starter.actuator)
     implementation(libs.spring.boot.starter.data.jpa)
     implementation(project(":common-library"))
-    implementation(libs.spring.boot.starter.aop)
+    implementation(libs.spring.aop)
+    implementation(libs.aspectjweaver)
     implementation(libs.grpc.spring.boot.starter)
     implementation(libs.micrometer.registry.prometheus)
     implementation(libs.opentelemetry.sdk)
@@ -22,4 +23,3 @@ dependencies {
     testImplementation(libs.testcontainers.postgresql)
     compileOnly("com.github.spotbugs:spotbugs-annotations:4.9.8")
 }
-

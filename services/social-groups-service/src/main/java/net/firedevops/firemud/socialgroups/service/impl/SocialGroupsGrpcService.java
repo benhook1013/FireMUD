@@ -21,10 +21,10 @@ import net.firedevops.firemud.socialgroups.v1.PingResponse;
 import net.firedevops.firemud.socialgroups.v1.SendMailResponse;
 import net.firedevops.firemud.socialgroups.v1.SendMessageResponse;
 import net.firedevops.firemud.socialgroups.v1.SocialGroupsServiceGrpc;
-import org.lognet.springboot.grpc.GRpcService;
+import org.springframework.grpc.server.service.GrpcService;
 
 /** gRPC service implementation for the SocialGroupsService API. */
-@GRpcService
+@GrpcService
 @RequiredArgsConstructor
 @SuppressFBWarnings(
     value = "EI_EXPOSE_REP2",

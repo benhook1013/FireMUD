@@ -28,7 +28,9 @@ import reactor.core.publisher.Mono;
 @ConditionalOnProperty("gateway.stub.target-uri")
 @EnableAutoConfiguration(
     excludeName = {
-      "org.lognet.springboot.grpc.autoconfigure.GRpcAutoConfiguration",
+      "org.springframework.boot.grpc.server.autoconfigure.GrpcServerAutoConfiguration",
+      "org.springframework.boot.grpc.server.autoconfigure.GrpcServerFactoryAutoConfiguration",
+      "org.springframework.boot.grpc.server.autoconfigure.health.GrpcServerHealthAutoConfiguration",
       "org.springframework.cloud.gateway.config.GatewayRedisAutoConfiguration"
     })
 public class GatewayStubApplication {

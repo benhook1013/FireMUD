@@ -9,11 +9,9 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.SpringBootConfiguration;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
 import org.springframework.boot.autoconfigure.ImportAutoConfiguration;
-import org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration;
-import org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration;
+import org.springframework.boot.resttestclient.TestRestTemplate;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
-import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.ResponseEntity;
@@ -23,10 +21,10 @@ import org.springframework.http.ResponseEntity;
     webEnvironment = WebEnvironment.RANDOM_PORT,
     classes = TestApp.class,
     properties = {
-      "spring.autoconfigure.exclude=org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration,org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration,org.springframework.cloud.gateway.config.GatewayClassPathWarningAutoConfiguration",
+      "spring.autoconfigure.exclude=org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration,org.springframework.boot.data.redis.autoconfigure.DataRedisAutoConfiguration,org.springframework.cloud.gateway.config.GatewayClassPathWarningAutoConfiguration",
       "spring.main.web-application-type=reactive"
     })
-@ImportAutoConfiguration(exclude = DataSourceAutoConfiguration.class)
+@ImportAutoConfiguration
 class GatewayApplicationIntegrationTest {
 
   @LocalServerPort private int port;
@@ -43,6 +41,9 @@ class GatewayApplicationIntegrationTest {
 
 @SpringBootConfiguration
 @EnableAutoConfiguration(
-    exclude = {DataSourceAutoConfiguration.class, RedisAutoConfiguration.class})
+    excludeName = {
+      "org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration",
+      "org.springframework.boot.data.redis.autoconfigure.DataRedisAutoConfiguration"
+    })
 @Import({CommonAutoConfiguration.class})
 class TestApp {}

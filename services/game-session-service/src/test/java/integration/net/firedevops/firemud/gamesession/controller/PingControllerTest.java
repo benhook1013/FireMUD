@@ -12,9 +12,9 @@ import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.PingService;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import org.junit.jupiter.api.Test;
-import org.lognet.springboot.grpc.GRpcServerRunner;
 import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.grpc.server.lifecycle.GrpcServerLifecycle;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -24,7 +24,7 @@ class PingControllerTest {
   @Autowired private MockMvc mockMvc;
 
   @MockitoBean private PingService pingService;
-  @MockitoBean private GRpcServerRunner grpcServerRunner;
+  @MockitoBean private GrpcServerLifecycle grpcServerLifecycle;
   @MockitoBean private LoginCommandHandler loginCommandHandler;
   @MockitoBean private LookCommandHandler lookCommandHandler;
   @MockitoBean private SayCommandHandler sayCommandHandler;

@@ -10,13 +10,13 @@ import net.firedevops.firemud.tcpproxy.v1.NotifyDisconnectResponse;
 import net.firedevops.firemud.tcpproxy.v1.PingRequest;
 import net.firedevops.firemud.tcpproxy.v1.PingResponse;
 import net.firedevops.firemud.tcpproxy.v1.TcpProxyServiceGrpc;
-import org.lognet.springboot.grpc.GRpcService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.grpc.server.service.GrpcService;
 import org.springframework.util.StringUtils;
 
 /** gRPC endpoints for the TCP Proxy Service. */
-@GRpcService
+@GrpcService
 public class TcpProxyGrpcService extends TcpProxyServiceGrpc.TcpProxyServiceImplBase {
   private static final Logger logger = LoggerFactory.getLogger(TcpProxyGrpcService.class);
   private static final String OK = "OK";

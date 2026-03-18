@@ -23,9 +23,9 @@ import net.firedevops.firemud.gamedesign.v1.PublishVersionResponse;
 import net.firedevops.firemud.gamedesign.v1.SaveRevisionRequest;
 import net.firedevops.firemud.gamedesign.v1.SaveRevisionResponse;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
-import org.lognet.springboot.grpc.GRpcService;
+import org.springframework.grpc.server.service.GrpcService;
 
-@GRpcService
+@GrpcService
 @RequiredArgsConstructor
 public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServiceImplBase {
   private final PingService pingService;

@@ -19,21 +19,20 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
     properties = {
       "spring.flyway.enabled=false",
       "firemud.database.enabled=false",
-      "grpc.server.security.enabled=false",
-      "grpc.server.port=0",
+      "spring.grpc.server.port=0",
       "firemud.auth.jwt-secret=test-secret-for-prod-profile-tests",
       "spring.main.web-application-type=reactive",
-      "spring.autoconfigure.exclude=org.springframework.cloud.gateway.config.GatewayClassPathWarningAutoConfiguration,org.lognet.springboot.grpc.autoconfigure.GRpcAutoConfiguration,org.lognet.springboot.grpc.autoconfigure.actuate.GRpcActuateAutoConfiguration"
+      "spring.autoconfigure.exclude=org.springframework.cloud.gateway.config.GatewayClassPathWarningAutoConfiguration,org.springframework.boot.grpc.server.autoconfigure.GrpcServerAutoConfiguration,org.springframework.boot.grpc.server.autoconfigure.GrpcServerFactoryAutoConfiguration,org.springframework.boot.grpc.server.autoconfigure.health.GrpcServerHealthAutoConfiguration"
     })
 @ActiveProfiles("prod")
 @Import(TestGatewayRateLimiterConfig.class)
 class GatewayRoutesConfigurationProdTest {
 
-  @MockitoBean private org.lognet.springboot.grpc.GRpcServerRunner grpcServerRunner;
-  @MockitoBean private org.lognet.springboot.grpc.GRpcServicesRegistry grpcServicesRegistry;
+  @MockitoBean
+  private org.springframework.grpc.server.lifecycle.GrpcServerLifecycle grpcServerLifecycle;
 
   @MockitoBean
-  private org.lognet.springboot.grpc.health.ManagedHealthStatusService managedHealthStatusService;
+  private org.springframework.grpc.server.service.GrpcServiceDiscoverer grpcServiceDiscoverer;
 
   @Autowired private GatewayProperties gatewayProperties;
 
