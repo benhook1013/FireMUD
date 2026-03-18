@@ -10,6 +10,8 @@ import java.io.PrintWriter;
 import java.net.Socket;
 import java.net.URI;
 import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.net.http.WebSocket;
 import java.net.http.WebSocket.Listener;
 import java.nio.charset.StandardCharsets;
@@ -32,7 +34,6 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
 import org.springframework.boot.builder.SpringApplicationBuilder;
-import org.springframework.boot.resttestclient.TestRestTemplate;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.boot.test.web.server.LocalServerPort;
@@ -77,8 +78,6 @@ class TelnetGatewayGameSessionCrossServiceIntegrationTest {
 
   @LocalServerPort private int port;
 
-  @Autowired private TestRestTemplate restTemplate;
-
   @Autowired private TelnetServer telnetServer;
 
   @MockitoBean private GrpcServerLifecycle grpcServerLifecycle;
@@ -100,7 +99,14 @@ class TelnetGatewayGameSessionCrossServiceIntegrationTest {
   @Test
   void telnetCommandFlowsThroughGatewayToGameSession() throws Exception {
     ensureTestServicesStarted();
-    String body = restTemplate.getForObject("http://localhost:" + port + "/ping", String.class);
+    HttpResponse<String> pingResponse =
+        HttpClient.newHttpClient()
+            .send(
+                HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/ping"))
+                    .GET()
+                    .build(),
+                HttpResponse.BodyHandlers.ofString());
+    String body = pingResponse.body();
     assertThat(body).contains("pong");
 
     try (Socket socket = new Socket("localhost", telnetServer.getPort());

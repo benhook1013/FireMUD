@@ -2,9 +2,14 @@ package net.firedevops.firemud.tcpproxy;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.github.dockerjava.api.exception.NotFoundException;
 import java.io.OutputStreamWriter;
 import java.io.PrintWriter;
 import java.net.Socket;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import net.firedevops.firemud.tcpproxy.telnet.TelnetServer;
 import org.junit.jupiter.api.AfterAll;
@@ -12,7 +17,6 @@ import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.resttestclient.TestRestTemplate;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.boot.test.web.server.LocalServerPort;
@@ -55,15 +59,27 @@ class TcpProxyCrossServiceIntegrationTest {
     }
   }
 
+  private static boolean isGatewayImageAvailableLocally() {
+    try {
+      DockerClientFactory.instance()
+          .client()
+          .inspectImageCmd("ghcr.io/benhook1013/spring-cloud-gateway:latest")
+          .exec();
+      return true;
+    } catch (NotFoundException e) {
+      return false;
+    } catch (Exception e) {
+      return false;
+    }
+  }
+
   @LocalServerPort private int port;
 
   @Autowired private TelnetServer telnetServer;
 
-  @Autowired private TestRestTemplate restTemplate;
-
   @DynamicPropertySource
   static void registerProperties(DynamicPropertyRegistry registry) {
-    if (isDockerAvailable()) {
+    if (isDockerAvailable() && isGatewayImageAvailableLocally()) {
       try {
         gateway =
             new GenericContainer<>(
@@ -106,7 +122,11 @@ class TcpProxyCrossServiceIntegrationTest {
       writer.println("look");
     }
 
-    String body = restTemplate.getForObject("http://localhost:" + port + "/ping", String.class);
+    HttpClient httpClient = HttpClient.newHttpClient();
+    HttpRequest request =
+        HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/ping")).GET().build();
+    HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+    String body = response.body();
     assertThat(body).contains("pong");
   }
 }
