@@ -1,7 +1,8 @@
 # Helm Charts
 
-This directory contains placeholder Helm charts for deploying FireMUD services.
-Charts are provided for the **Account Service** and **Game Session Service** as examples.
+This directory contains Helm charts for deploying FireMUD services.
+Charts are provided for the **Account Service** and **Game Session Service** as focused examples.
+The umbrella chart under `firemud/` is the evolving deployment surface for the hosted `pr-preview` environment.
 
 The files `values-local.yaml` and `values-dev.yaml` demonstrate how runtime
 settings such as Redis connection info, tick interval, and feature flags can be
@@ -32,7 +33,25 @@ helm install firemud ./firemud \
   -f values-local.yaml
 ```
 
-The umbrella chart includes a Helm hook job that wipes the Redis Append-Only File on each deployment.
-Set `redis.releaseName` in your values file to match the Redis Helm release name
-(for example `firemud-redis` in production) so the hook can mount the correct
-PersistentVolumeClaim.
+For the future hosted PR preview environment, start from:
+
+```bash
+helm upgrade --install pr-123 ./firemud \
+  -f firemud/values-preview.example.yaml \
+  --namespace pr-123 \
+  --create-namespace
+```
+
+`firemud/values-preview.example.yaml` documents the preview deployment contract:
+
+- PR number, namespace, release name, and preview hostname
+- immutable per-PR image tags from GHCR
+- Traefik/TLS settings
+- persistent storage for PostgreSQL, MinIO, and Redis
+- conservative preview capacity assumptions for the single-node Hetzner host
+- stubbed first-create seed/bootstrap hooks that can be replaced once the runtime data model stabilizes
+
+Current limitation:
+
+- The umbrella chart now renders the core backend/stateful preview topology and passes server-side validation against the preview cluster API.
+- Final preview deployment is still intentionally gated in `preview.yml` while the frontend/runtime delivery path and first-create data bootstrap remain under implementation.

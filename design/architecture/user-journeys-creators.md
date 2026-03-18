@@ -144,6 +144,11 @@ Game Design Service (publish) → Tenant Admin / Platform Admin → Script Patch
 
 Hotfixes follow the steps in the [Hotfix Procedure](./system-architecture-runbooks.md#-hotfix-procedure) to ensure minimal downtime.
 
+Example rollout choice:
+
+- **Use a script-patch pin** when the change is limited to automation behavior, such as fixing an NPC conversation tree or encounter trigger while keeping the same published world, entity, and asset bundle.
+- **Use a replacement-instance cutover** when the change includes new rooms, altered entity templates, balance data, assets, or any other non-script content that requires a new published version to become active.
+
 Hotfix procedures and runtime rollout steps are shared with operators for auditability and incident response; see [Testing & Continuous Delivery](./user-journeys-operators.md#testing--continuous-delivery) and [Platform Service Updates](./user-journeys-operators.md#platform-service-updates) for CI/CD details.
 
 ---

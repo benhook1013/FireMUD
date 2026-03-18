@@ -37,7 +37,7 @@ These modes are mutually exclusive. Implementations must not allow both the prox
 If configuration drift would cause both greeting paths to fire, producers must fail closed on the duplicate-greeting path rather than sending two server greetings on one connection. This is a rollout/configuration bug, not a valid protocol variant:
 
 - the duplicate greeting must be suppressed before it reaches the client whenever detection is possible,
-- the owning component must emit a bounded misconfiguration signal such as `mcp_greeting_mode_conflict` and, if metrics are exposed for this condition, use the stable low-cardinality name `mcp.greeting.mode_conflict`,
+- the owning component must emit a bounded misconfiguration signal such as `mcp_greeting_mode_conflict` and, if metrics are exposed for this condition, use the stable low-cardinality name `mcp.greeting.mode_conflict`; in `backend_greets` mode that signal is owned by Game Session, while in `proxy_shim_greets` mode it is owned by the proxy-side greeting shim,
 - and operators should treat any client-visible duplicate greeting as an incident requiring rollback or feature-flag correction.
 
 Clients should not be expected to recover from duplicate server greetings beyond falling back to plain-text behavior or disconnecting cleanly; the server side owns preventing this condition.

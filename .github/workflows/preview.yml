@@ -2,116 +2,284 @@ name: PR Preview Environment
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
-    branches:
-      - develop
-      - main
-      - 'release/**'
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - closed
   workflow_dispatch:
+    inputs:
+      action:
+        description: Future hosted preview operation
+        required: true
+        default: deploy
+        type: choice
+        options:
+          - deploy
+          - destroy
+      pr_number:
+        description: Pull request number to target
+        required: true
+        type: string
+      image_tag:
+        description: PR image tag to deploy (for example pr-123-deadbeef)
+        required: false
+        default: ""
+        type: string
+      preview_domain:
+        description: Preview DNS suffix (for example preview.firedevops.net)
+        required: false
+        default: preview.firedevops.net
+        type: string
 
 permissions:
   contents: read
   packages: read
+  issues: write
+  pull-requests: write
 
 jobs:
-  preview:
-    if: github.base_ref == 'develop' || github.base_ref == 'main' || startsWith(github.base_ref, 'release/')
+  preview-plan:
+    name: Preview Plan
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    if: ${{ github.actor != 'dependabot[bot]' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    outputs:
+      action: ${{ steps.derive.outputs.action }}
+      pr_number: ${{ steps.derive.outputs.pr_number }}
+      namespace: ${{ steps.derive.outputs.namespace }}
+      release_name: ${{ steps.derive.outputs.release_name }}
+      hostname: ${{ steps.derive.outputs.hostname }}
+      image_tag: ${{ steps.derive.outputs.image_tag }}
     steps:
-      - name: ⬇️ Checkout Code
-        uses: actions/checkout@v6
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-
-      - name: Login to GHCR
-        uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: ⚙️ Set Up Java
-        uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: '21'
-
-      - name: ⚙️ Set Up Gradle
-        uses: gradle/actions/setup-gradle@v5
-
-      - name: Enable BuildKit
-        run: echo "DOCKER_BUILDKIT=1" >> $GITHUB_ENV
-
-      - name: Resolve published base image tag
-        run: echo "FIREMUD_BASE_IMAGE=ghcr.io/benhook1013/firemud-base:latest" >> $GITHUB_ENV
-
-      - name: Prepare environment file
-        run: cp .env.sample .env
-
-      - name: Generate Dev Certificates
-        run: ./dev-tools/generate-dev-certs.sh dev-tools/certs
-
-      - name: Build service images with cache
+      - name: Derive preview identifiers
+        id: derive
         run: |
-          services="account-service automation-scripting-service entity-management-service game-design-service game-logic-service game-session-service logging-admin-service social-groups-service spring-cloud-gateway tcp-proxy-service world-management-service"
-          docker pull "$FIREMUD_BASE_IMAGE"
-          for service in $services; do
-            docker pull ghcr.io/benhook1013/$service:latest || true
-            docker buildx build \
-              --build-arg BASE_IMAGE=$FIREMUD_BASE_IMAGE \
-              --cache-from type=registry,ref=ghcr.io/benhook1013/$service:buildcache \
-              --cache-from type=registry,ref=ghcr.io/benhook1013/$service:latest \
-              --cache-from type=gha \
-              --cache-to type=registry,ref=ghcr.io/benhook1013/$service:buildcache,mode=max \
-              --cache-to type=gha,mode=max \
-              --load \
-              -t firemud-$service \
-              -f ./services/$service/Dockerfile \
-              .
-          done
-
-      - name: Start preview
-        run: |
-          COMPOSE_PROJECT_NAME=firemud docker compose -f docker/docker-compose.yml -f docker/docker-compose.override.yml up -d
-
-      - name: Check Gateway Health
-        run: |
-          for i in {1..30}; do
-            if curl -fs http://localhost:8080/actuator/health >/dev/null; then
-              echo "Gateway healthy" && break
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            PR_NUMBER="${{ github.event.pull_request.number }}"
+            PREVIEW_DOMAIN="preview.firedevops.net"
+            if [ "${{ github.event.action }}" = "closed" ]; then
+              ACTION="destroy"
+            else
+              ACTION="deploy"
             fi
-            sleep 5
-          done
-          curl -fs http://localhost:8080/actuator/health
+            IMAGE_TAG="pr-${PR_NUMBER}-${GITHUB_SHA::8}"
+          else
+            PR_NUMBER="${{ inputs.pr_number }}"
+            PREVIEW_DOMAIN="${{ inputs.preview_domain }}"
+            ACTION="${{ inputs.action }}"
+            IMAGE_TAG="${{ inputs.image_tag }}"
+          fi
+          if [ -z "$IMAGE_TAG" ]; then
+            IMAGE_TAG="pr-${PR_NUMBER}-${GITHUB_SHA::8}"
+          fi
+          echo "action=${ACTION}" >> "$GITHUB_OUTPUT"
+          echo "pr_number=${PR_NUMBER}" >> "$GITHUB_OUTPUT"
+          echo "namespace=pr-${PR_NUMBER}" >> "$GITHUB_OUTPUT"
+          echo "release_name=pr-${PR_NUMBER}" >> "$GITHUB_OUTPUT"
+          echo "hostname=pr-${PR_NUMBER}.${PREVIEW_DOMAIN}" >> "$GITHUB_OUTPUT"
+          echo "image_tag=${IMAGE_TAG}" >> "$GITHUB_OUTPUT"
 
-      - name: Post Preview Summary
-        if: github.event_name == 'pull_request'
-        uses: actions/github-script@v8
+      - name: Explain current state
+        run: |
+          cat <<'EOF'
+          Hosted PR preview deployments are partially wired.
+
+          The preview cluster, DNS, TLS, and self-hosted preview runner exist.
+          Main CI still covers stack startup, smoke, and cross-service verification.
+          GitHub-hosted CI currently handles planning and orchestration only.
+          Cluster-touching preview steps run on the Hetzner self-hosted runner,
+          where the workflow prepares the target namespace, required secrets,
+          and validates the preview manifests against the live cluster API.
+          The final Helm apply is still gated because the application/database bootstrap
+          and frontend delivery path are still under active implementation.
+
+          Target preview contract:
+          1. Build and push PR-tagged images to private GHCR.
+          2. Authenticate a hosted single-node k3s preview cluster to pull those images.
+          3. Deploy or upgrade Helm release pr-<PR_NUMBER> in namespace pr-<PR_NUMBER>.
+          4. Seed PostgreSQL, MinIO, and other stateful preview components once on first create.
+          5. Expose https://pr-<PR_NUMBER>.preview.<DOMAIN> through Traefik with TLS.
+          6. Preserve mutable preview state for the life of the PR.
+          7. Tear the namespace down when the PR closes or merges.
+
+          Initial capacity target:
+          - One full-stack preview should fit reliably on the preview node.
+          - A second concurrent preview is best-effort and may fail if capacity is exhausted.
+          - Capacity policy is enforced in CI via PREVIEW_MAX_ACTIVE (default 2).
+          EOF
+
+      - name: Show derived target
+        env:
+          PREVIEW_MAX_ACTIVE: ${{ vars.PREVIEW_MAX_ACTIVE }}
+        run: |
+          cat <<EOF
+          event_name=${{ github.event_name }}
+          derived_action=${{ steps.derive.outputs.action }}
+          pr_number=${{ steps.derive.outputs.pr_number }}
+          namespace=${{ steps.derive.outputs.namespace }}
+          release_name=${{ steps.derive.outputs.release_name }}
+          hostname=${{ steps.derive.outputs.hostname }}
+          image_tag=${{ steps.derive.outputs.image_tag }}
+          preview_max_active=${PREVIEW_MAX_ACTIVE:-2}
+          EOF
+
+  preview-deploy-disabled:
+    name: Deploy Preview Release
+    runs-on:
+      - self-hosted
+      - Linux
+      - X64
+      - preview
+    needs: preview-plan
+    if: ${{ needs.preview-plan.outputs.action == 'deploy' }}
+    environment: pr-preview
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Helm
+        run: |
+          if ! command -v helm >/dev/null 2>&1; then
+            HELM_VERSION="v3.20.1"
+            INSTALL_DIR="$HOME/.local/bin"
+            mkdir -p "$INSTALL_DIR"
+            curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz" -o /tmp/helm.tgz
+            tar -xzf /tmp/helm.tgz -C /tmp
+            install /tmp/linux-amd64/helm "$INSTALL_DIR/helm"
+          fi
+          export PATH="$HOME/.local/bin:$PATH"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          helm version
+
+      - name: Use local preview kubeconfig
+        run: |
+          KUBECONFIG_PATH="$HOME/.kube/firemud-preview-ci.yaml"
+          test -f "$KUBECONFIG_PATH"
+          echo "KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"
+
+      - name: Verify preview cluster access
+        run: |
+          kubectl get namespace kube-system >/dev/null
+          kubectl auth can-i get clusterissuers.cert-manager.io
+          kubectl auth can-i list namespaces
+
+      - name: Enforce preview capacity
+        env:
+          PREVIEW_MAX_ACTIVE: ${{ vars.PREVIEW_MAX_ACTIVE }}
+        run: |
+          ./dev-tools/preview/check-preview-capacity.sh \
+            "${{ needs.preview-plan.outputs.namespace }}" \
+            "${PREVIEW_MAX_ACTIVE:-2}"
+
+      - name: Ensure preview namespace exists
+        run: |
+          ./dev-tools/preview/ensure-preview-namespace.sh \
+            "${{ needs.preview-plan.outputs.namespace }}" \
+            "${{ needs.preview-plan.outputs.pr_number }}"
+
+      - name: Ensure GHCR pull secret exists
+        env:
+          PREVIEW_GHCR_USERNAME: ${{ secrets.PREVIEW_GHCR_USERNAME }}
+          PREVIEW_GHCR_TOKEN: ${{ secrets.PREVIEW_GHCR_TOKEN }}
+        run: |
+          ./dev-tools/preview/ensure-ghcr-pull-secret.sh "${{ needs.preview-plan.outputs.namespace }}"
+
+      - name: Ensure preview gRPC TLS secret exists
+        run: |
+          ./dev-tools/preview/ensure-grpc-tls-secret.sh "${{ needs.preview-plan.outputs.namespace }}"
+
+      - name: Show namespace state
+        run: |
+          kubectl get namespace "${{ needs.preview-plan.outputs.namespace }}"
+          kubectl -n "${{ needs.preview-plan.outputs.namespace }}" get secret ghcr-preview-pull
+          kubectl -n "${{ needs.preview-plan.outputs.namespace }}" get secret firemud-grpc-tls
+
+      - name: Render preview values
+        run: |
+          ./dev-tools/preview/render-preview-values.sh \
+            k8s/helm/firemud/values-preview.example.yaml \
+            /tmp/preview-values.yaml \
+            "${{ needs.preview-plan.outputs.pr_number }}" \
+            "${{ needs.preview-plan.outputs.namespace }}" \
+            "${{ needs.preview-plan.outputs.release_name }}" \
+            "${{ needs.preview-plan.outputs.hostname }}" \
+            "${{ needs.preview-plan.outputs.image_tag }}"
+
+      - name: Validate preview chart render
+        run: |
+          helm template "${{ needs.preview-plan.outputs.release_name }}" k8s/helm/firemud \
+            -f /tmp/preview-values.yaml \
+            --namespace "${{ needs.preview-plan.outputs.namespace }}" \
+            >/tmp/preview-rendered.yaml
+          kubectl apply --dry-run=server -n "${{ needs.preview-plan.outputs.namespace }}" -f /tmp/preview-rendered.yaml
+          wc -l /tmp/preview-rendered.yaml
+
+      - name: Upload rendered preview artifacts
+        uses: actions/upload-artifact@v7
         with:
-          script: |
-            const body = `### ✨ Preview environment up\nAll services started via Docker Compose.`;
-            await core.summary.addHeading('Preview Environment').addRaw(body).write();
-            const { data: comments } = await github.rest.issues.listComments({
-              ...context.repo,
-              issue_number: context.issue.number
-            });
-            const existing = comments.find(c => c.body.startsWith('### ✨ Preview environment'));
-            if (existing) {
-              await github.rest.issues.updateComment({
-                ...context.repo,
-                comment_id: existing.id,
-                body
-              });
-            } else {
-              await github.rest.issues.createComment({
-                ...context.repo,
-                issue_number: context.issue.number,
-                body
-              });
-            }
+          name: preview-render-${{ needs.preview-plan.outputs.release_name }}
+          path: |
+            /tmp/preview-values.yaml
+            /tmp/preview-rendered.yaml
 
-      - name: Tear Down Stack
-        if: always()
-        run: COMPOSE_PROJECT_NAME=firemud docker compose -f docker/docker-compose.yml -f docker/docker-compose.override.yml down
+      - name: Explain deployment gate
+        run: |
+          cat <<'EOF'
+          Preview deployment is intentionally blocked at the final apply step.
+
+          The workflow now proves:
+          - cluster credentials work
+          - the target namespace exists
+          - the GHCR pull secret exists
+          - the preview gRPC TLS secret exists
+          - cluster access is performed from the self-hosted preview runner
+          - preview values can be generated from CI inputs
+          - the current preview chart renders successfully
+          - the rendered manifests pass server-side Kubernetes validation on the preview cluster
+
+          The actual Helm apply remains gated until:
+          - the preview frontend/runtime delivery path is ready
+          - first-create data/bootstrap behavior moves beyond the current stub
+          EOF
+
+  preview-destroy:
+    name: Destroy Preview Release
+    runs-on:
+      - self-hosted
+      - Linux
+      - X64
+      - preview
+    needs: preview-plan
+    if: ${{ needs.preview-plan.outputs.action == 'destroy' }}
+    environment: pr-preview
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Helm
+        run: |
+          if ! command -v helm >/dev/null 2>&1; then
+            HELM_VERSION="v3.20.1"
+            INSTALL_DIR="$HOME/.local/bin"
+            mkdir -p "$INSTALL_DIR"
+            curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz" -o /tmp/helm.tgz
+            tar -xzf /tmp/helm.tgz -C /tmp
+            install /tmp/linux-amd64/helm "$INSTALL_DIR/helm"
+          fi
+          export PATH="$HOME/.local/bin:$PATH"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          helm version
+
+      - name: Use local preview kubeconfig
+        run: |
+          KUBECONFIG_PATH="$HOME/.kube/firemud-preview-ci.yaml"
+          test -f "$KUBECONFIG_PATH"
+          echo "KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"
+
+      - name: Uninstall preview release if present
+        run: |
+          helm uninstall "${{ needs.preview-plan.outputs.release_name }}" \
+            --namespace "${{ needs.preview-plan.outputs.namespace }}" \
+            --ignore-not-found || true
+
+      - name: Delete preview namespace if present
+        run: |
+          kubectl delete namespace "${{ needs.preview-plan.outputs.namespace }}" --ignore-not-found=true

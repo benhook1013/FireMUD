@@ -5,7 +5,7 @@ This document defines the backup schedule and disaster recovery procedures for F
 - **production**: scheduled backups and verification are mandatory.
 - **hobby-self-hosted**: backups are mandatory with a minimum baseline (at least daily logical backup, at least 7 daily restore points retained, and at least one restore drill every 30 days). Operators may choose cadence/automation above this floor.
 - **staging**: disposable by default with no scheduled backups unless explicitly enabled for specific goals.
-- **local-dev / ci-preview / dev-demo-cluster**: disposable or ad hoc backup posture unless explicitly upgraded.
+- **local-dev / pr-preview / dev-demo-cluster**: ad hoc or no-backup posture unless explicitly upgraded. `pr-preview` persists mutable state only for the lifetime of the PR and loses that state if the preview node or its storage is lost.
 
 Staging is treated as **disposable by default**: it does not run the production backup CronJobs unless operators explicitly install staging-specific schedules. Operators may temporarily restore staging from production backups for disaster recovery rehearsals or investigations; when doing so, staging must follow the same post-restore secret hardening flow before it is considered player-facing again (see [Post-Restore Secret Hardening](#post-restore-secret-hardening)).
 `hobby-self-hosted` restores that return an environment to player-facing status must also execute the same core hardening controls (JWT/JWKS rotation, DB credential rotation, certificate reissuance, and external credential validation) before reopening traffic.
@@ -19,6 +19,7 @@ The main body of this document describes the target-state backup workflow. Curre
 - `PauseTicksForScope` / `ResumeTicksForScope` support pausing by `tenant_id` + `game_instance_id` today; `region_id` scoping exists in the proto contract but is not yet enforced end-to-end.
 - Backup-related spans and metrics should still use the target-state names and units documented here so dashboards and alert rules remain stable as scope support is expanded.
 - Automated coordinated backups for player-facing prod-like environments must converge on canonical `tenant_id + region_id` scope before those environments are considered fully backup-ready. Alias scope remains a migration aid, not a steady-state operating mode.
+- The alias-scope migration notes in this document are temporary implementation-bridge guidance. Once canonical `tenant_id + region_id` pause scope is enforced end-to-end, these migration-only notes and phase descriptions should be removed so the architecture returns to one steady-state scope contract.
 
 ## PostgreSQL Logical Backups
 
@@ -662,6 +663,7 @@ Before opening `hobby-self-hosted` to player traffic for the first time, or reop
 
 Required fields:
 
+- `schemaVersion` (`traffic-open-record/v1` for the current canonical shape)
 - `environment` (`hobby-self-hosted`)
 - `deploymentRef`
 - `assessedAt`

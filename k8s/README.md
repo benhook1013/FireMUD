@@ -91,3 +91,16 @@ For production deployments, use the umbrella chart:
 ```bash
 helm upgrade --install firemud ./charts/firemud -n firemud --create-namespace
 ```
+
+## Preview Cluster Prerequisites
+
+The [`preview/`](./preview) directory captures the one-time cluster prerequisites for the hosted `pr-preview` environment, including:
+
+- Let's Encrypt `ClusterIssuer` resources for Traefik-hosted preview URLs
+- the dedicated `preview-deployer` ServiceAccount and RBAC for GitHub Actions
+
+Apply them with:
+
+```bash
+kubectl apply -k k8s/preview
+```

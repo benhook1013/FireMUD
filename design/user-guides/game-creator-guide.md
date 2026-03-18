@@ -34,6 +34,15 @@ This guide helps game creators customize their worlds on the hosted FireMUD plat
 - **Choose the Rollout Type** – Prefer a script patch when only automation behavior changes and the underlying published version remains valid. Prefer a replacement-instance cutover when world layouts, entities, balance data, assets, or other non-script content changes.
 - **Multi-Tenancy** – Each game is isolated by a unique identifier so you can manage multiple worlds from one account. See the [Multi-Tenancy design](../architecture/system-architecture-multi-tenancy.md).
 
+Common creator actions:
+
+| Intent | Recommended action |
+| --- | --- |
+| Hotfix a script bug in a live encounter | Publish and pin a script patch to the affected realm |
+| Test an upcoming release against live-like data | Create a playtest fork from the current production realm and launch it on the target build |
+| Roll back a broken content release | Use the normal rollback path to restore the prior version or pinned script patch on the production realm |
+| Refresh a fork from the latest production state | Reset the existing fork from a fresh production snapshot when the same tester group and fork identity remain appropriate |
+
 ## Scripting & Integration API
 
 FireMUD exposes gRPC and REST endpoints for automation. Key APIs include:

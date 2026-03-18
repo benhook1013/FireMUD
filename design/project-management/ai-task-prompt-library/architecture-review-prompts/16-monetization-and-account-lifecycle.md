@@ -1,6 +1,6 @@
 # Architecture Review Prompt: Monetization and Account Lifecycle
 
-Read the following documents. Follow references only when a listed document clearly delegates a canonical contract needed to resolve a contradiction or implementation-blocking account/billing rule. Do not recursively traverse unrelated docs.
+Read the following documents. Follow references only when a listed document clearly delegates a canonical contract needed to resolve a contradiction or implementation-blocking account or billing rule. Do not recursively traverse unrelated docs.
 
 - `design/architecture/system-architecture-frontend.md` (if it covers authentication, payments, or account flows)
 - `design/architecture/microservices/account-service/README.md`

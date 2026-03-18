@@ -176,10 +176,15 @@ manual steps.
 
 ## PR Preview Environments
 
-Pull requests targeting `develop`, `main`, and `release/**` spin up a short-lived Docker Compose stack so reviewers can test changes interactively. The [`.github/workflows/preview.yml`](../../.github/workflows/preview.yml) workflow uses Docker Buildx to build service images with cached layers, copies `.env.sample` to `.env`, generates development certificates, and launches the stack via Docker Compose.
-A status comment is posted once the gateway passes its health check, and the
-runner tears the stack down at the end of the job so the preview is removed
-automatically.
+FireMUD's preview workflow is reserved for real reviewer-accessible PR environments, not CI-only stack boot validation. The [`.github/workflows/preview.yml`](../../.github/workflows/preview.yml) workflow targets a hosted single-node k3s cluster and follows this contract:
+
+- Build and push PR-tagged container images to private GHCR.
+- Deploy or upgrade Helm release `pr-<PR_NUMBER>` into namespace `pr-<PR_NUMBER>`.
+- Expose the environment at `https://pr-<PR_NUMBER>.preview.<DOMAIN>` using cluster ingress/TLS.
+- Seed preview state once on first namespace creation and preserve mutable preview state for the lifetime of the PR.
+- Tear the preview down when the PR closes or merges.
+
+Main CI remains responsible for stack startup, smoke, and cross-service verification. Preview deployment is intentionally a separate concern focused on reviewer-accessible environments.
 
 ---
 

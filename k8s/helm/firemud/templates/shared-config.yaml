@@ -1,0 +1,52 @@
+{{- if .Values.previewStack.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: firemud-config
+  labels:
+{{ include "firemud.commonLabels" . | indent 4 }}
+data:
+{{- range $key, $value := .Values.previewStack.sharedConfig }}
+  {{ $key }}: {{ $value | quote }}
+{{- end }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: firemud-secret
+  labels:
+{{ include "firemud.commonLabels" . | indent 4 }}
+type: Opaque
+stringData:
+{{- range $key, $value := .Values.previewStack.sharedSecret }}
+  {{ $key }}: {{ $value | quote }}
+{{- end }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: minio-credentials
+  labels:
+{{ include "firemud.commonLabels" . | indent 4 }}
+type: Opaque
+stringData:
+  accessKey: {{ .Values.previewStack.minio.accessKey | quote }}
+  secretKey: {{ .Values.previewStack.minio.secretKey | quote }}
+{{- if .Values.previewStack.grpcTls.createSecret }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "firemud.grpcSecretName" . }}
+  labels:
+{{ include "firemud.commonLabels" . | indent 4 }}
+type: Opaque
+stringData:
+  client.crt: |
+{{ .Values.previewStack.grpcTls.clientCrt | indent 4 }}
+  client.key: |
+{{ .Values.previewStack.grpcTls.clientKey | indent 4 }}
+  ca.crt: |
+{{ .Values.previewStack.grpcTls.caCrt | indent 4 }}
+{{- end }}
+{{- end }}

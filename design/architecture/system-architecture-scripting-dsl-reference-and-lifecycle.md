@@ -541,6 +541,11 @@ Timer reconciliation on patch or plugin change is a required part of reload/roll
 - The same rule applies to plugin activation, disable, rollback, and signer-revocation flows: any schedule owned by a displaced `pluginVersionId` must be removed or tombstoned before normal scheduling resumes for that plugin.
 - Canceling outbox work items alone is insufficient for rollback safety; old-version timer schedules must also be reconciled so they cannot mint new `scriptEventId` values after the version has been displaced.
 
+Plugin example:
+
+- If plugin version `combat-helper@v4` and `combat-helper@v5` both compile a "reapply guard aura every 20 ticks" timer with `scheduleDefinitionId=combat-helper.guard-aura.v1`, reconciliation preserves that durable timer row across the version switch, rewrites ownership from `pluginVersionId=v4` to `pluginVersionId=v5`, and recalculates the next due point from the resume rule before scheduling resumes.
+- If `combat-helper@v5` replaces that timer with a different logical schedule such as "pulse only while threat > 0" compiled to a different `scheduleDefinitionId`, the old timer owned by `v4` must be tombstoned and a new timer created for `v5`.
+
 Under this model, durable script schedules, quotas, and trigger-instance de-duplication live in PostgreSQL, while `automation:timer:{tenantRegionTag}`, `script-scheduler:{tenantRegionTag}:lastTickId`, and related coordination keys form a reset-tolerant coordination layer for interval state. Stored entries and reconciliation logic remain instance-aware even though the Redis keys are region-scoped. The combination of tick heartbeat, durable trigger-instance claims, checkpoints, and script patch versioning preserves both correctness and determinism across failures and leader changes: losing or resetting these Redis keys may delay or slightly reshuffle timer firings within the tail-loss envelope but must not change which scripts are eventually scheduled according to their stored configurations or cause duplicate logical trigger creation.
 
 ---

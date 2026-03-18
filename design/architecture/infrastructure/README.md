@@ -11,7 +11,7 @@ This directory contains core documentation for the shared infrastructure that po
 | [System Architecture Overview](../system-architecture-overview.md) | High-level design with observability and service interactions. |
 | [System Architecture Diagram](../system-architecture-diagram.md) | Visual representation of component relationships and client flows. |
 | [System Context Diagram](../system-context-diagram.md) | Shows clients, DMZ components, internal services, and datastores. |
-| [Deployment Environments](./deployment-environments.md) | Defines the canonical environment classes (`local-dev`, `ci-preview`, `dev-demo-cluster`, `hobby-self-hosted`, `staging`, `production`) and their deployment controls. |
+| [Deployment Environments](./deployment-environments.md) | Defines the canonical environment classes (`local-dev`, `pr-preview`, `dev-demo-cluster`, `hobby-self-hosted`, `staging`, `production`) and their deployment controls. |
 | [Environment & Secrets Management](./environment-and-secrets.md) | How services receive configuration values and handle sensitive data. |
 | [Gateway Architecture](../system-architecture-gateway.md) | Details on Spring Cloud Gateway routing, WebSocket support, and service access. |
 | [Protocol Bridging](../system-architecture-protocol-bridging.md) | Explains how FireMUD supports both WebSocket and Telnet clients through a unified backend. |

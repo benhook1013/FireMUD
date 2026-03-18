@@ -156,11 +156,11 @@ Command recovery must converge just like effect recovery:
 - Any accepted command that is still `RECEIVED` or `ENQUEUED` when a reset or tail-loss reconcile occurs and that is not durably tied to a surviving `tick_batch_id` must be marked `TERMINAL` with explicit status fields:
   - `executionOutcome = LOST_BEFORE_STAGING`
   - `gameplayResult` set by the command type's documented terminal mapping (for the shared default, `FAILED` unless a more specific command contract says otherwise)
-- Commands that are `BOUND_TO_BATCH` follow the batch/effect replay path and converge based on the terminal outcomes of the effects tied to that batch.
+- Commands that are `BOUND_TO_BATCH` follow the batch/effect replay path and converge based on the batch's terminal command status mapping.
   - For commands, this means they converge to terminal command status fields (`executionOutcome`, `gameplayResult`) based on the documented command mapping for those batch-bound effects; do not collapse command status into effect-ledger status names alone.
 - Reconciliation of command records is part of the same operational scope as ledger replay/reset tooling; operators must not need a separate ad-hoc command repair path just to clear dedupe rows stranded before staging.
 - This keeps command deduplication safe: the same `commandId` can be retried by clients for status lookup without leaving an unexecutable, permanently non-terminal record behind.
-- For canonical worked examples of command terminal status mappings, see `system-architecture-tick-execution-flows.md`.
+- For the canonical shared command terminal mapping table and worked examples, see `system-architecture-tick-execution-flows.md` under `Canonical Command Terminal Mapping Table`.
 
 Minimum command-status surface for operators and clients:
 

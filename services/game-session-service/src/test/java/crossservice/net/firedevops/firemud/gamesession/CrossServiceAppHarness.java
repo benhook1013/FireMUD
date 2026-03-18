@@ -9,13 +9,13 @@ import net.firedevops.firemud.common.conflict.ConflictTracker;
 import net.firedevops.firemud.gamesession.dto.GameInstanceDto;
 import net.firedevops.firemud.gamesession.dto.StartSessionRequest;
 import net.firedevops.firemud.gamesession.service.GameInstanceService;
+import org.lognet.springboot.grpc.autoconfigure.GRpcServerProperties;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.web.context.WebServerApplicationContext;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
-import org.springframework.test.util.TestSocketUtils;
 
 /** Shared bootstrap helpers for nested cross-service Spring application contexts in tests. */
 public final class CrossServiceAppHarness {
@@ -23,13 +23,12 @@ public final class CrossServiceAppHarness {
 
   public static GameLogicHolder startGameLogic(
       String worldEndpoint, String entityEndpoint, String socialEndpoint) {
-    int grpcPort = TestSocketUtils.findAvailableTcpPort();
     Map<String, Object> props = new LinkedHashMap<>();
     props.put("spring.profiles.active", "test");
     props.put("spring.application.name", "game-logic-service");
     props.put("server.port", "0");
-    props.put("grpc.port", String.valueOf(grpcPort));
-    props.put("grpc.server.port", String.valueOf(grpcPort));
+    props.put("grpc.port", "0");
+    props.put("grpc.server.port", "0");
     props.put("grpc.enabled", "true");
     props.put("grpc.server.security.enabled", "false");
     props.put("firemud.grpc.plaintext", "true");
@@ -45,6 +44,7 @@ public final class CrossServiceAppHarness {
         new SpringApplicationBuilder(
                 net.firedevops.firemud.gamelogic.GameLogicServiceApplication.class)
             .run(toCommandLineArgs(props));
+    int grpcPort = context.getBean(GRpcServerProperties.class).getRunningPort();
     return new GameLogicHolder(context, grpcPort);
   }
 

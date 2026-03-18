@@ -603,6 +603,7 @@ TCP Proxy metrics follow the global Micrometer/OpenTelemetry conventions describ
   - `unknown` – fallback bucket for unexpected failures.
 - `tcpproxy.telnet.discarded` and related `tcpproxy.disconnect.notify.*` counters for abuse and error visibility.
 - MCP rollout/misconfiguration observability should keep using bounded names; when duplicate MCP greeting ownership is detected, the canonical low-cardinality metric name is `mcp.greeting.mode_conflict`.
+- Bridge shutdown attribution should keep using bounded names; when the internal authenticated gameplay bridge closes, the canonical structured label is `bridge_shutdown_class=planned_drain|unattributed_failure`.
   - **Transport vs application failures are separated** so dashboards stay unambiguous and align with [gRPC API Style & Versioning](../../system-architecture-grpc.md#error-handling):
     - `tcpproxy.disconnect.notify.transport_failure{status="<grpc_status>"}` increments whenever a `NotifyDisconnect` attempt fails with a non-OK gRPC status (for example `UNAVAILABLE`, `DEADLINE_EXCEEDED`, TLS handshake failures). These are retried within the configured `TCP_PROXY_NOTIFY_DISCONNECT_MAX_RETRY_MS` window and counted once per failed attempt.
     - `tcpproxy.disconnect.notify.app_error{code="<code>"}` increments when the gRPC transport returns `OK` but the `NotifyDisconnectResponse.error.code` field is not `OK`. These are treated as permanent, contract-level outcomes and are **not retried**.
@@ -620,6 +621,8 @@ The example PromQL and Alertmanager rules in
 `design/observability/grafana/tcp-proxy-alerts-snippets.md` use these
 Prometheus-style names; treat this section as the canonical list of meters and
 the Grafana snippets as reference queries over them.
+
+For operator interpretation, `bridge_shutdown_class=planned_drain` corresponds to a machine-parseable internal bridge close such as `1000/logout;subreason=gateway_restart`, while `bridge_shutdown_class=unattributed_failure` corresponds to abrupt bridge loss where established Telnet sessions close as `backend_unavailable`.
 
 Labels on these metrics are intentionally low-cardinality (for example `type`, and occasionally `tenantId`)
 to keep Prometheus usage aligned with the global guidelines. Detailed context such as client IP, `gameInstanceId`,

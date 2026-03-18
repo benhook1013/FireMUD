@@ -2,7 +2,7 @@
 
 FireMUD uses two distinct validation surfaces:
 
-- **Engineering preview environments** – Pull requests may still create short-lived environments through [`preview.yml`](../../.github/workflows/preview.yml) for developer validation. These are engineering tools, not the canonical creator-facing playtest experience.
+- **Engineering preview environments** – Pull requests may deploy hosted per-PR environments through [`preview.yml`](../../.github/workflows/preview.yml) for reviewer and developer validation. These previews persist for the lifetime of the PR, but they remain engineering tools rather than the canonical creator-facing playtest experience.
 - **Creator playtest realms** – The canonical product playtest flow uses creator-managed forked realms derived from source realm snapshots under the v1 fork-snapshot boundary in `system-architecture-versioning-runtime.md`. These realms are temporary, isolated from production writes, use the same platform accounts with explicit access grants, and are surfaced to authorized testers through the same authenticated lobby/realm-selection contract used for normal gameplay.
 
 The creator-facing playtest loop is:

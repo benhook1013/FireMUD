@@ -1,0 +1,60 @@
+{{- if .Values.previewStack.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: firemud-seed-sql
+  labels:
+{{ include "firemud.commonLabels" . | indent 4 }}
+data:
+  seed.sql: |
+{{ .Values.previewStack.seedSql | indent 4 }}
+{{- if .Values.previewStack.seed.enabled }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: firemud-seed
+  labels:
+{{ include "firemud.commonLabels" . | indent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  ttlSecondsAfterFinished: 300
+  template:
+    metadata:
+      labels:
+        app: firemud-seed
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: seed
+          image: {{ .Values.previewStack.seed.image | quote }}
+          env:
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: firemud-secret
+                  key: FIREMUD_POSTGRES_PASSWORD
+          command:
+            - sh
+            - -c
+            - |
+              until pg_isready -h postgres -p 5432 -U "$FIREMUD_POSTGRES_USER" -d "$FIREMUD_POSTGRES_DB"; do
+                sleep 2
+              done
+              psql -h postgres -U "$FIREMUD_POSTGRES_USER" -d "$FIREMUD_POSTGRES_DB" -f /seed/seed.sql
+          envFrom:
+            - configMapRef:
+                name: firemud-config
+            - secretRef:
+                name: firemud-secret
+          volumeMounts:
+            - name: seed-sql
+              mountPath: /seed
+      volumes:
+        - name: seed-sql
+          configMap:
+            name: firemud-seed-sql
+{{- end }}
+{{- end }}

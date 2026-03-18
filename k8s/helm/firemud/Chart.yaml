@@ -2,12 +2,4 @@ apiVersion: v2
 name: firemud
 version: 0.1.0
 appVersion: "0.1.0"
-description: Umbrella chart deploying all FireMUD services
-
-dependencies:
-  - name: account-service
-    version: 0.1.0
-    repository: file://../account-service
-  - name: game-session-service
-    version: 0.1.0
-    repository: file://../game-session-service
+description: Preview-oriented chart for deploying the FireMUD stack

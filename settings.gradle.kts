@@ -40,5 +40,12 @@ project(":tcp-proxy-service").projectDir = File("services/tcp-proxy-service")
 include("world-management-service")
 project(":world-management-service").projectDir = File("services/world-management-service")
 
-include("load-testing")
-project(":load-testing").projectDir = File("dev-tools/load-testing")
+val includeLoadTesting = providers.gradleProperty("includeLoadTesting")
+    .map(String::toBooleanStrictOrNull)
+    .orElse(true)
+    .get()
+
+if (includeLoadTesting) {
+    include("load-testing")
+    project(":load-testing").projectDir = File("dev-tools/load-testing")
+}

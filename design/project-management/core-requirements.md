@@ -126,7 +126,7 @@ See [Logging & Admin Service](../architecture/microservices/logging-admin-servic
 
 - The **Game Design Service** publishes immutable game versions identified by a `version_id`.
 - Domain services copy design data by `version_id` and do not query the design database at runtime.
-- The **Game Session Service** activates the desired `version_id` when starting a game instance.
+- The **Game Session Service** activates the desired `version_id` when launching or cutting over the instance currently routed behind a specific realm.
 - Runtime feature flags are stored with the session and edited via the **Logging & Admin Service**. See [Versioning & Runtime Configuration](../architecture/system-architecture-versioning-runtime.md).
 - The Game Design Service maintains **patch notes** for each published version so administrators can track changes over time.
 See [Game Design Service](../architecture/microservices/game-design-service/README.md) for publishing workflows.

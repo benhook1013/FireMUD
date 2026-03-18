@@ -146,7 +146,7 @@ At a configuration level, Spring Cloud Gateway defines WebSocket routes in `appl
 - **TLS expectations**
   - External clients connect over `wss://` to the public load balancer, which forwards to Spring Cloud Gateway as described in [Security Architecture](./system-architecture-security.md#tls-termination--internal-encryption).
   - The TCP Proxy Service connects to `/ws/game/**` using `wss://` with mutual TLS to the Gateway’s internal-only WebSocket mTLS listener in production; plain `ws://` is reserved for local/dev-only flows.
-- **Admission discriminator** – `X-Firemud-Connection-Mode` is the sole positive discriminator for gameplay admission path. Game Session must accept the trusted-proxy bypass only when this gateway-issued header is `trusted_tcp_proxy`; it must not infer trusted-proxy admission from the absence of `X-Firemud-Connect-Context` or from raw `X-Proxy-*` headers.
+- **Admission discriminator** – `X-Firemud-Connection-Mode` is the sole positive discriminator for gameplay admission path. Its supported values and downstream meaning are defined in [Gateway Output Rules (Downstream-Trusted)](#gateway-output-rules-downstream-trusted). Game Session must accept the trusted-proxy bypass only when this gateway-issued header is `trusted_tcp_proxy`; it must not infer trusted-proxy admission from the absence of `X-Firemud-Connect-Context` or from raw `X-Proxy-*` headers.
 
 ### Gameplay Sharding (Routing Boundary)
 

@@ -180,7 +180,7 @@ Illustrative `GetTenantEntitlementsForRuntime(tenantId)` response:
   "subscriptionStatus": "active",
   "gameplayAvailable": true,
   "allowNewInstanceStarts": true,
-  "quota": {
+  "quotas": {
     "maxActiveSessions": 250,
     "maxConcurrentInstances": 1
   },
