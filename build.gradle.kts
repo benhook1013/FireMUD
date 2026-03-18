@@ -63,9 +63,11 @@ subprojects {
         val categorizedTestRoots = listOf("src/test/java/unit", "src/test/java/integration", "src/test/java/crossservice")
             .map(::file)
             .filter(File::exists)
-        the<SourceSetContainer>()["test"].java.setSrcDirs(
-            categorizedTestRoots.ifEmpty { listOf(file("src/test/java")) }
-        )
+        if (categorizedTestRoots.isNotEmpty()) {
+            the<SourceSetContainer>()["test"].java.setSrcDirs(
+                listOf(file("src/test/java")) + categorizedTestRoots
+            )
+        }
         tasks.withType<JavaCompile>().configureEach {
             options.release.set(21)
             if (name.contains("Test")) {
