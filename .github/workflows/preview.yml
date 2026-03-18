@@ -144,6 +144,7 @@ jobs:
             tar -xzf /tmp/helm.tgz -C /tmp
             install /tmp/linux-amd64/helm "$INSTALL_DIR/helm"
           fi
+          export PATH="$HOME/.local/bin:$PATH"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           helm version
 
@@ -261,6 +262,7 @@ jobs:
             tar -xzf /tmp/helm.tgz -C /tmp
             install /tmp/linux-amd64/helm "$INSTALL_DIR/helm"
           fi
+          export PATH="$HOME/.local/bin:$PATH"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           helm version
 
