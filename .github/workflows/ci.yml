@@ -270,7 +270,7 @@ jobs:
   validation-summary:
     name: Validation Summary
     runs-on: ubuntu-latest
-    needs: [docs-check, frontend-checks, build-and-test]
+    needs: [buf-check, docker-lint, shellcheck, docs-check, frontend-checks, build-and-test]
     if: github.event_name == 'pull_request' && always()
     steps:
       - name: 💬 Publish Validation Summary Comment
@@ -285,6 +285,9 @@ jobs:
             };
 
             const checks = [
+              ["Buf generation", "${{ needs.buf-check.result }}"],
+              ["Dockerfile lint", "${{ needs.docker-lint.result }}"],
+              ["ShellCheck", "${{ needs.shellcheck.result }}"],
               ["Docs and links", "${{ needs.docs-check.result }}"],
               ["Frontend checks", "${{ needs.frontend-checks.result }}"],
               ["Service build/test matrix", "${{ needs.build-and-test.result }}"],
