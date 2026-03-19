@@ -2,11 +2,11 @@ package net.firedevops.firemud.gamesession;
 
 import net.firedevops.firemud.common.config.CommonAutoConfiguration;
 import net.firedevops.firemud.common.config.DatabaseAutoConfiguration;
+import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.saga.persistence.SagaInstance;
 import net.firedevops.firemud.common.saga.persistence.SagaStep;
 import net.firedevops.firemud.gamesession.config.GameLogicProperties;
 import net.firedevops.firemud.gamesession.config.GameSessionProperties;
-import net.firedevops.firemud.gamesession.config.GrpcClientProperties;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -19,7 +19,7 @@ import org.springframework.scheduling.annotation.EnableScheduling;
     basePackageClasses = {GameSessionServiceApplication.class, SagaInstance.class, SagaStep.class})
 @EnableScheduling
 @EnableConfigurationProperties({
-  GrpcClientProperties.class,
+  CommonGrpcClientProperties.class,
   GameSessionProperties.class,
   GameLogicProperties.class
 })

@@ -5,6 +5,7 @@ import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
+import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.entitymanagement.v1.EntityManagementServiceGrpc;
 import net.firedevops.firemud.entitymanagement.v1.EntityManagementServiceGrpc.EntityManagementServiceBlockingStub;
@@ -19,7 +20,7 @@ import org.springframework.context.annotation.Lazy;
 @RequiredArgsConstructor
 public class GameLogicGrpcClientConfig {
   private final ServiceEndpointsProperties endpoints;
-  private final GrpcClientProperties grpcClientProperties;
+  private final CommonGrpcClientProperties grpcClientProperties;
   private final GrpcChannelFactory channelFactory;
 
   private ManagedChannel worldChannel;

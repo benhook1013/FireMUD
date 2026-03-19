@@ -6,9 +6,9 @@ import jakarta.annotation.PostConstruct;
 import javax.net.ssl.SSLException;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
+import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.gamesession.config.DevIsolatedProperties;
-import net.firedevops.firemud.gamesession.config.GrpcClientProperties;
 import net.firedevops.firemud.worldmanagement.v1.PingRequest;
 import net.firedevops.firemud.worldmanagement.v1.PingResponse;
 import net.firedevops.firemud.worldmanagement.v1.WorldManagementServiceGrpc;
@@ -26,7 +26,7 @@ import org.springframework.stereotype.Component;
     justification = "Configuration and channel references remain internal")
 public final class WorldManagementClient implements AutoCloseable {
   private final ServiceEndpointsProperties endpoints;
-  private final GrpcClientProperties tlsProps;
+  private final CommonGrpcClientProperties tlsProps;
   private final DevIsolatedProperties devIsolatedProperties;
   private final GrpcChannelFactory channelFactory;
   private static final org.slf4j.Logger logger = LoggingUtil.getLogger(WorldManagementClient.class);
@@ -35,7 +35,7 @@ public final class WorldManagementClient implements AutoCloseable {
 
   public WorldManagementClient(
       ServiceEndpointsProperties endpoints,
-      GrpcClientProperties tlsProps,
+      CommonGrpcClientProperties tlsProps,
       DevIsolatedProperties devIsolatedProperties,
       GrpcChannelFactory channelFactory) {
     this.endpoints = endpoints;

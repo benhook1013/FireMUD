@@ -6,12 +6,12 @@ import jakarta.annotation.PostConstruct;
 import javax.net.ssl.SSLException;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
+import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.entitymanagement.v1.EntityManagementServiceGrpc;
 import net.firedevops.firemud.entitymanagement.v1.PingRequest;
 import net.firedevops.firemud.entitymanagement.v1.PingResponse;
 import net.firedevops.firemud.gamesession.config.DevIsolatedProperties;
-import net.firedevops.firemud.gamesession.config.GrpcClientProperties;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
@@ -26,7 +26,7 @@ import org.springframework.stereotype.Component;
     justification = "Configuration and channel references remain internal")
 public final class EntityManagementClient implements AutoCloseable {
   private final ServiceEndpointsProperties endpoints;
-  private final GrpcClientProperties tlsProps;
+  private final CommonGrpcClientProperties tlsProps;
   private final DevIsolatedProperties devIsolatedProperties;
   private final GrpcChannelFactory channelFactory;
   private static final org.slf4j.Logger logger =
@@ -36,7 +36,7 @@ public final class EntityManagementClient implements AutoCloseable {
 
   public EntityManagementClient(
       ServiceEndpointsProperties endpoints,
-      GrpcClientProperties tlsProps,
+      CommonGrpcClientProperties tlsProps,
       DevIsolatedProperties devIsolatedProperties,
       GrpcChannelFactory channelFactory) {
     this.endpoints = endpoints;

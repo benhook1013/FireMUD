@@ -9,12 +9,12 @@ import java.nio.file.Path;
 import java.util.List;
 import javax.net.ssl.SSLException;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
+import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.TlsCertificateWatcher;
 import net.firedevops.firemud.gamedesign.v1.GameDesignServiceGrpc;
 import net.firedevops.firemud.gamedesign.v1.ListVersionsRequest;
 import net.firedevops.firemud.gamedesign.v1.ListVersionsResponse;
-import net.firedevops.firemud.worldmanagement.config.GrpcClientProperties;
 import org.springframework.stereotype.Component;
 
 /** gRPC client for communicating with the Game Design Service. */
@@ -24,7 +24,7 @@ import org.springframework.stereotype.Component;
     justification = "Injected configuration and channel references are not exposed")
 public class GameDesignClient implements AutoCloseable {
   private final ServiceEndpointsProperties endpoints;
-  private final GrpcClientProperties tlsProps;
+  private final CommonGrpcClientProperties tlsProps;
   private final GrpcChannelFactory channelFactory;
   private ManagedChannel channel;
   private GameDesignServiceGrpc.GameDesignServiceBlockingStub stub;
@@ -32,7 +32,7 @@ public class GameDesignClient implements AutoCloseable {
 
   public GameDesignClient(
       ServiceEndpointsProperties endpoints,
-      GrpcClientProperties tlsProps,
+      CommonGrpcClientProperties tlsProps,
       GrpcChannelFactory channelFactory) {
     this.endpoints = endpoints;
     this.tlsProps = tlsProps;

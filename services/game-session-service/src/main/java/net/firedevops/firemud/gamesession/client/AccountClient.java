@@ -11,9 +11,9 @@ import net.firedevops.firemud.account.v1.AuthenticateRequest;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
+import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.gamesession.config.DevIsolatedProperties;
-import net.firedevops.firemud.gamesession.config.GrpcClientProperties;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.slf4j.Logger;
 import org.springframework.stereotype.Component;
@@ -27,7 +27,7 @@ public final class AccountClient implements AutoCloseable {
   private static final Logger logger = LoggingUtil.getLogger(AccountClient.class);
 
   private final ServiceEndpointsProperties endpoints;
-  private final GrpcClientProperties tlsProps;
+  private final CommonGrpcClientProperties tlsProps;
   private final DevIsolatedProperties devIsolatedProperties;
   private final GrpcChannelFactory channelFactory;
 
@@ -37,7 +37,7 @@ public final class AccountClient implements AutoCloseable {
 
   public AccountClient(
       ServiceEndpointsProperties endpoints,
-      GrpcClientProperties tlsProps,
+      CommonGrpcClientProperties tlsProps,
       DevIsolatedProperties devIsolatedProperties,
       GrpcChannelFactory channelFactory) {
     this.endpoints = endpoints;
