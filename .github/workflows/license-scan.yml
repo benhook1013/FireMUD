@@ -1,4 +1,4 @@
-name: License Scan
+name: License Checks
 
 on:
   push:
