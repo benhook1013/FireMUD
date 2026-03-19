@@ -7,6 +7,7 @@ import org.springframework.cloud.gateway.filter.factory.RequestRateLimiterGatewa
 import org.springframework.cloud.gateway.filter.ratelimit.KeyResolver;
 import org.springframework.cloud.gateway.filter.ratelimit.RateLimiter;
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Primary;
 import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
 
@@ -14,6 +15,7 @@ import reactor.core.publisher.Mono;
 public class TestGatewayRateLimiterConfig {
 
   @Bean
+  @Primary
   RateLimiter<Object> testRateLimiter() {
     return new RateLimiter<>() {
       @Override
@@ -39,6 +41,7 @@ public class TestGatewayRateLimiterConfig {
   }
 
   @Bean
+  @Primary
   KeyResolver testKeyResolver() {
     return (ServerWebExchange exchange) -> Mono.just("test");
   }

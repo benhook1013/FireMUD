@@ -6,7 +6,6 @@ import org.gradle.api.DefaultTask
 import org.gradle.api.file.ConfigurableFileCollection
 import org.gradle.api.tasks.OutputDirectories
 import org.gradle.api.tasks.TaskAction
-import org.gradle.api.tasks.testing.Test
 import org.springframework.boot.gradle.tasks.run.BootRun
 
 abstract class CreateDirectoriesTask : DefaultTask() {
@@ -69,13 +68,6 @@ dependencies {
     testImplementation(libs.grpc.inprocess)
     testImplementation(project(":game-logic-service"))
     compileOnly("com.github.spotbugs:spotbugs-annotations:4.9.8")
-}
-
-tasks.register<Test>("crossServiceTest") {
-    description = "Runs cross-service regression tests only."
-    useJUnitPlatform()
-    include("**/crossservice/**")
-    mustRunAfter(tasks.test)
 }
 
 tasks.named<BootRun>("bootRun") {

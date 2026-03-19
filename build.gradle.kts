@@ -1,6 +1,7 @@
 import com.github.gradle.node.npm.task.NpxTask
 import com.github.spotbugs.snom.SpotBugsTask
 import org.gradle.api.plugins.quality.Checkstyle
+import org.gradle.api.plugins.jvm.JvmTestSuite
 import org.gradle.api.tasks.compile.JavaCompile
 import java.io.File
 import org.springframework.boot.gradle.tasks.run.BootRun
@@ -61,14 +62,9 @@ subprojects {
 
     plugins.withId("java") {
         the<JavaPluginExtension>().toolchain.languageVersion.set(JavaLanguageVersion.of(21))
-        val categorizedTestRoots = listOf("src/test/java/unit", "src/test/java/integration", "src/test/java/crossservice")
-            .map(::file)
-            .filter(File::exists)
-        if (categorizedTestRoots.isNotEmpty()) {
-            the<SourceSetContainer>()["test"].java.setSrcDirs(
-                listOf(file("src/test/java")) + categorizedTestRoots
-            )
-        }
+        val integrationTestsDir = file("src/test/java/integration")
+        val crossServiceTestsDir = file("src/test/java/crossservice")
+        val categorizedTestRootsExist = integrationTestsDir.exists() || crossServiceTestsDir.exists()
         tasks.withType<JavaCompile>().configureEach {
             options.release.set(21)
             if (name.contains("Test")) {
@@ -76,10 +72,86 @@ subprojects {
                 options.compilerArgs.add("-Xlint:-removal")
             }
         }
-        if (categorizedTestRoots.isNotEmpty()) {
-            tasks.named<JavaCompile>("compileTestJava").configure {
-                // Categorized test roots have produced stale cache hits where selectors miss real test classes.
-                outputs.cacheIf { false }
+        testing {
+            suites {
+                named<JvmTestSuite>("test") {
+                    useJUnitJupiter()
+                    sources {
+                        java {
+                            setSrcDirs(listOf(file("src/test/java")))
+                            exclude("integration/**", "crossservice/**")
+                        }
+                        resources {
+                            setSrcDirs(listOf(file("src/test/resources")))
+                        }
+                    }
+                }
+
+                if (integrationTestsDir.exists()) {
+                    register<JvmTestSuite>("integrationTest") {
+                        useJUnitJupiter()
+                        dependencies {
+                            implementation(project())
+                        }
+                        sources {
+                            java.setSrcDirs(listOf(integrationTestsDir))
+                            resources.setSrcDirs(listOf(file("src/test/resources")))
+                        }
+                        targets {
+                            all {
+                                testTask.configure {
+                                    shouldRunAfter(tasks.named("test"))
+                                }
+                            }
+                        }
+                    }
+                    configurations.named("integrationTestImplementation").configure {
+                        extendsFrom(configurations.named("testImplementation").get())
+                    }
+                    configurations.named("integrationTestRuntimeOnly").configure {
+                        extendsFrom(configurations.named("testRuntimeOnly").get())
+                    }
+                    tasks.named("check") {
+                        dependsOn("integrationTest")
+                    }
+                }
+
+                if (crossServiceTestsDir.exists()) {
+                    register<JvmTestSuite>("crossServiceTest") {
+                        useJUnitJupiter()
+                        dependencies {
+                            implementation(project())
+                        }
+                        sources {
+                            java.setSrcDirs(listOf(crossServiceTestsDir))
+                            resources.setSrcDirs(listOf(file("src/test/resources")))
+                        }
+                        targets {
+                            all {
+                                testTask.configure {
+                                    shouldRunAfter(tasks.named("test"))
+                                }
+                            }
+                        }
+                    }
+                    configurations.named("crossServiceTestImplementation").configure {
+                        extendsFrom(configurations.named("testImplementation").get())
+                    }
+                    configurations.named("crossServiceTestRuntimeOnly").configure {
+                        extendsFrom(configurations.named("testRuntimeOnly").get())
+                    }
+                    tasks.named("check") {
+                        dependsOn("crossServiceTest")
+                    }
+                }
+            }
+        }
+        if (categorizedTestRootsExist) {
+            tasks.withType<JavaCompile>().configureEach {
+                if (name == "compileTestJava" || name == "compileIntegrationTestJava" || name == "compileCrossServiceTestJava") {
+                    // Categorized test roots have produced stale cache hits where selectors miss real test classes.
+                    outputs.cacheIf { false }
+                }
             }
         }
     }

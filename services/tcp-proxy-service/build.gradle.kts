@@ -1,7 +1,6 @@
 
 import net.firedevops.firemud.GenerateTcpProxyDevCertsTask
 import org.springframework.boot.gradle.tasks.run.BootRun
-import org.gradle.api.tasks.testing.Test
 import org.gradle.language.jvm.tasks.ProcessResources
 
 apply(from = "${rootDir}/gradle/proto-convention.gradle")
@@ -91,13 +90,6 @@ tasks.withType<BootRun>().configureEach {
     dependsOn(generateTcpProxyDevCerts)
 }
 
-tasks.withType<Test>().configureEach {
+tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
     dependsOn(generateTcpProxyDevCerts)
-}
-
-tasks.register<Test>("crossServiceTest") {
-    description = "Runs TELNET/WebSocket cross-service LOOK regression suites."
-    useJUnitPlatform()
-    include("**/crossservice/**")
-    mustRunAfter(tasks.test)
 }
