@@ -9,6 +9,7 @@ class FiremudJwtConventionsPlugin : Plugin<Project> {
         plugins.withId("java") {
             val libs = extensions.getByType(VersionCatalogsExtension::class.java).named("libs")
 
+            dependencies.add("implementation", project.project(":common-security"))
             dependencies.add("implementation", libs.findLibrary("jjwt.api").get())
             dependencies.add("runtimeOnly", libs.findLibrary("jjwt.impl").get())
             dependencies.add("runtimeOnly", libs.findLibrary("jjwt.jackson").get())

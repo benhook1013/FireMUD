@@ -10,6 +10,9 @@ project(":common-library").projectDir = File("services/common-library")
 include("common-platform-core")
 project(":common-platform-core").projectDir = File("services/common-platform-core")
 
+include("common-security")
+project(":common-security").projectDir = File("services/common-security")
+
 include("account-service")
 project(":account-service").projectDir = File("services/account-service")
 

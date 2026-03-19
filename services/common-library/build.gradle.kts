@@ -15,7 +15,6 @@ dependencies {
     annotationProcessor(libs.lombok.mapstruct.binding)
     annotationProcessor(libs.spring.boot.configuration.processor)
     compileOnly(libs.lombok)
-    implementation(libs.jjwt.api)
     implementation(libs.micrometer.core)
     implementation(libs.opentelemetry.api)
     implementation(libs.opentelemetry.sdk)
@@ -26,13 +25,9 @@ dependencies {
     implementation(libs.spring.boot.starter.jdbc)
     implementation(libs.spring.boot.starter.validation)
     implementation(libs.spring.boot.starter.web)
-    implementation(libs.spring.aop)
-    implementation(libs.aspectjweaver)
     implementation(libs.spring.boot.starter.actuator)
     implementation(libs.grpc.netty.shaded)
     compileOnly(libs.grpc.spring.boot.starter)
-    runtimeOnly(libs.jjwt.impl)
-    runtimeOnly(libs.jjwt.jackson)
 
     compileOnly("com.github.spotbugs:spotbugs-annotations:4.9.8")
 

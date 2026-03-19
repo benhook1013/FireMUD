@@ -6,7 +6,6 @@ import net.firedevops.firemud.common.conflict.RedisConflictTracker;
 import net.firedevops.firemud.common.saga.SagaRunner;
 import net.firedevops.firemud.common.saga.persistence.SagaInstanceRepository;
 import net.firedevops.firemud.common.saga.persistence.SagaStepRepository;
-import net.firedevops.firemud.common.security.RequireAdminRoleAspect;
 import net.firedevops.firemud.metrics.SagaMetrics;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
@@ -17,7 +16,6 @@ import org.springframework.context.annotation.Import;
 @AutoConfiguration
 @Import({
   CommonCoreAutoConfiguration.class,
-  RequireAdminRoleAspect.class,
   RedisConflictTracker.class,
   RedisLookCacheService.class
 })
