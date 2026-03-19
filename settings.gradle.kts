@@ -7,6 +7,9 @@ rootProject.name = "firemud"
 include("common-library")
 project(":common-library").projectDir = File("services/common-library")
 
+include("common-platform-core")
+project(":common-platform-core").projectDir = File("services/common-platform-core")
+
 include("account-service")
 project(":account-service").projectDir = File("services/account-service")
 

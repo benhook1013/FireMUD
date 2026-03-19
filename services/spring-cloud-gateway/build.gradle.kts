@@ -15,11 +15,7 @@ dependencies {
     implementation(libs.spring.cloud.gateway)
     implementation(libs.grpc.spring.boot.starter)
     implementation(libs.spring.boot.starter.data.redis.reactive)
-    implementation(project(":common-library")) {
-        exclude(group = "org.springframework.boot", module = "spring-boot-starter-web")
-        exclude(group = "org.springframework.boot", module = "spring-boot-starter-tomcat")
-        exclude(group = "org.springframework", module = "spring-webmvc")
-    }
+    implementation(project(":common-platform-core"))
     implementation(libs.jjwt.api)
     runtimeOnly(libs.jjwt.impl)
     runtimeOnly(libs.jjwt.jackson)

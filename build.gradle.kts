@@ -156,7 +156,7 @@ subprojects {
         }
     }
 
-    if (projectDir.parentFile.name == "services" && name != "common-library") {
+    if (projectDir.parentFile.name == "services" && name != "common-library" && name != "common-platform-core") {
         apply(plugin = "org.springframework.boot")
         apply(plugin = "org.flywaydb.flyway")
 

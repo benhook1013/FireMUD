@@ -9,6 +9,7 @@ plugins {
 apply(from = "${rootDir}/gradle/proto-convention.gradle")
 
 dependencies {
+    api(project(":common-platform-core"))
     annotationProcessor(libs.mapstruct.processor)
     annotationProcessor(libs.lombok)
     annotationProcessor(libs.lombok.mapstruct.binding)
