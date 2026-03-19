@@ -43,7 +43,8 @@ public final class HttpTestSupport {
     HttpRequest request =
         HttpRequest.newBuilder(URI.create(url))
             .header("Content-Type", "application/json")
-            .POST(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(requestBody)))
+            .POST(
+                HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(requestBody)))
             .build();
     String responseBody = HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString()).body();
     return OBJECT_MAPPER.readValue(responseBody, responseType);
