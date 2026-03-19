@@ -10,6 +10,7 @@ apply(from = "${rootDir}/gradle/proto-convention.gradle")
 
 dependencies {
     api(project(":common-platform-core"))
+    implementation(project(":common-saga"))
     annotationProcessor(libs.mapstruct.processor)
     annotationProcessor(libs.lombok)
     annotationProcessor(libs.lombok.mapstruct.binding)
