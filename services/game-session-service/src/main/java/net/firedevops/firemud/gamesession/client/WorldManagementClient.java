@@ -2,15 +2,11 @@ package net.firedevops.firemud.gamesession.client;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.ManagedChannel;
-import io.grpc.ManagedChannelBuilder;
-import io.grpc.netty.shaded.io.grpc.netty.GrpcSslContexts;
-import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
 import jakarta.annotation.PostConstruct;
-import java.io.File;
-import java.util.concurrent.TimeUnit;
 import javax.net.ssl.SSLException;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
+import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.gamesession.config.DevIsolatedProperties;
 import net.firedevops.firemud.gamesession.config.GrpcClientProperties;
 import net.firedevops.firemud.worldmanagement.v1.PingRequest;
@@ -32,6 +28,7 @@ public final class WorldManagementClient implements AutoCloseable {
   private final ServiceEndpointsProperties endpoints;
   private final GrpcClientProperties tlsProps;
   private final DevIsolatedProperties devIsolatedProperties;
+  private final GrpcChannelFactory channelFactory;
   private static final org.slf4j.Logger logger = LoggingUtil.getLogger(WorldManagementClient.class);
   private ManagedChannel channel;
   private WorldManagementServiceGrpc.WorldManagementServiceBlockingStub stub;
@@ -39,10 +36,12 @@ public final class WorldManagementClient implements AutoCloseable {
   public WorldManagementClient(
       ServiceEndpointsProperties endpoints,
       GrpcClientProperties tlsProps,
-      DevIsolatedProperties devIsolatedProperties) {
+      DevIsolatedProperties devIsolatedProperties,
+      GrpcChannelFactory channelFactory) {
     this.endpoints = endpoints;
     this.tlsProps = tlsProps;
     this.devIsolatedProperties = devIsolatedProperties;
+    this.channelFactory = channelFactory;
   }
 
   @PostConstruct
@@ -56,31 +55,7 @@ public final class WorldManagementClient implements AutoCloseable {
     if (target == null || target.isEmpty()) {
       target = "world-management-service:6565";
     }
-    String[] parts = target.split(":");
-    String host = parts[0];
-    int port = parts.length > 1 ? Integer.parseInt(parts[1]) : 6565;
-    if (tlsProps.isPlaintext()) {
-      channel =
-          ManagedChannelBuilder.forAddress(host, port)
-              .keepAliveTime(30, TimeUnit.SECONDS)
-              .keepAliveTimeout(5, TimeUnit.SECONDS)
-              .keepAliveWithoutCalls(true)
-              .usePlaintext()
-              .build();
-    } else {
-      var sslContext =
-          GrpcSslContexts.forClient()
-              .trustManager(new File(tlsProps.getCaCert()))
-              .keyManager(new File(tlsProps.getCertChain()), new File(tlsProps.getPrivateKey()))
-              .build();
-      channel =
-          NettyChannelBuilder.forAddress(host, port)
-              .sslContext(sslContext)
-              .keepAliveTime(30, TimeUnit.SECONDS)
-              .keepAliveTimeout(5, TimeUnit.SECONDS)
-              .keepAliveWithoutCalls(true)
-              .build();
-    }
+    channel = channelFactory.buildChannel(target, 6565, tlsProps, true);
     stub = WorldManagementServiceGrpc.newBlockingStub(channel).withCompression("gzip");
   }
 

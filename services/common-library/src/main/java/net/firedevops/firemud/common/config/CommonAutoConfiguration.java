@@ -4,6 +4,8 @@ import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import net.firedevops.firemud.cache.RedisLookCacheService;
 import net.firedevops.firemud.common.conflict.RedisConflictTracker;
+import net.firedevops.firemud.common.grpc.CommonGrpcServerConfiguration;
+import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcServerTlsReloader;
 import net.firedevops.firemud.common.saga.SagaRunner;
 import net.firedevops.firemud.common.saga.persistence.SagaInstanceRepository;
@@ -24,6 +26,7 @@ import org.springframework.context.annotation.Import;
 @EnableConfigurationProperties(ServiceEndpointsProperties.class)
 @Import({
   TracingConfig.class,
+  CommonGrpcServerConfiguration.class,
   RequireAdminRoleAspect.class,
   GrpcServerTlsReloader.class,
   RedisConflictTracker.class,
@@ -42,6 +45,12 @@ public class CommonAutoConfiguration {
   public MeterRegistryCustomizer<MeterRegistry> commonServiceTag(
       @Value("${spring.application.name:unknown}") String serviceName) {
     return registry -> registry.config().commonTags("service", serviceName);
+  }
+
+  @Bean
+  @ConditionalOnMissingBean
+  public GrpcChannelFactory grpcChannelFactory() {
+    return new GrpcChannelFactory();
   }
 
   @Bean

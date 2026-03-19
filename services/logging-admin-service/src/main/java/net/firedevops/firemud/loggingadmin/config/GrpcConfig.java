@@ -1,10 +1,5 @@
 package net.firedevops.firemud.loggingadmin.config;
 
-import io.micrometer.core.instrument.MeterRegistry;
-import io.opentelemetry.api.trace.Tracer;
-import net.firedevops.firemud.common.grpc.LoggingInterceptor;
-import net.firedevops.firemud.common.grpc.MetricsInterceptor;
-import net.firedevops.firemud.common.grpc.TracingInterceptor;
 import net.firedevops.firemud.common.security.AuthTokenInterceptor;
 import net.firedevops.firemud.common.security.JwtUtil;
 import org.springframework.context.annotation.Bean;
@@ -13,25 +8,6 @@ import org.springframework.grpc.server.GlobalServerInterceptor;
 
 @Configuration
 public class GrpcConfig {
-
-  @Bean
-  @GlobalServerInterceptor
-  public LoggingInterceptor loggingInterceptor() {
-    return new LoggingInterceptor();
-  }
-
-  @Bean
-  @GlobalServerInterceptor
-  public MetricsInterceptor metricsInterceptor(MeterRegistry registry) {
-    return new MetricsInterceptor(registry);
-  }
-
-  @Bean
-  @GlobalServerInterceptor
-  public TracingInterceptor tracingInterceptor(Tracer tracer) {
-    return new TracingInterceptor(tracer);
-  }
-
   @Bean
   @GlobalServerInterceptor
   public AuthTokenInterceptor authTokenInterceptor(JwtUtil jwtUtil) {

@@ -1,20 +1,16 @@
 package net.firedevops.firemud.gamedesign.client;
 
 import io.grpc.ManagedChannel;
-import io.grpc.ManagedChannelBuilder;
-import io.grpc.netty.shaded.io.grpc.netty.GrpcSslContexts;
-import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
-import java.io.File;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.List;
-import java.util.concurrent.TimeUnit;
 import javax.net.ssl.SSLException;
 import net.firedevops.firemud.automationscripting.v1.AutomationScriptingServiceGrpc;
 import net.firedevops.firemud.automationscripting.v1.NotifyScriptVersionUpdateRequest;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
+import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.TlsCertificateWatcher;
 import net.firedevops.firemud.gamedesign.config.GrpcClientProperties;
 import org.springframework.stereotype.Component;
@@ -24,14 +20,18 @@ import org.springframework.stereotype.Component;
 public class AutomationScriptingClient implements AutoCloseable {
   private final ServiceEndpointsProperties endpoints;
   private final GrpcClientProperties tlsProps;
+  private final GrpcChannelFactory channelFactory;
   private ManagedChannel channel;
   private AutomationScriptingServiceGrpc.AutomationScriptingServiceBlockingStub stub;
   private TlsCertificateWatcher watcher;
 
   public AutomationScriptingClient(
-      ServiceEndpointsProperties endpoints, GrpcClientProperties tlsProps) {
+      ServiceEndpointsProperties endpoints,
+      GrpcClientProperties tlsProps,
+      GrpcChannelFactory channelFactory) {
     this.endpoints = copyEndpoints(endpoints);
     this.tlsProps = copyTlsProps(tlsProps);
+    this.channelFactory = channelFactory;
   }
 
   private static ServiceEndpointsProperties copyEndpoints(ServiceEndpointsProperties source) {
@@ -85,32 +85,7 @@ public class AutomationScriptingClient implements AutoCloseable {
     if (target == null || target.isEmpty()) {
       target = "automation-scripting-service:6565";
     }
-    String[] parts = target.split(":");
-    String host = parts[0];
-    int port = parts.length > 1 ? Integer.parseInt(parts[1]) : 6565;
-    ManagedChannel newChannel;
-    if (tlsProps.isPlaintext()) {
-      newChannel =
-          ManagedChannelBuilder.forAddress(host, port)
-              .usePlaintext()
-              .keepAliveTime(30, TimeUnit.SECONDS)
-              .keepAliveTimeout(5, TimeUnit.SECONDS)
-              .keepAliveWithoutCalls(true)
-              .build();
-    } else {
-      var sslContext =
-          GrpcSslContexts.forClient()
-              .trustManager(new File(tlsProps.getCaCert()))
-              .keyManager(new File(tlsProps.getCertChain()), new File(tlsProps.getPrivateKey()))
-              .build();
-      newChannel =
-          NettyChannelBuilder.forAddress(host, port)
-              .sslContext(sslContext)
-              .keepAliveTime(30, TimeUnit.SECONDS)
-              .keepAliveTimeout(5, TimeUnit.SECONDS)
-              .keepAliveWithoutCalls(true)
-              .build();
-    }
+    ManagedChannel newChannel = channelFactory.buildChannel(target, 6565, tlsProps, true);
     if (channel != null) {
       channel.shutdown();
     }

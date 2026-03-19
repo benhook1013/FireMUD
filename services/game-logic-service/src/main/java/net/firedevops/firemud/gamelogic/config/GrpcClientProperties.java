@@ -1,14 +1,8 @@
 package net.firedevops.firemud.gamelogic.config;
 
-import lombok.Data;
+import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 /** TLS configuration for outbound gRPC connections. */
-@Data
 @ConfigurationProperties(prefix = "firemud.grpc")
-public class GrpcClientProperties {
-  private String certChain;
-  private String privateKey;
-  private String caCert;
-  private boolean plaintext;
-}
+public class GrpcClientProperties extends CommonGrpcClientProperties {}
