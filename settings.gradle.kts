@@ -13,6 +13,9 @@ project(":common-platform-core").projectDir = File("services/common-platform-cor
 include("common-security")
 project(":common-security").projectDir = File("services/common-security")
 
+include("common-data-runtime")
+project(":common-data-runtime").projectDir = File("services/common-data-runtime")
+
 include("common-saga")
 project(":common-saga").projectDir = File("services/common-saga")
 

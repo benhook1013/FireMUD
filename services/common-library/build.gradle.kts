@@ -10,27 +10,8 @@ apply(from = "${rootDir}/gradle/proto-convention.gradle")
 
 dependencies {
     api(project(":common-platform-core"))
-    implementation(project(":common-saga"))
-    annotationProcessor(libs.mapstruct.processor)
-    annotationProcessor(libs.lombok)
-    annotationProcessor(libs.lombok.mapstruct.binding)
-    annotationProcessor(libs.spring.boot.configuration.processor)
-    compileOnly(libs.lombok)
-    implementation(libs.micrometer.core)
-    implementation(libs.opentelemetry.api)
-    implementation(libs.opentelemetry.sdk)
-    implementation(libs.opentelemetry.exporter.otlp)
-    implementation(libs.mapstruct)
-    implementation(libs.spring.boot.starter.data.redis)
-    implementation(libs.spring.boot.starter.data.jpa)
-    implementation(libs.spring.boot.starter.jdbc)
     implementation(libs.spring.boot.starter.validation)
     implementation(libs.spring.boot.starter.web)
-    implementation(libs.spring.boot.starter.actuator)
-    implementation(libs.grpc.netty.shaded)
-    compileOnly(libs.grpc.spring.boot.starter)
-
-    compileOnly("com.github.spotbugs:spotbugs-annotations:4.9.8")
 
     api(libs.spring.boot.starter.web)
     api(libs.spring.boot.starter.validation)
@@ -38,6 +19,7 @@ dependencies {
     testFixturesImplementation(libs.spring.boot.starter.test)
     testFixturesCompileOnly(libs.grpc.spring.boot.starter)
 }
+
 
 
 publishing {
