@@ -1,8 +1,6 @@
 plugins {
     `java-test-fixtures`
-    id("net.firedevops.firemud.service-conventions")
-    id("net.firedevops.firemud.jpa-postgres-conventions")
-    id("net.firedevops.firemud.redis-conventions")
+    id("net.firedevops.firemud.stateful-service-conventions")
 }
 
 import org.gradle.api.DefaultTask
