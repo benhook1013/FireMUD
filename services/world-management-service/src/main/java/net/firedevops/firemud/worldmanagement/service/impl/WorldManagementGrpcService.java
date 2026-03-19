@@ -7,7 +7,7 @@ import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
-import net.firedevops.firemud.shared.v1.ErrorDetail;
+import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.worldmanagement.dto.RoomDto;
 import net.firedevops.firemud.worldmanagement.dto.RoomSnapshotDto;
 import net.firedevops.firemud.worldmanagement.dto.RoomSnapshotDto.RoomExitSnapshotDto;
@@ -42,11 +42,6 @@ public class WorldManagementGrpcService
   private final MeterRegistry meterRegistry;
   private final ObjectMapper objectMapper = new ObjectMapper();
 
-  private ErrorDetail error(String code, String message) {
-    meterRegistry.counter("grpc.app_error", "code", code).increment();
-    return ErrorDetail.newBuilder().setCode(code).setMessage(message).build();
-  }
-
   @Override
   @Timed(value = "worldGrpc.ping")
   public void ping(PingRequest request, StreamObserver<PingResponse> responseObserver) {
@@ -57,7 +52,9 @@ public class WorldManagementGrpcService
       responseObserver.onCompleted();
     } catch (IllegalArgumentException ex) {
       PingResponse response =
-          PingResponse.newBuilder().setError(error("INVALID_ARGUMENT", ex.getMessage())).build();
+          PingResponse.newBuilder()
+              .setError(GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", ex.getMessage()))
+              .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (Exception ex) {
@@ -80,18 +77,24 @@ public class WorldManagementGrpcService
         responseObserver.onCompleted();
       } else {
         GetRoomResponse response =
-            GetRoomResponse.newBuilder().setError(error("NOT_FOUND", "room not found")).build();
+            GetRoomResponse.newBuilder()
+                .setError(GrpcAppErrors.error(meterRegistry, "NOT_FOUND", "room not found"))
+                .build();
         responseObserver.onNext(response);
         responseObserver.onCompleted();
       }
     } catch (NumberFormatException ex) {
       GetRoomResponse response =
-          GetRoomResponse.newBuilder().setError(error("INVALID_ARGUMENT", "invalid id")).build();
+          GetRoomResponse.newBuilder()
+              .setError(GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", "invalid id"))
+              .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (IllegalArgumentException ex) {
       GetRoomResponse response =
-          GetRoomResponse.newBuilder().setError(error("NOT_FOUND", ex.getMessage())).build();
+          GetRoomResponse.newBuilder()
+              .setError(GrpcAppErrors.error(meterRegistry, "NOT_FOUND", ex.getMessage()))
+              .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     }
@@ -112,14 +115,14 @@ public class WorldManagementGrpcService
     } catch (NumberFormatException ex) {
       GetRoomSnapshotResponse response =
           GetRoomSnapshotResponse.newBuilder()
-              .setError(error("INVALID_ARGUMENT", "invalid id"))
+              .setError(GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", "invalid id"))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (IllegalArgumentException ex) {
       GetRoomSnapshotResponse response =
           GetRoomSnapshotResponse.newBuilder()
-              .setError(error("NOT_FOUND", ex.getMessage()))
+              .setError(GrpcAppErrors.error(meterRegistry, "NOT_FOUND", ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -140,7 +143,7 @@ public class WorldManagementGrpcService
       UpdateWorldStateResponse response =
           UpdateWorldStateResponse.newBuilder()
               .setSuccess(false)
-              .setError(error("INVALID_ARGUMENT", ex.getMessage()))
+              .setError(GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();

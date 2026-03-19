@@ -6,6 +6,7 @@ plugins {
     `maven-publish`
 }
 
+apply(from = "${rootDir}/gradle/proto-convention.gradle")
 
 dependencies {
     annotationProcessor(libs.mapstruct.processor)

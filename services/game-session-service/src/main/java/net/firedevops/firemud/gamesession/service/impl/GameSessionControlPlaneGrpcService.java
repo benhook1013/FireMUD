@@ -5,6 +5,7 @@ import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Instant;
+import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.TickService;
@@ -19,7 +20,6 @@ import net.firedevops.firemud.gamesession.v1.RollbackScriptPatchVersionRequest;
 import net.firedevops.firemud.gamesession.v1.RollbackScriptPatchVersionResponse;
 import net.firedevops.firemud.gamesession.v1.SetPinnedScriptPatchVersionRequest;
 import net.firedevops.firemud.gamesession.v1.SetPinnedScriptPatchVersionResponse;
-import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.grpc.server.service.GrpcService;
@@ -44,11 +44,6 @@ public final class GameSessionControlPlaneGrpcService
     this.gameInstanceRepository = gameInstanceRepository;
     this.tickService = tickService;
     this.meterRegistry = meterRegistry;
-  }
-
-  private ErrorDetail error(String code, String message) {
-    meterRegistry.counter("grpc.app_error", "code", code).increment();
-    return ErrorDetail.newBuilder().setCode(code).setMessage(message).build();
   }
 
   private long parseTenantId(String tenantId) {
@@ -109,7 +104,7 @@ public final class GameSessionControlPlaneGrpcService
     } catch (IllegalArgumentException ex) {
       GetPinnedScriptPatchVersionResponse response =
           GetPinnedScriptPatchVersionResponse.newBuilder()
-              .setError(error("INVALID_ARGUMENT", ex.getMessage()))
+              .setError(GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -117,7 +112,7 @@ public final class GameSessionControlPlaneGrpcService
       logger.error("GetPinnedScriptPatchVersion failed", ex);
       GetPinnedScriptPatchVersionResponse response =
           GetPinnedScriptPatchVersionResponse.newBuilder()
-              .setError(error("INTERNAL", "Internal error"))
+              .setError(GrpcAppErrors.error(meterRegistry, "INTERNAL", "Internal error"))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -156,7 +151,7 @@ public final class GameSessionControlPlaneGrpcService
     } catch (IllegalArgumentException ex) {
       SetPinnedScriptPatchVersionResponse response =
           SetPinnedScriptPatchVersionResponse.newBuilder()
-              .setError(error("INVALID_ARGUMENT", ex.getMessage()))
+              .setError(GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -164,7 +159,7 @@ public final class GameSessionControlPlaneGrpcService
       logger.error("SetPinnedScriptPatchVersion failed", ex);
       SetPinnedScriptPatchVersionResponse response =
           SetPinnedScriptPatchVersionResponse.newBuilder()
-              .setError(error("INTERNAL", "Internal error"))
+              .setError(GrpcAppErrors.error(meterRegistry, "INTERNAL", "Internal error"))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -203,7 +198,7 @@ public final class GameSessionControlPlaneGrpcService
     } catch (IllegalArgumentException ex) {
       RollbackScriptPatchVersionResponse response =
           RollbackScriptPatchVersionResponse.newBuilder()
-              .setError(error("INVALID_ARGUMENT", ex.getMessage()))
+              .setError(GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -211,7 +206,7 @@ public final class GameSessionControlPlaneGrpcService
       logger.error("RollbackScriptPatchVersion failed", ex);
       RollbackScriptPatchVersionResponse response =
           RollbackScriptPatchVersionResponse.newBuilder()
-              .setError(error("INTERNAL", "Internal error"))
+              .setError(GrpcAppErrors.error(meterRegistry, "INTERNAL", "Internal error"))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -242,7 +237,7 @@ public final class GameSessionControlPlaneGrpcService
       PauseTicksForScopeResponse response =
           PauseTicksForScopeResponse.newBuilder()
               .setSuccess(false)
-              .setError(error("INVALID_ARGUMENT", ex.getMessage()))
+              .setError(GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -251,7 +246,7 @@ public final class GameSessionControlPlaneGrpcService
       PauseTicksForScopeResponse response =
           PauseTicksForScopeResponse.newBuilder()
               .setSuccess(false)
-              .setError(error("INTERNAL", "Internal error"))
+              .setError(GrpcAppErrors.error(meterRegistry, "INTERNAL", "Internal error"))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -282,7 +277,7 @@ public final class GameSessionControlPlaneGrpcService
       ResumeTicksForScopeResponse response =
           ResumeTicksForScopeResponse.newBuilder()
               .setSuccess(false)
-              .setError(error("INVALID_ARGUMENT", ex.getMessage()))
+              .setError(GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -291,7 +286,7 @@ public final class GameSessionControlPlaneGrpcService
       ResumeTicksForScopeResponse response =
           ResumeTicksForScopeResponse.newBuilder()
               .setSuccess(false)
-              .setError(error("INTERNAL", "Internal error"))
+              .setError(GrpcAppErrors.error(meterRegistry, "INTERNAL", "Internal error"))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();

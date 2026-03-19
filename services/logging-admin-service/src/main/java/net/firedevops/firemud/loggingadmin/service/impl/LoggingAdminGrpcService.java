@@ -6,11 +6,11 @@ import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.util.List;
+import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.loggingadmin.service.FeatureFlagService;
 import net.firedevops.firemud.loggingadmin.service.LogQueryService;
 import net.firedevops.firemud.loggingadmin.service.ModerationService;
 import net.firedevops.firemud.loggingadmin.v1.*;
-import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.springframework.grpc.server.service.GrpcService;
 
 @GrpcService
@@ -34,11 +34,6 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
     this.logQueryService = logQueryService;
     this.moderationService = moderationService;
     this.meterRegistry = meterRegistry;
-  }
-
-  private ErrorDetail error(String code, String message) {
-    meterRegistry.counter("grpc.app_error", "code", code).increment();
-    return ErrorDetail.newBuilder().setCode(code).setMessage(message).build();
   }
 
   @Override
@@ -71,7 +66,7 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
       ToggleFeatureFlagResponse response =
           ToggleFeatureFlagResponse.newBuilder()
               .setSuccess(false)
-              .setError(error("INVALID_ARGUMENT", ex.getMessage()))
+              .setError(GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -96,7 +91,7 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
     } catch (IllegalArgumentException ex) {
       QueryLogsResponse response =
           QueryLogsResponse.newBuilder()
-              .setError(error("INVALID_ARGUMENT", ex.getMessage()))
+              .setError(GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -126,7 +121,7 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
       ApplyModerationActionResponse response =
           ApplyModerationActionResponse.newBuilder()
               .setSuccess(false)
-              .setError(error("INVALID_ARGUMENT", ex.getMessage()))
+              .setError(GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();

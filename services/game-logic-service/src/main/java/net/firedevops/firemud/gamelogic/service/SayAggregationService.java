@@ -8,6 +8,7 @@ import java.util.Optional;
 import java.util.TreeSet;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
+import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.entitymanagement.v1.EntityManagementServiceGrpc;
 import net.firedevops.firemud.entitymanagement.v1.EntityType;
 import net.firedevops.firemud.entitymanagement.v1.ListRoomEntitiesRequest;
@@ -88,7 +89,7 @@ public class SayAggregationService {
 
     if (!socialResponse.getSuccess()) {
       ErrorDetail error = socialResponse.hasError() ? socialResponse.getError() : genericError();
-      recordAppError(error.getCode());
+      GrpcAppErrors.countIfError(meterRegistry, error);
       return builder.setSuccess(false).setError(error).build();
     }
 
@@ -147,9 +148,9 @@ public class SayAggregationService {
 
   private BroadcastSayResponse errorResponse(
       BroadcastSayResponse.Builder builder, String code, String message) {
-    recordAppError(code);
+    ErrorDetail detail = GrpcAppErrors.error(meterRegistry, code, message);
     builder.setSuccess(false);
-    builder.setError(ErrorDetail.newBuilder().setCode(code).setMessage(message).build());
+    builder.setError(detail);
     return builder.build();
   }
 
@@ -171,13 +172,6 @@ public class SayAggregationService {
     String message =
         Optional.ofNullable(detail.getMessage()).filter(s -> !s.isBlank()).orElse("unreachable");
     return errorResponse(builder, code, source + ": " + message);
-  }
-
-  private void recordAppError(String code) {
-    if (code == null || code.isBlank()) {
-      code = "UNAVAILABLE";
-    }
-    meterRegistry.counter("grpc.app_error", "code", code).increment();
   }
 
   private ErrorDetail genericError() {

@@ -5,12 +5,12 @@ import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
+import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.loggingadmin.dto.ReportDto;
 import net.firedevops.firemud.loggingadmin.service.ReportService;
 import net.firedevops.firemud.loggingadmin.v1.CreateReportRequest;
 import net.firedevops.firemud.loggingadmin.v1.CreateReportResponse;
 import net.firedevops.firemud.loggingadmin.v1.ReportServiceGrpc;
-import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.springframework.grpc.server.service.GrpcService;
 
 @GrpcService
@@ -25,11 +25,6 @@ public class ReportGrpcService extends ReportServiceGrpc.ReportServiceImplBase {
   public ReportGrpcService(ReportService reportService, MeterRegistry meterRegistry) {
     this.reportService = reportService;
     this.meterRegistry = meterRegistry;
-  }
-
-  private ErrorDetail error(String code, String message) {
-    meterRegistry.counter("grpc.app_error", "code", code).increment();
-    return ErrorDetail.newBuilder().setCode(code).setMessage(message).build();
   }
 
   @Override
@@ -54,7 +49,7 @@ public class ReportGrpcService extends ReportServiceGrpc.ReportServiceImplBase {
     } catch (IllegalArgumentException ex) {
       CreateReportResponse response =
           CreateReportResponse.newBuilder()
-              .setError(error("INVALID_ARGUMENT", ex.getMessage()))
+              .setError(GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();

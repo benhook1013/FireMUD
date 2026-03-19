@@ -5,7 +5,7 @@ import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import java.time.Duration;
-import net.firedevops.firemud.shared.v1.ErrorDetail;
+import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.tcpproxy.v1.NotifyDisconnectResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -16,8 +16,6 @@ import org.springframework.util.StringUtils;
 @Service
 public class TcpProxyEventService {
   private static final Logger logger = LoggerFactory.getLogger(TcpProxyEventService.class);
-  private static final String OK = "OK";
-
   private final TcpProxyEventClient client;
   private final MeterRegistry meterRegistry;
   private final Timer connectionDurationTimer;
@@ -70,7 +68,10 @@ public class TcpProxyEventService {
     if (!StringUtils.hasText(proxyConnectionId) || disconnectSequence <= 0) {
       return NotifyDisconnectResponse.newBuilder()
           .setError(
-              error("INVALID_ARGUMENT", "proxyConnectionId and disconnectSequence are required"))
+              GrpcAppErrors.error(
+                  meterRegistry,
+                  "INVALID_ARGUMENT",
+                  "proxyConnectionId and disconnectSequence are required"))
           .build();
     }
     try {
@@ -80,7 +81,9 @@ public class TcpProxyEventService {
     } catch (RuntimeException ex) {
       logger.warn("Failed to notify Game Session Service about disconnect", ex);
       return NotifyDisconnectResponse.newBuilder()
-          .setError(error("UPSTREAM_FAILURE", "Failed to notify Game Session Service"))
+          .setError(
+              GrpcAppErrors.error(
+                  meterRegistry, "UPSTREAM_FAILURE", "Failed to notify Game Session Service"))
           .build();
     }
   }
@@ -89,25 +92,11 @@ public class TcpProxyEventService {
     NotifyDisconnectResponse safeResponse =
         response != null ? response : NotifyDisconnectResponse.getDefaultInstance();
     if (safeResponse.hasError()) {
-      incrementIfError(safeResponse.getError());
+      GrpcAppErrors.countIfError(meterRegistry, safeResponse.getError());
       return safeResponse;
     }
-    return NotifyDisconnectResponse.newBuilder(safeResponse).setError(ok(okMessage)).build();
-  }
-
-  private ErrorDetail ok(String message) {
-    return ErrorDetail.newBuilder().setCode(OK).setMessage(message).build();
-  }
-
-  private ErrorDetail error(String code, String message) {
-    meterRegistry.counter("grpc.app_error", "code", code).increment();
-    return ErrorDetail.newBuilder().setCode(code).setMessage(message).build();
-  }
-
-  private void incrementIfError(ErrorDetail detail) {
-    if (detail == null || OK.equals(detail.getCode())) {
-      return;
-    }
-    meterRegistry.counter("grpc.app_error", "code", detail.getCode()).increment();
+    return NotifyDisconnectResponse.newBuilder(safeResponse)
+        .setError(GrpcAppErrors.ok(okMessage))
+        .build();
   }
 }
