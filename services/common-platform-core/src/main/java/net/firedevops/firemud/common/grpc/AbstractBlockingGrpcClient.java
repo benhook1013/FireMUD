@@ -21,13 +21,19 @@ public abstract class AbstractBlockingGrpcClient<TStub> implements AutoCloseable
     this.channelFactory = channelFactory;
   }
 
-  protected final void initClient() throws SSLException {
+  protected final synchronized void initClient() throws SSLException {
     String target = configuredTarget(endpoints);
     if (target == null || target.isBlank()) {
       target = defaultTarget();
     }
-    channel = channelFactory.buildChannel(target, defaultPort(), tlsProps, keepAliveEnabled());
+    ManagedChannel newChannel =
+        channelFactory.buildChannel(target, defaultPort(), tlsProps, keepAliveEnabled());
+    ManagedChannel previousChannel = channel;
+    channel = newChannel;
     stub = buildStub(channel);
+    if (previousChannel != null) {
+      previousChannel.shutdown();
+    }
   }
 
   protected final TStub stub() {

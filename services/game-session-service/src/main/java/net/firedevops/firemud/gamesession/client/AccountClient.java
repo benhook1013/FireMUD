@@ -1,7 +1,5 @@
 package net.firedevops.firemud.gamesession.client;
 
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
-import io.grpc.ManagedChannel;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import jakarta.annotation.PostConstruct;
@@ -11,6 +9,7 @@ import net.firedevops.firemud.account.v1.AuthenticateRequest;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
+import net.firedevops.firemud.common.grpc.AbstractBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.gamesession.config.DevIsolatedProperties;
@@ -20,30 +19,19 @@ import org.springframework.stereotype.Component;
 
 /** gRPC client for the Account Service login endpoint. */
 @Component
-@SuppressFBWarnings(
-    value = "EI_EXPOSE_REP2",
-    justification = "Injected configuration is stored internally")
-public final class AccountClient implements AutoCloseable {
+public final class AccountClient
+    extends AbstractBlockingGrpcClient<AccountServiceGrpc.AccountServiceBlockingStub> {
   private static final Logger logger = LoggingUtil.getLogger(AccountClient.class);
 
-  private final ServiceEndpointsProperties endpoints;
-  private final CommonGrpcClientProperties tlsProps;
   private final DevIsolatedProperties devIsolatedProperties;
-  private final GrpcChannelFactory channelFactory;
-
-  private ManagedChannel channel;
-  private AccountServiceGrpc.AccountServiceBlockingStub stub;
-  private String target;
 
   public AccountClient(
       ServiceEndpointsProperties endpoints,
       CommonGrpcClientProperties tlsProps,
       DevIsolatedProperties devIsolatedProperties,
       GrpcChannelFactory channelFactory) {
-    this.endpoints = endpoints;
-    this.tlsProps = tlsProps;
+    super(endpoints, tlsProps, channelFactory);
     this.devIsolatedProperties = devIsolatedProperties;
-    this.channelFactory = channelFactory;
   }
 
   @PostConstruct
@@ -52,29 +40,13 @@ public final class AccountClient implements AutoCloseable {
       logger.info("Dev-isolated mode enabled; skipping AccountService channel initialization");
       return;
     }
-    target = endpoints.getAccountService();
-    if (target == null || target.isEmpty()) {
-      target = "account-service:6565";
-    }
-    reloadChannel();
-  }
-
-  private synchronized void reloadChannel() throws Exception {
-    if (devIsolatedProperties.isDevIsolated()) {
-      return;
-    }
-    ManagedChannel newChannel = channelFactory.buildChannel(target, 6565, tlsProps, true);
-    if (channel != null) {
-      channel.shutdown();
-    }
-    channel = newChannel;
-    stub = AccountServiceGrpc.newBlockingStub(channel).withCompression("gzip");
+    initClient();
   }
 
   /** Authenticates a player via the Account Service. */
   public AuthenticateResponse authenticate(
       String tenantId, String username, String password, String otp) {
-    if (devIsolatedProperties.isDevIsolated() || stub == null) {
+    if (devIsolatedProperties.isDevIsolated() || stub() == null) {
       return AuthenticateResponse.newBuilder().setAuthToken("dev-isolated").build();
     }
     AuthenticateRequest request =
@@ -85,14 +57,14 @@ public final class AccountClient implements AutoCloseable {
             .setOtp(otp == null ? "" : otp)
             .build();
     try {
-      return stub.authenticate(request);
+      return stub().authenticate(request);
     } catch (StatusRuntimeException ex) {
       if (ex.getStatus().getCode() == Status.Code.UNAVAILABLE) {
         logger.warn(
             "Account Service unavailable; rebuilding channel and retrying authenticate", ex);
         try {
-          reloadChannel();
-          return stub.authenticate(request);
+          initClient();
+          return stub().authenticate(request);
         } catch (Exception retryEx) {
           logger.warn("Failed to retry Account Service authenticate after channel reload", retryEx);
         }
@@ -111,9 +83,18 @@ public final class AccountClient implements AutoCloseable {
   }
 
   @Override
-  public void close() {
-    if (channel != null) {
-      channel.shutdown();
-    }
+  protected String configuredTarget(ServiceEndpointsProperties endpoints) {
+    return endpoints.getAccountService();
+  }
+
+  @Override
+  protected String defaultTarget() {
+    return "account-service:6565";
+  }
+
+  @Override
+  protected AccountServiceGrpc.AccountServiceBlockingStub buildStub(
+      io.grpc.ManagedChannel channel) {
+    return AccountServiceGrpc.newBlockingStub(channel).withCompression("gzip");
   }
 }
