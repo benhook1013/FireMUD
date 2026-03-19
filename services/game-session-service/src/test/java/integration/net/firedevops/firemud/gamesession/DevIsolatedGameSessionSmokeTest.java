@@ -20,6 +20,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.ObjectMapper;
 
 @SuppressWarnings({})
 @Disabled(
@@ -39,20 +40,21 @@ import tools.jackson.core.type.TypeReference;
     })
 @Import(NoGrpcServerTestConfiguration.class)
 class DevIsolatedGameSessionSmokeTest {
+  private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
   @LocalServerPort private int port;
 
   @MockitoBean private RedisTemplate<String, Object> redisTemplate;
 
   @Test
-  void startSessionIsAcceptedAndLogged(CapturedOutput output) {
+  void startSessionIsAcceptedAndLogged(CapturedOutput output) throws Exception {
     StartSessionRequest request = new StartSessionRequest(42L, "1.0.0", "patch-1", 100L);
 
+    String responseBody =
+        HttpTestSupport.postJsonBodyUnchecked(
+            "http://localhost:" + port + "/sessions", OBJECT_MAPPER.writeValueAsString(request));
     ApiResponse<GameInstanceDto> body =
-        HttpTestSupport.postJsonUnchecked(
-            "http://localhost:" + port + "/sessions",
-            request,
-            new TypeReference<ApiResponse<GameInstanceDto>>() {});
+        OBJECT_MAPPER.readValue(responseBody, new TypeReference<ApiResponse<GameInstanceDto>>() {});
     assertThat(body).isNotNull();
     assertThat(body.status()).isEqualTo(ResultStatus.SUCCESS);
     GameInstanceDto dto = body.data();

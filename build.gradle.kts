@@ -156,7 +156,7 @@ subprojects {
         }
     }
 
-    if (projectDir.parentFile.name == "services" && name != "common-library" && name != "common-platform-core") {
+    if (projectDir.parentFile.name == "services" && !name.startsWith("common-")) {
         apply(plugin = "org.springframework.boot")
         apply(plugin = "org.flywaydb.flyway")
 
@@ -197,8 +197,8 @@ subprojects {
         testImplementation(libs.findLibrary("spring-boot-resttestclient").get())
         testImplementation(libs.findLibrary("spring-boot-starter-webmvc-test").get())
         testRuntimeOnly("org.junit.platform:junit-platform-launcher:6.0.3")
-        if (projectDir.parentFile.name == "services" && name != "common-library") {
-            testImplementation(testFixtures(project(":common-library")))
+        if (projectDir.parentFile.name == "services" && !name.startsWith("common-")) {
+            testImplementation(testFixtures(project(":common-test-support")))
         }
     }
 
