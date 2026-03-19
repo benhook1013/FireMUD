@@ -7,10 +7,13 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.ObjectMapper;
 
 /** Shared HTTP helpers for integration tests that should not depend on TestRestTemplate beans. */
 public final class HttpTestSupport {
   private static final HttpClient HTTP_CLIENT = HttpClient.newHttpClient();
+  private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
   private HttpTestSupport() {}
 
@@ -33,5 +36,28 @@ public final class HttpTestSupport {
       throws IOException, InterruptedException {
     HttpRequest request = HttpRequest.newBuilder(URI.create(url)).GET().build();
     return HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString(charset)).body();
+  }
+
+  public static <T> T postJson(String url, Object requestBody, TypeReference<T> responseType)
+      throws IOException, InterruptedException {
+    HttpRequest request =
+        HttpRequest.newBuilder(URI.create(url))
+            .header("Content-Type", "application/json")
+            .POST(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(requestBody)))
+            .build();
+    String responseBody = HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString()).body();
+    return OBJECT_MAPPER.readValue(responseBody, responseType);
+  }
+
+  public static <T> T postJsonUnchecked(
+      String url, Object requestBody, TypeReference<T> responseType) {
+    try {
+      return postJson(url, requestBody, responseType);
+    } catch (IOException | InterruptedException e) {
+      if (e instanceof InterruptedException) {
+        Thread.currentThread().interrupt();
+      }
+      throw new IllegalStateException("HTTP JSON test probe failed for " + url, e);
+    }
   }
 }
