@@ -6,6 +6,7 @@ import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.CommonGrpcServerConfiguration;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcServerTlsReloader;
+import net.firedevops.firemud.common.grpc.GrpcTlsMaterialResolver;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
@@ -37,5 +38,11 @@ public class CommonCoreAutoConfiguration {
   @ConditionalOnMissingBean
   public GrpcChannelFactory grpcChannelFactory() {
     return new GrpcChannelFactory();
+  }
+
+  @Bean
+  @ConditionalOnMissingBean
+  public GrpcTlsMaterialResolver grpcTlsMaterialResolver() {
+    return new GrpcTlsMaterialResolver();
   }
 }
