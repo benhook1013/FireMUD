@@ -1,0 +1,98 @@
+name: Security Checks
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  trivy-scan:
+    name: Trivy Filesystem Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: ⬇️ Checkout Code
+        uses: actions/checkout@v6
+
+      - name: ⚙️ Set Up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: |
+            config/openapi/package-lock.json
+            web-client/package-lock.json
+
+      - name: 💾 Cache OpenAPI Dependencies
+        id: cache-openapi
+        uses: actions/cache@v5
+        with:
+          path: config/openapi/node_modules
+          key: openapi-node-modules-${{ runner.os }}-${{ hashFiles('config/openapi/package-lock.json') }}
+          restore-keys: openapi-node-modules-${{ runner.os }}-
+
+      - name: 📦 Install OpenAPI Dependencies
+        if: steps.cache-openapi.outputs.cache-hit != 'true'
+        run: npm --prefix config/openapi ci
+
+      - name: 💾 Cache Web Client Dependencies
+        id: cache-web-client
+        uses: actions/cache@v5
+        with:
+          path: web-client/node_modules
+          key: web-client-node-modules-${{ runner.os }}-${{ hashFiles('web-client/package-lock.json') }}
+          restore-keys: web-client-node-modules-${{ runner.os }}-
+
+      - name: 📦 Install Web Client Dependencies
+        if: steps.cache-web-client.outputs.cache-hit != 'true'
+        run: npm --prefix web-client ci
+
+      - name: 💾 Cache Trivy DB
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/trivy
+          key: trivy-db-${{ runner.os }}-${{ hashFiles('**/build.gradle*', '**/package-lock.json') }}
+          restore-keys: trivy-db-${{ runner.os }}-
+
+      - name: 🛡️ Install Trivy
+        run: |
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
+            | sudo sh -s -- -b /usr/local/bin
+          trivy --version
+
+      - name: 🔍 Run Trivy and Save Report
+        run: |
+          echo "::group::Run Trivy"
+          trivy fs --config config/security/trivy.yaml . | tee trivy-report.txt
+          echo "::endgroup::"
+
+      - name: 📤 Upload Trivy Report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: trivy-report-${{ github.sha }}
+          path: trivy-report.txt
+
+  security-gate:
+    name: Security Gate
+    runs-on: ubuntu-latest
+    needs: [trivy-scan]
+    if: always()
+    steps:
+      - name: Enforce security success
+        env:
+          TRIVY_SCAN: ${{ needs.trivy-scan.result }}
+        run: |
+          echo "Trivy Filesystem Scan => $TRIVY_SCAN"
+          if [ "$TRIVY_SCAN" != "success" ]; then
+            echo "Security Gate failed because the filesystem Trivy scan did not succeed." >&2
+            exit 1
+          fi

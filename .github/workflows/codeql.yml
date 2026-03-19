@@ -2,9 +2,9 @@ name: CodeQL
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, develop ]
   pull_request:
-    branches: [ main ]
+    branches: [ main, develop ]
   schedule:
     - cron: '0 0 * * 0'  # Weekly on Sundays at 00:00 UTC
   workflow_dispatch:      # Enables manual trigger from GitHub Actions UI
@@ -40,7 +40,7 @@ jobs:
           languages: ${{ matrix.language }}
 
       - name: ⚙️ Build project for CodeQL
-        run: ./gradlew testClasses --no-daemon
+        run: ./gradlew codeqlClasses --no-daemon
 
       - name: 📊 Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v4

@@ -2,8 +2,9 @@ name: License Scan
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, develop ]
   pull_request:
+    branches: [ main, develop ]
     paths:
       - '**/build.gradle*'
       - '**/pom.xml'
@@ -20,6 +21,7 @@ permissions:
 
 jobs:
   ort-scan:
+    name: License Gate
     runs-on: ubuntu-latest
     steps:
       - name: Use HTTPS for Git

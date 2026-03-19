@@ -1,0 +1,44 @@
+name: Generate ERD Diagrams
+
+on:
+  workflow_run:
+    workflows: ["CI — Validation"]
+    types: [completed]
+    branches: [main, develop]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  generate-erd:
+    name: Generate ERD Diagrams
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    steps:
+      - name: ⬇️ Checkout Code
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+
+      - name: ⚙️ Set Up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: ⚙️ Set Up Gradle
+        uses: gradle/actions/setup-gradle@v5
+        with:
+          cache-read-only: false
+
+      - name: 🖼️ Generate ERD diagrams
+        run: ./dev-tools/docs/generate-erd.sh
+
+      - name: 📤 Upload ERD artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: erd-${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+          path: design/erd
