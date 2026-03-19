@@ -267,13 +267,13 @@ jobs:
           name: test-logs-${{ matrix.service }}-${{ github.sha }}
           path: services/${{ matrix.service }}/build/reports/tests/test/
 
-  ci-summary:
-    name: CI Summary
+  validation-summary:
+    name: Validation Summary
     runs-on: ubuntu-latest
     needs: [buf-check, docker-lint, shellcheck, docs-check, frontend-checks, build-and-test, validation-gate]
     if: github.event_name == 'pull_request' && always()
     steps:
-      - name: 💬 Publish CI Summary Comment
+      - name: 💬 Publish Validation Summary Comment
         uses: actions/github-script@v8
         with:
           script: |
@@ -281,11 +281,11 @@ jobs:
               if (result === "success") return "✅";
               if (result === "failure") return "❌";
               if (result === "cancelled") return "⚪";
-              if (result === "pending" || result === "in_progress" || result === "queued") return "🟡";
               return "⏭️";
             };
 
             const validationChecks = [
+              ["Validation gate", "${{ needs.validation-gate.result }}"],
               ["Buf generation", "${{ needs.buf-check.result }}"],
               ["Dockerfile lint", "${{ needs.docker-lint.result }}"],
               ["ShellCheck", "${{ needs.shellcheck.result }}"],
@@ -294,46 +294,15 @@ jobs:
               ["Service build/test matrix", "${{ needs.build-and-test.result }}"],
             ];
 
-            const requiredChecks = [
-              "Validation Gate",
-              "Core Smoke Tests",
-              "Security Gate",
-              "CodeQL Analysis (java)",
-              "License Gate",
-            ];
-
-            const { data: checkRunsPage } = await github.rest.checks.listForRef({
-              ...context.repo,
-              ref: context.payload.pull_request.head.sha,
-              per_page: 100,
-            });
-
-            const normalizeStatus = (checkRun) => {
-              if (!checkRun) return "pending";
-              if (checkRun.status !== "completed") return checkRun.status;
-              return checkRun.conclusion ?? "pending";
-            };
-
-            const requiredCheckResults = requiredChecks.map((name) => {
-              const run = checkRunsPage.check_runs
-                .filter((checkRun) => checkRun.name === name)
-                .sort((a, b) => b.id - a.id)[0];
-              return [name, normalizeStatus(run)];
-            });
-
-            const failedChecks = requiredCheckResults.filter(([, result]) => result !== "success");
+            const failedChecks = validationChecks.filter(([, result]) => result !== "success");
             const headline = failedChecks.length === 0
-              ? "✅ All required CI checks passed"
-              : "❌ One or more required CI checks failed";
+              ? "✅ All validation checks passed"
+              : "❌ One or more validation checks failed";
 
             const body = [
-              "### CI Summary",
+              "### Validation Summary",
               headline,
               "",
-              "**Required merge gates**",
-              ...requiredCheckResults.map(([name, result]) => `- ${statusIcon(result)} ${name}: \`${result}\``),
-              "",
-              "**Validation breakdown**",
               ...validationChecks.map(([name, result]) => `- ${statusIcon(result)} ${name}: \`${result}\``),
               "",
               "Coverage reports and failure logs are available in the workflow artifacts."
@@ -341,9 +310,6 @@ jobs:
 
             await core.summary
               .addRaw(headline, true)
-              .addRaw("Required merge gates", true)
-              .addList(requiredCheckResults.map(([name, result]) => `${statusIcon(result)} ${name}: ${result}`))
-              .addRaw("Validation breakdown", true)
               .addList(validationChecks.map(([name, result]) => `${statusIcon(result)} ${name}: ${result}`))
               .write();
 
@@ -353,7 +319,7 @@ jobs:
             });
 
             const existing = comments.find(comment =>
-              comment.body.startsWith("### CI Summary")
+              comment.body.startsWith("### Validation Summary")
             );
 
             if (existing) {
