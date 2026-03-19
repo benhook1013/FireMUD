@@ -104,9 +104,14 @@ The following Redis-focused incident flows build on the general recovery steps a
        - Goal: fence the old timeline with an epoch bump and use the canonical reset handshake to abandon or reconcile old-epoch work explicitly.
 3. **Act**
    1. If the chosen mode is `replay_first`:
-      - Trigger the ledger replay controller / maintenance API for the affected scope without bumping `region_epoch`.
+      - Run `coordination-maintenance reconcile-ledger ...` for the affected scope without bumping `region_epoch`; this is the canonical operator entrypoint for the replay controller / maintenance API path.
       - Watch `tick_effects_pending_oldest_age_seconds`, `tick_effects_replay_slo_breached`, and command convergence for one emitted replay-convergence budget window.
       - Escalate to `reset_first` immediately if replay cannot make bounded progress, if inconsistent-state signals appear, or if the region transitions to `STALLED`.
+      - Worked example:
+        1. Region `(T1, R7)` remains on `region_epoch = 13`, `tick_effects_pending_oldest_age_seconds` exceeds budget, and there is no evidence of mixed-epoch state or duplicate durable batches.
+        2. Operator runs `coordination-maintenance reconcile-ledger --scope region --tenant T1 --region R7`.
+        3. The replay controller converges lingering epoch-13 `SCHEDULED` rows to `APPLIED` or `ABANDONED` without bumping `region_epoch`.
+        4. If pending age and stalled signals recover within one emitted budget window, the region stays on epoch `13`; otherwise the operator escalates to `reset_first`.
    2. If the chosen mode is `reset_first`:
       - Execute the canonical coordination reset workflow for the same scope via `coordination-maintenance`:
         - `pause`

@@ -25,16 +25,18 @@ Before the first player-facing deployment into `hobby-self-hosted`, `staging`, o
 
 Bootstrap is part of the deployment contract, not an informal prerequisite. A player-facing environment is not considered deployable until this bootstrap pass succeeds with environment-specific credentials and bindings.
 
-## Production First-Live Backup Gate
+## Production Traffic-Open Backup Gate
 
-Before opening production to player traffic for the first time, operators must prove that recovery already works for the live environment:
+Before opening production to player traffic for the first time, or reopening it after a restore into a fresh environment boundary, operators must prove that recovery already works for the live environment:
 
 1. Confirm the production backup/object-store binding is the intended production target.
 2. Confirm at least one successful PostgreSQL logical backup upload exists for the environment.
 3. Confirm at least one successful backup verification run exists for the environment.
-4. Record this evidence in the deployment record and require `PREFLIGHT-BACKUP-002=pass` before opening player traffic.
+4. Confirm a successful restore drill exists for the same production environment class/binding and that the drill completed within the required restore-proof freshness window of 30 days.
+5. Confirm the referenced backup attempt uses canonical coordinated-backup scope (`tenant_id + region_id`).
+6. Record this evidence in the deployment record and require `PREFLIGHT-BACKUP-002=pass` before opening player traffic.
 
-If production must be opened before the normal schedules have accumulated history, operators must create an explicit bootstrap backup and verification record first. Opening traffic without proven backup success is non-compliant.
+If production must be opened before the normal schedules have accumulated history, operators must create an explicit bootstrap backup, verification, and restore-drill record first. Opening traffic without proven recovery evidence is non-compliant.
 This is a traffic-open gate, not a routine steady-state rollout gate.
 
 ## Overlay Deployment Flow (Staging and Production)
@@ -144,7 +146,7 @@ If a deployment causes instability:
 | Environment | Deploy Steps | Rollback Steps |
 | --- | --- | --- |
 | **Staging** | Ensure CI is green → run preflight policy checks (including bootstrap and external-binding checks for player-facing invariants) → open/merge PR that updates image digests in `k8s/overlays/stage` → apply overlay: `kubectl apply -k k8s/overlays/stage` → verify live state matches the merged overlay → monitor rollout and run smoke tests → write/update the canonical deployment record | Open/merge PR that reverts `k8s/overlays/stage` to the last known-good digest set → re-apply overlay → verify live state → monitor rollout |
-| **Production** | Merge the `release-please` release PR to `main` and confirm the release tag (for example `v1.2.3`) exists → ensure CI and security scans are green → verify staging attestation for the exact digest set → run preflight policy checks → for `roll-forward-only` releases attach fresh backup-readiness evidence → for first-live or reopen events require proven backup upload + verification evidence → open/merge PR that updates `k8s/overlays/prod` to the approved digests → apply overlay: `kubectl apply -k k8s/overlays/prod` → verify live state matches the merged overlay → monitor rollout and run smoke tests → write/update the canonical deployment record | Open/merge PR that reverts `k8s/overlays/prod` to the last known-good digest set → re-apply overlay → verify live state → monitor rollout; follow database migration downgrade guidance when schema changes are involved |
+| **Production** | Merge the `release-please` release PR to `main` and confirm the release tag (for example `v1.2.3`) exists → ensure CI and security scans are green → verify staging attestation for the exact digest set → run preflight policy checks → for `roll-forward-only` releases attach fresh backup-readiness evidence → for first-live or reopen events require proven backup upload, verification, restore-drill evidence within 30 days, and canonical `tenant_id + region_id` coordinated-backup scope → open/merge PR that updates `k8s/overlays/prod` to the approved digests → apply overlay: `kubectl apply -k k8s/overlays/prod` → verify live state matches the merged overlay → monitor rollout and run smoke tests → write/update the canonical deployment record | Open/merge PR that reverts `k8s/overlays/prod` to the last known-good digest set → re-apply overlay → verify live state → monitor rollout; follow database migration downgrade guidance when schema changes are involved |
 | **Hobby / Self-Hosted** | Resolve target manifests/charts → run operator preflight (`./dev-tools/deploy/preflight.sh hobby-self-hosted`) and capture report → for first-live or reopen events require backup-baseline compliance evidence (`PREFLIGHT-BACKUP-003`) before opening traffic → apply manifests/charts from operator environment → verify live state → monitor rollout and run smoke tests → record canonical deployment evidence (`manifestRef`/`chartVersion`, preflight report, rollback reference) | Re-apply previously known-good manifest/chart reference and confirm health only when the prior release remains compatible with the current schema, secret/config contract, mounted file-path contract, and external bindings; if not, follow the documented forward remediation path |
 
 Overlay PRs should include a clear deployment intent payload: target environment, service image digests, source commit/tag, rollback digest set (or explicit `roll-forward-only` marker), and (for production) an attestation reference under `design/operations/deployments/production/attestations/`. Attestation schema and validation requirements are defined in `design/architecture/system-architecture-promotion-attestation.md`. CI validates overlay images and preflight policy contracts via [`.github/workflows/validate-kustomize-overlays.yml`](../../.github/workflows/validate-kustomize-overlays.yml) before merge.

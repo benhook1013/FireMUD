@@ -801,6 +801,19 @@ Fields:
 10. Call `SetAutomationAdmissionMode(..., mode=NORMAL)` once convergence and cleanup complete.
 11. Resume ticks with `ResumeTicks`.
 
+Concrete example:
+
+- `tenantId=T1`, `gameInstanceId=G7`, current pin `P22`, rollback target `P21`, `controlPlaneRequestId=RB-42`.
+- Step 1: `PauseTicks(T1, G7, RB-42)`.
+- Step 2: `SetAutomationAdmissionMode(T1, G7, PAUSED_FOR_ROLLBACK, RB-42)`.
+- Step 3: `RollbackScriptPatchVersion(T1, G7, P21, RB-42)`.
+- Step 4: Poll `GetAutomationPinConvergence(T1, G7)` and `GetGameSessionPinConvergence(T1, G7)` until both report `observedPinnedScriptPatchVersion=P21` and `lastObservedControlPlaneRequestId=RB-42`.
+- Step 5: Run patch/plugin-scoped cancel or purge hooks for displaced `P22` work, then poll `GetAutomationDrainStatus(T1, G7)` until active executions and cancelable pending work are both zero.
+- Step 6: `SetAutomationAdmissionMode(T1, G7, NORMAL, RB-42)`.
+- Step 7: `ResumeTicks(T1, G7, RB-42)`.
+
+Ordering is intentional: Automation admission returns to `NORMAL` only after convergence and drain complete, and ticks resume last.
+
 ### Rollback Orchestration State Machine (Required)
 
 Rollback orchestration must expose and persist a state machine so partial failures are recoverable and retries are deterministic.

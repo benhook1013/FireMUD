@@ -233,6 +233,34 @@ Normative examples:
 }
 ```
 
+- Preflight attestation mismatch rejection:
+
+```json
+{
+  "request": {
+    "tenantId": "t1",
+    "gameTemplateId": "gt-default"
+  },
+  "resolvedDescriptor": {
+    "launchDescriptorId": "ld-3001",
+    "versionId": "v42",
+    "generationConfigRevision": "genrev-42a1",
+    "releaseBundleRef": "prb:t1:v42"
+  },
+  "releaseBundle": {
+    "tenantId": "t1",
+    "versionId": "v42",
+    "generationConfigRevision": "genrev-42b9"
+  },
+  "error": {
+    "code": "RELEASE_ATTESTATION_MISMATCH",
+    "message": "Resolved launch descriptor does not match the current published release attestation for version v42."
+  }
+}
+```
+
+This failure occurs before any persistent `gameInstanceId` row or World `PREPARING` state is created.
+
 Illustrative startup sequence:
 
 1. The instance-creation orchestrator calls `GetTemplateReferencePhase(tenantId)` and fails fast unless the result is `ENFORCED`.

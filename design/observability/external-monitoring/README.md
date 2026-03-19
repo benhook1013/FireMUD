@@ -67,6 +67,18 @@ Public observability entrypoint checks do not require a universal mirrored metri
 
 Either way, operators and smoke tests must be able to identify which external checks correspond to Prometheus, Alertmanager, Grafana, Kibana/log-query, and Jaeger/trace-query availability.
 
+Illustrative bounded mirror vocabulary for observability entrypoints:
+
+- `observability_entrypoint_probe_success{entrypoint,target}`
+  - `entrypoint` is a bounded enum such as `prometheus`, `alertmanager`, `grafana`, `kibana_log_query`, or `jaeger_query`.
+  - `target` identifies the externally probed endpoint and must remain low-cardinality.
+  - Values are boolean-like: `1` when the external check can reach the entrypoint and `0` when it cannot.
+- Example mappings:
+  - `vendor.prometheus.staging.status -> observability_entrypoint_probe_success{entrypoint="prometheus",target="staging-prometheus"}`
+  - `vendor.kibana.staging.status -> observability_entrypoint_probe_success{entrypoint="kibana_log_query",target="staging-kibana"}`
+
+This vocabulary is recommended for cross-environment consistency, not mandatory. Environments may keep entrypoint checks external-only or use another bounded mirror vocabulary if they document the mapping in readiness evidence.
+
 ## Ownership and Evidence
 
 - `owner="platform"` is responsible for the external monitoring configuration, routing, and periodic validation.

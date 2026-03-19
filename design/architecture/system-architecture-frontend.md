@@ -43,12 +43,12 @@ Application state is handled by **Redux Toolkit**, with **RTK Query** used for d
 Frontend flows are split between **player gameplay sessions** and **admin/creator tools** so that gameplay auth remains simple while control-plane operations use JWTs:
 
 - **Player UI (gameplay)**  
-  - First-party clients must first call the dedicated player-bootstrap endpoint (`POST /auth/player-bootstrap` or equivalent) with player credentials to establish short-lived account identity for gameplay bootstrap only, then use bootstrap-authenticated HTTP discovery endpoints to choose a caller-visible world/realm/character target, then obtain a short-lived connect token (`POST /auth/connect-token`) for the selected `{tenantId, gameInstanceId}` before opening `/ws/game/**`, then complete gameplay authentication by issuing `LOGIN` over the WebSocket channel using the already-verified bootstrap/connect context rather than replaying username/password/OTP from the browser, as described in [Authentication & Authorization](./system-architecture-authentication.md#login-and-session-flow).  
+  - First-party clients must first call the dedicated player-bootstrap endpoint (`POST /auth/player-bootstrap` or equivalent) with player credentials to establish short-lived account identity for gameplay bootstrap only, then use bootstrap-authenticated HTTP discovery endpoints to choose a caller-visible world/realm/character target, then obtain a short-lived connect token (`POST /auth/connect-token`) using the discovery-provided `connectScopeId` before opening `/ws/game/**`, then complete gameplay authentication by issuing `LOGIN` over the WebSocket channel using the already-verified bootstrap/connect context rather than replaying username/password/OTP from the browser, as described in [Authentication & Authorization](./system-architecture-authentication.md#login-and-session-flow).  
   - The React client does not store or expose control-plane Browser JWTs for gameplay. It may hold only the short-lived, memory-only `player-bootstrap` token described in the authentication design and use it solely for gameplay bootstrap surfaces such as bootstrap discovery and `POST /auth/connect-token`.  
   - Explicit player logout must clear any in-memory `player-bootstrap` token immediately in addition to closing gameplay sockets and clearing reconnect state.
   - Canonical player logout order is: stop reconnect attempts, close the gameplay socket, clear remembered world/character selection plus reconnect metadata, clear the in-memory `player-bootstrap` token, and render the logged-out player state.
-  - Tenant membership and runtime entitlement checks for first-party gameplay happen during bootstrap discovery and `POST /auth/connect-token`, not during `POST /auth/player-bootstrap`. The first implementation is realm-aware: the chosen target must come from the canonical discovery contract and may be the production realm or an explicitly authorized alternate realm such as a playtest fork.  
-  - After login, the client participates in an explicit **lobby world-selection** step by issuing `WORLDS` / `REALMS <world>` / `CHARS <world> [realm]` and then `PLAY <world> [realm] [character]` as described in [Tenant Selection for Gameplay](./system-architecture-authentication.md#tenant-selection-for-gameplay-lobby-selection). The Game Session Service resolves the selected world/realm/character into internal identifiers (`tenantId`, `gameInstanceId`, `characterId`), enforces tenant authorization and entitlements, and then binds the socket to a gameplay session in Redis.  
+  - Tenant membership, non-public realm-access-grant checks, and runtime entitlement checks for first-party gameplay happen during bootstrap discovery and `POST /auth/connect-token`, not during `POST /auth/player-bootstrap`. The first implementation is realm-aware: the chosen target must come from the canonical discovery contract and may be the production realm or an explicitly authorized alternate realm such as a playtest fork.  
+  - After login, the client participates in an explicit **lobby world-selection** step by issuing `WORLDS` / `REALMS <world>` / `CHARS <world> [realm]` and then `PLAY <world> [realm] [character]` as described in [Tenant Selection for Gameplay](./system-architecture-authentication.md#tenant-selection-for-gameplay-lobby-selection). The Game Session Service resolves the selected world/realm/character into internal identifiers (`tenantId`, `gameInstanceId`, `characterId`), enforces tenant authorization, public-production admission, and entitlements, returns the resolved realm bundle metadata, and then binds the socket to a gameplay session in Redis.  
   - On page reload or connectivity loss, the client requests a fresh connect token, reconnects the WebSocket, then replays `LOGIN` and tenant-selection without prompting for credentials again; the Game Session Service uses Redis gameplay session bindings, current membership authority, and fresh backend token rebinding to restore gameplay state when allowed by server-side TTLs and revocation rules.
 
 - **Admin and creator UIs**  
@@ -66,7 +66,7 @@ All new frontend features that interact with protected APIs should reuse the sha
 - `ENTITLEMENT_UNAVAILABLE` – Keep the current auth state, show a retriable availability banner, and apply bounded retry/backoff rather than logging the user out.
 - `ADMISSION_POINTER_UNAVAILABLE` – Keep the current auth state, show a retriable gameplay-admission unavailable message, and retry lobby admission with bounded backoff.
 - `CONNECT_CONTEXT_INVALID` – Keep the current auth state, force gameplay reconnect flow (`connect-token` refresh + new socket + `LOGIN`), and block `PLAY` retries on the current socket.
-- `CONNECT_SCOPE_MISMATCH` – Keep the current auth state, prompt world/session re-selection, request a fresh connect token for the intended `{tenantId, gameInstanceId}`, and retry on a new socket.
+- `CONNECT_SCOPE_MISMATCH` – Keep the current auth state, prompt world/session re-selection, request a fresh connect token for the intended discovery-selected realm target, and retry on a new socket.
 
 For gameplay WebSocket handshake failures on `/ws/game/**`, first-party clients must also differentiate HTTP `403` handshake classes:
 
@@ -87,7 +87,11 @@ Authorization: Bearer <bootstrapToken>
 
 GET /auth/bootstrap/worlds/demo/realms
 Authorization: Bearer <bootstrapToken>
--> [{ realmSlug: "production", displayName: "Live Realm" }]
+-> [{
+     realmSlug: "production",
+     displayName: "Live Realm",
+     connectScopeId: "cs_demo_production_v17"
+   }]
 
 GET /auth/bootstrap/worlds/demo/characters?realm=production
 Authorization: Bearer <bootstrapToken>
@@ -95,8 +99,8 @@ Authorization: Bearer <bootstrapToken>
 
 POST /auth/connect-token
 Authorization: Bearer <bootstrapToken>
-{ tenantId: "tenant-demo", gameInstanceId: "production", requestId: "req-reconnect-1" }
--> { connectToken, expiresAt, tenantId: "tenant-demo", gameInstanceId: "production" }
+{ connectScopeId: "cs_demo_production_v17", requestId: "req-reconnect-1" }
+-> { connectToken, expiresAt, tenantId: "tenant-demo", realmSlug: "production", gameInstanceId: "production" }
 
 GET /ws/game/** with X-Firemud-Connect-Token: <connectToken>
 
@@ -118,8 +122,8 @@ OK PLAY Entered world: Demo World / Live Realm as Mara
 
 POST /auth/connect-token
 Authorization: Bearer <bootstrapToken>
-{ tenantId: "tenant-demo", gameInstanceId: "production", requestId: "req-reconnect-2" }
--> { connectToken, expiresAt, tenantId: "tenant-demo", gameInstanceId: "production" }
+{ connectScopeId: "cs_demo_production_v17", requestId: "req-reconnect-2" }
+-> { connectToken, expiresAt, tenantId: "tenant-demo", realmSlug: "production", gameInstanceId: "production" }
 
 GET /ws/game/** with X-Firemud-Connect-Token: <connectToken>
 

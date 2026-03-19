@@ -175,6 +175,10 @@ To keep synthetic canaries actionable instead of merely visible, prod-like envir
   - `owner="gameplay"` for representative command success/latency once the canary is authenticated and in-session.
   - `service` should preserve the runtime entry-path emitter identity where the alert expression is service-specific; otherwise use `component="playerflow-canary"` to keep routing explicit without inventing ad hoc service names.
   - `runbook` must point to the player-experience or incident response runbook section that explains how to validate whether the canary reflects a real outage versus canary-only breakage.
+- Severity requirements:
+  - `PlayerFlowCanaryLoginFailed` should use `severity="P0"` because it indicates end-to-end login unavailability on a monitored public path even when live traffic is sparse.
+  - `PlayerFlowCanaryCommandFailed` should use `severity="P1"` because it indicates in-session gameplay degradation on a monitored public path, but does not by itself prove a total entry outage.
+  - `PlayerFlowCanaryLatencyHigh` should use `severity="P1"` because it indicates sustained player-visible degradation on a monitored public path without requiring a total failure.
 - Detection requirements:
   - Success/failure alerts must evaluate on short windows suitable for outage detection and must not rely on live-traffic volume.
   - Latency alerts must evaluate `playerflow_canary_latency_ms{flow,path,target}` using millisecond thresholds and preserve the bounded `flow` and `path` labels.
@@ -307,6 +311,34 @@ When Logging & Admin renders alert state, it must expose enough metadata for ope
 - Failure-mode rules:
   - If both Alertmanager and Prometheus are unavailable, Logging & Admin must display that alert state is unavailable rather than presenting stale fallback conditions as current.
   - Logging & Admin should preserve the last known `observed_at` timestamp for degraded views, but must not imply continued freshness after the freshness budget expires.
+  - Default freshness budget: treat fallback-derived alert state as stale after 5 minutes unless an environment documents a stricter budget for its Prometheus scrape and rule-evaluation cadence.
+
+Illustrative alert-state payload:
+
+```json
+{
+  "source": "prometheus-fallback",
+  "observed_at": "2026-03-19T10:42:00Z",
+  "status_freshness": "stale",
+  "service": "spring-cloud-gateway",
+  "component": "entrypath",
+  "severity": "P0",
+  "owner": "platform",
+  "runbook": "design/architecture/system-architecture-observability-incident-runbook.md#edge-path-outage",
+  "condition": "EntryPathAvailabilityLowGateway",
+  "labels": {
+    "path": "websocket",
+    "tenantId": "public"
+  },
+  "degraded_reason": "Alertmanager unavailable; showing fallback Prometheus conditions"
+}
+```
+
+Illustrative interpretation:
+
+- `source="alertmanager"` means the condition is being rendered from routed Alertmanager state and any matching fallback condition should be suppressed.
+- `source="prometheus-fallback"` plus `status_freshness="stale"` means Logging & Admin is still showing the last known fallback-derived state, but operators should treat it as degraded information rather than current routed alert state.
+- If neither `alertmanager` nor `prometheus-fallback` can be refreshed within the freshness budget, the UI/API should switch to an explicit “alert state unavailable” presentation rather than continuing to render the example payload above as current.
 
 Fallback recording rules must be installed as part of the Prometheus ruleset for every prod-like environment. The reference starting point for these rules lives at `k8s/monitoring/prometheus-rules-firemud.yaml`; environment overlays may adjust thresholds but must preserve the metric names, labels, and alert label contract described in this document.
 
@@ -394,6 +426,7 @@ Structured log emission is not sufficient by itself. Prod-like environments must
 - Required behavior:
   - Synthetic smoke traffic that emits logs with `service`, `traceId`, and the applicable contextual fields must land in the canonical log index pattern (`firemud-logs-*` unless an environment documents a compatibility mapping).
   - Those logs must become queryable in the Elasticsearch/Kibana path within a bounded delay suitable for incident response.
+    - Default starting point for prod-like smoke: the records should be queryable within 2 minutes of emission unless an environment documents a stricter bound.
   - Operators must be able to retrieve the smoke records by `service` and `traceId`, and by `tenantId` / `regionId` / `playerId` when those fields are expected by the logging contract.
 - Failure semantics:
   - A pipeline that emits structured logs locally but fails Fluent Bit forwarding, Elasticsearch indexing, or Kibana/query entrypoint retrieval is non-compliant for prod-like readiness because incident drilldowns depend on end-to-end queryability, not only emitter correctness.

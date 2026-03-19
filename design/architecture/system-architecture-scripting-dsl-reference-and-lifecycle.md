@@ -207,6 +207,14 @@ See the Automation & Scripting Service README and service protos for the full, u
   - A `SUPERSEDED` patch is terminal for readiness purposes: it remains queryable for audit/history, but it is no longer eligible for pinning and must not emit further `onLoad` work after the superseding publish is accepted.
 - Like other events, each `onLoad` trigger is recorded in `script_event_audit` with `eventType=onLoad`, `tenantId`, `scriptId`, the target `scriptPatchVersion`, and stage-aware outcome fields (`finalStage`, `finalOutcome`, `finalReason`, plus any per-stage breakdown) so operators can verify that initialization ran for a given script and patch and see exactly where it failed (admission vs DSL eval vs persistence vs tick handoff).
 
+Concrete supersession example:
+
+- Patch `P21` is published for tenant `T1` and enters `ONLOAD_RUNNING`.
+- Before all `P21` `onLoad` handlers finish, Game Design publishes `P22` for the same tenant and the publish is accepted for readiness ingestion.
+- Automation & Scripting transitions `P21` to `SUPERSEDED` with `statusReason=superseded_by_newer_patch` and records `supersededByScriptPatchVersion=P22` in patch-status surfaces.
+- Any not-yet-started `onLoad` work for `P21` is canceled. If an already-running `P21` `onLoad` handler finishes later, that completion may be recorded in audit history for its own Trigger Identity but must not advance patch `P21` back to `READY`.
+- Only `P22` remains eligible to progress through `ONLOAD_RUNNING` to `READY`.
+
 ### `scheduleDefinitionId` Reconciliation Example
 
 Implementers should treat `scheduleDefinitionId` as the canonical answer to "is this the same logical schedule?":
@@ -373,6 +381,19 @@ Runtime execution must still remain **instance-aware** even though patch readine
 - Instance-scoped runtime state tracks only **pin observation and admission control** for the patch that an instance is trying to run (for example `observedPinnedScriptPatchVersion`, `reloadState`, convergence checkpoints, and rollback pause). It does **not** rerun tenant patch readiness or `onLoad`.
 - A single tenant-wide mutable `activePatchVersion` inside Automation & Scripting is therefore not sufficient. The service must keep tenant-scoped patch readiness separate from instance-scoped pin observation and scheduling state.
 
+Side-by-side lifecycle view:
+
+| Concern | Scope | Owner | Canonical states | What advances it |
+| --- | --- | --- | --- | --- |
+| Patch readiness | `<tenantId, scriptPatchVersion>` | Automation & Scripting | `PENDING_VALIDATION` -> `ONLOAD_RUNNING` -> `READY` / `FAILED`, terminal `SUPERSEDED` | Publish ingestion, static validation, tenant-scoped `onLoad`, newer accepted publish supersession |
+| Runtime pin observation | `<tenantId, gameInstanceId, scriptPatchVersion>` | Game Session pin plus Automation observation | Observed previous pin, `reloadState=RELOADING`, observed new pin, `reloadState=FAILED`, rollback pause / convergence checkpoints | `SetPinnedScriptPatchVersion`, `RollbackScriptPatchVersion`, pin-change events, reload reconciliation, rollback orchestration |
+
+Interpretation rules:
+
+- A tenant patch reaching `READY` means only that it is eligible to be pinned by instances in that tenant.
+- An instance switching pins does not rerun tenant readiness or `onLoad`; it consumes already-`READY` definitions and reconciles runtime-scoped derived state.
+- `SUPERSEDED` exists only on the tenant readiness side. A runtime scope may still be executing an older observed pin while a newer pending patch supersedes an older readiness candidate.
+
 The canonical states are:
 
 - `PENDING_VALIDATION` – the Game Design Service has published a script-only patch version and the Automation & Scripting Service has accepted the compiled graphs and bindings, but `onLoad` initialization has not yet completed for the tenant.
@@ -434,6 +455,38 @@ Determinism depends not only on stable RNG/time, but also on a stable **read sna
   - dry-run/test runs must either accept an explicit snapshot selector from tooling or record the server-chosen latest committed snapshot token in the returned/audited result so the run is reproducible.
 
 This snapshot contract is part of the runtime semantics, not an implementation detail. Services backing DSL read components must therefore accept and honor the snapshot/read-version token required by the component contract.
+
+Concrete transport shape example:
+
+- For a gameplay trigger emitted immediately after tick commit, the ingress payload may carry an opaque `readSnapshotToken` whose decoded contents are equivalent to `<tenantId=T1, gameInstanceId=G7, regionId=R2, regionEpoch=14, tickId=981223>`.
+- DSL components that query region-local world state, inventory, or nearby entities must pass that same token on every downstream read call for the lifetime of the run.
+- Downstream services may expose the token either as an opaque envelope or as explicit fields, but the semantics are the same: the run sees one committed snapshot and does not silently upgrade to tick `981224` midway through evaluation.
+
+Illustrative transport example:
+
+```protobuf
+message TriggerScriptEventRequest {
+  string tenant_id = 1;
+  string game_instance_id = 2;
+  string region_id = 3;
+  int64 region_epoch = 4;
+  string entity_id = 5;
+  string script_patch_version = 6;
+  string script_event_id = 7;
+  string event_type = 8;
+  bytes read_snapshot_token = 9;
+}
+
+message GetNearbyEntitiesRequest {
+  string tenant_id = 1;
+  string game_instance_id = 2;
+  string region_id = 3;
+  string entity_id = 4;
+  bytes read_snapshot_token = 5;
+}
+```
+
+In this shape, Automation captures `read_snapshot_token` once from ingress and forwards the same byte-for-byte token on every authoritative read made during that handler-scoped run. A downstream service may decode it internally into fields such as `regionEpoch=14` and `tickId=981223`, but the calling contract remains "one run, one committed snapshot."
 
 Crucially, **script handlers are not re-executed during tick replay or recovery**. The Automation & Scripting Service evaluates each trigger at most once, produces a set of commands annotated with `scriptEventId`, and hands those commands to the tick system. Tick-level crash recovery and retries reapply those commands idempotently in the Game Session and domain services without re-entering the DSL graph for the same trigger. Determinism for scripting therefore depends on this **“no re-execution per trigger”** guarantee plus the seeded RNG and time constraints.
 

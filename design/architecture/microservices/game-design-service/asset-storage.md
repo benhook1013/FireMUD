@@ -36,6 +36,57 @@ Canonical producer-to-publisher handoff for derived artifacts:
 - The publish Saga order is: producer materializes and freezes the derived artifact in its own ownership boundary, then Game Design exports those exact bytes into the published version prefix, then attestation records the resulting `manifestHash`.
 - Exact-bytes repair for a Published/Active version must re-read the same producer-owned artifact contract or an equivalent immutable repair source capable of reproducing the attested bytes. If the producer can no longer supply the attested bytes, recovery requires publishing a new `versionId`.
 
+Illustrative producer API for derived artifacts:
+
+- Producer services should expose a typed API such as `GetPublishableDerivedArtifact(tenantId, versionId, artifactKind)`.
+- Minimum response contract:
+  - `status` (`READY`, `NOT_READY`, `FAILED`);
+  - immutable fetch handle or byte-stream reference controlled by the producer;
+  - `contentHash`;
+  - `contentType`;
+  - `artifactKind`;
+  - `producerService`;
+  - producer-local finalized timestamp or equivalent evidence that publishable bytes are frozen.
+- `READY` means the producer has durably recorded the artifact and guarantees the referenced bytes can be fetched for publish or exact-bytes repair.
+- `NOT_READY` means publish must fail or wait before `ExportAssets`; Game Design must not export placeholder bytes.
+- `FAILED` means the producer could not materialize a publishable artifact and must return structured failure details suitable for Saga diagnostics.
+
+Illustrative `GetPublishableDerivedArtifact` fragments:
+
+- `NOT_READY`:
+
+```json
+{
+  "tenantId": "t1",
+  "versionId": "v42",
+  "artifactKind": "NAVMESH",
+  "status": "NOT_READY",
+  "error": {
+    "code": "DERIVED_ARTIFACT_NOT_FINALIZED",
+    "message": "Navmesh generation has not produced finalized bytes for tenantId=t1 versionId=v42."
+  }
+}
+```
+
+- `FAILED`:
+
+```json
+{
+  "tenantId": "t1",
+  "versionId": "v42",
+  "artifactKind": "NAVMESH",
+  "status": "FAILED",
+  "error": {
+    "code": "DERIVED_ARTIFACT_BUILD_FAILED",
+    "message": "Navmesh generation failed validation and no publishable artifact was recorded.",
+    "details": {
+      "producerService": "world-management-service",
+      "failureId": "navmesh-build-7f3c"
+    }
+  }
+}
+```
+
 Initial-slice discovery rule for derived world artifacts:
 
 - For the first implementation slice, exported world navmesh/path graph artifacts must be discoverable through the same attested release surfaces as other version assets.
@@ -46,11 +97,26 @@ Initial-slice discovery rule for derived world artifacts:
 
 Required-artifact attestation contract:
 
-- `GetPublishedReleaseBundle(tenantId, versionId)` must expose an attested field such as `requiredManifestAssetKeys[]`.
+- `GetPublishedReleaseBundle(tenantId, versionId)` must expose an attested field named `requiredManifestAssetKeys[]`.
 - For the first implementation slice, the field lists stable manifest usage keys that are required for launch or cutover validation of that release.
 - `requiredManifestAssetKeys[]` may be empty for releases that do not require derived runtime artifacts.
 - If `requiredManifestAssetKeys[]` contains `world.navmesh` or `world.pathGraph`, runtime launch and cutover tooling must require the corresponding `manifest.json` entry to exist and match the attested release metadata.
 - Consumers must not infer requiredness from filename conventions, producer type, or the mere presence or absence of an entry in `manifest.json`.
+
+Illustrative `GetPublishedReleaseBundle` fragment:
+
+```json
+{
+  "tenantId": "t1",
+  "versionId": "v42",
+  "manifestHash": "sha256:2d4b2e...",
+  "requiredManifestAssetKeys": ["world.navmesh", "world.pathGraph"],
+  "assetContentHashes": {
+    "world.navmesh": "sha256:8fd0c4...",
+    "world.pathGraph": "sha256:91baf2..."
+  }
+}
+```
 
 Initial-slice manifest shape for derived world artifacts:
 

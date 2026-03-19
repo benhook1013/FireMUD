@@ -162,6 +162,13 @@ Lease ownership is enforced through a two-part fence:
 
 This durable fence is the canonical protection against stale executors that lost Redis lease ownership but still have in-flight SQL work.
 
+Canonical ownership sequence:
+
+1. The executor acquires or renews the Redis region lease.
+2. On successful ownership acquisition, Game Session advances `RegionStatus.executorFence` exactly once for that ownership generation.
+3. The executor creates `tick_batch` rows and other durable tick-control state using that new `executorFence`.
+4. Any later durable write for the same region must compare-and-match the current `executorFence`; stale writers fail closed and do not advance commit state.
+
 ---
 
 ## Distributed Locking
@@ -329,6 +336,7 @@ Tick timers (cooldowns, regeneration, delayed effects) are:
 - Aligned with the tick heartbeat and tick cadence.
 - Subject to time-scaling rules that speed up or slow down perceived time while preserving ordering.
 - Evaluated against absolute wall-clock `due_ms` values using caller-supplied `now_ms` in Lua (never Redis `TIME`); changing `tick_interval_ms` does not rescale already-scheduled timers.
+- When a timer also has durable ordering/replay metadata, `due_ms` is the wall-clock firing input while the persisted `due_tick_id` is the canonical ordering and replay key.
 
 Tick-region timers and retry queues are **volatile coordination structures**, not durable schedules. After coordination resets or data loss, only timers/schedules that are also represented durably elsewhere (for example PostgreSQL-backed automation schedules or other explicit domain state) are expected to be recovered or re-derived. Gameplay features that require timers to survive resets must store the underlying intent durably and treat Redis timer entries as derived coordination indexes rather than as the only record of the timer.
 

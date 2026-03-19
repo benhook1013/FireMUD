@@ -158,6 +158,14 @@ Quota and budget policy must be applied at fixed charge points so operators can 
 - **`onLoad`**
   - Uses its own publish-time capacity class and is excluded from the live per-script quota window and tenant runtime budget accounting above.
 
+Concrete mixed fan-out accounting example:
+
+- One inbound `TriggerScriptEvent` for `onEnterRegion` is admitted at event scope and resolves to three handler-scoped Trigger Identities: `S1`, `S2`, and `S3`.
+- `S1` is rejected immediately with `finalStage=ADMISSION`, `finalOutcome=quota_denied`. It consumes no tenant runtime execution budget and no sandbox CPU/memory budget.
+- `S2` is accepted under `concurrencyPolicy=queue_until_free`. It consumes one per-script quota slot immediately when queued, but it does not consume tenant runtime execution budget until it later reserves sandbox capacity and starts running.
+- `S3` is admitted directly to execution. It consumes one per-script quota slot at handler admission and consumes tenant runtime execution budget when it reserves sandbox capacity.
+- If `S2` later reaches execution and fails with `sandbox_error`, or `S3` later fails with `work_item_size_exceeded`, the already-charged quota/execution budget is not refunded.
+
 ---
 
 ## Resource Isolation and Multi-Level Budgets
@@ -239,6 +247,13 @@ At the metric layer, these rows should contribute to the same bounded rollback/d
 - Dashboards and incident tooling should therefore show both:
   - Automation pipeline completion (`finalStage`, `finalOutcome`) and
   - any later execution-time fence rejection (`executionDisposition.outcome=version_fence_dropped`, bounded reason).
+
+Concrete rollback-visibility example:
+
+- Trigger Identity `T123` reaches `finalStage=TICK_HANDOFF`, `finalOutcome=success` after Automation & Scripting hands off its commands to Game Session.
+- Before the queued command executes, operators roll the instance back to an older `scriptPatchVersion`.
+- Game Session rejects the queued command on its execution-time version fence and publishes `executionDisposition={ outcome=version_fence_dropped, reason=script_patch_mismatch, sourceService=game-session }` for Trigger Identity `T123`.
+- Operator tooling for `T123` must therefore show both the successful Automation pipeline result and the later execution-time fence drop, rather than overwriting one with the other.
 
 Retention and sizing are governed by environment variables described below and in the Automation & Scripting Service README; in particular, `SCRIPT_EVENT_AUDIT_RETENTION_DAYS` and `SCRIPT_EVENT_AUDIT_MAX_ROWS` control how long audit rows are retained and how large the table is allowed to grow (current defaults are 30 days and 1,000,000 rows, but the README remains the authoritative source).
 Dead-letter stores used for rejected queue entries or non-progressing outbox work must also define explicit `maxAge`, `maxRows`, cleanup cadence, and alert thresholds; unbounded dead-letter growth is not an acceptable operational mode. These controls should be exposed as operator knobs (for example, `SCRIPT_DEAD_LETTER_MAX_ROWS`, `SCRIPT_DEAD_LETTER_MAX_AGE_SECONDS`, `SCRIPT_DEAD_LETTER_CLEANUP_INTERVAL_SECONDS`, `SCRIPT_DEAD_LETTER_ALERT_THRESHOLD_ROWS`) rather than implicit defaults.
@@ -539,6 +554,17 @@ At a minimum, rollback consists of:
    - If an old-epoch execution reaches persist or handoff checks after rollback pause has advanced the scope `admissionEpoch`, it must fail as a non-success canceled outcome rather than creating new live work. Operators should expect to see these rows in `script_event_audit` during rollback convergence and draining.
 
 Rollback orchestration should be modeled as a durable state machine (`PAUSING`, `REPINNING`, `CANCELING`, `PURGING`, `CONVERGING`, `DRAINING`, `RESUMING`, `COMPLETED`, terminal `TIMED_OUT`) keyed by `controlPlaneRequestId` so partial failures can be resumed deterministically.
+
+Concrete rollback sequence example:
+
+1. Call `PauseTicks(tenantId=T1, gameInstanceId=G7, controlPlaneRequestId=RB-42)` so Game Session stops new tick scheduling and command intake for that instance.
+2. Call `SetAutomationAdmissionMode(tenantId=T1, gameInstanceId=G7, mode=PAUSED_FOR_ROLLBACK, controlPlaneRequestId=RB-42)` so new external and scheduler triggers are rejected with `finalOutcome=skipped_rollback_pause`.
+3. Call `RollbackScriptPatchVersion(tenantId=T1, gameInstanceId=G7, targetScriptPatchVersion=P21, controlPlaneRequestId=RB-42)` to repin the instance to the known-good patch.
+4. Poll `GetAutomationPinConvergence` and `GetGameSessionPinConvergence` until both report `observedPinnedScriptPatchVersion=P21` and the latest observed `controlPlaneRequestId=RB-42`.
+5. Cancel or purge queued outbox work and staging entries that still carry the displaced patch `P22`, then poll `GetAutomationDrainStatus` until `activeExecutionCount=0` and `pendingCancelableWorkItemCount=0` for the paused scope.
+6. Expect a bounded number of old-epoch audit rows for executions that were admitted before pause and later fenced by the advanced `admissionEpoch`; these remain non-success outcomes, not silent loss.
+7. Call `SetAutomationAdmissionMode(..., mode=NORMAL, controlPlaneRequestId=RB-42)` only after convergence and drain checks pass.
+8. Call `ResumeTicks(..., controlPlaneRequestId=RB-42)` last so gameplay resumes only after both runtime services agree on the rollback target and old-version work has quiesced.
 
 Operationally, use control-plane APIs rather than direct data-store edits for pending and dead-lettered work:
 

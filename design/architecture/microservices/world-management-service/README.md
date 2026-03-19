@@ -122,6 +122,47 @@ Attestation rule for derived world artifacts:
 - Instead, the publish workflow must compute and persist an explicit per-artifact digest in `published_release_bundle` alongside the participant digests and `manifestHash`.
 - The artifact digest must be bound to the same `(tenantId, versionId, commitId, publishWorkflowId)` as the World digest so runtime consumers can prove the published artifact came from the same attested release.
 
+Illustrative attestation fragment:
+
+```json
+{
+  "tenantId": "t1",
+  "versionId": "v42",
+  "commitId": "c900",
+  "publishWorkflowId": "pub-77",
+  "participantDigests": [
+    {
+      "serviceName": "world-management",
+      "appliedCommitId": "c900",
+      "contentDigest": "sha256:world-draft-abc",
+      "digestSchemaVersion": 3
+    }
+  ],
+  "artifactDigests": [
+    {
+      "artifactType": "WORLD_NAVMESH_BUNDLE",
+      "artifactPath": "versions/v42/world/navmesh.bundle",
+      "artifactDigest": "sha256:navmesh-123",
+      "artifactSchemaVersion": 1
+    },
+    {
+      "artifactType": "WORLD_PATH_GRAPH_BUNDLE",
+      "artifactPath": "versions/v42/world/path-graph.bundle",
+      "artifactDigest": "sha256:pathgraph-456",
+      "artifactSchemaVersion": 1
+    }
+  ],
+  "manifestHash": "sha256:manifest-789",
+  "generationConfigRevision": "genrev-42a1"
+}
+```
+
+The exact attestation schema may evolve, but initial-slice implementations must preserve the same semantics:
+
+- each exported world artifact has its own typed digest entry;
+- each entry is bound to the same release identity as the participant digests;
+- runtime consumers discover artifact locations through the attested `manifest.json`, not by reconstructing bucket paths from the digest entries alone.
+
 `digestSchemaVersion` must be bumped whenever the included row families, selected semantic fields, canonical ordering, or artifact-attestation rules above change.
 
 ## Architecture / Design Notes

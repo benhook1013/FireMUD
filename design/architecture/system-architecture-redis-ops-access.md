@@ -142,9 +142,15 @@ To keep reset/replay behavior implementation-safe, the maintenance/tooling surfa
   - `coordination-maintenance reconcile-ledger`
     - accepts the scope grammar above.
     - accepts either `--old-region-epoch <epoch>` for `--scope region` or `--old-region-epoch-map <path>` for tenant/cluster scopes.
+    - is the canonical operator entrypoint for `replay_first` convergence as well as old-epoch reset convergence:
+      - without an epoch bump, it drives in-epoch `SCHEDULED` ledger rows toward `APPLIED` or `ABANDONED` for the selected current-epoch scope.
+      - after an epoch bump, it drives old-epoch rows toward terminal reset outcomes for the selected reset scope.
     - may support `--discover-old-epochs` as an implementation convenience, but only if it resolves epochs from PostgreSQL and emits the discovered map in its audit output.
   - `coordination-maintenance converge-commands`
     - accepts the same epoch arguments and discovery behavior as `reconcile-ledger`.
+    - remains a distinct command in first implementation:
+      - operators run `reconcile-ledger` first and `converge-commands` second when both effect-ledger and command-status convergence are required.
+      - a future combined verb is intentionally out of scope for this contract unless the canonical CLI section is updated.
   - `coordination-maintenance init-meta`
     - accepts the scope grammar above.
     - accepts either `--region-epoch <epoch> --current-tick-id <tickId>` for `--scope region` or `--region-epoch-map <path> --current-tick-id <tickId>` for tenant/cluster scopes.
@@ -158,6 +164,48 @@ To keep reset/replay behavior implementation-safe, the maintenance/tooling surfa
   - The CLI subcommands above are the only supported write-path entrypoints for coordinated reset/recovery flows. Helm hooks, Jobs, and admin dashboards call these verbs rather than re-encoding reset logic themselves.
 - Required version rule:
   - The CLI and control-plane implementation must ship from the same build/version set as the services and Lua registry they operate on. Mixed-version reset orchestration is unsupported.
+
+Canonical epoch-map examples:
+
+```yaml
+# old-region-epoch-map.yaml
+regions:
+  - tenantId: T1
+    regionId: R7
+    oldRegionEpoch: 12
+  - tenantId: T1
+    regionId: R8
+    oldRegionEpoch: 4
+```
+
+```yaml
+# region-epoch-map.yaml
+regions:
+  - tenantId: T1
+    regionId: R7
+    regionEpoch: 13
+  - tenantId: T1
+    regionId: R8
+    regionEpoch: 5
+currentTickId: -1
+```
+
+```yaml
+# cluster-region-epoch-map.yaml
+regions:
+  - tenantId: T1
+    regionId: R7
+    regionEpoch: 13
+  - tenantId: T1
+    regionId: R8
+    regionEpoch: 5
+  - tenantId: T2
+    regionId: R2
+    regionEpoch: 21
+currentTickId: -1
+```
+
+Minimum audit output for any command that auto-discovers or consumes an epoch map must include the resolved `<tenantId, regionId, oldRegionEpoch|regionEpoch>` tuples so operators can verify exactly which timeline coordinates were acted on.
 
 ### Pause/Status/Resume State Contract
 

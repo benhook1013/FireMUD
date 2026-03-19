@@ -37,6 +37,7 @@ manifest files.
   The workflow is implemented using the Saga utilities from `firemud-common`
   with compensation steps to roll back if downstream steps fail. The workflow
   persists the new version metadata and instructs domain services to finalize their versioned data for that `version_id`.
+- Plugin publication is narrower than a full game-version publish Saga. `UploadPluginBundle` and `PublishPluginVersion` are design-time Game Design workflows that validate and persist immutable plugin-version metadata; they do not repin running games and do not require the cross-service runtime cutover/orchestration used by `PublishVersion`. Cross-service runtime effects begin later, when Logging & Admin invokes instance-scoped activation against Automation & Scripting.
 - Design assets are stored per `tenantId` so multiple games can coexist in the
   same database schema. Queries and version publishing workflows enforce this
   tenant filter. See [Multi-Tenancy](../../system-architecture-multi-tenancy.md).
@@ -124,6 +125,12 @@ rollback-preflight, and repair tooling. It contains the publish workflow
 identity, target `commitId`, required participant digests, `manifestHash`, and
 `generationConfigRevision` for that release.
 
+For releases that export derived artifacts outside participant-owned databases
+in the initial slice, `published_release_bundle` must also include
+`artifactDigests[]` entries for each exported artifact family. For world bundles
+such as navmesh/path graph payloads, these entries are mandatory rather than
+optional metadata.
+
 ### Design Workflow
 
 1. Creators use the web UI to craft worlds, items, and scripts.
@@ -140,6 +147,8 @@ identity, target `commitId`, required participant digests, `manifestHash`, and
 - `SaveRevision` – persists a new or updated design asset.
 - `PublishVersion` – freezes a set of revisions and notifies downstream services.
 - `PublishScriptPatchVersion` – creates a script-only patch version referencing a base version.
+- `UploadPluginBundle` – stores a signed plugin bundle, verifies archive safety and signatures, extracts indexed manifest metadata, and records the pre-publication design-time status.
+- `PublishPluginVersion` – runs design-time validation for an uploaded plugin bundle version and transitions it into immutable publication history when validation succeeds.
 - `GetPluginVersionStatus` / `ListPluginVersionStatuses` – authoritative design-time read APIs for plugin publication lifecycle, signer verification status, and validation outcomes.
 - `ListVersions` – enumerates published versions for selection when creating a
   game instance.
@@ -147,6 +156,12 @@ identity, target `commitId`, required participant digests, `manifestHash`, and
 - `GetDesignControlPlaneDigest` – digest surface for publish gating over normalized metadata.
 - `GetPublishedReleaseBundle` – authoritative read surface for immutable release attestation used by activation, cutover preflight, and repair workflows.
 - `CanDeleteVersionAssets` – deletion-eligibility oracle for version-scoped asset prefixes.
+
+The protobuf service definitions under
+[../../../../protos/game-design/v1](../../../../protos/game-design/v1) are the
+authoritative wire-contract source for these gRPC APIs. Architecture-doc JSON
+examples are normative for semantics and invariants, but field names and enums
+must ultimately converge on the proto definitions.
 
 ## Dependencies
 
@@ -204,6 +219,10 @@ The service API contract resides in
 [../../../../protos/game-design/v1](../../../../protos/game-design/v1). Generate
 stubs with `./gradlew generateProto` whenever these files are updated.
 
+For REST endpoints, the authoritative request/response schema source is
+[openapi.yaml](../../../../services/game-design-service/src/main/resources/openapi.yaml).
+Design-doc examples should be updated to match when those schemas evolve.
+
 ## Related Documentation
 
 See [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md) for how published versions are promoted to runtime.
@@ -237,6 +256,13 @@ See [Versioning & Runtime Configuration](../../system-architecture-versioning-ru
 - [System Context Diagram](../../system-context-diagram.md)
 
 ## Additional Details
+
+Plugin publication and activation are intentionally documented in
+[In-Game Modding and Plugin Framework](modding-framework.md) as a separate
+contract surface. The world/content-authoring docs in this folder define only
+the shared versioning, publish-attestation, and launch-resolution contracts that
+plugin workflows consume; they are not the canonical home for end-to-end plugin
+lifecycle rules.
 
 ### REST & gRPC Endpoints
 

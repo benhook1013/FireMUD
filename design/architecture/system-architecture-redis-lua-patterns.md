@@ -30,6 +30,7 @@ Every coordination script belongs to a **script category** that constrains which
 | Tick staging / pending | `tick:{tenantRegionTag}:pending` and related effect structures | Single-key or shard-local multi-key scripts that operate entirely within one `{tenantRegionTag}` slot. |
 | Timers and retries | `timer:{tenantRegionTag}`, `retry:{tenantRegionTag}` | Shard-local scripts operating on keys that share the same `{tenantRegionTag}`; no cross-slot operations. |
 | Session CAS / bindings | `session:game:<tenantId>:<gameInstanceId>:<sessionId>`, `session:auth:<scope>:<tokenHash>` (for example `session:auth:tenant:<tenantId>:<tokenHash>`) | Single-key scripts; session keys are never mixed with tick keys in the same script unless all keys are shard-local to one `{tenantRegionTag}`. |
+| Session-to-region bridge | `tick:{tenantRegionTag}:session-binding:<entityId>` plus `tick-executor-lease:{tenantRegionTag}` | Region-lease scripts only. They update region-authoritative gameplay bindings using caller-supplied `sessionId` / `binding_generation` and never read `session:game:*` directly inside Lua. |
 | Maintenance / cleanup | Region-local maintenance keys under `tick:{tenantRegionTag}:*` or `timer:{tenantRegionTag}` | Shard-local scans and deletes constrained to one `{tenantRegionTag}` at a time; no cross-slot operations. |
 | Automation helpers (coordination role only) | `script-scheduler:{tenantRegionTag}:lastTickId` and similar | Shard-local scripts that operate on per-region scheduler metadata; must not touch Cache/Rate-Limit prefixes. |
 
@@ -158,6 +159,8 @@ Every region-lease script must perform the following validations before executin
   - Replays for the same tick may continue only while `current_tick_state in {STAGED, RESOLVING}`.
   - Hot-path scripts must never advance `current_tick_id` past a non-terminal tick.
 
+The Redis operations docs and metrics catalog should treat `current_tick_state` transitions as first-class observability surfaces so operators can tell whether regions are stuck in `STAGED` or `RESOLVING`, how often ticks terminate as `APPLIED` vs `ABANDONED`, and whether stale-timeline outcomes correlate with reset or recovery activity.
+
 These checks are enforced via the Lua Script Registry descriptors, generated key-builder helpers, and CI linting so reviewers can automatically catch regressions. Scripts that cannot make these validations are not allowed to touch tick/coordination prefixes.
 
 #### Session-only scripts
@@ -188,6 +191,12 @@ To make the session/region split implementable in cluster mode, Game Session own
 - They return explicit non-mutating outcomes such as `"STALE_SESSION_GENERATION"`, `"STALE_LEASE"`, or `"ALREADY_BOUND"` when the requested bridge mutation should not proceed.
 
 This keeps cluster-slot correctness simple: the bridge step never needs to read `session:game:*` directly inside Lua, and the session step never writes region-local gameplay keys.
+
+Registry and ops expectations for this category:
+
+- Registry metadata should identify session-to-region bridge scripts explicitly so CI and reviewers can verify they touch only region-local binding keys plus the region lease.
+- Outcome enums should include bridge-specific stale-generation results such as `"STALE_SESSION_GENERATION"` and replay/no-op results such as `"ALREADY_BOUND"` or `"ALREADY_UNBOUND"` where applicable.
+- The Redis operations docs and metrics catalog should name these outcomes explicitly so operators can distinguish reconnect/takeover races from lease loss or generic script failures.
 
 #### Maintenance and non-lease scripts
 
@@ -226,6 +235,7 @@ From a correctness perspective, `automation:queue:*` and related automation cach
 - Scripts and callers must assume that queued items can be lost, duplicated, or reordered within the bounds described in the Redis hub doc.
 - Any automation contract that requires “exactly once” semantics or durable ordering must record its authoritative state in PostgreSQL or another durable store and use `automation:queue:*` only as a convenience layer for scheduling, not as the sole record of work.
 - For gameplay-equivalent automation, the authoritative handoff record is a durable PostgreSQL trigger-instance or outbox row keyed by the dispatch identity. Game Session treats the same identity as the dedupe key when enqueueing into `tick:{tenantRegionTag}:queue:<entityId>`.
+- The Redis operations docs and metrics catalog should name stale automation-dispatch outcomes explicitly (for example duplicate-dispatch no-op, stale epoch rejection, stale due-tick rejection) so on-call operators can separate healthy idempotent suppression from broken automation admission.
 
 ### Script Complexity and Runtime Limits
 

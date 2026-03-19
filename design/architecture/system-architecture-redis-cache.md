@@ -315,7 +315,7 @@ Cached aggregates in Redis should follow structured, namespaced key patterns to 
 
 - `inventory:<tenantId>:<containerId>` – cached view of a single inventory or container (including room-ground containers).
 - `character-cache:<tenantId>:<characterId>` – cached character graphs for hot reads.
-- `world-dynamic:<tenantId>:<aggregateId>` – cached view of room-level dynamic state or other world-scoped aggregates.
+- `world-dynamic:<tenantId>:room-dynamic:<gameInstanceId>:<roomInstanceId>` – cached room-level dynamic state used in correctness-critical world decisions.
 - `room:<tenantId>:<gameInstanceId>:<roomInstanceId>` – cached room snapshots/topology slices used for LOOK/navigation, scoped to a running instance.
 - `view:room-look:<tenantId>:<gameInstanceId>:<roomInstanceId>` – cached rendered or pre-assembled room “view” data serving LOOK or similar commands.
 - `chat:city:<tenantId>:<cityId>` – cached short-lived windows of city chat history.

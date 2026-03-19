@@ -271,12 +271,17 @@ Symptoms:
 
 Recommended actions:
 
-- Perform a **region‑scoped reset** for the affected `<tenantId, regionId>`:
-  - Clear `tick:{tenantRegionTag}:*`, `timer:{tenantRegionTag}`, `retry:{tenantRegionTag}`, and `tick-executor-lease:{tenantRegionTag}`.
-  - Leave sessions and non‑region‑scoped keys intact unless they are known to be affected.
-- Verify:
-  - New tick leases can be acquired for the region.
-  - Fresh ticks can schedule and commit.
+- Execute the canonical region-scoped workflow:
+  - `coordination-maintenance pause --scope region --tenant <tenantId> --region <regionId>`
+  - bump `region_epoch` for the region
+  - `coordination-maintenance reset --scope region --tenant <tenantId> --region <regionId>`
+  - `coordination-maintenance reconcile-ledger --scope region --tenant <tenantId> --region <regionId> --old-region-epoch <epoch>`
+  - `coordination-maintenance converge-commands --scope region --tenant <tenantId> --region <regionId> --old-region-epoch <epoch>`
+  - `coordination-maintenance init-meta --scope region --tenant <tenantId> --region <regionId> --region-epoch <epoch> --current-tick-id -1`
+  - `coordination-maintenance smoke-check --scope region --tenant <tenantId> --region <regionId>`
+  - `coordination-maintenance resume --scope region --tenant <tenantId> --region <regionId>`
+- Apply the default region reset session policy:
+  - Leave sessions and other non-region-scoped keys intact unless a broader documented workflow is explicitly chosen.
 
 Expected impact:
 
@@ -293,9 +298,16 @@ Symptoms:
 Recommended actions:
 
 - Roll out a fixed script version.
-- Perform a **tenant‑scoped reset**:
-  - Clear coordination keys for all regions of that tenant.
-  - Optionally schedule staged restarts or maintenance windows for the tenant’s players.
+- Execute the canonical tenant-scoped workflow:
+  - `coordination-maintenance pause --scope tenant --tenant <tenantId>`
+  - bump `region_epoch` for all affected tenant regions
+  - `coordination-maintenance reset --scope tenant --tenant <tenantId> [--preserve-sessions|--invalidate-sessions]`
+  - `coordination-maintenance reconcile-ledger --scope tenant --tenant <tenantId> --old-region-epoch-map <path>`
+  - `coordination-maintenance converge-commands --scope tenant --tenant <tenantId> --old-region-epoch-map <path>`
+  - `coordination-maintenance init-meta --scope tenant --tenant <tenantId> --region-epoch-map <path> --current-tick-id -1`
+  - `coordination-maintenance smoke-check --scope tenant --tenant <tenantId>`
+  - `coordination-maintenance resume --scope tenant --tenant <tenantId>`
+- Choose the tenant session policy explicitly when player-binding state is part of the incident.
 
 Expected impact:
 
@@ -311,7 +323,7 @@ Symptoms:
 Recommended actions:
 
 - Treat the affected scope as “coordination state may be inconsistent”.
-- Perform a **region‑ or tenant‑scoped reset**, depending on how broad the manual edits were.
+- Execute the canonical region- or tenant-scoped workflow for the smallest safe scope, using the same `pause -> reset -> reconcile-ledger -> converge-commands -> init-meta -> smoke-check -> resume` sequence defined above.
 - Record the incident using the standard audit fields (who, when, why, which prefixes/tenants/regions).
 
 Expected impact:
@@ -327,7 +339,7 @@ Symptoms:
 Recommended actions:
 
 - Plan a **cluster‑scoped reset** as part of a controlled maintenance window.
-- Use migration and reset flows from `system-architecture-redis-operations.md`.
+- Execute the canonical cluster-scoped workflow from `system-architecture-redis-operations.md`, including `pause`, epoch fencing, storage-level wipe, `reconcile-ledger`, `converge-commands`, `init-meta`, `smoke-check`, and `resume`.
 - Communicate expected impact to tenants and players.
 
 Expected impact:

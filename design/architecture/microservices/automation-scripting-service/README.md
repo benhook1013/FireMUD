@@ -53,8 +53,12 @@ An OpenAPI specification for the REST endpoints is available at `src/main/resour
   [Hot Reload & Failure Handling](#hot-reload--failure-handling) for how
   tenant readiness and instance-scoped `activePatchVersion`,
   `pendingPatchVersion`, and `reloadState` are managed.
+  Example: if `P21` is in `ONLOAD_RUNNING` and `P22` is then published for the
+  same tenant, `P21` becomes `SUPERSEDED`, any not-yet-started `P21` `onLoad`
+  work is canceled, and only `P22` remains eligible to become `READY`.
 - Runtime execution is instance-aware even when patch readiness is tenant-scoped: a tenant-level `READY` patch is only eligible for pinning, while admission, timer scheduling, rollback pause, and plugin activation are evaluated per `<tenantId, gameInstanceId>`.
   Runtime patch state therefore cannot rely on one mutable tenant-wide `activePatchVersion`; implementations must track `activePatchVersion`, `pendingPatchVersion`, and `reloadState` per instance or per explicit pin cohort.
+- Authoritative gameplay reads within one handler-scoped run must share the same runtime-issued snapshot token captured at admission. In practice, a `TriggerScriptEvent`-style ingress may carry an opaque `readSnapshotToken` equivalent to `<tenantId=T1, gameInstanceId=G7, regionId=R2, regionEpoch=14, tickId=981223>`, and every downstream gameplay-affecting read made during that run must forward the same token rather than silently reading a fresher tick midway through evaluation.
 - Direct script upload/update APIs (for example `UpdateScript`) are limited to bootstrap/dev tooling and must not be used as a production runtime publish path. Production patch rollout uses the Game Design-driven publish Saga and `NotifyScriptVersionUpdate` lifecycle (`PENDING_VALIDATION` -> `ONLOAD_RUNNING` -> `READY`/`FAILED`, with terminal `SUPERSEDED` for an older pending patch displaced by a newer publish) so all runtime gating, audit, and rollback contracts are preserved.
 - Each game's scripts live in tables keyed by `tenantId`, ensuring automation for
   one game cannot access another's data. Derived Redis coordination/index keys must preserve runtime instance isolation as well, not just tenant isolation; see [Multi-Tenancy](../../system-architecture-multi-tenancy.md).

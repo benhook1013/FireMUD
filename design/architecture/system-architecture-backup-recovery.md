@@ -222,8 +222,10 @@ This behavior is distinct from **failover**:
 
 - **Velero** backs up Deployments, StatefulSets, ConfigMaps, and Secrets (but not volume snapshots).
   - Restoration process (scripted):
-    1. Use `dev-tools/restores/restore-cluster.sh <backup-name>` to restore the latest `pg_dump` and Kubernetes manifests and restart services.
-    2. Set `FIREMUD_K8S_NAMESPACE` if restoring to a non-default namespace.
+    1. Use `dev-tools/restores/restore-cluster.sh <backup-name>` to restore the latest `pg_dump` and Kubernetes manifests into the quarantined target namespace.
+    2. Treat that script as a restore-bootstrap step only unless it explicitly documents the full coordination recovery gate and post-restore hardening flow for the target environment. “Script completed” is not by itself sufficient evidence to reopen traffic.
+    3. Before player traffic can reopen, run the required restore-mode selection, post-restore coordination recovery gate, secret hardening, external credential validation, and smoke verification defined later in this document.
+    4. Set `FIREMUD_K8S_NAMESPACE` if restoring to a non-default namespace.
   - Restoration process (manual):
     1. Copy the desired dump out of the PostgreSQL pod:
 
@@ -251,7 +253,9 @@ This behavior is distinct from **failover**:
        kubectl rollout status statefulset --all -n <namespace>
        ```
 
-    4. If dumps live in `PG_DUMP_BUCKET`, download them first with:
+    4. Treat the rollout above as the database-restore/bootstrap step only. Before player traffic can reopen, operators must still select `cold_start_restore` or `scoped_reset_restore`, complete the corresponding coordination recovery gate, run post-restore hardening, validate external credentials, and pass smoke verification.
+
+    5. If dumps live in `PG_DUMP_BUCKET`, download them first with:
 
        ```bash
        aws s3 cp s3://$PG_DUMP_BUCKET/<path> ./dump.sql.gz
@@ -606,6 +610,52 @@ Illustrative recovery record shape:
 }
 ```
 
+Illustrative `cold_start_restore` recovery record variant:
+
+```json
+{
+  "schemaVersion": "recovery-record/v1",
+  "environment": "staging",
+  "recoveryRef": "2026-03-14-drill-02",
+  "restoreSource": "pgdump-2026-03-14T03:00:00Z",
+  "coordinationRecoveryMode": "cold_start_restore",
+  "quarantineStartedAt": "2026-03-14T04:00:00Z",
+  "quarantineReleasedAt": "2026-03-14T05:05:00Z",
+  "restoredAt": "2026-03-14T04:18:00Z",
+  "restoredBy": "operator@example",
+  "expectedBindingsRef": "design/operations/environments/staging/expected-bindings.yaml",
+  "coordinationRecoveryEvidence": {
+    "status": "pass",
+    "mode": "cold_start_restore",
+    "evidenceRefs": [
+      "coordination-keyspace-empty",
+      "cold-start-validation-complete",
+      "sessions-reestablished-after-reset"
+    ]
+  },
+  "jwtHardening": {
+    "status": "pass",
+    "jobRef": "job/post-restore-secret-hardening-jwt",
+    "keyIds": ["staging-2026-03-14-a"]
+  },
+  "databaseCredentialRotation": {
+    "status": "pass",
+    "jobRef": "job/db-credential-rotation"
+  },
+  "certificateReissuance": {
+    "status": "pass",
+    "evidenceRefs": ["workload-leaf-reissued"]
+  },
+  "externalCredentialValidation": {
+    "status": "pass",
+    "results": []
+  },
+  "smokeStatus": "pass",
+  "smokeEvidence": ["design/operations/deployments/staging/smoke/2026-03-14-drill-02.json"],
+  "reopenApprovedBy": "operator@example"
+}
+```
+
 The `post-restore-secret-hardening` Job runs after PostgreSQL and core services have been restored and basic health checks pass, but **before** the restored environment is considered player-facing. It uses least-privilege service accounts:
 
 - JWT rotation service accounts can only read/update the `jwt-signing-keys` Secret, the `jwt-jwks` Secret for player-facing environments (`hobby-self-hosted`, staging, production), and, optionally, the Account Service Deployment. Non-player-facing environments may use a JWKS ConfigMap.
@@ -682,11 +732,11 @@ Validation rules:
 
 This evidence is consumed by production CI and preflight and is mandatory before applying a `roll-forward-only` production release.
 
-## Production First-Live Backup Evidence
+## Production Traffic-Open Backup Evidence
 
 Before opening production to player traffic for the first time, or reopening it after a restore into a fresh environment boundary, operators must record proof that the backup pipeline is already functioning for that environment.
 
-This is a specialized `backup-readiness` artifact used for traffic-open gating, not a second unrelated evidence family. It lives under the same `design/operations/deployments/production/backup-readiness/` namespace as release-time backup evidence, but uses the `first-live-<deployment-ref>.json` naming pattern so tooling can distinguish “traffic-open readiness” from “roll-forward-only release readiness” without introducing a separate schema lineage.
+This is a specialized `backup-readiness` artifact used for production traffic-open gating, not a second unrelated evidence family. It lives under the same `design/operations/deployments/production/backup-readiness/` namespace as release-time backup evidence, but uses the `first-live-<deployment-ref>.json` naming pattern so tooling can distinguish “traffic-open readiness” from “roll-forward-only release readiness” without introducing a separate schema lineage.
 This artifact is the canonical production traffic-open gate evidence referenced by the deployment runbook.
 
 Canonical evidence path:
@@ -703,18 +753,21 @@ Required fields:
 - `backupLastSuccessAt`
 - `backupVerifyLastSuccessAt`
 - `restoreDrillLastSuccessAt`
+- `restoreRecoveryRecordRef`
+- `coordinatedBackupScope`
 - `evidenceRefs[]`
 
 Validation rules:
 
 - `backupLastSuccessAt` must point to a successful logical backup upload produced against the live production environment binding.
 - `backupVerifyLastSuccessAt` must point to a successful verification run against that same environment binding.
-- `restoreDrillLastSuccessAt` must point to a successful restore drill against that same environment class/binding and must be within the documented restore-proof freshness window.
-- The referenced backup attempt must use canonical coordinated-backup scope (`tenant_id + region_id`) for player-facing production traffic-open readiness; alias-scoped backup evidence is valid only for quarantined drills and must not satisfy first-live production reopen gates.
+- `restoreDrillLastSuccessAt` must point to a successful restore drill against that same environment class/binding and must be within 30 days of the traffic-open preflight.
+- `restoreRecoveryRecordRef` must point to a canonical recovery record from a drill that completed quarantine, post-restore hardening, external credential validation, and smoke verification for the relevant environment class.
+- `coordinatedBackupScope` must be `tenant_id + region_id` for player-facing production traffic-open readiness. Alias-scoped evidence is valid only for quarantined drills and must not satisfy production traffic-open gates.
 - Production traffic-open preflight must fail when this evidence is missing, stale, or bound to the wrong bucket/endpoint.
 - The canonical gate for this artifact is the deployment preflight contract in `system-architecture-deploy-preflight-policy.md` (`PREFLIGHT-BACKUP-002`), and the deployment sequencing that consumes it is defined in `system-architecture-deployment-runbook.md`.
 
-Illustrative production first-live backup-readiness record:
+Illustrative production traffic-open backup-readiness record:
 
 ```json
 {
@@ -726,11 +779,12 @@ Illustrative production first-live backup-readiness record:
   "backupLastSuccessAt": "2026-03-13T08:10:00Z",
   "backupVerifyLastSuccessAt": "2026-03-13T08:25:00Z",
   "restoreDrillLastSuccessAt": "2026-03-05T09:00:00Z",
+  "restoreRecoveryRecordRef": "design/operations/deployments/production/recovery/2026-03-05-drill-01.json",
+  "coordinatedBackupScope": "tenant_id + region_id",
   "evidenceRefs": [
     "pgdump-upload-2026-03-13T08:10:00Z",
     "backup-verify-2026-03-13T08:25:00Z",
-    "restore-drill-2026-03-05T09:00:00Z",
-    "scope=tenant-a:region-prod-1"
+    "restore-drill-2026-03-05T09:00:00Z"
   ]
 }
 ```
@@ -740,8 +794,8 @@ Illustrative production first-live backup-readiness record:
 `hobby-self-hosted` environments must maintain a versioned backup-compliance record at `design/operations/deployments/hobby-self-hosted/backup-compliance.yaml` with:
 
 - `lastSuccessfulBackupAt`
-- `lastSuccessfulRestoreDrillAt`
-- `lastRestoreDrillAt`
+- `lastSuccessfulRestoreDrillAt` – timestamp of the most recent restore drill that passed the required restore-proof gates for hobby/self-hosted reopen readiness.
+- `lastRestoreDrillAt` – timestamp of the most recent restore drill attempt, whether it passed or failed.
 - `retentionDailyPoints`
 - `backupTooling`
 - `evidenceRefs[]`

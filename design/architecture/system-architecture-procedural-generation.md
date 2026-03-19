@@ -118,6 +118,51 @@ Generation revisions are explicit and scope-bound:
 - Reconciliation must replay `generate -> subsequent manual revisions` in original commit/revision order. It must never rerun generation over a scope that has later manual edits unless the recorded generation revision itself declared `REPLACE_SCOPE` for that same scope.
 - Manual edits applied after a generation revision are canonical authored state. A later replay that would erase those edits without an explicit replacement revision is invalid and must fail the Draft as `OUT_OF_SYNC`.
 
+Illustrative revision examples:
+
+```json
+{
+  "revisionType": "GENERATE_WORLD_SUBTREE",
+  "tenantId": "t1",
+  "versionId": "v42",
+  "revisionId": "r-gen-001",
+  "targetScope": {
+    "scopeType": "ZONE_SUBTREE",
+    "zoneTemplateId": "zoneTemplateId:starter-caves"
+  },
+  "replacementPolicy": "REPLACE_SCOPE",
+  "generatorType": "SimpleDungeonGenerator",
+  "generationRequestId": "genreq-t1-v42-starter-caves-r1"
+}
+```
+
+Resulting replay semantics:
+
+- rerunning `r-gen-001` may replace the topology inside `zoneTemplateId:starter-caves`;
+- later manual revisions that edit rooms in that zone remain authoritative until another explicit `REPLACE_SCOPE` revision targets the same zone.
+
+```json
+{
+  "revisionType": "GENERATE_WORLD_SUBTREE",
+  "tenantId": "t1",
+  "versionId": "v42",
+  "revisionId": "r-gen-002",
+  "targetScope": {
+    "scopeType": "NEW_EMPTY_REGION",
+    "regionTemplateId": "regionTemplateId:northern-wilds"
+  },
+  "replacementPolicy": "SEED_APPEND_ONLY",
+  "generatorType": "OverworldMapGenerator",
+  "generationRequestId": "genreq-t1-v42-northern-wilds-r1"
+}
+```
+
+Resulting replay semantics:
+
+- `r-gen-002` may add generated rows into the declared empty region;
+- if later manual revisions rename rooms or adjust exits in that region, replay must preserve those later edits rather than regenerating over them;
+- if regeneration under `SEED_APPEND_ONLY` would require deleting or rewriting those later authored rows, Draft convergence fails as `OUT_OF_SYNC`.
+
 This rule makes generated scaffolding safe to refine manually while preserving one deterministic answer to “what does replay regenerate versus preserve?”
 
 ---

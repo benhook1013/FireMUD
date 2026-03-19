@@ -104,11 +104,28 @@ POST /auth/player-bootstrap
 GET /auth/bootstrap/worlds
 GET /auth/bootstrap/worlds/{world}/realms
 GET /auth/bootstrap/worlds/{world}/characters?realm={realm}
-POST /auth/connect-token { tenantId, gameInstanceId }
+POST /auth/connect-token { connectScopeId=cs_demo_production_v17 }
 GET /ws/game/** with X-Firemud-Connect-Token
 LOGIN
 PLAY <world> <realm> <character>
 ```
+
+Example first-time public production join:
+
+```text
+POST /auth/player-bootstrap
+GET /auth/bootstrap/worlds
+GET /auth/bootstrap/worlds/emberfall/realms
+GET /auth/bootstrap/worlds/emberfall/characters?realm=production
+POST /characters { world=emberfall, realm=production, name=Mara, template=human-fighter }
+POST /auth/connect-token { connectScopeId=cs_emberfall_production_v1 }
+GET /ws/game/** with X-Firemud-Connect-Token
+LOGIN
+PLAY emberfall production Mara
+OK PLAY Entered Emberfall / Live Realm as Mara
+```
+
+After this first successful join, the player's account now has normal `player` membership for Emberfall, so later discovery no longer depends on public-production visibility alone.
 
 ---
 

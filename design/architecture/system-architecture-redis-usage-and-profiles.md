@@ -49,7 +49,7 @@ FireMUD runs two logical Redis roles in all non‑trivial environments:
   - Example prefixes:
     - `inventory:<tenantId>:<containerId>`
     - `view:room-look:<tenantId>:<gameInstanceId>:<roomInstanceId>`
-    - `world-dynamic:<tenantId>:<aggregateId>`
+    - `world-dynamic:<tenantId>:room-dynamic:<gameInstanceId>:<roomInstanceId>`
     - `ratelimit:<tenantId>:<bucket>:<timeWindow>[:<shard>]`
     - `automation:queue:<tenantId>:<entityId>` and automation quota counters.
 
@@ -62,6 +62,12 @@ New prefixes must declare:
 - How they behave under tail‑loss and eviction.
 
 The **Redis Cheat Sheet** keeps a representative mapping from prefixes to roles and owning services.
+
+Keep the cheat sheet and the owning service Redis sections aligned with the canonical names in this document, especially:
+
+- `tick:{tenantRegionTag}:session-binding:<entityId>`
+- `binding_generation`
+- `automationDispatchId`
 
 ### Automation & Scheduler Coordination Prefixes
 
@@ -84,6 +90,8 @@ A small set of automation/scheduler-specific prefixes live on Coordination Redis
   - Reset behavior: classified as reset-tolerant in the reset policy matrix; keys may be dropped by scoped coordination resets and are rebuilt from durable automation state and fresh tick activity.
 
 Durable automation schedules, quotas, script configuration, and trigger-instance de-duplication live in PostgreSQL; these coordination prefixes are latency and progress hints only and must not be treated as the primary record of “which scripts should run”. Designs that introduce new automation-related coordination prefixes must register them in the reset policy matrix and document how they recover from resets.
+
+The cheat sheet and the Automation & Scripting / Game Session service docs should also expose the operator-facing outcome vocabulary for fairness-critical automation admission so duplicate-dispatch no-ops, stale-timeline rejections, and successful admissions are recognizable without reading implementation code.
 
 ### Automation Routing: Coordination vs Cache/Rate-Limit
 
@@ -111,6 +119,13 @@ Automation workloads split into two broad classes, with different expectations a
     - The durable trigger-instance / outbox row is the source of truth that the automation action became due.
     - The Game Session enqueue acknowledgement is the source of truth that the due automation was admitted into gameplay coordination for that region.
     - Redis keys are hot-path coordination state only; they are never the sole record that a fairness-critical automation action existed.
+  - Worked example:
+    - A schedule for NPC `entityId=E1` becomes due at `(tenantId=T1, gameInstanceId=G1, regionId=R1, regionEpoch=7, dueTickId=420)`.
+    - Automation & Scripting upserts a durable trigger-instance row keyed by `(scheduleId=S1, gameInstanceId=G1, regionEpoch=7, dueTickId=420, entityId=E1, commandKind=MOVE)` and derives `automationDispatchId` from that identity.
+    - It calls `EnqueueAutomationCommandIfAbsent` with `automationDispatchId`, the target region timeline fields, and the deterministic command payload.
+    - Game Session validates the active region lease and epoch for `R1`, maps the request to `tick:{tenantRegionTag}:queue:E1`, and returns `"ENQUEUED"` on the first successful admission.
+    - If the same trigger retries due to gRPC timeout, Game Session sees the same `automationDispatchId` and returns a replay/no-op outcome instead of enqueuing a second command.
+    - If the region has already moved to `regionEpoch=8`, Game Session returns a stale-timeline outcome and Automation & Scripting re-derives what should happen next from the durable trigger-instance row instead of inferring state from Redis.
 
 - **Best-effort, non-critical automation**
   - Examples: analytics-style background work, non-critical notifications, opportunistic refreshes that can be dropped or reordered without visible gameplay impact.

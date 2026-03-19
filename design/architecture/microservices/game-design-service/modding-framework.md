@@ -56,6 +56,7 @@ Contract rules:
 - `abilitySchemaDigest` must match the immutable digest attested for that `baseVersionId`; it is recorded in Game Design metadata and re-checked at activation time.
 - Game Design must persist indexed metadata from the signed manifest (`pluginId`, `pluginVersionId`, `baseVersionId`, `abilitySchemaDigest`, signer identity, validation status) so UIs and control-plane APIs do not need to unpack bundles for routine reads.
 - Automation & Scripting must treat the signed manifest as the source of truth for runtime activation metadata. It may cache extracted fields, but it must not trust mutable side-channel metadata over the signed manifest.
+- If `assetRefs[]` are runtime-consumable, runtime discovery must flow through the signed manifest metadata that Game Design publishes and, where instance/runtime consumers need object-store access, through the attested release/distribution metadata derived from that manifest rather than undocumented bucket key conventions.
 
 ## Signing and Key Lifecycle (Required)
 
@@ -149,7 +150,7 @@ Each `(tenantId, pluginId, pluginVersionId)` must have one canonical design-time
 
 - `DRAFT` – authoring metadata exists but no accepted signed bundle has been stored.
 - `UPLOAD_REJECTED` – bundle ingestion failed before publication, for example due to archive safety limits, malformed manifest, or signature failure.
-- `SIGNATURE_VERIFIED` – the bundle passed canonicalization and signature verification and its signed metadata has been persisted.
+- `SIGNATURE_VERIFIED` – the bundle passed canonicalization and signature verification and its signed metadata has been persisted. This is a durable operator-visible state, not merely an internal transient step; a version may remain here indefinitely until publication is requested or abandoned.
 - `VALIDATION_FAILED_DESIGN` – Game Design completed design-time validation and rejected the version due to deterministic authoring errors such as invalid bindings, disallowed components, `baseVersionId` mismatch, or `abilitySchemaDigest` mismatch.
 - `PUBLISHED` – the plugin version is accepted into immutable design-time history and is eligible for runtime activation against matching instances.
 - `SUPERSEDED` – a later plugin version for the same `pluginId` exists; older versions remain immutable and may still be rolled back to if otherwise valid.
@@ -161,6 +162,77 @@ Required lifecycle semantics:
 - Transition into `PUBLISHED` records the indexed manifest metadata, validation results, signer metadata, and publication timestamp in Game Design.
 - Logging & Admin may inspect all design-time states, but it must not bypass them by attempting to activate a non-`PUBLISHED` plugin version.
 - Game Design must expose read surfaces such as `GetPluginVersionStatus(tenantId, pluginId, pluginVersionId)` and `ListPluginVersionStatuses(tenantId, pluginId?)`, plus a durable `PluginVersionStatusChanged` event family, so authoring UIs and operator tooling read one authoritative publication state model.
+
+Required write path:
+
+- `UploadPluginBundle` accepts the bundle bytes, performs archive safety checks, canonicalization, signature verification, manifest extraction, and indexed metadata persistence.
+  - Success moves the version to `SIGNATURE_VERIFIED`.
+  - Deterministic ingestion or signature failures move the version to `UPLOAD_REJECTED`.
+- `PublishPluginVersion` is the explicit design-time publication step for a previously uploaded bundle version.
+  - It runs design-time validation over graphs, bindings, component policy, `baseVersionId`, and `abilitySchemaDigest`.
+  - Validation failures move the version to `VALIDATION_FAILED_DESIGN`.
+  - Success moves the version to `PUBLISHED` and emits `PluginVersionStatusChanged`.
+- Re-invoking either call with the same `(tenantId, pluginId, pluginVersionId)` must be idempotent: once a version is immutable, callers may observe the existing status but must not overwrite signed content in place.
+
+### Minimal Bundle Example
+
+This example shows the minimum signed authoring shape expected by the publication pipeline:
+
+```json
+{
+  "pluginId": "town-crier",
+  "pluginVersionId": "town-crier-v3",
+  "baseVersionId": "game-v12",
+  "abilitySchemaDigest": "sha256:9dd1b7c2...",
+  "displayName": "Town Crier",
+  "entrypoints": [
+    {
+      "graphId": "announce-arrival",
+      "path": "graphs/announce-arrival.json"
+    }
+  ],
+  "bindings": [
+    {
+      "bindingId": "announce-on-enter-market",
+      "eventType": "onEnterRegion",
+      "targetScopeType": "REGION",
+      "targetSelector": "market-square",
+      "entrypointGraphId": "announce-arrival"
+    }
+  ],
+  "requiredComponents": [
+    "dialog.say",
+    "condition.entity_flag"
+  ],
+  "requiredCapabilities": [],
+  "assetRefs": []
+}
+```
+
+Expected publication behavior for this example:
+
+- `UploadPluginBundle` verifies the archive, signatures, and manifest shape, then persists indexed metadata for `town-crier-v3`.
+- `PublishPluginVersion` validates that `market-square` exists in `game-v12`, that `announce-arrival` is present and safe, and that the plugin remains compatible with `sha256:9dd1b7c2...`.
+- `SetPluginActiveVersion` may later activate `town-crier-v3` only for instances whose `runtimeVersionId` is `game-v12` and whose bound ability schema digest matches the same value.
+- If `assetRefs[]` included an entry such as `"assetRefs": [{"assetId": "bell-sfx", "path": "assets/bell.ogg"}]`, Game Design would persist that signed reference as indexed bundle metadata and expose the runtime-discoverable asset only through attested release/distribution metadata derived from the signed manifest. Runtime consumers would resolve `bell-sfx` through that attested metadata, not by constructing object-store paths directly.
+
+### End-to-End Publication Sequence
+
+One canonical happy path plus failure path:
+
+1. A creator uploads `town-crier-v3` with `UploadPluginBundle`.
+2. Game Design enforces archive safety limits, verifies signatures, extracts `plugin-manifest.json`, persists indexed metadata, and sets status to `SIGNATURE_VERIFIED`.
+3. A creator or operator invokes `PublishPluginVersion` for the same `(tenantId, pluginId, pluginVersionId)`.
+4. Game Design validates graphs, bindings, component policy, `baseVersionId`, and `abilitySchemaDigest`.
+5. If validation succeeds, Game Design sets status to `PUBLISHED` and emits `PluginVersionStatusChanged`.
+6. Logging & Admin may then invoke `SetPluginActiveVersion` for a matching game instance; Automation & Scripting admits the plugin only if the instance `runtimeVersionId` and ability digest match the published metadata.
+
+Failure example:
+
+1. `UploadPluginBundle` succeeds and leaves the version in `SIGNATURE_VERIFIED`.
+2. `PublishPluginVersion` discovers that binding target `market-square` does not exist in the plugin's exact `baseVersionId`.
+3. Game Design sets status to `VALIDATION_FAILED_DESIGN`, emits `PluginVersionStatusChanged`, and does not create or mutate runtime registry state.
+4. Any later `SetPluginActiveVersion` attempt for that `pluginVersionId` must fail deterministically because the version is not `PUBLISHED`.
 
 ## Plugin Lifecycle & Rollback
 

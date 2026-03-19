@@ -114,7 +114,7 @@ Game Session must treat `X-Proxy-Connection-Id` as authoritative only when `X-Fi
 
 - `X-Game-Instance-Id` is a hint for the desired game instance (`gameInstanceId`), not a gameplay “player session” identifier.
 - `X-Tenant-Id` is a hint for the desired tenant and must be validated against the authenticated account’s allowed tenants and entitlements during the canonical `LOGIN` + lobby selection (`PLAY`) flow.
-- Any mismatch between these hints and Redis-backed session bindings or authenticated claims must result in the enter-game request being rejected with a canonical admission error and should be logged as a suspicious attach attempt. Game Session must not silently ignore an inadmissible trusted-proxy attach hint once it has been promoted into canonical admission context.
+- Any mismatch between these hints and Redis-backed session bindings or authenticated claims must result in the enter-game request being rejected with a canonical admission error and should be logged as a suspicious attach attempt. Game Session must not silently ignore an inadmissible trusted-proxy attach hint once it has been promoted into canonical admission context. The canonical `PLAY` admission error set lives in [Authentication & Authorization](./system-architecture-authentication.md#play-returns-canonical-stable-error-codes-so-clients-can-recover-deterministically); gateway and proxy docs must reference that table rather than inventing a Telnet-only error name for inadmissible trusted-proxy attach hints.
 
 After `PLAY` succeeds, Redis-backed session binding is authoritative for tenant/gameplay scope. Header hints (`X-Game-Instance-Id`, `X-Tenant-Id`) remain admission-only context and must not override already-bound session scope.
 

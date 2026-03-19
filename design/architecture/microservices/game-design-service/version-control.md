@@ -93,6 +93,7 @@ In addition to domain-service digests, publish safety requires a Game Design con
 - Game Design must expose the attestation through `GetPublishedReleaseBundle(tenantId, versionId)` with deterministic response fields at minimum:
   - `tenantId`, `versionId`, `commitId`, `publishWorkflowId`, `publishedAt`
   - `participantDigests[] { serviceName, appliedCommitId, contentDigest, digestSchemaVersion }`
+  - `artifactDigests[] { artifactType, artifactPath, artifactDigest, artifactSchemaVersion }` for any exported derived artifacts; these entries are mandatory in the initial slice for world navmesh/path graph bundles
   - `manifestHash`, `manifestSchemaVersion`
   - `generationConfigRevision`
   - attestation schema/version fields for future evolution

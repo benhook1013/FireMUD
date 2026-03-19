@@ -184,6 +184,42 @@ Bootstrap compliance semantics:
 - Bootstrap provisioning evidence is valid only until the first planned rotation window for that credential class. After the first completed rotation, records must switch to `lastRotationAt` and reference rotation evidence rather than continuing to rely on bootstrap issuance.
 - Validators must treat bootstrap provisioning and rotation as equivalent compliance sources for first deployment, provided the evidence record still includes an immutable artifact identifier and the credential age remains within the configured maximum age.
 
+Illustrative bootstrap compliance record:
+
+```json
+{
+  "environment": "staging",
+  "generatedAt": "2026-03-13T00:00:00Z",
+  "credentialClasses": {
+    "jwt-signing-keys-jwks": {
+      "owner": "platform-security",
+      "maxAgeDays": 30,
+      "lastProvisionedAt": "2026-03-13T00:00:00Z",
+      "alertRuleId": "sec.jwt.rotation.age",
+      "evidenceRef": "design/operations/secret-compliance/evidence/staging-bootstrap.json",
+      "evidenceKey": "jwt-signing-keys-jwks"
+    }
+  }
+}
+```
+
+Corresponding evidence payload:
+
+```json
+{
+  "environment": "staging",
+  "generatedAt": "2026-03-13T00:05:00Z",
+  "records": {
+    "jwt-signing-keys-jwks": {
+      "evidenceType": "provisioning",
+      "immutableArtifactId": "change-ticket:STAGE-401:sha256:9a1b2c3d",
+      "source": "bootstrap-runbook",
+      "recordedBy": "platform-security"
+    }
+  }
+}
+```
+
 ## Player-Facing Environment Bootstrap Requirements
 
 Before the first deployment into `hobby-self-hosted`, `staging`, or `production`, operators must provision a minimum bootstrap set of secrets and trust resources. This is the canonical bootstrap contract for environment and secret readiness:
@@ -199,9 +235,9 @@ Before the first deployment into `hobby-self-hosted`, `staging`, or `production`
 - outbound communications credentials when email or webhook integrations are enabled
 - operator credential binding used for environment-scoped control-plane access
 
-Bootstrap resources must be unique to the environment boundary. Shared namespace names such as `firemud` do not relax the requirement for separate staging and production secret sources, bucket bindings, or operator trust bindings.
+Bootstrap resources must be unique to the environment boundary. Shared namespace names such as `firemud` do not relax the requirement for separate staging and production secret sources, bucket bindings, or operator trust bindings. For cluster-local internal bindings, uniqueness is evaluated by environment ownership of the underlying resource, not by requiring globally unique literal names.
 
-Expected bindings for player-facing deployment and recovery checks must be declared once per environment in `design/operations/environments/<environment>/expected-bindings.yaml`. Deploy preflight and restore validation both consume this same manifest so internal state/trust bindings (PostgreSQL, Redis, JWT/JWKS, certificate issuer, registry pull credentials) and external bindings (backup storage, asset storage, outbound communications, operator credential bindings) do not drift between deployment and recovery procedures.
+Expected bindings for player-facing deployment and recovery checks must be declared once per environment in `design/operations/environments/<environment>/expected-bindings.yaml`. Deploy preflight and restore validation both consume this same manifest so internal state/trust bindings (PostgreSQL, Redis, JWT/JWKS, certificate issuer, registry pull credentials) and external bindings (backup storage, asset storage, outbound communications, operator credential bindings) do not drift between deployment and recovery procedures. Internal bindings are evaluated relative to the target environment boundary, so the same cluster-local literal may appear in multiple manifests when it resolves to environment-owned resources in separate boundaries.
 
 Player-facing preflight must fail when this bootstrap set is incomplete or when an external binding resolves to another environment’s target. The authoritative preflight policy IDs and evidence contract for these checks are defined in `../system-architecture-deploy-preflight-policy.md`.
 

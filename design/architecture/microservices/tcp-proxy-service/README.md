@@ -429,7 +429,7 @@ multi-tenant safety:
   during admission with a canonical error, and logged with enough context for
   audit/alerting (without leaking sensitive credentials).
 - `SESSION` carries only canonical UUID identifiers. Any higher-level gameplay aliasing or default-instance selection (for example a conceptual “primary” instance) happens after authentication inside Game Session and must not be encoded as a special edge-level `SESSION` value.
-- If a `SESSION` hint resolves to an instance that is not admissible for the authenticated account, Game Session rejects the enter-game attempt with a canonical admission error and emits a bounded metric/log signal so stale clients can be migrated.
+- If a `SESSION` hint resolves to an instance that is not admissible for the authenticated account, Game Session rejects the enter-game attempt with a canonical admission error and emits a bounded metric/log signal so stale clients can be migrated. The canonical `PLAY` admission error set lives in [Authentication & Authorization](../../system-architecture-authentication.md#play-returns-canonical-stable-error-codes-so-clients-can-recover-deterministically); TCP Proxy must not define a separate Telnet-only error name for this case.
 
 Metrics give observability into each Telnet connection while keeping
 Prometheus label cardinality bounded:

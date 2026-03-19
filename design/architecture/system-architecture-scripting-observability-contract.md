@@ -111,6 +111,66 @@ Rules:
 - A trigger may therefore show `finalStage=TICK_HANDOFF`, `finalOutcome=success`, and later `executionDisposition.outcome=version_fence_dropped`.
 - When present, UI/query surfaces must return both views together so operators can distinguish “accepted into tick queues” from “later fenced before execution.”
 
+Concrete example:
+
+- `script_event_audit` row for Trigger Identity `T123` ends with `finalStage=TICK_HANDOFF`, `finalOutcome=success`.
+- Later, Game Session rejects the queued command during rollback convergence and appends `executionDisposition={ outcome=version_fence_dropped, reason=script_patch_mismatch, sourceService=game-session, recordedAt=... }`.
+- Queries for `T123` must surface both facts in one result so operators can tell that Automation succeeded but gameplay execution was later fenced.
+
+Illustrative record shape:
+
+```json
+{
+  "tenantId": "T1",
+  "gameInstanceId": "G7",
+  "regionId": "R2",
+  "regionEpoch": 14,
+  "entityId": "npc-guard-9",
+  "scriptId": "guard-on-enter",
+  "eventType": "onEnterRegion",
+  "scriptPatchVersion": "P22",
+  "scriptEventId": "evt-7f4c",
+  "isDryRun": false,
+  "finalStage": "TICK_HANDOFF",
+  "finalOutcome": "success",
+  "finalReason": "accepted_into_tick_queue",
+  "stages": [
+    {
+      "stage": "ADMISSION",
+      "outcome": "admitted",
+      "reason": "ok",
+      "at": "2026-03-19T08:10:00Z"
+    },
+    {
+      "stage": "DSL_EVAL",
+      "outcome": "evaluated",
+      "reason": "ok",
+      "at": "2026-03-19T08:10:00Z"
+    },
+    {
+      "stage": "WORK_ITEM_PERSIST",
+      "outcome": "persisted",
+      "reason": "ok",
+      "at": "2026-03-19T08:10:00Z"
+    },
+    {
+      "stage": "TICK_HANDOFF",
+      "outcome": "success",
+      "reason": "accepted_into_tick_queue",
+      "at": "2026-03-19T08:10:01Z"
+    }
+  ],
+  "executionDisposition": {
+    "outcome": "version_fence_dropped",
+    "reason": "script_patch_mismatch",
+    "sourceService": "game-session",
+    "recordedAt": "2026-03-19T08:10:03Z"
+  }
+}
+```
+
+This example is illustrative rather than prescriptive about JSON column layout, but any API or query surface must preserve the same information model: one Trigger Identity, one Automation-owned final stage/outcome, and an optional later downstream execution disposition.
+
 ### Canonical Outcome Taxonomy (Required)
 
 Audit writers must use the canonical `finalOutcome` values defined in `design/architecture/system-architecture-scripting-normative-contract-tables.md#canonical-finaloutcome-values-normative`.

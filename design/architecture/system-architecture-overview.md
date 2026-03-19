@@ -47,9 +47,9 @@ The documents linked from this overview describe the target-state design, but th
 - [**Feature flags**](./microservices/game-design-service/feature-flags.md) are defined at design-time in the Game Design Service; Logging & Admin provides the operator UI for runtime toggles, while Game Session owns the runtime override state and enforcement during gameplay.
 - **One active gameplay binding per identity key is enforced** — logging in from another client forcibly transfers control to the new session and terminates the old one. The canonical uniqueness key is `{tenantId, gameInstanceId, characterId}`, as defined in [Authentication & Authorization](./system-architecture-authentication.md#contract-decisions-normative).
 - **Multi-tenant architecture shares infrastructure across games; per-game resource quotas prevent one tenant from exhausting cluster capacity.**
-- **Admin and operations tooling communicates with Spring Cloud Gateway over an internal gRPC management API** for route and health management; no gameplay traffic flows over this control-plane path.
+- **Admin and operations tooling communicates with Spring Cloud Gateway over the infrastructure management plane** for route and health management; no gameplay traffic flows over this path.
 
-### Admin Entry Points and Control Plane
+### Admin Entry Points and Traffic Surfaces
 
 All external admin and creator tools access the platform through the **Spring Cloud Gateway**; Logging & Admin Service is never exposed directly at the network edge.
 
@@ -66,6 +66,14 @@ These names are normative and should be used consistently in service docs and di
 - **Internal-only dependencies:** Logging & Admin Service calls Elasticsearch, Prometheus, Jaeger, Grafana, Kibana, and Alertmanager directly from the internal network for analytics and dashboards. These observability backends are **not** exposed to clients and are treated as internal, operator-facing dependencies of Logging & Admin.
 
 `Bypass-safe workflow` has a specific meaning in this architecture: it is an externally callable domain-owned admin operation whose correctness does not depend on Logging & Admin-owned policy definition, cross-domain audit orchestration, or operator availability-split guarantees. Bypass-safe workflows must still emit domain audit records and must be explicitly named in the owning service contract before they are exposed directly through an edge-routable domain API.
+
+Minimum service-doc requirements for a bypass-safe workflow designation:
+
+- Name the exact route shape and method.
+- State why the workflow is domain-local and does not rely on Logging & Admin-owned policy.
+- State why it does not require cross-domain write orchestration.
+- State the required audit behavior emitted by the owning service.
+- State explicitly that the route is bypass-safe rather than merely edge-routable.
 
 Examples:
 
@@ -88,6 +96,16 @@ Canonical bypass-safe workflow allowlist at the architecture layer:
 
 If a proposed external write does not fit one of the explicitly allowlisted classes above, it is not bypass-safe and requires an architecture update before implementation.
 
+Canonical route-review examples:
+
+| Proposed route | Classification | Canonical decision | Why |
+| --- | --- | --- | --- |
+| `GET /admin/accounts/{id}` | External admin read | Allowed when Account documents the read contract | Edge-routable read on an allowlisted service |
+| `POST /admin/game-design/validation-runs/{runId}:cancel` | Domain-local write | Allowed only when Game Design explicitly documents it as bypass-safe | Can qualify only if it is domain-local and does not depend on Logging & Admin-owned policy or cross-domain orchestration |
+| `POST /admin/game-sessions/{id}/feature-flags/{flagKey}:toggle` | External operator write | Not allowed as a direct external route | Runtime feature-flag overrides must enter through Logging & Admin |
+| `POST /admin/quota-overrides` | External operator write | Not allowed as a direct external route | Quota overrides must enter through Logging & Admin and remain canonical at Account |
+| `POST /admin/tick-remediation/pause` | External operator write | Not allowed as a direct external route | Tick remediation must enter through Logging & Admin with Game Session as the state-mutation owner |
+
 #### External Admin Traffic Split (Canonical)
 
 | Traffic category | Edge entry point | Allowed direct domain route behavior |
@@ -106,9 +124,9 @@ Gateway-routed external surfaces are intentionally narrow:
 | --- | --- | --- |
 | `/ws/game/**` gameplay WebSocket | Yes | Canonical gameplay entry point for web clients and TCP Proxy bridged Telnet sessions. |
 | Logging & Admin admin APIs | Yes | Routed through Gateway allowlist only. |
-| Account control-plane APIs | Yes | Routed through Gateway allowlist only. |
-| Game Design control-plane APIs | Yes | Routed through Gateway allowlist only. |
-| Game Session control-plane/admin APIs | Yes | Routed through Gateway allowlist only. |
+| Account external admin/creator APIs | Yes | Routed through Gateway allowlist only. |
+| Game Design external admin/creator APIs | Yes | Routed through Gateway allowlist only. |
+| Game Session external admin/creator APIs | Yes | Routed through Gateway allowlist only. |
 | Social & Groups admin APIs | Yes | Routed through Gateway allowlist only. |
 | World Management, Entity Management, Game Logic, Automation & Scripting direct APIs | No by default | Internal-only service surfaces unless a dedicated design update explicitly adds an edge route group and auth model. |
 
@@ -117,7 +135,7 @@ Network policies and ingress configuration must reflect this model:
 - Only Gateway and TCP Proxy Service are reachable from external networks.
 - Logging & Admin Service accepts traffic only from Gateway (and from observability systems where necessary), not from the public internet or VPN clients directly.
 
-#### Gateway Management Plane Capability Matrix (Canonical)
+#### Infrastructure Management Plane Capability Matrix (Canonical)
 
 The management-plane contract must be explicit so operator tooling does not assume unsupported mutating behavior in production-like environments.
 
@@ -151,7 +169,7 @@ FireMUD uses two complementary authentication modes that share a common identity
   - Game Session delegates credential verification (including 2FA, external identity providers, and lockout rules) to the **Account Service**, which owns all credential and account-security decisions.  
   - On success, Game Session creates and maintains a Redis-backed gameplay session binding (tenant, character, tick-region context) and enforces one active binding per `{tenantId, gameInstanceId, characterId}`. Gameplay traffic is authenticated by this Redis session context rather than by browser-style JWTs sent on each message.
 
-- **Admin and creator sessions (control plane)**  
+- **Admin and creator sessions (external admin/creator API plane)**  
   - Admin and creator tools authenticate via HTTP/gRPC using JWTs issued by the **Account Service**, which publishes JWKS and remains the source of truth for token semantics.  
   - Internal services validate JWTs using a shared library and JWKS; they do not make ad-hoc token-parsing decisions.  
   - Spring Cloud Gateway forwards auth headers and can enforce coarse-grained route protections (for example, “admin endpoints require a valid JWT”) but does not own credential verification or authorization policy.
@@ -292,6 +310,16 @@ Within Game Session-owned PostgreSQL metadata, the default write split is also c
 - The **lease owner / executor** writes region-owned runtime control metadata such as remediation state, fenced coordination health records, and region-scoped cutover or lease-transition bookkeeping.
 - Shared records must not use unconstrained last-writer-wins updates. When both roles can touch the same logical record, the service contract must define a single-writer owner or a fenced compare-and-swap rule keyed by lease epoch or equivalent monotonic version.
 
+Minimal canonical Game Session PostgreSQL write split examples:
+
+| Record category | Canonical writer |
+| --- | --- |
+| Disconnect dedupe markers and session recovery breadcrumbs | Session front-end |
+| Front-end-owned operator/session bookkeeping | Session front-end |
+| Region remediation state and fenced coordination health records | Lease owner / executor |
+| Region-scoped cutover or lease-transition bookkeeping | Lease owner / executor |
+| Shared records touched by both roles | Only via an explicit single-writer owner or fenced CAS rule |
+
 ### Canonical Room Runtime Contract
 
 - World Management is the sole owner of runtime room occupancy/location and mutable room-environment state.
@@ -316,6 +344,14 @@ Minimal interoperability requirements for the fence token:
 - Responses must echo the exact token value they satisfied so Game Session can reject mixed-token joins.
 - `fence_unsatisfied` is the required rejection shape for a missed fence; services must not silently upgrade to a newer snapshot.
 - A retry always uses a newly minted token; an older token is not reusable across later commands or refresh attempts.
+
+Minimal canonical room-read example:
+
+1. Game Session handling `LOOK` for `{tenantId=T1, gameInstanceId=G1, characterId=C7}` mints `roomReadFence=rf_9c2a`.
+2. Game Session calls World Management with `{tenantId:T1, gameInstanceId:G1, roomInstanceRef:R44, roomReadFence:"rf_9c2a"}`.
+3. Game Session calls Entity Management with `{tenantId:T1, gameInstanceId:G1, roomInstanceRef:R44, roomReadFence:"rf_9c2a"}`.
+4. Success path: both services return payloads that echo `roomReadFence:"rf_9c2a"`, and only then may Game Session compose canonical room state.
+5. Rejection path: if either service cannot satisfy that fence, it returns `fence_unsatisfied` for `rf_9c2a`; Game Session either retries with a freshly minted fence or returns an explicit room-view failure, but it must not join `rf_9c2a` data with a newer fence.
 
 > 🔗 See [Redis Architecture](./system-architecture-redis.md) for key structure and durability strategies.
 
@@ -403,9 +439,9 @@ From the perspective of admin and moderation tooling there are two broad classes
 - **Core admin actions** – Feature flag toggles, bans/unbans, basic account and session controls, and other actions that primarily talk to domain microservices (for example, Account, Game Session, Social & Groups) via the Gateway. These are designed to remain available even if Elasticsearch, Prometheus, Jaeger, or Alertmanager are temporarily unavailable.
 - **Observability-driven workflows** – Log search, metrics and trace dashboards, and alert-centric investigations that depend on Elasticsearch, Prometheus, Jaeger, and Alertmanager being healthy. These surfaces may degrade or become read-only during observability outages but should not block core admin actions.
 
-Implementations of Logging & Admin must preserve this separation with independent readiness/degradation behavior and resource isolation so observability outages do not take down the operator control plane.
+Implementations of Logging & Admin must preserve this separation with independent readiness/degradation behavior and resource isolation so observability outages do not take down the operator-facing paths on the external admin/creator API plane.
 
-For gameplay/chat moderation specifically, the control plane and enforcement plane must remain aligned under the canonical moderation propagation contract:
+For gameplay/chat moderation specifically, the operator policy plane and enforcement plane must remain aligned under the canonical moderation propagation contract:
 
 - Logging & Admin emits versioned moderation policy snapshots and monotonic invalidations per `{tenantId, policyScope}` using durable outbox delivery for business-significant changes.
 - Game Session and Social & Groups maintain bounded-staleness caches keyed by `{tenantId, policyScope}` and must record the `policyVersion` used for each enforcement decision that reaches an audit trail.

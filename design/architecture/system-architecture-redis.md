@@ -59,6 +59,12 @@ Different readers care about different aspects of Redis:
 
 For quick answers about prefixes and which doc to open next, use the **Redis Cheat Sheet** (`system-architecture-redis-cheatsheet.md`).
 
+When this hub introduces or sharpens canonical coordination contracts, keep the cheat sheet and the owning service Redis sections in sync with the same names and authority split. That applies especially to:
+
+- `tick:{tenantRegionTag}:session-binding:<entityId>`
+- `binding_generation`
+- `automationDispatchId`
+
 ---
 
 ## Redis Coordination Invariants
@@ -388,6 +394,7 @@ This table lists representative coordination keys and their responsibilities. Fu
 | `tick:{tenantRegionTag}:lock:<entityId>` | Lock for an entity during tick execution within a region. |
 | `tick:{tenantRegionTag}:pending` | Staged results for a tick region (single in‑flight tick). |
 | `tick:{tenantRegionTag}:queue:<entityId>` | Per‑entity command queue within a region. |
+| `tick:{tenantRegionTag}:session-binding:<entityId>` | Region-authoritative gameplay session binding for an entity. Stores the currently admitted `sessionId` and `binding_generation` for region-local command admission and takeover cleanup. |
 | `retry:{tenantRegionTag}` | Retry queue for failed actions, keyed by `next_eligible_tick_id` on the target region timeline (not wall-clock due time). |
 | `timer:{tenantRegionTag}` | Sorted set of timers for a region; score is expiration timestamp (ms), members encode entity/effect metadata. |
 | `remote:<tenantId>:<entityId>` | Best‑effort, TTL-bounded hint marker for cross‑region follow‑ups (durable follow‑ups live in PostgreSQL). Default `remote_hint_ttl_ms = 60_000`; expiry/missing keys affect latency only. |

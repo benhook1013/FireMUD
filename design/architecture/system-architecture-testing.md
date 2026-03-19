@@ -9,6 +9,54 @@ Unless a more specific runbook defines another canonical evidence path for the s
 For first-live and reopen events, the illustrative `traffic-open-record/v1` shape in `design/architecture/system-architecture-backup-recovery.md#hobby-traffic-open-evidence` is the canonical example artifact for this retained evidence.
 That artifact should minimally preserve: the event identity (`deploymentRef` or `recoveryRef`), the operator identity and timestamp, the backing preflight or smoke evidence reference, and the retained results for the authoritative external pager/deadman verification plus mirrored `entrypath_blackbox_probe_success` / `observability_deadman_heartbeat_timestamp_seconds` / `playerflow_canary_*` checks.
 
+Illustrative retained evidence shape for a prod-like observability smoke or hobby traffic-open event:
+
+```json
+{
+  "deploymentRef": "staging-2026-03-19-a",
+  "verifiedAt": "2026-03-19T10:55:00Z",
+  "verifiedBy": "operator@example",
+  "preflightEvidenceRef": "ci://observability-smoke/2026-03-19T10:40:00Z",
+  "externalAuthority": {
+    "deadmanIncidentOpened": true,
+    "entrypointChecks": {
+      "prometheus": "green",
+      "alertmanager": "green",
+      "grafana": "green",
+      "kibana_log_query": "green",
+      "jaeger_query": "green"
+    }
+  },
+  "mirroredSignals": {
+    "entrypath_blackbox_probe_success": [
+      {"path": "websocket", "target": "staging-web-gateway", "value": 1},
+      {"path": "telnet", "target": "staging-telnet-edge", "value": 1}
+    ],
+    "observability_deadman_heartbeat_timestamp_seconds": {
+      "source": "staging",
+      "value": 1773917600
+    },
+    "playerflow_canary_success": [
+      {"flow": "login", "path": "websocket", "target": "staging-web-gateway", "value": 1},
+      {"flow": "command", "path": "websocket", "target": "staging-web-gateway", "value": 1}
+    ]
+  },
+  "canaryAlerts": [
+    {"alert": "PlayerFlowCanaryLoginFailed", "severity": "P0", "exerciseResult": "passed"},
+    {"alert": "PlayerFlowCanaryCommandFailed", "severity": "P1", "exerciseResult": "passed"},
+    {"alert": "PlayerFlowCanaryLatencyHigh", "severity": "P1", "exerciseResult": "passed"}
+  ],
+  "logPipelineQueryability": {
+    "traceId": "9c8d7e6f5a4b3210",
+    "queryPath": "firemud-logs-*",
+    "queryableWithinSeconds": 74,
+    "verifiedFields": ["service", "traceId", "tenantId", "regionId", "playerId"]
+  }
+}
+```
+
+This example is illustrative rather than exhaustive. Equivalent retained evidence is acceptable as long as it preserves the same canonical checks and operator accountability.
+
 ---
 
 ## Testing Scope
@@ -153,7 +201,7 @@ In addition to functional, load, and security tests, FireMUD treats observabilit
   - Fail the check if any expected service path emits only free-form messages without these fields, because incident runbooks and Kibana drilldowns depend on those keys.
   - In prod-like observability smoke, also verify end-to-end log pipeline queryability:
     - run a synthetic login + command + tick flow that records expected `traceId` values,
-    - verify the resulting records arrive in the canonical Elasticsearch/Kibana log-query path within the environment's bounded indexing delay,
+    - verify the resulting records arrive in the canonical Elasticsearch/Kibana log-query path within the environment's bounded indexing delay (default starting point: within 2 minutes unless the environment documents a stricter bound),
     - verify those records are retrievable by `service` and `traceId`, plus `tenantId` / `regionId` / `playerId` when applicable,
     - fail readiness if structured logs are emitted but not queryable end-to-end through the documented log-query path.
 
@@ -168,9 +216,9 @@ Prod-like environments that advertise player-experience monitoring must also val
 - Verify `playerflow_canary_latency_ms{flow="command",path=...}` is exported with millisecond semantics.
 - Verify canary labels remain low-cardinality (`flow`, `path`, `target`) and do not include account IDs, tenant IDs, player IDs, or trace IDs.
 - Verify the canonical canary alert path can be exercised in non-production without using production paging destinations:
-  - login canary failure trips `PlayerFlowCanaryLoginFailed` (or the documented environment-equivalent canonical alert),
-  - representative command failure trips `PlayerFlowCanaryCommandFailed`,
-  - controlled latency degradation trips `PlayerFlowCanaryLatencyHigh`,
+  - login canary failure trips `PlayerFlowCanaryLoginFailed` with `severity="P0"` (or the documented environment-equivalent canonical alert),
+  - representative command failure trips `PlayerFlowCanaryCommandFailed` with `severity="P1"`,
+  - controlled latency degradation trips `PlayerFlowCanaryLatencyHigh` with `severity="P1"`,
   - alert labels preserve `owner`, `severity`, and `runbook` from the architecture contract.
 - These checks are required for prod-like observability smoke because live-traffic SLIs alone are not sufficient in low-traffic periods.
 
