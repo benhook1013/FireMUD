@@ -28,7 +28,7 @@ public abstract class AbstractReloadingBlockingGrpcClient<TStub> implements Auto
       CommonGrpcClientProperties tlsProps,
       GrpcChannelFactory channelFactory,
       Class<?> loggerClass) {
-    this.endpoints = copyEndpoints(endpoints);
+    this.endpoints = endpoints.copy();
     this.tlsProps = tlsProps.copy();
     this.channelFactory = channelFactory;
     this.logger = LoggingUtil.getLogger(loggerClass);
@@ -100,18 +100,5 @@ public abstract class AbstractReloadingBlockingGrpcClient<TStub> implements Auto
     } catch (SSLException e) {
       logger.error("Failed to reload gRPC channel", e);
     }
-  }
-
-  private static ServiceEndpointsProperties copyEndpoints(ServiceEndpointsProperties source) {
-    var copy = new ServiceEndpointsProperties();
-    copy.setAccountService(source.getAccountService());
-    copy.setGameSessionService(source.getGameSessionService());
-    copy.setGameDesignService(source.getGameDesignService());
-    copy.setGameLogicService(source.getGameLogicService());
-    copy.setWorldManagementService(source.getWorldManagementService());
-    copy.setEntityManagementService(source.getEntityManagementService());
-    copy.setLoggingAdminService(source.getLoggingAdminService());
-    copy.setAutomationScriptingService(source.getAutomationScriptingService());
-    return copy;
   }
 }

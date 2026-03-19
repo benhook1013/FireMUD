@@ -16,8 +16,8 @@ public abstract class AbstractBlockingGrpcClient<TStub> implements AutoCloseable
       ServiceEndpointsProperties endpoints,
       CommonGrpcClientProperties tlsProps,
       GrpcChannelFactory channelFactory) {
-    this.endpoints = endpoints;
-    this.tlsProps = tlsProps;
+    this.endpoints = endpoints.copy();
+    this.tlsProps = tlsProps.copy();
     this.channelFactory = channelFactory;
   }
 

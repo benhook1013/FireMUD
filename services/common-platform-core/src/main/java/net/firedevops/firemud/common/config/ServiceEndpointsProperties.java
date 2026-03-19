@@ -15,4 +15,18 @@ public class ServiceEndpointsProperties {
   private String loggingAdminService;
   private String automationScriptingService;
   private String socialGroupsService;
+
+  public ServiceEndpointsProperties copy() {
+    ServiceEndpointsProperties copy = new ServiceEndpointsProperties();
+    copy.setAccountService(accountService);
+    copy.setGameSessionService(gameSessionService);
+    copy.setGameDesignService(gameDesignService);
+    copy.setGameLogicService(gameLogicService);
+    copy.setWorldManagementService(worldManagementService);
+    copy.setEntityManagementService(entityManagementService);
+    copy.setLoggingAdminService(loggingAdminService);
+    copy.setAutomationScriptingService(automationScriptingService);
+    copy.setSocialGroupsService(socialGroupsService);
+    return copy;
+  }
 }

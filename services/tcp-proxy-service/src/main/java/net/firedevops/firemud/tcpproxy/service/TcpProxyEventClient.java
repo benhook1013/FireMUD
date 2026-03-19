@@ -40,21 +40,8 @@ public class TcpProxyEventClient implements AutoCloseable {
 
   public TcpProxyEventClient(
       ServiceEndpointsProperties endpoints, CommonGrpcClientProperties tlsProps) {
-    this.endpoints = copyEndpoints(endpoints);
+    this.endpoints = endpoints.copy();
     this.tlsProps = tlsProps.copy();
-  }
-
-  private static ServiceEndpointsProperties copyEndpoints(ServiceEndpointsProperties src) {
-    var copy = new ServiceEndpointsProperties();
-    copy.setAccountService(src.getAccountService());
-    copy.setGameSessionService(src.getGameSessionService());
-    copy.setGameDesignService(src.getGameDesignService());
-    copy.setGameLogicService(src.getGameLogicService());
-    copy.setWorldManagementService(src.getWorldManagementService());
-    copy.setEntityManagementService(src.getEntityManagementService());
-    copy.setLoggingAdminService(src.getLoggingAdminService());
-    copy.setAutomationScriptingService(src.getAutomationScriptingService());
-    return copy;
   }
 
   @PostConstruct
