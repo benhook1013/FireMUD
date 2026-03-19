@@ -25,6 +25,10 @@ gradlePlugin {
             id = "net.firedevops.firemud.stateful-service-conventions"
             implementationClass = "net.firedevops.firemud.FiremudStatefulServiceConventionsPlugin"
         }
+        register("firemudSecuredStatefulServiceConventions") {
+            id = "net.firedevops.firemud.secured-stateful-service-conventions"
+            implementationClass = "net.firedevops.firemud.FiremudSecuredStatefulServiceConventionsPlugin"
+        }
         register("firemudJwtConventions") {
             id = "net.firedevops.firemud.jwt-conventions"
             implementationClass = "net.firedevops.firemud.FiremudJwtConventionsPlugin"
