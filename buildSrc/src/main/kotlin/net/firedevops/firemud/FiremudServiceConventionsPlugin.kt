@@ -22,6 +22,7 @@ class FiremudServiceConventionsPlugin : Plugin<Project> {
             dependencies.add("implementation", libs.findLibrary("spring.boot.starter.web").get())
             dependencies.add("implementation", project.project(":common-data-runtime"))
             dependencies.add("implementation", project.project(":common-saga"))
+            dependencies.add("implementation", project.project(":common-web-support"))
             dependencies.add("implementation", libs.findLibrary("grpc.spring.boot.starter").get())
             dependencies.add("implementation", libs.findLibrary("micrometer.core").get())
             dependencies.add("implementation", libs.findLibrary("micrometer.registry.prometheus").get())

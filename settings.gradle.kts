@@ -4,9 +4,6 @@ plugins {
 
 rootProject.name = "firemud"
 
-include("common-library")
-project(":common-library").projectDir = File("services/common-library")
-
 include("common-platform-core")
 project(":common-platform-core").projectDir = File("services/common-platform-core")
 
@@ -18,6 +15,9 @@ project(":common-data-runtime").projectDir = File("services/common-data-runtime"
 
 include("common-test-support")
 project(":common-test-support").projectDir = File("services/common-test-support")
+
+include("common-web-support")
+project(":common-web-support").projectDir = File("services/common-web-support")
 
 include("common-saga")
 project(":common-saga").projectDir = File("services/common-saga")
