@@ -227,6 +227,12 @@ subprojects {
         enabled = fullCheck
         excludeFilter.set(rootProject.file("config/spotbugs/spotbugs-exclude.xml"))
         setIgnoreFailures(true)
+        when (name) {
+            "spotbugsMain" -> dependsOn("compileJava", "processResources")
+            "spotbugsTest" -> dependsOn("compileTestJava", "processTestResources")
+            "spotbugsIntegrationTest" -> dependsOn("compileIntegrationTestJava", "processIntegrationTestResources")
+            "spotbugsCrossServiceTest" -> dependsOn("compileCrossServiceTestJava", "processCrossServiceTestResources")
+        }
         // Exclude generated sources and protobuf-generated packages from analysis
         val generatedDir = "${File.separator}generated${File.separator}"
         val protoPackages = listOf("net/firedevops/firemud/**/v1/**")
@@ -242,14 +248,6 @@ subprojects {
                 .map { fileTree(it) { exclude(protoPackages) } }
         )
         auxClassPaths.from(originalClassDirs)
-    }
-
-    // Ensure SpotBugs runs after compilation
-    tasks.named("spotbugsMain") {
-        dependsOn("compileJava", "processResources")
-    }
-    tasks.named("spotbugsTest") {
-        dependsOn("compileTestJava", "processTestResources")
     }
 
     // Gate Spotless checks behind fullCheck (CI or -PfullCheck)
