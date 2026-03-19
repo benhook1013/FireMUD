@@ -1,17 +1,14 @@
 package net.firedevops.firemud.gamesession.client;
 
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
-import io.grpc.ManagedChannel;
 import jakarta.annotation.PostConstruct;
 import javax.net.ssl.SSLException;
-import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
+import net.firedevops.firemud.common.grpc.AbstractBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.entitymanagement.v1.EntityManagementServiceGrpc;
 import net.firedevops.firemud.entitymanagement.v1.PingRequest;
 import net.firedevops.firemud.entitymanagement.v1.PingResponse;
-import net.firedevops.firemud.gamesession.config.DevIsolatedProperties;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
@@ -21,54 +18,40 @@ import org.springframework.stereotype.Component;
     name = "game-session.dev-isolated",
     havingValue = "false",
     matchIfMissing = false)
-@SuppressFBWarnings(
-    value = "EI_EXPOSE_REP2",
-    justification = "Configuration and channel references remain internal")
-public final class EntityManagementClient implements AutoCloseable {
-  private final ServiceEndpointsProperties endpoints;
-  private final CommonGrpcClientProperties tlsProps;
-  private final DevIsolatedProperties devIsolatedProperties;
-  private final GrpcChannelFactory channelFactory;
-  private static final org.slf4j.Logger logger =
-      LoggingUtil.getLogger(EntityManagementClient.class);
-  private ManagedChannel channel;
-  private EntityManagementServiceGrpc.EntityManagementServiceBlockingStub stub;
+public final class EntityManagementClient
+    extends AbstractBlockingGrpcClient<
+        EntityManagementServiceGrpc.EntityManagementServiceBlockingStub> {
 
   public EntityManagementClient(
       ServiceEndpointsProperties endpoints,
       CommonGrpcClientProperties tlsProps,
-      DevIsolatedProperties devIsolatedProperties,
       GrpcChannelFactory channelFactory) {
-    this.endpoints = endpoints;
-    this.tlsProps = tlsProps;
-    this.devIsolatedProperties = devIsolatedProperties;
-    this.channelFactory = channelFactory;
+    super(endpoints, tlsProps, channelFactory);
   }
 
   @PostConstruct
   void init() throws SSLException {
-    if (devIsolatedProperties.isDevIsolated()) {
-      logger.info(
-          "Dev-isolated mode enabled; skipping EntityManagementClient channel initialization");
-      return;
-    }
-    String target = endpoints.getEntityManagementService();
-    if (target == null || target.isEmpty()) {
-      target = "entity-management-service:6565";
-    }
-    channel = channelFactory.buildChannel(target, 6565, tlsProps, true);
-    stub = EntityManagementServiceGrpc.newBlockingStub(channel).withCompression("gzip");
+    initClient();
+  }
+
+  @Override
+  protected String configuredTarget(ServiceEndpointsProperties endpoints) {
+    return endpoints.getEntityManagementService();
+  }
+
+  @Override
+  protected String defaultTarget() {
+    return "entity-management-service:6565";
+  }
+
+  @Override
+  protected EntityManagementServiceGrpc.EntityManagementServiceBlockingStub buildStub(
+      io.grpc.ManagedChannel channel) {
+    return EntityManagementServiceGrpc.newBlockingStub(channel).withCompression("gzip");
   }
 
   /** Simple ping to verify connectivity. */
   public PingResponse ping() {
-    return stub.ping(PingRequest.newBuilder().build());
-  }
-
-  @Override
-  public void close() {
-    if (channel != null) {
-      channel.shutdown();
-    }
+    return stub().ping(PingRequest.newBuilder().build());
   }
 }
