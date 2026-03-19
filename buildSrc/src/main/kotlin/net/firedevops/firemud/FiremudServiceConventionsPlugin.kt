@@ -25,6 +25,8 @@ class FiremudServiceConventionsPlugin : Plugin<Project> {
             dependencies.add("implementation", libs.findLibrary("opentelemetry.api").get())
             dependencies.add("implementation", libs.findLibrary("opentelemetry.sdk").get())
             dependencies.add("implementation", libs.findLibrary("opentelemetry.exporter.otlp").get())
+            dependencies.add("testImplementation", libs.findLibrary("testcontainers.junit.jupiter").get())
+            dependencies.add("testImplementation", libs.findLibrary("testcontainers.postgresql").get())
         }
     }
 }

@@ -13,8 +13,6 @@ dependencies {
     implementation("io.netty:netty-all:4.2.10.Final")
     implementation(libs.spring.boot.starter.websocket)
     implementation(libs.spring.boot.starter.data.redis)
-    testImplementation(libs.testcontainers.junit.jupiter)
-    testImplementation(libs.testcontainers.postgresql)
     testImplementation(libs.micrometer.registry.prometheus)
     testImplementation("com.squareup.okhttp3:mockwebserver:5.3.2")
     testImplementation(libs.spring.boot.starter.webflux)

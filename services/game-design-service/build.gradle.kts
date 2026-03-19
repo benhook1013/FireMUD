@@ -11,6 +11,4 @@ dependencies {
     implementation(libs.aspectjweaver)
     implementation(libs.aws.sdk.s3)
     runtimeOnly(libs.postgresql)
-    testImplementation(libs.testcontainers.junit.jupiter)
-    testImplementation(libs.testcontainers.postgresql)
 }

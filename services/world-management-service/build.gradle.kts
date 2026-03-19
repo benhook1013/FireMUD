@@ -14,6 +14,4 @@ dependencies {
     runtimeOnly(libs.jjwt.jackson)
     runtimeOnly(libs.postgresql)
     testImplementation(libs.h2)
-    testImplementation(libs.testcontainers.junit.jupiter)
-    testImplementation(libs.testcontainers.postgresql)
 }
