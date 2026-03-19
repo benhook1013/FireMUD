@@ -3,8 +3,8 @@ package net.firedevops.firemud.springcloudgateway.service.impl;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
-import io.grpc.StatusRuntimeException;
 import io.grpc.stub.StreamObserver;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.gateway.v1.PingRequest;
 import net.firedevops.firemud.gateway.v1.PingResponse;
@@ -21,7 +21,8 @@ class GatewayManagementGrpcServiceTest {
   @Test
   void pingReturnsPong() {
     GatewayRouteService routeService = mock(GatewayRouteService.class);
-    GatewayManagementGrpcService service = new GatewayManagementGrpcService(routeService);
+    GatewayManagementGrpcService service =
+        new GatewayManagementGrpcService(routeService, new SimpleMeterRegistry());
 
     AtomicReference<PingResponse> ref = new AtomicReference<>();
     service.ping(
@@ -46,7 +47,8 @@ class GatewayManagementGrpcServiceTest {
   void upsertRouteValidCallsService() {
     GatewayRouteService routeService = mock(GatewayRouteService.class);
     when(routeService.upsert(any())).thenReturn(new GatewayRoute("id", "http://u", null, null));
-    GatewayManagementGrpcService service = new GatewayManagementGrpcService(routeService);
+    GatewayManagementGrpcService service =
+        new GatewayManagementGrpcService(routeService, new SimpleMeterRegistry());
 
     UpsertRouteRequest req =
         UpsertRouteRequest.newBuilder().setRouteId("id").setUri("http://u").build();
@@ -75,35 +77,37 @@ class GatewayManagementGrpcServiceTest {
   @Test
   void upsertRouteMissingFieldsReturnsError() {
     GatewayRouteService routeService = mock(GatewayRouteService.class);
-    GatewayManagementGrpcService service = new GatewayManagementGrpcService(routeService);
+    GatewayManagementGrpcService service =
+        new GatewayManagementGrpcService(routeService, new SimpleMeterRegistry());
 
     UpsertRouteRequest req = UpsertRouteRequest.newBuilder().build();
-    AtomicReference<Throwable> err = new AtomicReference<>();
+    AtomicReference<UpsertRouteResponse> ref = new AtomicReference<>();
     service.upsertRoute(
         req,
         new StreamObserver<>() {
           @Override
-          public void onNext(UpsertRouteResponse value) {}
+          public void onNext(UpsertRouteResponse value) {
+            ref.set(value);
+          }
 
           @Override
-          public void onError(Throwable t) {
-            err.set(t);
-          }
+          public void onError(Throwable t) {}
 
           @Override
           public void onCompleted() {}
         });
 
-    assertNotNull(err.get());
-    StatusRuntimeException ex = (StatusRuntimeException) err.get();
-    assertEquals(io.grpc.Status.INVALID_ARGUMENT.getCode(), ex.getStatus().getCode());
+    assertNotNull(ref.get());
+    assertFalse(ref.get().getSuccess());
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
   }
 
   @Test
   void removeRouteNotFoundReturnsErrorDetail() {
     GatewayRouteService routeService = mock(GatewayRouteService.class);
     when(routeService.remove("missing")).thenReturn(false);
-    GatewayManagementGrpcService service = new GatewayManagementGrpcService(routeService);
+    GatewayManagementGrpcService service =
+        new GatewayManagementGrpcService(routeService, new SimpleMeterRegistry());
 
     RemoveRouteRequest req = RemoveRouteRequest.newBuilder().setRouteId("missing").build();
     AtomicReference<RemoveRouteResponse> ref = new AtomicReference<>();

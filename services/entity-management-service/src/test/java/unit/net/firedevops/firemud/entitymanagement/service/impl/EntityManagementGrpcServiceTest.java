@@ -1,9 +1,8 @@
 package net.firedevops.firemud.entitymanagement.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 
-import io.grpc.Status;
-import io.grpc.StatusRuntimeException;
 import io.grpc.stub.StreamObserver;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.entitymanagement.service.CharacterService;
@@ -106,25 +105,24 @@ class EntityManagementGrpcServiceTest {
         new EntityManagementGrpcService(
             pingService, characterService, inventoryService, roomEntityService, meterRegistry);
 
-    AtomicReference<Throwable> err = new AtomicReference<>();
+    AtomicReference<PingResponse> ref = new AtomicReference<>();
     service.ping(
         PingRequest.getDefaultInstance(),
         new StreamObserver<>() {
           @Override
-          public void onNext(PingResponse value) {}
+          public void onNext(PingResponse value) {
+            ref.set(value);
+          }
 
           @Override
-          public void onError(Throwable t) {
-            err.set(t);
-          }
+          public void onError(Throwable t) {}
 
           @Override
           public void onCompleted() {}
         });
 
-    assertEquals(
-        io.grpc.Status.INTERNAL.getCode(),
-        ((io.grpc.StatusRuntimeException) err.get()).getStatus().getCode());
+    assertNotNull(ref.get());
+    assertEquals("INTERNAL", ref.get().getError().getCode());
   }
 
   @Test
@@ -184,7 +182,8 @@ class EntityManagementGrpcServiceTest {
         new EntityManagementGrpcService(
             pingService, characterService, inventoryService, roomEntityService, meterRegistry);
 
-    AtomicReference<Throwable> err = new AtomicReference<>();
+    AtomicReference<net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse>
+        ref = new AtomicReference<>();
     service.listCharactersByAccount(
         net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountRequest.newBuilder()
             .setAccountId("1")
@@ -192,18 +191,18 @@ class EntityManagementGrpcServiceTest {
         new StreamObserver<>() {
           @Override
           public void onNext(
-              net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse value) {}
+              net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse value) {
+            ref.set(value);
+          }
 
           @Override
-          public void onError(Throwable t) {
-            err.set(t);
-          }
+          public void onError(Throwable t) {}
 
           @Override
           public void onCompleted() {}
         });
 
-    assertEquals(
-        Status.INTERNAL.getCode(), ((StatusRuntimeException) err.get()).getStatus().getCode());
+    assertNotNull(ref.get());
+    assertEquals("INTERNAL", ref.get().getError().getCode());
   }
 }

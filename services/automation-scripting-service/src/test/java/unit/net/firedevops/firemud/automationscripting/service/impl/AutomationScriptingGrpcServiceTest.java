@@ -3,9 +3,8 @@ package net.firedevops.firemud.automationscripting.service.impl;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 
-import io.grpc.Status;
-import io.grpc.StatusRuntimeException;
 import io.grpc.stub.StreamObserver;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.automationscripting.service.NpcFormationService;
 import net.firedevops.firemud.automationscripting.service.PingService;
@@ -27,7 +26,11 @@ class AutomationScriptingGrpcServiceTest {
     NpcFormationService formationService = Mockito.mock(NpcFormationService.class);
     AutomationScriptingGrpcService service =
         new AutomationScriptingGrpcService(
-            pingService, scriptService, versionService, formationService);
+            pingService,
+            scriptService,
+            versionService,
+            formationService,
+            new SimpleMeterRegistry());
 
     AtomicReference<PingResponse> ref = new AtomicReference<>();
     service.ping(
@@ -57,7 +60,11 @@ class AutomationScriptingGrpcServiceTest {
     NpcFormationService formationService = Mockito.mock(NpcFormationService.class);
     AutomationScriptingGrpcService service =
         new AutomationScriptingGrpcService(
-            pingService, scriptService, versionService, formationService);
+            pingService,
+            scriptService,
+            versionService,
+            formationService,
+            new SimpleMeterRegistry());
 
     AtomicReference<PingResponse> ref = new AtomicReference<>();
     service.ping(
@@ -81,7 +88,7 @@ class AutomationScriptingGrpcServiceTest {
   }
 
   @Test
-  void unexpectedErrorReturnsInternal() {
+  void unexpectedErrorReturnsInternalResponse() {
     PingService pingService = Mockito.mock(PingService.class);
     Mockito.when(pingService.ping()).thenThrow(new RuntimeException("boom"));
     ScriptDefinitionService scriptService = Mockito.mock(ScriptDefinitionService.class);
@@ -89,26 +96,29 @@ class AutomationScriptingGrpcServiceTest {
     NpcFormationService formationService = Mockito.mock(NpcFormationService.class);
     AutomationScriptingGrpcService service =
         new AutomationScriptingGrpcService(
-            pingService, scriptService, versionService, formationService);
+            pingService,
+            scriptService,
+            versionService,
+            formationService,
+            new SimpleMeterRegistry());
 
-    AtomicReference<Throwable> err = new AtomicReference<>();
+    AtomicReference<PingResponse> ref = new AtomicReference<>();
     service.ping(
         PingRequest.getDefaultInstance(),
         new StreamObserver<>() {
           @Override
-          public void onNext(PingResponse value) {}
+          public void onNext(PingResponse value) {
+            ref.set(value);
+          }
 
           @Override
-          public void onError(Throwable t) {
-            err.set(t);
-          }
+          public void onError(Throwable t) {}
 
           @Override
           public void onCompleted() {}
         });
 
-    assertNotNull(err.get());
-    StatusRuntimeException ex = (StatusRuntimeException) err.get();
-    assertEquals(Status.INTERNAL.getCode(), ex.getStatus().getCode());
+    assertNotNull(ref.get());
+    assertEquals("INTERNAL", ref.get().getError().getCode());
   }
 }
