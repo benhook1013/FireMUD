@@ -284,7 +284,7 @@ jobs:
               return "⏭️";
             };
 
-            const checks = [
+            const validationChecks = [
               ["Validation gate", "${{ needs.validation-gate.result }}"],
               ["Buf generation", "${{ needs.buf-check.result }}"],
               ["Dockerfile lint", "${{ needs.docker-lint.result }}"],
@@ -294,10 +294,10 @@ jobs:
               ["Service build/test matrix", "${{ needs.build-and-test.result }}"],
             ];
 
-            const failedChecks = checks.filter(([, result]) =>
+            const failedChecks = validationChecks.filter(([, result]) =>
               ["failure", "cancelled", "timed_out", "action_required"].includes(result)
             );
-            const pendingChecks = checks.filter(([, result]) =>
+            const pendingChecks = validationChecks.filter(([, result]) =>
               ["pending", "in_progress", "queued"].includes(result)
             );
 
@@ -311,14 +311,14 @@ jobs:
               "### Validation Summary",
               headline,
               "",
-              ...checks.map(([name, result]) => `- ${statusIcon(result)} ${name}: \`${result}\``),
+              ...validationChecks.map(([name, result]) => `- ${statusIcon(result)} ${name}: \`${result}\``),
               "",
               "Coverage reports and failure logs are available in the workflow artifacts."
             ].join("\n");
 
             await core.summary
               .addRaw(headline, true)
-              .addList(checks.map(([name, result]) => `${statusIcon(result)} ${name}: ${result}`))
+              .addList(validationChecks.map(([name, result]) => `${statusIcon(result)} ${name}: ${result}`))
               .write();
 
             const { data: comments } = await github.rest.issues.listComments({

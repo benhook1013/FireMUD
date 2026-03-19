@@ -73,3 +73,87 @@ jobs:
             echo "### 📜 License Scan Summary" >> $GITHUB_STEP_SUMMARY
             cat "$SUMMARY_FILE" >> $GITHUB_STEP_SUMMARY
           fi
+
+  static-analysis-summary:
+    name: Static Analysis Summary
+    runs-on: ubuntu-latest
+    needs: [ort-scan]
+    if: github.event_name == 'pull_request' && always()
+    steps:
+      - name: 💬 Publish Static Analysis Summary Comment
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const statusIcon = (value) => {
+              if (value === "success") return "✅";
+              if (value === "failure") return "❌";
+              if (value === "cancelled") return "⚪";
+              if (value === "pending" || value === "in_progress" || value === "queued") return "🟡";
+              return "⏭️";
+            };
+
+            const { data: checkRunsPage } = await github.rest.checks.listForRef({
+              ...context.repo,
+              ref: context.payload.pull_request.head.sha,
+              per_page: 100,
+            });
+
+            const normalizeStatus = (checkRun) => {
+              if (!checkRun) return "pending";
+              if (checkRun.status !== "completed") return checkRun.status;
+              return checkRun.conclusion ?? "pending";
+            };
+
+            const latestCheckRun = (name) =>
+              checkRunsPage.check_runs
+                .filter((checkRun) => checkRun.name === name)
+                .sort((a, b) => b.id - a.id)[0];
+
+            const checks = [
+              ["CodeQL analysis", normalizeStatus(latestCheckRun("CodeQL Analysis (java)"))],
+              ["License gate", "${{ needs.ort-scan.result }}"],
+            ];
+
+            const failedChecks = checks.filter(([, result]) =>
+              ["failure", "cancelled", "timed_out", "action_required"].includes(result)
+            );
+            const pendingChecks = checks.filter(([, result]) =>
+              ["pending", "in_progress", "queued"].includes(result)
+            );
+
+            let headline = "✅ Static analysis checks passed";
+            if (failedChecks.length > 0) {
+              headline = "❌ Static analysis checks failed";
+            } else if (pendingChecks.length > 0) {
+              headline = "🟡 Static analysis checks are still running";
+            }
+
+            const body = [
+              "### Static Analysis Summary",
+              headline,
+              "",
+              ...checks.map(([name, result]) => `- ${statusIcon(result)} ${name}: \`${result}\``),
+            ].join("\n");
+
+            const { data: comments } = await github.rest.issues.listComments({
+              ...context.repo,
+              issue_number: context.issue.number
+            });
+
+            const existing = comments.find(comment =>
+              comment.body.startsWith("### Static Analysis Summary")
+            );
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                ...context.repo,
+                comment_id: existing.id,
+                body
+              });
+            } else {
+              await github.rest.issues.createComment({
+                ...context.repo,
+                issue_number: context.issue.number,
+                body
+              });
+            }
