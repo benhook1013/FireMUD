@@ -46,13 +46,20 @@ An OpenAPI specification for the REST endpoints is available at `src/main/resour
   [Script Sandbox & Resource Limits](./sandbox-runtime-design.md).
 - The service listens for a `NotifyScriptVersionUpdate` event and reloads the
   specified patch into tenant-readiness state, validating compatibility and
-  running `onLoad` before any running instance is allowed to switch to it. See
+  running `onLoad` before any running instance is allowed to switch to it.
+  Tenant readiness is single-pending per tenant: if a newer publish arrives
+  before the current pending patch reaches a terminal state, the older pending
+  patch becomes `SUPERSEDED` and cannot later advance to `READY`. See
   [Hot Reload & Failure Handling](#hot-reload--failure-handling) for how
   tenant readiness and instance-scoped `activePatchVersion`,
   `pendingPatchVersion`, and `reloadState` are managed.
+  Example: if `P21` is in `ONLOAD_RUNNING` and `P22` is then published for the
+  same tenant, `P21` becomes `SUPERSEDED`, any not-yet-started `P21` `onLoad`
+  work is canceled, and only `P22` remains eligible to become `READY`.
 - Runtime execution is instance-aware even when patch readiness is tenant-scoped: a tenant-level `READY` patch is only eligible for pinning, while admission, timer scheduling, rollback pause, and plugin activation are evaluated per `<tenantId, gameInstanceId>`.
   Runtime patch state therefore cannot rely on one mutable tenant-wide `activePatchVersion`; implementations must track `activePatchVersion`, `pendingPatchVersion`, and `reloadState` per instance or per explicit pin cohort.
-- Direct script upload/update APIs (for example `UpdateScript`) are limited to bootstrap/dev tooling and must not be used as a production runtime publish path. Production patch rollout uses the Game Design–driven publish Saga and `NotifyScriptVersionUpdate` lifecycle (`PENDING_VALIDATION` -> `ONLOAD_RUNNING` -> `READY`/`FAILED`) so all runtime gating, audit, and rollback contracts are preserved.
+- Authoritative gameplay reads within one handler-scoped run must share the same runtime-issued snapshot token captured at admission. In practice, a `TriggerScriptEvent`-style ingress may carry an opaque `readSnapshotToken` equivalent to `<tenantId=T1, gameInstanceId=G7, regionId=R2, regionEpoch=14, tickId=981223>`, and every downstream gameplay-affecting read made during that run must forward the same token rather than silently reading a fresher tick midway through evaluation.
+- Direct script upload/update APIs (for example `UpdateScript`) are limited to bootstrap/dev tooling and must not be used as a production runtime publish path. Production patch rollout uses the Game Design-driven publish Saga and `NotifyScriptVersionUpdate` lifecycle (`PENDING_VALIDATION` -> `ONLOAD_RUNNING` -> `READY`/`FAILED`, with terminal `SUPERSEDED` for an older pending patch displaced by a newer publish) so all runtime gating, audit, and rollback contracts are preserved.
 - Each game's scripts live in tables keyed by `tenantId`, ensuring automation for
   one game cannot access another's data. Derived Redis coordination/index keys must preserve runtime instance isolation as well, not just tenant isolation; see [Multi-Tenancy](../../system-architecture-multi-tenancy.md).
 - Utilizes the [Shared Libraries](../../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
@@ -198,7 +205,7 @@ Script definitions are updated via `NotifyScriptVersionUpdate` from the Game Des
 
 - `NotifyScriptVersionUpdate` is a **tenant-readiness ingestion** signal, not an instance activation signal. It causes Automation & Scripting to ingest compiled graphs and bindings for `<tenantId, scriptPatchVersion>`, then run tenant-scoped readiness checks and `onLoad` before any running instance is allowed to pin that patch.
 - Tenant readiness is tracked separately from runtime-scope pin observation:
-  - Tenant readiness uses the patch lifecycle `PENDING_VALIDATION -> ONLOAD_RUNNING -> READY/FAILED`.
+  - Tenant readiness uses the patch lifecycle `PENDING_VALIDATION -> ONLOAD_RUNNING -> READY/FAILED`, plus terminal `SUPERSEDED` when a newer publish displaces an older pending patch for the same tenant.
   - Runtime scopes track only the patch observed as pinned for `<tenantId, gameInstanceId>` plus instance-scoped admission state such as `reloadState` and rollback pause.
 - When Game Session later pins a tenant-`READY` patch for a specific `<tenantId, gameInstanceId>`, leaders set runtime-scope `pendingPatchVersion` and `reloadState=RELOADING` while keeping the previously observed `activePatchVersion` unchanged. Scheduling is paused for that runtime scope: in-flight executions complete under the existing patch, but **new triggers are not admitted** for the affected `<tenantId, gameInstanceId>` while reload is in progress.
 - Instance reload does **not** rerun `onLoad`. Instead, leaders load the already-validated tenant-`READY` definitions for the newly observed pin, reconcile version-scoped timers and other derived scheduler state, then atomically switch the runtime scope to the new observed patch and clear `reloadState=IDLE`.
@@ -214,7 +221,7 @@ This behavior ensures that a script patch either becomes the new active version 
   entity.
 - `NotifyScriptVersionUpdate` – informs the service that a new `script_patch_version`
   is available for tenant-readiness ingestion; the service validates and stages
-  the patch for `PENDING_VALIDATION -> ONLOAD_RUNNING -> READY/FAILED`, while
+  the patch for `PENDING_VALIDATION -> ONLOAD_RUNNING -> READY/FAILED/SUPERSEDED`, while
   running instances reload only after a later pin change to that tenant-`READY`
   patch.
 - **Event ingress RPCs** – domain services such as the Game Session Service and Game Logic Service call event-ingress methods (for example, `TriggerScriptEvent` or a batch equivalent defined in `automation_scripting_service.proto`) to deliver script events. These RPCs carry:
@@ -367,7 +374,7 @@ Any additional, less common tuning variables should be documented alongside thei
 
 In addition to event-handling and test endpoints, the Automation & Scripting Service exposes control-plane APIs for script patch visibility and plugin lifecycle management. Script patch pin authority remains in Game Session/Logging & Admin; plugin runtime lifecycle authority lives in Automation & Scripting and is orchestrated by Logging & Admin.
 
-- `GetScriptPatchStatus(tenantId, scriptPatchVersion)` – returns the current lifecycle state (`PENDING_VALIDATION`, `ONLOAD_RUNNING`, `READY`, `FAILED`), `baseVersionId`, `abilitySchemaDigest`, timestamps, and any last-error details for the given `<tenantId, scriptPatchVersion>`.
+- `GetScriptPatchStatus(tenantId, scriptPatchVersion)` – returns the current lifecycle state (`PENDING_VALIDATION`, `ONLOAD_RUNNING`, `READY`, `FAILED`, `SUPERSEDED`), `baseVersionId`, `abilitySchemaDigest`, timestamps, and any last-error details for the given `<tenantId, scriptPatchVersion>`.
 - `ListScriptPatchStatuses(tenantId, status?, changedAfter?, changedBefore?)` – lists known script patches and their status for a tenant so operators and tools can see which patches are eligible to be pinned.
 - `ScriptPatchTenantStatusChanged` event – emitted whenever `<tenantId, scriptPatchVersion>` transitions between tenant readiness lifecycle states.
 - `ScriptPatchInstanceRolloutChanged` event – consumed as the authoritative instance rollout history stream produced by Game Session (`PINNED`, `ROLLED_BACK`, `REPINNED`) and projected into read APIs.
@@ -380,7 +387,7 @@ In addition to event-handling and test endpoints, the Automation & Scripting Ser
 
 Consumption rules for patch-status events:
 
-- Use `ScriptPatchTenantStatusChanged` for tenant readiness gates (`READY` / `FAILED`) and publish-validation UX.
+- Use `ScriptPatchTenantStatusChanged` for tenant readiness gates and publish-validation UX (`READY`, `FAILED`, and `SUPERSEDED` history).
 - Use `ScriptPatchInstanceRolloutChanged` for instance rollout progression and rollback history.
 - Read-model ownership for rollout status is Game Session pin mutations projected into query APIs via idempotent, replayable events keyed by `controlPlaneRequestId`.
 

@@ -139,6 +139,20 @@ Ownership and usage rules:
 - World creation, Game Session admission, and script-patch pinning consume this descriptor as input; they must not fetch "latest READY patch" or re-parse template JSON mid-flight.
 - If descriptor resolution fails because a dependency is missing, not `READY`, not attested, or not enforceable under `GetTemplateReferencePhase`, the launch fails before any instance rows are created.
 
+### Launch Orchestration Ownership
+
+The first implementation slice must use one control-plane launch orchestrator. The canonical owner is the Game Session instance-creation workflow consuming Game Design control-plane APIs.
+
+Required ordering:
+
+1. Read `GetTemplateReferencePhase(tenantId)` and fail fast unless the phase is `ENFORCED`.
+2. Call `ResolveLaunchDescriptor(...)` in Game Design and receive immutable resolved values.
+3. Read `GetPublishedReleaseBundle(tenantId, versionId)` and verify the attested release matches the resolved descriptor, including `generationConfigRevision` and attestation identity.
+4. Only after steps 1-3 succeed may the orchestrator create any persistent `gameInstanceId` row or request World Management to create `PREPARING` instance state.
+5. World creation then executes using only the resolved descriptor values and must not re-resolve template JSON, patch defaults, or release metadata mid-flight.
+
+No service may create persistent instance rows before this preflight sequence completes successfully. Partial provisioning before attestation/reference validation is not an allowed first-slice behavior.
+
 Illustrative control-plane schema:
 
 - Request: `ResolveLaunchDescriptorRequest { tenantId, gameTemplateId, requestedRuntimeFlags?, requestedScriptPatchVersion?, sourceVersionId?, targetVersionId? }`
@@ -218,6 +232,34 @@ Normative examples:
   }
 }
 ```
+
+- Preflight attestation mismatch rejection:
+
+```json
+{
+  "request": {
+    "tenantId": "t1",
+    "gameTemplateId": "gt-default"
+  },
+  "resolvedDescriptor": {
+    "launchDescriptorId": "ld-3001",
+    "versionId": "v42",
+    "generationConfigRevision": "genrev-42a1",
+    "releaseBundleRef": "prb:t1:v42"
+  },
+  "releaseBundle": {
+    "tenantId": "t1",
+    "versionId": "v42",
+    "generationConfigRevision": "genrev-42b9"
+  },
+  "error": {
+    "code": "RELEASE_ATTESTATION_MISMATCH",
+    "message": "Resolved launch descriptor does not match the current published release attestation for version v42."
+  }
+}
+```
+
+This failure occurs before any persistent `gameInstanceId` row or World `PREPARING` state is created.
 
 Illustrative startup sequence:
 

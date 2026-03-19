@@ -22,6 +22,7 @@ Before applying the detailed checklists below, follow this high‑level workflow
    - For **coordination prefixes**:
      - Update the reset policy matrix in `system-architecture-redis-reset-and-recovery.md` (prefix naming, role, reset tolerance).
      - Ensure any new or changed prefixes appear in the **Redis Cheat Sheet** (`system-architecture-redis-cheatsheet.md`) as a routed, documented example.
+     - Ensure the owning service README Redis sections mirror any authority split or bridge contract introduced here (for example `session:game:*` vs `tick:{tenantRegionTag}:session-binding:<entityId>`, `binding_generation`, or automation enqueue identities such as `automationDispatchId`).
    - For **cache/rate‑limit prefixes**:
      - Update the cache key catalog in `system-architecture-redis-cache.md` (prefix, role, owner, correctness class, reset tolerance).
      - Ensure the cheat sheet remains consistent with the cache catalog for any representative entries it lists.
@@ -39,6 +40,7 @@ Before applying the detailed checklists below, follow this high‑level workflow
    - Update or validate the corresponding runbooks in `system-architecture-redis-operations.md` and the Redis incident runbook so operators have a clear path for resets, repairs, and “accept loss” decisions.
 6. **Wire observability and metrics**
    - Ensure required metrics and alerts for AOF size/growth, tail‑loss, prefix key counts, and script outcomes are covered or updated in the Redis metrics catalog in `system-architecture-redis-operations.md`.
+   - When the change introduces new state-machine fields or outcome codes, ensure the operations docs and metrics catalog name them explicitly (for example `current_tick_state`, `STALE_SESSION_GENERATION`, and stale automation-dispatch outcomes) rather than relying on generic script-failure buckets.
    - Verify that dashboards and alerts referenced in service docs and the incident runbook line up with the new or changed prefixes/scripts.
 
 Only after these workflow steps are accounted for should a change be considered “ready” to leave design review and move into implementation.
@@ -71,9 +73,14 @@ Use this when adding or changing coordination prefixes (for example `tick:*`, `t
 
 - [ ] Key format uses `tenantId` (and `regionId` if applicable) as stable IDs, not user‑provided strings.
 - [ ] Region‑scoped keys use `{tenantRegionTag}` (or an equivalent canonical hash tag) so all keys for a region land in a single cluster slot.
+- [ ] Session-vs-region authority is explicit where applicable:
+  - [ ] `session:game:*` remains session-authoritative for reconnect/CAS semantics.
+  - [ ] Any region-local gameplay participation key (for example `tick:{tenantRegionTag}:session-binding:<entityId>`) is documented as region-authoritative and mutated only by region-lease scripts.
+  - [ ] Monotonic bridge fields such as `binding_generation` are named and their stale-generation behavior is documented.
 - [ ] Multi‑key scripts operating on this prefix:
   - [ ] Only touch keys that share the same hash tag and slot.
   - [ ] Do not mix coordination and cache prefixes in one invocation.
+- [ ] If a coordination flow uses session-to-region bridge scripts, that category is called out explicitly in the Lua Script Registry and service docs rather than treated as an unnamed region-lease special case.
 - [ ] For tick-region coordination, epoch/tick metadata is read and written through the canonical `tick:{tenantRegionTag}:meta` hash key defined in the Redis architecture doc, not via ad-hoc per-script metadata keys.
 
 ### Tail-Loss and Reset Behavior
@@ -92,6 +99,7 @@ Use this when adding or changing coordination prefixes (for example `tick:*`, `t
   - [ ] Key counts or approximate size for this prefix by tenant/region.
   - [ ] Error or outcome codes from relevant Lua scripts.
   - [ ] Any important watermarks (for example, tick IDs, backlog depths).
+- [ ] For session-to-region bridge flows, metrics and alerts can distinguish stale-generation cleanup, successful region rebinds, and orphaned region bindings detected after session expiry.
 - [ ] Dashboards and alerts consider this prefix when assessing tail‑loss SLOs.
 
 ---

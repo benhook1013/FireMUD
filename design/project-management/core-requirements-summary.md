@@ -5,7 +5,8 @@ This summary highlights the **most important product and infrastructure requirem
 ## Top-Level Product Goals
 
 - **Multi-tenant MUD hosting** – One platform hosts multiple independent games, each with isolated world data, player characters, and configuration.
-- **Realm-based gameplay** – Hosted games may expose a public production realm plus explicit non-production playtest forks for creator-led validation.
+- **Realm-based gameplay** – Hosted games may expose a publicly discoverable production realm plus explicit non-production playtest forks for creator-led validation. In v1, those non-production realms require explicit access grants.
+- **Discovery-first player admission** – First-party clients discover visible worlds, realms, and characters before socket admission and then complete the same canonical lobby `PLAY` flow as text clients.
 - **Powerful game design tools** – Game creators can shape worlds, NPCs, items, abilities, and rulesets without direct code changes.
 - **Real-time multiplayer** – Low-latency, text-first gameplay with support for Web and Telnet clients.
 - **Automation & scripting** – Designers can extend gameplay through scripts and automation, integrated with ticks and world events.

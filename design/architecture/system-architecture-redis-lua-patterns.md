@@ -30,6 +30,7 @@ Every coordination script belongs to a **script category** that constrains which
 | Tick staging / pending | `tick:{tenantRegionTag}:pending` and related effect structures | Single-key or shard-local multi-key scripts that operate entirely within one `{tenantRegionTag}` slot. |
 | Timers and retries | `timer:{tenantRegionTag}`, `retry:{tenantRegionTag}` | Shard-local scripts operating on keys that share the same `{tenantRegionTag}`; no cross-slot operations. |
 | Session CAS / bindings | `session:game:<tenantId>:<gameInstanceId>:<sessionId>`, `session:auth:<scope>:<tokenHash>` (for example `session:auth:tenant:<tenantId>:<tokenHash>`) | Single-key scripts; session keys are never mixed with tick keys in the same script unless all keys are shard-local to one `{tenantRegionTag}`. |
+| Session-to-region bridge | `tick:{tenantRegionTag}:session-binding:<entityId>` plus `tick-executor-lease:{tenantRegionTag}` | Region-lease scripts only. They update region-authoritative gameplay bindings using caller-supplied `sessionId` / `binding_generation` and never read `session:game:*` directly inside Lua. |
 | Maintenance / cleanup | Region-local maintenance keys under `tick:{tenantRegionTag}:*` or `timer:{tenantRegionTag}` | Shard-local scans and deletes constrained to one `{tenantRegionTag}` at a time; no cross-slot operations. |
 | Automation helpers (coordination role only) | `script-scheduler:{tenantRegionTag}:lastTickId` and similar | Shard-local scripts that operate on per-region scheduler metadata; must not touch Cache/Rate-Limit prefixes. |
 
@@ -153,6 +154,12 @@ Every region-lease script must perform the following validations before executin
 - **Lease token and epoch** – re-read `tick-executor-lease:{tenantRegionTag}` and compare its stored token and epoch to the supplied values in `ARGV`. If they differ or the key is missing, the script returns a non-mutating outcome such as `"STALE_LEASE"` / `"UNSUPPORTED_EPOCH"` and performs no writes.
 - **Lock tokens** – for each `tick:{tenantRegionTag}:lock:<entityId>` key included in `KEYS`, compare the stored token to the expected value. Any mismatch or absence yields a `"STALE_LOCK"` result without mutation.
 - **`tickId` guard via meta** – when touching `tick:{tenantRegionTag}:pending` or other tick-scoped structures, use the canonical metadata key `tick:{tenantRegionTag}:meta` as the monotonic guard: read `current_tick_id` from that hash and verify it is ≤ the requested `tickId` before staging new work. Commit/cleanup scripts abort if the guard indicates the requested `tickId` is out of order so only the intended tick makes progress. Any `tickId` fields embedded inside `pending` payloads are informational only and must not be used as guards.
+- **`current_tick_state` gate via meta** – region-lease scripts must also read `current_tick_state` from `tick:{tenantRegionTag}:meta` and obey the canonical state machine from the Redis hub doc:
+  - A new tick may be initialized only from a missing meta record or from a terminal state (`APPLIED` or `ABANDONED`) of the immediately prior tick.
+  - Replays for the same tick may continue only while `current_tick_state in {STAGED, RESOLVING}`.
+  - Hot-path scripts must never advance `current_tick_id` past a non-terminal tick.
+
+The Redis operations docs and metrics catalog should treat `current_tick_state` transitions as first-class observability surfaces so operators can tell whether regions are stuck in `STAGED` or `RESOLVING`, how often ticks terminate as `APPLIED` vs `ABANDONED`, and whether stale-timeline outcomes correlate with reset or recovery activity.
 
 These checks are enforced via the Lua Script Registry descriptors, generated key-builder helpers, and CI linting so reviewers can automatically catch regressions. Scripts that cannot make these validations are not allowed to touch tick/coordination prefixes.
 
@@ -167,6 +174,29 @@ Session scripts operate only on `session:game:<tenantId>:<gameInstanceId>:<sessi
   - Avoid partial updates that would leave the payload in a mixed version or conflicting binding state.
 
 These rules keep session scripts lightweight while still protecting reconnect and binding invariants. They deliberately avoid a region lease so that session operations are not coupled to tick leadership, but they still behave deterministically and idempotently around reconnection windows.
+
+Session scripts must not attempt to mutate region-scoped gameplay binding keys in the same invocation. Region-local gameplay authority lives under `tick:{tenantRegionTag}:session-binding:<entityId>` and is updated only by region-lease scripts using the monotonic `binding_generation` carried from the session contract. As a result:
+
+- `session:game:*` is authoritative for reconnect eligibility, session CAS fields, and the latest desired binding generation.
+- `tick:{tenantRegionTag}:session-binding:<entityId>` is authoritative for whether gameplay in a specific region currently recognizes that session.
+- Any cross-region takeover or disconnect flow is implemented as a session-only step plus one or more per-region lease-guarded steps; it is never a single Lua invocation spanning both key families.
+
+#### Session-to-region bridge scripts
+
+To make the session/region split implementable in cluster mode, Game Session owns a small category of **session-to-region bridge** scripts with these rules:
+
+- They are registered as **region-lease scripts**, not session-only scripts.
+- They operate only on region-local keys such as `tick:{tenantRegionTag}:session-binding:<entityId>` plus the region lease key for the same `{tenantRegionTag}`.
+- They receive the expected `sessionId` and `binding_generation` via `ARGV` from an already-validated session flow.
+- They return explicit non-mutating outcomes such as `"STALE_SESSION_GENERATION"`, `"STALE_LEASE"`, or `"ALREADY_BOUND"` when the requested bridge mutation should not proceed.
+
+This keeps cluster-slot correctness simple: the bridge step never needs to read `session:game:*` directly inside Lua, and the session step never writes region-local gameplay keys.
+
+Registry and ops expectations for this category:
+
+- Registry metadata should identify session-to-region bridge scripts explicitly so CI and reviewers can verify they touch only region-local binding keys plus the region lease.
+- Outcome enums should include bridge-specific stale-generation results such as `"STALE_SESSION_GENERATION"` and replay/no-op results such as `"ALREADY_BOUND"` or `"ALREADY_UNBOUND"` where applicable.
+- The Redis operations docs and metrics catalog should name these outcomes explicitly so operators can distinguish reconnect/takeover races from lease loss or generic script failures.
 
 #### Maintenance and non-lease scripts
 
@@ -193,6 +223,7 @@ Automation-related Lua scripts follow stricter cluster slotting rules to avoid `
 - Cross-boundary rules:
   - Automation scripts **never** perform multi-key operations that span both `automation:*` and `tick:*` prefixes in one `EVAL`/`EVALSHA` call.
   - Automation work is staged under `automation:queue:*` and `automation:tick:*` and handed off to Game Session via gRPC; only Game Session scripts mutate `tick:*` prefixes.
+  - Fairness-critical automation handoff is idempotent on a durable dispatch identity (for example `(scheduleId, gameInstanceId, regionEpoch, dueTickId, entityId, commandKind)` or an equivalent derived `automationDispatchId`) and must not depend on Redis queue contents as the sole dedupe record.
 
 CI must reject automation Lua scripts that:
 
@@ -203,6 +234,8 @@ From a correctness perspective, `automation:queue:*` and related automation cach
 
 - Scripts and callers must assume that queued items can be lost, duplicated, or reordered within the bounds described in the Redis hub doc.
 - Any automation contract that requires “exactly once” semantics or durable ordering must record its authoritative state in PostgreSQL or another durable store and use `automation:queue:*` only as a convenience layer for scheduling, not as the sole record of work.
+- For gameplay-equivalent automation, the authoritative handoff record is a durable PostgreSQL trigger-instance or outbox row keyed by the dispatch identity. Game Session treats the same identity as the dedupe key when enqueueing into `tick:{tenantRegionTag}:queue:<entityId>`.
+- The Redis operations docs and metrics catalog should name stale automation-dispatch outcomes explicitly (for example duplicate-dispatch no-op, stale epoch rejection, stale due-tick rejection) so on-call operators can separate healthy idempotent suppression from broken automation admission.
 
 ### Script Complexity and Runtime Limits
 
@@ -245,15 +278,18 @@ Bulk key-walking is reserved for **offline maintenance tooling**, not tick execu
     - The script reads the current epoch/tick metadata from the canonical metadata key:
       - `KEYS` must include `tick:{tenantRegionTag}:meta` (a hash as defined in the Redis architecture doc).
       - The script loads `region_epoch` and `current_tick_id` from that hash.
+      - The script also loads `current_tick_state` and refuses to advance to a newer tick while the stored state is non-terminal.
     - Behavior (hot-path tick staging/cleanup):
       - If the stored `region_epoch` does not match the expected epoch, the script returns a non-mutating `"STALE_EPOCH"` outcome and does not modify state; callers treat this as “reset or handoff happened, abandon this attempt and reacquire lease under the new epoch”.
       - For hot-path tick execution, callers must only invoke staging/cleanup scripts with `requestedTickId` equal to the scheduler’s current tick for that region (as derived from RegionStatus/ledger); under that assumption:
-        - If `current_tick_id` is unset, the script sets it to `requestedTickId` and stages new effects.
-        - If `current_tick_id == requestedTickId`, the script proceeds and treats existing effect entries as already staged (see Pattern 3).
-        - If `current_tick_id > requestedTickId`, the script returns a non-mutating “out-of-date” outcome and does not modify state; callers must not attempt to re-stage older ticks through these hot-path scripts and should instead rely on ledger-driven replay/maintenance flows to reconcile older work.
+        - If `current_tick_id` is unset, the script sets `current_tick_id = requestedTickId`, `current_tick_state = STAGED`, and stages new effects.
+        - If `current_tick_id == requestedTickId` and `current_tick_state in {STAGED, RESOLVING}`, the script proceeds and treats existing effect entries as already staged (see Pattern 3).
+        - If `current_tick_id < requestedTickId`, the script may only advance to the newer tick when the stored `current_tick_state` is terminal (`APPLIED` or `ABANDONED`) and `requestedTickId` is the immediate next scheduler tick for that region.
+        - If `current_tick_id > requestedTickId`, or if the stored state for an older tick is non-terminal, the script returns a non-mutating “out-of-date” outcome and does not modify state; callers must not attempt to re-stage older ticks through these hot-path scripts and should instead rely on ledger-driven replay/maintenance flows to reconcile older work.
       - Recovery rule:
         - These hot-path scripts are intentionally **not** the mechanism for reconstructing a lost older tick after tail-loss or reset.
         - First implementation replays older work directly from durable tick-batch manifests and ledger rows without re-materializing that old tick into `pending`.
+        - The caller records the older tick as `APPLIED` or `ABANDONED` in `tick:{tenantRegionTag}:meta` only after the durable ledger/reconciliation state is terminal; Redis `pending` contents alone are never sufficient evidence that the region may move on.
         - If FireMUD later introduces a dedicated recovery-restage script, it must be registered as a separate maintenance script category with its own explicit invariants, compatibility mode, and runbook entry; it must not silently reuse the normal tick staging contract.
         - Such a recovery-restage path is not considered specified or implementable until the corresponding maintenance runbook in the Redis operations docs names the entrypoint, scope restrictions, and post-run verification steps.
 

@@ -12,6 +12,10 @@
 
 - {{ Key architecture choice or pattern (e.g., gRPC, REST). }}
 - {{ State management approach or other design considerations. }}
+- Describe the service’s ingress and egress surfaces using the canonical top-level terms: `player traffic plane`, `external admin/creator API plane`, and `infrastructure management plane` where applicable.
+- If the service exposes an edge-routable admin route, state whether it is a read-only contract, an explicitly documented bypass-safe workflow, or internal-only by default.
+- If the service marks an edge-routable write as bypass-safe, document the route shape and method, why it is domain-local, why it avoids Logging & Admin-owned policy and cross-domain orchestration, and what audit behavior it emits.
+- If the service participates in the canonical room-read fence contract, include a shared request/response example showing `roomReadFence`, echoed-fence success, and `fence_unsatisfied` failure.
 
 ## Key Features
 
@@ -32,6 +36,12 @@
 | Method | Path | Description |
 | --- | --- | --- |
 | `GET` | `/ping` | Health check |
+
+### Traffic Surface Classification
+
+- `player traffic plane`: {{ Describe any player-facing HTTP/WebSocket/Telnet surface, or state "none". }}
+- `external admin/creator API plane`: {{ Describe any Gateway-routed operator/creator HTTP(S) surface, or state "none". }}
+- `infrastructure management plane`: {{ Describe any internal Gateway management or infrastructure-control interaction, or state "none". }}
 
 ## Dependencies
 

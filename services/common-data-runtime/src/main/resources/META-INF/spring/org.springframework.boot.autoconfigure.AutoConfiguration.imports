@@ -1,0 +1,2 @@
+net.firedevops.firemud.common.config.CommonAutoConfiguration
+net.firedevops.firemud.common.config.DatabaseAutoConfiguration

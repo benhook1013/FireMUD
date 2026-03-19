@@ -16,8 +16,11 @@ Unless a document explicitly says otherwise, docs in `design/architecture/` desc
 - `session front-end` – The connected Game Session pod that owns socket I/O, connection-local state, and per-session sequencing.
 - `lease owner` – The Game Session execution owner currently holding the `<tenantId, regionId>` lease required to mutate region-scoped coordination state.
 - `canonical room state` – A room view assembled only from same-fence World Management occupancy data and Entity Management containment/presentation data.
-- `control-plane API` – An infrastructure or domain admin API that is not part of player gameplay traffic.
+- `control-plane API` – An infrastructure or domain admin API classification that is not part of player gameplay traffic; when describing ingress surfaces, prefer the named traffic planes below.
 - `bypass-safe workflow` – An explicitly documented external admin workflow allowed to bypass Logging & Admin ingress because it does not rely on Logging & Admin-owned policy, cross-domain write orchestration, or control-plane availability guarantees.
+- `infrastructure management plane` – Internal Gateway management and health-control traffic used for infrastructure operations such as route configuration and liveness checks; this is not an external product API surface.
+- `external admin/creator API plane` – The HTTP(S) API surface exposed through Gateway for operator and creator tools on explicitly allowlisted domain routes.
+- `player traffic plane` – Player-facing HTTP, WebSocket, and Telnet traffic used for gameplay admission and live play.
 
 ## When To Update Architecture
 

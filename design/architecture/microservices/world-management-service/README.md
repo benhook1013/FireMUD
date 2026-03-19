@@ -95,6 +95,76 @@ Initial-slice decision:
 - Game Design writes the artifact under the version-scoped published prefix, records it in the attested version `manifest.json`, and attests that manifest through the immutable `published_release_bundle`.
 - Game Logic and any other runtime consumer must discover the artifact through the attested version manifest for that release; they must not rely on ad hoc World-local storage conventions for this artifact family in the initial slice.
 
+### Draft Digest Manifest
+
+World Management is a required full-publish digest participant, so its `GetDraftDesignDigest` surface must attest one explicit and testable input set for `(tenantId, versionId)`.
+
+Initial-slice `contentDigest` manifest:
+
+- Included world-owned version-scoped semantic rows:
+  - `region_template`, `zone_template`, `room_template`, and normalized exit/topology relations;
+  - `terrain_template` and other version-scoped generated/authored topology rows that contribute to the published world graph;
+  - version-scoped declarative population/spawn bindings owned by World Management;
+  - `generation_rule_template` (or equivalent version-scoped generation-input rows) that affect published topology or activation-time generated instance topology for that version.
+- Excluded rows and fields:
+  - all runtime/instance-scoped rows keyed by `gameInstanceId`;
+  - audit/provenance/history rows such as applied-revision ledgers and `generation_run` artifacts;
+  - non-semantic timestamps and write-time metadata such as `created_at`, `updated_at`, `changed_at`, and operator notes;
+  - derived world artifacts stored outside template tables, including navmesh/path graph payload bytes and object-store metadata.
+- Canonicalization rules:
+  - serialize included object families in fixed table/type order;
+  - within each family, order by full primary key;
+  - serialize only documented semantic fields in deterministic encoding.
+
+Attestation rule for derived world artifacts:
+
+- In the initial slice, navmesh/path graph bundles are not folded into World Management’s `contentDigest`.
+- Instead, the publish workflow must compute and persist an explicit per-artifact digest in `published_release_bundle` alongside the participant digests and `manifestHash`.
+- The artifact digest must be bound to the same `(tenantId, versionId, commitId, publishWorkflowId)` as the World digest so runtime consumers can prove the published artifact came from the same attested release.
+
+Illustrative attestation fragment:
+
+```json
+{
+  "tenantId": "t1",
+  "versionId": "v42",
+  "commitId": "c900",
+  "publishWorkflowId": "pub-77",
+  "participantDigests": [
+    {
+      "serviceName": "world-management",
+      "appliedCommitId": "c900",
+      "contentDigest": "sha256:world-draft-abc",
+      "digestSchemaVersion": 3
+    }
+  ],
+  "artifactDigests": [
+    {
+      "artifactType": "WORLD_NAVMESH_BUNDLE",
+      "artifactPath": "versions/v42/world/navmesh.bundle",
+      "artifactDigest": "sha256:navmesh-123",
+      "artifactSchemaVersion": 1
+    },
+    {
+      "artifactType": "WORLD_PATH_GRAPH_BUNDLE",
+      "artifactPath": "versions/v42/world/path-graph.bundle",
+      "artifactDigest": "sha256:pathgraph-456",
+      "artifactSchemaVersion": 1
+    }
+  ],
+  "manifestHash": "sha256:manifest-789",
+  "generationConfigRevision": "genrev-42a1"
+}
+```
+
+The exact attestation schema may evolve, but initial-slice implementations must preserve the same semantics:
+
+- each exported world artifact has its own typed digest entry;
+- each entry is bound to the same release identity as the participant digests;
+- runtime consumers discover artifact locations through the attested `manifest.json`, not by reconstructing bucket paths from the digest entries alone.
+
+`digestSchemaVersion` must be bumped whenever the included row families, selected semantic fields, canonical ordering, or artifact-attestation rules above change.
+
 ## Architecture / Design Notes
 
 - World data is stored in PostgreSQL. Redis holds only transient active state used during gameplay.

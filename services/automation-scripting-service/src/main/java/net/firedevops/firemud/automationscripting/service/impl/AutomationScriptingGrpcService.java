@@ -1,8 +1,8 @@
 package net.firedevops.firemud.automationscripting.service.impl;
 
-import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
+import io.micrometer.core.instrument.MeterRegistry;
 import java.util.List;
 import java.util.Objects;
 import net.firedevops.firemud.automationscripting.dto.ScriptDefinitionDto;
@@ -29,26 +29,33 @@ import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventRequest;
 import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventResponse;
 import net.firedevops.firemud.automationscripting.v1.UpdateScriptRequest;
 import net.firedevops.firemud.automationscripting.v1.UpdateScriptResponse;
-import net.firedevops.firemud.shared.v1.ErrorDetail;
+import net.firedevops.firemud.common.grpc.GrpcAppErrors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.grpc.server.service.GrpcService;
 
 @GrpcService
 public class AutomationScriptingGrpcService
     extends AutomationScriptingServiceGrpc.AutomationScriptingServiceImplBase {
+  private static final Logger logger =
+      LoggerFactory.getLogger(AutomationScriptingGrpcService.class);
   private final PingService pingService;
   private final ScriptDefinitionService scriptService;
   private final ScriptVersionService scriptVersionService;
   private final NpcFormationService formationService;
+  private final MeterRegistry meterRegistry;
 
   public AutomationScriptingGrpcService(
       PingService pingService,
       ScriptDefinitionService scriptService,
       ScriptVersionService scriptVersionService,
-      NpcFormationService formationService) {
+      NpcFormationService formationService,
+      MeterRegistry meterRegistry) {
     this.pingService = pingService;
     this.scriptService = scriptService;
     this.scriptVersionService = scriptVersionService;
     this.formationService = Objects.requireNonNull(formationService);
+    this.meterRegistry = meterRegistry;
   }
 
   @Override
@@ -63,16 +70,18 @@ public class AutomationScriptingGrpcService
       PingResponse response =
           PingResponse.newBuilder()
               .setError(
-                  ErrorDetail.newBuilder()
-                      .setCode("INVALID_ARGUMENT")
-                      .setMessage(ex.getMessage())
-                      .build())
+                  GrpcAppErrors.error(
+                      meterRegistry, logger, "Ping", "INVALID_ARGUMENT", ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (Exception ex) {
-      responseObserver.onError(
-          Status.INTERNAL.withDescription(ex.getMessage()).asRuntimeException());
+      PingResponse response =
+          PingResponse.newBuilder()
+              .setError(GrpcAppErrors.internal(meterRegistry, logger, "Ping", ex))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
     }
   }
 
@@ -87,10 +96,12 @@ public class AutomationScriptingGrpcService
             .setAdmissionOutcome(TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_UNSPECIFIED)
             .setAdmissionReason("not_implemented")
             .setError(
-                ErrorDetail.newBuilder()
-                    .setCode("NOT_IMPLEMENTED")
-                    .setMessage("TriggerScriptEvent is not implemented yet")
-                    .build())
+                GrpcAppErrors.error(
+                    meterRegistry,
+                    logger,
+                    "TriggerScriptEvent",
+                    "NOT_IMPLEMENTED",
+                    "TriggerScriptEvent is not implemented yet"))
             .build();
     responseObserver.onNext(response);
     responseObserver.onCompleted();
@@ -115,16 +126,22 @@ public class AutomationScriptingGrpcService
       CreateFormationResponse resp =
           CreateFormationResponse.newBuilder()
               .setError(
-                  ErrorDetail.newBuilder()
-                      .setCode("INVALID_ARGUMENT")
-                      .setMessage(ex.getMessage())
-                      .build())
+                  GrpcAppErrors.error(
+                      meterRegistry,
+                      logger,
+                      "CreateFormation",
+                      "INVALID_ARGUMENT",
+                      ex.getMessage()))
               .build();
       responseObserver.onNext(resp);
       responseObserver.onCompleted();
     } catch (Exception ex) {
-      responseObserver.onError(
-          Status.INTERNAL.withDescription(ex.getMessage()).asRuntimeException());
+      CreateFormationResponse resp =
+          CreateFormationResponse.newBuilder()
+              .setError(GrpcAppErrors.internal(meterRegistry, logger, "CreateFormation", ex))
+              .build();
+      responseObserver.onNext(resp);
+      responseObserver.onCompleted();
     }
   }
 
@@ -147,16 +164,23 @@ public class AutomationScriptingGrpcService
           AddFormationMemberResponse.newBuilder()
               .setSuccess(false)
               .setError(
-                  ErrorDetail.newBuilder()
-                      .setCode("INVALID_ARGUMENT")
-                      .setMessage(ex.getMessage())
-                      .build())
+                  GrpcAppErrors.error(
+                      meterRegistry,
+                      logger,
+                      "AddFormationMember",
+                      "INVALID_ARGUMENT",
+                      ex.getMessage()))
               .build();
       responseObserver.onNext(resp);
       responseObserver.onCompleted();
     } catch (Exception ex) {
-      responseObserver.onError(
-          Status.INTERNAL.withDescription(ex.getMessage()).asRuntimeException());
+      AddFormationMemberResponse resp =
+          AddFormationMemberResponse.newBuilder()
+              .setSuccess(false)
+              .setError(GrpcAppErrors.internal(meterRegistry, logger, "AddFormationMember", ex))
+              .build();
+      responseObserver.onNext(resp);
+      responseObserver.onCompleted();
     }
   }
 
@@ -175,9 +199,26 @@ public class AutomationScriptingGrpcService
               .build();
       responseObserver.onNext(resp);
       responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      ListFormationMembersResponse resp =
+          ListFormationMembersResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry,
+                      logger,
+                      "ListFormationMembers",
+                      "INVALID_ARGUMENT",
+                      ex.getMessage()))
+              .build();
+      responseObserver.onNext(resp);
+      responseObserver.onCompleted();
     } catch (Exception ex) {
-      responseObserver.onError(
-          Status.INTERNAL.withDescription(ex.getMessage()).asRuntimeException());
+      ListFormationMembersResponse resp =
+          ListFormationMembersResponse.newBuilder()
+              .setError(GrpcAppErrors.internal(meterRegistry, logger, "ListFormationMembers", ex))
+              .build();
+      responseObserver.onNext(resp);
+      responseObserver.onCompleted();
     }
   }
 
@@ -202,16 +243,19 @@ public class AutomationScriptingGrpcService
           UpdateScriptResponse.newBuilder()
               .setSuccess(false)
               .setError(
-                  ErrorDetail.newBuilder()
-                      .setCode("INVALID_ARGUMENT")
-                      .setMessage(ex.getMessage())
-                      .build())
+                  GrpcAppErrors.error(
+                      meterRegistry, logger, "UpdateScript", "INVALID_ARGUMENT", ex.getMessage()))
               .build();
       responseObserver.onNext(resp);
       responseObserver.onCompleted();
     } catch (Exception ex) {
-      responseObserver.onError(
-          Status.INTERNAL.withDescription(ex.getMessage()).asRuntimeException());
+      UpdateScriptResponse resp =
+          UpdateScriptResponse.newBuilder()
+              .setSuccess(false)
+              .setError(GrpcAppErrors.internal(meterRegistry, logger, "UpdateScript", ex))
+              .build();
+      responseObserver.onNext(resp);
+      responseObserver.onCompleted();
     }
   }
 

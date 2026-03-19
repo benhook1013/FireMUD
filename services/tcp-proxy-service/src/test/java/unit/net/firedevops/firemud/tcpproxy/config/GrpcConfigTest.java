@@ -5,18 +5,19 @@ import static org.assertj.core.api.Assertions.assertThat;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import io.opentelemetry.api.trace.Tracer;
+import net.firedevops.firemud.common.grpc.CommonGrpcServerConfiguration;
 import net.firedevops.firemud.common.grpc.TracingInterceptor;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 
-/** Unit tests for {@link GrpcConfig} verifying conditional bean creation. */
+/** Unit tests for shared gRPC interceptor configuration. */
 class GrpcConfigTest {
 
   private final ApplicationContextRunner contextRunner =
       new ApplicationContextRunner()
           .withBean(MeterRegistry.class, SimpleMeterRegistry::new)
-          .withUserConfiguration(GrpcConfig.class);
+          .withUserConfiguration(CommonGrpcServerConfiguration.class);
 
   @Test
   void tracingInterceptorNotLoadedWhenTracerMissing() {

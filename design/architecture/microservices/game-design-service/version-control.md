@@ -55,6 +55,11 @@ services as the source of truth for the current Draft template graphs:
   - Each design-time write into a domain service is keyed by a stable `revisionId` (and, where relevant, `commitId`) and must be safe to retry.
   - Domain services persist an “applied revisions” ledger (or equivalent) per `(tenantId, versionId)` so duplicate deliveries do not produce duplicate rows or conflicting mutations.
   - Publish-time validation must be based on durable digests and applied-revision state, not on transient in-memory caches.
+- Draft-write concurrency is explicit:
+  - design-time mutations of Draft aggregates must use optimistic concurrency with an `expectedDraftRevisionEpoch` (or equivalent monotonic aggregate version) supplied by Game Design;
+  - stale writes must fail with a conflict result and must not silently overwrite newer Draft state;
+  - replay of an already-applied `revisionId` remains a no-op rather than a conflict;
+  - reconciler replay follows canonical commit order and revision order within a commit; it does not invent merge results for conflicting user edits.
 - The Game Design Service tracks a derived `designSyncStatus` for each
   `(tenantId, versionId)` indicating whether the known revision set has been
   fully applied to all participating domain services.
@@ -88,6 +93,7 @@ In addition to domain-service digests, publish safety requires a Game Design con
 - Game Design must expose the attestation through `GetPublishedReleaseBundle(tenantId, versionId)` with deterministic response fields at minimum:
   - `tenantId`, `versionId`, `commitId`, `publishWorkflowId`, `publishedAt`
   - `participantDigests[] { serviceName, appliedCommitId, contentDigest, digestSchemaVersion }`
+  - `artifactDigests[] { artifactType, artifactPath, artifactDigest, artifactSchemaVersion }` for any exported derived artifacts; these entries are mandatory in the initial slice for world navmesh/path graph bundles
   - `manifestHash`, `manifestSchemaVersion`
   - `generationConfigRevision`
   - attestation schema/version fields for future evolution

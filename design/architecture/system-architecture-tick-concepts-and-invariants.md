@@ -159,6 +159,27 @@ Two related configuration concepts control how long tick work is allowed to run 
 
 These formulas are implemented once in shared tick/Redis helpers and consumed by Game Session and participating services; individual services must not define their own alternative lock/budget formulas. The defaults are chosen to give generous headroom for GC pauses and hiccups without requiring per-environment tuning; in most deployments, operators primarily adjust `tick_interval_ms`.
 
+The only allowed exception is an explicit **solo-tick budget mode** for commands marked `requiresSoloTick: true`:
+
+- `solo_tick_budget_ms` is a second canonical shared setting, not an ad-hoc per-command override.
+- When enabled for a tick, `solo_lock_ttl_ms` is derived from `solo_tick_budget_ms` using the same shared helper family and operator-visible health model.
+- The scheduler must admit solo-budget ticks only when the command is the sole work item for that region tick.
+- A deployment that does not enable `solo_tick_budget_ms` must treat `requiresSoloTick` as isolation-only; it does not permit budget overruns beyond the normal `tick_budget_ms`.
+- During a solo-budget tick, health and alerting use the solo-derived ratios (`tick_execution_time_ms_* / solo_lock_ttl_ms`) for that tick rather than the normal `tick_lock_ttl_ms` denominator.
+
+Changing tick cadence is also constrained by replay determinism:
+
+- `tick_interval_ms` is fixed within a live `region_epoch`.
+- Any cadence change that would alter timer ordering or due normalization requires an explicit `regionEpoch` bump and timer re-derivation/reconciliation for the affected region.
+
+Worked cadence-change example:
+
+1. Region `R7` is running at `tick_interval_ms = 100` in `regionEpoch = 13`.
+2. Operators decide to move `R7` to `tick_interval_ms = 200`.
+3. Game Session pauses the region and bumps `regionEpoch` to `14` rather than changing cadence in place.
+4. Timer ordering state is re-derived for the new epoch, including canonical `due_tick_id` values for any timers that must survive the change.
+5. The new epoch resumes at `lastCommittedTickId = -1`, so the first committable tick under the new cadence is `tickId = 0`.
+
 At runtime, observed tick durations are compared against lock TTLs using Prometheus-facing series such as `tick_execution_time_ms_p95` and `tick_execution_time_ms_p99` (derived from `tick_execution_time_ms_bucket` recording rules). Ratios like `tick_execution_time_ms_p99 / tick_lock_ttl_ms` drive region health for each `<tenantId, regionId>`.
 
 ### Canonical Region Health States and Threshold Source
@@ -167,8 +188,8 @@ This table is the single source of truth for region health state names and thres
 
 | State | Meaning | Primary triggers |
 | --- | --- | --- |
-| `RUNNING` | Region is making normal forward progress. | `tick_execution_time_ms_p99 / tick_lock_ttl_ms` remains below the degraded threshold and commit progress is advancing. |
-| `DEGRADED` | Region is still progressing but close to safety limits. | `tick_execution_time_ms_p99 / tick_lock_ttl_ms` is near or above the degraded threshold over a sustained window, or remote/retry backlog exceeds budget. |
+| `RUNNING` | Region is making normal forward progress. | `tick_execution_time_ms_p99 / tick_lock_ttl_ms` remains below the degraded threshold and commit progress is advancing. During an admitted solo-budget tick, evaluate the same state against `solo_lock_ttl_ms` instead. |
+| `DEGRADED` | Region is still progressing but close to safety limits. | `tick_execution_time_ms_p99 / tick_lock_ttl_ms` is near or above the degraded threshold over a sustained window, or remote/retry backlog exceeds budget. During an admitted solo-budget tick, evaluate the same state against `solo_lock_ttl_ms` instead. |
 | `STALLED` | Region lease may still be held but progress has stopped. | No successful commits for multiple `tick_interval_ms` windows, repeated failed ticks, or persistent stuck cleanup/ledger signals. |
 | `PAUSED` | Region is intentionally paused by control plane or maintenance flow. | Operator/control-plane pause for reset, migration, or incident mitigation. |
 

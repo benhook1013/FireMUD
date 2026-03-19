@@ -20,7 +20,9 @@ The following contract decisions are mandatory and resolve cross-document ambigu
 - **Gameplay session identity key** – Session uniqueness and takeover scope are keyed by `{tenantId, gameInstanceId, characterId}`. Legacy `playerId` fields are aliases only and must map one-to-one to `characterId`.
 - **JWT claim contract** – Services must validate a strict JWT claim profile (required claims and audience per token profile), not only signature plus ad-hoc fields.
 - **Internal delegation boundary** – Gameplay services must validate a Game Session-issued `SessionAttestation` on internal calls; mTLS-only trust is insufficient for end-user identity delegation.
+- **Session attestation audience binding** – `SessionAttestation` must be bound to the destination gameplay service and RPC/method; a valid attestation for one gameplay API must not be reusable against another.
 - **Route classification governance** – Protected routes must be classified in the shared route matrix document and enforced through middleware annotations/interceptors; behavior must not rely on per-service ad-hoc interpretation.
+- **Gameplay session indexing** – Game Session is the authoritative writer for bounded secondary indexes that map gameplay bindings by uniqueness key, account/tenant scope, and tenant scope so takeover, reconnect, and revocation do not require scans.
 
 ## Responsibility Split
 
@@ -216,25 +218,43 @@ Telnet `SESSION` hints may include a target `{gameInstanceId, tenantId}` for adv
 
 For first-party WebSocket clients, the control plane issues a short-lived connect token used only for handshake-time edge policy (for example tenant-aware rate limiting before `LOGIN` completes).
 
-To avoid introducing a second independent end-user login model for first-party gameplay web/mobile clients, FireMUD standardizes a **player bootstrap** contract:
+FireMUD standardizes a dedicated **player bootstrap** contract for first-party gameplay web/mobile clients:
 
-- The first-party player UI obtains a short-lived, memory-only **player bootstrap token** from a dedicated bootstrap endpoint (for example `POST /auth/player-bootstrap`) after the player authenticates in the first-party UI.
+- The first-party player UI authenticates directly against a dedicated bootstrap endpoint (for example `POST /auth/player-bootstrap`) using the same primary account credentials and abuse/2FA policy as gameplay login.
+- `POST /auth/player-bootstrap` is the canonical first-party browser/mobile player-login endpoint. It is not derived from an existing admin/creator browser session and must not require or return a control-plane Browser JWT.
+- On success, the endpoint returns one short-lived, memory-only **player bootstrap token** plus expiry metadata.
 - This bootstrap token is not a control-plane Browser JWT and must not be accepted on admin/creator APIs.
 - It is still an Account Service-issued JWT profile and must carry at least `iss`, `sub`, `accountId`, `aud=player-bootstrap`, `jti`, `iat`, `nbf`, and `exp`, backed by `session:auth:account:<accountId>:<tokenHash>` so account-level revocation and logout semantics apply.
-- Audience/scope is limited to player bootstrap functions such as `POST /auth/connect-token`.
+- Audience/scope is limited to first-party gameplay bootstrap functions such as discovery and `POST /auth/connect-token`.
 - Lifetime is intentionally short (target <= 5 minutes), stored in memory only, and cleared on tab reload/logout.
 - `POST /auth/connect-token` must derive caller identity from this bootstrap token; clients must not supply an arbitrary `accountId`.
 - The subsequent gameplay `LOGIN` remains mandatory but, for first-party `/ws/game/**` clients, it must complete using the already-verified bootstrap/connect context rather than requiring the browser to re-submit account credentials. A mismatch between the verified bootstrap identity and the gameplay login result is a hard failure and the connect context must not be honored.
 
 - Bootstrap issuance API: Account Service endpoint (for example `POST /auth/player-bootstrap`) that authenticates the player account for first-party gameplay bootstrap only and returns one short-lived bootstrap token plus expiry metadata.
-- Issuer: Account/authentication control-plane only, after account authentication. Tenant membership and entitlement checks do not occur here because no gameplay tenant has been selected yet.
+- Issuer: Account/authentication control-plane only, after direct player-account authentication. Tenant membership and entitlement checks do not occur here because no gameplay tenant has been selected yet.
+- Bootstrap-discovery APIs: authenticated first-party HTTP endpoints (for example `GET /auth/bootstrap/worlds`, `GET /auth/bootstrap/worlds/{world}/realms`, `GET /auth/bootstrap/worlds/{world}/realms/{realm}/characters`) that accept only the `player-bootstrap` token profile and return the canonical lobby discovery data used to choose a target before socket open.
+  - These endpoints are the canonical pre-socket discovery path for first-party clients.
+  - They must apply the same caller-bound membership, realm visibility, and entitlement filtering rules as in-band `WORLDS` / `REALMS` / `CHARS`.
+  - Hidden or unauthorized tenants, realms, and characters must not be inferable by probing these endpoints.
+  - Discovery responses must return a canonical connect-token selector for each admissible realm target. FireMUD standardizes this as an opaque `connectScopeId` plus resolved routing metadata.
+  - `connectScopeId` is the only client-supplied selector accepted by `POST /auth/connect-token`; first-party clients must not invent or derive `tenantId` / `gameInstanceId` pairs locally from slugs.
+  - Minimum selector fields returned by discovery for an admissible realm target: `connectScopeId`, `tenantId`, `realmSlug`, `gameInstanceId`, `pointerVersion`, and a bounded freshness timestamp (`evaluatedAt` or equivalent).
+  - For non-public realms such as playtest forks, visibility is controlled by an explicit realm-access grant. The minimum grant record is `{tenantId, realmSlug, accountId, grantedByAccountId, grantedAt, expiresAt?}`.
+  - Realm-access grants are owned by Account Service. Account Service is the sole writer and read authority for grant visibility decisions; Game Session and frontend callers consume grant-filtered results and must not maintain independent grant stores.
+  - `tenantAdmin` is the routine owner of creating and revoking realm-access grants for that tenant through Account Service-owned admin surfaces. `platformAdmin` may do the same only as break-glass support.
+  - Required internal read contract: Account Service must expose a caller-bound runtime lookup for realm visibility/admission, for example `GetRealmAccessGrant(accountId, tenantId, realmSlug)` or a batch/list equivalent consumed by bootstrap discovery, in-band `REALMS`, `POST /auth/connect-token`, and `PLAY`.
+  - Required semantics for realm-access-grant reads/writes:
+    - idempotent create/revoke by `{accountId, tenantId, realmSlug}`
+    - expired grants are treated as non-existent for visibility and admission
+    - successful create/revoke must be immediately visible to subsequent discovery/admission reads
+    - if grant authority is unavailable, non-public realm discovery and admission fail closed rather than falling back to stale local cache state
 - Connect-token issuance API: control-plane endpoint (for example `POST /auth/connect-token`) that returns exactly one short-lived token per request and logs `accountId`, `tenantId`, `gameInstanceId`, `jti`, and issuance timestamp.
-  - Minimum request fields: `tenantId`, `gameInstanceId`, `requestId`.
-  - Minimum response fields: `connectToken`, `expiresAt`, `accountId`, `tenantId`, `gameInstanceId`, `jti`, `issuedAt`.
-  - Before issuance, Account Service must perform a live membership check for `{accountId, tenantId}`, a live runtime entitlement check for `tenantId`, and a live realm-routing read for the requested realm target via the Game Session control-plane API.
+  - Minimum request fields: `connectScopeId`, `requestId`.
+  - Minimum response fields: `connectToken`, `expiresAt`, `accountId`, `tenantId`, `gameInstanceId`, `realmSlug`, `jti`, `issuedAt`.
+  - Before issuance, Account Service must resolve `connectScopeId` to the canonical `{tenantId, realmSlug, gameInstanceId, pointerVersion}` tuple, perform a live membership/public-admission check for `{accountId, tenantId, realmSlug}`, a live runtime entitlement check for `tenantId`, and a live realm-routing read for the selected realm target via the Game Session control-plane API.
   - If realm-routing state is unavailable or ambiguous, connect-token issuance fails closed with `ADMISSION_POINTER_UNAVAILABLE`.
-  - If the requested `gameInstanceId` is not the current admissible target for the selected realm, connect-token issuance fails closed with `CONNECT_SCOPE_MISMATCH`; it must not mint a token for a stale or non-admissible target and rely on `PLAY` to correct it later.
-  - Clients may request connect tokens only for realm targets returned by the canonical lobby/discovery contract for that caller; hidden or unauthorized realms must not be inferable by probing connect-token issuance directly.
+  - If `connectScopeId` no longer resolves to the current admissible target for the selected realm, connect-token issuance fails closed with `CONNECT_SCOPE_MISMATCH`; it must not mint a token for a stale or non-admissible target and rely on `PLAY` to correct it later.
+  - First-party clients may request connect tokens only for realm targets returned by the canonical bootstrap-discovery contract for that caller; hidden or unauthorized realms must not be inferable by probing connect-token issuance directly.
   - Missing required request/response fields are contract violations and must fail closed rather than being defaulted by callers.
 - Transport: `X-Firemud-Connect-Token` header on `/ws/game/**` handshake.
 - Required claims: `accountId`, `tenantId`, `gameInstanceId`, `exp`, `jti`.
@@ -276,10 +296,11 @@ Gateway verification of `X-Firemud-Connect-Token` must not be translated into tr
 To remove ambiguity between connect-token admission and `LOGIN`, first-party web/mobile gameplay clients must follow this sequence:
 
 1. Call the dedicated first-party player bootstrap endpoint (for example `POST /auth/player-bootstrap`) and establish a short-lived player bootstrap identity.
-2. Request a short-lived gameplay connect token for one target `{tenantId, gameInstanceId}`. This call performs the live membership and runtime entitlement checks for that target.
+2. Use bootstrap-authenticated discovery endpoints to select a caller-visible world/realm/character target.
+3. Request a short-lived gameplay connect token for one target selected by `connectScopeId` returned by that discovery contract. This call performs the live membership/public-admission and runtime entitlement checks for that target.
    - The issuance path must also validate the target against the authoritative realm-routing record. If the target is no longer admissible for the selected realm, the request fails before socket open rather than issuing a stale token.
-3. Open gameplay WebSocket on `/ws/game/**` with `X-Firemud-Connect-Token`.
-4. Complete gameplay authentication in-band using `LOGIN` (or `LOGON`) and then lobby binding with `PLAY`.
+4. Open gameplay WebSocket on `/ws/game/**` with `X-Firemud-Connect-Token`.
+5. Complete gameplay authentication in-band using `LOGIN` (or `LOGON`) and then lobby binding with `PLAY`.
 
 Normative constraints:
 
@@ -290,7 +311,7 @@ Normative constraints:
 - Game Session must bind the verified connect context to the authenticated gameplay login: if bootstrap-backed `LOGIN` resolves to an `accountId` different from the connect-context `accountId`, the session fails closed with canonical error `ACCOUNT_MISMATCH` and no gameplay scope is bound.
 - For first-party clients on `/ws/game/**`, the `PLAY` selection must match the connect-token scope `{tenantId, gameInstanceId}`. Scope mismatch is rejected with canonical error `CONNECT_SCOPE_MISMATCH`; clients must request a fresh connect token for the intended target and reconnect.
 - Because `/auth/connect-token` validates against the authoritative realm-routing state for the caller, `CONNECT_SCOPE_MISMATCH` at `PLAY` is treated as drift between issuance and admission (for example route movement during reconnect), not as normal stale-client correction.
-- The bootstrap/connect-token contract and the lobby `PLAY` contract together form the canonical player-selected `{tenantId, gameInstanceId}` path. Players may select from any realms they are authorized to see through `REALMS <world>`, and connect tokens must be issued only for a concrete target returned by the same realm-routing contract rather than via a side-channel selector.
+- The bootstrap-discovery contract, connect-token contract, and the lobby `PLAY` contract together form the canonical player-selected `{tenantId, gameInstanceId}` path. Connect tokens must be issued only for a concrete target returned by the same discovery and realm-routing contract rather than via a side-channel selector, and first-party clients must carry that selection forward via `connectScopeId`.
 
 Canonical first-party browser sequence (example):
 
@@ -298,10 +319,28 @@ Canonical first-party browser sequence (example):
 POST /auth/player-bootstrap
 -> { bootstrapToken, expiresAt }
 
+GET /auth/bootstrap/worlds
+Authorization: Bearer <bootstrapToken>
+-> [{ worldSlug: "demo", displayName: "Demo World" }]
+
+GET /auth/bootstrap/worlds/demo/realms
+Authorization: Bearer <bootstrapToken>
+-> [{
+     realmSlug: "production",
+     displayName: "Live Realm",
+     tenantId: "tenant-demo",
+     gameInstanceId: "production",
+     connectScopeId: "cs_demo_production_v17"
+   }]
+
+GET /auth/bootstrap/worlds/demo/characters?realm=production
+Authorization: Bearer <bootstrapToken>
+-> [{ characterName: "Mara" }]
+
 POST /auth/connect-token
 Authorization: Bearer <bootstrapToken>
-{ tenantId: "tenant-demo", gameInstanceId: "production", requestId: "req-123" }
--> { connectToken, accountId, tenantId: "tenant-demo", gameInstanceId: "production", expiresAt }
+{ connectScopeId: "cs_demo_production_v17", requestId: "req-123" }
+-> { connectToken, accountId, tenantId: "tenant-demo", realmSlug: "production", gameInstanceId: "production", expiresAt }
 
 GET /ws/game/** with X-Firemud-Connect-Token: <connectToken>
 
@@ -314,22 +353,89 @@ PLAY demo production Mara
 OK PLAY Entered Demo World / Live Realm as Mara
 ```
 
+Canonical first-public-join sequence (example):
+
+```text
+POST /auth/player-bootstrap
+-> { bootstrapToken, expiresAt }
+
+GET /auth/bootstrap/worlds
+Authorization: Bearer <bootstrapToken>
+-> [{ worldSlug: "emberfall", displayName: "Emberfall" }]
+
+GET /auth/bootstrap/worlds/emberfall/realms
+Authorization: Bearer <bootstrapToken>
+-> [{
+     realmSlug: "production",
+     displayName: "Live Realm",
+     tenantId: "tenant-emberfall",
+     gameInstanceId: "production",
+     connectScopeId: "cs_emberfall_production_v1"
+   }]
+
+GET /auth/bootstrap/worlds/emberfall/characters?realm=production
+Authorization: Bearer <bootstrapToken>
+-> []
+
+POST /characters
+Authorization: Bearer <bootstrapToken>
+{ worldSlug: "emberfall", realmSlug: "production", name: "Mara", template: "human-fighter" }
+-> { characterName: "Mara", characterId: "char-9001" }
+
+POST /auth/connect-token
+Authorization: Bearer <bootstrapToken>
+{ connectScopeId: "cs_emberfall_production_v1", requestId: "req-join-1" }
+-> { connectToken, accountId, tenantId: "tenant-emberfall", realmSlug: "production", gameInstanceId: "production", expiresAt }
+
+GET /ws/game/** with X-Firemud-Connect-Token: <connectToken>
+LOGIN
+PLAY emberfall production Mara
+OK PLAY Entered Emberfall / Live Realm as Mara
+```
+
+Required postconditions for the first successful public-production join:
+
+- the account now has canonical `player` membership for the tenant;
+- future `WORLDS` results for that account may rely on membership rather than public discovery alone; and
+- if character creation or admission fails before `OK PLAY`, the service must not persist a partial membership grant.
+
 Example first-party browser sequence for a playtest fork:
 
 ```text
 POST /auth/player-bootstrap
 -> { bootstrapToken, expiresAt }
 
-WORLDS
-1) demo  Demo World
-REALMS demo
-1) production  Live Realm
-2) playtest-docks  Playtest Fork
+GET /auth/bootstrap/worlds
+Authorization: Bearer <bootstrapToken>
+-> [{ worldSlug: "demo", displayName: "Demo World" }]
+
+GET /auth/bootstrap/worlds/demo/realms
+Authorization: Bearer <bootstrapToken>
+-> [
+     {
+       realmSlug: "production",
+       displayName: "Live Realm",
+       tenantId: "tenant-demo",
+       gameInstanceId: "production",
+       connectScopeId: "cs_demo_production_v17"
+     },
+     {
+       realmSlug: "playtest-docks",
+       displayName: "Playtest Fork",
+       tenantId: "tenant-demo",
+       gameInstanceId: "playtest-docks",
+       connectScopeId: "cs_demo_playtest_docks_v4"
+     }
+   ]
+
+GET /auth/bootstrap/worlds/demo/characters?realm=playtest-docks
+Authorization: Bearer <bootstrapToken>
+-> [{ characterName: "Mara" }]
 
 POST /auth/connect-token
 Authorization: Bearer <bootstrapToken>
-{ tenantId: "tenant-demo", gameInstanceId: "playtest-docks", requestId: "req-456" }
--> { connectToken, accountId, tenantId: "tenant-demo", gameInstanceId: "playtest-docks", expiresAt }
+{ connectScopeId: "cs_demo_playtest_docks_v4", requestId: "req-456" }
+-> { connectToken, accountId, tenantId: "tenant-demo", realmSlug: "playtest-docks", gameInstanceId: "playtest-docks", expiresAt }
 
 GET /ws/game/** with X-Firemud-Connect-Token: <connectToken>
 
@@ -372,15 +478,19 @@ After `LOGIN` succeeds, the Game Session Service requires an explicit lobby sele
 Realm discovery and routing contract:
 
 - A tenant may expose multiple player-addressable realms. Each visible realm resolves to exactly one admissible `gameInstanceId` at a time through the authoritative realm-routing records owned by Game Session.
-- One realm may be designated as the default public production realm. Additional realms may be public or access-controlled according to tenant policy, but unauthorized or hidden realms must not appear in discovery.
+- One realm may be designated as the default public production realm. In v1, this production realm is the only realm that may be publicly discoverable without an existing tenant membership row.
+- Additional realms are access-controlled in v1. Unauthorized or hidden realms must not appear in discovery, and non-production realms such as playtest forks require explicit access grants.
+- Explicit access grants for non-public realms are sourced from Account Service runtime grant authority, not from Game Session-local configuration or frontend-cached state.
 - Connect-token issuance, `REALMS`, `CHARS`, and `PLAY` must all consume the same realm-routing state so clients never infer realm identity from transport-side hints alone.
 
 Lobby discovery source-of-truth contract:
 
-- `WORLDS` must be sourced from Account Service tenant-membership and entitlement state (not from opportunistic local caches alone) so world visibility and billing state cannot drift across services.
+- `WORLDS` must be sourced from Account Service tenant-membership, public-production discovery, and entitlement state (not from opportunistic local caches alone) so world visibility and billing state cannot drift across services.
 - If fresh enough entitlement state cannot be established to build the visible-world set safely, `WORLDS` must fail closed with canonical error `ENTITLEMENT_UNAVAILABLE` rather than listing worlds from stale discovery data (for example text rendering `ERROR ENTITLEMENT_UNAVAILABLE Entitlement state is temporarily unavailable; retry discovery.`).
 - `WORLDS` discovery does not need to reuse the full 15-second admission SLA verbatim, but it must still be based on entitlement state fresh enough to avoid exposing worlds that are no longer gameplay-available. If that freshness bar cannot be met safely, discovery fails closed with `ENTITLEMENT_UNAVAILABLE`.
-- `CHARS <world>` must be sourced from the authoritative character store for the resolved tenant and filtered to `{accountId, tenantId}` ownership before any character names are returned.
+- `REALMS <world>` must distinguish between public-production visibility and explicit realm grants. Only the default production realm may be visible through public discovery in v1.
+- Bootstrap discovery, `REALMS`, `POST /auth/connect-token`, and `PLAY` must all consume the same Account Service-owned realm-access-grant authority for non-public realms so visibility and admission cannot drift by surface.
+- `CHARS <world> [realm]` must be sourced from the authoritative character store for the resolved tenant/realm and filtered to `{accountId, tenantId}` ownership before any character names are returned.
 - `WORLDS` and `CHARS` responses must not leak inaccessible tenants or characters; unresolved selectors return canonical errors (`WORLD_NOT_FOUND`, `WORLD_ACCESS_DENIED`, `CHARACTER_NOT_FOUND`, `CHARACTER_ACCESS_DENIED`) without exposing whether a hidden tenant exists.
 
 Lobby command classification contract:
@@ -394,13 +504,24 @@ The `PLAY` flow:
 
 - Resolves `<world>` to a canonical `tenantId` (opaque GUID) and validates it exists.
 - Resolves optional `[realm]` to a canonical realm for that tenant. If no realm is supplied, the tenant's default production realm is selected.
-- Verifies that the account is authorized to play in that `tenantId` using caller-bound gameplay membership authority. Global roles alone must not satisfy gameplay admission.
+- Verifies that the account is authorized to play in that `tenantId` using caller-bound gameplay membership authority or the canonical public-production admission policy for the default production realm. Global roles alone must not satisfy gameplay admission.
+- If admission is proceeding through public-production discovery rather than an existing membership row, the first successful `PLAY` must atomically create the caller's `player` membership before gameplay binding is committed. Failed admissions must not leave behind a partial membership grant.
+  - Membership creation writer authority: Account Service only. Game Session must not write membership rows directly.
+  - Required API: `EnsurePublicProductionPlayerMembership(accountId, tenantId, realmSlug, requestId)` or protocol-equivalent, owned by Account Service.
+  - This API is valid only for the tenant's default production realm under the canonical public-production admission policy; it must fail closed for non-production realms or callers that are not eligible for public admission.
+  - Idempotency: repeated requests for the same `{accountId, tenantId, realmSlug}` must either return the existing `player` membership or create it exactly once without duplicating grants.
+  - Concurrency: if multiple first-join attempts race, exactly one membership row may be created and all successful callers must observe the same resulting membership identity/version.
+  - Visibility: on success, the resulting membership must be immediately visible to `GetTenantMembershipForRuntime(accountId, tenantId)` for the same admission transaction.
+  - Failure semantics: gameplay binding, session creation, and any character-binding side effects must not commit unless `EnsurePublicProductionPlayerMembership` commits successfully.
 - Performs an authoritative internal membership read for `{accountId, tenantId}` and persists the returned `membershipVersion` into the gameplay session binding on successful admission. The membership response must also assert `gameplayAdmissionAllowed=true`; gameplay admission must not source `membershipVersion` or gameplay authority from JWT claims or local caches.
 - Consults the runtime entitlement contract `GetTenantEntitlementsForRuntime(tenantId)` to confirm that the tenant is currently available for gameplay (for example, subscription state is not `suspended` or `canceled` and hard quotas are not violated).
-- Resolves `[character]` to a canonical `characterId` scoped to `{accountId, tenantId, gameInstanceId}` according to the selected realm's character policy. Until character selection ships, the service may bind to a default character identity derived from `accountId`, but the binding model must still treat `characterId` as a distinct identifier for forward compatibility.
+- Resolves `[character]` to a canonical `characterId` scoped to `{accountId, tenantId, gameInstanceId}` according to the selected realm's character policy.
+  - Explicit character creation and selection are part of the v1 contract. If the selected realm has no visible character for the caller, the client must complete the canonical character-creation flow before `PLAY` can succeed.
+  - `PLAY` may omit `[character]` only when exactly one visible character exists for the resolved realm. Otherwise admission fails with `CHARACTER_REQUIRED`.
 - Resolves the selected realm's gameplay-admissible instance and records that `gameInstanceId` in the gameplay binding.
   - First-party `/ws/game/**` contract: if a validated connect token is present, resolved `tenantId` and `gameInstanceId` must match token claims. On mismatch, reject admission with `CONNECT_SCOPE_MISMATCH` and do not bind session scope.
   - Runtime control-plane and admission flows use the realm-routing contract from [Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md#realm-routing-contract-for-player-addressable-realms) as the source of truth for which concrete `gameInstanceId` is admissible for the selected realm.
+- On successful admission, runtime must return the resolved realm bundle identity at minimum as `versionId`, optional `scriptPatchVersion`, and manifest location/hash (or a stable bundle token that resolves to those fields) so clients can apply realm-specific branding and assets.
 - Binds the socket to a gameplay session key for the chosen world/instance/character identity under `session:game:<tenantId>:<gameInstanceId>:<sessionId>` as described in [Multi-Tenancy](./system-architecture-multi-tenancy.md#identity--tenant-model) and [Redis Architecture](./system-architecture-redis.md#session-keys-and-gameplay-binding).
 - Ensures the gameplay session binding is consistent with the tick/lease ownership model for the character’s current `<tenantId, regionId>`. Per `design/architecture/decisions/adr-0007-edge-sharding-and-close-taxonomy.md`, `/ws/game/**` is routed to a stable Game Session service endpoint and the edge does not implement a lease-aware shard routing plane.
 
@@ -415,7 +536,8 @@ The `PLAY` flow:
 - `ACCOUNT_MISMATCH` – bootstrap-backed `LOGIN` resolved to an account different from the validated connect-context subject, so no gameplay scope may be bound.
 - `ADMISSION_POINTER_UNAVAILABLE` – realm-routing state is unavailable or ambiguous for the selected realm; admission is denied until routing reconciliation succeeds.
 - `WORLD_NOT_SELECTED` – a gameplay command requiring an admitted world was issued before `PLAY` completed successfully.
-- `CHARACTER_NOT_FOUND` / `CHARACTER_ACCESS_DENIED` – character selection is requested but the character cannot be found or is not owned by the account (reserved for when character selection ships).
+- `CHARACTER_REQUIRED` – the selected realm requires an explicit character choice because zero or multiple visible characters exist for the caller.
+- `CHARACTER_NOT_FOUND` / `CHARACTER_ACCESS_DENIED` – character selection is requested but the character cannot be found or is not owned by the account.
 - Any subsequent attempt to switch tenants or characters for a socket must go through the same tenant-selection flow so that role checks and entitlements are re-evaluated; there is no implicit cross-tenant switching based solely on the initial `LOGIN`.
 
 First-party gameplay admission and reconnect clients should treat the following errors as canonical:
@@ -475,7 +597,7 @@ Internal JWTs are issued by the Account Service and used for backend gRPC author
 | `sub` | Subject claim for the authenticated account (same semantic identity as `accountId`) |
 | `jti` | Unique token identifier for audit/correlation |
 | `accountId` | Identity of the authenticated account |
-| `aud` | Audience/profile marker used to separate Browser vs Service tokens |
+| `aud` | Audience/profile marker used to separate Browser, player-bootstrap, and Service tokens |
 | `iat` | Issued-at timestamp (UTC epoch seconds), required for revocation watermark checks |
 | `nbf` | Not-before timestamp |
 | `exp` | Expiration timestamp |
@@ -495,7 +617,7 @@ Internal JWTs are issued by the Account Service and used for backend gRPC author
 
 ### Token Profiles and Audiences
 
-To keep trust boundaries clear, FireMUD distinguishes between two primary JWT profiles:
+To keep trust boundaries clear, FireMUD distinguishes between three JWT profiles:
 
 - **Browser JWTs**
   - Issued via the `/auth/login` HTTP endpoint on the Account Service after a successful login from a first-party admin/creator web UI.
@@ -503,30 +625,36 @@ To keep trust boundaries clear, FireMUD distinguishes between two primary JWT pr
   - Carried only by first-party SPAs behind the Gateway; stored in memory only and sent as `Authorization: Bearer <token>` on meta/control API calls.
   - Lifetime: short (for example 15–30 minutes) and not automatically refreshed; when a Browser JWT expires or is revoked, UIs must treat this as a hard logout condition and require re-authentication.
 
+- **Player-bootstrap JWTs**
+  - Issued via the `/auth/player-bootstrap` HTTP endpoint on the Account Service after a successful first-party gameplay login.
+  - Intended audience: bootstrap-only gameplay surfaces (for example an `aud` claim exactly `player-bootstrap`).
+  - Carried only by first-party gameplay SPAs or mobile clients, stored in memory only, and used only for bootstrap discovery and `POST /auth/connect-token`.
+  - Lifetime: intentionally short (target <= 5 minutes). Expiry or revocation requires the first-party gameplay client to obtain a fresh bootstrap token before continuing gameplay bootstrap.
+
 - **Service JWTs**
   - Issued by the Account Service for backend callers (for example, Game Session, Logging & Admin, Game Design) via the gRPC `Authenticate` or equivalent internal flows.
   - Intended audience: internal services (for example an `aud` claim such as `internal`).
   - Carried only over mTLS-protected service-to-service links.
   - Lifetime: also short-lived and backed by `session:auth:*` allowlist entries; services must not cache them beyond their expiry or ignore allowlist revocation.
 
-Meta/control services must validate both the signature and the expected audience/profile for incoming tokens and reject tokens with an unexpected `aud` (for example, a Browser JWT presented to a purely internal service endpoint that only accepts Service JWTs).
+Services must validate both the signature and the expected audience/profile for incoming tokens and reject tokens with an unexpected `aud` (for example, a Browser JWT presented to a purely internal service endpoint that only accepts Service JWTs, or a player-bootstrap JWT presented to an admin API).
 
 ### JWT Claim Contract (Normative)
 
 Services must enforce this claim contract before role/tenant authorization:
 
-| Claim | Browser JWT | Service JWT | Notes |
-| --- | --- | --- | --- |
-| `iss` | Required | Required | Must match Account Service issuer value |
-| `sub` | Required | Required | Must identify the account subject |
-| `jti` | Required | Required | Unique per issued token |
-| `accountId` | Required | Required | Must be consistent with `sub` mapping |
-| `aud` | Required (`frontend` / `meta-ui`) | Required (`internal`) | Exact allowed values are centrally configured |
-| `iat` | Required | Required | UTC epoch seconds |
-| `nbf` | Required | Required | Token not usable before this time |
-| `exp` | Required | Required | Token unusable after this time |
-| `globalRoles` | Optional | Optional | Empty list when none |
-| `scopedRoles` | Optional | Optional | Empty map when none |
+| Claim | Browser JWT | Player-bootstrap JWT | Service JWT | Notes |
+| --- | --- | --- | --- | --- |
+| `iss` | Required | Required | Required | Must match Account Service issuer value |
+| `sub` | Required | Required | Required | Must identify the account subject |
+| `jti` | Required | Required | Required | Unique per issued token |
+| `accountId` | Required | Required | Required | Must be consistent with `sub` mapping |
+| `aud` | Required (`frontend` / `meta-ui`) | Required (`player-bootstrap`) | Required (`internal`) | Exact allowed values are centrally configured |
+| `iat` | Required | Required | Required | UTC epoch seconds |
+| `nbf` | Required | Required | Required | Token not usable before this time |
+| `exp` | Required | Required | Required | Token unusable after this time |
+| `globalRoles` | Optional | Optional | Optional | Empty list when none |
+| `scopedRoles` | Optional | Optional | Optional | Empty map when none |
 
 Tokens that omit required claims, have malformed claim types, or present an unexpected `aud` for the endpoint profile must be rejected before route classification.
 
@@ -567,11 +695,13 @@ When Game Session calls gameplay services on behalf of an authenticated player, 
 - `gameInstanceId`
 - `characterId`
 - `sessionId`
+- `aud` or `targetService`
+- `targetMethod`
 - `issuedAt`
 - `expiresAt`
 - `nonce` or `jti`
 
-Gameplay services must verify attestation signature (or MAC), expiry bounds, and caller service identity, then reject calls where attestation fields do not match request payload scope. Raw forwarded headers/metadata (`X-Tenant-Id`, `X-Game-Instance-Id`, etc.) are advisory only and are never sufficient identity proof by themselves.
+Gameplay services must verify attestation signature (or MAC), expiry bounds, destination audience/method, and caller service identity, then reject calls where attestation fields do not match request payload scope. A valid attestation for one gameplay service or RPC must not be accepted by another gameplay service or RPC. Raw forwarded headers/metadata (`X-Tenant-Id`, `X-Game-Instance-Id`, etc.) are advisory only and are never sufficient identity proof by themselves.
 
 Attestation crypto and replay requirements:
 
@@ -581,6 +711,7 @@ Attestation crypto and replay requirements:
 - Verification-key discovery must use a single authoritative interface (JWKS-like HTTP endpoint or gRPC equivalent) owned by Game Session control-plane.
 - Rotation must maintain overlap for at least `2 x max_attestation_ttl` before old keys are removed, and services must fail closed if they cannot resolve a referenced `kid`.
 - Maximum attestation TTL: 120 seconds; reject attestations older than TTL or outside bounded clock-skew tolerance (recommended 60 seconds).
+- Attestations are minted per outbound gameplay RPC using the destination service/method as part of the signed scope; consumers must not accept wildcard or omitted destination scope.
 - Require unique `jti`/`nonce` replay guard within TTL; gameplay services must reject duplicates.
 - Replay guards must be backed by a shared, bounded, low-latency store per gameplay trust domain (for example Coordination Redis prefix) so duplicate detection is consistent across horizontally scaled consumers.
 - Replay guard keys must include `{issuer, jti}` (or equivalent globally unique tuple) and expire automatically at `expiresAt + bounded_skew`; consumers must emit overload metrics when replay-cache capacity limits are hit.
@@ -672,6 +803,19 @@ FireMUD uses distinct lifetimes and invariants for each session type:
   - Keys: tenant-scoped session keys described in [Redis Architecture](./system-architecture-redis.md#session-keys-and-gameplay-binding), storing `accountId`, `tenantId`, `characterId` (with `playerId` as alias only), and tick-region context.  
   - Purpose: Bind a connected socket (or reconnect token) to a character in a specific tenant, enforce “one session per character”, and support reconnect flows.  
   - Lifetime: Sliding TTL refreshed while the player remains active. When the TTL elapses, the session is considered abandoned and is eligible for cleanup.
+
+    Game Session must also maintain bounded authoritative secondary indexes for gameplay bindings so takeover, reconnect, and revocation do not require scans:
+
+    - `session:game:index:character:<tenantId>:<gameInstanceId>:<characterId>` -> `sessionId`
+    - `session:game:index:account-tenant:<accountId>:<tenantId>` -> active `sessionId` set
+    - `session:game:index:tenant:<tenantId>` -> active `sessionId` set
+
+    Index contract requirements:
+
+    - Game Session is the sole writer for these indexes.
+    - Session key creation/update, uniqueness-index update, and reverse-index membership changes must occur atomically with respect to takeover/resume decisions.
+    - Index entries must be removed or expired when the bound gameplay session ends or becomes non-resumable.
+    - Billing- and membership-driven revocation flows must use these bounded indexes rather than wildcard key scans.
 
     Each gameplay session binding must store the **server-side auth token identity it is operating under**:
 

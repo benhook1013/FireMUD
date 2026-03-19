@@ -1,12 +1,12 @@
 plugins {
     `java-test-fixtures`
+    id("net.firedevops.firemud.stateful-service-conventions")
 }
 
 import org.gradle.api.DefaultTask
 import org.gradle.api.file.ConfigurableFileCollection
 import org.gradle.api.tasks.OutputDirectories
 import org.gradle.api.tasks.TaskAction
-import org.gradle.api.tasks.testing.Test
 import org.springframework.boot.gradle.tasks.run.BootRun
 
 abstract class CreateDirectoriesTask : DefaultTask() {
@@ -44,38 +44,13 @@ tasks.named("generateTestFixturesProto") {
 }
 
 dependencies {
-    annotationProcessor(libs.mapstruct.processor)
-    annotationProcessor(libs.lombok)
-    annotationProcessor(libs.lombok.mapstruct.binding)
-    compileOnly(libs.lombok)
-    implementation(libs.mapstruct)
-    implementation(libs.spring.boot.starter)
-    implementation(libs.spring.boot.starter.actuator)
     implementation(libs.spring.boot.starter.websocket)
-    implementation(libs.spring.boot.starter.data.jpa)
-    implementation(libs.spring.boot.starter.data.redis)
-    implementation(project(":common-library"))
-    implementation(libs.grpc.spring.boot.starter)
-    implementation(libs.micrometer.registry.prometheus)
-    implementation(libs.opentelemetry.sdk)
-    implementation(libs.opentelemetry.exporter.otlp)
-    runtimeOnly(libs.postgresql)
     testFixturesImplementation("io.grpc:grpc-netty-shaded:${libs.versions.grpc.get()}")
     testFixturesImplementation("io.grpc:grpc-protobuf:${libs.versions.grpc.get()}")
     testFixturesImplementation("io.grpc:grpc-stub:${libs.versions.grpc.get()}")
     testFixturesImplementation("com.google.protobuf:protobuf-java:${libs.versions.protobuf.get()}")
-    testImplementation(libs.testcontainers.junit.jupiter)
-    testImplementation(libs.testcontainers.postgresql)
     testImplementation(libs.grpc.inprocess)
     testImplementation(project(":game-logic-service"))
-    compileOnly("com.github.spotbugs:spotbugs-annotations:4.9.8")
-}
-
-tasks.register<Test>("crossServiceTest") {
-    description = "Runs cross-service regression tests only."
-    useJUnitPlatform()
-    include("**/crossservice/**")
-    mustRunAfter(tasks.test)
 }
 
 tasks.named<BootRun>("bootRun") {

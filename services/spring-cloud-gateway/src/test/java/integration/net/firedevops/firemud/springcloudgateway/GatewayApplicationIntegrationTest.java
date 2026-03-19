@@ -2,7 +2,6 @@ package net.firedevops.firemud.springcloudgateway;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import net.firedevops.firemud.common.config.CommonAutoConfiguration;
 import net.firedevops.firemud.test.HttpTestSupport;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
@@ -12,7 +11,6 @@ import org.springframework.boot.autoconfigure.ImportAutoConfiguration;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.boot.test.web.server.LocalServerPort;
-import org.springframework.context.annotation.Import;
 
 @Disabled("integration environment not configured")
 @SpringBootTest(
@@ -40,5 +38,4 @@ class GatewayApplicationIntegrationTest {
       "org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration",
       "org.springframework.boot.data.redis.autoconfigure.DataRedisAutoConfiguration"
     })
-@Import({CommonAutoConfiguration.class})
 class TestApp {}

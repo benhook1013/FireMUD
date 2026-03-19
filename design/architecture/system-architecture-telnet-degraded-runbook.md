@@ -110,6 +110,10 @@ When inspecting Telnet-side disconnects, prefer reasoning in terms of the standa
 - Treat `policy_violation` with `edge_backpressure` context (from structured logs/metrics such as `tcpproxy.telnet.discarded{reason="gateway_buffer_full"}`) as edge buffer-pressure enforcement, not as backend outage.
 - Treat `idle_timeout` and `logout` as expected lifecycle noise rather than indicators of incidents unless volumes spike unexpectedly.
 - If correlating with WebSocket dashboards, use the bounded WebSocket `subreason` taxonomy from Gateway Architecture (`user_logout`, `takeover`, `gateway_restart`, `admin_termination`, `edge_backpressure`, `none`) so planned edge restarts are not misclassified as player-driven logout volume.
+- For bridge-level shutdown attribution, reason in the bounded structured classes `planned_drain`, `upstream_logout`, and `unattributed_failure` rather than treating every non-`backend_unavailable` close as the same kind of event:
+  - `planned_drain` means the authenticated bridge delivered a machine-parseable drain signal such as `1000/logout;subreason=gateway_restart`.
+  - `upstream_logout` means the authenticated bridge delivered a clean session-end logout such as `1000/logout;subreason=takeover`, `user_logout`, `admin_termination`, or `none`.
+  - `unattributed_failure` means the bridge dropped without a clean authenticated logout signal and established Telnet sessions therefore surface `backend_unavailable`.
 - If `gamesession.notifydisconnect.dedupe.capacity_reached` is sustained during a broad outage, treat it as pressure on the disconnect-dedupe path and verify durable dedupe-store health and partition saturation before changing retry/retention guarantees.
 
 Quick operator guide:
@@ -119,6 +123,7 @@ Quick operator guide:
 | `policy_violation` | Usually client misuse, malformed protocol, or trust/policy failure; non-retriable by default | Check client behavior, malformed input, and TLS/trust-policy logs before treating it as platform outage |
 | `policy_violation;subreason=edge_backpressure` | Edge buffer pressure or slow-client enforcement; retriable with outage-style backoff | Check `tcpproxy.telnet.discarded{reason="gateway_buffer_full"}` and related backpressure metrics before changing backend outage settings |
 | `backend_unavailable` | Core gameplay outage or edge-to-gateway bridge failure | Check Gateway, Game Session, and Redis health first |
+| `logout;subreason=takeover` or `logout;subreason=admin_termination` | Clean upstream session end, not an outage | Confirm takeover/admin activity before treating it as network instability |
 | `logout;subreason=gateway_restart` | Planned Gateway drain / restart path | Treat as expected lifecycle behavior and confirm deploy/drain timeline before opening an outage incident |
 
 Unattributed bridge-loss example:

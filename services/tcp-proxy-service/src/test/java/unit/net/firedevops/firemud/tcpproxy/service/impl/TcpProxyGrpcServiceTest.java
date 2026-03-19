@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 import io.grpc.stub.StreamObserver;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.tcpproxy.service.PingService;
@@ -17,12 +18,17 @@ import org.mockito.Mockito;
 import org.springframework.util.StringUtils;
 
 class TcpProxyGrpcServiceTest {
+  private static TcpProxyGrpcService newService(
+      PingService pingService, TcpProxyEventService eventService) {
+    return new TcpProxyGrpcService(pingService, eventService, new SimpleMeterRegistry());
+  }
+
   @Test
   void pingReturnsPong() {
     PingService pingService = Mockito.mock(PingService.class);
     Mockito.when(pingService.ping()).thenReturn("pong");
     TcpProxyEventService eventService = Mockito.mock(TcpProxyEventService.class);
-    TcpProxyGrpcService service = new TcpProxyGrpcService(pingService, eventService);
+    TcpProxyGrpcService service = newService(pingService, eventService);
 
     AtomicReference<PingResponse> ref = new AtomicReference<>();
     service.ping(
@@ -58,7 +64,7 @@ class TcpProxyGrpcServiceTest {
                 Mockito.anyString(), Mockito.anyString(), Mockito.anyString(), Mockito.anyLong()))
         .thenReturn(upstream);
 
-    TcpProxyGrpcService service = new TcpProxyGrpcService(pingService, eventService);
+    TcpProxyGrpcService service = newService(pingService, eventService);
     AtomicReference<NotifyDisconnectResponse> ref = new AtomicReference<>();
 
     service.notifyDisconnect(
@@ -95,7 +101,7 @@ class TcpProxyGrpcServiceTest {
                 Mockito.anyString(), Mockito.anyString(), Mockito.anyString(), Mockito.anyLong()))
         .thenThrow(new RuntimeException("boom"));
 
-    TcpProxyGrpcService service = new TcpProxyGrpcService(pingService, eventService);
+    TcpProxyGrpcService service = newService(pingService, eventService);
     AtomicReference<NotifyDisconnectResponse> ref = new AtomicReference<>();
 
     service.notifyDisconnect(
@@ -132,7 +138,7 @@ class TcpProxyGrpcServiceTest {
                 Mockito.anyString(), Mockito.anyString(), Mockito.anyString(), Mockito.anyLong()))
         .thenReturn(NotifyDisconnectResponse.getDefaultInstance());
 
-    TcpProxyGrpcService service = new TcpProxyGrpcService(pingService, eventService);
+    TcpProxyGrpcService service = newService(pingService, eventService);
     AtomicReference<NotifyDisconnectResponse> ref = new AtomicReference<>();
 
     service.notifyDisconnect(
@@ -173,7 +179,7 @@ class TcpProxyGrpcServiceTest {
                 Mockito.anyString(), Mockito.anyString(), Mockito.anyString(), Mockito.anyLong()))
         .thenReturn(upstream);
 
-    TcpProxyGrpcService service = new TcpProxyGrpcService(pingService, eventService);
+    TcpProxyGrpcService service = newService(pingService, eventService);
 
     service.notifyDisconnect(
         net.firedevops.firemud.tcpproxy.v1.NotifyDisconnectRequest.newBuilder()
@@ -211,7 +217,7 @@ class TcpProxyGrpcServiceTest {
                 Mockito.anyString(), Mockito.anyString(), Mockito.anyString(), Mockito.anyLong()))
         .thenReturn(upstream);
 
-    TcpProxyGrpcService service = new TcpProxyGrpcService(pingService, eventService);
+    TcpProxyGrpcService service = newService(pingService, eventService);
     AtomicReference<NotifyDisconnectResponse> ref = new AtomicReference<>();
 
     service.notifyDisconnect(

@@ -137,6 +137,35 @@ Patch readiness initialization uses a separate admission class from ordinary liv
 
 This separation is required so patch publication remains predictable under load and so live automation traffic cannot accidentally block all progress on new script patch readiness.
 
+### Budget Accounting Rules
+
+Quota and budget policy must be applied at fixed charge points so operators can predict what a burst will cost and retries cannot distort usage:
+
+- **Per-script quota windows**
+  - Charged once per resolved handler-scoped Trigger Identity at handler admission time.
+  - Handlers admitted into a bounded `queue_until_free` backlog consume quota immediately and are not re-charged when they later start.
+  - Duplicate deliveries of the same handler-scoped Trigger Identity must not consume additional quota.
+- **Per-tenant tier budgets**
+  - Charged when a handler-scoped run is reserved onto live sandbox execution capacity.
+  - Event-scope ingress acceptance alone does not charge tenant runtime budget.
+  - Mixed fan-out therefore consumes tenant runtime budget only for handlers that actually leave admission and reserve execution capacity.
+- **Cluster-wide execution ceilings**
+  - Applied at the same execution-reservation point as tenant runtime budgets.
+  - Admission rejections due purely to cluster exhaustion must remain `ADMISSION` outcomes and must not burn sandbox CPU/memory budget.
+- **Output-budget and post-admission failures**
+  - Output-budget failures, sandbox errors, rollback-epoch cancellations after admission, and downstream infrastructure failures do not refund quota or execution budget that has already been charged.
+  - These runs still consumed or reserved scarce runtime capacity and must remain visible as charged non-success outcomes.
+- **`onLoad`**
+  - Uses its own publish-time capacity class and is excluded from the live per-script quota window and tenant runtime budget accounting above.
+
+Concrete mixed fan-out accounting example:
+
+- One inbound `TriggerScriptEvent` for `onEnterRegion` is admitted at event scope and resolves to three handler-scoped Trigger Identities: `S1`, `S2`, and `S3`.
+- `S1` is rejected immediately with `finalStage=ADMISSION`, `finalOutcome=quota_denied`. It consumes no tenant runtime execution budget and no sandbox CPU/memory budget.
+- `S2` is accepted under `concurrencyPolicy=queue_until_free`. It consumes one per-script quota slot immediately when queued, but it does not consume tenant runtime execution budget until it later reserves sandbox capacity and starts running.
+- `S3` is admitted directly to execution. It consumes one per-script quota slot at handler admission and consumes tenant runtime execution budget when it reserves sandbox capacity.
+- If `S2` later reaches execution and fails with `sandbox_error`, or `S3` later fails with `work_item_size_exceeded`, the already-charged quota/execution budget is not refunded.
+
 ---
 
 ## Resource Isolation and Multi-Level Budgets
@@ -210,6 +239,21 @@ The canonical `script_event_audit` schema includes:
 
 During rollback draining, operators should also expect a bounded number of old-epoch rows whose runs started before pause but were fenced before persistence or handoff. Those rows should appear as non-success canceled outcomes for the original Trigger Identity, not as silently dropped work. A typical example is `finalStage=WORK_ITEM_PERSIST`, `finalOutcome=canceled`, `finalReason=rollback_epoch_advanced`, paired with rollback/drain metrics for the same scope.
 At the metric layer, these rows should contribute to the same bounded rollback/drain visibility used for the paused scope rather than disappearing into generic infrastructure noise. Use `automation_rollback_drain_canceled_total{tenantId, gameInstanceId, finalStage, reason}` as defined in the canonical observability contract so operators can confirm that draining work was fenced intentionally rather than lost unexpectedly.
+
+`script_event_audit` remains the authoritative record for Automation-owned stages through `TICK_HANDOFF`, but post-handoff execution-time version fences must also be correlated back to the same trigger:
+
+- If Game Session later drops a handed-off command because its embedded `scriptPatchVersion` or plugin version no longer matches the instance's active pin, operator tooling must be able to locate that drop directly from the originating Trigger Identity.
+- The canonical mechanism is the supplementary execution-disposition contract in `design/architecture/system-architecture-scripting-observability-contract.md`: Game Session reports a bounded post-handoff disposition keyed by Trigger Identity rather than forcing operators to infer the relationship from metrics alone.
+- Dashboards and incident tooling should therefore show both:
+  - Automation pipeline completion (`finalStage`, `finalOutcome`) and
+  - any later execution-time fence rejection (`executionDisposition.outcome=version_fence_dropped`, bounded reason).
+
+Concrete rollback-visibility example:
+
+- Trigger Identity `T123` reaches `finalStage=TICK_HANDOFF`, `finalOutcome=success` after Automation & Scripting hands off its commands to Game Session.
+- Before the queued command executes, operators roll the instance back to an older `scriptPatchVersion`.
+- Game Session rejects the queued command on its execution-time version fence and publishes `executionDisposition={ outcome=version_fence_dropped, reason=script_patch_mismatch, sourceService=game-session }` for Trigger Identity `T123`.
+- Operator tooling for `T123` must therefore show both the successful Automation pipeline result and the later execution-time fence drop, rather than overwriting one with the other.
 
 Retention and sizing are governed by environment variables described below and in the Automation & Scripting Service README; in particular, `SCRIPT_EVENT_AUDIT_RETENTION_DAYS` and `SCRIPT_EVENT_AUDIT_MAX_ROWS` control how long audit rows are retained and how large the table is allowed to grow (current defaults are 30 days and 1,000,000 rows, but the README remains the authoritative source).
 Dead-letter stores used for rejected queue entries or non-progressing outbox work must also define explicit `maxAge`, `maxRows`, cleanup cadence, and alert thresholds; unbounded dead-letter growth is not an acceptable operational mode. These controls should be exposed as operator knobs (for example, `SCRIPT_DEAD_LETTER_MAX_ROWS`, `SCRIPT_DEAD_LETTER_MAX_AGE_SECONDS`, `SCRIPT_DEAD_LETTER_CLEANUP_INTERVAL_SECONDS`, `SCRIPT_DEAD_LETTER_ALERT_THRESHOLD_ROWS`) rather than implicit defaults.
@@ -510,6 +554,17 @@ At a minimum, rollback consists of:
    - If an old-epoch execution reaches persist or handoff checks after rollback pause has advanced the scope `admissionEpoch`, it must fail as a non-success canceled outcome rather than creating new live work. Operators should expect to see these rows in `script_event_audit` during rollback convergence and draining.
 
 Rollback orchestration should be modeled as a durable state machine (`PAUSING`, `REPINNING`, `CANCELING`, `PURGING`, `CONVERGING`, `DRAINING`, `RESUMING`, `COMPLETED`, terminal `TIMED_OUT`) keyed by `controlPlaneRequestId` so partial failures can be resumed deterministically.
+
+Concrete rollback sequence example:
+
+1. Call `PauseTicks(tenantId=T1, gameInstanceId=G7, controlPlaneRequestId=RB-42)` so Game Session stops new tick scheduling and command intake for that instance.
+2. Call `SetAutomationAdmissionMode(tenantId=T1, gameInstanceId=G7, mode=PAUSED_FOR_ROLLBACK, controlPlaneRequestId=RB-42)` so new external and scheduler triggers are rejected with `finalOutcome=skipped_rollback_pause`.
+3. Call `RollbackScriptPatchVersion(tenantId=T1, gameInstanceId=G7, targetScriptPatchVersion=P21, controlPlaneRequestId=RB-42)` to repin the instance to the known-good patch.
+4. Poll `GetAutomationPinConvergence` and `GetGameSessionPinConvergence` until both report `observedPinnedScriptPatchVersion=P21` and the latest observed `controlPlaneRequestId=RB-42`.
+5. Cancel or purge queued outbox work and staging entries that still carry the displaced patch `P22`, then poll `GetAutomationDrainStatus` until `activeExecutionCount=0` and `pendingCancelableWorkItemCount=0` for the paused scope.
+6. Expect a bounded number of old-epoch audit rows for executions that were admitted before pause and later fenced by the advanced `admissionEpoch`; these remain non-success outcomes, not silent loss.
+7. Call `SetAutomationAdmissionMode(..., mode=NORMAL, controlPlaneRequestId=RB-42)` only after convergence and drain checks pass.
+8. Call `ResumeTicks(..., controlPlaneRequestId=RB-42)` last so gameplay resumes only after both runtime services agree on the rollback target and old-version work has quiesced.
 
 Operationally, use control-plane APIs rather than direct data-store edits for pending and dead-lettered work:
 

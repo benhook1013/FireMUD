@@ -43,8 +43,14 @@ The Game Design Service’s publish workflows are responsible for enforcing thes
 - During `PublishVersion`, it verifies that all ability identifiers referenced by scripts and plugins targeting a given `(tenantId, versionId)` exist and are compatible with the ability schema for that version.
 - During `PublishScriptPatchVersion` and plugin bundle publication/enablement, it must re-validate that the patch/plugin remains compatible with the pinned `baseVersionId` (the underlying published game version) and its ability schema. Script-only and plugin-only patches must not introduce new dependencies that require a new `versionId`.
 - Compatibility checks must be bound to an immutable `abilitySchemaDigest` associated with `baseVersionId`. Patch/plugin validation must use that digest snapshot, and the same digest must be recorded in publish metadata so validation cannot drift due to mutable schema reads.
+- For plugins, compatibility is exact: one `pluginVersionId` targets one `baseVersionId` and one `abilitySchemaDigest`. If a creator needs the same logical plugin on a different game version, they must publish a new plugin version rather than relying on an implicit “compatible version” rule.
 
-If mismatches are detected, Game Design marks the publish/enable attempt as failed in its design-time status model (for example `PUBLISH_FAILED_DESIGN`) and does **not** hand the corresponding patch/plugin version to the Automation & Scripting Service. As a result, no `<tenantId, scriptPatchVersion>` lifecycle row is created and the patch never enters `PENDING_VALIDATION` / `ONLOAD_RUNNING` / `READY` on the runtime side; runtime handlers therefore never execute against missing or incompatible abilities.
+If mismatches are detected, Game Design fails the relevant design-time operation and does **not** hand incompatible content to the runtime:
+
+- For script patches, the publish attempt is recorded as a design-time failure (for example `PUBLISH_FAILED_DESIGN`), no `<tenantId, scriptPatchVersion>` lifecycle row is created in Automation & Scripting, and the patch never enters `PENDING_VALIDATION` / `ONLOAD_RUNNING` / `READY`.
+- For plugins, the bundle version remains in a non-published design-time status such as `VALIDATION_FAILED_DESIGN`, and runtime activation APIs must reject it as not eligible for activation.
+
+In both cases, runtime handlers therefore never execute against missing or incompatible abilities.
 
 From an observability perspective, script and plugin invocations that exercise abilities are recorded in `script_event_audit` with a `scriptEventId` that you can use to correlate designer-facing events with logs/traces and downstream tick effects; aggregate automation metrics should be used at the `scriptId` / `eventType` / `tenantId` level rather than per `scriptEventId`, following the patterns in `design/architecture/system-architecture-scripting-quotas-and-operations.md`.
 

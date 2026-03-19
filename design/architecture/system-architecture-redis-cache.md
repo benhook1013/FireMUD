@@ -315,7 +315,7 @@ Cached aggregates in Redis should follow structured, namespaced key patterns to 
 
 - `inventory:<tenantId>:<containerId>` – cached view of a single inventory or container (including room-ground containers).
 - `character-cache:<tenantId>:<characterId>` – cached character graphs for hot reads.
-- `world-dynamic:<tenantId>:<aggregateId>` – cached view of room-level dynamic state or other world-scoped aggregates.
+- `world-dynamic:<tenantId>:room-dynamic:<gameInstanceId>:<roomInstanceId>` – cached room-level dynamic state used in correctness-critical world decisions.
 - `room:<tenantId>:<gameInstanceId>:<roomInstanceId>` – cached room snapshots/topology slices used for LOOK/navigation, scoped to a running instance.
 - `view:room-look:<tenantId>:<gameInstanceId>:<roomInstanceId>` – cached rendered or pre-assembled room “view” data serving LOOK or similar commands.
 - `chat:city:<tenantId>:<cityId>` – cached short-lived windows of city chat history.
@@ -385,6 +385,65 @@ Expectations:
 - Writers are encouraged to set TTLs as part of the same write operation (for example using `SET key value EX ttl` or a Lua script) so value and expiry are updated atomically.
 - Future implementations should prefer single atomic commands or scripts (set value and TTL together, optionally with version) over multi-step delete plus set sequences unless there is a very specific, documented reason (such as maintaining backward-compatible behavior during a migration).
 
+### Canonical World Management Cache Contracts (`world-dynamic:*` and `room:*`, Class A)
+
+The first supported World Management Class A caches are intentionally narrow and room-scoped. They are defined here so `world-dynamic:*` and `room:*` are implementable contracts rather than placeholders.
+
+- **`world-dynamic:*` authoritative aggregate**
+  - Canonical first aggregate:
+    - `world-dynamic:<tenantId>:room-dynamic:<gameInstanceId>:<roomInstanceId>`
+  - Owner:
+    - World Management Service.
+  - Authoritative source:
+    - The room-instance dynamic-state row (or equivalent authoritative projection) in World Management PostgreSQL keyed by `(tenantId, gameInstanceId, roomInstanceId)`.
+  - Required authoritative version field:
+    - `roomDynamicVersion`, a monotonic version/`lastModified` value on that authoritative row.
+  - Cache payload may contain only room-scoped dynamic fields that affect correctness-critical world decisions, such as:
+    - exit open/closed/locked state
+    - traversal blockers and room accessibility flags
+    - ambient hazard activation state that World Management serves authoritatively
+    - other room-local, gameplay-relevant dynamic flags explicitly documented by World Management
+  - Cache payload must **not** include:
+    - rendered LOOK text
+    - inventory/container contents
+    - occupant/entity lists
+    - any data whose authoritative owner is another service
+  - Invalidator of record:
+    - World Management write paths that mutate room dynamic state.
+    - Required events include room dynamic-state changes such as door/exit state changes, hazard activation/inactivation changes, traversal-flag changes, and instance reset/teardown.
+
+- **`room:*` authoritative aggregate**
+  - Canonical first aggregate:
+    - `room:<tenantId>:<gameInstanceId>:<roomInstanceId>`
+  - Owner:
+    - World Management Service.
+  - Authoritative source:
+    - World Management’s room snapshot/read model for the running instance, built from published topology plus room-instance dynamic overlays.
+  - Required authoritative version field:
+    - `roomSnapshotVersion`, a monotonic version/`lastModified` value exposed by World Management for the full snapshot served to correctness-critical readers.
+    - `roomSnapshotVersion` must advance whenever either:
+      - the underlying published room topology/version visible to the instance changes, or
+      - any included room dynamic field changes.
+  - Cache payload may contain only the data required for correctness-critical navigation/visibility reads, such as:
+    - room identity and instance scope
+    - exits and connectivity metadata
+    - traversal/LOS-relevant topology flags
+    - the current `roomDynamicVersion` or equivalent embedded dynamic overlay version
+  - Cache payload must **not** include:
+    - presentation-only rendered room views
+    - chat/history windows
+    - inventories or occupant rosters owned by other services unless a separate cross-service contract explicitly makes them part of the World Management snapshot
+  - Invalidator of record:
+    - World Management publish/activation paths for topology-visible changes.
+    - World Management dynamic-state mutations that feed the snapshot.
+    - Instance lifecycle transitions that rebuild or retire the room snapshot.
+
+- **Reader and correctness contract**
+  - `world-dynamic:*` and `room:*` are the only World Management Redis prefixes allowed to participate in correctness-critical pathfinding, movement admission, and visibility decisions.
+  - Readers must validate these caches against `roomDynamicVersion` or `roomSnapshotVersion`; TTL is a backup only.
+  - If the authoritative version cannot be fetched or compared, readers must fall back to the authoritative World Management read path rather than trust a possibly stale cache entry.
+  - TTL-only world or room presentation caches must use distinct prefixes and must not be substituted for these Class A contracts.
+
 ### Cache/Rate-Limit Key Catalog
 
 Cache/Rate-Limit Redis hosts prefixes that are **not** part of the coordination log and may be evicted under pressure. Designs and CI treat this table as the canonical catalog for non-coordination Redis keys; new cache/rate-limit prefixes must be added here, labelled with their role, correctness class, and reset behavior, and then referenced from per-service design docs and the reset policy matrix.
@@ -393,8 +452,8 @@ Cache/Rate-Limit Redis hosts prefixes that are **not** part of the coordination 
 | --- | --- | --- | --- | --- |
 | `inventory:<tenantId>:<containerId>` | Cache | **Versioned (Class A)** | **Reset-tolerant** | Entity Management – cached inventory/container aggregates following version/TTL rules in the Redis cache design. Dropping entries flushes cached views; values are recomputed from PostgreSQL. Inventories rely on versioned correctness because stale caches can otherwise produce duplicate or missing items across containers. |
 | `character-cache:<tenantId>:<characterId>` | Cache | **Versioned (Class A)** | **Reset-tolerant** | Entity Management – cached character graphs for hot reads. Loss clears caches only; character state persists in PostgreSQL. These caches are Class A because stale graphs can leak incorrect stats, abilities, or equipment into combat and progression flows. |
-| `world-dynamic:<tenantId>:<aggregateId>` | Cache | **Versioned (Class A)** | **Reset-tolerant** | World Management – cached dynamic world aggregates (for example, room dynamic state). Resets discard snapshots; aggregates are rebuilt from authoritative state. TTL-only world caches must use distinct prefixes that are added to this catalog explicitly. These aggregates are Class A because pathfinding, movement, and visibility decisions depend on their correctness. |
-| `room:<tenantId>:<gameInstanceId>:<roomInstanceId>` | Cache | **Versioned (Class A)** | **Reset-tolerant** | World Management – cached room snapshots/topology slices for LOOK and navigation scoped to a running instance. Safe to drop; topology is reloaded from PostgreSQL. TTL-only room views must use distinct prefixes that are added to this catalog explicitly. Room snapshots are Class A because incorrect layouts can create unreachable areas, broken exits, or invalid LOS assumptions. |
+| `world-dynamic:<tenantId>:room-dynamic:<gameInstanceId>:<roomInstanceId>` | Cache | **Versioned (Class A)** | **Reset-tolerant** | World Management – room-scoped dynamic-state cache backed by authoritative `roomDynamicVersion` in World Management. Includes only room-local correctness-critical dynamic fields such as exit state, traversal blockers, and hazard activation. Occupant lists, inventories, and presentation views remain out of scope. |
+| `room:<tenantId>:<gameInstanceId>:<roomInstanceId>` | Cache | **Versioned (Class A)** | **Reset-tolerant** | World Management – correctness-critical room snapshot cache backed by authoritative `roomSnapshotVersion`. Includes topology and dynamic overlay fields needed for movement/pathfinding/visibility decisions. Presentation-only LOOK payloads remain on `view:room-look:*` as Class B caches. |
 | `view:room-look:<tenantId>:<gameInstanceId>:<roomInstanceId>` | Cache | **TTL-only (Class B)** | **Reset-tolerant** | Game Session – cached rendered or pre-assembled room views for LOOK and similar commands. Dropping keys invalidates views; they are recomputed on demand. This prefix is strictly Class B and is never used as a correctness source for combat, movement, or visibility; Game Logic consumes authoritative LOOK results only via gRPC, not directly from this prefix. Game Session is the sole writer and direct Redis reader for this prefix. |
 | `chat:say:<tenantId>:<playerId>`, `chat:tell:<tenantId>:<conversationId>`, `chat:guild:<tenantId>:<guildId>`, `chat:city:<tenantId>:<cityId>`, `chat:account:<tenantId>:<accountId>` | Cache | **TTL-only (Class B)** | **Reset-tolerant** | Social & Groups – short-lived chat history buffers. Resets drop recent chat windows only; authoritative history (where needed) lives in PostgreSQL. Clients must tolerate gaps and non-contiguous windows after resets or TTL truncation and rely on persisted history when a complete transcript is required. |
 | `automation:queue:<tenantId>:*`, `automation:quota:<tenantId>:*` | Cache / Rate-Limit | **TTL-only (Class B)** | **Reset-tolerant** | Automation & Scripting – queued automation work items and per-script quota counters. Dropping queued work or quota counters is acceptable; automation re-enqueues from durable triggers where required and quotas are re-established from configuration. Eventual execution is guaranteed by authoritative effect/trigger tables in PostgreSQL, not by these queue keys. |
@@ -417,8 +476,8 @@ To keep cache usage reviewable and consistent across services, common aggregate 
 | --- | --- | --- | --- |
 | Inventory/container views | `inventory:<tenantId>:<containerId>` | **Versioned** | Validated against a container or aggregate `version`/`lastModified` field in PostgreSQL; writes bump the version, and cache entries are discarded when versions mismatch. |
 | Character graphs | `character-cache:<tenantId>:<characterId>` | **Versioned** | Backed by character graph rows with explicit versioning; invalidated on writes or relevant domain events. |
-| Dynamic world aggregates | `world-dynamic:<tenantId>:<aggregateId>` | **Versioned** | Backed by world/region dynamic-state rows with explicit versioning; invalidated on writes or relevant domain events. |
-| Room topology snapshots | `room:<tenantId>:<gameInstanceId>:<roomInstanceId>` | **Versioned** | Cached room topology/state snapshots scoped to a running instance; validated against room/world topology versions to avoid serving stale layouts. |
+| Dynamic world aggregates | `world-dynamic:<tenantId>:room-dynamic:<gameInstanceId>:<roomInstanceId>` | **Versioned** | Backed by authoritative room-instance dynamic-state rows with `roomDynamicVersion`; invalidated on room dynamic-state writes and instance lifecycle changes. |
+| Room topology snapshots | `room:<tenantId>:<gameInstanceId>:<roomInstanceId>` | **Versioned** | Cached room snapshots scoped to a running instance; validated against `roomSnapshotVersion`, which advances on topology-visible or included dynamic changes. |
 | Room LOOK views | `view:room-look:<tenantId>:<gameInstanceId>:<roomInstanceId>` | **TTL-only** | Recomputed on demand and cached for a short TTL; occasional staleness is acceptable between writes and cache expiry. |
 | Short-lived chat buffers | `chat:say:<tenantId>:<playerId>`, `chat:guild:<tenantId>:<guildId>`, `chat:city:<tenantId>:<cityId>`, etc. | **TTL-only** | Treated as rolling windows of recent messages with small, fixed-size buffers; authoritative chat history (where required) lives in PostgreSQL. |
 
@@ -476,9 +535,9 @@ This section captures remaining design work; it is intentionally **short-lived**
     - Ensure the authoritative `version`/`lastModified` fields referenced in this catalog match the concrete columns and API fields named in the Entity Management README.
     - Confirm event-based invalidation flows (for example, “inventory changed”, “character graph changed”) remain documented and tested as those APIs evolve.
 - **World Management**
-  - Specify the first `world-dynamic:*` and `room:*` aggregates to cache:
-    - Define which room/topology fields participate in versioned caches under `world-dynamic:*` / `room:*` and ensure any TTL-only world views use distinct prefixes that are added to this catalog explicitly.
-    - Document the domain events that invalidate or refresh these caches (for example, room layout/persisted state changes).
+  - Keep the canonical `world-dynamic:*` and `room:*` contracts in sync with the World Management service design:
+    - Ensure `roomDynamicVersion` and `roomSnapshotVersion` map to concrete columns/API fields in the World Management README and APIs.
+    - Confirm the documented invalidation events stay aligned with the actual room dynamic-state and topology mutation paths.
 - **Game Session / Game Logic**
   - Confirm how `view:room-look:*` caches map onto room views and ensure they are used only for Class B flows (UI/analytics-style views). Correctness-critical flows (combat, visibility, movement) must rely on authoritative world/entity APIs or separate Class A caches with their own prefixes.
 - **Cross-service documentation**

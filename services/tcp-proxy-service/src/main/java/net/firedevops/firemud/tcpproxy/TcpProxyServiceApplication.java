@@ -1,14 +1,10 @@
 package net.firedevops.firemud.tcpproxy;
 
 import jakarta.annotation.PreDestroy;
-import net.firedevops.firemud.common.config.CommonAutoConfiguration;
-import net.firedevops.firemud.tcpproxy.config.GrpcClientProperties;
 import net.firedevops.firemud.tcpproxy.telnet.TelnetServer;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
-import org.springframework.boot.context.properties.EnableConfigurationProperties;
-import org.springframework.context.annotation.Import;
 import org.springframework.context.event.EventListener;
 
 @SpringBootApplication(
@@ -16,8 +12,6 @@ import org.springframework.context.event.EventListener;
       "org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration",
       "org.springframework.boot.data.redis.autoconfigure.DataRedisAutoConfiguration"
     })
-@Import(CommonAutoConfiguration.class)
-@EnableConfigurationProperties(GrpcClientProperties.class)
 public class TcpProxyServiceApplication {
   private final TelnetServer telnetServer;
 

@@ -13,6 +13,7 @@ Companion docs:
 - [Audience](#audience)
 - [Example: `onEnterRegion` Script Execution](#example-onenterregion-script-execution)
 - [Example: Periodic Patrol via `onInterval`](#example-periodic-patrol-via-oninterval)
+- [Example: Instance-Scoped Plugin Activation](#example-instance-scoped-plugin-activation)
 
 ---
 
@@ -48,10 +49,11 @@ This example walks through how a typical `onEnterRegion` script executes end-to-
 
 3. **Bindings and quotas**
    - The Automation & Scripting Service looks up all scripts bound to `onEnterRegion` for the target entity and tenant, using the version metadata provided by the Game Session Service to resolve the correct script definitions.
-   - Per-script quotas and tenant budgets are applied before execution (see `design/architecture/system-architecture-scripting-quotas-and-operations.md` for details). Scripts that fail quota checks are skipped and logged; others proceed to sandboxed execution.
+   - Per-script quotas and tenant budgets are applied before execution (see `design/architecture/system-architecture-scripting-quotas-and-operations.md` for details). Handler-scoped quota is charged at handler admission; tenant runtime budget is charged only when a handler actually reserves sandbox capacity. Scripts that fail quota checks are skipped and logged; others proceed to sandboxed execution.
 
 4. **Sandboxed DSL execution**
    - For each allowed script, the Automation & Scripting Service executes the `onEnterRegion` handler inside the sandboxed DSL runtime, walking the graph of condition, timer, and action nodes for the current event payload.
+   - All gameplay-affecting reads in that handler use the same run snapshot token captured at admission for the trigger's committed `(gameInstanceId, regionId, regionEpoch, tick/read-version)` view; the handler must not silently mix fresher state mid-run.
    - Typical patterns include:
      - Checking player or NPC state (faction, health, quest flags).
      - Branching into dialogue, combat, or flavor events.
@@ -103,7 +105,7 @@ This example shows how a script that runs on a fixed cadence (for example, an NP
    - When an interval becomes due, the scheduler creates a `scriptEventId` for the `onInterval` trigger and evaluates it using the same quota, cadence, and budgeting layers described in `design/architecture/system-architecture-scripting-quotas-and-operations.md`.
    - If multiple handlers are bound to the timer event, the timer firing is admitted once at event scope and then fans out into handler-scoped Trigger Identities whose outcomes are tracked independently.
    - If the script is outside its budgets or disabled, the trigger is skipped and recorded in both metrics and the audit feed.
-   - If allowed, the scheduler enqueues the `onInterval` trigger for sandbox execution and updates the interval entry with a new `nextTick` or `nextRunAt`, ensuring the cadence remains stable even if some intervals are occasionally delayed by load.
+   - If allowed, the scheduler enqueues the `onInterval` trigger for sandbox execution and updates the interval entry with a new `nextTick` or `nextRunAt`, ensuring the cadence remains stable even if some intervals are occasionally delayed by load. If the timer survives a reload or rollback because the logical schedule is preserved, the next due point is recalculated from the canonical resume rule rather than by replaying the paused window.
 
 4. **Sandbox execution and command enqueue**
    - The `onInterval` handler runs inside the sandboxed DSL engine, evaluating conditions such as “is the NPC currently out of combat?” and “is the patrol still active?” before deciding on the next waypoint or behavior.
@@ -132,3 +134,40 @@ Timer-driven handlers such as `onInterval` follow the same **at-most-once per tr
 
 - If patch `P11` and patch `P12` both define the NPC patrol timer as "run every 30 ticks while patrol is enabled" and Game Design emits the same `scheduleDefinitionId`, Automation & Scripting preserves the existing timer row and carries its due state forward under the new patch.
 - If patch `P12` replaces that patrol timer with a different logical schedule such as "run every 5 ticks while alerted" and the compiled `scheduleDefinitionId` changes, the old timer is tombstoned and a new timer is created. Rollback to `P11` follows the same rule in reverse: preserve only matching `scheduleDefinitionId` values, and recreate timers for schedules whose identity no longer matches.
+
+---
+
+## Example: Instance-Scoped Plugin Activation
+
+This example shows how one published plugin version is activated for one running game instance without changing other instances for the same tenant.
+
+1. **Plugin version is uploaded and published**
+   - A creator uploads plugin bundle `town-crier-v3` through the Game Design Service.
+   - Game Design verifies signatures, extracts `plugin-manifest.json`, validates bindings against `baseVersionId=game-v12`, and records the version as `PUBLISHED`.
+
+2. **Instance-scoped activation is requested**
+   - An operator uses Logging & Admin to call `SetPluginActiveVersion` for `<tenantId=T1, gameInstanceId=I7, pluginId=town-crier, targetPluginVersionId=town-crier-v3>`.
+   - Another instance for the same tenant, such as `I8`, is unaffected because plugin activation is scoped to one `(tenantId, gameInstanceId, pluginId)`.
+
+3. **Runtime compatibility gates are enforced**
+   - Automation & Scripting loads the published plugin metadata and verifies that:
+     - `town-crier-v3` is `PUBLISHED`.
+     - The instance runtime version is exactly `game-v12`.
+     - The instance’s bound ability schema digest matches the plugin’s recorded `abilitySchemaDigest`.
+   - If any of these checks fail, activation is rejected deterministically and the active plugin state for `I7` is unchanged.
+
+4. **Bindings resolve for the activated instance only**
+   - Suppose the plugin manifest contains a binding:
+     - `eventType=onEnterRegion`
+     - `targetScopeType=REGION`
+     - `targetSelector=market-square`
+     - `entrypointGraphId=announce-arrival`
+   - After activation, only triggers occurring inside `I7` that match `market-square` resolve this plugin binding. The same tenant’s other instance `I8` does not resolve the plugin unless it separately activates the same `pluginVersionId`.
+
+5. **Trigger execution and audit**
+   - When a player enters `market-square` in `I7`, Game Session emits the event to Automation & Scripting.
+   - Automation resolves the active plugin binding for `I7`, executes graph `announce-arrival`, and records the resulting handler activity in `script_event_audit` with `pluginId=town-crier` and `pluginVersionId=town-crier-v3`.
+
+6. **Rollback remains instance-scoped**
+   - If `town-crier-v3` misbehaves in `I7`, Logging & Admin can disable or roll back that plugin only for `I7`.
+   - Any other instance continues using its own separately activated plugin state.

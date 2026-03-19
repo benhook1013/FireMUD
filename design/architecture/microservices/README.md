@@ -4,6 +4,14 @@ This directory contains detailed design documents for each core microservice in 
 
 Service READMEs must not contradict the canonical contracts in [System Architecture Overview](../system-architecture-overview.md) and [Service Responsibility Matrix](../service-responsibility-matrix.md). If a service-level design needs to change an edge exposure rule, ownership boundary, Redis prefix owner, moderation/operator write path, or other canonical cross-service contract, update the architecture docs first or in the same change. For shared terminology such as `session front-end`, `lease owner`, `canonical room state`, and `bypass-safe workflow`, use the canonical definitions in the [architecture index glossary](../README.md#canonical-terms).
 
+Service READMEs must also treat the overview’s `Gameplay Hot Path Policy (Canonical)` as normative. A service doc may not introduce a steady-state gameplay API design that depends on synchronous fan-out to more than two downstream domain services unless the architecture docs are updated with the required latency-budget and fallback rationale.
+
+Service READMEs may not create new classes of externally writable bypass-safe workflows on their own. If an external write path is not explicitly allowlisted by the overview or responsibility matrix, it is not bypass-safe until the architecture docs are updated.
+
+When a service README designates an edge-routable write as bypass-safe, it must include the minimum checklist from the overview: exact route shape and method, domain-local ownership rationale, statement that no Logging & Admin-owned policy is involved, statement that no cross-domain write orchestration is involved, required audit behavior, and an explicit `bypass-safe` designation.
+
+When a service participates in the canonical room-read fence contract, its README should include a shared request/response example that shows `roomReadFence` input, echoed-fence success, and `fence_unsatisfied` failure semantics so cross-service contract tests can align on one shape.
+
 ---
 
 ## Core Microservices

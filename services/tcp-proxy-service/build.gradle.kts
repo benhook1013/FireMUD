@@ -1,32 +1,18 @@
 
+plugins {
+    id("net.firedevops.firemud.service-conventions")
+    id("net.firedevops.firemud.redis-conventions")
+}
+
 import net.firedevops.firemud.GenerateTcpProxyDevCertsTask
 import org.springframework.boot.gradle.tasks.run.BootRun
-import org.gradle.api.tasks.testing.Test
 import org.gradle.language.jvm.tasks.ProcessResources
 
 apply(from = "${rootDir}/gradle/proto-convention.gradle")
 
 dependencies {
-    annotationProcessor(libs.mapstruct.processor)
-    annotationProcessor(libs.lombok)
-    annotationProcessor(libs.lombok.mapstruct.binding)
-    compileOnly("com.github.spotbugs:spotbugs-annotations:4.9.8")
-    compileOnly(libs.lombok)
-    implementation(libs.mapstruct)
-    implementation(libs.spring.boot.starter)
-    implementation(libs.spring.boot.starter.actuator)
     implementation("io.netty:netty-all:4.2.10.Final")
     implementation(libs.spring.boot.starter.websocket)
-    implementation(libs.spring.boot.starter.data.redis)
-    implementation(project(":common-library"))
-    implementation(libs.grpc.spring.boot.starter)
-    implementation(libs.micrometer.core)
-    implementation(libs.micrometer.registry.prometheus)
-    implementation(libs.opentelemetry.api)
-    implementation(libs.opentelemetry.sdk)
-    implementation(libs.opentelemetry.exporter.otlp)
-    testImplementation(libs.testcontainers.junit.jupiter)
-    testImplementation(libs.testcontainers.postgresql)
     testImplementation(libs.micrometer.registry.prometheus)
     testImplementation("com.squareup.okhttp3:mockwebserver:5.3.2")
     testImplementation(libs.spring.boot.starter.webflux)
@@ -91,13 +77,6 @@ tasks.withType<BootRun>().configureEach {
     dependsOn(generateTcpProxyDevCerts)
 }
 
-tasks.withType<Test>().configureEach {
+tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
     dependsOn(generateTcpProxyDevCerts)
-}
-
-tasks.register<Test>("crossServiceTest") {
-    description = "Runs TELNET/WebSocket cross-service LOOK regression suites."
-    useJUnitPlatform()
-    include("**/crossservice/**")
-    mustRunAfter(tasks.test)
 }

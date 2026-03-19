@@ -6,6 +6,7 @@ import io.grpc.StatusRuntimeException;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
+import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.gamelogic.logic.dto.CommandResult;
 import net.firedevops.firemud.gamelogic.logic.service.CommandService;
 import net.firedevops.firemud.gamelogic.service.LookAggregationService;
@@ -20,7 +21,6 @@ import net.firedevops.firemud.gamelogic.v1.LookRequest;
 import net.firedevops.firemud.gamelogic.v1.LookResult;
 import net.firedevops.firemud.gamelogic.v1.PingRequest;
 import net.firedevops.firemud.gamelogic.v1.PingResponse;
-import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.springframework.grpc.server.service.GrpcService;
 
 /** gRPC endpoints for the Game Logic Service. */
@@ -49,11 +49,6 @@ public class GameLogicGrpcService extends GameLogicServiceGrpc.GameLogicServiceI
     this.meterRegistry = meterRegistry;
   }
 
-  private ErrorDetail error(String code, String message) {
-    meterRegistry.counter("grpc.app_error", "code", code).increment();
-    return ErrorDetail.newBuilder().setCode(code).setMessage(message).build();
-  }
-
   @Override
   @Timed(value = "gamelogicGrpc.ping")
   public void ping(PingRequest request, StreamObserver<PingResponse> responseObserver) {
@@ -70,7 +65,8 @@ public class GameLogicGrpcService extends GameLogicServiceGrpc.GameLogicServiceI
     ExecuteCommandResponse.Builder builder =
         ExecuteCommandResponse.newBuilder().setResult(result.result());
     if (result.error() != null) {
-      builder.setError(error(result.error().code(), result.error().message()));
+      builder.setError(
+          GrpcAppErrors.error(meterRegistry, result.error().code(), result.error().message()));
     }
     responseObserver.onNext(builder.build());
     responseObserver.onCompleted();

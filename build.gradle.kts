@@ -1,6 +1,7 @@
 import com.github.gradle.node.npm.task.NpxTask
 import com.github.spotbugs.snom.SpotBugsTask
 import org.gradle.api.plugins.quality.Checkstyle
+import org.gradle.api.plugins.jvm.JvmTestSuite
 import org.gradle.api.tasks.compile.JavaCompile
 import java.io.File
 import org.springframework.boot.gradle.tasks.run.BootRun
@@ -61,14 +62,9 @@ subprojects {
 
     plugins.withId("java") {
         the<JavaPluginExtension>().toolchain.languageVersion.set(JavaLanguageVersion.of(21))
-        val categorizedTestRoots = listOf("src/test/java/unit", "src/test/java/integration", "src/test/java/crossservice")
-            .map(::file)
-            .filter(File::exists)
-        if (categorizedTestRoots.isNotEmpty()) {
-            the<SourceSetContainer>()["test"].java.setSrcDirs(
-                listOf(file("src/test/java")) + categorizedTestRoots
-            )
-        }
+        val integrationTestsDir = file("src/test/java/integration")
+        val crossServiceTestsDir = file("src/test/java/crossservice")
+        val categorizedTestRootsExist = integrationTestsDir.exists() || crossServiceTestsDir.exists()
         tasks.withType<JavaCompile>().configureEach {
             options.release.set(21)
             if (name.contains("Test")) {
@@ -76,15 +72,91 @@ subprojects {
                 options.compilerArgs.add("-Xlint:-removal")
             }
         }
-        if (categorizedTestRoots.isNotEmpty()) {
-            tasks.named<JavaCompile>("compileTestJava").configure {
-                // Categorized test roots have produced stale cache hits where selectors miss real test classes.
-                outputs.cacheIf { false }
+        testing {
+            suites {
+                named<JvmTestSuite>("test") {
+                    useJUnitJupiter()
+                    sources {
+                        java {
+                            setSrcDirs(listOf(file("src/test/java")))
+                            exclude("integration/**", "crossservice/**")
+                        }
+                        resources {
+                            setSrcDirs(listOf(file("src/test/resources")))
+                        }
+                    }
+                }
+
+                if (integrationTestsDir.exists()) {
+                    register<JvmTestSuite>("integrationTest") {
+                        useJUnitJupiter()
+                        dependencies {
+                            implementation(project())
+                        }
+                        sources {
+                            java.setSrcDirs(listOf(integrationTestsDir))
+                            resources.setSrcDirs(listOf(file("src/test/resources")))
+                        }
+                        targets {
+                            all {
+                                testTask.configure {
+                                    shouldRunAfter(tasks.named("test"))
+                                }
+                            }
+                        }
+                    }
+                    configurations.named("integrationTestImplementation").configure {
+                        extendsFrom(configurations.named("testImplementation").get())
+                    }
+                    configurations.named("integrationTestRuntimeOnly").configure {
+                        extendsFrom(configurations.named("testRuntimeOnly").get())
+                    }
+                    tasks.named("check") {
+                        dependsOn("integrationTest")
+                    }
+                }
+
+                if (crossServiceTestsDir.exists()) {
+                    register<JvmTestSuite>("crossServiceTest") {
+                        useJUnitJupiter()
+                        dependencies {
+                            implementation(project())
+                        }
+                        sources {
+                            java.setSrcDirs(listOf(crossServiceTestsDir))
+                            resources.setSrcDirs(listOf(file("src/test/resources")))
+                        }
+                        targets {
+                            all {
+                                testTask.configure {
+                                    shouldRunAfter(tasks.named("test"))
+                                }
+                            }
+                        }
+                    }
+                    configurations.named("crossServiceTestImplementation").configure {
+                        extendsFrom(configurations.named("testImplementation").get())
+                    }
+                    configurations.named("crossServiceTestRuntimeOnly").configure {
+                        extendsFrom(configurations.named("testRuntimeOnly").get())
+                    }
+                    tasks.named("check") {
+                        dependsOn("crossServiceTest")
+                    }
+                }
+            }
+        }
+        if (categorizedTestRootsExist) {
+            tasks.withType<JavaCompile>().configureEach {
+                if (name == "compileTestJava" || name == "compileIntegrationTestJava" || name == "compileCrossServiceTestJava") {
+                    // Categorized test roots have produced stale cache hits where selectors miss real test classes.
+                    outputs.cacheIf { false }
+                }
             }
         }
     }
 
-    if (projectDir.parentFile.name == "services" && name != "common-library") {
+    if (projectDir.parentFile.name == "services" && !name.startsWith("common-")) {
         apply(plugin = "org.springframework.boot")
         apply(plugin = "org.flywaydb.flyway")
 
@@ -125,8 +197,8 @@ subprojects {
         testImplementation(libs.findLibrary("spring-boot-resttestclient").get())
         testImplementation(libs.findLibrary("spring-boot-starter-webmvc-test").get())
         testRuntimeOnly("org.junit.platform:junit-platform-launcher:6.0.3")
-        if (projectDir.parentFile.name == "services" && name != "common-library") {
-            testImplementation(testFixtures(project(":common-library")))
+        if (projectDir.parentFile.name == "services" && !name.startsWith("common-")) {
+            testImplementation(testFixtures(project(":common-test-support")))
         }
     }
 
@@ -246,6 +318,25 @@ tasks.register("crossServiceTest") {
     group = "verification"
     description = "Runs the cross-service LOOK regression suites."
     dependsOn(":game-session-service:crossServiceTest", ":tcp-proxy-service:crossServiceTest")
+}
+
+tasks.register("codeqlClasses") {
+    group = "build"
+    description = "Compiles the source sets needed for CodeQL analysis without running tests."
+    dependsOn(
+        subprojects.flatMap { project ->
+            buildList {
+                add("${project.path}:classes")
+                add("${project.path}:testClasses")
+                if (project.file("src/test/java/integration").exists()) {
+                    add("${project.path}:integrationTestClasses")
+                }
+                if (project.file("src/test/java/crossservice").exists()) {
+                    add("${project.path}:crossServiceTestClasses")
+                }
+            }
+        }
+    )
 }
 
 tasks.register<Exec>("buildBaseImage") {

@@ -107,6 +107,10 @@ The ingress endpoint determines who owns `scriptEventId` generation and retry be
 | `WORK_ITEM_PERSIST` | If durable persistence fails, the audit record must not show success. It must record a persistence failure outcome and must not claim that effects were enqueued. |
 | `TICK_HANDOFF` | `finalOutcome=success` is permitted only when Game Session has accepted commands into tick queues. “DSL evaluated successfully but handoff failed” must be a non-success handoff outcome. |
 
+Supplementary post-handoff correlation rule:
+
+- Execution-time version/plugin fence drops that happen after tick handoff must not be left as metrics-only signals. They must be exposed through the same Trigger Identity via the observability contract's supplementary `executionDisposition` surface, using bounded reasons such as `script_patch_mismatch` or `plugin_version_mismatch`.
+
 ### Canonical `finalOutcome` Values (Normative)
 
 Use a single canonical outcome taxonomy across docs, protos, metrics, and dashboards. Aliases are not allowed in new writes.
@@ -165,6 +169,7 @@ The matrix below defines what the scheduler does when a firing becomes due under
 | `reloadState=RELOADING` | Do not admit new timer firings; do not backfill by default. | `finalStage=ADMISSION` with `finalOutcome=skipped_reloading`. |
 | `PAUSED_FOR_ROLLBACK` | Do not admit new timer firings while rollback cleanup and repin complete. | `finalStage=ADMISSION` with `finalOutcome=skipped_rollback_pause`. |
 | Leader failover / short downtime | May perform bounded catch-up for missed cadence boundaries: at most one synthetic firing per cadence boundary crossed, and never more than `SCRIPT_TIMER_CATCH_UP_MAX_FIRINGS_PER_RESUME` for a resume window. Excess candidates are coalesced/dropped and never enqueued as triggers. | Catch-up firings must use `triggerMode=CATCH_UP` and deterministic `scriptEventId` derived from the due point. Truncated catch-up must emit an operator-visible metric and bounded reason code. |
+| Preserved timer across reload/rollback | Recalculate the next due point from the canonical resume formula using `resumeTickId`, `previousDueTickId`, and cadence; do not replay the paused window unless the next valid cadence boundary lands exactly on resume. | The preserved firing cadence must remain derivable from durable schedule metadata and the documented resume rule. |
 | Long downtime or sustained overload | No guarantee of eventual execution for every firing; the system converges by running future firings once capacity returns. | Missed firings must be visible as skips/drops in metrics and audit. |
 | Infrastructure error after admission | Do not re-run the DSL body for the same `scriptEventId`. Only idempotent downstream ops may retry. | `finalStage` must reflect where it failed; do not record `success`. |
 

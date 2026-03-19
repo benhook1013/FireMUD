@@ -1,13 +1,12 @@
 package net.firedevops.firemud.worldmanagement.service.impl;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
-import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
-import net.firedevops.firemud.shared.v1.ErrorDetail;
+import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.worldmanagement.dto.RoomDto;
 import net.firedevops.firemud.worldmanagement.dto.RoomSnapshotDto;
 import net.firedevops.firemud.worldmanagement.dto.RoomSnapshotDto.RoomExitSnapshotDto;
@@ -24,6 +23,8 @@ import net.firedevops.firemud.worldmanagement.v1.RoomSnapshot;
 import net.firedevops.firemud.worldmanagement.v1.UpdateWorldStateRequest;
 import net.firedevops.firemud.worldmanagement.v1.UpdateWorldStateResponse;
 import net.firedevops.firemud.worldmanagement.v1.WorldManagementServiceGrpc;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.grpc.server.service.GrpcService;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.ObjectMapper;
@@ -36,16 +37,12 @@ import tools.jackson.databind.ObjectMapper;
     justification = "Injected services and registry remain internal")
 public class WorldManagementGrpcService
     extends WorldManagementServiceGrpc.WorldManagementServiceImplBase {
+  private static final Logger logger = LoggerFactory.getLogger(WorldManagementGrpcService.class);
   private final PingService pingService;
   private final RoomService roomService;
   private final net.firedevops.firemud.worldmanagement.service.WorldEventService worldEventService;
   private final MeterRegistry meterRegistry;
   private final ObjectMapper objectMapper = new ObjectMapper();
-
-  private ErrorDetail error(String code, String message) {
-    meterRegistry.counter("grpc.app_error", "code", code).increment();
-    return ErrorDetail.newBuilder().setCode(code).setMessage(message).build();
-  }
 
   @Override
   @Timed(value = "worldGrpc.ping")
@@ -57,12 +54,20 @@ public class WorldManagementGrpcService
       responseObserver.onCompleted();
     } catch (IllegalArgumentException ex) {
       PingResponse response =
-          PingResponse.newBuilder().setError(error("INVALID_ARGUMENT", ex.getMessage())).build();
+          PingResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry, logger, "Ping", "INVALID_ARGUMENT", ex.getMessage()))
+              .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (Exception ex) {
-      responseObserver.onError(
-          Status.INTERNAL.withDescription(ex.getMessage()).asRuntimeException());
+      PingResponse response =
+          PingResponse.newBuilder()
+              .setError(GrpcAppErrors.internal(meterRegistry, logger, "Ping", ex))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
     }
   }
 
@@ -80,18 +85,37 @@ public class WorldManagementGrpcService
         responseObserver.onCompleted();
       } else {
         GetRoomResponse response =
-            GetRoomResponse.newBuilder().setError(error("NOT_FOUND", "room not found")).build();
+            GetRoomResponse.newBuilder()
+                .setError(
+                    GrpcAppErrors.error(
+                        meterRegistry, logger, "GetRoom", "NOT_FOUND", "room not found"))
+                .build();
         responseObserver.onNext(response);
         responseObserver.onCompleted();
       }
     } catch (NumberFormatException ex) {
       GetRoomResponse response =
-          GetRoomResponse.newBuilder().setError(error("INVALID_ARGUMENT", "invalid id")).build();
+          GetRoomResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry, logger, "GetRoom", "INVALID_ARGUMENT", "invalid id"))
+              .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (IllegalArgumentException ex) {
       GetRoomResponse response =
-          GetRoomResponse.newBuilder().setError(error("NOT_FOUND", ex.getMessage())).build();
+          GetRoomResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry, logger, "GetRoom", "NOT_FOUND", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      GetRoomResponse response =
+          GetRoomResponse.newBuilder()
+              .setError(GrpcAppErrors.internal(meterRegistry, logger, "GetRoom", ex))
+              .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     }
@@ -112,14 +136,25 @@ public class WorldManagementGrpcService
     } catch (NumberFormatException ex) {
       GetRoomSnapshotResponse response =
           GetRoomSnapshotResponse.newBuilder()
-              .setError(error("INVALID_ARGUMENT", "invalid id"))
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry, logger, "GetRoomSnapshot", "INVALID_ARGUMENT", "invalid id"))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (IllegalArgumentException ex) {
       GetRoomSnapshotResponse response =
           GetRoomSnapshotResponse.newBuilder()
-              .setError(error("NOT_FOUND", ex.getMessage()))
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry, logger, "GetRoomSnapshot", "NOT_FOUND", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      GetRoomSnapshotResponse response =
+          GetRoomSnapshotResponse.newBuilder()
+              .setError(GrpcAppErrors.internal(meterRegistry, logger, "GetRoomSnapshot", ex))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -140,13 +175,24 @@ public class WorldManagementGrpcService
       UpdateWorldStateResponse response =
           UpdateWorldStateResponse.newBuilder()
               .setSuccess(false)
-              .setError(error("INVALID_ARGUMENT", ex.getMessage()))
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry,
+                      logger,
+                      "UpdateWorldState",
+                      "INVALID_ARGUMENT",
+                      ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (Exception ex) {
-      responseObserver.onError(
-          Status.INTERNAL.withDescription(ex.getMessage()).asRuntimeException());
+      UpdateWorldStateResponse response =
+          UpdateWorldStateResponse.newBuilder()
+              .setSuccess(false)
+              .setError(GrpcAppErrors.internal(meterRegistry, logger, "UpdateWorldState", ex))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
     }
   }
 

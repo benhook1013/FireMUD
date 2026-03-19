@@ -1,11 +1,11 @@
 package net.firedevops.firemud.entitymanagement.service.impl;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
-import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.util.stream.Collectors;
+import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.entitymanagement.dto.CharacterDto;
 import net.firedevops.firemud.entitymanagement.dto.RoomEntityDto;
 import net.firedevops.firemud.entitymanagement.service.CharacterService;
@@ -27,7 +27,8 @@ import net.firedevops.firemud.entitymanagement.v1.QueryInventoryResponse;
 import net.firedevops.firemud.entitymanagement.v1.RoomEntity;
 import net.firedevops.firemud.entitymanagement.v1.UpdateEntityRequest;
 import net.firedevops.firemud.entitymanagement.v1.UpdateEntityResponse;
-import net.firedevops.firemud.shared.v1.ErrorDetail;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.Pageable;
 import org.springframework.grpc.server.service.GrpcService;
 
@@ -35,6 +36,7 @@ import org.springframework.grpc.server.service.GrpcService;
 @GrpcService
 public class EntityManagementGrpcService
     extends EntityManagementServiceGrpc.EntityManagementServiceImplBase {
+  private static final Logger logger = LoggerFactory.getLogger(EntityManagementGrpcService.class);
   private final PingService pingService;
   private final CharacterService characterService;
 
@@ -63,11 +65,6 @@ public class EntityManagementGrpcService
     this.meterRegistry = meterRegistry;
   }
 
-  private ErrorDetail error(String code, String message) {
-    meterRegistry.counter("grpc.app_error", "code", code).increment();
-    return ErrorDetail.newBuilder().setCode(code).setMessage(message).build();
-  }
-
   @Override
   @Timed(value = "entityGrpc.ping")
   public void ping(PingRequest request, StreamObserver<PingResponse> responseObserver) {
@@ -78,12 +75,20 @@ public class EntityManagementGrpcService
       responseObserver.onCompleted();
     } catch (IllegalArgumentException ex) {
       PingResponse response =
-          PingResponse.newBuilder().setError(error("INVALID_ARGUMENT", ex.getMessage())).build();
+          PingResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry, logger, "Ping", "INVALID_ARGUMENT", ex.getMessage()))
+              .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (Exception ex) {
-      responseObserver.onError(
-          Status.INTERNAL.withDescription(ex.getMessage()).asRuntimeException());
+      PingResponse response =
+          PingResponse.newBuilder()
+              .setError(GrpcAppErrors.internal(meterRegistry, logger, "Ping", ex))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
     }
   }
 
@@ -105,20 +110,37 @@ public class EntityManagementGrpcService
     } catch (NumberFormatException ex) {
       ListCharactersByAccountResponse response =
           ListCharactersByAccountResponse.newBuilder()
-              .setError(error("INVALID_ARGUMENT", ex.getMessage()))
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry,
+                      logger,
+                      "ListCharactersByAccount",
+                      "INVALID_ARGUMENT",
+                      ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (IllegalArgumentException ex) {
       ListCharactersByAccountResponse response =
           ListCharactersByAccountResponse.newBuilder()
-              .setError(error("INVALID_ARGUMENT", ex.getMessage()))
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry,
+                      logger,
+                      "ListCharactersByAccount",
+                      "INVALID_ARGUMENT",
+                      ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (Exception ex) {
-      responseObserver.onError(
-          Status.INTERNAL.withDescription(ex.getMessage()).asRuntimeException());
+      ListCharactersByAccountResponse response =
+          ListCharactersByAccountResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.internal(meterRegistry, logger, "ListCharactersByAccount", ex))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
     }
   }
 
@@ -140,13 +162,23 @@ public class EntityManagementGrpcService
     } catch (NumberFormatException ex) {
       CreateCharacterResponse response =
           CreateCharacterResponse.newBuilder()
-              .setError(error("INVALID_ARGUMENT", ex.getMessage()))
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry,
+                      logger,
+                      "CreateCharacter",
+                      "INVALID_ARGUMENT",
+                      ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (Exception ex) {
-      responseObserver.onError(
-          Status.INTERNAL.withDescription(ex.getMessage()).asRuntimeException());
+      CreateCharacterResponse response =
+          CreateCharacterResponse.newBuilder()
+              .setError(GrpcAppErrors.internal(meterRegistry, logger, "CreateCharacter", ex))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
     }
   }
 
@@ -163,13 +195,19 @@ public class EntityManagementGrpcService
     } catch (NumberFormatException ex) {
       UpdateEntityResponse response =
           UpdateEntityResponse.newBuilder()
-              .setError(error("INVALID_ARGUMENT", ex.getMessage()))
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry, logger, "UpdateEntity", "INVALID_ARGUMENT", ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (Exception ex) {
-      responseObserver.onError(
-          Status.INTERNAL.withDescription(ex.getMessage()).asRuntimeException());
+      UpdateEntityResponse response =
+          UpdateEntityResponse.newBuilder()
+              .setError(GrpcAppErrors.internal(meterRegistry, logger, "UpdateEntity", ex))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
     }
   }
 
@@ -188,13 +226,19 @@ public class EntityManagementGrpcService
     } catch (NumberFormatException ex) {
       QueryInventoryResponse response =
           QueryInventoryResponse.newBuilder()
-              .setError(error("INVALID_ARGUMENT", ex.getMessage()))
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry, logger, "QueryInventory", "INVALID_ARGUMENT", ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (Exception ex) {
-      responseObserver.onError(
-          Status.INTERNAL.withDescription(ex.getMessage()).asRuntimeException());
+      QueryInventoryResponse response =
+          QueryInventoryResponse.newBuilder()
+              .setError(GrpcAppErrors.internal(meterRegistry, logger, "QueryInventory", ex))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
     }
   }
 
@@ -209,9 +253,26 @@ public class EntityManagementGrpcService
       entities.stream().map(this::toProto).forEach(builder::addEntities);
       responseObserver.onNext(builder.build());
       responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      ListRoomEntitiesResponse response =
+          ListRoomEntitiesResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry,
+                      logger,
+                      "ListRoomEntities",
+                      "INVALID_ARGUMENT",
+                      ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
     } catch (Exception ex) {
-      responseObserver.onError(
-          Status.INTERNAL.withDescription(ex.getMessage()).asRuntimeException());
+      ListRoomEntitiesResponse response =
+          ListRoomEntitiesResponse.newBuilder()
+              .setError(GrpcAppErrors.internal(meterRegistry, logger, "ListRoomEntities", ex))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
     }
   }
 

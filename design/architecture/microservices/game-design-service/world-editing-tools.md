@@ -35,6 +35,81 @@ Game creators use these interfaces to craft rooms, items and NPCs without modify
    revision history remains anchored in the Game Design Service even though
    domain services store the versioned templates.
 
+### Draft Write Concurrency
+
+Eventually consistent application does not permit last-writer-wins mutation of Draft templates.
+
+Initial-slice concurrency contract:
+
+- Each design-time mutation against a domain-owned Draft aggregate must carry:
+  - stable `revisionId`;
+  - containing `commitId`;
+  - the target `(tenantId, versionId)`;
+  - an `expectedDraftRevisionEpoch` (or equivalent monotonic aggregate version) for the aggregate being edited.
+- World Management and Entity Management design APIs must reject the write with a conflict error if the expected epoch does not match the current Draft aggregate state.
+- Replays of the same `revisionId` remain idempotent; a duplicate delivery with the same already-applied revision must no-op rather than fail conflict.
+- Game Design must surface the conflict to the editor as a Draft-write concurrency failure, not silently overwrite the newer state.
+- Publish reconciliation replays commits in commit order and revision order within the commit. It must not reorder concurrent conflicting edits into a synthetic merged result.
+
+Illustrative request/response shapes:
+
+```json
+{
+  "request": {
+    "tenantId": "t1",
+    "versionId": "v42",
+    "commitId": "c901",
+    "revisionId": "r-room-12",
+    "aggregateType": "ROOM_TEMPLATE",
+    "aggregateId": "roomTemplateId:inn-foyer",
+    "expectedDraftRevisionEpoch": 7
+  },
+  "response": {
+    "result": "APPLIED",
+    "newDraftRevisionEpoch": 8
+  }
+}
+```
+
+```json
+{
+  "request": {
+    "tenantId": "t1",
+    "versionId": "v42",
+    "commitId": "c901",
+    "revisionId": "r-room-12",
+    "aggregateType": "ROOM_TEMPLATE",
+    "aggregateId": "roomTemplateId:inn-foyer",
+    "expectedDraftRevisionEpoch": 7
+  },
+  "response": {
+    "result": "NO_OP_ALREADY_APPLIED",
+    "currentDraftRevisionEpoch": 8
+  }
+}
+```
+
+```json
+{
+  "request": {
+    "tenantId": "t1",
+    "versionId": "v42",
+    "commitId": "c902",
+    "revisionId": "r-room-13",
+    "aggregateType": "ROOM_TEMPLATE",
+    "aggregateId": "roomTemplateId:inn-foyer",
+    "expectedDraftRevisionEpoch": 7
+  },
+  "error": {
+    "code": "DRAFT_WRITE_CONFLICT",
+    "message": "Draft aggregate has advanced to epoch 8.",
+    "currentDraftRevisionEpoch": 8
+  }
+}
+```
+
+If a later implementation introduces multi-branch merging semantics, that workflow must be specified explicitly. Until then, the canonical first-slice rule is optimistic concurrency plus deterministic replay order, not implicit merge behavior.
+
 When domain templates for a `(tenantId, versionId)` are temporarily out of sync
 with the revision set recorded in the Game Design Service (for example due to
 transient failures when calling design APIs), the version’s `designSyncStatus`
@@ -83,6 +158,32 @@ Publish completion must also persist an immutable release attestation in Game De
 - Activation, repair, and rollback-preflight workflows must validate against this attestation instead of reconstructing release state from multiple service-local sources.
 - Game Design must expose this attestation through a read-only API such as `GetPublishedReleaseBundle(tenantId, versionId)` so runtime and operator workflows never depend on direct table access.
 
+For initial-slice releases that export derived world artifacts, the attestation should also carry typed artifact-digest entries for those payloads in addition to `participantDigests[]` and `manifestHash`, so publish/activation tooling can verify that the exported world bundles belong to the same attested release.
+
+For exported world bundles in the initial slice, these `artifactDigests[]`
+entries are mandatory fields of the release attestation rather than optional
+extensions.
+
+### Implementation Checklist
+
+Use this checklist when wiring the first implementation slice for world and content authoring:
+
+1. Apply design revisions only to Draft domain templates keyed by `(tenantId, versionId)`.
+2. Enforce optimistic concurrency on Draft aggregate writes and no-op replay on duplicate `revisionId`.
+3. Mark versions `OUT_OF_SYNC` or `UNRESOLVED_REFERENCE` instead of treating failed cross-service application as healthy Draft state.
+4. Gate full publish on documented participant digests plus the Game Design control-plane digest.
+5. Persist `published_release_bundle` before treating a version as publish-complete.
+6. Resolve one immutable launch descriptor before any persistent instance rows are created.
+7. Verify `GetTemplateReferencePhase == ENFORCED` and validate `GetPublishedReleaseBundle` before launch.
+8. Drive world creation only from the resolved descriptor and attested `generationConfigRevision`.
+9. Treat design-time generation as an explicit revision with declared scope and replacement policy.
+10. Replay generation revisions and later manual edits in original order; fail Draft convergence rather than silently erasing authored changes.
+
+Authoritative schema source rule:
+
+- The concrete gRPC field names and enums for `GetDraftDesignDigest`, `GetDesignControlPlaneDigest`, `GetPublishedReleaseBundle`, `ResolveLaunchDescriptor`, and conflict/error surfaces are authoritative only once they exist in the service proto definitions.
+- The JSON examples in this document define required semantics and minimum payload content, but implementers should treat the proto/OpenAPI files as the final schema source when wiring clients and servers.
+
 When digest semantics evolve, the system must follow the explicit “Digest Schema Migration” workflow described in `design/architecture/microservices/game-design-service/version-control.md` so publish gating never compares incompatible hashes.
 
 The Game Design Service reconciler records the per-service digest it observed for a given `commitId` when that commit was last applied successfully, and later compares current digests against those recorded values. Publish-time validation must require that all participating services report `appliedCommitId == commitId` and `contentDigest` equal to the recorded digest for that commit.
@@ -117,6 +218,36 @@ Eventually consistent design application is not permission to persist unresolved
 - Designers must see the unresolved dependency set explicitly (referenced identifier, owning service, failing constraint, last validation time).
 - Publish is blocked for any version with unresolved references, even if replay/reconciliation later succeeds for unrelated services.
 - Reconciliation may retry delivery of valid revisions, but it must not silently normalize or auto-rewrite broken identifiers.
+
+Illustrative unresolved-reference example:
+
+```json
+{
+  "request": {
+    "tenantId": "t1",
+    "versionId": "v42",
+    "commitId": "c903",
+    "revisionId": "r-spawn-17",
+    "bindingType": "WORLD_ENTITY_SPAWN_BINDING",
+    "roomTemplateId": "roomTemplateId:graveyard-gate",
+    "entityTemplateId": "entityTemplateId:skeleton-captain"
+  },
+  "validationResult": {
+    "versionStatus": "UNRESOLVED_REFERENCE",
+    "failures": [
+      {
+        "owningService": "entity-management",
+        "referencedIdentifier": "entityTemplateId:skeleton-captain",
+        "constraint": "ENTITY_TEMPLATE_NOT_FOUND_FOR_VERSION",
+        "lastValidatedAt": "2026-03-19T09:15:00Z"
+      }
+    ]
+  }
+}
+```
+
+This version remains publish-blocked until the referenced entity template exists
+for the same `(tenantId, versionId)` or the binding revision is replaced.
 
 Where synchronous reference validation is available, Game Design should reject the commit before it becomes durable. Where synchronous validation is temporarily unavailable, the version must still enter an explicit invalid state rather than a generic Draft state.
 

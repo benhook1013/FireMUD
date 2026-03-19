@@ -1,17 +1,11 @@
 package net.firedevops.firemud.gamesession.client;
 
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
-import io.grpc.ManagedChannel;
-import io.grpc.ManagedChannelBuilder;
-import io.grpc.netty.shaded.io.grpc.netty.GrpcSslContexts;
-import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
 import jakarta.annotation.PostConstruct;
-import jakarta.annotation.PreDestroy;
-import java.io.File;
 import java.util.Locale;
-import java.util.concurrent.TimeUnit;
-import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
+import net.firedevops.firemud.common.grpc.AbstractBlockingGrpcClient;
+import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
+import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.gamelogic.v1.BroadcastSayRequest;
 import net.firedevops.firemud.gamelogic.v1.BroadcastSayResponse;
 import net.firedevops.firemud.gamelogic.v1.ChatAlias;
@@ -20,50 +14,39 @@ import net.firedevops.firemud.gamelogic.v1.LookRequest;
 import net.firedevops.firemud.gamelogic.v1.LookResult;
 import net.firedevops.firemud.gamelogic.v1.PingRequest;
 import net.firedevops.firemud.gamelogic.v1.PingResponse;
-import net.firedevops.firemud.gamesession.config.GrpcClientProperties;
 import net.firedevops.firemud.shared.v1.RoomInstanceRef;
 import org.springframework.stereotype.Component;
 
 @Component
-@RequiredArgsConstructor
-@SuppressFBWarnings(
-    value = "EI_EXPOSE_REP2",
-    justification = "Injected configuration is stored internally")
-public class GameLogicClient implements AutoCloseable {
-  private final ServiceEndpointsProperties endpoints;
-  private final GrpcClientProperties grpcClientProperties;
+public class GameLogicClient
+    extends AbstractBlockingGrpcClient<GameLogicServiceGrpc.GameLogicServiceBlockingStub> {
 
-  private ManagedChannel channel;
-  private GameLogicServiceGrpc.GameLogicServiceBlockingStub stub;
+  public GameLogicClient(
+      ServiceEndpointsProperties endpoints,
+      CommonGrpcClientProperties grpcClientProperties,
+      GrpcChannelFactory channelFactory) {
+    super(endpoints, grpcClientProperties, channelFactory);
+  }
 
   @PostConstruct
   void init() throws Exception {
-    String target = endpoints.getGameLogicService();
-    if (target == null || target.isBlank()) {
-      target = "game-logic-service:6565";
-    }
-    String[] parts = target.split(":");
-    String host = parts[0];
-    int port = parts.length > 1 ? Integer.parseInt(parts[1]) : 6565;
-    if (grpcClientProperties.isPlaintext()) {
-      channel = ManagedChannelBuilder.forAddress(host, port).usePlaintext().build();
-    } else {
-      var sslContext =
-          GrpcSslContexts.forClient()
-              .trustManager(new File(grpcClientProperties.getCaCert()))
-              .keyManager(
-                  new File(grpcClientProperties.getCertChain()),
-                  new File(grpcClientProperties.getPrivateKey()))
-              .build();
-      channel =
-          NettyChannelBuilder.forAddress(host, port)
-              .sslContext(sslContext)
-              .keepAliveTime(30, TimeUnit.SECONDS)
-              .keepAliveTimeout(5, TimeUnit.SECONDS)
-              .keepAliveWithoutCalls(true)
-              .build();
-    }
-    stub = GameLogicServiceGrpc.newBlockingStub(channel).withCompression("gzip");
+    initClient();
+  }
+
+  @Override
+  protected String configuredTarget(ServiceEndpointsProperties endpoints) {
+    return endpoints.getGameLogicService();
+  }
+
+  @Override
+  protected String defaultTarget() {
+    return "game-logic-service:6565";
+  }
+
+  @Override
+  protected GameLogicServiceGrpc.GameLogicServiceBlockingStub buildStub(
+      io.grpc.ManagedChannel channel) {
+    return GameLogicServiceGrpc.newBlockingStub(channel).withCompression("gzip");
   }
 
   public LookResult resolveLook(String tenantId, String sessionId, String playerId, String roomId) {
@@ -78,7 +61,7 @@ public class GameLogicClient implements AutoCloseable {
                     .setRoomInstanceId(roomId)
                     .build())
             .build();
-    return stub.resolveLook(request);
+    return stub().resolveLook(request);
   }
 
   public BroadcastSayResponse broadcastSay(
@@ -101,11 +84,11 @@ public class GameLogicClient implements AutoCloseable {
             .setAlias(mapAlias(aliasToken))
             .setText(text)
             .build();
-    return stub.broadcastSay(request);
+    return stub().broadcastSay(request);
   }
 
   public PingResponse ping() {
-    return stub.ping(PingRequest.getDefaultInstance());
+    return stub().ping(PingRequest.getDefaultInstance());
   }
 
   private ChatAlias mapAlias(String token) {
@@ -117,12 +100,5 @@ public class GameLogicClient implements AutoCloseable {
       case "WHISPER" -> ChatAlias.WHISPER;
       default -> ChatAlias.SAY;
     };
-  }
-
-  @PreDestroy
-  public void close() {
-    if (channel != null) {
-      channel.shutdown();
-    }
   }
 }

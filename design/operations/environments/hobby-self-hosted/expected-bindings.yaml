@@ -1,0 +1,31 @@
+environment: hobby-self-hosted
+internalBindings:
+  postgres:
+    endpoint: postgres.firemud.svc.cluster.local:5432
+    credentialsRef: secret://firemud/postgres-credentials
+  redis:
+    coordination:
+      endpoint: redis-coord.firemud.svc.cluster.local:6379
+    cache:
+      endpoint: redis-cache.firemud.svc.cluster.local:6379
+  jwt:
+    signingKeysRef: secret://firemud/jwt-signing-keys
+    jwksRef: secret://firemud/jwt-jwks
+  certificates:
+    issuerRef: cert-manager://firemud/clusterissuers/firemud-hobby
+  registry:
+    imagePullSecretRef: secret://firemud/ghcr-pull-hobby
+backupStorage:
+  bucket: firemud-hobby-backups
+  endpoint: https://minio.hobby.internal
+assetStorage:
+  bucket: firemud-hobby-assets
+  endpoint: https://minio.hobby.internal
+outboundComms:
+  smtpHost: smtp.hobby.internal
+  webhookTargets:
+    accountNotifications: hobby-only
+operatorCredentials:
+  bindingRef: cert-manager://firemud/hobby-operator-client
+serviceDiscovery:
+  mode: kubernetes-dns-default

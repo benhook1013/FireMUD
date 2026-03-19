@@ -217,7 +217,7 @@ Some failures leave edge connections technically alive while core gameplay servi
 To avoid ambiguous half-open behavior for already-established Telnet sessions, the TCP Proxy bridge uses an explicit per-connection state machine:
 
 - `healthy` – upstream WebSocket bridge is established; gameplay traffic flows normally.
-- `close_due_to_planned_drain` – if the proxy receives the deterministic bridge-drain signal defined in Gateway Architecture for the authenticated bridge path, it closes the Telnet session as `logout` with `gateway_restart` context.
+- `close_due_to_clean_logout` – if the proxy receives `1000/logout` on the authenticated bridge path, it closes the Telnet session as `logout` and preserves the bounded subreason. `subreason=gateway_restart` is the planned-drain case within this branch.
 - `close_due_to_unreachable` – if the established upstream gameplay WebSocket cannot be maintained for any other reason, the proxy closes that Telnet connection immediately with `backend_unavailable`. The proxy does not keep the client TCP socket open while attempting a hidden gameplay-bridge reattach.
 - `close_due_to_edge_backpressure` – if buffered lines exceed `TCP_PROXY_GATEWAY_MAX_BUFFERED_LINES` while upstream is still reachable, close that Telnet connection with `policy_violation` and emit `edge_backpressure` context in structured logs/metrics.
 

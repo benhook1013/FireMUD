@@ -18,7 +18,8 @@ The main body of this document describes the target-state backup workflow. Curre
 
 - `PauseTicksForScope` / `ResumeTicksForScope` support pausing by `tenant_id` + `game_instance_id` today; `region_id` scoping exists in the proto contract but is not yet enforced end-to-end.
 - Backup-related spans and metrics should still use the target-state names and units documented here so dashboards and alert rules remain stable as scope support is expanded.
-- Automated coordinated backups for player-facing prod-like environments must converge on canonical `tenant_id + region_id` scope before those environments are considered fully backup-ready. Alias scope remains a migration aid, not a steady-state operating mode.
+- Player-facing prod-like environments are not considered coordinated-backup-ready until automated backups invoke `PauseTicksForScope` / `ResumeTicksForScope` with canonical `tenant_id + region_id` scope end-to-end. Alias scope remains a migration aid, not a steady-state operating mode.
+- Until that convergence is complete, production releases that would depend on restore-point recovery rather than binary rollback are non-compliant for promotion.
 - The alias-scope migration notes in this document are temporary implementation-bridge guidance. Once canonical `tenant_id + region_id` pause scope is enforced end-to-end, these migration-only notes and phase descriptions should be removed so the architecture returns to one steady-state scope contract.
 
 ## PostgreSQL Logical Backups
@@ -95,6 +96,7 @@ Backups should use `region_id` scoping wherever possible to minimize blast radiu
 To keep backup alerts actionable and blast radius explicit:
 
 - Automated coordinated backups in production and other player-facing prod-like environments must use canonical `tenant_id + region_id` scope.
+- Until canonical `tenant_id + region_id` scope is enforced end-to-end, production and other player-facing prod-like environments must fail coordinated-backup readiness for live traffic. During that interim state, only quarantined drills, detached restore rehearsals, and other non-player-facing maintenance may rely on backup automation that still uses alias scope.
 - Alias-scoped `game_instance_id` pause/resume is allowed only for:
   - non-player-facing restore drills,
   - quarantined staging rehearsals,
@@ -177,8 +179,11 @@ Run `dev-tools/backups/setup-local-backup.sh` to deploy MinIO, create the `firem
 
 - If the database service fails completely:
   1. Restore the most recent `pg_dump` file from the `firemud-pg-dumps` volume or object store.
-  2. Restart services to resume operation.
-  3. Coordination state is treated as reset-tolerant and is rebuilt as services run (where possible) from PostgreSQL state and new activity as described in the Redis architecture and runbooks; cache/rate-limit keys refill on demand.
+  2. Choose and record exactly one coordination recovery mode before services resume:
+     - `cold_start_restore`: Coordination Redis is intentionally empty for the restored environment and is treated as a cold-start/reset event.
+     - `scoped_reset_restore`: surviving Coordination Redis state is treated as potentially inconsistent with the restored PostgreSQL snapshot and must be fenced/reset using the Coordination Reset Model before player traffic resumes.
+  3. Restart services only after the chosen coordination recovery mode's required gates have run.
+  4. Coordination state is treated as reset-tolerant and is rebuilt as services run (where possible) from PostgreSQL state and new activity as described in the Redis architecture and runbooks; cache/rate-limit keys refill on demand.
      - Reset-sensitive session prefixes (`session:game:*`, `session:auth:*`) may be dropped as part of this rebuild; expect player re-login and internal token re-authentication where applicable.
 
 ## Redis Persistence
@@ -217,8 +222,10 @@ This behavior is distinct from **failover**:
 
 - **Velero** backs up Deployments, StatefulSets, ConfigMaps, and Secrets (but not volume snapshots).
   - Restoration process (scripted):
-    1. Use `dev-tools/restores/restore-cluster.sh <backup-name>` to restore the latest `pg_dump` and Kubernetes manifests and restart services.
-    2. Set `FIREMUD_K8S_NAMESPACE` if restoring to a non-default namespace.
+    1. Use `dev-tools/restores/restore-cluster.sh <backup-name>` to restore the latest `pg_dump` and Kubernetes manifests into the quarantined target namespace.
+    2. Treat that script as a restore-bootstrap step only unless it explicitly documents the full coordination recovery gate and post-restore hardening flow for the target environment. “Script completed” is not by itself sufficient evidence to reopen traffic.
+    3. Before player traffic can reopen, run the required restore-mode selection, post-restore coordination recovery gate, secret hardening, external credential validation, and smoke verification defined later in this document.
+    4. Set `FIREMUD_K8S_NAMESPACE` if restoring to a non-default namespace.
   - Restoration process (manual):
     1. Copy the desired dump out of the PostgreSQL pod:
 
@@ -246,13 +253,35 @@ This behavior is distinct from **failover**:
        kubectl rollout status statefulset --all -n <namespace>
        ```
 
-    4. If dumps live in `PG_DUMP_BUCKET`, download them first with:
+    4. Treat the rollout above as the database-restore/bootstrap step only. Before player traffic can reopen, operators must still select `cold_start_restore` or `scoped_reset_restore`, complete the corresponding coordination recovery gate, run post-restore hardening, validate external credentials, and pass smoke verification.
+
+    5. If dumps live in `PG_DUMP_BUCKET`, download them first with:
 
        ```bash
        aws s3 cp s3://$PG_DUMP_BUCKET/<path> ./dump.sql.gz
        ```
 
        Add `--endpoint-url` for MinIO-backed buckets as needed.
+
+### Restore Mode Selection (Normative)
+
+Every restore that rewinds PostgreSQL must select one explicit Coordination Redis recovery mode before the environment is allowed to reopen:
+
+- `cold_start_restore`
+  - Use when Coordination Redis for the target environment is known to be empty because the PVC/data directory was intentionally replaced, lost, or wiped for the recovery event.
+  - Required proof:
+    - the Coordination Redis deployment came up with an empty keyspace for coordination prefixes, and
+    - the environment then followed the documented cold-start/reset behavior before traffic reopen.
+- `scoped_reset_restore`
+  - Use when Coordination Redis state may survive while PostgreSQL has been rewound to an earlier snapshot.
+  - Required proof:
+    - operators ran the authoritative reset handshake for the affected scope (`pause -> epoch bump -> reset -> ledger/command convergence -> init-meta -> smoke-check -> resume`), and
+    - reset-sensitive session/auth state was either invalidated or explicitly handled according to reset policy before traffic reopen.
+
+Ambiguous restore behavior is not allowed:
+
+- Operators must not simply “restore PostgreSQL and restart everything” while leaving it undefined whether surviving coordination/session state is trusted.
+- Any player-facing restore that cannot prove one of the two modes above is non-compliant and must remain quarantined.
 
 ## Local Development
 
@@ -274,14 +303,22 @@ This behavior is distinct from **failover**:
 - The `k8s/velero/verify-backups-cronjob.yaml` CronJob runs nightly at **04:00**
   and executes `dev-tools/backups/verify-backups.sh` to ensure recent snapshots are present in
   the object store. The script also verifies that the latest PostgreSQL dump
-  exists in `PG_DUMP_BUCKET`, failing the job if no dumps are found. This
+  exists in `PG_DUMP_BUCKET`, that the dump is restorable by the supported recovery tooling, and that the latest eligible backup set can satisfy the recovery contract expected by the environment class. Existence-only checks are insufficient for player-facing recovery evidence. This
   CronJob is installed automatically by the production Terraform modules. See [`k8s/terraform-production`](../../k8s/terraform-production) for the deployment configuration.
 - Operators should periodically test recovery by restoring a snapshot into a
   throwaway namespace with `dev-tools/restores/restore-cluster.sh <backup-name>
-  <namespace>` (or by setting `FIREMUD_K8S_NAMESPACE`) and verifying
-  services start successfully. A manual workflow
+  <namespace>` (or by setting `FIREMUD_K8S_NAMESPACE`) and driving the restore through quarantine, post-restore hardening, external credential validation, and smoke verification so the drill produces the same canonical recovery record required for a player-facing reopen. A manual workflow
   `.github/workflows/manual-backup-restore.yml` can run these checks on
-  demand from the GitHub Actions UI. See [Operational Runbooks](./system-architecture-runbooks.md#recovery) for step-by-step instructions.
+  demand from the GitHub Actions UI only for explicit throwaway drill targets using dedicated low-privilege credentials and GitHub Environment approvals. It must not restore into live staging or production namespaces, and it must not hold credentials capable of mutating the currently player-facing namespace or cluster boundary. See [Operational Runbooks](./system-architecture-runbooks.md#recovery) for step-by-step instructions.
+- Artifact verification and restore proof are separate requirements:
+  - `verify-backups.sh` proves backup artifacts exist, are readable, and remain compatible with supported recovery tooling.
+  - restore drills prove the artifacts, restore tooling, restore-mode selection, and post-restore hardening flow actually produce a recoverable environment.
+- Every successful restore drill must record:
+  - selected restore mode (`cold_start_restore` or `scoped_reset_restore`),
+  - restore-tool success,
+  - smoke success,
+  - required post-restore hardening and validation results for the drill scope,
+  - immutable evidence references.
 - Each environment boundary (staging, production) normally uses the namespace name `firemud` in its own cluster context. `FIREMUD_K8S_NAMESPACE` is an explicit override for throwaway restore drills and non-default restore targets.
 
 ### Backup Observability and Alerts
@@ -290,6 +327,8 @@ Backup and verification jobs must emit simple, environment-agnostic metrics so o
 
 - `backup_last_success_timestamp_seconds` – Unix timestamp of the last successful PostgreSQL logical backup (`pg_dump`) for the environment.
 - `backup_verify_last_success_timestamp_seconds` – Unix timestamp of the last successful verification run from `verify-backups.sh` (for example, verifying that recent dumps exist in the object store).
+- `backup_restore_drill_last_success_timestamp_seconds` – Unix timestamp of the last successful restore drill that completed restore-mode selection, restore execution, and post-restore validation for the environment class/binding.
+- `backup_restore_drill_total{result="success"|"failure",mode}` – counts restore drill executions by result and chosen restore mode (`cold_start_restore` or `scoped_reset_restore`).
 - Coordinated pause/resume safety metrics (to ensure backups do not cause prolonged player-visible degradation):
   - `backup_tick_pause_wait_seconds{scope_type,tenantId?,regionId?}` – time from `PauseTicks` request to `PAUSED`.
   - `backup_tick_pause_duration_seconds{scope_type,tenantId?,regionId?}` – duration of the tick pause window for a backup attempt (including wait-for-paused time).
@@ -307,6 +346,7 @@ For Alertmanager-down fallback and dashboard consistency, Prometheus should also
 
 - `backup_pipeline_recent_backup_slo_breached` – boolean-like recording for “no successful backup within the configured freshness window”.
 - `backup_pipeline_recent_verification_slo_breached` – boolean-like recording for “no successful verification within the configured freshness window”.
+- `backup_pipeline_recent_restore_drill_slo_breached` – boolean-like recording for “no successful restore drill within the configured restore-proof freshness window”.
 - `backup_tick_pause_wait_budget_breached{scope_type,tenantId?,regionId?}` – derived from `backup_tick_pause_wait_seconds > backup_tick_pause_wait_budget_seconds`.
 - `backup_tick_pause_duration_budget_breached{scope_type,tenantId?,regionId?}` – derived from `backup_tick_pause_duration_seconds > backup_tick_pause_duration_budget_seconds`.
 - `backup_ticks_paused_budget_breached{scope_type,tenantId?,regionId?}` – derived from “scope remains paused while the emitted pause-duration budget is exceeded”, so fallback and alerting do not rely on a fixed wall-clock constant.
@@ -319,6 +359,9 @@ Prometheus and Alertmanager should expose and alert on these metrics using rules
 - **Missed verification (P1/P2)**
   - Expression: “no successful verification in the last 24h” (for example, `time() - backup_verify_last_success_timestamp_seconds > 24 * 60 * 60`).
   - Labels similar to the backup alert, with a clear `runbook` annotation.
+- **Missed restore proof (P1)**
+  - Expression: “no successful restore drill in the required window” (for example, `time() - backup_restore_drill_last_success_timestamp_seconds > 30 * 24 * 60 * 60` for production-like environments unless a stricter environment overlay is documented).
+  - Labels: `service="postgres-backup"`, `severity="P1"`, `owner="infra"`, `runbook="design/architecture/system-architecture-backup-recovery.md#backup-verification--restoration-testing"`.
 - **Backup pause too long (P0 for player-facing scopes)**
   - Expression: pause wait or pause duration exceeds the emitted per-scope budget (for example `backup_tick_pause_wait_seconds > backup_tick_pause_wait_budget_seconds` or `backup_tick_pause_duration_seconds > backup_tick_pause_duration_budget_seconds`).
   - Labels: `service="postgres-backup"`, `severity="P0"` when the affected scope is player-facing and `severity="P1"` otherwise, `owner="infra"`, `runbook="design/architecture/system-architecture-backup-recovery.md#backup-verification-restoration-testing"`.
@@ -332,10 +375,12 @@ Prometheus and Alertmanager should expose and alert on these metrics using rules
 Grafana dashboards under `design/observability/grafana` should include a small “Backups” section or dedicated dashboard that visualizes:
 
 - The age of the last successful backup and verification.
+- The age of the last successful restore drill.
 - Recent backup/verify success vs failure counts.
+- Restore drill results by recovery mode.
 - Tick pause wait, pause duration, alias-scope usage, and queue growth signals during backup windows.
 
-These signals allow operators to treat backup and verification health as first-class SLOs alongside tick, Redis, and player experience SLOs.
+These signals allow operators to treat backup artifact freshness, restore proof, and backup safety as first-class SLOs alongside tick, Redis, and player experience SLOs.
 
 #### Scope Migration Behaviour for Backup Signals
 
@@ -428,6 +473,27 @@ Post-restore hardening is performed by a dedicated Kubernetes Job (for example `
      - `design/operations/deployments/staging/recovery/<recovery-ref>.json`
      - Export `SANITIZATION_EVIDENCE_REF` with that in-repo evidence path so `validate-external-credentials.sh staging` can enforce the gate.
 
+### Post-Restore Coordination Recovery Gate
+
+After PostgreSQL is restored, but before quarantine is lifted, the restore workflow must prove that Coordination Redis is operating in exactly one approved recovery mode:
+
+1. `cold_start_restore`
+   - Verify the target Coordination Redis keyspace is empty for coordination prefixes because the recovery intentionally started from an empty coordination store.
+   - Allow services to re-establish coordination through the documented cold-start path.
+   - Record evidence that reset-sensitive session/auth state was dropped or re-established under the restored environment.
+2. `scoped_reset_restore`
+   - Run the authoritative reset handshake for the affected scope from `system-architecture-redis-reset-and-recovery.md`.
+   - Record evidence for:
+     - pause completion,
+     - `region_epoch` bump,
+     - scoped reset execution,
+     - ledger reconcile / command convergence,
+     - metadata reinitialization,
+     - post-reset smoke-check success.
+   - Record whether reset-sensitive session/auth prefixes were invalidated as part of the recovery event.
+
+Recovery automation must fail closed if the restore event cannot be classified into one of these two modes with evidence.
+
 ## Canonical Recovery Record
 
 Every player-facing restore must produce one canonical recovery record before quarantine is lifted:
@@ -442,12 +508,14 @@ Required fields:
 - `environment`
 - `recoveryRef`
 - `restoreSource` (backup/snapshot identifier)
+- `coordinationRecoveryMode` (`cold_start_restore` or `scoped_reset_restore`)
 - `quarantineStartedAt`
 - `quarantineReleasedAt`
 - `restoredAt`
 - `restoredBy`
 - `preflightReportPath` when a traffic-reopen preflight gate ran for the same event
 - `expectedBindingsRef`
+- `coordinationRecoveryEvidence`
 - `jwtHardening`
 - `databaseCredentialRotation`
 - `certificateReissuance`
@@ -463,6 +531,9 @@ Nested control-group requirements:
 - `databaseCredentialRotation` must include rotation job reference, affected Secret refs, and rollout-restart completion evidence.
 - `certificateReissuance` must include workload, bridge, and operator leaf identity evidence plus peer-convergence evidence.
 - `externalCredentialValidation` must include one result per credential class (`backup-storage`, `asset-storage`, `outbound-comms`, `operator-credentials`) with `validationMethod`, `validatedAt`, `validatedBy`, `observedValue` or fingerprint, environment-isolation assertion, and immutable evidence reference.
+- `coordinationRecoveryEvidence` must prove exactly one restore mode:
+  - `cold_start_restore`: empty-coordination proof and cold-start validation evidence.
+  - `scoped_reset_restore`: pause/epoch-bump/reset/reconcile/init-meta/smoke evidence for the chosen scope.
 
 Operator credential evidence representation:
 
@@ -484,12 +555,24 @@ Illustrative recovery record shape:
   "environment": "staging",
   "recoveryRef": "2026-03-13-drill-01",
   "restoreSource": "pgdump-2026-03-13T03:00:00Z",
+  "coordinationRecoveryMode": "scoped_reset_restore",
   "quarantineStartedAt": "2026-03-13T04:00:00Z",
   "quarantineReleasedAt": "2026-03-13T05:12:00Z",
   "restoredAt": "2026-03-13T04:21:00Z",
   "restoredBy": "operator@example",
   "preflightReportPath": "design/operations/deployments/staging/preflight/2026-03-13-drill-01.json",
   "expectedBindingsRef": "design/operations/environments/staging/expected-bindings.yaml",
+  "coordinationRecoveryEvidence": {
+    "status": "pass",
+    "mode": "scoped_reset_restore",
+    "evidenceRefs": [
+      "coordination-pause-complete",
+      "region-epoch-bump-complete",
+      "coordination-reset-complete",
+      "ledger-reconcile-complete",
+      "post-reset-smoke-complete"
+    ]
+  },
   "jwtHardening": {
     "status": "pass",
     "jobRef": "job/post-restore-secret-hardening-jwt",
@@ -523,6 +606,52 @@ Illustrative recovery record shape:
   "sanitizationEvidenceRef": "design/operations/deployments/staging/recovery/2026-03-13-drill-01-sanitization.json",
   "smokeStatus": "pass",
   "smokeEvidence": ["design/operations/deployments/staging/smoke/2026-03-13-drill-01.json"],
+  "reopenApprovedBy": "operator@example"
+}
+```
+
+Illustrative `cold_start_restore` recovery record variant:
+
+```json
+{
+  "schemaVersion": "recovery-record/v1",
+  "environment": "staging",
+  "recoveryRef": "2026-03-14-drill-02",
+  "restoreSource": "pgdump-2026-03-14T03:00:00Z",
+  "coordinationRecoveryMode": "cold_start_restore",
+  "quarantineStartedAt": "2026-03-14T04:00:00Z",
+  "quarantineReleasedAt": "2026-03-14T05:05:00Z",
+  "restoredAt": "2026-03-14T04:18:00Z",
+  "restoredBy": "operator@example",
+  "expectedBindingsRef": "design/operations/environments/staging/expected-bindings.yaml",
+  "coordinationRecoveryEvidence": {
+    "status": "pass",
+    "mode": "cold_start_restore",
+    "evidenceRefs": [
+      "coordination-keyspace-empty",
+      "cold-start-validation-complete",
+      "sessions-reestablished-after-reset"
+    ]
+  },
+  "jwtHardening": {
+    "status": "pass",
+    "jobRef": "job/post-restore-secret-hardening-jwt",
+    "keyIds": ["staging-2026-03-14-a"]
+  },
+  "databaseCredentialRotation": {
+    "status": "pass",
+    "jobRef": "job/db-credential-rotation"
+  },
+  "certificateReissuance": {
+    "status": "pass",
+    "evidenceRefs": ["workload-leaf-reissued"]
+  },
+  "externalCredentialValidation": {
+    "status": "pass",
+    "results": []
+  },
+  "smokeStatus": "pass",
+  "smokeEvidence": ["design/operations/deployments/staging/smoke/2026-03-14-drill-02.json"],
   "reopenApprovedBy": "operator@example"
 }
 ```
@@ -584,6 +713,8 @@ Required fields:
 - `backupVerifyLastSuccessAt`
 - `restoreDrillLastSuccessAt`
 - `restorePlanRef`
+- `restoreRecoveryRecordRef`
+- `coordinatedBackupScope`
 - `evidenceRefs[]`
 
 Freshness policy:
@@ -592,13 +723,20 @@ Freshness policy:
 - `backupVerifyLastSuccessAt` must be within 36 hours of production preflight.
 - `restoreDrillLastSuccessAt` should be within the last 30 days unless an explicit break-glass waiver is recorded.
 
-This evidence is consumed by production CI and preflight and is mandatory before applying a `roll-forward-only` production release. Validation must fail when `promotionAttestationRef` or `serviceDigests` do not match the attestation being promoted.
+Validation rules:
 
-## Production First-Live Backup Evidence
+- `promotionAttestationRef` and `serviceDigests` must match the attestation being promoted.
+- `restoreRecoveryRecordRef` must point to a canonical recovery record from a drill that completed quarantine, post-restore hardening, external credential validation, and smoke verification for the relevant environment class.
+- `coordinatedBackupScope` must be `tenant_id + region_id` for player-facing production release readiness. Alias-scoped evidence is valid only for quarantined drills and must not satisfy `roll-forward-only` production promotion.
+- Production CI and preflight must fail when any of those checks do not pass.
+
+This evidence is consumed by production CI and preflight and is mandatory before applying a `roll-forward-only` production release.
+
+## Production Traffic-Open Backup Evidence
 
 Before opening production to player traffic for the first time, or reopening it after a restore into a fresh environment boundary, operators must record proof that the backup pipeline is already functioning for that environment.
 
-This is a specialized `backup-readiness` artifact used for traffic-open gating, not a second unrelated evidence family. It lives under the same `design/operations/deployments/production/backup-readiness/` namespace as release-time backup evidence, but uses the `first-live-<deployment-ref>.json` naming pattern so tooling can distinguish “traffic-open readiness” from “roll-forward-only release readiness” without introducing a separate schema lineage.
+This is a specialized `backup-readiness` artifact used for production traffic-open gating, not a second unrelated evidence family. It lives under the same `design/operations/deployments/production/backup-readiness/` namespace as release-time backup evidence, but uses the `first-live-<deployment-ref>.json` naming pattern so tooling can distinguish “traffic-open readiness” from “roll-forward-only release readiness” without introducing a separate schema lineage.
 This artifact is the canonical production traffic-open gate evidence referenced by the deployment runbook.
 
 Canonical evidence path:
@@ -614,17 +752,22 @@ Required fields:
 - `backupStorageBinding`
 - `backupLastSuccessAt`
 - `backupVerifyLastSuccessAt`
+- `restoreDrillLastSuccessAt`
+- `restoreRecoveryRecordRef`
+- `coordinatedBackupScope`
 - `evidenceRefs[]`
 
 Validation rules:
 
 - `backupLastSuccessAt` must point to a successful logical backup upload produced against the live production environment binding.
 - `backupVerifyLastSuccessAt` must point to a successful verification run against that same environment binding.
-- The referenced backup attempt must use canonical coordinated-backup scope (`tenant_id + region_id`) for player-facing production traffic-open readiness; alias-scoped backup evidence is valid only for quarantined drills and must not satisfy first-live production reopen gates.
+- `restoreDrillLastSuccessAt` must point to a successful restore drill against that same environment class/binding and must be within 30 days of the traffic-open preflight.
+- `restoreRecoveryRecordRef` must point to a canonical recovery record from a drill that completed quarantine, post-restore hardening, external credential validation, and smoke verification for the relevant environment class.
+- `coordinatedBackupScope` must be `tenant_id + region_id` for player-facing production traffic-open readiness. Alias-scoped evidence is valid only for quarantined drills and must not satisfy production traffic-open gates.
 - Production traffic-open preflight must fail when this evidence is missing, stale, or bound to the wrong bucket/endpoint.
 - The canonical gate for this artifact is the deployment preflight contract in `system-architecture-deploy-preflight-policy.md` (`PREFLIGHT-BACKUP-002`), and the deployment sequencing that consumes it is defined in `system-architecture-deployment-runbook.md`.
 
-Illustrative production first-live backup-readiness record:
+Illustrative production traffic-open backup-readiness record:
 
 ```json
 {
@@ -635,10 +778,13 @@ Illustrative production first-live backup-readiness record:
   "backupStorageBinding": "firemud-production-backups",
   "backupLastSuccessAt": "2026-03-13T08:10:00Z",
   "backupVerifyLastSuccessAt": "2026-03-13T08:25:00Z",
+  "restoreDrillLastSuccessAt": "2026-03-05T09:00:00Z",
+  "restoreRecoveryRecordRef": "design/operations/deployments/production/recovery/2026-03-05-drill-01.json",
+  "coordinatedBackupScope": "tenant_id + region_id",
   "evidenceRefs": [
     "pgdump-upload-2026-03-13T08:10:00Z",
     "backup-verify-2026-03-13T08:25:00Z",
-    "scope=tenant-a:region-prod-1"
+    "restore-drill-2026-03-05T09:00:00Z"
   ]
 }
 ```
@@ -648,7 +794,8 @@ Illustrative production first-live backup-readiness record:
 `hobby-self-hosted` environments must maintain a versioned backup-compliance record at `design/operations/deployments/hobby-self-hosted/backup-compliance.yaml` with:
 
 - `lastSuccessfulBackupAt`
-- `lastRestoreDrillAt`
+- `lastSuccessfulRestoreDrillAt` – timestamp of the most recent restore drill that passed the required restore-proof gates for hobby/self-hosted reopen readiness.
+- `lastRestoreDrillAt` – timestamp of the most recent restore drill attempt, whether it passed or failed.
 - `retentionDailyPoints`
 - `backupTooling`
 - `evidenceRefs[]`
@@ -708,8 +855,8 @@ Naming rule:
 
 | Environment | Steps |
 | --- | --- |
-| **Kubernetes** | Restore PostgreSQL from `pg_dump` → restore other resources with Velero → restart pods → Redis recovers via AOF when PVCs exist (or starts empty and follows cold start/reset behavior) |
-| **Docker Compose** | `dev-tools/restores/restore-db.sh` snapshot → restart containers → Coordination Redis either reuses its AOF volume or starts empty and follows cold start/reset behavior |
+| **Kubernetes** | Restore PostgreSQL from `pg_dump` -> choose and record `cold_start_restore` or `scoped_reset_restore` -> restore other resources with Velero -> run the coordination recovery gate for the chosen mode -> run post-restore hardening and smoke checks -> reopen traffic only after recovery evidence is complete |
+| **Docker Compose** | `dev-tools/restores/restore-db.sh` snapshot -> choose and record `cold_start_restore` or `scoped_reset_restore` -> restart containers only after the chosen coordination recovery path is understood -> follow cold-start/reset behavior and local validation before reopening traffic |
 
 Redis always uses AOF for crash recovery during runtime but is **never** restored from backup images. If Coordination Redis starts empty, treat it as a reset/cold start scenario as described in the Redis architecture docs.
 

@@ -6,6 +6,7 @@ import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.util.Optional;
 import net.firedevops.firemud.common.LoggingUtil;
+import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.gamesession.config.DevIsolatedProperties;
 import net.firedevops.firemud.gamesession.dto.GameInstanceDto;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
@@ -26,7 +27,6 @@ import org.springframework.util.StringUtils;
 @GrpcService
 public final class TcpProxyServiceImpl extends TcpProxyServiceGrpc.TcpProxyServiceImplBase {
   private static final Logger logger = LoggingUtil.getLogger(TcpProxyServiceImpl.class);
-  private static final String OK_CODE = "OK";
   private static final String SUSPENDED_STATUS = "SUSPENDED";
 
   private final GameInstanceRepository repository;
@@ -81,7 +81,7 @@ public final class TcpProxyServiceImpl extends TcpProxyServiceGrpc.TcpProxyServi
         && request.getDisconnectSequence() > 0) {
       if (!disconnectDeduplicator.shouldProcess(
           request.getProxyConnectionId(), request.getDisconnectSequence())) {
-        return ok("Duplicate disconnect ignored");
+        return GrpcAppErrors.ok("Duplicate disconnect ignored");
       }
     }
 
@@ -90,7 +90,7 @@ public final class TcpProxyServiceImpl extends TcpProxyServiceGrpc.TcpProxyServi
             ? request.getGameInstanceId()
             : request.getSessionId();
     if (!StringUtils.hasText(gameInstanceIdText) || !StringUtils.hasText(request.getTenantId())) {
-      return ok("Disconnect recorded (no SESSION envelope)");
+      return GrpcAppErrors.ok("Disconnect recorded (no SESSION envelope)");
     }
     SessionValidationResult validation = validateSession(gameInstanceIdText, request.getTenantId());
     if (validation.hasError()) {
@@ -107,29 +107,32 @@ public final class TcpProxyServiceImpl extends TcpProxyServiceGrpc.TcpProxyServi
             SUSPENDED_STATUS);
     try {
       sessionStateService.saveState(suspendedState);
-      return ok("Disconnect recorded");
+      return GrpcAppErrors.ok("Disconnect recorded");
     } catch (RuntimeException ex) {
       logger.error("Failed to save suspended session state", ex);
-      return error("INTERNAL", "Failed to update session state");
+      return GrpcAppErrors.error(meterRegistry, "INTERNAL", "Failed to update session state");
     }
   }
 
   private SessionValidationResult validateSession(String sessionIdText, String tenantIdText) {
     if (!StringUtils.hasText(sessionIdText) || !StringUtils.hasText(tenantIdText)) {
       return SessionValidationResult.failed(
-          error("INVALID_ARGUMENT", "sessionId and tenantId are required"));
+          GrpcAppErrors.error(
+              meterRegistry, "INVALID_ARGUMENT", "sessionId and tenantId are required"));
     }
     long sessionId;
     long tenantId;
     try {
       sessionId = Long.parseLong(sessionIdText);
     } catch (NumberFormatException ex) {
-      return SessionValidationResult.failed(error("INVALID_ARGUMENT", "sessionId must be numeric"));
+      return SessionValidationResult.failed(
+          GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", "sessionId must be numeric"));
     }
     try {
       tenantId = Long.parseLong(tenantIdText);
     } catch (NumberFormatException ex) {
-      return SessionValidationResult.failed(error("INVALID_ARGUMENT", "tenantId must be numeric"));
+      return SessionValidationResult.failed(
+          GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", "tenantId must be numeric"));
     }
     // Dev-isolated mode never persists GameInstance records, so this lookup currently always fails
     // and propagates NOT_FOUND. We should skip the DB check or seed the session state when
@@ -141,12 +144,13 @@ public final class TcpProxyServiceImpl extends TcpProxyServiceGrpc.TcpProxyServi
     }
     Optional<GameInstance> maybeInstance = repository.findById(sessionId);
     if (maybeInstance.isEmpty()) {
-      return SessionValidationResult.failed(error("NOT_FOUND", "Session not found"));
+      return SessionValidationResult.failed(
+          GrpcAppErrors.error(meterRegistry, "NOT_FOUND", "Session not found"));
     }
     GameInstance instance = maybeInstance.get();
     if (!instance.getTenantId().equals(tenantId)) {
       return SessionValidationResult.failed(
-          error("INVALID_ARGUMENT", "Tenant does not own session"));
+          GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", "Tenant does not own session"));
     }
     return new SessionValidationResult(sessionId, tenantId, instance, null);
   }
@@ -189,15 +193,6 @@ public final class TcpProxyServiceImpl extends TcpProxyServiceGrpc.TcpProxyServi
         return true;
       }
     }
-  }
-
-  private ErrorDetail error(String code, String message) {
-    meterRegistry.counter("grpc.app_error", "code", code).increment();
-    return ErrorDetail.newBuilder().setCode(code).setMessage(message).build();
-  }
-
-  private ErrorDetail ok(String message) {
-    return ErrorDetail.newBuilder().setCode(OK_CODE).setMessage(message).build();
   }
 
   private record SessionValidationResult(

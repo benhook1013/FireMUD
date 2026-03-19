@@ -59,6 +59,12 @@ Different readers care about different aspects of Redis:
 
 For quick answers about prefixes and which doc to open next, use the **Redis Cheat Sheet** (`system-architecture-redis-cheatsheet.md`).
 
+When this hub introduces or sharpens canonical coordination contracts, keep the cheat sheet and the owning service Redis sections in sync with the same names and authority split. That applies especially to:
+
+- `tick:{tenantRegionTag}:session-binding:<entityId>`
+- `binding_generation`
+- `automationDispatchId`
+
 ---
 
 ## Redis Coordination Invariants
@@ -86,12 +92,36 @@ Redis coordination keys form a long-running, tail-loss-bounded **coordination bu
       - `tick:{tenantRegionTag}:meta` is a hash that stores at least:
         - `region_epoch` – the epoch currently considered valid for this `<tenantId, regionId>` in Redis.
         - `current_tick_id` – the highest **staged** `tickId` for this region as observed by the tick executor’s coordination scripts. It is a monotonic guard for Redis writes only; it is **not** the source of truth for “last committed tick”.
+        - `current_tick_state` – the Redis-side execution state for `current_tick_id`. Allowed values are:
+          - `STAGED` – Redis `pending`/queue state exists for this tick and hot-path scripts may continue to add idempotent entries for the same tick.
+          - `RESOLVING` – durable domain/application work for this tick is in progress or being reconciled; no newer tick may be staged yet.
+          - `APPLIED` – all required effects for this tick have reached a durable applied/no-op terminal outcome in PostgreSQL-backed handlers or the reconciliation backlog.
+          - `ABANDONED` – the tick was intentionally terminated for the current epoch (for example due to reset/recovery) and no more work for that `(region_epoch, tickId)` may be staged through hot-path scripts.
+        - `current_tick_terminal_at_ms` – caller-supplied timestamp marking when `current_tick_state` first entered `APPLIED` or `ABANDONED`; used for observability and bounded cleanup only, never for correctness decisions inside Lua.
+      - The canonical Redis-side state machine for a region is:
+        - `missing meta` or `current_tick_state in {APPLIED, ABANDONED}` with no newer tick staged:
+          - The next winning executor may initialize or advance the meta record to `current_tick_id = requestedTickId`, `current_tick_state = STAGED` if `requestedTickId` is exactly the scheduler/control-plane tick derived from PostgreSQL RegionStatus for that region.
+        - `STAGED -> RESOLVING`:
+          - The first script or caller that hands staged effects to durable domain/application processing flips the state to `RESOLVING`.
+          - Replays for the same tick must treat `STAGED` and `RESOLVING` as the same logical in-flight tick and may only add idempotent effect entries for that same `current_tick_id`.
+        - `RESOLVING -> APPLIED`:
+          - Only after the durable tick ledger and/or reconciliation backlog for `(tenantId, regionId, region_epoch, tickId)` shows all required participants at applied/no-op terminal outcomes.
+        - `RESOLVING -> ABANDONED`:
+          - Only after the control plane or recovery tooling has made an explicit terminal decision to abandon the tick for the current epoch.
+        - `APPLIED` or `ABANDONED` for tick `T`:
+          - Cleanup may delete `pending`, retry markers, and other Redis-only remnants for tick `T`.
+          - Staging for tick `T+1` is allowed only after the meta record for `T` is already terminal.
       - Tick- and epoch-aware Lua scripts:
         - Read `region_epoch` (and when needed `current_tick_id`) from this key and compare it to the expected epoch/tick supplied from PostgreSQL/lease context.
         - Return non-mutating outcomes such as `"STALE_EPOCH"` when the stored epoch does not match the expected value, so callers can abandon work tied to an old epoch and reacquire leases under the new epoch.
+        - Treat `current_tick_state` as the gate for hot-path progress:
+          - Staging scripts may create or extend `pending` only when `requestedTickId == current_tick_id` and `current_tick_state in {STAGED, RESOLVING}`, or when they are initializing the next tick from a terminal prior state.
+          - Hot-path scripts must never advance directly from `STAGED`/`RESOLVING` to a newer `current_tick_id`; only a terminal `APPLIED` or `ABANDONED` state unlocks the next tick.
       - Schedulers and operators:
         - Obtain their authoritative baseline for `(region_epoch, tickId)` from PostgreSQL RegionStatus/tick effect ledger and heartbeats, not from `current_tick_id`.
         - On a normal cold start with empty Coordination Redis, the next winning tick executor initializes or recreates `tick:{tenantRegionTag}:meta` during hot-path staging from PostgreSQL `RegionStatus`; schedulers and operators do not treat missing `meta` as a manual pre-seeding task.
+        - Treat Redis `pending` contents as an implementation detail of the hot path, not as proof of durable convergence. The durable proof that a tick is safe to move past lives in PostgreSQL-ledger and reconciliation state, after which the caller records `APPLIED` or `ABANDONED` in `tick:{tenantRegionTag}:meta`.
+        - Recovery after tail loss or reset does **not** reconstruct old ticks by silently restaging them through normal hot-path scripts. Recovery completes or abandons older work from durable manifests, ledger rows, and reconciliation backlog state, then records the resulting terminal meta state before allowing newer ticks to stage.
   - Split‑brain detection, replay, and reset handling treat this timeline as the arbiter of “which work is valid”:
     - If multiple executors attempt to own the same `<tenantId, regionId>` with different `region_epoch` values, the highest epoch wins and lower epochs are treated as stale.
     - After a region‑ or tenant‑scoped reset, a new `region_epoch` is created and any surviving coordination state from older epochs is ignored or explicitly cleaned up by reset tooling.
@@ -125,6 +155,10 @@ Redis coordination keys form a long-running, tail-loss-bounded **coordination bu
 - **Session binding**
   - Session keys in Redis bind player connections, tick participation, and cooldown state to authenticated platform identities.
   - Session binding is monotonic: once a session is rebound or terminated, old bindings are not resurrected, even under replay or tail‑loss.
+  - Session keys are **not** the authoritative runtime record for region-local gameplay participation. To preserve shard locality in Redis Cluster:
+    - `session:game:<tenantId>:<gameInstanceId>:<sessionId>` remains the authoritative record for connection identity, reconnect eligibility, auth/session CAS fields, and desired gameplay attachment generation.
+    - Region-local gameplay attachment is authoritative under the region-scoped key family `tick:{tenantRegionTag}:session-binding:<entityId>`, owned by Game Session and mutated only by region-lease scripts.
+    - Any region list or attachment summary mirrored inside `session:game:*` is advisory/reconnect metadata only and must not be used as the sole authority for gameplay admission or command routing.
 
 The **Redis Design Checklist** (`system-architecture-redis-design-checklist.md`) turns these invariants into concrete review steps for new prefixes, scripts, and flows.
 
@@ -172,6 +206,25 @@ These keys capture:
 - Authoritative tenant membership freshness metadata (for example `membershipVersion`) so reconnect/resume can verify that gameplay admission authority still exists before rebinding.
 - Tick-region participation metadata (for example active region bindings and reconnect context). Per-entity command queues remain under `tick:{tenantRegionTag}:queue:<entityId>` and are reset-tolerant coordination state, not durable session payload.
 - Session-local coordination metadata (for example reconnect state, transport-level pacing, and other per-connection ephemeral fields).
+
+### Session and Region-Binding Contract
+
+Session and region participation updates are intentionally **two-phase and monotonic**, not a single cross-slot atomic Redis transaction:
+
+1. A **session-only** script updates `session:game:<tenantId>:<gameInstanceId>:<sessionId>`:
+   - It validates the session CAS fields and logical expiry.
+   - It increments or verifies a monotonic `binding_generation`.
+   - It records reconnect/takeover intent plus any advisory region summary fields.
+2. A **region-lease** script for each affected region updates `tick:{tenantRegionTag}:session-binding:<entityId>`:
+   - It validates the active region lease and expected `binding_generation` from the session contract carried in `ARGV`.
+   - It binds or unbinds the session for gameplay participation within that region.
+   - It rejects stale generations with a non-mutating outcome such as `"STALE_SESSION_GENERATION"`.
+3. Gameplay authority reads region-local binding keys, not `session:game:*`, when deciding whether an entity may enqueue commands or continue tick participation in that region.
+4. Disconnect/takeover reconciliation is generation-based:
+   - If `session:game:*` says a newer generation is active, any older `tick:{tenantRegionTag}:session-binding:<entityId>` entry is stale and must be ignored or cleaned up by the next region-lease script.
+   - If a region binding survives after the session key is deleted or expires, the next lease-holder treats it as stale and removes it as part of region-local cleanup.
+
+This contract keeps region-local correctness shard-safe while still letting reconnect and takeover flows carry session-wide intent. It also means the system tolerates brief mismatches between `session:game:*` and region-local bindings: the region-local binding key is authoritative for gameplay, while `session:game:*` remains authoritative for reconnect semantics.
 
 Gameplay timers and cooldowns (combat cooldowns, regen ticks, delayed effects) are not “session state”: they are region/entity gameplay state and must be driven by the tick timer system and/or authoritative domain state so they continue to progress correctly in idle regions and across reconnects.
 
@@ -341,6 +394,7 @@ This table lists representative coordination keys and their responsibilities. Fu
 | `tick:{tenantRegionTag}:lock:<entityId>` | Lock for an entity during tick execution within a region. |
 | `tick:{tenantRegionTag}:pending` | Staged results for a tick region (single in‑flight tick). |
 | `tick:{tenantRegionTag}:queue:<entityId>` | Per‑entity command queue within a region. |
+| `tick:{tenantRegionTag}:session-binding:<entityId>` | Region-authoritative gameplay session binding for an entity. Stores the currently admitted `sessionId` and `binding_generation` for region-local command admission and takeover cleanup. |
 | `retry:{tenantRegionTag}` | Retry queue for failed actions, keyed by `next_eligible_tick_id` on the target region timeline (not wall-clock due time). |
 | `timer:{tenantRegionTag}` | Sorted set of timers for a region; score is expiration timestamp (ms), members encode entity/effect metadata. |
 | `remote:<tenantId>:<entityId>` | Best‑effort, TTL-bounded hint marker for cross‑region follow‑ups (durable follow‑ups live in PostgreSQL). Default `remote_hint_ttl_ms = 60_000`; expiry/missing keys affect latency only. |

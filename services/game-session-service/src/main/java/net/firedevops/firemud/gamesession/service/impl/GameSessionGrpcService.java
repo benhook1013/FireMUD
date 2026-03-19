@@ -4,6 +4,7 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
+import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.gamesession.command.text.TextCommandInterpretationResult;
 import net.firedevops.firemud.gamesession.command.text.TextCommandInterpreter;
 import net.firedevops.firemud.gamesession.dto.GameInstanceDto;
@@ -34,7 +35,6 @@ import net.firedevops.firemud.gamesession.v1.StopSessionResponse;
 import net.firedevops.firemud.gamesession.v1.TickStatus;
 import net.firedevops.firemud.gamesession.v1.ToggleFeatureFlagRequest;
 import net.firedevops.firemud.gamesession.v1.ToggleFeatureFlagResponse;
-import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.springframework.grpc.server.service.GrpcService;
 
 /** gRPC endpoints for the Game Session Service. */
@@ -75,20 +75,12 @@ public final class GameSessionGrpcService
     this.ipConnectionLimiter = ipConnectionLimiter;
   }
 
-  private ErrorDetail error(String code, String message) {
-    meterRegistry.counter("grpc.app_error", "code", code).increment();
-    return ErrorDetail.newBuilder().setCode(code).setMessage(message).build();
-  }
-
   @Override
   @Timed(value = "gamesessionGrpc.ping")
   public void ping(PingRequest request, StreamObserver<PingResponse> responseObserver) {
     String msg = pingService.ping();
     PingResponse response =
-        PingResponse.newBuilder()
-            .setMessage(msg)
-            .setError(ErrorDetail.newBuilder().setCode("OK").setMessage(msg))
-            .build();
+        PingResponse.newBuilder().setMessage(msg).setError(GrpcAppErrors.ok(msg)).build();
     responseObserver.onNext(response);
     responseObserver.onCompleted();
   }
@@ -103,7 +95,9 @@ public final class GameSessionGrpcService
       if (clientIp != null && !clientIp.isBlank() && !ipConnectionLimiter.canAccept(clientIp)) {
         StartSessionResponse response =
             StartSessionResponse.newBuilder()
-                .setError(error("CONNECTION_LIMIT", "Too many connections from IP"))
+                .setError(
+                    GrpcAppErrors.error(
+                        meterRegistry, "CONNECTION_LIMIT", "Too many connections from IP"))
                 .build();
         responseObserver.onNext(response);
         responseObserver.onCompleted();
@@ -126,7 +120,7 @@ public final class GameSessionGrpcService
     } catch (IllegalArgumentException ex) {
       StartSessionResponse response =
           StartSessionResponse.newBuilder()
-              .setError(error("INVALID_ARGUMENT", ex.getMessage()))
+              .setError(GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -148,7 +142,7 @@ public final class GameSessionGrpcService
       StopSessionResponse response =
           StopSessionResponse.newBuilder()
               .setSuccess(false)
-              .setError(error("NOT_FOUND", ex.getMessage()))
+              .setError(GrpcAppErrors.error(meterRegistry, "NOT_FOUND", ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -169,7 +163,7 @@ public final class GameSessionGrpcService
       RestartSessionResponse response =
           RestartSessionResponse.newBuilder()
               .setSuccess(false)
-              .setError(error("NOT_FOUND", ex.getMessage()))
+              .setError(GrpcAppErrors.error(meterRegistry, "NOT_FOUND", ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -187,7 +181,9 @@ public final class GameSessionGrpcService
     EnqueueCommandResponse.Builder builder =
         EnqueueCommandResponse.newBuilder().setAccepted(commandResult.accepted());
     if (commandResult.hasError()) {
-      builder.setError(error(commandResult.errorCode(), commandResult.errorMessage()));
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry, commandResult.errorCode(), commandResult.errorMessage()));
     }
     responseObserver.onNext(builder.build());
     responseObserver.onCompleted();
@@ -204,7 +200,9 @@ public final class GameSessionGrpcService
       responseObserver.onCompleted();
     } catch (IllegalArgumentException ex) {
       QueryStateResponse response =
-          QueryStateResponse.newBuilder().setError(error("NOT_FOUND", ex.getMessage())).build();
+          QueryStateResponse.newBuilder()
+              .setError(GrpcAppErrors.error(meterRegistry, "NOT_FOUND", ex.getMessage()))
+              .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     }
@@ -227,7 +225,7 @@ public final class GameSessionGrpcService
       ToggleFeatureFlagResponse response =
           ToggleFeatureFlagResponse.newBuilder()
               .setSuccess(false)
-              .setError(error("INVALID_ARGUMENT", ex.getMessage()))
+              .setError(GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();

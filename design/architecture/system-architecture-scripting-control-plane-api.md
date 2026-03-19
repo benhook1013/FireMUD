@@ -21,7 +21,7 @@ It exists to remove ambiguity from “conceptual APIs” referenced in service R
 This document covers:
 
 - Pinning and rolling back `scriptPatchVersion` for a running `gameInstanceId`.
-- Patch lifecycle visibility (`READY` / `FAILED`) plus per-instance rollout/rollback visibility as an operator-facing contract.
+- Patch lifecycle visibility (`READY`, `FAILED`, `SUPERSEDED`) plus per-instance rollout/rollback visibility as an operator-facing contract.
 - Operational interactions needed for safe rollback (pause/resume, drain/purge).
 - Plugin lifecycle operations (enable/disable/rollback) scoped to a running `gameInstanceId`, as part of the same operational surface as scripts.
 
@@ -40,12 +40,13 @@ This document does not define the designer-facing DSL, sandbox internals, or per
 
 - **Game Design Service (designer control plane)**
   - Publishes script patches and plugin bundles.
+  - Owns the immutable design-time publication lifecycle for plugin versions and exposes whether a plugin version is eligible for runtime activation.
   - Triggers runtime reload via publication notifications.
   - Does not repin running games by itself; repinning is an operator action.
 
 - **Automation & Scripting Service (runtime + patch lifecycle)**
   - Evaluates triggers, persists script work items durably, and hands off to Game Session.
-  - Tracks per-tenant patch lifecycle state (`READY` / `FAILED`) and enforces admission rules (“only `READY` is runnable”).
+  - Tracks per-tenant patch lifecycle state (`READY`, `FAILED`, `SUPERSEDED`) and enforces admission rules (“only `READY` is runnable”).
   - Emits tenant patch readiness lifecycle events (`ScriptPatchTenantStatusChanged`) when readiness state changes.
   - Consumes Game Session pin events to project rollout history read models.
 
@@ -322,10 +323,11 @@ Inputs:
 Outputs:
 
 - `tenantId`, `scriptPatchVersion`
-- `status` (for example `PENDING_VALIDATION`, `ONLOAD_RUNNING`, `READY`, `FAILED`)
+- `status` (for example `PENDING_VALIDATION`, `ONLOAD_RUNNING`, `READY`, `FAILED`, `SUPERSEDED`)
 - `statusReason` (optional)
 - `baseVersionId` (required)
 - `abilitySchemaDigest` (required for compatibility/audit surfaces)
+- `supersededByScriptPatchVersion` (nullable; required when `status=SUPERSEDED`)
 - `lastChangedAt`
 
 #### `ListScriptPatchStatuses`
@@ -413,6 +415,7 @@ Inputs:
 Semantics:
 
 - Idempotent.
+- Validates that the target plugin version is `PUBLISHED` in the Game Design design-time lifecycle before any runtime mutation occurs. Non-published versions must fail deterministically with an application error (for example `PLUGIN_VERSION_NOT_PUBLISHED`).
 - Validates that the target bundle is allowed for the environment (signature verified, signer allowed, component policy satisfied).
 - Validates runtime-version compatibility before activation:
   - `plugin.baseVersionId` must equal the instance `runtimeVersionId`.
@@ -681,7 +684,7 @@ Fields:
 
 Operator consumption rule:
 
-- Use this event family for tenant patch readiness gates (`READY` / `FAILED`) and publish validation UX.
+- Use this event family for tenant patch readiness gates and publish validation UX (`READY`, `FAILED`, `SUPERSEDED`).
 
 ### `ScriptPatchInstanceRolloutChanged` (Game Session → Event Bus)
 
@@ -797,6 +800,19 @@ Fields:
 9. Wait for `GetAutomationDrainStatus` to report `activeExecutionCount=0` and `pendingCancelableWorkItemCount=0` for the rollback scope under the current `admissionEpoch`.
 10. Call `SetAutomationAdmissionMode(..., mode=NORMAL)` once convergence and cleanup complete.
 11. Resume ticks with `ResumeTicks`.
+
+Concrete example:
+
+- `tenantId=T1`, `gameInstanceId=G7`, current pin `P22`, rollback target `P21`, `controlPlaneRequestId=RB-42`.
+- Step 1: `PauseTicks(T1, G7, RB-42)`.
+- Step 2: `SetAutomationAdmissionMode(T1, G7, PAUSED_FOR_ROLLBACK, RB-42)`.
+- Step 3: `RollbackScriptPatchVersion(T1, G7, P21, RB-42)`.
+- Step 4: Poll `GetAutomationPinConvergence(T1, G7)` and `GetGameSessionPinConvergence(T1, G7)` until both report `observedPinnedScriptPatchVersion=P21` and `lastObservedControlPlaneRequestId=RB-42`.
+- Step 5: Run patch/plugin-scoped cancel or purge hooks for displaced `P22` work, then poll `GetAutomationDrainStatus(T1, G7)` until active executions and cancelable pending work are both zero.
+- Step 6: `SetAutomationAdmissionMode(T1, G7, NORMAL, RB-42)`.
+- Step 7: `ResumeTicks(T1, G7, RB-42)`.
+
+Ordering is intentional: Automation admission returns to `NORMAL` only after convergence and drain complete, and ticks resume last.
 
 ### Rollback Orchestration State Machine (Required)
 

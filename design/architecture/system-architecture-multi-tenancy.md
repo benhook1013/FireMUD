@@ -16,7 +16,8 @@ FireMUD separates **global identity** from **per-game state** so that one person
 - **Tenant slug (`tenantSlug`)** – A stable, human-friendly identifier owned by the Game Design Service. Slugs are used only as **player-facing selectors** in the post-login lobby flow (`WORLDS` / `REALMS` / `CHARS` / `PLAY`) and are resolved server-side to `tenantId`; services and persistence models continue to use `tenantId` as the authoritative tenant identifier. See `design/architecture/decisions/adr-0005-tenant-identifiers-in-gameplay-protocol.md` for the required slug stability rules.
 - **Game instance (`gameInstanceId`)** – A specific running instance of a tenant’s world, keyed as described in [Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md#version-activation--rollback). Persistence models, APIs, and key formats must include `gameInstanceId` explicitly rather than overloading `tenantId`.
   - A tenant may expose one or more **player-addressable realms**. Each realm resolves to exactly one admissible `gameInstanceId` at a time through the authoritative realm-routing contract owned by Game Session.
-  - One realm may be marked as the default public production realm. Additional realms may be explicitly authorized non-production realms such as playtest forks.
+  - One realm may be marked as the default public production realm. In v1, that production realm is the only realm that may be publicly discoverable to authenticated accounts that do not already hold tenant membership.
+  - Additional realms are explicitly authorized non-production realms such as playtest forks. They are never public-discovery realms in v1 and require explicit access grants owned by Account Service and evaluated through the same runtime grant authority across bootstrap discovery and gameplay admission.
   - Additional running instances may still exist for operational workflows, but only realms surfaced through the authenticated lobby contract are player-addressable.
 - **Account–tenant membership and roles** – For each tenant a platform account participates in, the platform records membership and roles (for example, `player`, `designer`, `tenantAdmin`) that appear in JWT `scopedRoles[tenantId]` claims. Membership is many-to-many: one account can join many tenants, and each tenant can host many accounts.
 - **Character (`characterId`)** – A per-tenant gameplay identity controlled by a platform account within a specific tenant. Characters, inventories, and progress are always keyed by `tenantId` plus `characterId`. Where legacy docs or APIs still use `playerId`, treat it as a temporary alias for `characterId`.
@@ -29,8 +30,11 @@ This model underpins both authentication and authorization:
 
 - Authentication always resolves a single platform `accountId`.
 - Tenant-scoped control-plane authorization combines the authenticated `accountId` with tenant-scoped roles from `scopedRoles[tenantId]`, plus any cross-tenant `globalRoles` such as `platformAdmin`, as described in [Authentication & Authorization](./system-architecture-authentication.md).
-- Gameplay admission is stricter: player-facing `WORLDS` / `REALMS` / `CHARS` / `PLAY` selection uses caller-bound tenant membership and entitlement checks, and global roles alone do not grant gameplay admission.
-- Player-facing world visibility is the intersection of caller-bound tenant membership and current runtime entitlement state; worlds that fail either check must not appear in discovery responses.
+- Gameplay admission is stricter: player-facing `WORLDS` / `REALMS` / `CHARS` / `PLAY` selection uses caller-bound tenant membership, public-production admission policy, and entitlement checks, and global roles alone do not grant gameplay admission.
+- Player-facing world visibility in v1 has two sources:
+  - existing caller-bound tenant membership for any visible realm the caller is allowed to enter, and
+  - public-production discovery for tenants whose default production realm is live and gameplay-admissible.
+  Worlds that fail both visibility sources, or fail entitlement checks, must not appear in discovery responses.
 
 ## Account-to-Game Relationships
 

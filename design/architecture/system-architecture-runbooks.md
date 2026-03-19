@@ -75,18 +75,22 @@ For a single-admin operator, most “what do I do now?” coordination/tick ques
   - Redis primary/replica health, split-brain/sentinel alerts.
 
 - **Named operations**
+  - Tail-loss incidents first choose a **replay-first** or **reset-first** recovery mode. Scope selection for resets happens only after `reset-first` is chosen.
   - **Per-region reset** – clear coordination state (`tick:*`, timers, retries, leases) for a single `<tenantId, regionId>` and allow ticks to rebuild from PostgreSQL and the tick effect ledger.
   - **Per-tenant reset** – clear coordination state (all regions and sessions) for a single tenant and treat it as a tenant-scoped maintenance/reset event.
   - **Cluster reset** – clear coordination state for all tenants/regions on a Coordination Redis deployment; reserved for catastrophic incidents or planned migrations.
 
 - **How to choose**
   - If metrics show a brief blip but tail-loss and tick health have already recovered and invariants are intact → **Accept loss and monitor** (no active operation).
+  - If tail-loss is sustained but the region is still on one coherent timeline and replay can make bounded progress → choose **replay-first**.
+  - If the region is `STALLED`, mixed-epoch/orphaned state is suspected, or replay-first cannot make bounded progress → choose **reset-first**, then pick the smallest safe reset scope below.
   - If a problem is clearly confined to one region (for example, mis-keyed `tick:*` data or a stuck `pending` entry) → run a **per-region reset**.
   - If multiple regions for the same tenant are polluted or broken in similar ways → run a **per-tenant reset**.
   - Only when corruption or topology changes are broad and cannot be addressed region/tenant by tenant (for example, AOF directory corruption, cluster-wide hash-tag mistakes) should you plan a **cluster reset**, ideally during a maintenance window.
 
 Detailed step-by-step commands for these operations live in:
 
+- `design/architecture/system-architecture-redis-incident-runbook.md#coordination-aof-tail-loss-slo-breach`
 - `design/architecture/system-architecture-redis-reset-and-recovery.md`
 - `design/architecture/system-architecture-redis-operations.md`
 

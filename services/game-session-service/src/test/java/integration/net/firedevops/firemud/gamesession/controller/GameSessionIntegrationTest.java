@@ -10,6 +10,7 @@ import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import net.firedevops.firemud.cache.LookCacheService;
 import net.firedevops.firemud.gamesession.GameSessionServiceApplication;
+import net.firedevops.firemud.test.NoGrpcServerTestConfiguration;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
@@ -24,14 +25,13 @@ import org.springframework.context.annotation.Import;
     properties = {
       "firemud.database.enabled=false",
       "spring.main.allow-bean-definition-overriding=true",
-      "spring.autoconfigure.exclude=org.springframework.boot.grpc.server.autoconfigure.GrpcServerAutoConfiguration,org.springframework.boot.grpc.server.autoconfigure.GrpcServerFactoryAutoConfiguration,org.springframework.boot.grpc.server.autoconfigure.health.GrpcServerHealthAutoConfiguration",
       "game-session.dev-isolated=true",
       "firemud.grpc.plaintext=true",
       "spring.application.name=game-session-service",
       "spring.grpc.server.port=0"
     })
 @AutoConfigureMockMvc
-@Import(LookCacheTestConfiguration.class)
+@Import({NoGrpcServerTestConfiguration.class, LookCacheTestConfiguration.class})
 public @interface GameSessionIntegrationTest {}
 
 @TestConfiguration

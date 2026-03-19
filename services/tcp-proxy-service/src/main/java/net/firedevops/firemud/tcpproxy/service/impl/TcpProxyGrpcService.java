@@ -2,6 +2,8 @@ package net.firedevops.firemud.tcpproxy.service.impl;
 
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
+import io.micrometer.core.instrument.MeterRegistry;
+import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.tcpproxy.service.PingService;
 import net.firedevops.firemud.tcpproxy.service.TcpProxyEventService;
@@ -19,13 +21,15 @@ import org.springframework.util.StringUtils;
 @GrpcService
 public class TcpProxyGrpcService extends TcpProxyServiceGrpc.TcpProxyServiceImplBase {
   private static final Logger logger = LoggerFactory.getLogger(TcpProxyGrpcService.class);
-  private static final String OK = "OK";
   private final PingService pingService;
   private final TcpProxyEventService eventService;
+  private final MeterRegistry meterRegistry;
 
-  public TcpProxyGrpcService(PingService pingService, TcpProxyEventService eventService) {
+  public TcpProxyGrpcService(
+      PingService pingService, TcpProxyEventService eventService, MeterRegistry meterRegistry) {
     this.pingService = pingService;
     this.eventService = eventService;
+    this.meterRegistry = meterRegistry;
   }
 
   @Override
@@ -59,13 +63,11 @@ public class TcpProxyGrpcService extends TcpProxyServiceGrpc.TcpProxyServiceImpl
               request.getProxyConnectionId(),
               request.getDisconnectSequence());
       NotifyDisconnectResponse normalized = ensureErrorDetail(response, "NotifyDisconnect");
-      logIfError(normalized.getError(), "NotifyDisconnect");
+      GrpcAppErrors.logIfError(logger, "NotifyDisconnect", normalized.getError());
       responseObserver.onNext(normalized);
       responseObserver.onCompleted();
     } catch (RuntimeException ex) {
-      logger.warn("NotifyDisconnect failed", ex);
-      ErrorDetail error = error("INTERNAL", "NotifyDisconnect failed");
-      logIfError(error, "NotifyDisconnect");
+      ErrorDetail error = GrpcAppErrors.internal(meterRegistry, logger, "NotifyDisconnect", ex);
       responseObserver.onNext(NotifyDisconnectResponse.newBuilder().setError(error).build());
       responseObserver.onCompleted();
     }
@@ -75,41 +77,21 @@ public class TcpProxyGrpcService extends TcpProxyServiceGrpc.TcpProxyServiceImpl
       NotifyDisconnectResponse response, String operation) {
     if (response == null) {
       return NotifyDisconnectResponse.newBuilder()
-          .setError(error("INTERNAL", operation + " returned no response"))
+          .setError(
+              GrpcAppErrors.error(
+                  meterRegistry,
+                  logger,
+                  operation,
+                  "INTERNAL",
+                  operation + " returned no response"))
           .build();
     }
     NotifyDisconnectResponse safe = response;
     ErrorDetail detail =
         safe.hasError()
-            ? normalizeDetail(safe.getError(), operation)
-            : ok(operation + " completed");
+            ? GrpcAppErrors.normalize(
+                safe.getError(), "INTERNAL", operation + " returned no details")
+            : GrpcAppErrors.ok(operation + " completed");
     return NotifyDisconnectResponse.newBuilder(safe).setError(detail).build();
-  }
-
-  private ErrorDetail ok(String message) {
-    return ErrorDetail.newBuilder().setCode(OK).setMessage(message).build();
-  }
-
-  private ErrorDetail error(String code, String message) {
-    return ErrorDetail.newBuilder().setCode(code).setMessage(message).build();
-  }
-
-  private ErrorDetail normalizeDetail(ErrorDetail detail, String operation) {
-    if (detail == null) {
-      return error("INTERNAL", operation + " returned no details");
-    }
-    String code = StringUtils.hasText(detail.getCode()) ? detail.getCode() : "UNKNOWN";
-    String message =
-        StringUtils.hasText(detail.getMessage())
-            ? detail.getMessage()
-            : operation + " returned no message";
-    return ErrorDetail.newBuilder(detail).setCode(code).setMessage(message).build();
-  }
-
-  private void logIfError(ErrorDetail detail, String operation) {
-    if (detail == null || OK.equals(detail.getCode())) {
-      return;
-    }
-    logger.warn("{} returned error {}: {}", operation, detail.getCode(), detail.getMessage());
   }
 }

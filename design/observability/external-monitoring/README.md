@@ -41,6 +41,10 @@ Prod-like environments must configure the following checks in the authoritative 
      - Kibana or the Elasticsearch-backed log query entrypoint
      - Jaeger query UI or trace query endpoint
    - These checks are primarily for operator-access continuity and do not replace in-cluster health alerts for the underlying services.
+   - Each check must have:
+     - a documented external target,
+     - a canonical environment-scoped identity in the external monitoring product,
+     - a non-production failure or test method that proves the check can open an incident without relying on Prometheus.
 
 ## Prometheus Mirror Contract
 
@@ -56,6 +60,25 @@ When Prometheus is healthy, the external monitoring state must also be mirrored 
 
 Prometheus alerts and dashboards may use these mirrored metrics, but the external monitor must page independently using its own native checks and thresholds.
 
+Public observability entrypoint checks do not require a universal mirrored metric name today, but each prod-like environment must choose one of the following and document it in readiness evidence:
+
+- a bounded Prometheus-facing mirror vocabulary for those checks, or
+- an explicit statement that the checks are authoritative external-only and are verified through the external monitoring product rather than mirrored metrics.
+
+Either way, operators and smoke tests must be able to identify which external checks correspond to Prometheus, Alertmanager, Grafana, Kibana/log-query, and Jaeger/trace-query availability.
+
+Illustrative bounded mirror vocabulary for observability entrypoints:
+
+- `observability_entrypoint_probe_success{entrypoint,target}`
+  - `entrypoint` is a bounded enum such as `prometheus`, `alertmanager`, `grafana`, `kibana_log_query`, or `jaeger_query`.
+  - `target` identifies the externally probed endpoint and must remain low-cardinality.
+  - Values are boolean-like: `1` when the external check can reach the entrypoint and `0` when it cannot.
+- Example mappings:
+  - `vendor.prometheus.staging.status -> observability_entrypoint_probe_success{entrypoint="prometheus",target="staging-prometheus"}`
+  - `vendor.kibana.staging.status -> observability_entrypoint_probe_success{entrypoint="kibana_log_query",target="staging-kibana"}`
+
+This vocabulary is recommended for cross-environment consistency, not mandatory. Environments may keep entrypoint checks external-only or use another bounded mirror vocabulary if they document the mapping in readiness evidence.
+
 ## Ownership and Evidence
 
 - `owner="platform"` is responsible for the external monitoring configuration, routing, and periodic validation.
@@ -63,6 +86,7 @@ Prometheus alerts and dashboards may use these mirrored metrics, but the externa
   - the external monitoring product or deployment used,
   - the configured deadman threshold,
   - the configured `websocket` and `telnet` targets,
+  - the configured targets and check identities for Prometheus, Alertmanager, Grafana, Kibana/log-query, and Jaeger/trace-query availability,
   - evidence that the authoritative external pager can fire without Prometheus,
   - evidence that mirrored Prometheus metrics match the external monitor state when Prometheus is healthy.
 

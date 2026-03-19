@@ -1,20 +1,22 @@
 package net.firedevops.firemud.loggingadmin.service.impl;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
-import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
+import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.loggingadmin.dto.ReportDto;
 import net.firedevops.firemud.loggingadmin.service.ReportService;
 import net.firedevops.firemud.loggingadmin.v1.CreateReportRequest;
 import net.firedevops.firemud.loggingadmin.v1.CreateReportResponse;
 import net.firedevops.firemud.loggingadmin.v1.ReportServiceGrpc;
-import net.firedevops.firemud.shared.v1.ErrorDetail;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.grpc.server.service.GrpcService;
 
 @GrpcService
 public class ReportGrpcService extends ReportServiceGrpc.ReportServiceImplBase {
+  private static final Logger logger = LoggerFactory.getLogger(ReportGrpcService.class);
 
   private final ReportService reportService;
   private final MeterRegistry meterRegistry;
@@ -25,11 +27,6 @@ public class ReportGrpcService extends ReportServiceGrpc.ReportServiceImplBase {
   public ReportGrpcService(ReportService reportService, MeterRegistry meterRegistry) {
     this.reportService = reportService;
     this.meterRegistry = meterRegistry;
-  }
-
-  private ErrorDetail error(String code, String message) {
-    meterRegistry.counter("grpc.app_error", "code", code).increment();
-    return ErrorDetail.newBuilder().setCode(code).setMessage(message).build();
   }
 
   @Override
@@ -54,13 +51,19 @@ public class ReportGrpcService extends ReportServiceGrpc.ReportServiceImplBase {
     } catch (IllegalArgumentException ex) {
       CreateReportResponse response =
           CreateReportResponse.newBuilder()
-              .setError(error("INVALID_ARGUMENT", ex.getMessage()))
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry, logger, "CreateReport", "INVALID_ARGUMENT", ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (Exception ex) {
-      responseObserver.onError(
-          Status.INTERNAL.withDescription(ex.getMessage()).asRuntimeException());
+      CreateReportResponse response =
+          CreateReportResponse.newBuilder()
+              .setError(GrpcAppErrors.internal(meterRegistry, logger, "CreateReport", ex))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
     }
   }
 }

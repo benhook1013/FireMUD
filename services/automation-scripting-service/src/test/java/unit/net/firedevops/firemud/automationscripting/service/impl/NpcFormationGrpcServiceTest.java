@@ -3,6 +3,7 @@ package net.firedevops.firemud.automationscripting.service.impl;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import io.grpc.stub.StreamObserver;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.automationscripting.model.FormationType;
@@ -108,6 +109,7 @@ class NpcFormationGrpcServiceTest {
         Mockito.mock(PingService.class),
         Mockito.mock(ScriptDefinitionService.class),
         Mockito.mock(ScriptVersionService.class),
-        npcService);
+        npcService,
+        new SimpleMeterRegistry());
   }
 }
