@@ -22,13 +22,14 @@ import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.CommandService;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
+import net.firedevops.firemud.test.NoGrpcServerTestConfiguration;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
-import org.springframework.grpc.server.lifecycle.GrpcServerLifecycle;
+import org.springframework.context.annotation.Import;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketHttpHeaders;
@@ -49,6 +50,7 @@ import org.springframework.web.socket.handler.TextWebSocketHandler;
       "spring.application.name=game-session-service",
       "spring.grpc.server.port=0"
     })
+@Import(NoGrpcServerTestConfiguration.class)
 class GameSessionLoginIntegrationTest {
   @LocalServerPort private int port;
 
@@ -57,7 +59,6 @@ class GameSessionLoginIntegrationTest {
   @MockitoBean private SessionContextService sessionContextService;
   @MockitoBean private SessionAuthenticationService sessionAuthenticationService;
   @MockitoBean private CommandService commandService;
-  @MockitoBean private GrpcServerLifecycle grpcServerLifecycle;
 
   @BeforeEach
   void setUp() {
