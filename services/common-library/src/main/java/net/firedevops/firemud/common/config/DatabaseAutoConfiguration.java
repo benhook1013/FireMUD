@@ -15,6 +15,7 @@ import net.firedevops.firemud.common.saga.persistence.SagaInstance;
 import net.firedevops.firemud.common.saga.persistence.SagaInstanceRepository;
 import net.firedevops.firemud.common.saga.persistence.SagaStep;
 import net.firedevops.firemud.common.saga.persistence.SagaStepRepository;
+import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
@@ -25,7 +26,6 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Condition;
 import org.springframework.context.annotation.ConditionContext;
 import org.springframework.context.annotation.Conditional;
-import org.springframework.context.annotation.Configuration;
 import org.springframework.core.type.AnnotatedTypeMetadata;
 import org.springframework.data.jpa.repository.support.JpaRepositoryFactory;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
@@ -36,7 +36,7 @@ import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.orm.jpa.SharedEntityManagerCreator;
 
-@Configuration
+@AutoConfiguration
 @ConditionalOnProperty(
     prefix = "firemud.database",
     name = "enabled",
