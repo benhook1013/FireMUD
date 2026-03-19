@@ -18,6 +18,17 @@ public final class HttpTestSupport {
     return getBody(url, StandardCharsets.UTF_8);
   }
 
+  public static String getBodyUnchecked(String url) {
+    try {
+      return getBody(url);
+    } catch (IOException | InterruptedException e) {
+      if (e instanceof InterruptedException) {
+        Thread.currentThread().interrupt();
+      }
+      throw new IllegalStateException("HTTP test probe failed for " + url, e);
+    }
+  }
+
   public static String getBody(String url, Charset charset)
       throws IOException, InterruptedException {
     HttpRequest request = HttpRequest.newBuilder(URI.create(url)).GET().build();

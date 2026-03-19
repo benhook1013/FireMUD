@@ -2,12 +2,11 @@ package net.firedevops.firemud.socialgroups;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import net.firedevops.firemud.test.HttpTestSupport;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.resttestclient.TestRestTemplate;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.boot.test.web.server.LocalServerPort;
@@ -53,13 +52,11 @@ class SocialGroupsCrossServiceIntegrationTest {
 
   @LocalServerPort private int port;
 
-  @Autowired private TestRestTemplate restTemplate;
-
   @Test
   void socialGroupsRunsAlongsideLoggingAdminService() {
     assertThat(loggingAdminService.isRunning()).isTrue();
 
-    String body = restTemplate.getForObject("http://localhost:" + port + "/ping", String.class);
+    String body = HttpTestSupport.getBodyUnchecked("http://localhost:" + port + "/ping");
     assertThat(body).contains("pong");
   }
 }

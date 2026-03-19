@@ -2,10 +2,9 @@ package net.firedevops.firemud.accountservice;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import net.firedevops.firemud.test.HttpTestSupport;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.resttestclient.TestRestTemplate;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.boot.test.web.server.LocalServerPort;
@@ -44,11 +43,9 @@ class AccountApplicationIntegrationTest {
 
   @LocalServerPort private int port;
 
-  @Autowired private TestRestTemplate restTemplate;
-
   @Test
   void pingEndpointReturnsPong() {
-    String body = restTemplate.getForObject("http://localhost:" + port + "/ping", String.class);
+    String body = HttpTestSupport.getBodyUnchecked("http://localhost:" + port + "/ping");
     assertThat(body).contains("pong");
   }
 }
