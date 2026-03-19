@@ -1,6 +1,8 @@
 plugins {
     `java-test-fixtures`
     id("net.firedevops.firemud.service-conventions")
+    id("net.firedevops.firemud.jpa-postgres-conventions")
+    id("net.firedevops.firemud.redis-conventions")
 }
 
 import org.gradle.api.DefaultTask
@@ -45,9 +47,6 @@ tasks.named("generateTestFixturesProto") {
 
 dependencies {
     implementation(libs.spring.boot.starter.websocket)
-    implementation(libs.spring.boot.starter.data.jpa)
-    implementation(libs.spring.boot.starter.data.redis)
-    runtimeOnly(libs.postgresql)
     testFixturesImplementation("io.grpc:grpc-netty-shaded:${libs.versions.grpc.get()}")
     testFixturesImplementation("io.grpc:grpc-protobuf:${libs.versions.grpc.get()}")
     testFixturesImplementation("io.grpc:grpc-stub:${libs.versions.grpc.get()}")

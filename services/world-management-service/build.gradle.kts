@@ -3,15 +3,12 @@ apply(from = "${rootDir}/gradle/proto-convention.gradle")
 
 plugins {
     id("net.firedevops.firemud.service-conventions")
+    id("net.firedevops.firemud.jpa-postgres-conventions")
+    id("net.firedevops.firemud.redis-conventions")
+    id("net.firedevops.firemud.openapi-conventions")
+    id("net.firedevops.firemud.jwt-conventions")
 }
 
 dependencies {
-    implementation(libs.spring.boot.starter.data.jpa)
-    implementation(libs.spring.boot.starter.data.redis)
-    implementation(libs.springdoc.openapi)
-    implementation(libs.jjwt.api)
-    runtimeOnly(libs.jjwt.impl)
-    runtimeOnly(libs.jjwt.jackson)
-    runtimeOnly(libs.postgresql)
     testImplementation(libs.h2)
 }
