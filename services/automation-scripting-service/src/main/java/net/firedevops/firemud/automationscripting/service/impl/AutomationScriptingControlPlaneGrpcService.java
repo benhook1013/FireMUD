@@ -10,9 +10,9 @@ import net.firedevops.firemud.automationscripting.v1.GetScriptPatchStatusRespons
 import net.firedevops.firemud.automationscripting.v1.ListScriptPatchStatusesRequest;
 import net.firedevops.firemud.automationscripting.v1.ListScriptPatchStatusesResponse;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
-import org.lognet.springboot.grpc.GRpcService;
+import org.springframework.grpc.server.service.GrpcService;
 
-@GRpcService
+@GrpcService
 public final class AutomationScriptingControlPlaneGrpcService
     extends AutomationScriptingControlPlaneServiceGrpc
         .AutomationScriptingControlPlaneServiceImplBase {

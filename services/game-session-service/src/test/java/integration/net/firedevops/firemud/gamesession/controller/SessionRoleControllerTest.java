@@ -11,8 +11,8 @@ import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionRoleService;
 import org.junit.jupiter.api.Test;
-import org.lognet.springboot.grpc.GRpcServerRunner;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.grpc.server.lifecycle.GrpcServerLifecycle;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -21,7 +21,7 @@ class SessionRoleControllerTest {
 
   @Autowired private MockMvc mockMvc;
   @MockitoBean private SessionRoleService sessionRoleService;
-  @MockitoBean private GRpcServerRunner grpcServerRunner;
+  @MockitoBean private GrpcServerLifecycle grpcServerLifecycle;
   @MockitoBean private LoginCommandHandler loginCommandHandler;
   @MockitoBean private LookCommandHandler lookCommandHandler;
   @MockitoBean private SayCommandHandler sayCommandHandler;

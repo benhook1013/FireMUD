@@ -10,9 +10,9 @@ import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import net.firedevops.firemud.cache.LookCacheService;
 import net.firedevops.firemud.gamesession.GameSessionServiceApplication;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 
@@ -24,11 +24,11 @@ import org.springframework.context.annotation.Import;
     properties = {
       "firemud.database.enabled=false",
       "spring.main.allow-bean-definition-overriding=true",
-      "spring.autoconfigure.exclude=org.lognet.springboot.grpc.autoconfigure.GRpcAutoConfiguration,org.lognet.springboot.grpc.autoconfigure.actuate.GRpcActuateAutoConfiguration",
+      "spring.autoconfigure.exclude=org.springframework.boot.grpc.server.autoconfigure.GrpcServerAutoConfiguration,org.springframework.boot.grpc.server.autoconfigure.GrpcServerFactoryAutoConfiguration,org.springframework.boot.grpc.server.autoconfigure.health.GrpcServerHealthAutoConfiguration",
       "game-session.dev-isolated=true",
       "firemud.grpc.plaintext=true",
       "spring.application.name=game-session-service",
-      "grpc.server.port=0"
+      "spring.grpc.server.port=0"
     })
 @AutoConfigureMockMvc
 @Import(LookCacheTestConfiguration.class)

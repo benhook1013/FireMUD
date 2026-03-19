@@ -2,15 +2,17 @@ package net.firedevops.firemud.springcloudgateway.websocket;
 
 import java.net.URI;
 import java.time.Duration;
+import net.firedevops.firemud.test.GatewayTestProperties;
+import net.firedevops.firemud.test.NoGrpcServerTestConfiguration;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpHeaders;
 import org.springframework.test.context.ActiveProfiles;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.web.reactive.socket.client.ReactorNettyWebSocketClient;
 import reactor.core.publisher.Mono;
 import reactor.core.publisher.Sinks;
@@ -22,21 +24,15 @@ import reactor.test.StepVerifier;
     properties = {
       "spring.flyway.enabled=false",
       "firemud.database.enabled=false",
-      "grpc.server.security.enabled=false",
-      "grpc.server.port=0",
-      "spring.autoconfigure.exclude=org.springframework.cloud.gateway.config.GatewayClassPathWarningAutoConfiguration,org.lognet.springboot.grpc.autoconfigure.GRpcAutoConfiguration,org.lognet.springboot.grpc.autoconfigure.actuate.GRpcActuateAutoConfiguration,org.springframework.boot.autoconfigure.web.servlet.ServletWebServerFactoryAutoConfiguration,org.springframework.boot.autoconfigure.web.servlet.WebMvcAutoConfiguration",
-      "spring.main.web-application-type=reactive"
+      GatewayTestProperties.SPRING_GRPC_SERVER_RANDOM_PORT,
+      GatewayTestProperties.DISABLE_GATEWAY_WARNING_GRPC_SERVER_AND_SERVLET,
+      GatewayTestProperties.REACTIVE_WEB_APPLICATION
     })
 @ActiveProfiles("test")
+@Import(NoGrpcServerTestConfiguration.class)
 class DevEchoWebSocketIntegrationTest {
 
   @LocalServerPort private int port;
-
-  @MockitoBean private org.lognet.springboot.grpc.GRpcServerRunner grpcServerRunner;
-  @MockitoBean private org.lognet.springboot.grpc.GRpcServicesRegistry grpcServicesRegistry;
-
-  @MockitoBean
-  private org.lognet.springboot.grpc.health.ManagedHealthStatusService managedHealthStatusService;
 
   @Autowired private ReactorNettyWebSocketClient client;
 

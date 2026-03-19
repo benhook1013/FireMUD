@@ -21,10 +21,10 @@ import net.firedevops.firemud.gamelogic.v1.LookResult;
 import net.firedevops.firemud.gamelogic.v1.PingRequest;
 import net.firedevops.firemud.gamelogic.v1.PingResponse;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
-import org.lognet.springboot.grpc.GRpcService;
+import org.springframework.grpc.server.service.GrpcService;
 
 /** gRPC endpoints for the Game Logic Service. */
-@GRpcService
+@GrpcService
 public class GameLogicGrpcService extends GameLogicServiceGrpc.GameLogicServiceImplBase {
   private final PingService pingService;
   private final CommandService commandService;

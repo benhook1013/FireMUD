@@ -5,6 +5,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.net.URI;
 import java.util.Map;
 import net.firedevops.firemud.springcloudgateway.SpringCloudGatewayApplication;
+import net.firedevops.firemud.test.GatewayTestProperties;
+import net.firedevops.firemud.test.NoGrpcServerTestConfiguration;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -12,28 +14,20 @@ import org.springframework.cloud.gateway.config.GatewayProperties;
 import org.springframework.cloud.gateway.route.RouteDefinition;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.ActiveProfiles;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 @SpringBootTest(
     classes = SpringCloudGatewayApplication.class,
     properties = {
       "spring.flyway.enabled=false",
       "firemud.database.enabled=false",
-      "grpc.server.security.enabled=false",
-      "grpc.server.port=0",
+      GatewayTestProperties.SPRING_GRPC_SERVER_RANDOM_PORT,
       "firemud.auth.jwt-secret=test-secret-for-prod-profile-tests",
-      "spring.main.web-application-type=reactive",
-      "spring.autoconfigure.exclude=org.springframework.cloud.gateway.config.GatewayClassPathWarningAutoConfiguration,org.lognet.springboot.grpc.autoconfigure.GRpcAutoConfiguration,org.lognet.springboot.grpc.autoconfigure.actuate.GRpcActuateAutoConfiguration"
+      GatewayTestProperties.REACTIVE_WEB_APPLICATION,
+      GatewayTestProperties.DISABLE_GATEWAY_WARNING_AND_GRPC_SERVER
     })
 @ActiveProfiles("prod")
-@Import(TestGatewayRateLimiterConfig.class)
+@Import({NoGrpcServerTestConfiguration.class, TestGatewayRateLimiterConfig.class})
 class GatewayRoutesConfigurationProdTest {
-
-  @MockitoBean private org.lognet.springboot.grpc.GRpcServerRunner grpcServerRunner;
-  @MockitoBean private org.lognet.springboot.grpc.GRpcServicesRegistry grpcServicesRegistry;
-
-  @MockitoBean
-  private org.lognet.springboot.grpc.health.ManagedHealthStatusService managedHealthStatusService;
 
   @Autowired private GatewayProperties gatewayProperties;
 

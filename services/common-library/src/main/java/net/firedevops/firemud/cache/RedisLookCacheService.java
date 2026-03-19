@@ -1,7 +1,5 @@
 package net.firedevops.firemud.cache;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Duration;
 import java.util.Optional;
@@ -11,6 +9,8 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.ObjectMapper;
 
 @Service
 @ConditionalOnBean(RedisTemplate.class)
@@ -50,7 +50,7 @@ public class RedisLookCacheService implements LookCacheService {
               key(tenantId, sessionId),
               objectMapper.writeValueAsString(payload),
               Duration.ofMillis(ttlMs));
-    } catch (JsonProcessingException e) {
+    } catch (JacksonException e) {
       throw new IllegalStateException("Failed to serialize LOOK cache payload", e);
     }
   }
@@ -66,7 +66,7 @@ public class RedisLookCacheService implements LookCacheService {
       return Optional.of(
           new CachedLook(
               cached.roomId, cached.renderedText, cached.protocolText, cached.cachedAtMs));
-    } catch (JsonProcessingException e) {
+    } catch (JacksonException e) {
       redisTemplate.delete(key(tenantId, sessionId));
       return Optional.empty();
     }

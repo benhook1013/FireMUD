@@ -20,11 +20,11 @@ import net.firedevops.firemud.gamesession.v1.RollbackScriptPatchVersionResponse;
 import net.firedevops.firemud.gamesession.v1.SetPinnedScriptPatchVersionRequest;
 import net.firedevops.firemud.gamesession.v1.SetPinnedScriptPatchVersionResponse;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
-import org.lognet.springboot.grpc.GRpcService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.grpc.server.service.GrpcService;
 
-@GRpcService
+@GrpcService
 public final class GameSessionControlPlaneGrpcService
     extends GameSessionControlPlaneServiceGrpc.GameSessionControlPlaneServiceImplBase {
   private static final Logger logger =

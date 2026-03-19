@@ -7,9 +7,9 @@ import net.firedevops.firemud.account.v1.SendNotificationRequest;
 import net.firedevops.firemud.account.v1.SendNotificationResponse;
 import net.firedevops.firemud.accountservice.service.NotificationService;
 import net.firedevops.firemud.common.security.RequireAdminRole;
-import org.lognet.springboot.grpc.GRpcService;
+import org.springframework.grpc.server.service.GrpcService;
 
-@GRpcService
+@GrpcService
 public class NotificationGrpcService extends NotificationServiceGrpc.NotificationServiceImplBase {
   private final NotificationService notificationService;
 

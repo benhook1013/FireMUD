@@ -30,9 +30,9 @@ import net.firedevops.firemud.automationscripting.v1.TriggerScriptEventResponse;
 import net.firedevops.firemud.automationscripting.v1.UpdateScriptRequest;
 import net.firedevops.firemud.automationscripting.v1.UpdateScriptResponse;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
-import org.lognet.springboot.grpc.GRpcService;
+import org.springframework.grpc.server.service.GrpcService;
 
-@GRpcService
+@GrpcService
 public class AutomationScriptingGrpcService
     extends AutomationScriptingServiceGrpc.AutomationScriptingServiceImplBase {
   private final PingService pingService;

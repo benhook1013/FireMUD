@@ -19,6 +19,9 @@ x-service-environment: &service-env
   ASSET_STORE_REGION: ${ASSET_STORE_REGION:-ap-southeast-2}
   ASSET_STORE_ACCESS_KEY: ${ASSET_STORE_ACCESS_KEY:-minio}
   ASSET_STORE_SECRET_KEY: ${ASSET_STORE_SECRET_KEY:-minio123}
+  SPRING_FLYWAY_ENABLED: "true"
+  SPRING_GRPC_SERVER_PORT: "6565"
+  SPRING_JPA_HIBERNATE_DDL_AUTO: update
 
 x-service-healthcheck: &service-health
   test:
@@ -296,6 +299,7 @@ services:
       POSTGRES_DB: ${FIREMUD_POSTGRES_DB:-firemud}
     volumes:
       - postgres-data:/var/lib/postgresql/data
+      - ./postgres/initdb:/docker-entrypoint-initdb.d:ro
     ports:
       - "5432:5432"
     healthcheck:

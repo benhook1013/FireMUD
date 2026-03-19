@@ -6,32 +6,20 @@ import net.firedevops.firemud.common.ApiResponse;
 import net.firedevops.firemud.common.ResultStatus;
 import net.firedevops.firemud.gamesession.dto.GameInstanceDto;
 import net.firedevops.firemud.gamesession.dto.StartSessionRequest;
+import net.firedevops.firemud.test.HttpTestSupport;
+import net.firedevops.firemud.test.NoGrpcServerTestConfiguration;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.lognet.springboot.grpc.GRpcServerRunner;
-import org.lognet.springboot.grpc.GRpcServicesRegistry;
-import org.lognet.springboot.grpc.autoconfigure.GRpcServerProperties;
-import org.lognet.springboot.grpc.health.ManagedHealthStatusService;
-import org.mockito.Mockito;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
-import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.boot.test.web.server.LocalServerPort;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
-import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.data.redis.core.RedisTemplate;
-import org.springframework.http.HttpEntity;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpMethod;
-import org.springframework.http.MediaType;
-import org.springframework.http.ResponseEntity;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import tools.jackson.core.type.TypeReference;
 
 @SuppressWarnings({})
 @Disabled(
@@ -47,15 +35,12 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
       "spring.profiles.active=dev",
       "game-session.dev-isolated=true",
       "game-session.require-authenticated-commands=false",
-      "grpc.server.enabled=false",
-      "spring.autoconfigure.exclude=org.lognet.springboot.grpc.autoconfigure.GRpcAutoConfiguration,org.lognet.springboot.grpc.autoconfigure.actuate.GRpcActuateAutoConfiguration"
+      "spring.autoconfigure.exclude=org.springframework.boot.grpc.server.autoconfigure.GrpcServerAutoConfiguration,org.springframework.boot.grpc.server.autoconfigure.GrpcServerFactoryAutoConfiguration,org.springframework.boot.grpc.server.autoconfigure.health.GrpcServerHealthAutoConfiguration"
     })
-@Import(DevIsolatedGameSessionSmokeTest.DisabledGrpcTestConfig.class)
+@Import(NoGrpcServerTestConfiguration.class)
 class DevIsolatedGameSessionSmokeTest {
 
   @LocalServerPort private int port;
-
-  @Autowired private TestRestTemplate restTemplate;
 
   @MockitoBean private RedisTemplate<String, Object> redisTemplate;
 
@@ -63,19 +48,11 @@ class DevIsolatedGameSessionSmokeTest {
   void startSessionIsAcceptedAndLogged(CapturedOutput output) {
     StartSessionRequest request = new StartSessionRequest(42L, "1.0.0", "patch-1", 100L);
 
-    HttpHeaders headers = new HttpHeaders();
-    headers.setContentType(MediaType.APPLICATION_JSON);
-    HttpEntity<StartSessionRequest> entity = new HttpEntity<>(request, headers);
-    ParameterizedTypeReference<ApiResponse<GameInstanceDto>> responseType =
-        new ParameterizedTypeReference<>() {};
-
-    ResponseEntity<ApiResponse<GameInstanceDto>> response =
-        restTemplate.exchange(
-            "http://localhost:" + port + "/sessions", HttpMethod.POST, entity, responseType);
-
-    assertThat(response.getStatusCode().is2xxSuccessful()).isTrue();
-
-    ApiResponse<GameInstanceDto> body = response.getBody();
+    ApiResponse<GameInstanceDto> body =
+        HttpTestSupport.postJsonUnchecked(
+            "http://localhost:" + port + "/sessions",
+            request,
+            new TypeReference<ApiResponse<GameInstanceDto>>() {});
     assertThat(body).isNotNull();
     assertThat(body.status()).isEqualTo(ResultStatus.SUCCESS);
     GameInstanceDto dto = body.data();
@@ -87,28 +64,5 @@ class DevIsolatedGameSessionSmokeTest {
     assertThat(output.getOut())
         .contains(
             "Dev-isolated mode enabled; acknowledging start for tenant 42 version 1.0.0 patch patch-1");
-  }
-
-  @Configuration
-  static class DisabledGrpcTestConfig {
-    @Bean
-    GRpcServerRunner grpcServerRunner() {
-      return Mockito.mock(GRpcServerRunner.class);
-    }
-
-    @Bean
-    GRpcServicesRegistry grpcServicesRegistry() {
-      return Mockito.mock(GRpcServicesRegistry.class);
-    }
-
-    @Bean
-    GRpcServerProperties grpcServerProperties() {
-      return new GRpcServerProperties();
-    }
-
-    @Bean
-    ManagedHealthStatusService managedHealthStatusService() {
-      return Mockito.mock(ManagedHealthStatusService.class);
-    }
   }
 }

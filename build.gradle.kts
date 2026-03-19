@@ -113,13 +113,21 @@ subprojects {
     }
 
     dependencies {
+        implementation(platform(libs.findLibrary("spring-boot-dependencies").get()))
+        testImplementation(platform(libs.findLibrary("spring-boot-dependencies").get()))
         implementation(libs.findLibrary("protobuf-java").get())
         implementation(libs.findLibrary("grpc-netty-shaded").get())
         implementation(libs.findLibrary("grpc-protobuf").get())
         implementation(libs.findLibrary("grpc-stub").get())
         implementation("javax.annotation:javax.annotation-api:1.3.2")
         testImplementation(libs.findLibrary("spring-boot-starter-test").get())
+        testImplementation(libs.findLibrary("spring-boot-starter-restclient-test").get())
+        testImplementation(libs.findLibrary("spring-boot-resttestclient").get())
+        testImplementation(libs.findLibrary("spring-boot-starter-webmvc-test").get())
         testRuntimeOnly("org.junit.platform:junit-platform-launcher:6.0.3")
+        if (projectDir.parentFile.name == "services" && name != "common-library") {
+            testImplementation(testFixtures(project(":common-library")))
+        }
     }
 
     spotless {

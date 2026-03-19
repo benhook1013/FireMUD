@@ -13,7 +13,8 @@ dependencies {
     implementation(libs.spring.boot.starter.data.jpa)
     implementation(libs.grpc.spring.boot.starter)
     implementation(project(":common-library"))
-    implementation(libs.spring.boot.starter.aop)
+    implementation(libs.spring.aop)
+    implementation(libs.aspectjweaver)
     implementation(libs.micrometer.registry.prometheus)
     implementation(libs.opentelemetry.sdk)
     implementation(libs.opentelemetry.exporter.otlp)
@@ -25,4 +26,3 @@ dependencies {
     testImplementation(libs.testcontainers.junit.jupiter)
     testImplementation(libs.testcontainers.postgresql)
 }
-

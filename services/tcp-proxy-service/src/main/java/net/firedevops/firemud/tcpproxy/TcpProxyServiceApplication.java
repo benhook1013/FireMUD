@@ -6,14 +6,16 @@ import net.firedevops.firemud.tcpproxy.config.GrpcClientProperties;
 import net.firedevops.firemud.tcpproxy.telnet.TelnetServer;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
-import org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration;
-import org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Import;
 import org.springframework.context.event.EventListener;
 
-@SpringBootApplication(exclude = {DataSourceAutoConfiguration.class, RedisAutoConfiguration.class})
+@SpringBootApplication(
+    excludeName = {
+      "org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration",
+      "org.springframework.boot.data.redis.autoconfigure.DataRedisAutoConfiguration"
+    })
 @Import(CommonAutoConfiguration.class)
 @EnableConfigurationProperties(GrpcClientProperties.class)
 public class TcpProxyServiceApplication {

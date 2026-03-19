@@ -15,11 +15,9 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.SpringBootConfiguration;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
-import org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration;
-import org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration;
-import org.springframework.boot.autoconfigure.web.reactive.WebFluxProperties;
 import org.springframework.boot.builder.SpringApplicationBuilder;
-import org.springframework.boot.web.context.WebServerApplicationContext;
+import org.springframework.boot.web.server.context.WebServerApplicationContext;
+import org.springframework.boot.webflux.autoconfigure.WebFluxProperties;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -63,7 +61,7 @@ class GatewayLookCommandIntegrationTest {
     WebSocketHttpHeaders headers = new WebSocketHttpHeaders();
     headers.add("X-Game-Instance-Id", "42");
     client
-        .doHandshake(
+        .execute(
             new TextWebSocketHandler() {
               @Override
               public void afterConnectionEstablished(WebSocketSession session) throws IOException {
@@ -122,7 +120,10 @@ class GatewayLookCommandIntegrationTest {
 
   @SpringBootConfiguration
   @EnableAutoConfiguration(
-      exclude = {DataSourceAutoConfiguration.class, RedisAutoConfiguration.class})
+      excludeName = {
+        "org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration",
+        "org.springframework.boot.data.redis.autoconfigure.DataRedisAutoConfiguration"
+      })
   @Import(GatewayStubConfiguration.class)
   static class GatewayStubApplication {}
 

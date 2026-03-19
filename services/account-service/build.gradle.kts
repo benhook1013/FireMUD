@@ -12,7 +12,8 @@ dependencies {
     implementation(libs.spring.boot.starter.data.jpa)
     implementation(libs.spring.boot.starter.data.redis)
     implementation(project(":common-library"))
-    implementation(libs.spring.boot.starter.aop)
+    implementation(libs.spring.aop)
+    implementation(libs.aspectjweaver)
     implementation(libs.spring.boot.starter.mail)
     implementation(libs.grpc.spring.boot.starter)
     implementation(libs.micrometer.core)
@@ -31,4 +32,3 @@ dependencies {
     testImplementation(libs.testcontainers.junit.jupiter)
     testImplementation(libs.testcontainers.postgresql)
 }
-

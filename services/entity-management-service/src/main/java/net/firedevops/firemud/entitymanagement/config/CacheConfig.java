@@ -8,7 +8,7 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.data.redis.cache.RedisCacheConfiguration;
 import org.springframework.data.redis.cache.RedisCacheManager;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
-import org.springframework.data.redis.serializer.GenericJackson2JsonRedisSerializer;
+import org.springframework.data.redis.serializer.GenericJacksonJsonRedisSerializer;
 import org.springframework.data.redis.serializer.RedisSerializationContext;
 
 /** Configures Spring Cache to use Redis for entity graph caching. */
@@ -24,7 +24,10 @@ public class CacheConfig {
         RedisCacheConfiguration.defaultCacheConfig()
             .serializeValuesWith(
                 RedisSerializationContext.SerializationPair.fromSerializer(
-                    new GenericJackson2JsonRedisSerializer()))
+                    GenericJacksonJsonRedisSerializer.builder()
+                        .enableSpringCacheNullValueSupport()
+                        .enableUnsafeDefaultTyping()
+                        .build()))
             .entryTtl(Duration.ofSeconds(properties.getCharacterGraphTtlSeconds()));
 
     return RedisCacheManager.builder(factory).cacheDefaults(defaultConfig).build();

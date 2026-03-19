@@ -4,7 +4,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import io.grpc.Server;
 import io.grpc.ServerBuilder;
-import io.grpc.health.v1.HealthCheckResponse;
 import io.grpc.stub.StreamObserver;
 import io.opentelemetry.api.GlobalOpenTelemetry;
 import io.opentelemetry.api.trace.Tracer;
@@ -53,15 +52,13 @@ import net.firedevops.firemud.tcpproxy.telnet.TelnetServer;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
-import org.lognet.springboot.grpc.GRpcServerRunner;
-import org.lognet.springboot.grpc.GRpcServicesRegistry;
-import org.lognet.springboot.grpc.health.ManagedHealthStatusService;
+import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.boot.test.context.TestConfiguration;
-import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.boot.web.server.context.WebServerApplicationContext;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
@@ -69,9 +66,12 @@ import org.springframework.data.redis.connection.RedisConnectionFactory;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.grpc.server.lifecycle.GrpcServerLifecycle;
+import org.springframework.grpc.server.service.GrpcServiceDiscoverer;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.util.TestSocketUtils;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -113,9 +113,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
 
   @Autowired private TelnetServer telnetServer;
 
-  @SuppressWarnings("removal")
-  @MockBean
-  private GRpcServerRunner grpcServerRunner;
+  @MockitoBean private GrpcServerLifecycle grpcServerLifecycle;
 
   @DynamicPropertySource
   static void registerProperties(DynamicPropertyRegistry registry) {
@@ -320,10 +318,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     props.put("spring.profiles.active", "test");
     props.put("spring.application.name", "game-logic-service");
     props.put("server.port", "0");
-    props.put("grpc.port", String.valueOf(grpcPort));
-    props.put("grpc.enabled", "true");
-    props.put("grpc.server.port", String.valueOf(grpcPort));
-    props.put("grpc.server.security.enabled", "false");
+    props.put("spring.grpc.server.port", String.valueOf(grpcPort));
     props.put("firemud.grpc.plaintext", "true");
     props.put("otel.endpoint", "disabled");
     props.put("firemud.database.enabled", "false");
@@ -372,10 +367,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
                     "ACTIVE"))
             .orElseThrow(
                 () -> new IllegalStateException("Game instance insert did not return an id"));
-    int port =
-        ((org.springframework.boot.web.context.WebServerApplicationContext) context)
-            .getWebServer()
-            .getPort();
+    int port = ((WebServerApplicationContext) context).getWebServer().getPort();
     return new GameSessionHolder(context, port, insertedId);
   }
 
@@ -384,10 +376,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     props.put("spring.profiles.active", "test");
     props.put("spring.application.name", "game-session-service");
     props.put("server.port", "0");
-    props.put("grpc.port", "0");
-    props.put("grpc.enabled", "false");
-    props.put("grpc.server.port", "0");
-    props.put("grpc.server.enabled", "false");
+    props.put("spring.grpc.server.port", "0");
     props.put("game-session.dev-isolated", "false");
     props.put("game-session.require-authenticated-commands", "true");
     props.put("firemud.services.accountService", "localhost:" + accountPort);
@@ -418,8 +407,9 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     props.put("spring.jpa.hibernate.ddl-auto", "none");
     props.put(
         "spring.autoconfigure.exclude",
-        "org.lognet.springboot.grpc.autoconfigure.GRpcAutoConfiguration,"
-            + "org.lognet.springboot.grpc.autoconfigure.actuate.GRpcActuateAutoConfiguration");
+        "org.springframework.boot.grpc.server.autoconfigure.GrpcServerAutoConfiguration,"
+            + "org.springframework.boot.grpc.server.autoconfigure.GrpcServerFactoryAutoConfiguration,"
+            + "org.springframework.boot.grpc.server.autoconfigure.health.GrpcServerHealthAutoConfiguration");
     return props;
   }
 
@@ -455,10 +445,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
                 "spring.main.web-application-type=reactive",
                 "gateway.stub.target-uri=ws://localhost:" + gameSessionPort + "/ws/game")
             .run();
-    int port =
-        ((org.springframework.boot.web.context.WebServerApplicationContext) context)
-            .getWebServer()
-            .getPort();
+    int port = ((WebServerApplicationContext) context).getWebServer().getPort();
     return new GatewayHolder(context, port);
   }
 
@@ -709,25 +696,14 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
 
     @Bean
     @Primary
-    GRpcServicesRegistry grpcServicesRegistry() {
-      return new GRpcServicesRegistry();
+    GrpcServiceDiscoverer grpcServiceDiscoverer() {
+      return Mockito.mock(GrpcServiceDiscoverer.class);
     }
 
     @Bean
     @Primary
-    ManagedHealthStatusService managedHealthStatusService() {
-      return new ManagedHealthStatusService() {
-        @Override
-        public void onShutdown() {}
-
-        @Override
-        public void setStatus(String service, HealthCheckResponse.ServingStatus status) {}
-
-        @Override
-        public java.util.Map<String, HealthCheckResponse.ServingStatus> statuses() {
-          return java.util.Collections.emptyMap();
-        }
-      };
+    GrpcServerLifecycle grpcServerLifecycle() {
+      return Mockito.mock(GrpcServerLifecycle.class);
     }
   }
 }

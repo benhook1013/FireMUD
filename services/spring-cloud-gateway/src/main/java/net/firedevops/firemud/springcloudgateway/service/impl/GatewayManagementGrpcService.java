@@ -12,10 +12,10 @@ import net.firedevops.firemud.gateway.v1.UpsertRouteRequest;
 import net.firedevops.firemud.gateway.v1.UpsertRouteResponse;
 import net.firedevops.firemud.springcloudgateway.service.GatewayRoute;
 import net.firedevops.firemud.springcloudgateway.service.GatewayRouteService;
-import org.lognet.springboot.grpc.GRpcService;
+import org.springframework.grpc.server.service.GrpcService;
 
 /** gRPC implementation for remote gateway management. */
-@GRpcService
+@GrpcService
 @SuppressFBWarnings(
     value = "EI_EXPOSE_REP2",
     justification = "Injected route service is kept internal")

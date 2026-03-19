@@ -15,11 +15,11 @@ import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.service.CommandService;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
-import org.lognet.springboot.grpc.GRpcServerRunner;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.grpc.server.lifecycle.GrpcServerLifecycle;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -44,7 +44,7 @@ import org.springframework.web.socket.handler.TextWebSocketHandler;
       "game-session.require-authenticated-commands=false",
       "firemud.database.enabled=false",
       "spring.application.name=game-session-service",
-      "grpc.server.port=0",
+      "spring.grpc.server.port=0",
     })
 @ActiveProfiles("test")
 class GameSessionWebSocketHandlerIntegrationTest {
@@ -63,7 +63,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
 
   @LocalServerPort private int port;
 
-  @MockitoBean private GRpcServerRunner grpcServerRunner;
+  @MockitoBean private GrpcServerLifecycle grpcServerLifecycle;
 
   @MockitoBean private CommandService commandService;
 
@@ -80,7 +80,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
     CountDownLatch latch = new CountDownLatch(1);
 
     client
-        .doHandshake(
+        .execute(
             new TextWebSocketHandler() {
               @Override
               public void afterConnectionEstablished(WebSocketSession session) throws IOException {

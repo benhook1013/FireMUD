@@ -11,9 +11,9 @@ import net.firedevops.firemud.account.v1.SpendCurrencyRequest;
 import net.firedevops.firemud.account.v1.SpendCurrencyResponse;
 import net.firedevops.firemud.account.v1.VirtualCurrencyServiceGrpc;
 import net.firedevops.firemud.accountservice.service.VirtualCurrencyService;
-import org.lognet.springboot.grpc.GRpcService;
+import org.springframework.grpc.server.service.GrpcService;
 
-@GRpcService
+@GrpcService
 public class VirtualCurrencyGrpcService
     extends VirtualCurrencyServiceGrpc.VirtualCurrencyServiceImplBase {
   @SuppressFBWarnings(

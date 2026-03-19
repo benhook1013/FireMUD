@@ -66,6 +66,7 @@ dependencies {
     testFixturesImplementation("com.google.protobuf:protobuf-java:${libs.versions.protobuf.get()}")
     testImplementation(libs.testcontainers.junit.jupiter)
     testImplementation(libs.testcontainers.postgresql)
+    testImplementation(libs.grpc.inprocess)
     testImplementation(project(":game-logic-service"))
     compileOnly("com.github.spotbugs:spotbugs-annotations:4.9.8")
 }

@@ -1,7 +1,5 @@
 package net.firedevops.firemud.accountservice.service.impl;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.json.JsonMapper;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
@@ -26,9 +24,11 @@ import net.firedevops.firemud.accountservice.service.AccountService;
 import net.firedevops.firemud.accountservice.service.PingService;
 import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
 import net.firedevops.firemud.common.security.RequireAdminRole;
-import org.lognet.springboot.grpc.GRpcService;
+import org.springframework.grpc.server.service.GrpcService;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 
-@GRpcService
+@GrpcService
 public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBase {
   private final PingService pingService;
   private final AccountService accountService;
@@ -130,7 +130,7 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       GetProfileResponse response =
           GetProfileResponse.newBuilder()
               .setProfileJson(
-                  com.fasterxml.jackson.databind.json.JsonMapper.builder()
+                  tools.jackson.databind.json.JsonMapper.builder()
                       .build()
                       .createObjectNode()
                       .put("displayName", dto.displayName())

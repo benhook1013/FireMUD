@@ -1,7 +1,5 @@
 package net.firedevops.firemud.worldmanagement.service.impl;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
@@ -26,10 +24,12 @@ import net.firedevops.firemud.worldmanagement.v1.RoomSnapshot;
 import net.firedevops.firemud.worldmanagement.v1.UpdateWorldStateRequest;
 import net.firedevops.firemud.worldmanagement.v1.UpdateWorldStateResponse;
 import net.firedevops.firemud.worldmanagement.v1.WorldManagementServiceGrpc;
-import org.lognet.springboot.grpc.GRpcService;
+import org.springframework.grpc.server.service.GrpcService;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.ObjectMapper;
 
 /** gRPC endpoints for the World Management Service. */
-@GRpcService
+@GrpcService
 @RequiredArgsConstructor
 @SuppressFBWarnings(
     value = "EI_EXPOSE_REP2",
@@ -190,7 +190,7 @@ public class WorldManagementGrpcService
   private String toJson(RoomDto dto) {
     try {
       return objectMapper.writeValueAsString(dto);
-    } catch (JsonProcessingException e) {
+    } catch (JacksonException e) {
       throw new RuntimeException("Failed to serialize room", e);
     }
   }

@@ -9,34 +9,34 @@ import java.io.PrintWriter;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import net.firedevops.firemud.tcpproxy.telnet.TelnetServer;
+import net.firedevops.firemud.test.NoGrpcServerTestConfiguration;
 import org.junit.jupiter.api.Test;
-import org.lognet.springboot.grpc.GRpcServerRunner;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
+import org.springframework.context.annotation.Import;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.util.TestSocketUtils;
 
 @SpringBootTest(
     classes = TcpProxyServiceApplication.class,
     webEnvironment = WebEnvironment.DEFINED_PORT)
 @ActiveProfiles("dev")
+@Import(NoGrpcServerTestConfiguration.class)
 class DevEchoTelnetIntegrationTest {
   private static final int WEB_SERVER_PORT = allocatePort();
   private static final int TELNET_SERVER_PORT = allocatePort();
 
   @Autowired private TelnetServer telnetServer;
-  @MockitoBean private GRpcServerRunner grpcServerRunner;
 
   @DynamicPropertySource
   static void registerProperties(DynamicPropertyRegistry registry) {
     registry.add("server.port", () -> WEB_SERVER_PORT);
     registry.add("GATEWAY_WS_URL", () -> "ws://localhost:" + WEB_SERVER_PORT + "/dev/echo");
     registry.add("TCP_PROXY_PORT", () -> TELNET_SERVER_PORT);
-    registry.add("grpc.server.port", () -> 0);
+    registry.add("spring.grpc.server.port", () -> 0);
   }
 
   @Test

@@ -10,9 +10,9 @@ import net.firedevops.firemud.gamelogic.service.LookAggregationService;
 import net.firedevops.firemud.gamelogic.service.PingService;
 import net.firedevops.firemud.gamelogic.service.SayAggregationService;
 import org.junit.jupiter.api.Test;
-import org.lognet.springboot.grpc.GRpcServerRunner;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
+import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
+import org.springframework.grpc.server.lifecycle.GrpcServerLifecycle;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -22,7 +22,7 @@ class PingControllerTest {
   @Autowired private MockMvc mockMvc;
 
   @MockitoBean private GameLogicGrpcClientConfig gameLogicGrpcClientConfig;
-  @MockitoBean private GRpcServerRunner grpcServerRunner;
+  @MockitoBean private GrpcServerLifecycle grpcServerLifecycle;
   @MockitoBean private LookAggregationService lookAggregationService;
   @MockitoBean private PingService pingService;
   @MockitoBean private SayAggregationService sayAggregationService;

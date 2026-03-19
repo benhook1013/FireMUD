@@ -7,7 +7,7 @@ import static org.mockito.Mockito.when;
 import net.firedevops.firemud.gamesession.service.PingService;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
-import org.springframework.boot.actuate.health.Health;
+import org.springframework.boot.health.contributor.Health;
 
 class PingHealthIndicatorTest {
 

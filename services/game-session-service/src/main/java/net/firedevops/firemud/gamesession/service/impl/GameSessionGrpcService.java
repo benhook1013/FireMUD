@@ -35,10 +35,10 @@ import net.firedevops.firemud.gamesession.v1.TickStatus;
 import net.firedevops.firemud.gamesession.v1.ToggleFeatureFlagRequest;
 import net.firedevops.firemud.gamesession.v1.ToggleFeatureFlagResponse;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
-import org.lognet.springboot.grpc.GRpcService;
+import org.springframework.grpc.server.service.GrpcService;
 
 /** gRPC endpoints for the Game Session Service. */
-@GRpcService
+@GrpcService
 public final class GameSessionGrpcService
     extends GameSessionServiceGrpc.GameSessionServiceImplBase {
   private final PingService pingService;
