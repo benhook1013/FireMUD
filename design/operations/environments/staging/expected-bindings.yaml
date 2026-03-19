@@ -1,0 +1,31 @@
+environment: staging
+internalBindings:
+  postgres:
+    endpoint: postgres.firemud.svc.cluster.local:5432
+    credentialsRef: secret://firemud/postgres-credentials
+  redis:
+    coordination:
+      endpoint: redis-coord.firemud.svc.cluster.local:6379
+    cache:
+      endpoint: redis-cache.firemud.svc.cluster.local:6379
+  jwt:
+    signingKeysRef: secret://firemud/jwt-signing-keys
+    jwksRef: secret://firemud/jwt-jwks
+  certificates:
+    issuerRef: cert-manager://firemud/clusterissuers/firemud-staging
+  registry:
+    imagePullSecretRef: secret://firemud/ghcr-pull-staging
+backupStorage:
+  bucket: firemud-staging-backups
+  endpoint: https://minio.staging.internal
+assetStorage:
+  bucket: firemud-staging-assets
+  endpoint: https://minio.staging.internal
+outboundComms:
+  smtpHost: smtp.staging.internal
+  webhookTargets:
+    accountNotifications: staging-only
+operatorCredentials:
+  bindingRef: cert-manager://firemud/staging-operator-client
+serviceDiscovery:
+  mode: kubernetes-dns-default

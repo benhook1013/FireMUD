@@ -160,6 +160,7 @@ Changing `FIREMUD_AUTH_JWT_EXPIRATION_MS` or `FIREMUD_AUTH_SESSION_SAFETY_MARGIN
 
 In player-facing environments (`hobby-self-hosted`, staging, production), JWT signing keys are stored in a `jwt-signing-keys` Secret and exposed to the Account Service via the file pointed to by `FIREMUD_AUTH_JWT_SECRET_PATH`. The JWKS document is also stored in a `jwt-jwks` Secret in these environments. Rotation is handled by a dedicated `jwt-rotation` Kubernetes Job as described in `../system-architecture-security.md#jwt-key--jwks-rotation-workflow`; this Job updates both the signing key Secret and JWKS so validators always see the current public keys.
 In non-player-facing environments (`local-dev`, `pr-preview`, `dev-demo-cluster`), a JWKS ConfigMap may be used for convenience when keys are explicitly non-sensitive test material.
+Hosted `pr-preview` environments must still use PR-unique signing material and JWKS content even when they use a ConfigMap or test-only Secret. Shared preview JWT material across namespaces is not allowed.
 In player-facing environments (`hobby-self-hosted`, staging, production), `FIREMUD_AUTH_JWT_SECRET_PATH` is required and startup should fail if the service is configured with only `FIREMUD_AUTH_JWT_SECRET`.
 
 For local development and explicitly ephemeral test setups, it is acceptable to set `FIREMUD_AUTH_REQUIRE_2FA_FOR_PLAINTEXT_TCP=false` while iterating on Telnet tooling or before 2FA flows are configured. In any player-facing environment (`hobby-self-hosted`, staging, production), this flag should remain `true` so plaintext Telnet access is restricted to 2FA-enabled accounts that have explicitly opted in, with all other players connecting via TLS Telnet or the web client. Recommended Telnet deployment patterns by environment are summarized in `../system-architecture-protocol-bridging.md#recommended-telnet-deployment-modes`.
@@ -176,6 +177,8 @@ Each variable is suffixed with `_SERVICE` to match the Spring configuration keys
 FIREMUD_SERVICES_GAME_LOGIC_SERVICE=game-logic-service:6565
 FIREMUD_SERVICES_LOGGING_ADMIN_SERVICE=logging-admin-service:6565
 ```
+
+Player-facing environments (`hobby-self-hosted`, staging, production) must treat these overrides as exceptional. The compliant default is to leave them unset and use in-environment Kubernetes DNS/service discovery. If any `FIREMUD_SERVICES_*` override is required in a player-facing environment, deployment preflight must validate it against `design/operations/environments/<environment>/expected-bindings.yaml`; undeclared overrides or values that resolve into another environment boundary must fail deployment.
 
 ---
 

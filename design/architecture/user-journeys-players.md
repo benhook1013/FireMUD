@@ -66,12 +66,14 @@ Player → Account Service
 The first successful session for a new player follows a single canonical onboarding flow regardless of client type:
 
 1. **Authenticate the Platform Account**
-   - **First-party web client** – Obtains a short-lived player bootstrap token and connect token through the [Account Service](./microservices/account-service/README.md), then opens the gameplay WebSocket through the [Spring Cloud Gateway](./microservices/spring-cloud-gateway/README.md).
+   - **First-party web client** – Obtains a short-lived player bootstrap token through the [Account Service](./microservices/account-service/README.md), uses bootstrap-backed discovery endpoints to choose a world/realm/character target, then requests a connect token and opens the gameplay WebSocket through the [Spring Cloud Gateway](./microservices/spring-cloud-gateway/README.md).
    - **Telnet / MCP client** – Connects through the [TCP Proxy Service](./microservices/tcp-proxy-service/README.md) and authenticates in-band with `LOGIN`.
-2. **Discover Accessible Worlds** – After `LOGIN`, the player uses `WORLDS` to list only the tenants the account is allowed to enter. Responses use world slugs and friendly names rather than raw IDs, as defined in [Authentication & Authorization](./system-architecture-authentication.md) and [Multi-Tenancy](./system-architecture-multi-tenancy.md).
-3. **Choose a Realm** – If the selected world exposes more than one visible realm, the player uses `REALMS <world>` to choose between the default production realm and any explicitly authorized additional realms such as a playtest fork. Hidden or unauthorized realms are never disclosed.
-4. **List Characters or Create New** – The player uses `CHARS <world> [realm]` to view existing characters. If none exist, the client offers the world's character-creation flow before `PLAY`. For playtest forks, a player may arrive with copied fork-local character state from the source snapshot. If no visible fork-local character exists for that account, fork policy determines whether the player may create a fresh fork-local character or whether the fork is restricted to copied characters only; whichever policy a fork uses must be surfaced consistently in the lobby/client UX. If a fork permits both copied and newly created fork-local characters, `CHARS` returns them in one fork-local list and the client does not need a separate mode switch.
+2. **Discover Joinable Worlds** – After authentication, the player uses the canonical discovery contract to list worlds they can enter. Existing memberships always qualify. In v1, a live default production realm may also be publicly discoverable even before the player has joined that tenant. Responses use world slugs and friendly names rather than raw IDs, as defined in [Authentication & Authorization](./system-architecture-authentication.md) and [Multi-Tenancy](./system-architecture-multi-tenancy.md).
+3. **Choose a Realm** – If the selected world exposes more than one visible realm, the player uses `REALMS <world>` to choose between the default production realm and any explicitly authorized additional realms such as a playtest fork. Hidden or unauthorized realms are never disclosed. Public discovery applies only to the default production realm in v1; any additional realm requires an explicit access grant from the creator or operator.
+4. **List Characters or Create New** – The player uses `CHARS <world> [realm]` to view existing characters. If none exist, the client must complete the world's character-creation flow before `PLAY` succeeds. For playtest forks, a player may arrive with copied fork-local character state from the source snapshot. If no visible fork-local character exists for that account, fork policy determines whether the player may create a fresh fork-local character or whether the fork is restricted to copied characters only; whichever policy a fork uses must be surfaced consistently in the lobby/client UX. If a fork permits both copied and newly created fork-local characters, `CHARS` returns them in one fork-local list and the client does not need a separate mode switch.
 5. **Bind to Gameplay** – `PLAY <world> [realm] [character]` resolves to canonical `{tenantId, gameInstanceId, characterId}` values and binds the session to the selected realm. After this step, normal gameplay commands become available.
+
+For a first-time join through a publicly discoverable production realm, the first successful `PLAY` creates the player's `player` membership atomically as part of admission. Failed joins do not leave behind partial membership rows.
 
 This onboarding flow is the only supported way to discover and enter a realm. Transport-level hints such as Telnet `SESSION` and first-party WebSocket connect tokens may narrow the target realm, but they never replace the authenticated lobby contract.
 
@@ -99,10 +101,12 @@ Example first-party web flow:
 
 ```text
 POST /auth/player-bootstrap
+GET /auth/bootstrap/worlds
+GET /auth/bootstrap/worlds/{world}/realms
+GET /auth/bootstrap/worlds/{world}/characters?realm={realm}
 POST /auth/connect-token { tenantId, gameInstanceId }
 GET /ws/game/** with X-Firemud-Connect-Token
 LOGIN
-WORLDS / REALMS / CHARS
 PLAY <world> <realm> <character>
 ```
 
@@ -110,7 +114,7 @@ PLAY <world> <realm> <character>
 
 ## 3. Character Creation & Selection
 
-Character definitions and selection are scoped per game (tenant) using the [Entity Management Service](./microservices/entity-management-service/README.md) and [Game Session Service](./microservices/game-session-service/README.md). Creation flows are coordinated with the [Game Design Service](./microservices/game-design-service/README.md) to ensure race, class, and ability choices match the published game configuration. See [World and Entity Design](./user-journeys-creators.md#world-and-entity-design) for creator-side details on how these options are defined.
+Character definitions and selection are scoped per game (tenant) using the [Entity Management Service](./microservices/entity-management-service/README.md) and [Game Session Service](./microservices/game-session-service/README.md). Creation flows are coordinated with the [Game Design Service](./microservices/game-design-service/README.md) to ensure race, class, and ability choices match the published game configuration. Explicit character creation and selection are part of the v1 admission contract; the platform does not fall back to an implicit account-derived default character. See [World and Entity Design](./user-journeys-creators.md#world-and-entity-design) for creator-side details on how these options are defined.
 
 Behind the scenes:
 

@@ -22,12 +22,35 @@ Derived runtime-consumed artifacts produced by domain services follow the same w
 - If those artifacts are exported to the shared object store for runtime consumption, Game Design publishes them on behalf of the owning service as part of the version publish workflow.
 - Domain services must not write directly to the shared object store used for published version assets. A direct domain-service object-store write would bypass the artifact lifecycle, release attestation, and purge controls defined here.
 
+Canonical producer-to-publisher handoff for derived artifacts:
+
+- For the first implementation slice, a producer service that owns a derived runtime artifact must persist a version-scoped artifact record in its own database keyed by `(tenantId, versionId, artifactKind)`.
+- That producer-owned record is the canonical pre-publish handoff surface to Game Design and must include at minimum:
+  - a stable fetch handle or byte source controlled by the producer service;
+  - `contentHash`;
+  - `contentType`;
+  - `artifactKind`;
+  - `producerService`;
+  - a producer-local lifecycle/status field proving the artifact bytes are finalized for publish.
+- Game Design must obtain derived artifact bytes and metadata through a typed producer-service API backed by that persisted record. Ad hoc filesystem sharing, direct producer writes into the published asset bucket, and convention-based object-key pickup are not allowed.
+- The publish Saga order is: producer materializes and freezes the derived artifact in its own ownership boundary, then Game Design exports those exact bytes into the published version prefix, then attestation records the resulting `manifestHash`.
+- Exact-bytes repair for a Published/Active version must re-read the same producer-owned artifact contract or an equivalent immutable repair source capable of reproducing the attested bytes. If the producer can no longer supply the attested bytes, recovery requires publishing a new `versionId`.
+
 Initial-slice discovery rule for derived world artifacts:
 
 - For the first implementation slice, exported world navmesh/path graph artifacts must be discoverable through the same attested release surfaces as other version assets.
 - For the first implementation slice, Game Design must publish a `manifest.json` entry keyed by a stable usage name for each exported world navmesh/path graph artifact.
 - `published_release_bundle` must attest the same artifact indirectly through the attested `manifestHash`; implementations may add explicit artifact references to the bundle later, but they are not the required discovery surface for the initial slice.
+- The attested release contract must also declare which stable usage keys are required for launch of that specific release. Manifest integrity alone is not sufficient to infer whether an omitted key is valid or a launch-blocking defect.
 - Runtime consumers must treat those attested references as canonical and must not construct object-store paths by convention.
+
+Required-artifact attestation contract:
+
+- `GetPublishedReleaseBundle(tenantId, versionId)` must expose an attested field such as `requiredManifestAssetKeys[]`.
+- For the first implementation slice, the field lists stable manifest usage keys that are required for launch or cutover validation of that release.
+- `requiredManifestAssetKeys[]` may be empty for releases that do not require derived runtime artifacts.
+- If `requiredManifestAssetKeys[]` contains `world.navmesh` or `world.pathGraph`, runtime launch and cutover tooling must require the corresponding `manifest.json` entry to exist and match the attested release metadata.
+- Consumers must not infer requiredness from filename conventions, producer type, or the mere presence or absence of an entry in `manifest.json`.
 
 Initial-slice manifest shape for derived world artifacts:
 
@@ -98,6 +121,7 @@ Negative consumer examples:
 Fail-closed reader rule:
 
 - If a runtime consumer does not understand the manifest `schemaVersion`, or if a required derived-world-artifact key is missing for the release it is trying to start, launch must fail before gameplay admission rather than guessing fallback paths or object keys.
+- Requiredness is determined from the attested release bundle metadata for that release, not by heuristics over manifest contents.
 
 ## Table Structure
 
@@ -254,18 +278,24 @@ Transition enforcement contract:
   - If `manifestHash` verification fails for a Published/Active version, treat it as a data corruption or process bug incident. Do not “fix” the version in place by changing attested content; the only allowed repair is an exact-bytes rebuild that reproduces the existing `published_release_bundle` attestation. If that is impossible, recovery requires publishing a new `versionId`.
 - If any downstream publish step fails, the Saga must:
   - mark the version as **Failed** in the Game Design Service so it cannot be activated, and
-  - transition the asset artifact to `TOMBSTONED` instead of silently deleting bytes.
+  - transition the asset artifact to `FAILED` instead of silently deleting bytes.
 
   Manual deletion of failed artifact prefixes is not part of normal compensation. Purge is a separate operator workflow after failure triage. Failed versions follow the lifecycle rules in
   [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md)
   and require an explicit repair or retry action before they can transition
-  back to Draft or Published.
+  back to Draft or Published. Moving a failed artifact to `TOMBSTONED` is an explicit operator abandonment decision, not an automatic publish-failure transition.
 
 Exact-bytes repair rule:
 
 - Repair of a Published/Active version must begin by reading `GetPublishedReleaseBundle(tenantId, versionId)`.
 - The repair workflow may only regenerate object-store bytes that hash to the existing attested `manifestHash` (and optional per-asset hashes if recorded).
 - If regenerated bytes would change the attestation payload, the workflow must fail closed and require a new `versionId` rather than mutating the published release in place.
+
+Manifest evolution rule for attested releases:
+
+- Published/Active releases are immutable with respect to manifest bytes and `manifestHash`; they must not be migrated in place to a different manifest schema version by rerunning export.
+- Runtime consumers, activation, and repair tooling must continue to understand older attested manifest schema versions for all non-Retired releases they may encounter.
+- Rerunning `ExportAssets` to change manifest schema is allowed only before attestation completes or as part of a future explicit re-attestation workflow that defines how release immutability is preserved.
 
 Deletion-eligibility authority:
 

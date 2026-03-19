@@ -809,13 +809,21 @@ This reconcile step is the concrete enforcement of the convergence guarantees in
 
 1. Detect the issue:
    - Hash-tag or key-shape mistakes discovered via CI, logs, or metrics (for example, CROSSSLOT errors or inconsistent region placement).
-2. Pause affected workloads:
-   - Pause tick scheduling globally or for affected tenants/regions.
-3. Reset Coordination Redis for the affected scope:
-   - For node-wide issues: reset the Coordination Redis keyspace (per-node) using the AOF reset procedure, but only for reset-tolerant prefixes.
-   - For tenant/region-local issues: use tooling that targets only those prefixes or logical databases; reset-sensitive workloads may require additional confirmation or tenant scoping, and reset-forbidden workloads must be excluded.
-4. Resume ticks and sessions:
-   - Allow coordination keys to rebuild naturally from PostgreSQL and fresh gameplay activity.
+2. Choose the smallest safe scope:
+   - Region by default, tenant when the blast radius crosses regions for one tenant, cluster only when the deployment cannot be isolated safely.
+3. Execute the canonical reset workflow for that scope:
+   - `coordination-maintenance pause ...`
+   - bump `region_epoch` for the affected scope
+   - `coordination-maintenance reset ...`
+   - `coordination-maintenance reconcile-ledger ...`
+   - `coordination-maintenance converge-commands ...`
+   - `coordination-maintenance init-meta ...`
+   - `coordination-maintenance smoke-check ...`
+   - `coordination-maintenance resume ...`
+4. Resume player/session traffic only according to the chosen scope’s session policy:
+   - Region resets preserve sessions by default.
+   - Tenant resets preserve or invalidate sessions only according to the explicit CLI option used.
+   - Cluster resets follow the documented cluster reset session policy.
 
 Fine-grained, live migration of mis-sharded coordination keys is **not** the default; it is considered an advanced, optional extension when dropping coordination state is unacceptable for particular tenants.
 
@@ -901,12 +909,18 @@ See the “Hash Tag Normalization” section in `system-architecture-redis.md` f
    - Implement the new normalization version (for example `NORMALIZATION_V2`) in shared helpers.
    - Ensure the new normalization keeps `<tenantId, regionId>` stable and valid.
 2. Schedule a maintenance window.
-3. Pause ticks and stop accepting new commands for affected tenants/regions (or globally).
+3. Drive the affected scope to the canonical `PAUSED` state using `coordination-maintenance pause ...`.
 4. Deploy services using the new normalization helpers.
-5. Start a fresh Coordination Redis deployment (or logical database) with an empty keyspace:
+5. Bump `region_epoch` for the affected scope before any Redis wipe.
+6. Start a fresh Coordination Redis deployment (or logical database) with an empty keyspace:
    - Point Game Session and other coordination clients at the new deployment.
    - Do not attempt to migrate existing coordination keys.
-6. Resume ticks and player traffic:
+7. Complete the rest of the canonical reset workflow for the affected scope:
+   - `coordination-maintenance reconcile-ledger ...`
+   - `coordination-maintenance converge-commands ...`
+   - `coordination-maintenance init-meta ...`
+   - `coordination-maintenance smoke-check ...`
+8. `coordination-maintenance resume ...`, then reopen player traffic:
    - Existing game instances may require restart or reconnection.
    - Coordination state is rebuilt from PostgreSQL and new activity.
 

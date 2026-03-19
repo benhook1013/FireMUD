@@ -25,6 +25,38 @@ Plugins run with the same core execution model as other scripts but are subject 
 
 The Logging & Admin Service exposes management APIs for listing, enabling, disabling, and inspecting plugins; these APIs enforce the same role model and provide audit trails for all plugin state changes.
 
+## Canonical Plugin Bundle Contract (Required)
+
+Plugin bundles are not opaque archives. Authoring, validation, audit, and activation all consume one canonical signed contract inside the bundle.
+
+Required bundle contents:
+
+- `plugin-manifest.json` is the authoritative signed manifest for the bundle. Game Design and Automation & Scripting must derive activation metadata from this file rather than from upload-time form fields or object-store metadata.
+- `signatures.json` contains the signature envelope described below.
+- One or more DSL graph definition files referenced by `plugin-manifest.json`.
+- Zero or more static assets referenced by `plugin-manifest.json`.
+
+`plugin-manifest.json` must define at least:
+
+- `pluginId` – stable logical plugin identity reused across versions.
+- `pluginVersionId` – immutable version identity for this bundle only.
+- `baseVersionId` – the exact published game version this plugin version targets.
+- `abilitySchemaDigest` – the immutable ability schema digest for that same `baseVersionId`.
+- `displayName` and optional human-facing description/version notes.
+- `entrypoints[]` – the DSL graphs included in the bundle, with stable graph identifiers and file references.
+- `bindings[]` – the event subscriptions and target scopes declared by the bundle, using the canonical binding model defined below.
+- `requiredComponents[]` – DSL component identifiers the bundle requires so policy validation can be deterministic.
+- `requiredCapabilities[]` – any elevated plugin capabilities if the platform introduces them later; empty in the initial slice unless explicitly used.
+- `assetRefs[]` – optional plugin-local asset references.
+
+Contract rules:
+
+- `pluginVersionId` is immutable content identity. Republishing after any manifest, graph, binding, or asset change requires a new `pluginVersionId`.
+- `baseVersionId` compatibility is exact, not fuzzy. A plugin version targets one published game version only.
+- `abilitySchemaDigest` must match the immutable digest attested for that `baseVersionId`; it is recorded in Game Design metadata and re-checked at activation time.
+- Game Design must persist indexed metadata from the signed manifest (`pluginId`, `pluginVersionId`, `baseVersionId`, `abilitySchemaDigest`, signer identity, validation status) so UIs and control-plane APIs do not need to unpack bundles for routine reads.
+- Automation & Scripting must treat the signed manifest as the source of truth for runtime activation metadata. It may cache extracted fields, but it must not trust mutable side-channel metadata over the signed manifest.
+
 ## Signing and Key Lifecycle (Required)
 
 Plugin bundle signing must be specified precisely enough that operators can rotate keys and revoke signers without ambiguity.
@@ -74,7 +106,7 @@ Logging & Admin must also surface signer-policy propagation status and revocatio
 4. A registry tracks which plugins are active for each game instance and exposes toggle APIs via the Logging & Admin Service.
 5. Plugins can subscribe to events such as `onEnterRoom` or `onItemUse` to inject custom behavior.
 6. Execution metrics and error logs are forwarded to the Logging & Admin Service for monitoring.
-7. Plugin bundles are versioned as design assets but are independently publishable and operator-activatable against an already published compatible base game version; a new full game-version publish is not required unless the plugin depends on changed base-version assets.
+7. Plugin bundles are versioned as design assets but are independently publishable and operator-activatable against exactly one already published `baseVersionId`; a new game-version publish requires a new plugin version whenever the plugin must target a different `baseVersionId` or `abilitySchemaDigest`.
 
 ## Sandbox Capabilities & Quotas
 
@@ -109,6 +141,27 @@ From a validation perspective, plugins follow the same core rules as regular scr
 
 Validation results for plugins surface through the same tooling as core scripts (Game Design and Logging & Admin UIs), but may include plugin-specific reason codes so operators can distinguish “invalid graph” from “disallowed component for plugin use”.
 
+## Design-Time Plugin Version Lifecycle
+
+Game Design owns the authoring and publication lifecycle for plugin versions before any instance-scoped activation occurs.
+
+Each `(tenantId, pluginId, pluginVersionId)` must have one canonical design-time status:
+
+- `DRAFT` – authoring metadata exists but no accepted signed bundle has been stored.
+- `UPLOAD_REJECTED` – bundle ingestion failed before publication, for example due to archive safety limits, malformed manifest, or signature failure.
+- `SIGNATURE_VERIFIED` – the bundle passed canonicalization and signature verification and its signed metadata has been persisted.
+- `VALIDATION_FAILED_DESIGN` – Game Design completed design-time validation and rejected the version due to deterministic authoring errors such as invalid bindings, disallowed components, `baseVersionId` mismatch, or `abilitySchemaDigest` mismatch.
+- `PUBLISHED` – the plugin version is accepted into immutable design-time history and is eligible for runtime activation against matching instances.
+- `SUPERSEDED` – a later plugin version for the same `pluginId` exists; older versions remain immutable and may still be rolled back to if otherwise valid.
+
+Required lifecycle semantics:
+
+- Only `PUBLISHED` plugin versions are eligible inputs to runtime activation APIs such as `SetPluginActiveVersion`.
+- `UPLOAD_REJECTED` and `VALIDATION_FAILED_DESIGN` are design-time terminal failures and must not create or mutate runtime registry rows.
+- Transition into `PUBLISHED` records the indexed manifest metadata, validation results, signer metadata, and publication timestamp in Game Design.
+- Logging & Admin may inspect all design-time states, but it must not bypass them by attempting to activate a non-`PUBLISHED` plugin version.
+- Game Design must expose read surfaces such as `GetPluginVersionStatus(tenantId, pluginId, pluginVersionId)` and `ListPluginVersionStatuses(tenantId, pluginId?)`, plus a durable `PluginVersionStatusChanged` event family, so authoring UIs and operator tooling read one authoritative publication state model.
+
 ## Plugin Lifecycle & Rollback
 
 Plugins follow a lifecycle similar to script patches but scoped to `<tenantId, gameInstanceId, pluginId>` so a tenant can run multiple game instances with different plugin selections safely.
@@ -120,6 +173,12 @@ Plugins follow a lifecycle similar to script patches but scoped to `<tenantId, g
   - loading the new plugin version into the instance-scoped runtime registry, and
   - reconciling any plugin-owned derived scheduler state such as timers.
 - Any plugin setup that would otherwise require startup code must be expressed through normal event handlers (`onSpawn`, `onEnterRegion`, `onInterval`, custom events) or explicit operator/admin workflows. Implementations must not invent an implicit plugin initialization hook.
+
+Design-time publication and runtime activation are separate:
+
+- Publication in Game Design means the plugin bundle is immutable, signed, validated, and available for activation.
+- Activation in Automation & Scripting means a `PUBLISHED` plugin version has been selected for one `(tenantId, gameInstanceId, pluginId)` and admitted into the runtime registry.
+- A plugin version that is `PUBLISHED` in Game Design may still be `DISABLED` or never activated for any instance.
 
 - Each plugin version is identified by `pluginVersionId`. A registry in the Automation & Scripting Service tracks, per `<tenantId, gameInstanceId, pluginId>`:
   - `activeVersionId` – the plugin version currently enabled.
@@ -139,6 +198,27 @@ Certain safety decisions are **platform-wide and not overridable by tenant admin
 - Plugin-level quotas and budgets may be stricter than for core scripts by default; tenant administrators can lower their own plugin activity (for example, by increasing intervals or disabling plugins) but cannot raise plugin limits beyond operator-defined ceilings.
 
 This ensures that even trusted tenant administrators cannot inadvertently weaken the global safety posture for plugins.
+
+### Canonical Binding Model
+
+Plugin bindings are authored as signed design-time data, not as ad hoc instance-local toggles.
+
+- The authoritative `bindings[]` array lives in `plugin-manifest.json` and is part of the signed bundle.
+- Each binding must declare:
+  - `bindingId` – stable identity within the plugin version.
+  - `eventType` – the subscribed event or timer kind.
+  - `targetScopeType` – one of `GLOBAL`, `REGION`, `ENTITY_TEMPLATE`, `COMMAND_ALIAS`, or another explicitly documented scope added later.
+  - `targetSelector` – the identifier or selector for that scope.
+  - `entrypointGraphId` – which declared graph handles the binding.
+  - Any bounded binding parameters needed for validation, such as interval cadence.
+- Binding targets must reference published base-version assets that exist under the plugin version’s exact `baseVersionId`.
+- Rebinding is a content change. Adding, removing, or retargeting any binding requires publishing a new `pluginVersionId`; instance activation only chooses among published plugin versions and does not edit bindings in place.
+- Instance-scoped enablement remains separate from binding definition: Logging & Admin chooses whether a published plugin version is active for a given game instance, but it does not rewrite the signed binding set during activation.
+
+Validation responsibilities:
+
+- Game Design validates that all declared bindings are structurally valid and resolvable against the targeted `baseVersionId`.
+- Automation & Scripting consumes the validated binding set during activation and registry load; it must not invent additional bindings or infer missing targets from runtime state.
 
 ### Plugin Component Policy Management
 

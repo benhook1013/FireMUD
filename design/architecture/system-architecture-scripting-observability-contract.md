@@ -47,6 +47,7 @@ Audit records must include at least:
     - DSL evaluation outcome
     - Work-item persistence outcome (if using a durable outbox)
     - Handoff/enqueue outcome into the tick system
+  - Optional but required when present downstream: `executionDisposition` for post-handoff execution-time rejections reported by Game Session or another downstream owner. This is not part of the Automation-owned `finalStage` progression; it is a supplementary correlation surface keyed to the same Trigger Identity.
   - `policyViolations` (optional array, plugin policy rollouts only; see schema below)
 
 Outcome fields must be sufficient to distinguish “DSL evaluated successfully” from “commands were accepted into the tick system”. Do not collapse these into a single `success` signal.
@@ -92,6 +93,23 @@ Stage semantics:
 - Backpressure outcomes like `skipped_reloading` must use `finalStage=ADMISSION`.
 - Rollback pause backpressure `skipped_rollback_pause` must use `finalStage=ADMISSION`.
 - Quota denials must use `finalStage=ADMISSION` unless quotas are evaluated inside the DSL runtime for a given trigger (rare; avoid mixing).
+
+### Supplementary Execution Disposition (Required When Present)
+
+`script_event_audit` is the canonical lifecycle record through `TICK_HANDOFF`, but Game Session may later reject handed-off commands at execution-time version fences during rollback or plugin version changes. Tooling must not rely on metrics alone to correlate those drops back to the original trigger.
+
+When a downstream service reports such a post-handoff rejection, the audit surface must expose an `executionDisposition` object keyed to the same Trigger Identity with:
+
+- `outcome` – bounded enum. Minimum required value: `version_fence_dropped`.
+- `reason` – bounded reason such as `script_patch_mismatch` or `plugin_version_mismatch`.
+- `recordedAt` – timestamp.
+- `sourceService` – producer of the disposition (for example `game-session`).
+
+Rules:
+
+- `executionDisposition` does **not** replace `finalStage` / `finalOutcome`; those fields remain the Automation-owned pipeline result.
+- A trigger may therefore show `finalStage=TICK_HANDOFF`, `finalOutcome=success`, and later `executionDisposition.outcome=version_fence_dropped`.
+- When present, UI/query surfaces must return both views together so operators can distinguish “accepted into tick queues” from “later fenced before execution.”
 
 ### Canonical Outcome Taxonomy (Required)
 

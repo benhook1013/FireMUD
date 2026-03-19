@@ -39,6 +39,11 @@ This model provides:
 - **Crash-safe, replayable execution through idempotency**
 - **No need for Saga orchestration inside the tick loop**
 
+For cross-region gameplay commands, this also means:
+
+- The origin tick commits once its own local effects and durable remote follow-up creation have reached terminal tick-batch outcomes.
+- Any waiting for remote completion, timeout handling, or aggregation of multi-region results lives in a separate durable coordinator record and is resolved by later tick work, not by keeping the original origin tick open.
+
 > 🔗 See [Tick System and Runtime Design](./system-architecture-ticks.md) and [Redis Architecture](./system-architecture-redis.md) for detail on how ticks provide per-service transactional guarantees and cross-service convergence via idempotency.
 
 ### When Gameplay Commands Must *Not* Depend on Global Atomicity

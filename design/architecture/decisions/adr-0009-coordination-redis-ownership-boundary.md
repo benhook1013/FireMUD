@@ -21,6 +21,17 @@ Coordination Redis ownership is explicit and narrow:
   - Cache/Rate-Limit Redis: `automation:queue:*` and `automation:quota:*` best-effort buffers/counters.
 - Non-owner services may participate only through approved shared helpers and documented prefixes/contracts.
 
+Owner-managed bridge contracts are the only approved exception to “write only your own keys”:
+
+- Game Session owns the session-to-region bridge contract:
+  - `session:game:*` is session-authoritative.
+  - `tick:{tenantRegionTag}:session-binding:*` is region-authoritative.
+  - Non-owner services do not mutate either family directly; Game Session exposes approved helpers/APIs for the two-phase binding flow.
+- Game Session owns the gameplay-equivalent automation enqueue contract:
+  - Automation & Scripting may declare due work and call the enqueue API with a durable `automationDispatchId`.
+  - Only Game Session may translate that request into `tick:{tenantRegionTag}:queue:*` mutations.
+  - Durable dedupe for the automation handoff is part of the contract, not an implementation detail left to Redis queue contents.
+
 Non-owner services must not:
 
 - Introduce new coordination prefixes.

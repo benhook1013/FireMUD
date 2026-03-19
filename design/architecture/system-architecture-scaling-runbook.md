@@ -84,6 +84,7 @@ When deciding **what** to scale, prefer signals tied to the tick model and Redis
   - Watch `tick_execution_time_ms_p95` and `tick_execution_time_ms_p99` (recording rules derived from `tick_execution_time_ms_bucket`) relative to **lock TTLs** as described in `system-architecture-tick-concepts-and-invariants.md` (that is, `tick_execution_time_ms_p99 / tick_lock_ttl_ms`).
   - Treat `tick_execution_time_ms_p99 / tick_lock_ttl_ms` as the primary safety ratio for tick runtime; regions that sustain ratios near `DEGRADED`/`STALLED` transition thresholds from the concepts doc should first reduce region density per Game Session instance or add Game Session replicas before changing tick cadence.
   - For intuition, you may also track `tick_execution_time_ms_p99 / tick_interval_ms`, but decisions should be grounded in the TTL-based ratio since `lock_ttl_ms` is derived from `tick_interval_ms` via the canonical formulas.
+  - Treat any `tick_interval_ms` change as a topology-level/runtime-contract change for the affected live `regionEpoch`, not as a harmless tuning knob. If cadence changes would alter timer ordering normalization, perform them with an epoch bump and timer re-derivation as required by the tick invariants.
 - Tail-loss envelopes:
   - Monitor tail-loss metrics such as `redis_coordination_tail_loss_ms{tenantId,regionId}` and related Redis tail-loss SLO metrics from `system-architecture-redis-operations.md`.
   - If coordination tail-loss regularly exceeds `tail_loss_budget_ms = max(2000, 2 * tick_interval_ms)`, prioritize scaling or tuning **Coordination Redis** (hardware, AOF configuration, or shard layout) before adding more tick producers.
@@ -116,6 +117,7 @@ Baseline guardrails are only a starting point. Before materially increasing regi
 
 - `pod_tick_cost_ms = active_regions * (p99_region_tick_ms + p99_remote_drain_ms + p99_replay_overhead_ms)`
 - Keep `pod_tick_cost_ms` below the effective scheduling envelope implied by `tick_interval_ms`, lock TTL headroom, and observed Redis script latency.
+- When `solo_tick_budget_ms` is enabled for `requiresSoloTick` commands, capacity reviews must also model the isolated solo-tick path and its derived TTL/health thresholds rather than treating those commands as ordinary ticks.
 - Calibrate each term from load tests in the target profile (`dev_local`, `hobby_self_hosted`, `production_clustered`) and record:
   - `p99_region_tick_ms` from `tick_execution_time_ms_p99`.
   - `p99_remote_drain_ms` from remote follow-up lag/drain metrics.

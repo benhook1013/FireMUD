@@ -76,6 +76,8 @@ Compatibility contract requirement:
 
 - `PublishScriptPatchVersion` and plugin enable/publish paths must validate compatibility against the immutable `abilitySchemaDigest` bound to `baseVersionId`, not against mutable live lookups.
 - The validated digest must be propagated to runtime-facing metadata/audit surfaces so operators can prove which schema snapshot a patch/plugin was validated against.
+- Plugin publication must persist a canonical signed manifest contract that includes at least `pluginId`, `pluginVersionId`, exact `baseVersionId`, exact `abilitySchemaDigest`, declared entrypoints, and declared bindings. Runtime services must consume those signed fields as the activation source of truth.
+- Plugin versions use a separate Game Design lifecycle from runtime activation. Publication status answers whether a bundle is accepted into immutable authoring history; instance activation status answers whether a published plugin version is active for a given running game instance.
 
 ## Key Features
 
@@ -89,6 +91,7 @@ Compatibility contract requirement:
 - Patch note management for published games.
 - Supports script-only patch versions that reference a `baseVersionId` and
   generate a new `scriptPatchVersion` without requiring a full publish.
+- Supports plugin bundle publication as immutable design-time artifacts keyed by `pluginId` and `pluginVersionId`, with exact `baseVersionId` and `abilitySchemaDigest` pinning for later instance-scoped activation.
 - Does not track individual script definitions at runtime; only the patch
   version metadata is recorded. Runtime services manage the active script
   registry and are notified when a patch version is published.
@@ -106,6 +109,7 @@ Compatibility contract requirement:
 - [`runtime_flag` table](feature-flags.md) manages feature flag definitions and
   corresponding APIs expose these records.
 - `game_assets` table stores asset metadata for uploaded binary files such as icons or sound effects; canonical bytes live in object storage referenced by this metadata.
+- Plugin bundle metadata must be persisted as indexed design-time records keyed by `(tenantId, pluginId, pluginVersionId)` and include signed-manifest fields, signer verification status, publication status, and validation outcomes. The bundle bytes remain in object storage, but plugin activation metadata must be queryable without unpacking archives on routine reads.
 
 Design-time tables (such as `revision`, `version`, `game_templates`,
 `runtime_flag`, asset metadata tables, and release-attestation tables) are the
@@ -136,6 +140,7 @@ identity, target `commitId`, required participant digests, `manifestHash`, and
 - `SaveRevision` – persists a new or updated design asset.
 - `PublishVersion` – freezes a set of revisions and notifies downstream services.
 - `PublishScriptPatchVersion` – creates a script-only patch version referencing a base version.
+- `GetPluginVersionStatus` / `ListPluginVersionStatuses` – authoritative design-time read APIs for plugin publication lifecycle, signer verification status, and validation outcomes.
 - `ListVersions` – enumerates published versions for selection when creating a
   game instance.
 - `GetVersionState` / `CompareAndSetVersionState` – authoritative control-plane version lifecycle reads and CAS transitions.

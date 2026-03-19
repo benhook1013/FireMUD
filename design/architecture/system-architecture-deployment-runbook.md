@@ -20,7 +20,8 @@ Before the first player-facing deployment into `hobby-self-hosted`, `staging`, o
 3. Provision per-environment JWT resources (`jwt-signing-keys`, `jwt-jwks`) and ensure the Account Service file-path contract can mount them.
 4. Provision cert-manager issuer bindings and certificate resources required for workload gRPC mTLS, Gateway internal mTLS WebSocket listener, TCP Proxy bridge mTLS client identity, and operator-only client identities where applicable.
 5. Provision per-environment external integration credentials: backup/object-store, asset-store, outbound-communications, and operator-control-plane credentials as needed for that environment class.
-6. Run `./dev-tools/deploy/preflight.sh <environment>` and require `PREFLIGHT-BOOTSTRAP-001`, `PREFLIGHT-SECRETS-001`, `PREFLIGHT-JWT-001`, `PREFLIGHT-JWKS-001`, `PREFLIGHT-BRIDGE-001`, `PREFLIGHT-REDIS-001`, and `PREFLIGHT-EXTERNAL-001` to pass before the first apply.
+6. Run `./dev-tools/deploy/preflight.sh <environment>` and require `PREFLIGHT-BOOTSTRAP-001`, `PREFLIGHT-SECRETS-001`, `PREFLIGHT-SECRETS-002`, `PREFLIGHT-JWT-001`, `PREFLIGHT-JWKS-001`, `PREFLIGHT-BRIDGE-001`, `PREFLIGHT-REDIS-001`, `PREFLIGHT-EXTERNAL-001`, and `PREFLIGHT-SERVICES-001` to pass before the first apply.
+7. Record bootstrap secret-compliance evidence for each Tier A credential class. First deployment may use immutable initial-provisioning evidence (`lastProvisionedAt`) instead of rotation evidence, but the record must still satisfy the canonical secret-compliance schema before the environment is considered promotable or traffic-open.
 
 Bootstrap is part of the deployment contract, not an informal prerequisite. A player-facing environment is not considered deployable until this bootstrap pass succeeds with environment-specific credentials and bindings.
 
@@ -48,7 +49,7 @@ This is a traffic-open gate, not a routine steady-state rollout gate.
    - Treat rollback compatibility as broader than binary compatibility alone: previous digests must remain safe to re-apply against the current database schema, secret/config contract, mounted file-path contract, and expected external bindings.
 3. **Run Preflight Policy Checks**
    - Validate the target overlay before apply and fail fast on policy violations.
-   - Evaluate policy IDs from `design/architecture/system-architecture-deploy-preflight-policy.md` (for example `PREFLIGHT-DIGEST-001`, `PREFLIGHT-SECRETS-001`, `PREFLIGHT-JWT-001`, `PREFLIGHT-JWKS-001`, `PREFLIGHT-BRIDGE-001`, `PREFLIGHT-REDIS-001`, `PREFLIGHT-BOOTSTRAP-001`, `PREFLIGHT-EXTERNAL-001`, and `PREFLIGHT-PROMOTION-001` for production).
+   - Evaluate policy IDs from `design/architecture/system-architecture-deploy-preflight-policy.md` (for example `PREFLIGHT-DIGEST-001`, `PREFLIGHT-SECRETS-001`, `PREFLIGHT-SECRETS-002`, `PREFLIGHT-JWT-001`, `PREFLIGHT-JWKS-001`, `PREFLIGHT-BRIDGE-001`, `PREFLIGHT-REDIS-001`, `PREFLIGHT-BOOTSTRAP-001`, `PREFLIGHT-EXTERNAL-001`, `PREFLIGHT-SERVICES-001`, and `PREFLIGHT-PROMOTION-001` for production).
    - Treat preflight as blocking. Do not run `kubectl apply` until all checks pass.
    - Use the canonical entrypoint: `./dev-tools/deploy/preflight.sh <staging|production|hobby-self-hosted>`.
    - Store the preflight report artifact under `design/operations/deployments/<environment>/preflight/<deployment-ref>.json` with optional waiver record `.../<deployment-ref>.waiver.json` as defined in `design/architecture/system-architecture-deploy-preflight-policy.md`.

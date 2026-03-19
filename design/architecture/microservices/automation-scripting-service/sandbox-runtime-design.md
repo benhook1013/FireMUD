@@ -56,6 +56,10 @@ Sandboxing for scripts is implemented as a **multi-layer model**:
 2. **Execution sandbox**
    - Scripts run inside a **dedicated executor** within the Automation & Scripting Service.
    - Each script run receives a **budget token** derived from `AUTOMATION_TICK_BUDGET_MS`, per-script quotas, and per-tenant budgets.
+   - Charge points are fixed by the lifecycle contract:
+     - per-script quota is charged once per handler-scoped admission,
+     - tenant and cluster execution budgets are charged when the run is reserved onto sandbox capacity,
+     - no post-admission failure refunds already consumed execution budget.
    - The executor enforces **wall-clock timeouts** and **iteration limits**; when a budget is exhausted, the run is terminated and recorded as a sandbox failure.
 
 3. **Process / container isolation**

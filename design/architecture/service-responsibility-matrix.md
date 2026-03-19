@@ -91,6 +91,8 @@ Checkmarks in this table indicate **participation** in a workflow. Rows prefixed
 
 For the edge-routable services in this matrix, participation does not imply that every mutation may be called directly by external tools. Per the overview’s canonical operator write ingress policy, external mutating operator workflows for moderation, quota overrides, runtime feature-flag overrides, and tick remediation must enter through Logging & Admin. Direct external writes on other edge-routable services require an explicit bypass-safe designation in the owning service contract.
 
+Service docs may not create new external bypass-safe write classes on their own. If a workflow is not explicitly allowlisted by the overview or this matrix, treat it as non-bypass-safe until the architecture docs are updated.
+
 Route-review example:
 
 - Proposed route: `POST /admin/game-sessions/{id}/feature-flags/{flagKey}:toggle`. Matrix check: `Game Session` participates in `Admin/creator API participation`, but `External operator write ingress for moderation, quota overrides, runtime feature flags, and tick remediation` routes this workflow through `Logging & Admin`, so the direct external Game Session route is not allowed without a design update.
@@ -121,6 +123,7 @@ These ownership boundaries are normative per `design/architecture/decisions/adr-
 - **External operator write ingress** – Logging & Admin is the mandatory external ingress for operator writes covering moderation, quota overrides, runtime feature flags, and tick remediation; Gateway participates only as the edge routing and coarse protection layer for those writes.
 - **Edge admin/creator protocol** – External admin/creator APIs are HTTP(S) only at the Gateway edge unless a dedicated design update explicitly adds an edge gRPC contract. Internal service-to-service gRPC remains direct. External mutating operator workflows defined in the overview’s canonical operator action table must enter through Logging & Admin rather than directly through another edge-routable service.
 - **Edge exposure default** – Unless a service is explicitly marked as participating in edge-routable domain APIs, its APIs are internal-only and reached through service-to-service contracts, not directly from external tools via Gateway.
+- **Gameplay hot path policy** – Service APIs used in steady-state gameplay must follow the overview’s canonical bounded fan-out rule. New hot-path designs needing synchronous calls to more than two downstream domain services require an architecture-level justification of latency budget, fallback behavior, and why pre-aggregation or a read model is insufficient.
 
 ## Related Documentation
 

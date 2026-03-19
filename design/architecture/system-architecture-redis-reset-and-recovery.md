@@ -54,7 +54,8 @@ Because ticks treat `(region_epoch, tickId)` as the canonical coordination timel
 
 1. **Pause ticks for the chosen scope**
    - The Game Session control plane (or equivalent admin service) pauses tick scheduling and new command intake for the affected `<tenantId, regionId>` pairs (region/tenant) or all regions (cluster).
-   - This pause step is complete only once no executor in the target scope is allowed to create new durable tick batches or new Redis coordination state under the old epoch.
+   - This pause step is complete only once the scope reaches the control-plane `PAUSED` state defined in `system-architecture-redis-ops-access.md`: no executor in the target scope is allowed to create new durable tick batches or new Redis coordination state under the old epoch.
+
 2. **Bump `region_epoch` in PostgreSQL**
    - For each affected `<tenantId, regionId>`, the control plane updates `region_epoch` in the coordination metadata table so that any surviving executors and locks become stale by definition.
    - This step is authoritative: new executors always treat the highest `region_epoch` as the only valid timeline, and tick heartbeat streams (`StreamTickHeartbeats`) will begin emitting the new `regionEpoch` for those regions so consumers can distinguish pre- and post-reset ticks.
@@ -144,18 +145,18 @@ Worked example: normal failover for `<tenantId=T1, regionId=R7>`
   - Treat as a **coordination reset event**, not a normal failover.
   - There is no durable coordination history to replay; all coordination keys start empty.
   - Services re‑establish leases/locks as new activity occurs, but any coordination intent that existed only in Redis (timers, retry schedules, in‑flight queues, session bindings) is dropped unless it is also represented durably elsewhere.
-  - For region tick guards:
-    - `tick:{tenantRegionTag}:meta` is re-created lazily by the first successful hot-path tick staging for that region, using PostgreSQL `RegionStatus` as the baseline for the next requested tick.
-    - The winning tick executor for that first post-cold-start tick is responsible for initializing `region_epoch` and `current_tick_id` in Redis during staging; schedulers and operators do not pre-seed these values during ordinary cold-start recovery.
-    - Operators do not need to pre-populate `current_tick_id` outside reset tooling unless they are performing an explicit scoped reset/maintenance operation.
+  - Empty-start recovery is not a separate operator path:
+    - Operators must run the same scoped reset handshake defined above, including pause, epoch bump, scoped reset, ledger reconcile, command convergence, metadata initialization, smoke check, and resume.
+    - Lazy recreation of `tick:{tenantRegionTag}:meta` by hot-path staging may still occur as an implementation detail after the reset completes, but it is not a substitute for the reset handshake and operators must not treat an empty keyspace as “safe to resume automatically”.
 
-Worked example: non-reset cold start for `<tenantId=T1, regionId=R7>`
+Worked example: cold start for `<tenantId=T1, regionId=R7>`
 
-1. Coordination Redis starts empty after loss of its data directory, but PostgreSQL still shows `RegionStatus(regionEpoch=13, lastCommittedTickId=41)` for `(T1, R7)`.
-2. The next winning executor acquires the region lease and derives the next requested tick as `tickId=42` from PostgreSQL, not from Redis.
-3. During hot-path staging for tick `42`, the executor creates or recreates `tick:{tenantRegionTag}:meta` with `region_epoch=13` and `current_tick_id=42`.
-4. The executor stages `pending`, applies the tick, advances the durable commit watermark to `42`, and clears coordination state normally.
-5. Subsequent ticks proceed normally; operators never needed to pre-seed Redis metadata for this cold-start path.
+1. Coordination Redis starts empty after loss of its data directory, while PostgreSQL still shows `RegionStatus(regionEpoch=13, lastCommittedTickId=41)` for `(T1, R7)`.
+2. Operators treat the event as a region-, tenant-, or cluster-scoped reset depending on blast radius and first drive the scope to the canonical `PAUSED` state.
+3. Control plane bumps `region_epoch` for the affected scope, for example from `13` to `14` for `(T1, R7)`.
+4. Reset tooling reconciles old-epoch ledger rows and converges accepted-but-unbound command records before any new tick is allowed to stage work.
+5. `InitializeRegionMeta(...)` establishes the new-epoch Redis metadata baseline, and `RunPostResetSmokeCheck(...)` proves a fresh tick can stage and clear safely.
+6. `ResumeTicks(...)` allows the first committable tick in epoch `14` to begin.
 
 - **Reset** (intentional operational action)
   - A deliberate, scoped choice to discard volatile coordination state (region/tenant/cluster) and resume from PostgreSQL state plus new activity.

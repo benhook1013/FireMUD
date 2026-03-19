@@ -128,10 +128,79 @@ To keep reset/replay behavior implementation-safe, the maintenance/tooling surfa
   - `--scope region --tenant <tenantId> --region <regionId>`
   - `--scope tenant --tenant <tenantId>`
   - `--scope cluster`
+- Required argument contract:
+  - `coordination-maintenance pause`
+    - accepts only the scope grammar above.
+    - blocks until the scope reaches the control-plane `PAUSED` state or exits non-zero on timeout/failure.
+  - `coordination-maintenance status`
+    - accepts the scope grammar above.
+    - returns the control-plane status payload defined below for every affected region.
+  - `coordination-maintenance reset`
+    - accepts the scope grammar above.
+    - accepts `--preserve-sessions` / `--invalidate-sessions` where session policy allows an operator choice.
+    - never infers session invalidation from scope alone when the design says it is optional.
+  - `coordination-maintenance reconcile-ledger`
+    - accepts the scope grammar above.
+    - accepts either `--old-region-epoch <epoch>` for `--scope region` or `--old-region-epoch-map <path>` for tenant/cluster scopes.
+    - may support `--discover-old-epochs` as an implementation convenience, but only if it resolves epochs from PostgreSQL and emits the discovered map in its audit output.
+  - `coordination-maintenance converge-commands`
+    - accepts the same epoch arguments and discovery behavior as `reconcile-ledger`.
+  - `coordination-maintenance init-meta`
+    - accepts the scope grammar above.
+    - accepts either `--region-epoch <epoch> --current-tick-id <tickId>` for `--scope region` or `--region-epoch-map <path> --current-tick-id <tickId>` for tenant/cluster scopes.
+  - `coordination-maintenance smoke-check`
+    - accepts the scope grammar above.
+    - for tenant/cluster scopes, accepts an optional explicit sample-set argument; otherwise the tool must auto-select one representative region per affected executor/shard group and print which regions were sampled.
+  - `coordination-maintenance resume`
+    - accepts only the scope grammar above.
+    - exits non-zero unless the scope currently satisfies the resume gate: reset complete, old-epoch ledger converged, command convergence complete, and smoke check passing.
 - Required execution rule:
   - The CLI subcommands above are the only supported write-path entrypoints for coordinated reset/recovery flows. Helm hooks, Jobs, and admin dashboards call these verbs rather than re-encoding reset logic themselves.
 - Required version rule:
   - The CLI and control-plane implementation must ship from the same build/version set as the services and Lua registry they operate on. Mixed-version reset orchestration is unsupported.
+
+### Pause/Status/Resume State Contract
+
+`PauseTicks`, `GetRegionTickStatus`, and `ResumeTicks` are the control-plane safety boundary for all reset, failover-repair, and topology-change flows. First implementation must expose one shared state model rather than per-runbook interpretations.
+
+- Canonical per-region states:
+  - `RUNNING`
+  - `PAUSING`
+  - `PAUSED`
+  - `RESETTING`
+  - `DEGRADED`
+  - `STALLED`
+- `PauseTicks(scope)` required behavior:
+  - Reject new gameplay command intake for the scope before returning `PAUSED`.
+  - Prevent new durable tick-batch allocation for the scope before returning `PAUSED`.
+  - Wait for any in-flight executor work in the scope to drain, fail, or lose lease so no executor can create new coordination state under the old epoch.
+- `GetRegionTickStatus(scope)` minimum fields per affected region:
+  - `tenantId`
+  - `regionId`
+  - `status`
+  - `pauseRequested`
+  - `commandIntakeBlocked`
+  - `batchAllocationBlocked`
+  - `activeExecutorCount`
+  - `inFlightBatchCount`
+  - `currentRegionEpoch`
+  - `lastCommittedTickId`
+  - `lastSmokeCheckAt` and `lastSmokeCheckResult` when applicable
+- Authoritative `PAUSED` pass criteria for a region:
+  - `commandIntakeBlocked = true`
+  - `batchAllocationBlocked = true`
+  - `activeExecutorCount = 0`
+  - `inFlightBatchCount = 0`
+  - no control-plane path remains that can create new durable tick batches or new coordination keys for that region under the pre-pause epoch
+- Scope-level `PAUSED` rule:
+  - region scope: the target region satisfies the pass criteria above.
+  - tenant scope: every region owned by the tenant satisfies the pass criteria above.
+  - cluster scope: every active region on the deployment satisfies the pass criteria above.
+- `ResumeTicks(scope)` required behavior:
+  - Refuse to resume any region that has not passed the canonical post-reset resume gate.
+  - Transition regions back to `RUNNING` only after the reset workflow has completed for the scope.
+
+Jobs, wrappers, and dashboards may present this state differently, but they must all consume this same underlying contract and must not invent alternate quiescence criteria.
 
 `RunPostResetSmokeCheck(scope)` minimum assertions:
 

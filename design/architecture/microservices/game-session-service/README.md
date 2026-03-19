@@ -23,13 +23,13 @@ Orchestrates live game sessions, including tick execution, player input validati
 - Publish **coordination and tick health metrics** (per `<tenantId, regionId>`) and expose admin/control APIs that allow authorized services (such as Logging & Admin) to pause/resume tick execution and participate in scoped coordination resets.
 - Front gameplay login commands and session binding, calling Account Service to verify credentials and obtain JWTs/tokens while enforcing single-session control for each character.
 - For first-party `/ws/game/**`, accept bootstrap-backed bare `LOGIN` after Gateway connect-token validation and signed connect-context verification; this path is intentionally credentialless and must not prompt the browser to replay username/password/OTP.
-- Mint and attach short-lived internal `SessionAttestation` payloads on gameplay-service gRPC calls so downstream gameplay services can verify delegated player identity (`accountId`, `tenantId`, `gameInstanceId`, `characterId`, `sessionId`) in addition to mTLS caller identity.
+- Mint and attach short-lived internal `SessionAttestation` payloads on gameplay-service gRPC calls so downstream gameplay services can verify delegated player identity (`accountId`, `tenantId`, `gameInstanceId`, `characterId`, `sessionId`) plus destination service/method scope in addition to mTLS caller identity.
 
 ## Architecture / Design Notes
 
 - Coordinates with Redis to store volatile session state and command queues.
 - Communicates with other microservices exclusively via gRPC.
-- For gameplay-domain gRPC calls made on behalf of a player, includes a signed `SessionAttestation` (as defined in Authentication & Authorization) and rotates it on bounded TTL; downstream gameplay services must reject calls missing valid attestation even when mTLS is present.
+- For gameplay-domain gRPC calls made on behalf of a player, includes a signed `SessionAttestation` (as defined in Authentication & Authorization) and rotates it on bounded TTL; downstream gameplay services must reject calls missing valid attestation, or attestations whose destination service/method scope does not match the invoked RPC, even when mTLS is present.
 - Communicates game lifecycle changes to other services via gRPC so they can react to games starting or ending.
 - Provides a single point of truth for current tick and world time.
 - Uses PostgreSQL for durable Game Session control-plane metadata and audit-relevant workflow state, while Redis remains the coordination plane for gameplay session bindings, tick queues, timers, retries, and region leases.
@@ -282,8 +282,9 @@ At the protocol level, commands are split into two groups:
 | `LOGIN <username> <password> [otp]` | Authenticates a session and binds it to an account on credential-bearing transports; append an OTP when two-factor auth is enabled. First-party `/ws/game/**` may instead use bare `LOGIN` after bootstrap/connect-token validation. | `LOGIN demo@example.com swordfish 123456` |
 | `LOGON <username> <password> [otp]` | Exact alias for `LOGIN`; Telnet users often prefer the shorter name when typing from prompts. | `LOGON demo@example.com swordfish` |
 | `WORLDS` | Lists worlds the authenticated account can enter (numbered menu + stable world slug) from Account Service membership + entitlement state. | `WORLDS` |
-| `CHARS <world>` | Lists characters for a world (`<world>` is a world slug or a menu index from `WORLDS`) from the authoritative character store, filtered to `{accountId, tenantId}` ownership. | `CHARS demo` |
-| `PLAY <world> [character]` | Binds the authenticated connection to a world and character after `LOGIN`, enforcing tenant authorization and entitlements. `<world>` is a slug or menu index; `[character]` is optional name/index in the first implementation, but richer multi-character UX may require explicit selection in a future protocol revision. Current flow always binds `gameInstanceId=\"primary\"` per tenant. | `PLAY demo 1` |
+| `REALMS <world>` | Lists visible realms for a world (`<world>` is a world slug or a menu index from `WORLDS`) from the authoritative realm-routing contract. | `REALMS demo` |
+| `CHARS <world> [realm]` | Lists characters for a world and optional realm from the authoritative character store, filtered to `{accountId, tenantId, gameInstanceId}` ownership. | `CHARS demo production` |
+| `PLAY <world> [realm] [character]` | Binds the authenticated connection to a world, realm, and character after `LOGIN`, enforcing tenant authorization/public-admission rules, realm routing, and entitlements. `<world>` is a slug or menu index; `[realm]` is a realm slug or menu index from `REALMS`; `[character]` is an optional name/index only when exactly one visible character exists for the resolved realm. | `PLAY demo production 1` |
 | `LOOK` | Requests the current room snapshot (name, descriptions, exits, and visible entities) aggregated from Game Logic plus World and Entity services. | `LOOK` |
 | `SAY <text>` | Broadcasts chat text to everyone in the same room. | `SAY Hello travelers` |
 | `YELL <text>` | Alias for `SAY` that is rendered with higher emphasis but still delivers to the current room. | `YELL Hear me, comrades` |
@@ -312,7 +313,7 @@ Telnet and WebSocket clients share this line-based syntax, but transport context
 
 Handshake failures such as HTTP `403` `CONNECT_TOKEN_REJECTED` or `POLICY_DENY` occur before the gameplay protocol is established and therefore are not emitted as text-protocol `ERROR <CODE>` frames. The command examples in this section begin only after a socket is already open and the line-based gameplay protocol is active.
 
-After `LOGIN` succeeds, clients must issue `PLAY <world> [character]` before any gameplay commands (such as `LOOK` or `SAY`). This play step binds the authenticated connection to a world-scoped gameplay session and enforces tenant authorization and entitlements as defined in the Authentication & Authorization design.
+After `LOGIN` succeeds, clients must complete realm-aware lobby selection with `WORLDS`, optional `REALMS`, optional `CHARS`, and then `PLAY <world> [realm] [character]` before any gameplay commands (such as `LOOK` or `SAY`). This play step binds the authenticated connection to a world-scoped gameplay session and enforces tenant authorization, public-production admission, and entitlements as defined in the Authentication & Authorization design.
 
 For first-party `/ws/game/**` sessions, `PLAY` scope checks (`tenantId`, `gameInstanceId`) must use the gateway-signed connect context (`X-Firemud-Connect-Context`) validated by Game Session, not raw forwarded headers. Missing/invalid/expired/replayed context where connect-token validation was required must fail admission with `CONNECT_CONTEXT_INVALID`. Mismatched validated scope fails with `CONNECT_SCOPE_MISMATCH`.
 
@@ -333,21 +334,26 @@ OK WORLDS
 1) Demo World (demo)
 2) Builder Sandbox (sandbox)
 
-CHARS 1
+REALMS 1
+OK REALMS
+1) Live Realm (production)
+2) Playtest Dock (playtest-docks)
+
+CHARS 1 production
 OK CHARS
 1) Emberline
 2) Sora
 
-CHARS demo
+CHARS demo production
 OK CHARS
 1) Emberline
 2) Sora
 
-PLAY 1 2
-OK PLAY Entered world: Demo World as Sora
+PLAY 1 production 2
+OK PLAY Entered world: Demo World / Live Realm as Sora
 ```
 
-The same resolution rules apply to `PLAY demo 2` or `PLAY 1 Sora`: menu indices and stable world slugs are equivalent player-facing selectors for the same canonical `{tenantId, gameInstanceId="primary"}` target.
+The same resolution rules apply to `PLAY demo production 2` or `PLAY 1 1 Sora`: menu indices and stable world/realm slugs are equivalent player-facing selectors for the same canonical `{tenantId, gameInstanceId, characterId}` target.
 
 The Account Service returns canonical `AUTH_*` error codes (`AUTH_INVALID_CREDENTIALS`, `AUTH_OTP_REQUIRED`, `AUTH_ACCOUNT_LOCKED`, `AUTH_UPSTREAM_FAILURE`), and the Game Session Service translates them into the protocol-level responses (`ERROR INVALID_CREDENTIALS`, `ERROR OTP_REQUIRED`, etc.) so Telnet and WebSocket clients can rely on stable error semantics while the human-readable message remains flexible.
 
@@ -643,6 +649,12 @@ Game startup and shutdown are coordinated using the shared `Saga` helpers from `
 ### Redis Keys
 
 Session state needed for reconnect recovery is stored under `session:game:<tenantId>:<gameInstanceId>:<sessionId>`. These **per-session** keys (including any session-scoped command queues or metadata) are removed when the corresponding session stops or expires.
+
+Game Session must also maintain the bounded authoritative indexes defined in the authentication architecture so takeover, reconnect, and revocation do not require scans:
+
+- `session:game:index:character:<tenantId>:<gameInstanceId>:<characterId>` -> `sessionId`
+- `session:game:index:account-tenant:<accountId>:<tenantId>` -> active `sessionId` set
+- `session:game:index:tenant:<tenantId>` -> active `sessionId` set
 
 Gameplay session bindings must include the server-side auth token identity used for backend calls on behalf of the session (for example `authTokenHash` and `authTokenIssuedAt`) plus authoritative membership freshness metadata (for example `membershipVersion`) so resume logic can validate current identity, current membership authority, and current revocation state before rebinding to a fresh backend token:
 

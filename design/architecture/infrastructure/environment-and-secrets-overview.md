@@ -110,6 +110,9 @@ JWT signing key and JWKS behavior differs slightly by environment to balance saf
 - **Staging / Non-production clusters**
   - Recommended to mirror production: use a persistent `jwt-signing-keys` Secret and `jwt-jwks` Secret, with the Account Service serving JWKS from the mounted file.
   - The same `jwt-rotation` CronJob template used in production may be enabled on a low-frequency schedule (for example monthly) to exercise the rotation path; leaving it operator-triggered is also acceptable when staging is being kept closer to production change control than to rotation-path testing.
+- **PR preview**
+  - Each preview namespace must receive PR-unique JWT signing material and JWKS data, even when those resources are treated as low-sensitivity test material.
+  - Reusing one shared preview signing key across namespaces is non-compliant because it allows tokens minted in one PR environment to validate in another.
 - **Production**
   - Required to use a persistent `jwt-signing-keys` Secret and JWKS document; JWKS is the canonical trust source for all validating services.
   - The `jwt-rotation` CronJob is defined with `spec.suspend: true` and is triggered explicitly by operators as part of a rotation runbook.
@@ -142,10 +145,12 @@ Tier A controls must be measurable, not policy-only. Each player-facing environm
 - Credential class owner (for example platform/security owner role).
 - Maximum credential age target.
 - Alert rule ID for age/SLA breach.
-- Last successful rotation evidence reference.
+- Exactly one freshness timestamp:
+  - `lastRotationAt` after a credential has completed a documented rotation event, or
+  - `lastProvisionedAt` while the environment is still on its bootstrap issuance lineage before first rotation.
 
 The secret compliance record must be stored as versioned environment metadata in Git (for example under `design/operations/secret-compliance/<environment>.yaml`) so CI and reporting jobs can detect missing or stale records before promotion.
-Each credential record must also point to immutable rotation evidence in-repo (`evidenceRef` + `evidenceKey`) whose referenced payload includes an `immutableArtifactId` value (for example a job/run identifier that embeds a content digest such as `sha256:...`). Promotion/DR-readiness checks must fail when evidence is missing or cannot be tied to an immutable artifact identifier.
+Each credential record must also point to immutable provisioning or rotation evidence in-repo (`evidenceRef` + `evidenceKey`) whose referenced payload includes an `immutableArtifactId` value (for example a job/run identifier that embeds a content digest such as `sha256:...`). Promotion/DR-readiness checks must fail when evidence is missing or cannot be tied to an immutable artifact identifier.
 
 Minimum credential classes to track (canonical record keys shown in parentheses):
 
@@ -173,6 +178,12 @@ Illustrative distinction:
 - A staging playtest deployment with `deployStatus=pass`, `smokeStatus=pass`, and `secretComplianceStatus=warning` may remain valid for detached or non-promotion playtesting before the cutover date.
 - That same deployment is invalid as production-promotion evidence; production attestation requires the referenced staging deployment to show `secretComplianceStatus=pass` and a valid `secretComplianceEvidenceRef`.
 
+Bootstrap compliance semantics:
+
+- A brand-new player-facing environment may satisfy `secretComplianceStatus=pass` with immutable initial-provisioning evidence before any scheduled rotation has occurred.
+- Bootstrap provisioning evidence is valid only until the first planned rotation window for that credential class. After the first completed rotation, records must switch to `lastRotationAt` and reference rotation evidence rather than continuing to rely on bootstrap issuance.
+- Validators must treat bootstrap provisioning and rotation as equivalent compliance sources for first deployment, provided the evidence record still includes an immutable artifact identifier and the credential age remains within the configured maximum age.
+
 ## Player-Facing Environment Bootstrap Requirements
 
 Before the first deployment into `hobby-self-hosted`, `staging`, or `production`, operators must provision a minimum bootstrap set of secrets and trust resources. This is the canonical bootstrap contract for environment and secret readiness:
@@ -190,7 +201,7 @@ Before the first deployment into `hobby-self-hosted`, `staging`, or `production`
 
 Bootstrap resources must be unique to the environment boundary. Shared namespace names such as `firemud` do not relax the requirement for separate staging and production secret sources, bucket bindings, or operator trust bindings.
 
-Expected external bindings for player-facing deployment and recovery checks must be declared once per environment in `design/operations/environments/<environment>/expected-bindings.yaml`. Deploy preflight and restore validation both consume this same manifest so backup storage, asset storage, outbound communications, and operator credential bindings do not drift between deployment and recovery procedures.
+Expected bindings for player-facing deployment and recovery checks must be declared once per environment in `design/operations/environments/<environment>/expected-bindings.yaml`. Deploy preflight and restore validation both consume this same manifest so internal state/trust bindings (PostgreSQL, Redis, JWT/JWKS, certificate issuer, registry pull credentials) and external bindings (backup storage, asset storage, outbound communications, operator credential bindings) do not drift between deployment and recovery procedures.
 
 Player-facing preflight must fail when this bootstrap set is incomplete or when an external binding resolves to another environment’s target. The authoritative preflight policy IDs and evidence contract for these checks are defined in `../system-architecture-deploy-preflight-policy.md`.
 

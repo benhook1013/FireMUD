@@ -104,7 +104,7 @@ Once the world is ready:
 1. **Publish a Version** – A `designer` or `tenantAdmin` publishes the current design in the Game Design Service.
 2. **Launch the Production Realm** – A `tenantAdmin` instructs the [Game Session Service](./microservices/game-session-service/README.md) to launch the tenant's default production realm on that published version. The [World Creation Workflow](./microservices/world-management-service/world-creation-workflow.md) describes how initial world state is seeded from the published world data when a brand new world is created.
 3. **Check Entitlements** – Launch fails closed unless billing and plan entitlements permit gameplay for the tenant.
-4. **Open Player Admission** – Once the realm is healthy, it becomes the default production realm surfaced to players in `WORLDS` / `REALMS` / `PLAY`.
+4. **Open Player Admission** – Once the realm is healthy, it becomes the default production realm surfaced to players in `WORLDS` / `REALMS` / `PLAY`. In v1, this production realm is also the only realm that may be publicly discoverable to authenticated players who do not already hold tenant membership.
 5. **Emergency Override** – `platformAdmin` can perform the same launch path during incident response, but creators do not depend on operators for routine tenant launches.
 
 ```plaintext
@@ -155,7 +155,7 @@ Hotfix procedures and runtime rollout steps are shared with operators for audita
 
 ## 6. Branding and Customization
 
-Creators adjust the look and feel of their games through the Game Design Service at design time. When a version is published, branding assets are uploaded to tenant- and version-scoped object storage and a `manifest.json` is generated. Runtime clients fetch this manifest—not the Game Design Service—to load logos, favicons, and theme overrides before applying them in the UI. See [Frontend Architecture](./system-architecture-frontend.md) and [Game Customization Options](./game-customization-options.md) for details.
+Creators adjust the look and feel of their games through the Game Design Service at design time. When a version is published, branding assets are uploaded to tenant- and version-scoped object storage and a `manifest.json` is generated. Runtime clients fetch the manifest for the bundle actually resolved at `PLAY` time, not just "the tenant in general," so production and fork realms can present different branding when they run different published builds. See [Frontend Architecture](./system-architecture-frontend.md) and [Game Customization Options](./game-customization-options.md) for details.
 
 ---
 
@@ -165,7 +165,7 @@ Before launch or after major updates, creators validate changes with **forked pl
 
 1. **Fork a Source Realm** – A `tenantAdmin` selects a source realm, usually the live production realm, and requests a fork. The platform snapshots the source realm using the canonical v1 fork-snapshot boundary from [Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md) and creates a temporary isolated playtest realm with its own `gameInstanceId`.
 2. **Choose the Target Build** – The fork may run the same version as production for reproduction, or a newer `versionId` / `scriptPatchVersion` for validation against realistic state.
-3. **Invite Testers** – Access is explicit. The fork uses the same platform accounts as production, but only authorized testers, creators, and operators see it in `REALMS <world>`.
+3. **Invite Testers** – Access is explicit. The fork uses the same platform accounts as production, but only authorized testers, creators, and operators see it in `REALMS <world>`. In v1, `tenantAdmin` manages these explicit access grants for the fork, while `platformAdmin` remains break-glass override only.
 4. **Collect Feedback** – Feedback is collected per the [Playtesting & Feedback](../project-management/playtesting-feedback.md) flow and correlated with the fork realm in analytics.
 5. **Reset or Expire the Fork** – Forks are time-bounded and may be reset repeatedly from source snapshots during an iteration cycle. Runtime writes remain isolated to the fork and never merge back into production automatically.
 6. **Promote by Normal Launch/Cutover** – Successful playtests inform a normal production rollout; there is no direct "promote this fork" merge path for runtime state.

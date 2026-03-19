@@ -137,6 +137,27 @@ Patch readiness initialization uses a separate admission class from ordinary liv
 
 This separation is required so patch publication remains predictable under load and so live automation traffic cannot accidentally block all progress on new script patch readiness.
 
+### Budget Accounting Rules
+
+Quota and budget policy must be applied at fixed charge points so operators can predict what a burst will cost and retries cannot distort usage:
+
+- **Per-script quota windows**
+  - Charged once per resolved handler-scoped Trigger Identity at handler admission time.
+  - Handlers admitted into a bounded `queue_until_free` backlog consume quota immediately and are not re-charged when they later start.
+  - Duplicate deliveries of the same handler-scoped Trigger Identity must not consume additional quota.
+- **Per-tenant tier budgets**
+  - Charged when a handler-scoped run is reserved onto live sandbox execution capacity.
+  - Event-scope ingress acceptance alone does not charge tenant runtime budget.
+  - Mixed fan-out therefore consumes tenant runtime budget only for handlers that actually leave admission and reserve execution capacity.
+- **Cluster-wide execution ceilings**
+  - Applied at the same execution-reservation point as tenant runtime budgets.
+  - Admission rejections due purely to cluster exhaustion must remain `ADMISSION` outcomes and must not burn sandbox CPU/memory budget.
+- **Output-budget and post-admission failures**
+  - Output-budget failures, sandbox errors, rollback-epoch cancellations after admission, and downstream infrastructure failures do not refund quota or execution budget that has already been charged.
+  - These runs still consumed or reserved scarce runtime capacity and must remain visible as charged non-success outcomes.
+- **`onLoad`**
+  - Uses its own publish-time capacity class and is excluded from the live per-script quota window and tenant runtime budget accounting above.
+
 ---
 
 ## Resource Isolation and Multi-Level Budgets
@@ -210,6 +231,14 @@ The canonical `script_event_audit` schema includes:
 
 During rollback draining, operators should also expect a bounded number of old-epoch rows whose runs started before pause but were fenced before persistence or handoff. Those rows should appear as non-success canceled outcomes for the original Trigger Identity, not as silently dropped work. A typical example is `finalStage=WORK_ITEM_PERSIST`, `finalOutcome=canceled`, `finalReason=rollback_epoch_advanced`, paired with rollback/drain metrics for the same scope.
 At the metric layer, these rows should contribute to the same bounded rollback/drain visibility used for the paused scope rather than disappearing into generic infrastructure noise. Use `automation_rollback_drain_canceled_total{tenantId, gameInstanceId, finalStage, reason}` as defined in the canonical observability contract so operators can confirm that draining work was fenced intentionally rather than lost unexpectedly.
+
+`script_event_audit` remains the authoritative record for Automation-owned stages through `TICK_HANDOFF`, but post-handoff execution-time version fences must also be correlated back to the same trigger:
+
+- If Game Session later drops a handed-off command because its embedded `scriptPatchVersion` or plugin version no longer matches the instance's active pin, operator tooling must be able to locate that drop directly from the originating Trigger Identity.
+- The canonical mechanism is the supplementary execution-disposition contract in `design/architecture/system-architecture-scripting-observability-contract.md`: Game Session reports a bounded post-handoff disposition keyed by Trigger Identity rather than forcing operators to infer the relationship from metrics alone.
+- Dashboards and incident tooling should therefore show both:
+  - Automation pipeline completion (`finalStage`, `finalOutcome`) and
+  - any later execution-time fence rejection (`executionDisposition.outcome=version_fence_dropped`, bounded reason).
 
 Retention and sizing are governed by environment variables described below and in the Automation & Scripting Service README; in particular, `SCRIPT_EVENT_AUDIT_RETENTION_DAYS` and `SCRIPT_EVENT_AUDIT_MAX_ROWS` control how long audit rows are retained and how large the table is allowed to grow (current defaults are 30 days and 1,000,000 rows, but the README remains the authoritative source).
 Dead-letter stores used for rejected queue entries or non-progressing outbox work must also define explicit `maxAge`, `maxRows`, cleanup cadence, and alert thresholds; unbounded dead-letter growth is not an acceptable operational mode. These controls should be exposed as operator knobs (for example, `SCRIPT_DEAD_LETTER_MAX_ROWS`, `SCRIPT_DEAD_LETTER_MAX_AGE_SECONDS`, `SCRIPT_DEAD_LETTER_CLEANUP_INTERVAL_SECONDS`, `SCRIPT_DEAD_LETTER_ALERT_THRESHOLD_ROWS`) rather than implicit defaults.

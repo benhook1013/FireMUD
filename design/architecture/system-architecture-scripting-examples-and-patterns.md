@@ -48,10 +48,11 @@ This example walks through how a typical `onEnterRegion` script executes end-to-
 
 3. **Bindings and quotas**
    - The Automation & Scripting Service looks up all scripts bound to `onEnterRegion` for the target entity and tenant, using the version metadata provided by the Game Session Service to resolve the correct script definitions.
-   - Per-script quotas and tenant budgets are applied before execution (see `design/architecture/system-architecture-scripting-quotas-and-operations.md` for details). Scripts that fail quota checks are skipped and logged; others proceed to sandboxed execution.
+   - Per-script quotas and tenant budgets are applied before execution (see `design/architecture/system-architecture-scripting-quotas-and-operations.md` for details). Handler-scoped quota is charged at handler admission; tenant runtime budget is charged only when a handler actually reserves sandbox capacity. Scripts that fail quota checks are skipped and logged; others proceed to sandboxed execution.
 
 4. **Sandboxed DSL execution**
    - For each allowed script, the Automation & Scripting Service executes the `onEnterRegion` handler inside the sandboxed DSL runtime, walking the graph of condition, timer, and action nodes for the current event payload.
+   - All gameplay-affecting reads in that handler use the same run snapshot token captured at admission for the trigger's committed `(gameInstanceId, regionId, regionEpoch, tick/read-version)` view; the handler must not silently mix fresher state mid-run.
    - Typical patterns include:
      - Checking player or NPC state (faction, health, quest flags).
      - Branching into dialogue, combat, or flavor events.
@@ -103,7 +104,7 @@ This example shows how a script that runs on a fixed cadence (for example, an NP
    - When an interval becomes due, the scheduler creates a `scriptEventId` for the `onInterval` trigger and evaluates it using the same quota, cadence, and budgeting layers described in `design/architecture/system-architecture-scripting-quotas-and-operations.md`.
    - If multiple handlers are bound to the timer event, the timer firing is admitted once at event scope and then fans out into handler-scoped Trigger Identities whose outcomes are tracked independently.
    - If the script is outside its budgets or disabled, the trigger is skipped and recorded in both metrics and the audit feed.
-   - If allowed, the scheduler enqueues the `onInterval` trigger for sandbox execution and updates the interval entry with a new `nextTick` or `nextRunAt`, ensuring the cadence remains stable even if some intervals are occasionally delayed by load.
+   - If allowed, the scheduler enqueues the `onInterval` trigger for sandbox execution and updates the interval entry with a new `nextTick` or `nextRunAt`, ensuring the cadence remains stable even if some intervals are occasionally delayed by load. If the timer survives a reload or rollback because the logical schedule is preserved, the next due point is recalculated from the canonical resume rule rather than by replaying the paused window.
 
 4. **Sandbox execution and command enqueue**
    - The `onInterval` handler runs inside the sandboxed DSL engine, evaluating conditions such as “is the NPC currently out of combat?” and “is the patrol still active?” before deciding on the next waypoint or behavior.

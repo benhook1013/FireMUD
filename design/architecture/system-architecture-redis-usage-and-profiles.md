@@ -92,11 +92,25 @@ Automation workloads split into two broad classes, with different expectations a
 - **Gameplay-equivalent, fairness-critical automation**
   - Examples: scripted commands that enter the same per-entity tick queues as player actions, “every N ticks” buffs or debuffs that affect combat state, automated movement or AI that must respect one-action-per-entity-per-tick fairness.
   - Redis role: **Coordination Redis**.
-  - Prefixes: use the same coordination families as player commands (for example `tick:{tenantRegionTag}:queue:<entityId>`, `tick:{tenantRegionTag}:pending`, `timer:{tenantRegionTag}`, and scheduler checkpoints such as `script-scheduler:{tenantRegionTag}:lastTickId`).
+  - Prefixes: use the same coordination families as player commands (for example `tick:{tenantRegionTag}:queue:<entityId>`, `tick:{tenantRegionTag}:pending`, `timer:{tenantRegionTag}`, and scheduler checkpoints such as `script-scheduler:{tenantRegionTag}:lastTickId`), but only through Game Session-owned enqueue contracts.
   - Guarantees:
     - Subject to the same `(regionEpoch, tickId)` timeline, leases, and lock semantics as player commands.
     - Must respect the “one action per entity per tick” invariant and other tick fairness rules from the tick architecture docs.
   - Design rule: automation in this category must be reviewed like core gameplay logic and is **not** allowed to depend on TTL-only caches or best-effort queues for correctness.
+  - Canonical handoff contract:
+    - Automation & Scripting creates or reuses a durable PostgreSQL trigger-instance / outbox row keyed by a stable dispatch identity such as `(scheduleId, gameInstanceId, regionEpoch, dueTickId, entityId, commandKind)` or an equivalent derived `automationDispatchId`.
+    - Automation & Scripting then calls a Game Session gRPC/API contract such as `EnqueueAutomationCommandIfAbsent`, carrying:
+      - `automationDispatchId`
+      - `tenantId`, `gameInstanceId`, `regionId`, `regionEpoch`, `dueTickId`
+      - `entityId`
+      - the deterministic gameplay command payload
+    - Game Session is the only service allowed to translate that contract into `tick:{tenantRegionTag}:queue:<entityId>` mutations.
+    - Game Session deduplicates on `automationDispatchId` under the target region timeline and treats retries, duplicate gRPC delivery, or leader changes as no-op outcomes rather than second enqueues.
+    - If the supplied `regionEpoch` is stale or the due tick is no longer valid for the active region lease, Game Session returns a non-applied outcome and Automation & Scripting re-derives the next action from durable trigger state instead of guessing from Redis.
+  - Ordering point:
+    - The durable trigger-instance / outbox row is the source of truth that the automation action became due.
+    - The Game Session enqueue acknowledgement is the source of truth that the due automation was admitted into gameplay coordination for that region.
+    - Redis keys are hot-path coordination state only; they are never the sole record that a fairness-critical automation action existed.
 
 - **Best-effort, non-critical automation**
   - Examples: analytics-style background work, non-critical notifications, opportunistic refreshes that can be dropped or reordered without visible gameplay impact.

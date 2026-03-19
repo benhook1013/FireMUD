@@ -3,21 +3,25 @@
   "generatedAt": "2026-03-13T00:00:00Z",
   "records": {
     "jwt-signing-keys-jwks": {
+      "evidenceType": "rotation",
       "immutableArtifactId": "k8s-job:jwt-rotation-staging:2026-03-05T00:00:00Z:sha256:bc10984e",
       "source": "cluster-job-log",
       "recordedBy": "platform-security"
     },
     "postgres-application-credentials": {
+      "evidenceType": "rotation",
       "immutableArtifactId": "k8s-job:db-credential-rotation-staging:2026-02-28T00:00:00Z:sha256:2bfa41d9",
       "source": "cluster-job-log",
       "recordedBy": "platform-database"
     },
     "backup-object-store-credentials": {
+      "evidenceType": "rotation",
       "immutableArtifactId": "change-ticket:STAGE-347:sha256:c932c8f1",
       "source": "change-management",
       "recordedBy": "platform-infra"
     },
     "operator-credentials": {
+      "evidenceType": "rotation",
       "immutableArtifactId": "change-ticket:STAGE-344:sha256:e1930d5b",
       "source": "operator-credentials-runbook",
       "recordedBy": "platform-security"

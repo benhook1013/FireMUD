@@ -128,6 +128,12 @@ After tests pass, each service is packaged into a Docker image:
 
 Images are tagged with the commit SHA and pushed to **GitHub Container Registry (GHCR)**.
 
+Deployable artifact lineage rule:
+
+- The digest first produced for a reviewed source commit is the canonical deployable artifact for that commit.
+- Promotion between staging and production must reuse that exact digest; release tags, branch tags, or `latest` tags may be added later as aliases, but they must not point at a rebuilt image if the image is intended to remain promotable.
+- Any workflow that rebuilds from a release tag or branch tip produces a new artifact lineage. Those rebuilt digests are non-promotable until they independently pass staging and produce new deployment evidence plus a new production attestation chain.
+
 ### Base Docker Image
 
 The firemud-base image provides a consistent OS and JVM setup across all service containers. It is built using the `buildBaseImage` Gradle task and referenced in each microservice Dockerfile as `ghcr.io/benhook1013/firemud-base:latest`.
@@ -205,7 +211,7 @@ FireMUD uses a simple promotion flow from pull requests through staging to produ
 
 - Feature branches are merged into `develop` after passing CI.
 - Staging promotion is performed by updating the staging Kustomize overlay (for example `k8s/overlays/stage`) to the desired image digests (`image@sha256:...`) via a Git change, merging it, and applying it from a secure operator environment using `kubectl apply -k k8s/overlays/stage`. This keeps “what was deployed” traceable in Git history and removes mutable-tag drift.
-- When a release is ready, `release-please` opens a release PR against `main`; after that PR is merged, the release tag (for example `v1.2.3`) is created and images for that tag are built/pushed by the Docker image workflow.
+- When a release is ready, `release-please` opens a release PR against `main`; after that PR is merged, the release tag (for example `v1.2.3`) is created. Release-tag workflows may publish metadata and additional tags for the already-validated digest set, but must not rebuild the promotable production artifacts.
 - Production promotion is performed by updating the production Kustomize overlay (for example `k8s/overlays/prod`) to image digests that have already passed staging validation, via a Git change, merging it, and applying it from a secure operator environment using `kubectl apply -k k8s/overlays/prod` following the deployment runbook.
 - Overlay PRs are validated by [`.github/workflows/validate-kustomize-overlays.yml`](../../.github/workflows/validate-kustomize-overlays.yml), which checks that referenced images exist in GHCR, enforces digest pinning for staging/production overlays, and blocks staging backup schedules unless the explicit marker `k8s/overlays/stage/STAGING_BACKUPS_ENABLED` is present.
 - Overlay PRs run the canonical preflight entrypoint (`dev-tools/deploy/preflight.sh`) in `ci-static` context so policy IDs and report shape match operator pre-apply validation. CI-static mode may mark production attestation policy as `not_applicable` when no production promotion is being executed.
@@ -213,6 +219,7 @@ FireMUD uses a simple promotion flow from pull requests through staging to produ
 - Production overlay PR CI must evaluate the attestation and, when the attestation classifies the release as `roll-forward-only`, the matching backup-readiness evidence before merge. Deferring those checks to operator-only preflight is non-compliant.
 - Staging apply evidence must include the in-repo deployment record `design/operations/deployments/staging/deployments/<stagingOverlayCommitSha>.json`; production promotion validation fails when this record is missing, digest-mismatched, lacks live-state verification, or lacks passing secret-compliance evidence.
 - Player-facing preflight and operator validation must also verify environment bootstrap completeness and external integration isolation before apply; these checks are not limited to restore events.
+- `manual-backup-restore.yml` is limited to throwaway recovery drills. It may target only explicit non-player-facing restore namespaces or isolated drill clusters using dedicated low-privilege credentials and GitHub Environment approvals. It must not restore into live staging or production namespaces and must not hold credentials capable of modifying the currently player-facing cluster boundary.
 
 Rollbacks are handled by resuming a previously known-good image digest set and re-applying the staging or production manifests with those digests. See the Deployment Runbook for the step-by-step operator flow.
 Before approving a production promotion, deployment evidence must classify rollback mode as either:
@@ -230,6 +237,7 @@ For production releases classified as `roll-forward-only`, promotion evidence mu
 
 The canonical evidence path is `design/operations/deployments/production/backup-readiness/<deployment-ref>.json`, and production CI/preflight must reject `roll-forward-only` promotions when that evidence is missing, stale, or not bound to the attestation/digest set being promoted.
 Traffic-open readiness for first-live or reopen events uses the same `design/operations/deployments/production/backup-readiness/` artifact family with the specialized naming pattern `first-live-<deployment-ref>.json` defined in `system-architecture-backup-recovery.md`; this is distinct by purpose, not by schema lineage.
+For player-facing production promotions, the referenced coordinated-backup evidence must use canonical `tenant_id + region_id` scope. A release that depends on alias-scoped coordinated backup evidence is not eligible for `roll-forward-only` production promotion.
 
 Pre-apply policy checks for staging and production must run through the canonical preflight contract in `system-architecture-deploy-preflight-policy.md`. Static checks run in overlay PR CI, and resolved-manifest/runtime checks run in operator preflight execution. Both use the same policy IDs and evidence shape.
 
@@ -310,7 +318,8 @@ Enforcement workflow contract:
 - Required validator behavior:
   - Load `design/operations/secret-compliance/<environment>.yaml`.
   - Fail when required records/classes are missing.
-  - Fail when credential age exceeds configured maximum age for hard-gated environments.
+  - Fail when a record lacks both `lastRotationAt` and `lastProvisionedAt`, or sets both.
+  - Fail when credential age exceeds configured maximum age for hard-gated environments, regardless of whether age is measured from bootstrap provisioning or later rotation.
   - Fail when `evidenceRef`/`evidenceKey` is missing, the referenced evidence artifact is missing, or the evidence record lacks an immutable artifact identifier (`immutableArtifactId` with digest-qualified identity).
 - Required record classes:
   - `jwt-signing-keys-jwks`

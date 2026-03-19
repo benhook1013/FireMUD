@@ -126,6 +126,10 @@ In addition to functional, load, and security tests, FireMUD treats observabilit
     - force a deadman-staleness test target or equivalent external-only failure mode,
     - verify the external monitoring product opens the expected non-production incident without depending on Prometheus rule evaluation,
     - verify the mirrored Prometheus signal matches the external monitor state once Prometheus is healthy again.
+  - In prod-like observability smoke, also verify the canonical Logging & Admin alert-state behavior:
+    - when Alertmanager is healthy, the UI/API reports `source="alertmanager"` (or an equivalent explicit source marker) and does not duplicate the same condition from fallback rules,
+    - when Alertmanager is intentionally made unavailable while Prometheus remains healthy, the UI/API reports `source="prometheus-fallback"` for the supported fallback set and marks the view as degraded,
+    - when both Alertmanager and Prometheus are unavailable, the UI/API reports alert-state unavailability instead of presenting stale fallback conditions as current.
 
 - **Tracing checks**
   - In at least one non-production pipeline where Jaeger (or an OTLP-compatible trace backend) is available, run a small smoke test that:
@@ -147,6 +151,11 @@ In addition to functional, load, and security tests, FireMUD treats observabilit
     - Required when known in context: `tenantId`, `regionId`.
     - Required when a player session is authenticated/bound: `playerId`.
   - Fail the check if any expected service path emits only free-form messages without these fields, because incident runbooks and Kibana drilldowns depend on those keys.
+  - In prod-like observability smoke, also verify end-to-end log pipeline queryability:
+    - run a synthetic login + command + tick flow that records expected `traceId` values,
+    - verify the resulting records arrive in the canonical Elasticsearch/Kibana log-query path within the environment's bounded indexing delay,
+    - verify those records are retrievable by `service` and `traceId`, plus `tenantId` / `regionId` / `playerId` when applicable,
+    - fail readiness if structured logs are emitted but not queryable end-to-end through the documented log-query path.
 
 New services and features that add critical metrics or alerts should extend these observability tests where feasible so configuration errors are caught in CI rather than only in staging or production.
 
@@ -158,6 +167,11 @@ Prod-like environments that advertise player-experience monitoring must also val
 - Verify `playerflow_canary_success{flow="command",path=...}` exists for each exposed public path.
 - Verify `playerflow_canary_latency_ms{flow="command",path=...}` is exported with millisecond semantics.
 - Verify canary labels remain low-cardinality (`flow`, `path`, `target`) and do not include account IDs, tenant IDs, player IDs, or trace IDs.
+- Verify the canonical canary alert path can be exercised in non-production without using production paging destinations:
+  - login canary failure trips `PlayerFlowCanaryLoginFailed` (or the documented environment-equivalent canonical alert),
+  - representative command failure trips `PlayerFlowCanaryCommandFailed`,
+  - controlled latency degradation trips `PlayerFlowCanaryLatencyHigh`,
+  - alert labels preserve `owner`, `severity`, and `runbook` from the architecture contract.
 - These checks are required for prod-like observability smoke because live-traffic SLIs alone are not sufficient in low-traffic periods.
 
 #### Where These Checks Run (Decision)
@@ -170,10 +184,12 @@ To keep PR feedback fast while still preventing “it only breaks in staging” 
 - **Prod-like observability smoke (nightly or staging-gated)**:
   - Alert routing smoke: trigger a test-only alert (`alert_class="test"`, `severity="P2"`) and verify Alertmanager routing and label preservation end-to-end.
   - External-authority smoke: verify the independently hosted monitoring system can page on deadman staleness or an equivalent external-only failure target without relying on Prometheus alert evaluation.
+  - External observability-entrypoint smoke: verify the authoritative external monitoring configuration covers Prometheus, Alertmanager, Grafana, Kibana/log-query, and Jaeger/trace-query entrypoints, and that each has a documented non-production validation method or bounded mirrored signal mapping.
   - External edge blackbox smoke: verify prod-like environments expose an independent synthetic probe metric for each public entry path and that a forced probe failure (or equivalent test target) trips the non-production blackbox alert path.
   - Player-flow canary smoke: verify the prod-like environment exposes mirrored `playerflow_canary_success` and `playerflow_canary_latency_ms` signals for login and the representative command path, and that a controlled non-production failure can trip the canary alert path.
   - Tracing smoke: run a login + representative command flow and verify at least one `gamesession_handle_command` span (and one `tick_execute` span where ticks run) is present in the trace backend. In environments that expose Telnet and coordinated backups, also verify at least one `tcpproxy_notify_disconnect`/`tcpproxy_connection` span and one `backup_pause_ticks` + `backup_resume_ticks` pair.
   - Structured log contract smoke: verify sampled logs from critical paths contain required structured fields (`service`, `traceId`, `correlationId`, plus contextual `tenantId`/`regionId`/`playerId`).
+  - Log pipeline queryability smoke: verify those same synthetic records are queryable end-to-end in the canonical Elasticsearch/Kibana or documented compatible log-query path.
   - Prometheus rules conformance smoke: query the Prometheus rules API and verify the required fallback/recording rules are loaded (tail-loss fallback, tick safety ratio recording, login success ratio recording, command p99 latency recording, entry-path availability recording, and chat delivery latency recording).
     - This includes the canonical dynamic tail-loss pair (`redis_coordination_tail_loss_budget_ms`, `redis_coordination_tail_loss_slo_breached`) and both short-window and 1-day entry-path availability recordings.
     - This includes preserving the bounded `command` label on the core-command latency recording rules so single-command regressions continue to alert.

@@ -125,6 +125,7 @@ For any consumer or operator that needs to locate “where a region is” on the
   - New consumers and operational tools obtain their initial view of the timeline from this API or table; they do not infer it from Redis coordination keys.
 - Minimum `RegionStatus` contract (required for consumers and admission control):
   - Timeline: `regionEpoch`, `lastCommittedTickId`, and an `updatedAt`/`lastCommitTimestamp`.
+  - Ownership fencing: a durable monotonic `executorFence` (or equivalent name) that increments on every successful lease acquisition for the region and is recorded on tick batches and other durable tick-control writes.
   - Health: a bounded `status`/`health` value (for example `RUNNING`, `DEGRADED`, `PAUSED`, `STALLED`).
   - Backlog indicators:
     - Minimum required when cross-region gameplay, replay-driven admission control, or backlog-based shedding is enabled: retry depth and remote follow-up lag/backlog so origin-side admission control can shed load without relying on Redis hints.
@@ -151,13 +152,24 @@ For each `<tenantId, regionId>` there is exactly one active tick executor (Game 
 
 Other workers may be running but do not process ticks for that region while the lease is held. See `system-architecture-tick-concepts-and-invariants.md` for the full authority and lease model.
 
+Lease ownership is enforced through a two-part fence:
+
+- Redis remains the fast-path lease and liveness mechanism.
+- PostgreSQL `RegionStatus.executorFence` is the durable ownership fence for tick-control writes:
+  - Every successful lease acquisition increments `executorFence` exactly once for that `<tenantId, regionId>`.
+  - Every durable tick-control write (`tick_batch`, ledger transitions, `lastCommittedTickId`, and equivalent recovery/control rows) records and compares that fence.
+  - Rows written under an older fence are stale by definition and must not advance or continue tick execution.
+
+This durable fence is the canonical protection against stale executors that lost Redis lease ownership but still have in-flight SQL work.
+
 ---
 
 ## Distributed Locking
 
 Tick execution uses **per-entity locks** in Redis to coordinate concurrent actions within a region. Locks:
 
-- Are acquired in deterministic order to avoid deadlocks.
+- Are acquired one entity at a time by default.
+- May be acquired in deterministic multi-lock order only for the small explicit whitelist of scripts documented in `system-architecture-tick-concepts-and-invariants.md`.
 - Are scoped to a single region; cross-region flows never share locks.
 
 Region executors rely on **lock-on-demand** rather than fixed thread ownership: no region or room is permanently bound to a single worker thread; instead, workers acquire and release Redis-backed locks and leases as they process tick work.
@@ -280,7 +292,7 @@ The Game Session Service and Redis own the full tick transaction lifecycle (stag
 Some commands (for example, heavy runtime procedural generation) declare `requiresSoloTick: true`. For these commands:
 
 - The scheduler runs the command alone in its own tick so it does not compete with other player actions.
-- The tick may be allowed a larger execution budget (for example, up to a few hundred milliseconds) while still respecting the region’s lease and TTL rules.
+- If the command needs more than the normal `tick_budget_ms`, it must use the explicit `solo_tick_budget_ms` mode defined in `system-architecture-tick-concepts-and-invariants.md` rather than informally exceeding the shared formulas.
 
 This keeps expensive operations predictable without introducing special-case fallbacks in the tick engine.
 

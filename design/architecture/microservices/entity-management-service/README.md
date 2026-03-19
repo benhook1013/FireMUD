@@ -115,6 +115,14 @@ Entity upgrade validation minimum contract:
 - The response must enumerate the entity-owned row families checked, the referenced template identifiers, and per-family outcomes `COMPATIBLE`, `REQUIRES_MAPPING`, or `INCOMPATIBLE`.
 - If the service currently has no `S2` rows for a given source instance, it must report that explicitly rather than collapsing the result into a generic success.
 
+Cutover fence contract:
+
+- Replacement-instance validation and migration must run against a durable, fenced snapshot of Entity Management state for the source `gameInstanceId`; validating against Redis-staged or partially flushed deferred writes is not allowed.
+- Before invoking entity cutover validation or snapshot/export for a source instance, Game Session must quiesce gameplay admission and mutation for that `gameInstanceId`.
+- Entity Management must then flush all deferred `S1` and `S2` writes for that source instance to PostgreSQL and return a committed fence token or epoch that identifies the durable state used for validation.
+- The validation response must either include that fence token/epoch or be bound to an API contract that makes the same durable fence observable to the caller.
+- If Entity Management cannot flush deferred durable state for the source instance, cutover validation must fail closed rather than validating stale database rows.
+
 Illustrative responses:
 
 - Durable rows present but no remap required:

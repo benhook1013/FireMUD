@@ -75,6 +75,11 @@ Planned Gateway drain example:
 - TCP Proxy classifies that machine-parseable bridge close as `bridge_shutdown_class=planned_drain`.
 - The Telnet client receives a final `logout` disconnect with `subreason=gateway_restart` rather than `backend_unavailable`.
 
+Clean upstream logout example:
+
+- Game Session or Gateway closes the authenticated internal bridge with `1000/logout` and a supported bounded subreason such as `takeover`, `user_logout`, `admin_termination`, or `none`.
+- TCP Proxy preserves that clean upstream session-end signal as the Telnet-side `logout` category with the same bounded subreason instead of translating it into `backend_unavailable`.
+
 Unattributed bridge-loss example:
 
 - The authenticated internal bridge drops without a machine-parseable planned-drain close (for example abrupt transport reset or crash).
@@ -123,7 +128,7 @@ Architecture and service designs must not assume that external clients participa
 
 Telnet clients receive final disconnect messages from the TCP Proxy Service when connections close due to policy, slow-client behaviour, backend outages, or internal errors. To keep behaviour aligned with WebSocket close codes from [Gateway Architecture](./system-architecture-gateway.md#websocket-liveness-and-idle-timeouts), the TCP Proxy Service standardises a small set of Telnet disconnect reason categories:
 
-- `logout` – explicit, clean shutdown (user-initiated logout, takeover completion, admin-initiated session end, or planned edge drain); maps to WebSocket `1000` with reason `logout` and the corresponding bounded `subreason` defined in Gateway Architecture. When the TCP Proxy can attribute an upstream bridge close to a planned Gateway drain (`subreason=gateway_restart`), it must preserve the Telnet-side category as `logout` rather than translating that clean drain into `backend_unavailable`.
+- `logout` – explicit, clean shutdown (user-initiated logout, takeover completion, admin-initiated session end, or planned edge drain); maps to WebSocket `1000` with reason `logout` and the corresponding bounded `subreason` defined in Gateway Architecture. When the authenticated upstream gameplay bridge closes cleanly with `1000/logout`, the TCP Proxy must preserve the Telnet-side category as `logout` and carry through the bounded subreason (`user_logout`, `takeover`, `gateway_restart`, `admin_termination`, or `none`) rather than translating that clean shutdown into `backend_unavailable`.
 - `idle_timeout` – idle-connection timeout where no traffic has been observed within the configured idle window; maps to WebSocket `1001` with reason `idle_timeout`.
 - `policy_violation` – client behaviour that violates platform policies (for example sustained command-rate abuse, malformed envelopes, repeated MCP negotiation failures, intentionally abusive traffic, or edge trust/policy handshake failures such as proxy mTLS certificate validation mismatch); maps to WebSocket `1008` with reason `policy_violation`.
 - `backend_unavailable` – gameplay backend services (Game Session or critical dependencies) are unavailable or overloaded beyond well-defined grace windows on the WebSocket and Telnet paths. On the WebSocket side, Spring Cloud Gateway emits `1013/backend_unavailable` when its backend unavailable timer exceeds `firemud.gateway.backendUnavailableGraceMs` as described in [Gateway Architecture](./system-architecture-gateway.md#backend-unavailable-grace-window). On the Telnet side, the TCP Proxy emits `backend_unavailable` when its bridge-availability state determines gameplay admission is unavailable (including sustained inability to establish or maintain Proxy → Gateway gameplay connectivity) and does not keep ambiguous half-open gameplay sessions. Edge buffer-pressure closes map to `policy_violation` with `edge_backpressure` context only when upstream is reachable.

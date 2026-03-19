@@ -203,6 +203,8 @@ See the Automation & Scripting Service README and service protos for the full, u
 - **Interaction with reloads and recovery**
   - The Automation & Scripting Service treats `onLoad` as **at-most-once per `<tenantId, scriptId, scriptPatchVersion>`**, even across process restarts and leader changes. Load-completion state is tracked in persistent metadata so that simply restarting a scheduler instance does not re-fire `onLoad` for a script whose patch has already been initialized for that tenant.
   - `onLoad` triggers are enqueued only while the patch is tracked as `pendingPatchVersion` with lifecycle `ONLOAD_RUNNING`; `activePatchVersion` remains on the previous patch until all `onLoad` handlers succeed and the lifecycle transitions to `READY`. Scripts never run `onLoad` against a patch that is already the active `scriptPatchVersion` for a tenant.
+  - Tenant readiness allows only **one pending patch per tenant** at a time. If Game Design publishes a newer patch while an older patch is still `PENDING_VALIDATION` or `ONLOAD_RUNNING`, the older patch is transitioned deterministically to `SUPERSEDED` with a bounded reason such as `superseded_by_newer_patch`, any not-yet-started `onLoad` work for that older patch is canceled, and any in-flight `onLoad` executions for it must be prevented from later advancing the patch to `READY`.
+  - A `SUPERSEDED` patch is terminal for readiness purposes: it remains queryable for audit/history, but it is no longer eligible for pinning and must not emit further `onLoad` work after the superseding publish is accepted.
 - Like other events, each `onLoad` trigger is recorded in `script_event_audit` with `eventType=onLoad`, `tenantId`, `scriptId`, the target `scriptPatchVersion`, and stage-aware outcome fields (`finalStage`, `finalOutcome`, `finalReason`, plus any per-stage breakdown) so operators can verify that initialization ran for a given script and patch and see exactly where it failed (admission vs DSL eval vs persistence vs tick handoff).
 
 ### `scheduleDefinitionId` Reconciliation Example
@@ -377,12 +379,14 @@ The canonical states are:
 - `ONLOAD_RUNNING` – `onLoad` handlers for scripts in the patch are executing for the tenant. These executions are keyed by `<tenantId, scriptId, scriptPatchVersion>` and must be idempotent.
 - `READY` – all `onLoad` handlers for the patch have completed successfully for the tenant. The patch is eligible to become the `activePatchVersion` for games in that tenant, and Game Session may pin it as the current `scriptPatchVersion`.
 - `FAILED` – one or more `onLoad` handlers for the patch have failed for the tenant with a logical, sandbox, or infrastructure error after retries are exhausted. The previous instance-observed pin remains in use for running games, and the failed patch is not eligible to be pinned.
+- `SUPERSEDED` – a newer publish for the same tenant was accepted while this patch was still non-terminal (`PENDING_VALIDATION` or `ONLOAD_RUNNING`). The superseded patch remains visible for audit/history but is no longer eligible for pinning or further readiness progression.
 
 Typical transitions are:
 
 1. `PENDING_VALIDATION → ONLOAD_RUNNING` when Automation & Scripting begins `onLoad` initialization for the tenant after successfully ingesting a published patch from Game Design. Patches whose publish Saga fails in Game Design (for example, ability schema mismatches) never enter this lifecycle; from Automation’s perspective they do not exist or remain invisible runtime-only.
 2. `ONLOAD_RUNNING → READY` when all `onLoad` executions for scripts in the patch succeed for the tenant.
 3. `ONLOAD_RUNNING → FAILED` when any `onLoad` execution fails fatally after bounded retries; running instances continue using their previously pinned patch.
+4. `PENDING_VALIDATION|ONLOAD_RUNNING → SUPERSEDED` when a newer publish is accepted for the same tenant before the older patch reaches a terminal readiness state. `SUPERSEDED` is terminal and must be emitted before the newer patch begins readiness work.
 
 Per-instance rollout state is tracked separately (for example `PINNED`, `ROLLED_BACK`, `REPINNED`) and is driven by control-plane APIs/events (`SetPinnedScriptPatchVersion`, `RollbackScriptPatchVersion`, `ScriptPatchPinChanged`). An instance rollback does not imply tenant patch state transition away from `READY`.
 
@@ -414,6 +418,22 @@ Scripts are designed to behave **deterministically for a given game configuratio
   - be explicitly documented as **non-replayable** and confined to side channels such as logging and metrics where non-determinism does not affect gameplay state or authoritative decisions.
 
 Under these rules, the combination of Trigger Identity plus tick context (for example `tickId` and `regionEpoch` when applicable) fully determines the observable behavior of a script run that contributes commands to the tick system.
+
+### Read Consistency Contract
+
+Determinism depends not only on stable RNG/time, but also on a stable **read snapshot** for all gameplay-affecting data exposed to the DSL:
+
+- Every live handler-scoped run must execute against a runtime-issued **read snapshot token** captured at admission. For gameplay/runtime triggers, that token must be anchored to the committed source timeline for the trigger, including at minimum `<tenantId, gameInstanceId, regionId, regionEpoch>` plus a source consistency point such as `tickId` or an equivalent read version.
+- All DSL component reads that influence authoritative branching or emitted commands must use that same snapshot token for the duration of the run. A single run must not silently mix fresher and older committed values for the same gameplay state just because wall-clock time advanced between gRPC reads.
+- If the runtime exposes cross-region, tenant-global, or non-tick-owned data to scripts, the component contract must declare the consistency class explicitly. Data that can materially change authoritative gameplay decisions must either:
+  - be versioned by the same run snapshot token, or
+  - carry its own immutable version/read token captured at admission and reused for the whole run.
+- Eventually consistent or best-effort operational views may be exposed only to components whose outputs are non-authoritative (for example logging/diagnostics) or whose contract explicitly states that they do not affect gameplay branching.
+- `onLoad` and dry-run/test execution must also declare their snapshot source. In the first implementation slice:
+  - `onLoad` may read only configuration/runtime metadata and recomputable caches using a tenant-scoped readiness snapshot, not mutable gameplay state.
+  - dry-run/test runs must either accept an explicit snapshot selector from tooling or record the server-chosen latest committed snapshot token in the returned/audited result so the run is reproducible.
+
+This snapshot contract is part of the runtime semantics, not an implementation detail. Services backing DSL read components must therefore accept and honor the snapshot/read-version token required by the component contract.
 
 Crucially, **script handlers are not re-executed during tick replay or recovery**. The Automation & Scripting Service evaluates each trigger at most once, produces a set of commands annotated with `scriptEventId`, and hands those commands to the tick system. Tick-level crash recovery and retries reapply those commands idempotently in the Game Session and domain services without re-entering the DSL graph for the same trigger. Determinism for scripting therefore depends on this **“no re-execution per trigger”** guarantee plus the seeded RNG and time constraints.
 
@@ -447,6 +467,20 @@ Admission and sandboxing must bound not only how often a handler runs, but also 
 - Exceeding an output budget must fail deterministically with a non-success stage-aware outcome. Implementations may classify this at `DSL_EVAL` or `WORK_ITEM_PERSIST`, but `finalReason` must use bounded canonical codes such as `command_count_exceeded`, `per_entity_command_limit_exceeded`, or `work_item_size_exceeded` rather than collapsing the failure into an undifferentiated sandbox error.
 - Output budgets apply equally to core scripts and plugins.
 - Publish-time validation in Game Design should perform conservative worst-case fan-out analysis for bounded loops and bulk action nodes. Graphs whose statically bounded output exceeds runtime ceilings should be rejected before publish whenever feasible.
+
+### Budget Charge Points
+
+Quota and budget accounting must be deterministic so operators can reason about load and so retries do not double-charge:
+
+- **Event-scope ingress admission** does not itself consume per-script quota windows or tenant runtime budgets. Charging begins only after bindings have been resolved into handler-scoped Trigger Identities.
+- **Per-script quota windows** are charged once per resolved handler at handler admission time:
+  - a handler admitted immediately to sandbox work consumes one quota slot at admission;
+  - a handler accepted into a bounded `queue_until_free` waiting queue also consumes one quota slot immediately and must not be charged again when execution later starts;
+  - duplicate deliveries for the same handler-scoped Trigger Identity must not consume additional quota.
+- **Per-tenant and cluster execution budgets** are charged when a handler-scoped run leaves admission and is reserved onto sandbox execution capacity. These budgets are not charged for runs rejected at `ADMISSION`.
+- Budget consumption is **not refunded** for runs that later fail with `sandbox_error`, `validation_error`, output-budget failure, rollback-epoch cancellation, or downstream infrastructure failure after the charge point. The consumed capacity was still spent or reserved.
+- `onLoad` readiness work uses a separate publish-time budget class and must never consume the ordinary live per-script quota window or tenant runtime execution budget.
+- Implementations may expose additional budget dimensions, but they must map to one of the charge points above rather than inventing ad hoc charging semantics per caller or per service.
 
 ### Ordering Between Player and Script Commands
 
@@ -494,6 +528,23 @@ Within that model:
 
 From the tick system’s perspective, script timers are just another source of work that ultimately enqueues commands into tick queues. The determinism rules in this document apply equally to timer-driven triggers.
 
+### Timer Resume Rule (Normative)
+
+When reload, rollback, or schedule preservation keeps a logical timer alive across a version transition, the scheduler must recalculate its next due point using the same explicit rule:
+
+- Inputs:
+  - `resumeTickId` = the latest committed tick known for the timer's region when scheduling resumes for the runtime scope.
+  - `previousDueTickId` = the durable due point stored before pause/reconciliation.
+  - `intervalTicks` = the preserved schedule cadence in ticks.
+- Rule:
+  - if `previousDueTickId > resumeTickId`, keep `nextTick = previousDueTickId`;
+  - otherwise set `nextTick = resumeTickId + intervalTicks - ((resumeTickId - previousDueTickId) % intervalTicks)`, with the modulo term treated as `0` when the cadence boundary lands exactly on `resumeTickId`.
+- Consequences:
+  - the scheduler resumes on the **next future cadence boundary** at or after resume, never by replaying every missed firing from the paused window;
+  - a preserved schedule may fire immediately after resume only when its next valid cadence boundary is exactly `resumeTickId`;
+  - reload/rollback preservation and leader-failover catch-up remain distinct behaviors. The resume rule governs preserved timers after a version transition; bounded catch-up rules govern missed firings after scheduler downtime within the same logical schedule/version.
+- Equivalent wall-clock timers must define an analogous formula over `nextRunAt` and `resumeAt`, but gameplay-facing cadence remains specified in ticks and must reduce to the same tick-boundary behavior when tick-aligned.
+
 ---
 
 ## End-to-End `onInterval` Timer Lifecycle
@@ -524,7 +575,7 @@ All durable timer identity and scheduler checkpoints must be **instance-aware** 
   - Once reload succeeds and `activePatchVersion` is switched, the leader:
     - re-reads its heartbeat checkpoint and the current `tickId`,
     - reconciles durable schedule definitions for the newly pinned patch before any timer is allowed to fire again, and
-    - updates each surviving interval entry’s next due point (`nextTick` or `nextRunAt`) in the region index as needed so the cadence resumes from the latest tick/time (rather than replaying the paused window), and
+    - updates each surviving interval entry’s next due point (`nextTick` or `nextRunAt`) using the normative [Timer Resume Rule](#timer-resume-rule-normative) so the cadence resumes from the latest tick/time rather than replaying the paused window, and
     - resumes normal scheduling for `onInterval` using the updated `activePatchVersion`. No interval runs against a partially loaded script definition.
   - If reload fails, `activePatchVersion` remains unchanged, `pendingPatchVersion` is marked failed, and the leader resumes using the existing region-index timer entries as-is. Any `onInterval` triggers that fire after a failed reload are still scheduled according to the stored cadence, but always execute under the last known good patch version.
 
@@ -537,7 +588,7 @@ Timer reconciliation on patch or plugin change is a required part of reload/roll
 - When an instance observes a newly pinned `scriptPatchVersion`, the scheduler must compare the durable schedules for the previously observed patch with those for the newly pinned patch before resuming timer admission.
 - Schedules that do not exist in the newly pinned patch must be removed or tombstoned so they can no longer generate triggers.
 - Schedules may be preserved across patch or plugin changes **only** when the old and new definitions share the same `scheduleDefinitionId`. Matching by cadence, node shape, entity binding, or other inferred “semantic similarity” is not sufficient.
-- When a preserved schedule keeps the same `scheduleDefinitionId`, reconciliation must rewrite the durable owner/version metadata to the newly pinned `scriptPatchVersion` or `pluginVersionId` before scheduling resumes, and must recalculate `nextTick` / `nextRunAt` from the documented resume rule rather than reusing stale due points blindly.
+- When a preserved schedule keeps the same `scheduleDefinitionId`, reconciliation must rewrite the durable owner/version metadata to the newly pinned `scriptPatchVersion` or `pluginVersionId` before scheduling resumes, and must recalculate `nextTick` / `nextRunAt` from the normative [Timer Resume Rule](#timer-resume-rule-normative) rather than reusing stale due points blindly.
 - The same rule applies to plugin activation, disable, rollback, and signer-revocation flows: any schedule owned by a displaced `pluginVersionId` must be removed or tombstoned before normal scheduling resumes for that plugin.
 - Canceling outbox work items alone is insufficient for rollback safety; old-version timer schedules must also be reconciled so they cannot mint new `scriptEventId` values after the version has been displaced.
 

@@ -106,6 +106,20 @@ Reconciliation behavior:
 - If regenerated output does not match the recorded digest, reconciliation must fail fast and mark the version `OUT_OF_SYNC` rather than silently accepting a drifted topology.
 - The digest for publish gating must cover the finalized template rows produced by this artifact, so replay and publish checks converge on the same canonical state.
 
+Generation revisions are explicit and scope-bound:
+
+- A design-time generator invocation is a first-class revision type recorded in Game Design history, not an implicit side effect outside commit/replay ordering.
+- Every generation revision must declare its target replacement scope before execution. Initial-slice allowed scopes are:
+  - one or more newly created empty template containers; or
+  - an explicitly named world subtree rooted at a `regionTemplateId` or `zoneTemplateId`.
+- The revision must also declare its replacement policy:
+  - `REPLACE_SCOPE` means the generated output fully replaces the previously authored topology inside that declared target scope; rows outside the scope are untouched.
+  - `SEED_APPEND_ONLY` means generation may add new rows inside the target scope but may not rewrite or delete previously existing manually authored rows.
+- Reconciliation must replay `generate -> subsequent manual revisions` in original commit/revision order. It must never rerun generation over a scope that has later manual edits unless the recorded generation revision itself declared `REPLACE_SCOPE` for that same scope.
+- Manual edits applied after a generation revision are canonical authored state. A later replay that would erase those edits without an explicit replacement revision is invalid and must fail the Draft as `OUT_OF_SYNC`.
+
+This rule makes generated scaffolding safe to refine manually while preserving one deterministic answer to “what does replay regenerate versus preserve?”
+
 ---
 
 ### 2. `OverworldMapGenerator`
@@ -162,8 +176,8 @@ Generator outputs must not embed or assume these persisted identifiers; they are
 
 The following rules align generators with the core runtime and tooling:
 
-1. **Solo Tick Scheduling** – Runtime generation is queued like any other command but includes `requiresSoloTick: true`. The Game Session Service executes it in an isolated tick with an extended, configurable time budget.
-2. **Heavy Post‑Gen Population** – Population scripts may declare `requiresSoloTick: true`. The Game Session Service schedules these in dedicated ticks to avoid fairness regressions.
+1. **Solo Tick Scheduling** – Runtime generation is queued like any other command but includes `requiresSoloTick: true`. The Game Session Service executes it in an isolated tick and, if extra runtime is required, must use the canonical `solo_tick_budget_ms` mode defined by the tick invariants rather than an ad-hoc extended budget.
+2. **Heavy Post‑Gen Population** – Population scripts may declare `requiresSoloTick: true`. The Game Session Service schedules these in dedicated ticks to avoid fairness regressions and may only exceed the normal budget when `solo_tick_budget_ms` is enabled for that deployment/profile.
 3. **Seed & Metadata Persistence** – All generation requests include a seed. **World Management Service** persists `seed`, `generatorType`, and raw params alongside region/room records. For design-time generation this metadata is stored on template rows keyed by `(tenantId, versionId)`; for runtime/instance generation it is stored on instance rows keyed by `(tenantId, gameInstanceId)`.
 4. **Tenant Scoping** – All generation inputs/outputs are tenant‑scoped. For publish-affecting or activation-time generation, the effective inputs must come from version-scoped design rows and the frozen `generationConfigRevision`, not mutable tenant feature flags or operational defaults. Runtime-only operational knobs may affect scheduling or non-semantic execution details, but they must not change persisted topology semantics.
 5. **Sparse Traversal Rules** – Exit costs between sparse rooms are derived from their coordinate distance. **Game Logic** uses region `spacingMultiplier` to scale the overall pace if needed.

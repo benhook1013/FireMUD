@@ -12,6 +12,7 @@ This brief document summarizes optional ways a hosted game can change its look a
 - A `manifest.json` is generated for every published version, even when no assets are supplied, so version metadata remains consistent.
 - If the manifest is empty or missing fields, the default platform branding is applied.
 - The manifest can be extended with optional assets such as tutorial images, UI overlays, or CSS snippets.
+- Realm admission is the runtime resolution point for branding. `PLAY` success, reconnect resume, and any realm switch must return the resolved bundle identity for the selected realm (`versionId`, optional `scriptPatchVersion`, and manifest location/hash or equivalent) so first-party clients can swap theme assets deterministically when production and playtest realms run different builds.
 
 Example `manifest.json`:
 
@@ -25,7 +26,7 @@ Example `manifest.json`:
 
 - **Self-hosted S3**: For local development or private deployments, run an S3-compatible service such as MinIO; Docker Compose provides a `minio` service preconfigured with the `firemud-assets` bucket, while the Kubernetes manifests under `k8s/minio/` proxy `/assets/**` through the gateway instead of exposing MinIO directly. Set `ASSET_STORE_ENDPOINT` to `https://<gateway-domain>/assets` and supply the bucket and credentials via `ASSET_STORE_BUCKET`, `ASSET_STORE_ACCESS_KEY`, `ASSET_STORE_SECRET_KEY`, and `ASSET_STORE_REGION`.
 
-- The React client loads theme and asset files per tenant at runtime; see [Frontend Architecture](./system-architecture-frontend.md) for details.
+- The React client loads theme and asset files for the currently admitted realm bundle at runtime; see [Frontend Architecture](./system-architecture-frontend.md) for details.
 
 ---
 

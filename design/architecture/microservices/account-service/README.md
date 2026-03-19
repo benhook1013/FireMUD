@@ -128,6 +128,9 @@ resolved during authentication.
 | `DELETE` | `/accounts/{accountId}` | Delete an account |
 | `POST` | `/accounts/{accountId}/external` | Link external account |
 | `POST` | `/auth/player-bootstrap` | Authenticate a first-party player account and return a short-lived `player-bootstrap` token for gameplay bootstrap only |
+| `GET` | `/auth/bootstrap/worlds` | List caller-visible worlds for first-party gameplay bootstrap |
+| `GET` | `/auth/bootstrap/worlds/{world}/realms` | List caller-visible realms for a selected world during first-party gameplay bootstrap |
+| `GET` | `/auth/bootstrap/worlds/{world}/realms/{realm}/characters` | List caller-visible characters for a selected world and realm during first-party gameplay bootstrap |
 | `GET` | `/profiles/{accountId}` | Retrieve profile information |
 | `PUT` | `/profiles/{accountId}` | Update profile information |
 | `GET` | `/tenants/{tenantId}/memberships/me` | Authoritative caller-bound membership and roles for billing-safe mutation guards |
@@ -144,7 +147,7 @@ resolved during authentication.
 | --- | --- | --- | --- |
 | Public auth/bootstrap | `/auth/login`, `/auth/request-password-reset`, `/auth/complete-password-reset`, `/auth/request-email-verification`, `/auth/verify-email`, `/auth/recover-username`, `/.well-known/jwks.json` | No pre-existing user JWT; endpoint-specific validation and abuse controls | Intended for initial auth/bootstrap flows. |
 | Player bootstrap issuance | `/auth/player-bootstrap` | First-party player account authentication bootstrap | Issues the `player-bootstrap` token profile only; must not return a control-plane Browser JWT or perform tenant-scoped admission checks. |
-| Player bootstrap | `/auth/connect-token` | Short-lived, memory-only `player-bootstrap` token in `Authorization: Bearer ...` | Caller identity is derived from bootstrap auth context; endpoint must not accept arbitrary `accountId` and must perform live membership, runtime entitlement, and admission-pointer checks for the requested `{tenantId, gameInstanceId}`. |
+| Player bootstrap | `/auth/bootstrap/worlds`, `/auth/bootstrap/worlds/{world}/realms`, `/auth/bootstrap/worlds/{world}/realms/{realm}/characters`, `/auth/connect-token` | Short-lived, memory-only `player-bootstrap` token in `Authorization: Bearer ...` | Caller identity is derived from bootstrap auth context; discovery endpoints must return only caller-visible worlds/realms/characters, and `/auth/connect-token` must not accept arbitrary `accountId` and must perform live membership, runtime entitlement, and admission-pointer checks for the requested `{tenantId, gameInstanceId}`. |
 | Authenticated account control-plane APIs | `/auth/logout`, `/auth/logout-all`, `/profiles/*`, `/accounts/*/export`, `/tenants/{tenantId}/memberships/me`, `/tenants/{tenantId}/memberships/{accountId}` | JWT middleware (`AuthTokenInterceptor` + route classification) | Must enforce route class, subject-binding rules, and tenant/global role checks. |
 | Internal service gRPC | `Authenticate`, `GetCallerTenantMembership`, `GetTenantMembershipForAccount`, `GetTenantMembershipForRuntime`, `GetTenantEntitlementsForRuntime`, payment and profile gRPC APIs | mTLS caller identity plus method-level auth policy | Internal service surfaces are not edge-exposed directly. |
 
@@ -330,8 +333,9 @@ The `player-bootstrap` token profile is distinct from both Browser JWTs and Serv
 
 - Audience is `player-bootstrap`.
 - It is issued only by `POST /auth/player-bootstrap` / `IssuePlayerBootstrapToken`.
+- `POST /auth/player-bootstrap` is the canonical first-party browser/mobile player-login endpoint. It authenticates player credentials directly under the same password, OTP, brute-force defense, and account-lock policy used for gameplay login rather than deriving bootstrap from a pre-existing admin/creator session.
 - It establishes account identity for first-party gameplay bootstrap only; tenant membership and runtime entitlement checks occur later during `POST /auth/connect-token` for the requested `{tenantId, gameInstanceId}`.
-- It is stored in memory only by first-party gameplay UIs and is accepted only on gameplay-bootstrap surfaces such as `POST /auth/connect-token`.
+- It is stored in memory only by first-party gameplay UIs and is accepted only on gameplay-bootstrap surfaces such as bootstrap discovery and `POST /auth/connect-token`.
 - For first-party `/ws/game/**`, subsequent gameplay `LOGIN` must complete from the bootstrap/connect context already established for that socket; browser clients must not be required to replay account credentials after bootstrap.
 - It is backed by `session:auth:account:<accountId>:<tokenHash>` so account-level logout/revocation semantics remain consistent.
 - `POST /auth/logout` and `POST /auth/logout-all` must accept this profile so first-party gameplay UIs can explicitly revoke bootstrap capability on sign-out rather than waiting for expiry.
@@ -354,13 +358,14 @@ Runtime caller contract:
 - `GetTenantEntitlementsForRuntime(tenantId)` is the authoritative internal entitlement surface for gameplay/runtime flows.
   - Minimum request fields: `tenantId`, `requestId`.
   - Minimum response fields: `tenantId`, `subscriptionStatus`, `gameplayAvailable`, `quotas { ... }`, `evaluatedAt`, `entitlementVersion`, `tenantBillingSequence`.
-- `GetAdmissionPointer(tenantId)` is the authoritative gameplay-admissible-instance lookup owned by Game Session.
-  - Minimum request fields: `tenantId`, `requestId`.
-  - Minimum response fields: `tenantId`, `admissibleGameInstanceId`, `pointerVersion`, `updatedAt`.
+- `GetAdmissionPointer(tenantId, realmSlug)` is the authoritative gameplay-admissible-instance lookup owned by Game Session.
+  - Minimum request fields: `tenantId`, `realmSlug`, `requestId`.
+  - Minimum response fields: `tenantId`, `realmSlug`, `admissibleGameInstanceId`, `pointerVersion`, `updatedAt`.
 - `IssueConnectToken` / `POST /auth/connect-token` is the authoritative gameplay bootstrap token-issuance surface.
   - Minimum request fields: `tenantId`, `gameInstanceId`, `requestId`.
   - Minimum response fields: `connectToken`, `expiresAt`, `accountId`, `tenantId`, `gameInstanceId`, `jti`, `issuedAt`.
-- Account Service must use `GetAdmissionPointer(tenantId)` when issuing `/auth/connect-token` so connect-token scope is pinned to the tenant's current single admissible instance instead of a caller-supplied guess.
+- Account Service must expose bootstrap-discovery endpoints that accept only the `player-bootstrap` token profile and return the canonical caller-visible worlds, realms, and characters for pre-socket selection.
+- Account Service must use the authoritative realm-routing contract when issuing `/auth/connect-token` so connect-token scope is pinned to the tenant's current admissible instance for the selected realm instead of a caller-supplied guess.
 - Runtime callers must treat missing required fields as contract failure and fail closed rather than inferring defaults.
 
 Membership-change producer contract:
@@ -444,7 +449,8 @@ Canonical non-login authorization/entitlement errors:
   ```
 
   Error responses use the standard `shared.v1.ErrorDetail` structure and `AuthenticationErrorCodes` as described below.
-- `POST /auth/player-bootstrap` – authenticate a first-party player account and return a short-lived `player-bootstrap` token profile for gameplay bootstrap only. This endpoint must issue a dedicated audience (`aud=player-bootstrap`), back the token with `session:auth:account:<accountId>:<tokenHash>`, must not return a control-plane Browser JWT, and must not perform tenant-specific admission or entitlement checks.
+- `POST /auth/player-bootstrap` – authenticate a first-party player account and return a short-lived `player-bootstrap` token profile for gameplay bootstrap only. This endpoint is the canonical first-party player-login entrypoint, must issue a dedicated audience (`aud=player-bootstrap`), back the token with `session:auth:account:<accountId>:<tokenHash>`, must not return a control-plane Browser JWT, and must not perform tenant-specific admission or entitlement checks.
+- `GET /auth/bootstrap/worlds`, `GET /auth/bootstrap/worlds/{world}/realms`, `GET /auth/bootstrap/worlds/{world}/realms/{realm}/characters` – caller-bound bootstrap discovery surfaces for first-party gameplay clients. These endpoints accept only the `player-bootstrap` token profile and must apply the same membership, realm-visibility, and entitlement filtering as in-band lobby discovery.
 - `POST /auth/connect-token` – issue a short-lived gameplay connect token for one `{tenantId, gameInstanceId}` target for first-party WebSocket handshake policy on `/ws/game/**`. This endpoint is caller-bound to the authenticated player bootstrap identity, must not accept arbitrary `accountId`, must validate live membership and runtime entitlements for the target tenant, must validate `gameInstanceId` against the current Game Session admission pointer, and is not a general control-plane Browser JWT endpoint.
   - Minimum request body fields: `tenantId`, `gameInstanceId`, `requestId`.
   - Minimum response body fields: `connectToken`, `expiresAt`, `accountId`, `tenantId`, `gameInstanceId`, `jti`, `issuedAt`.
@@ -489,6 +495,9 @@ curl -X POST http://localhost:8080/auth/login \
 - `CompletePasswordReset(CompletePasswordResetRequest) returns (CompletePasswordResetResponse)` – reset the password using a token.
 - `LinkExternalAccount(LinkExternalAccountRequest) returns (LinkExternalAccountResponse)` – attach a third-party account.
 - `IssuePlayerBootstrapToken(IssuePlayerBootstrapTokenRequest) returns (IssuePlayerBootstrapTokenResponse)` – authenticate a first-party player account and issue the short-lived `player-bootstrap` token profile used only for gameplay bootstrap.
+- `ListBootstrapWorlds(ListBootstrapWorldsRequest) returns (ListBootstrapWorldsResponse)` – list caller-visible worlds for first-party gameplay bootstrap.
+- `ListBootstrapRealms(ListBootstrapRealmsRequest) returns (ListBootstrapRealmsResponse)` – list caller-visible realms for a selected world during first-party gameplay bootstrap.
+- `ListBootstrapCharacters(ListBootstrapCharactersRequest) returns (ListBootstrapCharactersResponse)` – list caller-visible characters for a selected world/realm during first-party gameplay bootstrap.
 - `IssueConnectToken(IssueConnectTokenRequest) returns (IssueConnectTokenResponse)` – issue short-lived gameplay connect token for `/ws/game/**` handshake policy after validating live membership, runtime entitlements, and the current admission pointer for the target `{tenantId, gameInstanceId}`.
   - Request must include at minimum `tenantId`, `gameInstanceId`, `requestId`.
   - Response must include at minimum `connectToken`, `expiresAt`, `accountId`, `tenantId`, `gameInstanceId`, `jti`, `issuedAt`.

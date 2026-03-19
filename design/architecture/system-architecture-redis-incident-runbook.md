@@ -95,16 +95,28 @@ The following Redis-focused incident flows build on the general recovery steps a
    - Region health shows sustained `DEGRADED` or `STALLED` state for those shards.
 2. **Decide**
    - For short-lived degradations where gameplay impact is minimal, investigate disk/replication performance, but keep serving traffic.
-   - For sustained violations or `STALLED` regions:
-     - Treat this as a **tick SLO breach** for the affected `<tenantId, regionId>` shards.
-     - Plan both:
-       - A region- or tenant-scoped coordination reset, and
-       - A run of the tick effect ledger replay controller for the same scope to converge any lingering `SCHEDULED` rows (see `system-architecture-tick-failures-and-operations.md#tick-effect-ledger-and-replay-guarantees` and `#ledger-replay-controller`).
+   - For sustained violations or `STALLED` regions, treat this as a **tick SLO breach** for the affected `<tenantId, regionId>` shards and choose exactly one recovery mode first:
+     - `replay_first`
+       - Use when the region is still on one coherent `region_epoch`, there is no evidence of mixed-epoch state, no duplicate durable batches, and surviving coordination residue can still be correlated to the durable batch/ledger timeline.
+       - Goal: preserve as much in-epoch work as possible by driving lingering `SCHEDULED` rows to `APPLIED` or `ABANDONED` without bumping `region_epoch`.
+     - `reset_first`
+       - Use when the region is already `STALLED`, when mixed-epoch or orphaned coordination state is suspected, when duplicate/inconsistent durable batches are detected, or when replay-first fails to make bounded progress within the replay convergence budget.
+       - Goal: fence the old timeline with an epoch bump and use the canonical reset handshake to abandon or reconcile old-epoch work explicitly.
 3. **Act**
-   1. Pause tick scheduling for affected `<tenantId, regionId>` scopes.
-   2. Run the corresponding coordination reset Job (region or tenant scope) as described in [Coordination Reset Model](./system-architecture-redis-reset-and-recovery.md#coordination-reset-model).
-   3. Trigger the ledger replay controller for the same scope to drive stale `SCHEDULED` tick effects to terminal `APPLIED` or `ABANDONED` outcomes based on idempotent domain state, and converge any accepted-but-unbound command records to `TERMINAL` with `executionOutcome = LOST_BEFORE_STAGING` and the command-type-appropriate `gameplayResult` from the canonical mapping table in `system-architecture-tick-execution-flows.md`.
-   4. Verify region health returns to `RUNNING` or bounded `DEGRADED` and `tail_loss_ms` drops back into the SLO envelope before resuming ticks.
+   1. If the chosen mode is `replay_first`:
+      - Trigger the ledger replay controller / maintenance API for the affected scope without bumping `region_epoch`.
+      - Watch `tick_effects_pending_oldest_age_seconds`, `tick_effects_replay_slo_breached`, and command convergence for one emitted replay-convergence budget window.
+      - Escalate to `reset_first` immediately if replay cannot make bounded progress, if inconsistent-state signals appear, or if the region transitions to `STALLED`.
+   2. If the chosen mode is `reset_first`:
+      - Execute the canonical coordination reset workflow for the same scope via `coordination-maintenance`:
+        - `pause`
+        - `reset`
+        - `reconcile-ledger`
+        - `converge-commands`
+        - `init-meta`
+        - `smoke-check`
+        - `resume`
+   3. Verify region health returns to `RUNNING` or bounded `DEGRADED` and `tail_loss_ms` drops back into the SLO envelope after the chosen recovery mode completes.
 
 Alerts based on `redis_coordination_tail_loss_ms` should follow the conventions in `design/observability/grafana/core-alerts-snippets.md` so they carry `owner` and `runbook` annotations that point back to this section.
 

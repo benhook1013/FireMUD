@@ -29,8 +29,8 @@ This guide helps game creators customize their worlds on the hosted FireMUD plat
   See the
   [Role-Based Admin UI](../architecture/microservices/logging-admin-service/admin-ui.md)
   documentation.
-- **Go-Live Prerequisites** – A tenant can remain in draft/edit-only mode while you build content. To expose a public production realm, publish a version and ensure the tenant's billing/entitlements allow gameplay.
-- **Playtest Forks** – Before cutting production over to a new version, create an isolated fork realm from a source realm snapshot, invite testers, and validate the new ruleset against realistic state. Fork writes never merge back into production automatically.
+- **Go-Live Prerequisites** – A tenant can remain in draft/edit-only mode while you build content. To expose a public production realm, publish a version and ensure the tenant's billing/entitlements allow gameplay. In v1, the launched default production realm becomes the tenant's publicly discoverable join surface for authenticated players.
+- **Playtest Forks** – Before cutting production over to a new version, create an isolated fork realm from a source realm snapshot, grant explicit tester access, and validate the new ruleset against realistic state. Fork writes never merge back into production automatically, and forks are never public-discovery realms in v1.
 - **Choose the Rollout Type** – Prefer a script patch when only automation behavior changes and the underlying published version remains valid. Prefer a replacement-instance cutover when world layouts, entities, balance data, assets, or other non-script content changes.
 - **Multi-Tenancy** – Each game is isolated by a unique identifier so you can manage multiple worlds from one account. See the [Multi-Tenancy design](../architecture/system-architecture-multi-tenancy.md).
 

@@ -159,6 +159,18 @@ Two related configuration concepts control how long tick work is allowed to run 
 
 These formulas are implemented once in shared tick/Redis helpers and consumed by Game Session and participating services; individual services must not define their own alternative lock/budget formulas. The defaults are chosen to give generous headroom for GC pauses and hiccups without requiring per-environment tuning; in most deployments, operators primarily adjust `tick_interval_ms`.
 
+The only allowed exception is an explicit **solo-tick budget mode** for commands marked `requiresSoloTick: true`:
+
+- `solo_tick_budget_ms` is a second canonical shared setting, not an ad-hoc per-command override.
+- When enabled for a tick, `solo_lock_ttl_ms` is derived from `solo_tick_budget_ms` using the same shared helper family and operator-visible health model.
+- The scheduler must admit solo-budget ticks only when the command is the sole work item for that region tick.
+- A deployment that does not enable `solo_tick_budget_ms` must treat `requiresSoloTick` as isolation-only; it does not permit budget overruns beyond the normal `tick_budget_ms`.
+
+Changing tick cadence is also constrained by replay determinism:
+
+- `tick_interval_ms` is fixed within a live `region_epoch`.
+- Any cadence change that would alter timer ordering or due normalization requires an explicit `regionEpoch` bump and timer re-derivation/reconciliation for the affected region.
+
 At runtime, observed tick durations are compared against lock TTLs using Prometheus-facing series such as `tick_execution_time_ms_p95` and `tick_execution_time_ms_p99` (derived from `tick_execution_time_ms_bucket` recording rules). Ratios like `tick_execution_time_ms_p99 / tick_lock_ttl_ms` drive region health for each `<tenantId, regionId>`.
 
 ### Canonical Region Health States and Threshold Source

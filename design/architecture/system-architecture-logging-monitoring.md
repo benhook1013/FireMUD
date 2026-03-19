@@ -162,6 +162,26 @@ Live-traffic SLIs remain the authoritative compliance view for player experience
   - These canaries are an outage-detection path, not the primary SLO compliance metric. They complement, but do not replace, `login_requests_total` and `command_end_to_end_latency_ms_bucket`.
   - The canary execution system should live outside the normal player request path failure domain where practical, and must alert independently from live-traffic volume.
 
+#### Canary Alert Contract (Normative)
+
+To keep synthetic canaries actionable instead of merely visible, prod-like environments must install a canonical alert set for canary failures:
+
+- Required alert families:
+  - `PlayerFlowCanaryLoginFailed`
+  - `PlayerFlowCanaryCommandFailed`
+  - `PlayerFlowCanaryLatencyHigh`
+- Label and routing requirements:
+  - `owner="platform"` for login and entry-path availability of the synthetic path.
+  - `owner="gameplay"` for representative command success/latency once the canary is authenticated and in-session.
+  - `service` should preserve the runtime entry-path emitter identity where the alert expression is service-specific; otherwise use `component="playerflow-canary"` to keep routing explicit without inventing ad hoc service names.
+  - `runbook` must point to the player-experience or incident response runbook section that explains how to validate whether the canary reflects a real outage versus canary-only breakage.
+- Detection requirements:
+  - Success/failure alerts must evaluate on short windows suitable for outage detection and must not rely on live-traffic volume.
+  - Latency alerts must evaluate `playerflow_canary_latency_ms{flow,path,target}` using millisecond thresholds and preserve the bounded `flow` and `path` labels.
+  - Controlled non-production failure injection for each required canary path must be testable without paging production destinations.
+- Relationship to live-traffic SLIs:
+  - Canary alerts complement, but do not replace, the live-traffic SLO alerts for `login_requests_total` and `command_end_to_end_latency_ms_bucket`.
+
 ### Degraded Modes and Observability Dependencies
 
 Moderation and admin workflows should remain usable even when parts of the observability stack are degraded. To avoid coupling core actions to non‑authoritative systems:
@@ -269,6 +289,25 @@ Logging & Admin should:
 - Prefer Alertmanager as the source of truth whenever it is healthy; fallback conditions are a last resort to keep operators informed of the most critical SLO violations.
 - Treat broader observability-stack outages as only partially representable in fallback mode: Alertmanager-specific/routing conditions can still be surfaced when Prometheus is healthy, but Prometheus-down conditions cannot be reconstructed from fallback rules because the source of truth is itself unavailable.
 
+#### Logging & Admin Alert-State Contract (Normative)
+
+When Logging & Admin renders alert state, it must expose enough metadata for operators to understand whether they are seeing authoritative Alertmanager data or degraded fallback data:
+
+- Required alert-state fields:
+  - `source` with values `alertmanager` or `prometheus-fallback`.
+  - `observed_at` timestamp for when the underlying alert or fallback condition was last confirmed.
+  - `status_freshness` or equivalent UI text derived from `observed_at` so stale fallback data is visibly different from current state.
+  - Canonical alert identity fields (`service`, `component` when present, `severity`, `owner`, `runbook`).
+- Precedence rules:
+  - When Alertmanager is healthy, Logging & Admin must treat Alertmanager as the source of truth and suppress duplicate fallback rendering for the same canonical condition.
+  - When Alertmanager is unhealthy or unreachable, Logging & Admin may render only the documented fallback rule set and must clearly mark those conditions as degraded approximations rather than routed alerts.
+- Duplicate-suppression rules:
+  - A fallback condition must not appear as a separate active issue when the matching Alertmanager alert is already healthy and visible.
+  - If exact alert-name equivalence is unavailable, dedupe by the canonical identity tuple of condition family plus bounded labels (for example `service`, `component`, `tenantId`, `regionId`, `path`, `command` as applicable).
+- Failure-mode rules:
+  - If both Alertmanager and Prometheus are unavailable, Logging & Admin must display that alert state is unavailable rather than presenting stale fallback conditions as current.
+  - Logging & Admin should preserve the last known `observed_at` timestamp for degraded views, but must not imply continued freshness after the freshness budget expires.
+
 Fallback recording rules must be installed as part of the Prometheus ruleset for every prod-like environment. The reference starting point for these rules lives at `k8s/monitoring/prometheus-rules-firemud.yaml`; environment overlays may adjust thresholds but must preserve the metric names, labels, and alert label contract described in this document.
 
 ### Observability Stack Alerts
@@ -330,6 +369,34 @@ To keep overlays, smoke tests, dashboards, and runbooks aligned, prod-like envir
   - `source` identifies the emitting in-cluster monitor instance or environment and must remain low-cardinality.
   - The signal records the latest successful heartbeat time as observed by the independent monitor, not by Prometheus itself.
   - Deadman paging should trigger when this timestamp becomes stale according to the environment's configured heartbeat budget.
+
+Prod-like environments must also define a canonical contract for observability entrypoint checks in the authoritative external monitor:
+
+- Required externally hosted checks:
+  - Prometheus
+  - Alertmanager
+  - Grafana
+  - Kibana or the Elasticsearch-backed log query entrypoint
+  - Jaeger query UI or trace query endpoint
+- These checks must remain part of readiness evidence and prod-like smoke even when an environment cannot mirror them into Prometheus.
+- If an environment mirrors these checks into Prometheus, the mirror must use a bounded vocabulary or a documented compatibility mapping that preserves:
+  - which observability entrypoint is being checked,
+  - the independent external paging behavior,
+  - the existing runbook behavior for operator-access outages.
+- If an environment does not mirror them into Prometheus, it must still document the authoritative external check names/targets and the expected non-production test method used to prove that operator-access outages are actionable.
+
+### Log Pipeline Queryability Contract
+
+Structured log emission is not sufficient by itself. Prod-like environments must prove that the log pipeline delivers and indexes those records so operators can actually investigate incidents:
+
+- Scope:
+  - Gateway, Game Session, TCP Proxy, and any other service that owns a player-facing or tick-critical path.
+- Required behavior:
+  - Synthetic smoke traffic that emits logs with `service`, `traceId`, and the applicable contextual fields must land in the canonical log index pattern (`firemud-logs-*` unless an environment documents a compatibility mapping).
+  - Those logs must become queryable in the Elasticsearch/Kibana path within a bounded delay suitable for incident response.
+  - Operators must be able to retrieve the smoke records by `service` and `traceId`, and by `tenantId` / `regionId` / `playerId` when those fields are expected by the logging contract.
+- Failure semantics:
+  - A pipeline that emits structured logs locally but fails Fluent Bit forwarding, Elasticsearch indexing, or Kibana/query entrypoint retrieval is non-compliant for prod-like readiness because incident drilldowns depend on end-to-end queryability, not only emitter correctness.
 
 If an environment cannot emit these exact metric names because of a hosted monitoring product constraint, it must provide a documented compatibility mapping to equivalent mirrored signals and keep the canonical alert names, `path` semantics, authoritative external paging behavior, and runbook behavior unchanged. Logging & Admin, runbooks, and smoke tests should treat the canonical names above as the default contract.
 

@@ -35,6 +35,24 @@ Game creators use these interfaces to craft rooms, items and NPCs without modify
    revision history remains anchored in the Game Design Service even though
    domain services store the versioned templates.
 
+### Draft Write Concurrency
+
+Eventually consistent application does not permit last-writer-wins mutation of Draft templates.
+
+Initial-slice concurrency contract:
+
+- Each design-time mutation against a domain-owned Draft aggregate must carry:
+  - stable `revisionId`;
+  - containing `commitId`;
+  - the target `(tenantId, versionId)`;
+  - an `expectedDraftRevisionEpoch` (or equivalent monotonic aggregate version) for the aggregate being edited.
+- World Management and Entity Management design APIs must reject the write with a conflict error if the expected epoch does not match the current Draft aggregate state.
+- Replays of the same `revisionId` remain idempotent; a duplicate delivery with the same already-applied revision must no-op rather than fail conflict.
+- Game Design must surface the conflict to the editor as a Draft-write concurrency failure, not silently overwrite the newer state.
+- Publish reconciliation replays commits in commit order and revision order within the commit. It must not reorder concurrent conflicting edits into a synthetic merged result.
+
+If a later implementation introduces multi-branch merging semantics, that workflow must be specified explicitly. Until then, the canonical first-slice rule is optimistic concurrency plus deterministic replay order, not implicit merge behavior.
+
 When domain templates for a `(tenantId, versionId)` are temporarily out of sync
 with the revision set recorded in the Game Design Service (for example due to
 transient failures when calling design APIs), the version’s `designSyncStatus`
