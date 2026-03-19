@@ -10,16 +10,16 @@ import javax.net.ssl.SSLException;
 import net.firedevops.firemud.automationscripting.v1.AutomationScriptingServiceGrpc;
 import net.firedevops.firemud.automationscripting.v1.NotifyScriptVersionUpdateRequest;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
+import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.TlsCertificateWatcher;
-import net.firedevops.firemud.gamedesign.config.GrpcClientProperties;
 import org.springframework.stereotype.Component;
 
 /** gRPC client for Automation & Scripting Service. */
 @Component
 public class AutomationScriptingClient implements AutoCloseable {
   private final ServiceEndpointsProperties endpoints;
-  private final GrpcClientProperties tlsProps;
+  private final CommonGrpcClientProperties tlsProps;
   private final GrpcChannelFactory channelFactory;
   private ManagedChannel channel;
   private AutomationScriptingServiceGrpc.AutomationScriptingServiceBlockingStub stub;
@@ -27,10 +27,10 @@ public class AutomationScriptingClient implements AutoCloseable {
 
   public AutomationScriptingClient(
       ServiceEndpointsProperties endpoints,
-      GrpcClientProperties tlsProps,
+      CommonGrpcClientProperties tlsProps,
       GrpcChannelFactory channelFactory) {
     this.endpoints = copyEndpoints(endpoints);
-    this.tlsProps = copyTlsProps(tlsProps);
+    this.tlsProps = tlsProps.copy();
     this.channelFactory = channelFactory;
   }
 
@@ -44,15 +44,6 @@ public class AutomationScriptingClient implements AutoCloseable {
     copy.setEntityManagementService(source.getEntityManagementService());
     copy.setLoggingAdminService(source.getLoggingAdminService());
     copy.setAutomationScriptingService(source.getAutomationScriptingService());
-    return copy;
-  }
-
-  private static GrpcClientProperties copyTlsProps(GrpcClientProperties source) {
-    GrpcClientProperties copy = new GrpcClientProperties();
-    copy.setCertChain(source.getCertChain());
-    copy.setPrivateKey(source.getPrivateKey());
-    copy.setCaCert(source.getCaCert());
-    copy.setPlaintext(source.isPlaintext());
     return copy;
   }
 

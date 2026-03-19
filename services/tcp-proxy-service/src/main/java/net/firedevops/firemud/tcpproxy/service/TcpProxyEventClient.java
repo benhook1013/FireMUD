@@ -16,8 +16,8 @@ import java.util.concurrent.TimeUnit;
 import javax.net.ssl.SSLException;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
+import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.TlsCertificateWatcher;
-import net.firedevops.firemud.tcpproxy.config.GrpcClientProperties;
 import net.firedevops.firemud.tcpproxy.v1.NotifyDisconnectRequest;
 import net.firedevops.firemud.tcpproxy.v1.NotifyDisconnectResponse;
 import net.firedevops.firemud.tcpproxy.v1.TcpProxyServiceGrpc;
@@ -32,15 +32,16 @@ public class TcpProxyEventClient implements AutoCloseable {
   private static final Logger logger = LoggingUtil.getLogger(TcpProxyEventClient.class);
 
   private final ServiceEndpointsProperties endpoints;
-  private final GrpcClientProperties tlsProps;
+  private final CommonGrpcClientProperties tlsProps;
   private ManagedChannel channel;
   private TcpProxyServiceGrpc.TcpProxyServiceBlockingStub stub;
   private TlsCertificateWatcher watcher;
   private TlsFiles tlsFiles;
 
-  public TcpProxyEventClient(ServiceEndpointsProperties endpoints, GrpcClientProperties tlsProps) {
+  public TcpProxyEventClient(
+      ServiceEndpointsProperties endpoints, CommonGrpcClientProperties tlsProps) {
     this.endpoints = copyEndpoints(endpoints);
-    this.tlsProps = copyTlsProps(tlsProps);
+    this.tlsProps = tlsProps.copy();
   }
 
   private static ServiceEndpointsProperties copyEndpoints(ServiceEndpointsProperties src) {
@@ -53,15 +54,6 @@ public class TcpProxyEventClient implements AutoCloseable {
     copy.setEntityManagementService(src.getEntityManagementService());
     copy.setLoggingAdminService(src.getLoggingAdminService());
     copy.setAutomationScriptingService(src.getAutomationScriptingService());
-    return copy;
-  }
-
-  private static GrpcClientProperties copyTlsProps(GrpcClientProperties src) {
-    var copy = new GrpcClientProperties();
-    copy.setPlaintext(src.isPlaintext());
-    copy.setCertChain(src.getCertChain());
-    copy.setPrivateKey(src.getPrivateKey());
-    copy.setCaCert(src.getCaCert());
     return copy;
   }
 

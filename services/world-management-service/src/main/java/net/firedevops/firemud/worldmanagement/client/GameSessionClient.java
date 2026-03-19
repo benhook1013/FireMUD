@@ -8,19 +8,19 @@ import java.nio.file.Path;
 import java.util.List;
 import javax.net.ssl.SSLException;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
+import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.TlsCertificateWatcher;
 import net.firedevops.firemud.gamesession.v1.GameSessionServiceGrpc;
 import net.firedevops.firemud.gamesession.v1.PingRequest;
 import net.firedevops.firemud.gamesession.v1.PingResponse;
-import net.firedevops.firemud.worldmanagement.config.GrpcClientProperties;
 import org.springframework.stereotype.Component;
 
 /** gRPC client for communicating with the Game Session Service. */
 @Component
 public class GameSessionClient implements AutoCloseable {
   private final ServiceEndpointsProperties endpoints;
-  private final GrpcClientProperties tlsProps;
+  private final CommonGrpcClientProperties tlsProps;
   private final GrpcChannelFactory channelFactory;
   private ManagedChannel channel;
   private GameSessionServiceGrpc.GameSessionServiceBlockingStub stub;
@@ -28,10 +28,10 @@ public class GameSessionClient implements AutoCloseable {
 
   public GameSessionClient(
       ServiceEndpointsProperties endpoints,
-      GrpcClientProperties tlsProps,
+      CommonGrpcClientProperties tlsProps,
       GrpcChannelFactory channelFactory) {
     this.endpoints = copyEndpoints(endpoints);
-    this.tlsProps = copyTlsProps(tlsProps);
+    this.tlsProps = tlsProps.copy();
     this.channelFactory = channelFactory;
   }
 
@@ -45,15 +45,6 @@ public class GameSessionClient implements AutoCloseable {
     copy.setEntityManagementService(src.getEntityManagementService());
     copy.setLoggingAdminService(src.getLoggingAdminService());
     copy.setAutomationScriptingService(src.getAutomationScriptingService());
-    return copy;
-  }
-
-  private static GrpcClientProperties copyTlsProps(GrpcClientProperties src) {
-    var copy = new GrpcClientProperties();
-    copy.setCertChain(src.getCertChain());
-    copy.setPrivateKey(src.getPrivateKey());
-    copy.setCaCert(src.getCaCert());
-    copy.setPlaintext(src.isPlaintext());
     return copy;
   }
 

@@ -9,4 +9,13 @@ public class CommonGrpcClientProperties {
   private String privateKey;
   private String caCert;
   private boolean plaintext;
+
+  public CommonGrpcClientProperties copy() {
+    CommonGrpcClientProperties copy = new CommonGrpcClientProperties();
+    copy.setCertChain(certChain);
+    copy.setPrivateKey(privateKey);
+    copy.setCaCert(caCert);
+    copy.setPlaintext(plaintext);
+    return copy;
+  }
 }

@@ -7,8 +7,8 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.util.List;
 import javax.net.ssl.SSLException;
-import net.firedevops.firemud.accountservice.config.GrpcClientProperties;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
+import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.TlsCertificateWatcher;
 import net.firedevops.firemud.loggingadmin.v1.ApplyModerationActionRequest;
@@ -19,7 +19,7 @@ import org.springframework.stereotype.Component;
 @Component
 public class LoggingAdminClient implements AutoCloseable {
   private final ServiceEndpointsProperties endpoints;
-  private final GrpcClientProperties tlsProps;
+  private final CommonGrpcClientProperties tlsProps;
   private final GrpcChannelFactory channelFactory;
 
   private ManagedChannel channel;
@@ -28,10 +28,10 @@ public class LoggingAdminClient implements AutoCloseable {
 
   public LoggingAdminClient(
       ServiceEndpointsProperties endpoints,
-      GrpcClientProperties tlsProps,
+      CommonGrpcClientProperties tlsProps,
       GrpcChannelFactory channelFactory) {
     this.endpoints = copyEndpoints(endpoints);
-    this.tlsProps = copyTlsProps(tlsProps);
+    this.tlsProps = tlsProps.copy();
     this.channelFactory = channelFactory;
   }
 
@@ -45,15 +45,6 @@ public class LoggingAdminClient implements AutoCloseable {
     copy.setEntityManagementService(src.getEntityManagementService());
     copy.setLoggingAdminService(src.getLoggingAdminService());
     copy.setAutomationScriptingService(src.getAutomationScriptingService());
-    return copy;
-  }
-
-  private static GrpcClientProperties copyTlsProps(GrpcClientProperties src) {
-    var copy = new GrpcClientProperties();
-    copy.setCertChain(src.getCertChain());
-    copy.setPrivateKey(src.getPrivateKey());
-    copy.setCaCert(src.getCaCert());
-    copy.setPlaintext(src.isPlaintext());
     return copy;
   }
 
