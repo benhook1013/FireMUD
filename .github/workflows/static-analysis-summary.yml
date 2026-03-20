@@ -36,9 +36,12 @@ jobs:
             const pullRequest = pullRequests[0];
             const issueNumber = pullRequest.number;
             const headSha = context.payload.workflow_run.head_sha;
-            const requiredChecks = [
+            const detailChecks = [
               ["CodeQL analysis (java)", "CodeQL Analysis (java)"],
               ["CodeQL analysis (javascript-typescript)", "CodeQL Analysis (javascript-typescript)"],
+            ];
+            const gateChecks = [
+              ["CodeQL gate", "CodeQL Gate"],
               ["License gate", "License Gate"],
             ];
             const terminalConclusions = new Set([
@@ -99,7 +102,7 @@ jobs:
             };
 
             const resolveStatuses = (checkRuns) =>
-              requiredChecks.map(([label, checkName]) => {
+              [...gateChecks, ...detailChecks].map(([label, checkName]) => {
                 const candidates = checkRuns
                   .filter((checkRun) => checkRun.name === checkName)
                   .map((checkRun) => ({
@@ -126,10 +129,13 @@ jobs:
               checks = resolveStatuses(await loadChecks());
             }
 
-            const failedChecks = checks.filter(([, result]) =>
+            const gateResults = checks.slice(0, gateChecks.length);
+            const detailResults = checks.slice(gateChecks.length);
+
+            const failedChecks = gateResults.filter(([, result]) =>
               ["failure", "timed_out", "action_required"].includes(result)
             );
-            const pendingChecks = checks.filter(([, result]) =>
+            const pendingChecks = gateResults.filter(([, result]) =>
               ["pending", "in_progress", "queued"].includes(result)
             );
 
@@ -144,7 +150,11 @@ jobs:
               "### Static Analysis Summary",
               headline,
               "",
-              ...checks.map(([name, result]) => `- ${statusIcon(result)} ${name}: \`${result}\``),
+              ...gateResults.map(([name, result]) => `- ${statusIcon(result)} ${name}: \`${result}\``),
+              "",
+              "CodeQL breakdown",
+              "",
+              ...detailResults.map(([name, result]) => `- ${statusIcon(result)} ${name}: \`${result}\``),
             ].join("\n");
 
             const { data: comments } = await github.rest.issues.listComments({
