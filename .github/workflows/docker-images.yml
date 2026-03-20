@@ -39,6 +39,13 @@ jobs:
       - uses: actions/checkout@v6
         with:
           ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v5
       - name: Derive image tags
         id: meta
         env:
@@ -54,6 +61,8 @@ jobs:
             fi
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
+      - name: Build service JAR
+        run: ./gradlew :${{ matrix.service }}:bootJar
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
       - name: Login to GHCR
