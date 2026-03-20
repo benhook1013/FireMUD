@@ -13,19 +13,19 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
-import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
 import tools.jackson.databind.ObjectMapper;
 
 @SuppressWarnings("unchecked")
 class RedisLookCacheServiceTest {
-  private RedisTemplate<String, String> redisTemplate;
+  private StringRedisTemplate redisTemplate;
   private ValueOperations<String, String> valueOperations;
   private RedisLookCacheService cacheService;
 
   @BeforeEach
   void setUp() {
-    redisTemplate = Mockito.mock(RedisTemplate.class);
+    redisTemplate = Mockito.mock(StringRedisTemplate.class);
     valueOperations = Mockito.mock(ValueOperations.class);
     when(redisTemplate.opsForValue()).thenReturn(valueOperations);
     cacheService = new RedisLookCacheService(redisTemplate, new ObjectMapper());

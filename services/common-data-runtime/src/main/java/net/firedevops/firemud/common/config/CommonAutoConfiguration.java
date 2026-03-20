@@ -6,16 +6,16 @@ import net.firedevops.firemud.cache.RedisLookCacheService;
 import net.firedevops.firemud.common.conflict.ConflictTracker;
 import net.firedevops.firemud.common.conflict.RedisConflictTracker;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
+import org.springframework.boot.autoconfigure.AutoConfigureAfter;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
-import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.StringRedisTemplate;
-import org.springframework.beans.factory.annotation.Qualifier;
 import tools.jackson.databind.ObjectMapper;
 
 @AutoConfiguration
+@AutoConfigureAfter(DatabaseAutoConfiguration.class)
 @Import(CommonCoreAutoConfiguration.class)
 public class CommonAutoConfiguration {
 
@@ -28,11 +28,10 @@ public class CommonAutoConfiguration {
   }
 
   @Bean
-  @ConditionalOnBean(RedisTemplate.class)
+  @ConditionalOnBean(StringRedisTemplate.class)
   @ConditionalOnMissingBean(LookCacheService.class)
   public LookCacheService lookCacheService(
-      @Qualifier("redisTemplate") RedisTemplate<String, String> redisTemplate,
-      ObjectMapper objectMapper) {
-    return new RedisLookCacheService(redisTemplate, objectMapper);
+      StringRedisTemplate stringRedisTemplate, ObjectMapper objectMapper) {
+    return new RedisLookCacheService(stringRedisTemplate, objectMapper);
   }
 }

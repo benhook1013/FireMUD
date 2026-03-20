@@ -5,7 +5,7 @@ import java.time.Duration;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.ObjectMapper;
 
@@ -14,7 +14,7 @@ import tools.jackson.databind.ObjectMapper;
     value = "EI_EXPOSE_REP2",
     justification = "Injected Redis/ObjectMapper dependencies are shared framework singletons")
 public class RedisLookCacheService implements LookCacheService {
-  private final RedisTemplate<String, String> redisTemplate;
+  private final StringRedisTemplate redisTemplate;
   private final ObjectMapper objectMapper;
 
   @Value("${firemud.look.cache.ttl-ms:600000}")
