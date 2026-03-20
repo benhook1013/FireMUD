@@ -10,7 +10,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.scheduling.annotation.EnableScheduling;
 
 @SpringBootApplication
-@EnableSagaEntityScan(basePackageClasses = WorldManagementServiceApplication.class)
+@EnableSagaEntityScan
 @OpenAPIDefinition(info = @Info(title = "World Management Service", version = "v1"))
 @EnableScheduling
 @Import(WorldConfig.class)

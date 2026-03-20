@@ -7,7 +7,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 
 @SpringBootApplication
-@EnableSagaEntityScan(basePackageClasses = AutomationScriptingServiceApplication.class)
+@EnableSagaEntityScan
 @EnableConfigurationProperties(AuthProperties.class)
 public class AutomationScriptingServiceApplication {
   public static void main(String[] args) {

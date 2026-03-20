@@ -7,7 +7,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 
 @SpringBootApplication
-@EnableSagaEntityScan(basePackageClasses = SocialGroupsServiceApplication.class)
+@EnableSagaEntityScan
 @EnableConfigurationProperties(ChatProperties.class)
 public class SocialGroupsServiceApplication {
   public static void main(String[] args) {

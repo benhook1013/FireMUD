@@ -9,7 +9,7 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.scheduling.annotation.EnableScheduling;
 
 @SpringBootApplication
-@EnableSagaEntityScan(basePackageClasses = GameSessionServiceApplication.class)
+@EnableSagaEntityScan
 @EnableScheduling
 @EnableConfigurationProperties({GameSessionProperties.class, GameLogicProperties.class})
 public class GameSessionServiceApplication {

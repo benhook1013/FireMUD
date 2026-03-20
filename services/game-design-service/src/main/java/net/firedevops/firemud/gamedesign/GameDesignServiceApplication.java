@@ -7,7 +7,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 
 @SpringBootApplication
-@EnableSagaEntityScan(basePackageClasses = GameDesignServiceApplication.class)
+@EnableSagaEntityScan
 @EnableConfigurationProperties(AssetStoreProperties.class)
 public class GameDesignServiceApplication {
   public static void main(String[] args) {

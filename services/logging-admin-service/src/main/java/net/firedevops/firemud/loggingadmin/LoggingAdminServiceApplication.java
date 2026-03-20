@@ -9,7 +9,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.context.annotation.Import;
 
 @SpringBootApplication
-@EnableSagaEntityScan(basePackageClasses = LoggingAdminServiceApplication.class)
+@EnableSagaEntityScan
 @OpenAPIDefinition(info = @Info(title = "Logging Admin Service", version = "v1"))
 @Import(AuthConfig.class)
 public class LoggingAdminServiceApplication {
