@@ -37,11 +37,6 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.orm.jpa.SharedEntityManagerCreator;
 
 @AutoConfiguration
-@ConditionalOnProperty(
-    prefix = "firemud.database",
-    name = "enabled",
-    havingValue = "true",
-    matchIfMissing = true)
 @EnableConfigurationProperties({PostgresProperties.class, RedisProperties.class})
 @SuppressFBWarnings(
     value = "EI_EXPOSE_REP2",
@@ -56,6 +51,11 @@ public class DatabaseAutoConfiguration {
   }
 
   @Bean
+  @ConditionalOnProperty(
+      prefix = "firemud.database",
+      name = "enabled",
+      havingValue = "true",
+      matchIfMissing = true)
   @ConditionalOnClass(name = "org.postgresql.Driver")
   public DataSource dataSource() {
     String url =
@@ -70,6 +70,12 @@ public class DatabaseAutoConfiguration {
   }
 
   @Bean
+  @ConditionalOnProperty(
+      prefix = "firemud.redis",
+      name = "enabled",
+      havingValue = "true",
+      matchIfMissing = true)
+  @ConditionalOnMissingBean(ClientResources.class)
   public ClientResources lettuceClientResources(MeterRegistry registry) {
     MicrometerOptions options = MicrometerOptions.create();
     return DefaultClientResources.builder()
@@ -78,6 +84,12 @@ public class DatabaseAutoConfiguration {
   }
 
   @Bean
+  @ConditionalOnProperty(
+      prefix = "firemud.redis",
+      name = "enabled",
+      havingValue = "true",
+      matchIfMissing = true)
+  @ConditionalOnMissingBean(RedisConnectionFactory.class)
   public RedisConnectionFactory redisConnectionFactory(ClientResources resources) {
     RedisStandaloneConfiguration standalone =
         new RedisStandaloneConfiguration(redis.getHost(), redis.getPort());
@@ -87,6 +99,12 @@ public class DatabaseAutoConfiguration {
   }
 
   @Bean
+  @ConditionalOnProperty(
+      prefix = "firemud.redis",
+      name = "enabled",
+      havingValue = "true",
+      matchIfMissing = true)
+  @ConditionalOnMissingBean(name = "redisUpGauge")
   public Gauge redisUpGauge(RedisConnectionFactory factory, MeterRegistry registry) {
     return Gauge.builder(
             "redis.up",
@@ -101,6 +119,12 @@ public class DatabaseAutoConfiguration {
   }
 
   @Bean
+  @ConditionalOnProperty(
+      prefix = "firemud.redis",
+      name = "enabled",
+      havingValue = "true",
+      matchIfMissing = true)
+  @ConditionalOnMissingBean(RedisTemplate.class)
   public RedisTemplate<String, Object> redisTemplate(RedisConnectionFactory factory) {
     RedisTemplate<String, Object> template = new RedisTemplate<>();
     template.setConnectionFactory(factory);
@@ -108,6 +132,11 @@ public class DatabaseAutoConfiguration {
   }
 
   @Bean
+  @ConditionalOnProperty(
+      prefix = "firemud.redis",
+      name = "enabled",
+      havingValue = "true",
+      matchIfMissing = true)
   @ConditionalOnMissingBean(StringRedisTemplate.class)
   public StringRedisTemplate stringRedisTemplate(RedisConnectionFactory factory) {
     StringRedisTemplate template = new StringRedisTemplate();
@@ -116,6 +145,11 @@ public class DatabaseAutoConfiguration {
   }
 
   @Bean
+  @ConditionalOnProperty(
+      prefix = "firemud.database",
+      name = "enabled",
+      havingValue = "true",
+      matchIfMissing = true)
   @ConditionalOnBean(EntityManagerFactory.class)
   @Conditional(SagaPersistenceManagedCondition.class)
   @ConditionalOnMissingBean(SagaInstanceRepository.class)
@@ -126,6 +160,11 @@ public class DatabaseAutoConfiguration {
   }
 
   @Bean
+  @ConditionalOnProperty(
+      prefix = "firemud.database",
+      name = "enabled",
+      havingValue = "true",
+      matchIfMissing = true)
   @ConditionalOnBean(EntityManagerFactory.class)
   @Conditional(SagaPersistenceManagedCondition.class)
   @ConditionalOnMissingBean(SagaStepRepository.class)

@@ -1,4 +1,4 @@
-name: Build Docker Images
+name: Build and Publish Docker Images
 
 on:
   workflow_run:
@@ -10,6 +10,10 @@ on:
 permissions:
   contents: read
   packages: write
+
+concurrency:
+  group: docker-images-${{ github.workflow }}-${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_branch || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   docker-build:

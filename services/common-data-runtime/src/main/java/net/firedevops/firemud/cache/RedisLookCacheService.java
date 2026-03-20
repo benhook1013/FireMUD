@@ -5,22 +5,16 @@ import java.time.Duration;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
-import org.springframework.data.redis.core.RedisTemplate;
-import org.springframework.stereotype.Service;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.ObjectMapper;
 
-@Service
-@ConditionalOnBean(RedisTemplate.class)
-@ConditionalOnMissingBean(LookCacheService.class)
 @RequiredArgsConstructor
 @SuppressFBWarnings(
     value = "EI_EXPOSE_REP2",
     justification = "Injected Redis/ObjectMapper dependencies are shared framework singletons")
 public class RedisLookCacheService implements LookCacheService {
-  private final RedisTemplate<String, String> redisTemplate;
+  private final StringRedisTemplate redisTemplate;
   private final ObjectMapper objectMapper;
 
   @Value("${firemud.look.cache.ttl-ms:600000}")
