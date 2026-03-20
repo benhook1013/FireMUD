@@ -65,6 +65,30 @@ jobs:
               return checkRun.conclusion ?? "pending";
             };
 
+            const statusPriority = (value) => {
+              switch (value) {
+                case "in_progress":
+                  return 7;
+                case "queued":
+                  return 6;
+                case "pending":
+                  return 5;
+                case "success":
+                  return 4;
+                case "failure":
+                case "timed_out":
+                case "action_required":
+                  return 3;
+                case "neutral":
+                case "skipped":
+                  return 2;
+                case "cancelled":
+                  return 1;
+                default:
+                  return 0;
+              }
+            };
+
             const loadChecks = async () => {
               const { data } = await github.rest.checks.listForRef({
                 ...context.repo,
@@ -76,14 +100,24 @@ jobs:
 
             const resolveStatuses = (checkRuns) =>
               requiredChecks.map(([label, checkName]) => {
-                const latest = checkRuns
+                const candidates = checkRuns
                   .filter((checkRun) => checkRun.name === checkName)
-                  .sort((a, b) => b.id - a.id)[0];
-                return [label, normalizeStatus(latest)];
+                  .map((checkRun) => ({
+                    checkRun,
+                    status: normalizeStatus(checkRun),
+                  }))
+                  .sort((a, b) => {
+                    const priorityDiff = statusPriority(b.status) - statusPriority(a.status);
+                    if (priorityDiff !== 0) {
+                      return priorityDiff;
+                    }
+                    return b.checkRun.id - a.checkRun.id;
+                  });
+                return [label, candidates[0]?.status ?? "pending"];
               });
 
             let checks = resolveStatuses(await loadChecks());
-            for (let attempt = 0; attempt < 12; attempt += 1) {
+            for (let attempt = 0; attempt < 30; attempt += 1) {
               const allCompleted = checks.every(([, result]) => terminalConclusions.has(result));
               if (allCompleted) {
                 break;
