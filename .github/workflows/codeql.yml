@@ -19,19 +19,21 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        language: [ 'java' ]
+        language: [ 'java', 'javascript-typescript' ]
 
     steps:
       - name: ⬇️ Checkout repository
         uses: actions/checkout@v6
 
       - name: ⚙️ Set Up Java
+        if: matrix.language == 'java'
         uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '21'
 
       - name: ⚙️ Set Up Gradle
+        if: matrix.language == 'java'
         uses: gradle/actions/setup-gradle@v5
 
       - name: 🔍 Initialize CodeQL
@@ -40,6 +42,7 @@ jobs:
           languages: ${{ matrix.language }}
 
       - name: ⚙️ Build project for CodeQL
+        if: matrix.language == 'java'
         run: ./gradlew codeqlClasses --no-daemon
 
       - name: 📊 Perform CodeQL Analysis
