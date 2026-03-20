@@ -110,7 +110,8 @@ jobs:
                 .sort((a, b) => b.id - a.id)[0];
 
             const checks = [
-              ["CodeQL analysis", normalizeStatus(latestCheckRun("CodeQL Analysis (java)"))],
+              ["CodeQL analysis (java)", normalizeStatus(latestCheckRun("CodeQL Analysis (java)"))],
+              ["CodeQL analysis (javascript-typescript)", normalizeStatus(latestCheckRun("CodeQL Analysis (javascript-typescript)"))],
               ["License gate", "${{ needs.ort-scan.result }}"],
             ];
 
