@@ -29,7 +29,7 @@ jobs:
         env:
           LYCHEE_CACHE: true
         with:
-          args: --no-progress --verbose --exclude-file config/lychee/.lycheeignore './**/*.md' --exclude './**/node_modules/**' --exclude './**/build/**' --exclude './**/.gradle/**'
+          args: --no-progress --verbose --exclude-file .lycheeignore './**/*.md' --exclude './**/node_modules/**' --exclude './**/build/**' --exclude './**/.gradle/**'
           fail: true
           jobSummary: true
       - uses: actions/configure-pages@v5
