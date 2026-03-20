@@ -36,9 +36,12 @@ jobs:
             const pullRequest = pullRequests[0];
             const issueNumber = pullRequest.number;
             const headSha = context.payload.workflow_run.head_sha;
-            const requiredChecks = [
+            const detailChecks = [
               ["CodeQL analysis (java)", "CodeQL Analysis (java)"],
               ["CodeQL analysis (javascript-typescript)", "CodeQL Analysis (javascript-typescript)"],
+            ];
+            const gateChecks = [
+              ["CodeQL gate", "CodeQL Gate"],
               ["License gate", "License Gate"],
             ];
             const terminalConclusions = new Set([
@@ -65,6 +68,30 @@ jobs:
               return checkRun.conclusion ?? "pending";
             };
 
+            const statusPriority = (value) => {
+              switch (value) {
+                case "in_progress":
+                  return 7;
+                case "queued":
+                  return 6;
+                case "pending":
+                  return 5;
+                case "success":
+                  return 4;
+                case "failure":
+                case "timed_out":
+                case "action_required":
+                  return 3;
+                case "neutral":
+                case "skipped":
+                  return 2;
+                case "cancelled":
+                  return 1;
+                default:
+                  return 0;
+              }
+            };
+
             const loadChecks = async () => {
               const { data } = await github.rest.checks.listForRef({
                 ...context.repo,
@@ -75,15 +102,25 @@ jobs:
             };
 
             const resolveStatuses = (checkRuns) =>
-              requiredChecks.map(([label, checkName]) => {
-                const latest = checkRuns
+              [...gateChecks, ...detailChecks].map(([label, checkName]) => {
+                const candidates = checkRuns
                   .filter((checkRun) => checkRun.name === checkName)
-                  .sort((a, b) => b.id - a.id)[0];
-                return [label, normalizeStatus(latest)];
+                  .map((checkRun) => ({
+                    checkRun,
+                    status: normalizeStatus(checkRun),
+                  }))
+                  .sort((a, b) => {
+                    const priorityDiff = statusPriority(b.status) - statusPriority(a.status);
+                    if (priorityDiff !== 0) {
+                      return priorityDiff;
+                    }
+                    return b.checkRun.id - a.checkRun.id;
+                  });
+                return [label, candidates[0]?.status ?? "pending"];
               });
 
             let checks = resolveStatuses(await loadChecks());
-            for (let attempt = 0; attempt < 12; attempt += 1) {
+            for (let attempt = 0; attempt < 30; attempt += 1) {
               const allCompleted = checks.every(([, result]) => terminalConclusions.has(result));
               if (allCompleted) {
                 break;
@@ -92,10 +129,13 @@ jobs:
               checks = resolveStatuses(await loadChecks());
             }
 
-            const failedChecks = checks.filter(([, result]) =>
+            const gateResults = checks.slice(0, gateChecks.length);
+            const detailResults = checks.slice(gateChecks.length);
+
+            const failedChecks = gateResults.filter(([, result]) =>
               ["failure", "timed_out", "action_required"].includes(result)
             );
-            const pendingChecks = checks.filter(([, result]) =>
+            const pendingChecks = gateResults.filter(([, result]) =>
               ["pending", "in_progress", "queued"].includes(result)
             );
 
@@ -110,7 +150,11 @@ jobs:
               "### Static Analysis Summary",
               headline,
               "",
-              ...checks.map(([name, result]) => `- ${statusIcon(result)} ${name}: \`${result}\``),
+              ...gateResults.map(([name, result]) => `- ${statusIcon(result)} ${name}: \`${result}\``),
+              "",
+              "CodeQL breakdown",
+              "",
+              ...detailResults.map(([name, result]) => `- ${statusIcon(result)} ${name}: \`${result}\``),
             ].join("\n");
 
             const { data: comments } = await github.rest.issues.listComments({

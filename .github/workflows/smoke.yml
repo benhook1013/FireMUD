@@ -72,10 +72,23 @@ jobs:
         if: always()
         run: ./gradlew devDown
 
+  smoke-gate:
+    name: Smoke Gate
+    runs-on: ubuntu-latest
+    needs: [smoke-core]
+    if: always()
+    steps:
+      - name: Enforce successful smoke tests
+        run: |
+          if [ "${{ needs.smoke-core.result }}" != "success" ]; then
+            echo "Smoke tests did not complete successfully: ${{ needs.smoke-core.result }}"
+            exit 1
+          fi
+
   smoke-summary:
     name: Smoke Summary
     runs-on: ubuntu-latest
-    needs: [smoke-core]
+    needs: [smoke-core, smoke-gate]
     if: github.event_name == 'pull_request' && always()
     steps:
       - name: 💬 Publish Smoke Summary Comment

@@ -82,26 +82,36 @@ jobs:
           name: trivy-report-${{ github.sha }}
           path: trivy-report.txt
 
+  secret-compliance:
+    name: Secret Compliance Validation
+    uses: ./.github/workflows/validate-secret-compliance.yml
+
   security-gate:
     name: Security Gate
     runs-on: ubuntu-latest
-    needs: [trivy-scan]
+    needs: [trivy-scan, secret-compliance]
     if: always()
     steps:
       - name: Enforce security success
         env:
           TRIVY_SCAN: ${{ needs.trivy-scan.result }}
+          SECRET_COMPLIANCE: ${{ needs.secret-compliance.result }}
         run: |
           echo "Trivy Filesystem Scan => $TRIVY_SCAN"
+          echo "Secret Compliance Validation => $SECRET_COMPLIANCE"
           if [ "$TRIVY_SCAN" != "success" ]; then
             echo "Security Gate failed because the filesystem Trivy scan did not succeed." >&2
+            exit 1
+          fi
+          if [ "$SECRET_COMPLIANCE" != "success" ]; then
+            echo "Security Gate failed because secret compliance validation did not succeed." >&2
             exit 1
           fi
 
   security-summary:
     name: Security Summary
     runs-on: ubuntu-latest
-    needs: [trivy-scan, security-gate]
+    needs: [trivy-scan, secret-compliance, security-gate]
     if: github.event_name == 'pull_request' && always()
     steps:
       - name: 💬 Publish Security Summary Comment
@@ -118,6 +128,7 @@ jobs:
             const checks = [
               ["Security gate", "${{ needs.security-gate.result }}"],
               ["Trivy filesystem scan", "${{ needs.trivy-scan.result }}"],
+              ["Secret compliance validation", "${{ needs.secret-compliance.result }}"],
             ];
 
             const failedChecks = checks.filter(([, result]) => result !== "success");
