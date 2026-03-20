@@ -123,3 +123,16 @@ jobs:
                 body
               });
             }
+
+  smoke-gate:
+    name: Smoke Gate
+    runs-on: ubuntu-latest
+    needs: [smoke-core]
+    if: always()
+    steps:
+      - name: Enforce successful smoke tests
+        run: |
+          if [ "${{ needs.smoke-core.result }}" != "success" ]; then
+            echo "Smoke tests did not complete successfully: ${{ needs.smoke-core.result }}"
+            exit 1
+          fi
