@@ -12,6 +12,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.beans.factory.annotation.Qualifier;
 import tools.jackson.databind.ObjectMapper;
 
 @AutoConfiguration
@@ -30,7 +31,8 @@ public class CommonAutoConfiguration {
   @ConditionalOnBean(RedisTemplate.class)
   @ConditionalOnMissingBean(LookCacheService.class)
   public LookCacheService lookCacheService(
-      RedisTemplate<String, String> redisTemplate, ObjectMapper objectMapper) {
+      @Qualifier("redisTemplate") RedisTemplate<String, String> redisTemplate,
+      ObjectMapper objectMapper) {
     return new RedisLookCacheService(redisTemplate, objectMapper);
   }
 }
