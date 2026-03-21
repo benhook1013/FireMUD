@@ -70,6 +70,7 @@ Key steps:
   - define vacuum/GC cadence,
   - confirm the command-status retention window outlives expected player/client retry windows,
   - verify oldest-pending-row age and write-latency SLOs across the whole surface rather than table-by-table in isolation.
+  - confirm dashboards and operator playbooks still map command-status rows onto the canonical terminal-state vocabulary in `design/architecture/system-architecture-tick-execution-flows.md`.
 
 ## Verification
 

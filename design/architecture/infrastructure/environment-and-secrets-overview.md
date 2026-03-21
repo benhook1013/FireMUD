@@ -112,6 +112,7 @@ JWT signing key and JWKS behavior differs slightly by environment to balance saf
   - The same `jwt-rotation` CronJob template used in production may be enabled on a low-frequency schedule (for example monthly) to exercise the rotation path; leaving it operator-triggered is also acceptable when staging is being kept closer to production change control than to rotation-path testing.
 - **PR preview**
   - Each preview namespace must receive PR-unique JWT signing material and JWKS data, even when those resources are treated as low-sensitivity test material.
+  - Canonical default: store the preview signing key in a preview-unique Kubernetes `Secret` and publish the corresponding preview-unique JWKS document via a namespace-local `ConfigMap`.
   - Reusing one shared preview signing key across namespaces is non-compliant because it allows tokens minted in one PR environment to validate in another.
 - **Production**
   - Required to use a persistent `jwt-signing-keys` Secret and JWKS document; JWKS is the canonical trust source for all validating services.

@@ -105,7 +105,7 @@ The following Redis-focused incident flows build on the general recovery steps a
 3. **Act**
    1. If the chosen mode is `replay_first`:
       - Run `coordination-maintenance reconcile-ledger ...` for the affected scope without bumping `region_epoch`; this is the canonical operator entrypoint for the replay controller / maintenance API path.
-      - Watch `tick_effects_pending_oldest_age_seconds`, `tick_effects_replay_slo_breached`, and command convergence for one emitted replay-convergence budget window.
+      - Watch `tick_effects_pending_oldest_age_seconds`, `tick_effects_replay_slo_breached`, and command convergence for one emitted replay-convergence budget window. Verify that command outcomes settle into the canonical terminal vocabulary described in `system-architecture-tick-execution-flows.md` rather than inventing a replay-only local interpretation.
       - Escalate to `reset_first` immediately if replay cannot make bounded progress, if inconsistent-state signals appear, or if the region transitions to `STALLED`.
       - Worked example:
         1. Region `(T1, R7)` remains on `region_epoch = 13`, `tick_effects_pending_oldest_age_seconds` exceeds budget, and there is no evidence of mixed-epoch state or duplicate durable batches.

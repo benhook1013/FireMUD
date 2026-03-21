@@ -79,57 +79,67 @@ Redis coordination keys form a long-running, tail-loss-bounded **coordination bu
 - Coordination Redis holds volatile structures such as tick queues, `pending` sets, timers, region leases, tick event streams, and scheduler offsets; these structures are expected to be subject to bounded tail-loss and scoped resets as defined in this document and the Redis reset/runbook docs.
 - Application and ops designs must not treat AOF contents or Redis key history as the primary log for audits, analytics, or long-term effect replay; those concerns belong in PostgreSQL-backed ledgers and domain stores.
 
-  - **Coordination timeline = `(regionEpoch, tickId)`**
-  - For each `<tenantId, regionId>` the canonical coordination timeline is the pair `(region_epoch, tickId)`:
-    - `region_epoch` lives in PostgreSQL and is advanced by the tick control plane when a scoped coordination reset occurs (or when explicitly performing topology/maintenance operations that intentionally sever the old timeline for a region).
-    - `tickId` is monotonic per `<tenantId, regionId>` within a given `region_epoch` and is carried on all tick‑driven calls and ledger entries.
-  - **Bootstrap vs stream**
-    - The authoritative **baseline** for `(region_epoch, tickId)` comes from Game Session’s control/status surface (for example a `GetRegionTickStatus` API) backed by a PostgreSQL `RegionStatus`-style table; new consumers and operational tooling must obtain their initial view of the timeline from there rather than inferring it from Redis keys.
-    - Long‑lived consumers then follow `StreamTickHeartbeats` as the authoritative progression of the timeline after that baseline; if a heartbeat disconnects or an epoch bump is observed, they reconcile using the control API plus durable domain state before resuming.
-    - Redis coordination structures (including `tick:{tenantRegionTag}:*`, timers, retries, tick event streams, and scheduler offsets) are treated purely as volatile buffers; they may be partially lost or reset within the documented tail-loss envelope (`tail_loss_budget_ms = max(2000, 2 * tick_interval_ms)` in `system-architecture-redis-operations.md`) and are never considered the primary source of truth for epoch or tick counters.
-    - Tick-scoped Redis staging state (for example `tick:{tenantRegionTag}:pending`, effect batches, and other data created for one in-flight tick) and all corresponding PostgreSQL tick ledger rows conceptually belong to exactly one `(region_epoch, tickId)` on this timeline.
-    - Region-scoped source structures such as `tick:{tenantRegionTag}:queue:*`, `timer:{tenantRegionTag}`, `retry:{tenantRegionTag}`, `tick-executor-lease:{tenantRegionTag}`, tick event streams, and scheduler offsets are primarily epoch-scoped coordination state:
-      - They belong to the current `region_epoch`.
-      - They carry eligibility/order metadata that may later be materialized into a specific `(region_epoch, tickId)` when a batch is staged.
-      - Reset/replay tooling and Lua validation must therefore distinguish epoch-scoped source state from tick-scoped staged state.
-    - A single **per-region metadata key** captures the Redis-side view of this timeline for coordination scripts:
-      - `tick:{tenantRegionTag}:meta` is a hash that stores at least:
-        - `region_epoch` – the epoch currently considered valid for this `<tenantId, regionId>` in Redis.
-        - `current_tick_id` – the highest **staged** `tickId` for this region as observed by the tick executor’s coordination scripts. It is a monotonic guard for Redis writes only; it is **not** the source of truth for “last committed tick”.
-        - `current_tick_state` – the Redis-side execution state for `current_tick_id`. Allowed values are:
-          - `STAGED` – Redis `pending`/queue state exists for this tick and hot-path scripts may continue to add idempotent entries for the same tick.
-          - `RESOLVING` – durable domain/application work for this tick is in progress or being reconciled; no newer tick may be staged yet.
-          - `APPLIED` – all required effects for this tick have reached a durable applied/no-op terminal outcome in PostgreSQL-backed handlers or the reconciliation backlog.
-          - `ABANDONED` – the tick was intentionally terminated for the current epoch (for example due to reset/recovery) and no more work for that `(region_epoch, tickId)` may be staged through hot-path scripts.
-        - `current_tick_terminal_at_ms` – caller-supplied timestamp marking when `current_tick_state` first entered `APPLIED` or `ABANDONED`; used for observability and bounded cleanup only, never for correctness decisions inside Lua.
-      - The canonical Redis-side state machine for a region is:
-        - `missing meta` or `current_tick_state in {APPLIED, ABANDONED}` with no newer tick staged:
-          - The next winning executor may initialize or advance the meta record to `current_tick_id = requestedTickId`, `current_tick_state = STAGED` if `requestedTickId` is exactly the scheduler/control-plane tick derived from PostgreSQL RegionStatus for that region.
-        - `STAGED -> RESOLVING`:
-          - The first script or caller that hands staged effects to durable domain/application processing flips the state to `RESOLVING`.
-          - Replays for the same tick must treat `STAGED` and `RESOLVING` as the same logical in-flight tick and may only add idempotent effect entries for that same `current_tick_id`.
-        - `RESOLVING -> APPLIED`:
-          - Only after the durable tick ledger and/or reconciliation backlog for `(tenantId, regionId, region_epoch, tickId)` shows all required participants at applied/no-op terminal outcomes.
-        - `RESOLVING -> ABANDONED`:
-          - Only after the control plane or recovery tooling has made an explicit terminal decision to abandon the tick for the current epoch.
-        - `APPLIED` or `ABANDONED` for tick `T`:
-          - Cleanup may delete `pending`, retry markers, and other Redis-only remnants for tick `T`.
-          - `APPLIED`/`ABANDONED` marks the durable terminal state only; it does not by itself prove the region is no longer in flight for scheduler purposes.
-          - Staging for tick `T+1` is allowed only after tick `T` is both terminal in Redis meta and `coordination_cleared` under the scheduler/runtime rules in `system-architecture-ticks.md`.
-      - Tick- and epoch-aware Lua scripts:
-        - Read `region_epoch` (and when needed `current_tick_id`) from this key and compare it to the expected epoch/tick supplied from PostgreSQL/lease context.
-        - Return non-mutating outcomes such as `"STALE_EPOCH"` when the stored epoch does not match the expected value, so callers can abandon work tied to an old epoch and reacquire leases under the new epoch.
-        - Treat `current_tick_state` as the gate for hot-path progress:
-          - Staging scripts may create or extend `pending` only when `requestedTickId == current_tick_id` and `current_tick_state in {STAGED, RESOLVING}`, or when they are initializing the next tick from a terminal prior state.
-          - Hot-path scripts must never advance directly from `STAGED`/`RESOLVING` to a newer `current_tick_id`; only a terminal `APPLIED` or `ABANDONED` state plus separate scheduler-observed `coordination_cleared` unlocks the next tick.
-      - Schedulers and operators:
-        - Obtain their authoritative baseline for `(region_epoch, tickId)` from PostgreSQL RegionStatus/tick effect ledger and heartbeats, not from `current_tick_id`.
-        - On a normal cold start with empty Coordination Redis, the next winning tick executor initializes or recreates `tick:{tenantRegionTag}:meta` during hot-path staging from PostgreSQL `RegionStatus`; schedulers and operators do not treat missing `meta` as a manual pre-seeding task.
-        - Treat Redis `pending` contents as an implementation detail of the hot path, not as proof of durable convergence. The durable proof that a tick is safe to move past lives in PostgreSQL-ledger and reconciliation state, after which the caller records `APPLIED` or `ABANDONED` in `tick:{tenantRegionTag}:meta`.
-        - Recovery after tail loss or reset does **not** reconstruct old ticks by silently restaging them through normal hot-path scripts. Recovery completes or abandons older work from durable manifests, ledger rows, and reconciliation backlog state, then records the resulting terminal meta state before allowing newer ticks to stage.
-  - Split‑brain detection, replay, and reset handling treat this timeline as the arbiter of “which work is valid”:
-    - If multiple executors attempt to own the same `<tenantId, regionId>` with different `region_epoch` values, the highest epoch wins and lower epochs are treated as stale.
-    - After a region‑ or tenant‑scoped reset, a new `region_epoch` is created and any surviving coordination state from older epochs is ignored or explicitly cleaned up by reset tooling.
+- **Coordination timeline = `(regionEpoch, tickId)`**
+- For each `<tenantId, regionId>` the canonical coordination timeline is the pair `(region_epoch, tickId)`:
+  - `region_epoch` lives in PostgreSQL and is advanced by the tick control plane when a scoped coordination reset occurs (or when explicitly performing topology/maintenance operations that intentionally sever the old timeline for a region).
+  - `tickId` is monotonic per `<tenantId, regionId>` within a given `region_epoch` and is carried on all tick‑driven calls and ledger entries.
+- **Bootstrap vs stream**
+  - The authoritative **baseline** for `(region_epoch, tickId)` comes from Game Session’s control/status surface (for example a `GetRegionTickStatus` API) backed by a PostgreSQL `RegionStatus`-style table; new consumers and operational tooling must obtain their initial view of the timeline from there rather than inferring it from Redis keys.
+  - Long‑lived consumers then follow `StreamTickHeartbeats` as the authoritative progression of the timeline after that baseline; if a heartbeat disconnects or an epoch bump is observed, they reconcile using the control API plus durable domain state before resuming.
+  - Redis coordination structures (including `tick:{tenantRegionTag}:*`, timers, retries, tick event streams, and scheduler offsets) are treated purely as volatile buffers; they may be partially lost or reset within the documented tail-loss envelope (`tail_loss_budget_ms = max(2000, 2 * tick_interval_ms)` in `system-architecture-redis-operations.md`) and are never considered the primary source of truth for epoch or tick counters.
+  - Tick-scoped Redis staging state (for example `tick:{tenantRegionTag}:pending`, effect batches, and other data created for one in-flight tick) and all corresponding PostgreSQL tick ledger rows conceptually belong to exactly one `(region_epoch, tickId)` on this timeline.
+  - Region-scoped source structures such as `tick:{tenantRegionTag}:queue:*`, `timer:{tenantRegionTag}`, `retry:{tenantRegionTag}`, `tick-executor-lease:{tenantRegionTag}`, tick event streams, and scheduler offsets are primarily epoch-scoped coordination state:
+    - They belong to the current `region_epoch`.
+    - They carry eligibility/order metadata that may later be materialized into a specific `(region_epoch, tickId)` when a batch is staged.
+    - Reset/replay tooling and Lua validation must therefore distinguish epoch-scoped source state from tick-scoped staged state.
+  - A single **per-region metadata key** captures the Redis-side view of this timeline for coordination scripts:
+    - `tick:{tenantRegionTag}:meta` is a hash that stores at least:
+      - `region_epoch` – the epoch currently considered valid for this `<tenantId, regionId>` in Redis.
+      - `current_tick_id` – the highest **staged** `tickId` for this region as observed by the tick executor’s coordination scripts. It is a monotonic guard for Redis writes only; it is **not** the source of truth for “last committed tick”.
+      - `current_tick_state` – the Redis-side execution state for `current_tick_id`. Allowed values are:
+        - `STAGED` – Redis `pending`/queue state exists for this tick and hot-path scripts may continue to add idempotent entries for the same tick.
+        - `RESOLVING` – durable domain/application work for this tick is in progress or being reconciled; no newer tick may be staged yet.
+        - `APPLIED` – all required effects for this tick have reached a durable applied/no-op terminal outcome in PostgreSQL-backed handlers or the reconciliation backlog.
+        - `ABANDONED` – the tick was intentionally terminated for the current epoch (for example due to reset/recovery) and no more work for that `(region_epoch, tickId)` may be staged through hot-path scripts.
+      - `current_tick_terminal_at_ms` – caller-supplied timestamp marking when `current_tick_state` first entered `APPLIED` or `ABANDONED`; used for observability and bounded cleanup only, never for correctness decisions inside Lua.
+    - Illustrative Redis hash contents:
+
+      ```text
+      HGETALL tick:{tenant-demo:region:starter-village}:meta
+      region_epoch               14
+      current_tick_id            9285
+      current_tick_state         RESOLVING
+      current_tick_terminal_at_ms
+      ```
+
+    - The canonical Redis-side state machine for a region is:
+      - `missing meta` or `current_tick_state in {APPLIED, ABANDONED}` with no newer tick staged:
+        - The next winning executor may initialize or advance the meta record to `current_tick_id = requestedTickId`, `current_tick_state = STAGED` if `requestedTickId` is exactly the scheduler/control-plane tick derived from PostgreSQL RegionStatus for that region.
+      - `STAGED -> RESOLVING`:
+        - The first script or caller that hands staged effects to durable domain/application processing flips the state to `RESOLVING`.
+        - Replays for the same tick must treat `STAGED` and `RESOLVING` as the same logical in-flight tick and may only add idempotent effect entries for that same `current_tick_id`.
+      - `RESOLVING -> APPLIED`:
+        - Only after the durable tick ledger and/or reconciliation backlog for `(tenantId, regionId, region_epoch, tickId)` shows all required participants at applied/no-op terminal outcomes.
+      - `RESOLVING -> ABANDONED`:
+        - Only after the control plane or recovery tooling has made an explicit terminal decision to abandon the tick for the current epoch.
+      - `APPLIED` or `ABANDONED` for tick `T`:
+        - Cleanup may delete `pending`, retry markers, and other Redis-only remnants for tick `T`.
+        - `APPLIED`/`ABANDONED` marks the durable terminal state only; it does not by itself prove the region is no longer in flight for scheduler purposes.
+        - Staging for tick `T+1` is allowed only after tick `T` is both terminal in Redis meta and `coordination_cleared` under the scheduler/runtime rules in `system-architecture-ticks.md`.
+    - Tick- and epoch-aware Lua scripts:
+      - Read `region_epoch` (and when needed `current_tick_id`) from this key and compare it to the expected epoch/tick supplied from PostgreSQL/lease context.
+      - Return non-mutating outcomes such as `"STALE_EPOCH"` when the stored epoch does not match the expected value, so callers can abandon work tied to an old epoch and reacquire leases under the new epoch.
+      - Treat `current_tick_state` as the gate for hot-path progress:
+        - Staging scripts may create or extend `pending` only when `requestedTickId == current_tick_id` and `current_tick_state in {STAGED, RESOLVING}`, or when they are initializing the next tick from a terminal prior state.
+        - Hot-path scripts must never advance directly from `STAGED`/`RESOLVING` to a newer `current_tick_id`; only a terminal `APPLIED` or `ABANDONED` state plus separate scheduler-observed `coordination_cleared` unlocks the next tick.
+    - Schedulers and operators:
+      - Obtain their authoritative baseline for `(region_epoch, tickId)` from PostgreSQL RegionStatus/tick effect ledger and heartbeats, not from `current_tick_id`.
+      - On a normal cold start with empty Coordination Redis, the next winning tick executor initializes or recreates `tick:{tenantRegionTag}:meta` during hot-path staging from PostgreSQL `RegionStatus`; schedulers and operators do not treat missing `meta` as a manual pre-seeding task.
+      - Treat Redis `pending` contents as an implementation detail of the hot path, not as proof of durable convergence. The durable proof that a tick is safe to move past lives in PostgreSQL-ledger and reconciliation state, after which the caller records `APPLIED` or `ABANDONED` in `tick:{tenantRegionTag}:meta`.
+      - Recovery after tail loss or reset does **not** reconstruct old ticks by silently restaging them through normal hot-path scripts. Recovery completes or abandons older work from durable manifests, ledger rows, and reconciliation backlog state, then records the resulting terminal meta state before allowing newer ticks to stage.
+- Split‑brain detection, replay, and reset handling treat this timeline as the arbiter of “which work is valid”:
+  - If multiple executors attempt to own the same `<tenantId, regionId>` with different `region_epoch` values, the highest epoch wins and lower epochs are treated as stale.
+  - After a region‑ or tenant‑scoped reset, a new `region_epoch` is created and any surviving coordination state from older epochs is ignored or explicitly cleaned up by reset tooling.
 
 - **Non‑authoritative for game data**
   - Canonical game state (accounts, entities, items, rooms, instances) lives in PostgreSQL and domain services.

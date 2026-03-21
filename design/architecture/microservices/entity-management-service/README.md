@@ -147,6 +147,8 @@ Illustrative responses:
 }
 ```
 
+`durableFenceToken` values in these examples are illustrative opaque tokens only. Clients and operators must not infer structure from the string shape beyond equality comparison against the corresponding cutover/readiness contract.
+
 - Durable rows require remap:
 
 ```json

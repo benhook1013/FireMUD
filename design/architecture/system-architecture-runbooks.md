@@ -73,7 +73,7 @@ For a single-admin operator, most “what do I do now?” coordination/tick ques
   - `tick_durable_commit_total`, `tick_coordination_cleared_total`, `tick_cleanup_lag_ms` to detect durable/cleanup divergence.
   - `current_tick_state`, `current_tick_terminal_at_ms`, `tick_effects_replay_slo_breached`, and `tick_effects_replay_starved` to detect replay and cleanup pressure.
 - Cluster health:
-  - Redis primary/replica health, split-brain/sentinel alerts.
+  - Redis primary/replica health and coordination-topology alerts.
 
 - **Named operations**
   - Tail-loss incidents first choose a **replay-first** or **reset-first** recovery mode. Scope selection for resets happens only after `reset-first` is chosen.
