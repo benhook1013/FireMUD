@@ -7,6 +7,7 @@ These steps exercise the same `LOGIN` + `LOOK` flow that users take over both We
 1. Account Service stub or real credential provider must be running (`grpcurl` prefix `account-service:6565` by default).
 2. Game Session Service and Spring Cloud Gateway must be running with the same tenant, or use `GATEWAY_WS_URL` / `ACCOUNT_SERVICE_ENDPOINT` overrides to target your locally running instances. Use the tenant and session identifiers for your environment (in the target-state design these are UUIDs).
 3. Before running the flow, wait for the canonical readiness endpoints of the path you are exercising. For the Telnet path, that means Account Service, Game Session Service, Spring Cloud Gateway, and TCP Proxy must all report `UP` from `/actuator/health/readiness`.
+4. For the Compose-backed Telnet smoke, assert the pre-readiness admission behavior before waiting for readiness convergence: while TCP Proxy readiness is still false, new Telnet sockets must either be refused before the listener binds or receive the explicit `DISCONNECT startup_unavailable ...` response. Do not accept silent connection success during this window.
 
 ## 1. Direct WebSocket Smoke Flow
 
@@ -95,3 +96,8 @@ differences (for example, missing blank lines) as regressions in
 `design/project-management/vertical-slices/02-task-list-login-and-session-vertical-slice.md`.
 
 If any readiness endpoint for the target path is still not `UP`, do not treat retries or waiting inside the client flow as a valid substitute. The stack is not yet ready for player traffic.
+
+For the Telnet path specifically, the smoke should verify both sides of the contract:
+
+- before readiness: player traffic is refused or explicitly rejected with `startup_unavailable`
+- after readiness: first-attempt `LOGIN` and first `LOOK` succeed without retries

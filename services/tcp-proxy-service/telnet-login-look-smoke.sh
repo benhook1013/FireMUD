@@ -15,6 +15,7 @@ SMOKE_GATEWAY_API_BASE=${SMOKE_GATEWAY_API_BASE:-http://localhost:8080}
 SMOKE_TCP_PROXY_API_BASE=${SMOKE_TCP_PROXY_API_BASE:-http://localhost:8089}
 SMOKE_LOGIN_EXPECT=${SMOKE_LOGIN_EXPECT:-"OK LOGIN"}
 SMOKE_LOOK_EXPECT=${SMOKE_LOOK_EXPECT:-"OK LOOK"}
+SMOKE_STARTUP_EXPECT=${SMOKE_STARTUP_EXPECT:-"DISCONNECT startup_unavailable"}
 SMOKE_TIMEOUT_SECONDS=${SMOKE_TIMEOUT_SECONDS:-10}
 
 if command -v python3 >/dev/null 2>&1; then
@@ -54,6 +55,7 @@ gateway_api_base = os.environ.get("SMOKE_GATEWAY_API_BASE", "http://localhost:80
 tcp_proxy_api_base = os.environ.get("SMOKE_TCP_PROXY_API_BASE", "http://localhost:8089")
 login_expect = os.environ.get("SMOKE_LOGIN_EXPECT", "OK LOGIN")
 look_expect = os.environ.get("SMOKE_LOOK_EXPECT", "OK LOOK")
+startup_expect = os.environ.get("SMOKE_STARTUP_EXPECT", "DISCONNECT startup_unavailable")
 timeout_seconds = int(os.environ.get("SMOKE_TIMEOUT_SECONDS", "10"))
 startup_wait_seconds = int(os.environ.get("SMOKE_STARTUP_WAIT_SECONDS", "90"))
 
@@ -144,16 +146,50 @@ def wait_for_http_readiness(name, base_url):
     deadline = time.time() + startup_wait_seconds
     readiness_url = f"{base_url}/actuator/health/readiness"
     while time.time() < deadline:
-        try:
-            with urllib.request.urlopen(readiness_url, timeout=timeout_seconds) as response:
-                body = response.read().decode("utf-8", errors="ignore")
-                if response.status < 500 and "\"status\":\"UP\"" in body.replace(" ", ""):
-                    print(f"Confirmed {name} readiness via {readiness_url}.")
-                    return
-        except (urllib.error.URLError, OSError):
-            pass
+        if http_readiness_up(readiness_url):
+            print(f"Confirmed {name} readiness via {readiness_url}.")
+            return
         time.sleep(2)
     raise RuntimeError(f"{name} readiness did not report UP at {readiness_url}")
+
+
+def http_readiness_up(readiness_url):
+    try:
+        with urllib.request.urlopen(readiness_url, timeout=timeout_seconds) as response:
+            body = response.read().decode("utf-8", errors="ignore")
+            return response.status < 500 and "\"status\":\"UP\"" in body.replace(" ", "")
+    except (urllib.error.URLError, OSError):
+        return False
+
+
+def verify_pre_readiness_telnet_admission():
+    readiness_url = f"{tcp_proxy_api_base}/actuator/health/readiness"
+    deadline = time.time() + startup_wait_seconds
+    observed_unready_window = False
+    while time.time() < deadline:
+        if http_readiness_up(readiness_url):
+            if observed_unready_window:
+                print("Confirmed pre-readiness Telnet refusal before tcp-proxy readiness converged.")
+            else:
+                print("tcp-proxy reported ready before a pre-readiness admission window was observable; skipping startup refusal assertion.")
+            return
+        observed_unready_window = True
+        try:
+            with socket.create_connection((host, port), timeout=timeout_seconds) as sock:
+                response = recv_until(sock, "\n", timeout_seconds).strip()
+                print("=== Pre-readiness Telnet response ===")
+                print(response or "<no data>")
+                if startup_expect not in response:
+                    raise RuntimeError(
+                        "Expected pre-readiness Telnet refusal containing "
+                        f"'{startup_expect}', got '{response or '<no data>'}'"
+                    )
+        except ConnectionRefusedError:
+            print("Pre-readiness Telnet connect refused before listener bind; acceptable while traffic is still blocked.")
+        except OSError as exc:
+            raise RuntimeError(f"Pre-readiness Telnet verification failed: {exc}") from exc
+        time.sleep(1)
+    raise RuntimeError("tcp-proxy readiness did not converge after verifying pre-readiness admission behavior")
 
 
 def sync_session_owner_account():
@@ -208,6 +244,7 @@ def sync_session_owner_account():
 
 try:
     wait_for_account_schema()
+    verify_pre_readiness_telnet_admission()
     wait_for_http_readiness("account-service", account_api_base)
     wait_for_http_readiness("game-logic-service", game_logic_api_base)
     wait_for_http_readiness("game-session-service", game_session_api_base)
