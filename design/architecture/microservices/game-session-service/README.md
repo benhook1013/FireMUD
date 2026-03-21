@@ -24,6 +24,17 @@ Orchestrates live game sessions, including tick execution, player input validati
 - Front gameplay login commands and session binding, calling Account Service to verify credentials and obtain JWTs/tokens while enforcing single-session control for each character.
 - For first-party `/ws/game/**`, accept bootstrap-backed bare `LOGIN` after Gateway connect-token validation and signed connect-context verification; this path is intentionally credentialless and must not prompt the browser to replay username/password/OTP.
 - Mint and attach short-lived internal `SessionAttestation` payloads on gameplay-service gRPC calls so downstream gameplay services can verify delegated player identity (`accountId`, `tenantId`, `gameInstanceId`, `characterId`, `sessionId`) plus destination service/method scope in addition to mTLS caller identity.
+- Fail readiness for new gameplay traffic when the currently exposed `LOGIN` + first-command path is not safe
+
+### Readiness and Liveness
+
+- `liveness` is local-only and indicates that the process is alive and not wedged.
+- `readiness` is gameplay admission safety for the commands this service currently exposes at the session front door. For the currently implemented slice, Game Session is ready only when:
+  - local persistence required for login/session state is usable;
+  - required Redis-backed session and tick infrastructure is usable;
+  - Account Service authentication is reachable; and
+  - Game Logic is reachable for the first gameplay command path, with Game Logic in turn proving readiness for the downstream services needed to satisfy the first `LOOK`.
+- A successful `LOGIN` without a safe first `LOOK` is not sufficient readiness for new player traffic.
 
 ## Architecture / Design Notes
 
@@ -211,7 +222,7 @@ The internal front-end to lease-owner path is a fenced gameplay contract, not a 
 
 ## Operational Notes
 
-- Runs as a Kubernetes Deployment (Docker Compose for local dev) with `/actuator/health` probes. See [Deployment Environments](../../infrastructure/deployment-environments.md).
+- Runs as a Kubernetes Deployment (Docker Compose for local dev) with `/actuator/health/readiness` and `/actuator/health/liveness` probes. See [Deployment Environments](../../infrastructure/deployment-environments.md).
 - Logging, metrics, and tracing follow the standard [Logging & Monitoring](../../system-architecture-logging-monitoring.md) pipeline.
 
 ### Scaling and Region Rebalancing

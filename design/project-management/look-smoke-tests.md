@@ -37,7 +37,7 @@ Prerequisites: the TCP Proxy + Gateway stack running locally (see `services/tcp-
 
 Document every command/response pair so reproducible cross-service logs can be referenced in regression notes. The sample transcripts under `design/project-management/smoke-tests/look/` (`look-ws-sample.log`, `look-telnet-sample.log`) show the expected formatting for happy-path runs.
 
-For a non-interactive Telnet smoke check that performs `LOGIN` + `LOOK` via the TCP Proxy and asserts `OK LOGIN` / `OK LOOK` appear in the responses, use the helper script in `services/tcp-proxy-service/telnet-login-look-smoke.sh`. This script is designed to complement the manual steps above and can be wired into CI or run locally after starting the full Telnet → Gateway → Game Session stack.
+For a non-interactive Telnet smoke check that performs `LOGIN` + `LOOK` via the TCP Proxy and asserts `OK LOGIN` / `OK LOOK` appear in the responses, use the helper script in `services/tcp-proxy-service/telnet-login-look-smoke.sh`. This script is designed to complement the manual steps above and can be wired into CI or run locally after starting the full Telnet → Gateway → Game Session stack. The helper must wait for the canonical readiness endpoints for the path under test and fail if readiness does not converge; it should not mask startup races by timing out and continuing anyway or by re-running the full smoke until the stack eventually stabilizes.
 
 ## 3. Notes
 

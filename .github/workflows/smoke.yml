@@ -49,17 +49,7 @@ jobs:
       - name: 🧪 Telnet LOGIN + LOOK (TCP Proxy)
         run: |
           cd services/tcp-proxy-service
-          for attempt in 1 2 3; do
-            echo "Attempt ${attempt}: running Telnet LOGIN + LOOK smoke test..."
-            if bash ./telnet-login-look-smoke.sh; then
-              echo "Telnet smoke test succeeded on attempt ${attempt}."
-              exit 0
-            fi
-            echo "Telnet smoke test attempt ${attempt} failed; waiting before retry..."
-            sleep 10
-          done
-          echo "Telnet LOGIN + LOOK smoke test failed after 3 attempts."
-          exit 1
+          bash ./telnet-login-look-smoke.sh
 
       - name: 📜 Dump Docker Compose Logs on Failure
         if: failure()

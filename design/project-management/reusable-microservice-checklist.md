@@ -13,7 +13,7 @@ These tasks apply to every FireMUD service unless noted otherwise. Gateway and T
 - Add the service to the GitHub Actions build matrix and Buf lint step.
 - Include the service in the Docker image workflow (`buildDockerImages`).
 - Define Kubernetes `Deployment` and `Service` manifests.
-- Expose `/actuator/health` for readiness and liveness probes.
+- Expose `/actuator/health/readiness` and `/actuator/health/liveness` for readiness and liveness probes.
 
 ## API Definition
 

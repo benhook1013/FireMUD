@@ -17,11 +17,11 @@ serviceAccount:
   create: true
   name: ""
 readinessProbe:
-  path: /actuator/health
+  path: /actuator/health/readiness
   initialDelaySeconds: 5
   periodSeconds: 10
 livenessProbe:
-  path: /actuator/health
+  path: /actuator/health/liveness
   initialDelaySeconds: 15
   periodSeconds: 20
 affinity: {}

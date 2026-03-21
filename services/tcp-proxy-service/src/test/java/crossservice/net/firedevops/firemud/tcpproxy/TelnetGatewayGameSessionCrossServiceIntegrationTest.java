@@ -182,7 +182,9 @@ class TelnetGatewayGameSessionCrossServiceIntegrationTest {
               .properties(
                   "server.port=0",
                   "spring.main.web-application-type=reactive",
-                  "spring.grpc.server.port=0")
+                  "spring.grpc.server.port=0",
+                  "management.endpoint.health.validate-group-membership=false",
+                  "management.endpoint.health.group.readiness.include=readinessState")
               .run();
       int port = ((WebServerApplicationContext) context).getWebServer().getPort();
       return new GameSessionStubHolder(context, port, context.getBean(GameSessionStub.class));
@@ -199,6 +201,8 @@ class TelnetGatewayGameSessionCrossServiceIntegrationTest {
               .properties(
                   "server.port=0",
                   "spring.main.web-application-type=reactive",
+                  "management.endpoint.health.validate-group-membership=false",
+                  "management.endpoint.health.group.readiness.include=readinessState",
                   "gateway.stub.target-uri=ws://localhost:" + gameSessionPort + "/ws/game")
               .run();
       int port = ((WebServerApplicationContext) context).getWebServer().getPort();

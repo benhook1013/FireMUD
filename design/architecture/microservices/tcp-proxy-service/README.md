@@ -56,6 +56,17 @@ For any shared or player-facing environment, operators should ensure at least:
 - Proxy buffered input to Spring Cloud Gateway as WebSocket frames while the
   Telnet connection remains open
 - Provide graceful disconnect and reconnection handling
+- Refuse new user-facing traffic while the downstream gameplay path is not yet ready for first-session admission
+
+### Readiness and Liveness
+
+- `liveness` is process-local only: the Spring Boot process is alive, the Netty event loops are not wedged, and the service can continue running.
+- `readiness` is traffic-admission safety for new Telnet sessions. The service is ready only when:
+  - the Telnet listener is bound;
+  - the proxy can reach Spring Cloud Gateway’s readiness surface for the gameplay route; and
+  - the current downstream gameplay admission path is safe for `connect -> LOGIN -> first LOOK`.
+- While unready, the proxy must reject new Telnet sessions immediately with an explicit startup/unavailable message and close the connection. It must not silently accept the socket and let the first gameplay command discover startup races later.
+- Loss of downstream readiness after a session is already established blocks new sessions but does not by itself imply that the proxy process is dead.
 
 ## Architecture / Design Notes
 
@@ -576,7 +587,7 @@ details on how Telnet connections are integrated into the platform.
 
 ## Operational Notes
 
-- Runs as a Kubernetes Deployment (Docker Compose for local dev) with `/actuator/health` probes. See [Deployment Environments](../../infrastructure/deployment-environments.md).
+- Runs as a Kubernetes Deployment (Docker Compose for local dev) with `/actuator/health/readiness` and `/actuator/health/liveness` probes. See [Deployment Environments](../../infrastructure/deployment-environments.md).
 - Logging, metrics, and tracing follow the standard [Logging & Monitoring](../../system-architecture-logging-monitoring.md) pipeline.
 - A simple `smoke-test.sh` script in the service directory checks the REST and gRPC endpoints.
 

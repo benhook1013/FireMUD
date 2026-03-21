@@ -36,6 +36,7 @@ class DevEchoTelnetIntegrationTest {
     registry.add("server.port", () -> WEB_SERVER_PORT);
     registry.add("GATEWAY_WS_URL", () -> "ws://localhost:" + WEB_SERVER_PORT + "/dev/echo");
     registry.add("TCP_PROXY_PORT", () -> TELNET_SERVER_PORT);
+    registry.add("TCP_PROXY_DEV_ISOLATED", () -> true);
     registry.add("spring.grpc.server.port", () -> 0);
   }
 

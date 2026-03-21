@@ -58,6 +58,7 @@ class TelnetServerHandlerSpringBootTest {
             meterRegistry.counter("test.discarded"),
             false,
             meterRegistry,
+            () -> true,
             TelnetServerHandler::createWebSocket,
             eventService,
             bufferDepth,

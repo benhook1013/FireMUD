@@ -20,6 +20,11 @@ management:
     health:
       probes:
         enabled: true
+      group:
+        liveness:
+          include: livenessState
+        readiness:
+          include: readinessState,db,redis,gameplayPathReadiness
 game:
   tick-duration-ms: 1000
   tick-max-commands: 50

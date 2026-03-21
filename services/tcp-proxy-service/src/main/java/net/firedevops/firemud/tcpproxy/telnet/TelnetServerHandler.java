@@ -29,6 +29,7 @@ import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.BooleanSupplier;
 import net.firedevops.firemud.cache.LookCacheService;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.tcpproxy.service.TcpProxyEventService;
@@ -43,6 +44,8 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   private static final Duration IDLE_TIMEOUT = Duration.ofMinutes(5);
   private static final int MAX_BUFFER_DEPTH = 512;
   private static final String OK = "OK";
+  private static final String STARTUP_UNAVAILABLE_MESSAGE =
+      "DISCONNECT startup_unavailable Gameplay path starting; please reconnect\n";
   private static final Set<String> SENSITIVE_COMMANDS = Set.of("LOGIN", "LOGON");
 
   private final String gatewayWsUrl;
@@ -53,6 +56,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   private final io.micrometer.core.instrument.Counter discardedCommandCounter;
   private final boolean advertiseMcp;
   private final MeterRegistry meterRegistry;
+  private final BooleanSupplier gameplayTrafficReady;
   private final Timer commandTimer;
   private final Timer heartbeatTimer;
   private final Timer idleCloseTimer;
@@ -94,6 +98,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
       io.micrometer.core.instrument.Counter discardedCommandCounter,
       boolean advertiseMcp,
       MeterRegistry meterRegistry,
+      BooleanSupplier gameplayTrafficReady,
       TcpProxyEventService eventService,
       AtomicInteger bufferDepth) {
     this(
@@ -105,6 +110,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
         discardedCommandCounter,
         advertiseMcp,
         meterRegistry,
+        gameplayTrafficReady,
         TelnetServerHandler::createWebSocket,
         eventService,
         bufferDepth,
@@ -121,6 +127,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
       io.micrometer.core.instrument.Counter discardedCommandCounter,
       boolean advertiseMcp,
       MeterRegistry meterRegistry,
+      BooleanSupplier gameplayTrafficReady,
       WebSocketConnector webSocketConnector,
       TcpProxyEventService eventService,
       AtomicInteger bufferDepth) {
@@ -133,6 +140,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
         discardedCommandCounter,
         advertiseMcp,
         meterRegistry,
+        gameplayTrafficReady,
         webSocketConnector,
         eventService,
         bufferDepth,
@@ -149,6 +157,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
       io.micrometer.core.instrument.Counter discardedCommandCounter,
       boolean advertiseMcp,
       MeterRegistry meterRegistry,
+      BooleanSupplier gameplayTrafficReady,
       WebSocketConnector webSocketConnector,
       TcpProxyEventService eventService,
       AtomicInteger bufferDepth,
@@ -162,6 +171,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     this.discardedCommandCounter = discardedCommandCounter;
     this.advertiseMcp = advertiseMcp;
     this.meterRegistry = meterRegistry;
+    this.gameplayTrafficReady = gameplayTrafficReady;
     this.webSocketConnector = webSocketConnector;
     this.eventService = eventService;
     this.bufferDepth = bufferDepth;
@@ -356,6 +366,12 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
         "Telnet client connected from {} targeting {}",
         clientIp != null ? clientIp : remote,
         gatewayWsUrl);
+    if (!devIsolated && !gameplayTrafficReady.getAsBoolean()) {
+      closing = true;
+      discardedCommandCounter.increment();
+      ctx.writeAndFlush(STARTUP_UNAVAILABLE_MESSAGE).addListener(ChannelFutureListener.CLOSE);
+      return;
+    }
     if (devIsolated) {
       logger.info("Dev-isolated mode enabled; using internal Telnet echo handler");
     }

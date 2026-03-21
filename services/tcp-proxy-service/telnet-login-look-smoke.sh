@@ -9,6 +9,10 @@ SMOKE_PASSWORD=${SMOKE_PASSWORD:-swordfish}
 SMOKE_SESSION_ID=${SMOKE_SESSION_ID:-1}
 SMOKE_TENANT_ID=${SMOKE_TENANT_ID:-1}
 SMOKE_ACCOUNT_API_BASE=${SMOKE_ACCOUNT_API_BASE:-http://localhost:8081}
+SMOKE_GAME_LOGIC_API_BASE=${SMOKE_GAME_LOGIC_API_BASE:-http://localhost:8085}
+SMOKE_GAME_SESSION_API_BASE=${SMOKE_GAME_SESSION_API_BASE:-http://localhost:8086}
+SMOKE_GATEWAY_API_BASE=${SMOKE_GATEWAY_API_BASE:-http://localhost:8080}
+SMOKE_TCP_PROXY_CONTAINER=${SMOKE_TCP_PROXY_CONTAINER:-docker-tcp-proxy-service-1}
 SMOKE_LOGIN_EXPECT=${SMOKE_LOGIN_EXPECT:-"OK LOGIN"}
 SMOKE_LOOK_EXPECT=${SMOKE_LOOK_EXPECT:-"OK LOOK"}
 SMOKE_TIMEOUT_SECONDS=${SMOKE_TIMEOUT_SECONDS:-10}
@@ -44,6 +48,10 @@ password = os.environ.get("SMOKE_PASSWORD", "swordfish")
 session_id = os.environ.get("SMOKE_SESSION_ID", "1")
 tenant_id = os.environ.get("SMOKE_TENANT_ID", "1")
 account_api_base = os.environ.get("SMOKE_ACCOUNT_API_BASE", "http://localhost:8081")
+game_logic_api_base = os.environ.get("SMOKE_GAME_LOGIC_API_BASE", "http://localhost:8085")
+game_session_api_base = os.environ.get("SMOKE_GAME_SESSION_API_BASE", "http://localhost:8086")
+gateway_api_base = os.environ.get("SMOKE_GATEWAY_API_BASE", "http://localhost:8080")
+tcp_proxy_container = os.environ.get("SMOKE_TCP_PROXY_CONTAINER", "docker-tcp-proxy-service-1")
 login_expect = os.environ.get("SMOKE_LOGIN_EXPECT", "OK LOGIN")
 look_expect = os.environ.get("SMOKE_LOOK_EXPECT", "OK LOOK")
 timeout_seconds = int(os.environ.get("SMOKE_TIMEOUT_SECONDS", "10"))
@@ -129,39 +137,48 @@ def wait_for_account_schema():
         except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
             pass
         time.sleep(2)
-    print("Account schema readiness wait timed out; continuing anyway.")
+    raise RuntimeError("Account schema readiness did not converge before smoke execution")
 
 
-def wait_for_account_api():
+def wait_for_http_readiness(name, base_url):
     deadline = time.time() + startup_wait_seconds
-    readiness_urls = (
-        f"{account_api_base}/actuator/health/readiness",
-        f"{account_api_base}/actuator/health",
-    )
-    while time.time() < deadline:
-        for url in readiness_urls:
-            try:
-                with urllib.request.urlopen(url, timeout=timeout_seconds) as response:
-                    body = response.read().decode("utf-8", errors="ignore")
-                    if response.status < 500 and "\"status\":\"UP\"" in body.replace(" ", ""):
-                        print(f"Confirmed account API is ready via {url}.")
-                        return
-            except (urllib.error.URLError, OSError):
-                continue
-        time.sleep(2)
-    print("Account API readiness wait timed out; continuing anyway.")
-
-
-def wait_for_telnet_port():
-    deadline = time.time() + startup_wait_seconds
+    readiness_url = f"{base_url}/actuator/health/readiness"
     while time.time() < deadline:
         try:
-            with socket.create_connection((host, port), timeout=timeout_seconds):
-                print(f"Confirmed telnet endpoint is accepting connections on {host}:{port}.")
-                return
-        except OSError:
+            with urllib.request.urlopen(readiness_url, timeout=timeout_seconds) as response:
+                body = response.read().decode("utf-8", errors="ignore")
+                if response.status < 500 and "\"status\":\"UP\"" in body.replace(" ", ""):
+                    print(f"Confirmed {name} readiness via {readiness_url}.")
+                    return
+        except (urllib.error.URLError, OSError):
+            pass
+        time.sleep(2)
+    raise RuntimeError(f"{name} readiness did not report UP at {readiness_url}")
+
+
+def wait_for_tcp_proxy_readiness():
+    deadline = time.time() + startup_wait_seconds
+    command = [
+        "docker",
+        "exec",
+        tcp_proxy_container,
+        "/layers/paketo-buildpacks_bellsoft-liberica/jre/bin/java",
+        "-cp",
+        "/workspace/BOOT-INF/classes:/workspace/BOOT-INF/lib/*",
+        "net.firedevops.firemud.common.health.HttpHealthcheck",
+        "http://localhost:8080/actuator/health/readiness",
+    ]
+    while time.time() < deadline:
+        try:
+            subprocess.check_call(command, timeout=timeout_seconds)
+            print(
+                "Confirmed tcp-proxy-service readiness via "
+                f"{tcp_proxy_container}:http://localhost:8080/actuator/health/readiness."
+            )
+            return
+        except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
             time.sleep(2)
-    print("Telnet endpoint readiness wait timed out; continuing anyway.")
+    raise RuntimeError("tcp-proxy-service readiness did not converge before smoke execution")
 
 
 def sync_session_owner_account():
@@ -216,8 +233,11 @@ def sync_session_owner_account():
 
 try:
     wait_for_account_schema()
-    wait_for_account_api()
-    wait_for_telnet_port()
+    wait_for_http_readiness("account-service", account_api_base)
+    wait_for_http_readiness("game-logic-service", game_logic_api_base)
+    wait_for_http_readiness("game-session-service", game_session_api_base)
+    wait_for_http_readiness("spring-cloud-gateway", gateway_api_base)
+    wait_for_tcp_proxy_readiness()
     ensure_smoke_account()
     sync_session_owner_account()
     with socket.create_connection((host, port), timeout=timeout_seconds) as sock:

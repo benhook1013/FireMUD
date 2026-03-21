@@ -260,7 +260,9 @@ details on shared infrastructure components.
 
 ## Operational Notes
 
-- Runs as a Kubernetes Deployment (Docker Compose for local dev) with `/actuator/health` probes. See [Deployment Environments](../../infrastructure/deployment-environments.md).
+- Runs as a Kubernetes Deployment (Docker Compose for local dev) with `/actuator/health/readiness` and `/actuator/health/liveness` probes. See [Deployment Environments](../../infrastructure/deployment-environments.md).
+- `liveness` is process-local only.
+- `readiness` is truthful local readiness for the currently implemented authentication/account slice and must fail when the service cannot safely satisfy new authentication traffic with its required local persistence/session infrastructure.
 - Logging, metrics, and tracing follow the standard [Logging & Monitoring](../../system-architecture-logging-monitoring.md) pipeline.
 
 ## Environment Variables

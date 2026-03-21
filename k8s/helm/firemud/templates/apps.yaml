@@ -82,13 +82,13 @@ spec:
             {{- end }}
           readinessProbe:
             httpGet:
-              path: {{ default "/actuator/health" $service.readinessPath }}
+              path: {{ default "/actuator/health/readiness" $service.readinessPath }}
               port: {{ $service.healthPort }}
             initialDelaySeconds: 5
             periodSeconds: 10
           livenessProbe:
             httpGet:
-              path: {{ default "/actuator/health" $service.livenessPath }}
+              path: {{ default "/actuator/health/liveness" $service.livenessPath }}
               port: {{ $service.healthPort }}
             initialDelaySeconds: 15
             periodSeconds: 20

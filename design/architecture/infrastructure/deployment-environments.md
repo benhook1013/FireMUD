@@ -87,21 +87,29 @@ FireMUD uses Docker Compose for local development and testing:
 
 ### Docker Health Checks
 
-- Services expose Spring Boot’s `/actuator/health` for basic health status.
+- Services expose Spring Boot actuator health groups and must publish:
+  - `/actuator/health/liveness` for process-local liveness only.
+  - `/actuator/health/readiness` for traffic-admission readiness.
+- Liveness means the process is alive and not wedged. It must not fail only because a downstream dependency is unavailable.
+- Readiness means the service can safely accept new traffic for the contract it currently exposes. For user-facing and gameplay-path services, readiness is dependency-aware rather than process-only.
 - Docker Compose can monitor health using `healthcheck` blocks in `docker/docker-compose.yml`.
 - Health status is visible via `docker ps` (e.g., `healthy`, `unhealthy`), but:
   - Docker does **not** automatically restart containers that become `unhealthy`.
       Even with `restart: unless-stopped` configured, services remain running
       until manually restarted.
-    - `depends_on` waits for initial health checks, but ongoing readiness still
-      requires manual monitoring.
+    - `depends_on` is bootstrap ordering only. It does not make a service safe for player traffic unless that service’s own readiness semantics are truthful.
+    - Ongoing readiness still requires manual monitoring in Docker Compose because Compose does not remove unhealthy containers from traffic automatically.
     - See [Reconnection Strategy](../system-architecture-reconnection.md) for how sessions survive service restarts in Docker Compose.
 
-💡 **Tip**: For more reliable startup coordination, use **Gateway retry filters** or utilities like `wait-for-it.sh`.
-The gateway now includes a default *Retry* filter in `application.yml` so failed
-requests to services are retried automatically during startup. Each service's
-Dockerfile runs `docker/start-service.sh`, which invokes `wait-for-it.sh` to
-pause startup until PostgreSQL and Redis are reachable.
+Readiness rules for the currently implemented player path:
+
+- `tcp-proxy-service` is ready only when its Telnet listener is bound and the downstream gameplay admission path is safe for new connections.
+- `spring-cloud-gateway` is ready only when `/ws/game/**` can be upgraded and the Game Session backend path required for new gameplay sockets is reachable.
+- `game-session-service` is ready only when its local persistence is usable and the currently exposed `LOGIN` + first-command gameplay path is safe.
+- `game-logic-service` is ready only when the downstream services required for `ResolveLook` are reachable.
+- `account-service`, `world-management-service`, and `entity-management-service` use truthful local readiness for the currently implemented slice.
+
+Gateway retry filters, `wait-for-it.sh`, and similar startup helpers are convenience/bootstrap mechanisms only. They must not be treated as substitutes for correct readiness semantics.
 
 ---
 
@@ -138,9 +146,12 @@ A sample Terraform module for a local Kind cluster is provided in [k8s/terraform
 
 ### Kubernetes Health Monitoring
 
-- Kubernetes uses Spring Boot’s `/actuator/health` for both:
-  - **Readiness probes** — to determine if a service is ready to handle requests.
-  - **Liveness probes** — to detect and restart stuck or unresponsive containers.
+- Kubernetes uses explicit actuator health groups:
+  - **Readiness probes** call `/actuator/health/readiness` to determine whether a pod should receive new traffic.
+  - **Liveness probes** call `/actuator/health/liveness` to detect wedged or dead processes.
+- Readiness must represent safe traffic admission for the service’s current public contract, not merely successful boot.
+- Liveness must remain local-only and must not fail because a dependency is degraded.
+- When startup is materially slower than steady-state readiness evaluation, use a `startupProbe` rather than inflating liveness or readiness thresholds.
 
 ### Kubernetes Auto Recovery
 

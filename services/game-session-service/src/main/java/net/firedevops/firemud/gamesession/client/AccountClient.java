@@ -7,6 +7,8 @@ import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.account.v1.AccountServiceGrpc;
 import net.firedevops.firemud.account.v1.AuthenticateRequest;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
+import net.firedevops.firemud.account.v1.PingRequest;
+import net.firedevops.firemud.account.v1.PingResponse;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.AbstractBlockingGrpcClient;
@@ -80,6 +82,10 @@ public final class AccountClient
                 .setCode(AuthenticationErrorCodes.UPSTREAM_FAILURE)
                 .setMessage("Authentication service unavailable"))
         .build();
+  }
+
+  public PingResponse ping() {
+    return stub().ping(PingRequest.getDefaultInstance());
   }
 
   @Override
