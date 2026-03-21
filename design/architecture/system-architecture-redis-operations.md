@@ -268,7 +268,7 @@ To make coordination and tick health observable in a consistent way across servi
   - `current_tick_terminal_at_ms{tenantId,regionId}` – projection of the terminal timestamp stored in `tick:{tenantRegionTag}:meta.current_tick_terminal_at_ms`, used for bounded cleanup and stale-state visibility.
   - `tick_retry_queue_depth{tenantId,regionId}` – current depth of retry queues.
   - `tick_command_queue_depth{tenantId,regionId}` – aggregate per-region command queue depth.
-  - `tick_current_id{tenantId,regionId}` – the last committed tick id for the region, used as a coarse tick progression watermark.
+  - `tick_current_id{tenantId,regionId}` – the last durably committed tick id for the region, sourced from the heartbeat/RegionStatus watermark rather than directly from `tick:{tenantRegionTag}:meta.current_tick_id`. This keeps the metric distinct from the Redis-side “highest staged tick” guard.
   - `tick_pending_oldest_id{tenantId,regionId}` – the oldest tick id still considered “in-flight” (pending, retrying, or awaiting ledger convergence), used to estimate effective loss/replay windows.
   - `tick_durable_commit_total{tenantId,regionId}` – count of ticks that reached the durable commit boundary (heartbeat/RegionStatus watermark).
   - `tick_coordination_cleared_total{tenantId,regionId}` – count of ticks whose coordination state reached the in-flight clearance boundary.
