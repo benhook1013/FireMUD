@@ -44,14 +44,11 @@ This checklist is for the remaining quality pass, observability tightening, and 
 
 ## Wider Service Coverage
 
-- [ ] Review other user-facing or near-user-facing services as they become real and explicitly decide whether each service needs:
-  - local-only readiness
-  - dependency-aware readiness
-  - no special readiness work yet
 - [x] Prevent new services from drifting back to generic “process is up” readiness by updating service templates/checklists if needed.
 
 ## Final Review Pass
 
 - [x] Do another repo-wide pass over the readiness changes and look specifically for simplifications, duplicated logic, weak assumptions, misleading docs, or test scaffolding that is compensating for behavior instead of verifying it.
   Resolution: shared readiness plumbing was consolidated, bounded readiness-only gRPC calls were added, and the `game-session-service` dev profile no longer downgrades readiness to `readinessState` only.
-- [ ] Update any design and architecture docs that drifted after the initial readiness/liveness documentation pass so the final documented model matches the implemented behavior and follow-up refinements.
+- [x] Update any design and architecture docs that drifted after the initial readiness/liveness documentation pass so the final documented model matches the implemented behavior and follow-up refinements.
+  Resolution: infrastructure, smoke-workflow, and service-level docs now reflect bounded readiness-only canaries, reserved probe identifiers, direct WebSocket parity coverage scope, shared readiness payload/observability fields, and the `dev-isolated` exception without weakening the standard `dev` profile readiness contract.

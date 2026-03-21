@@ -106,9 +106,10 @@ Readiness rules for the currently implemented player path:
 - `tcp-proxy-service` is ready only when its Telnet listener is bound and the downstream gameplay admission path is safe for new connections.
 - `spring-cloud-gateway` is ready only when `/ws/game/**` can be upgraded and the Game Session backend path required for new gameplay sockets is reachable.
 - `game-session-service` is ready only when its local persistence is usable and the currently exposed `LOGIN` + first-command gameplay path is safe.
-- For `game-session-service`, that safety check includes reserved readiness-only round trips through the session-context store and command-queue store so the first command path is not admitted on downstream reachability alone.
+- For `game-session-service`, that safety check includes reserved readiness-only round trips through the session-context store and command-queue store so the first command path is not admitted on downstream reachability alone. Readiness-only downstream gRPC canaries also run with explicit short per-call deadlines rather than inheriting ambient channel timing.
 - `game-logic-service` is ready only when the downstream services required for `ResolveLook` are reachable.
 - `account-service`, `world-management-service`, and `entity-management-service` use truthful local readiness for the currently implemented slice.
+- `game-session-service` may still run in `dev-isolated` mode for intentionally dependency-free local development, but the normal `dev` profile no longer weakens the canonical readiness group for Docker Compose or smoke environments.
 
 Gateway retry filters, `wait-for-it.sh`, and similar startup helpers are convenience/bootstrap mechanisms only. They must not be treated as substitutes for correct readiness semantics.
 
@@ -152,6 +153,7 @@ A sample Terraform module for a local Kind cluster is provided in [k8s/terraform
   - **Liveness probes** call `/actuator/health/liveness` to detect wedged or dead processes.
 - Readiness must represent safe traffic admission for the service’s current public contract, not merely successful boot.
 - Dependency-aware readiness checks should prefer bounded, operation-shaped canaries over raw ping endpoints when the user-visible contract immediately depends on a downstream RPC path. These canaries must remain side-effect free. A synthetic probe that intentionally exercises an RPC with invalid or missing identifiers may still count as reachable when it returns an application-level error such as `INVALID_ARGUMENT`, `NOT_FOUND`, or `AUTH_INVALID_CREDENTIALS`; transport failures, timeouts, and upstream-failure responses do not count as ready.
+- Readiness-only downstream RPC canaries must use explicit short deadlines so readiness timing remains bounded even when the normal client channel uses a longer retry or timeout budget.
 - Synthetic probe identifiers must be explicitly reserved for readiness-only traffic rather than borrowing plausible real IDs like `0`. Use obvious sentinel values such as `__readiness__` or dedicated out-of-band numeric ranges for internal probes.
 - Liveness must remain local-only and must not fail because a dependency is degraded.
 - When startup is materially slower than steady-state readiness evaluation, use a `startupProbe` rather than inflating liveness or readiness thresholds.

@@ -29,6 +29,7 @@ An OpenAPI specification for these REST endpoints lives in `services/spring-clou
 - `readiness` is route-admission safety. For the currently implemented gameplay slice, the gateway is ready only when:
   - baseline route configuration is loaded; and
   - the `/ws/game/**` gameplay path can be upgraded and forwarded to Game Session successfully enough for new gameplay sockets to be admitted.
+- The gameplay-route canary is bounded and operation-shaped. It validates the actual `/ws/game/**` upgrade path with an explicit short timeout rather than relying on unrelated ping-style checks or long retry budgets.
 - Retry filters are resilience mechanisms, not readiness compensation. A gateway that still needs startup retries to survive ordinary new gameplay admission is not ready.
 - Readiness transition observability uses the shared contract from [Deployment Environments](../../infrastructure/deployment-environments.md): `firemud.readiness.current`, `firemud.readiness.transitions`, and structured logs keyed by the curated dependency name `gameplayRoute`.
 
