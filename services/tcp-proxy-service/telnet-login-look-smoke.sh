@@ -12,7 +12,7 @@ SMOKE_ACCOUNT_API_BASE=${SMOKE_ACCOUNT_API_BASE:-http://localhost:8081}
 SMOKE_GAME_LOGIC_API_BASE=${SMOKE_GAME_LOGIC_API_BASE:-http://localhost:8085}
 SMOKE_GAME_SESSION_API_BASE=${SMOKE_GAME_SESSION_API_BASE:-http://localhost:8086}
 SMOKE_GATEWAY_API_BASE=${SMOKE_GATEWAY_API_BASE:-http://localhost:8080}
-SMOKE_TCP_PROXY_CONTAINER=${SMOKE_TCP_PROXY_CONTAINER:-docker-tcp-proxy-service-1}
+SMOKE_TCP_PROXY_API_BASE=${SMOKE_TCP_PROXY_API_BASE:-http://localhost:8089}
 SMOKE_LOGIN_EXPECT=${SMOKE_LOGIN_EXPECT:-"OK LOGIN"}
 SMOKE_LOOK_EXPECT=${SMOKE_LOOK_EXPECT:-"OK LOOK"}
 SMOKE_TIMEOUT_SECONDS=${SMOKE_TIMEOUT_SECONDS:-10}
@@ -51,7 +51,7 @@ account_api_base = os.environ.get("SMOKE_ACCOUNT_API_BASE", "http://localhost:80
 game_logic_api_base = os.environ.get("SMOKE_GAME_LOGIC_API_BASE", "http://localhost:8085")
 game_session_api_base = os.environ.get("SMOKE_GAME_SESSION_API_BASE", "http://localhost:8086")
 gateway_api_base = os.environ.get("SMOKE_GATEWAY_API_BASE", "http://localhost:8080")
-tcp_proxy_container = os.environ.get("SMOKE_TCP_PROXY_CONTAINER", "docker-tcp-proxy-service-1")
+tcp_proxy_api_base = os.environ.get("SMOKE_TCP_PROXY_API_BASE", "http://localhost:8089")
 login_expect = os.environ.get("SMOKE_LOGIN_EXPECT", "OK LOGIN")
 look_expect = os.environ.get("SMOKE_LOOK_EXPECT", "OK LOOK")
 timeout_seconds = int(os.environ.get("SMOKE_TIMEOUT_SECONDS", "10"))
@@ -156,31 +156,6 @@ def wait_for_http_readiness(name, base_url):
     raise RuntimeError(f"{name} readiness did not report UP at {readiness_url}")
 
 
-def wait_for_tcp_proxy_readiness():
-    deadline = time.time() + startup_wait_seconds
-    command = [
-        "docker",
-        "exec",
-        tcp_proxy_container,
-        "/layers/paketo-buildpacks_bellsoft-liberica/jre/bin/java",
-        "-cp",
-        "/workspace/BOOT-INF/classes:/workspace/BOOT-INF/lib/*",
-        "net.firedevops.firemud.common.health.HttpHealthcheck",
-        "http://localhost:8080/actuator/health/readiness",
-    ]
-    while time.time() < deadline:
-        try:
-            subprocess.check_call(command, timeout=timeout_seconds)
-            print(
-                "Confirmed tcp-proxy-service readiness via "
-                f"{tcp_proxy_container}:http://localhost:8080/actuator/health/readiness."
-            )
-            return
-        except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
-            time.sleep(2)
-    raise RuntimeError("tcp-proxy-service readiness did not converge before smoke execution")
-
-
 def sync_session_owner_account():
     query = (
         "select id from accounts "
@@ -237,7 +212,7 @@ try:
     wait_for_http_readiness("game-logic-service", game_logic_api_base)
     wait_for_http_readiness("game-session-service", game_session_api_base)
     wait_for_http_readiness("spring-cloud-gateway", gateway_api_base)
-    wait_for_tcp_proxy_readiness()
+    wait_for_http_readiness("tcp-proxy-service", tcp_proxy_api_base)
     ensure_smoke_account()
     sync_session_owner_account()
     with socket.create_connection((host, port), timeout=timeout_seconds) as sock:

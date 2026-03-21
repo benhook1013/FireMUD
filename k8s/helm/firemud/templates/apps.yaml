@@ -92,6 +92,12 @@ spec:
               port: {{ $service.healthPort }}
             initialDelaySeconds: 15
             periodSeconds: 20
+          startupProbe:
+            httpGet:
+              path: {{ default "/actuator/health/liveness" $service.startupPath }}
+              port: {{ $service.healthPort }}
+            failureThreshold: {{ default 30 $service.startupFailureThreshold }}
+            periodSeconds: {{ default 10 $service.startupPeriodSeconds }}
           resources:
             requests:
               cpu: "200m"
