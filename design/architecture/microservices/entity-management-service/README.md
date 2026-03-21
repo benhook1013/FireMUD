@@ -334,6 +334,38 @@ Room-entity data is derived from runtime entity state plus authoritative world l
 - `ListRoomEntities` must accept caller-supplied occupancy references together with the World Management read fence token (`asOfTickId`); when Entity Management cannot serve the same fence it must return `STALE_READ_FENCE` / `READ_FENCE_UNAVAILABLE` instead of returning mixed-tick data.
 - The read fence is satisfied only by durable post-commit state. Redis-staged containment changes that have not yet committed the effect guard and container/item row updates for that fence are not eligible to satisfy `asOfTickId`.
 
+Illustrative `ListRoomEntities` fragments:
+
+- Success:
+
+```json
+{
+  "tenantId": "t1",
+  "gameInstanceId": "g1",
+  "roomInstanceId": "room-antechamber",
+  "entitySnapshotId": "entitysnap-184",
+  "asOfTickId": 184,
+  "entities": [
+    {
+      "entityId": "char-mara",
+      "displayName": "Mara",
+      "entityType": "PLAYER"
+    }
+  ]
+}
+```
+
+- Fence mismatch:
+
+```json
+{
+  "error": {
+    "code": "STALE_READ_FENCE",
+    "message": "Entity state is not yet available for the requested room read fence."
+  }
+}
+```
+
 Entity Management must not maintain a competing “room occupancy index” that can drift from World Management’s location tables. Visibility and filtering rules are applied after aggregation so LOOK output remains player-correct.
 
 Concrete per-effect required writes and reconciliation rules live in `design/architecture/system-architecture-spatial-and-ambient-effects-catalog.md`.

@@ -16,8 +16,8 @@ For a brand-new player-facing environment (`hobby-self-hosted`, `staging`, or `p
 - PostgreSQL application credentials and admin rotation credentials when rotation Jobs are used,
 - JWT signing and validation resources (`jwt-signing-keys`, `jwt-jwks`),
 - cert-manager issuer or issuer reference for workload and bridge certificates,
-- backup/object-store credentials when the environment requires backups,
-- asset-store and outbound-communications credentials when those integrations are enabled,
+- backup/object-store credentials when the environment requires backups, including the binding identity that owns the bucket or object-store target,
+- asset-store and outbound-communications credentials when those integrations are enabled, including the binding identity that owns the asset bucket or object-store target,
 - operator credential bindings required for environment-scoped control-plane access.
 
 Bootstrap resources must be unique to the environment boundary. Reusing staging and production bootstrap secrets, buckets, or operator trust bindings is non-compliant.
@@ -61,7 +61,7 @@ Every run must emit one result per policy ID below, with status `pass`, `fail`, 
 - `PREFLIGHT-BRIDGE-001` – `GATEWAY_WS_URL` matches the expected internal Gateway listener for the target environment.
 - `PREFLIGHT-REDIS-001` – player-facing environments resolve distinct Coordination vs Cache Redis endpoints.
 - `PREFLIGHT-BOOTSTRAP-001` – player-facing environments confirm the minimum bootstrap secret and trust resources exist before apply.
-- `PREFLIGHT-EXTERNAL-001` – player-facing environments validate that backup storage, asset storage, outbound communications, and operator credential bindings match the target environment and do not cross environment boundaries.
+- `PREFLIGHT-EXTERNAL-001` – player-facing environments validate that backup storage, asset storage, outbound communications, and operator credential bindings match the target environment and do not cross environment boundaries. For backup and asset storage, the proof must include the credential-binding identity that owns the object-store target.
 - `PREFLIGHT-SERVICES-001` – player-facing environments either run with default in-environment service discovery or declare explicit `FIREMUD_SERVICES_*` overrides that are allowlisted for the target environment and do not resolve across environment boundaries.
 - `PREFLIGHT-PROMOTION-001` – production promotions reference a valid staging attestation with matching digests.
 - `PREFLIGHT-BACKUP-001` – production `roll-forward-only` promotions include fresh backup-readiness evidence, including canonical coordinated-backup scope and a recovery drill that produced the required recovery evidence chain.
@@ -98,8 +98,10 @@ Minimum required keys:
 - `internalBindings.registry.imagePullSecretRef`
 - `backupStorage.bucket`
 - `backupStorage.endpoint` when using a non-default S3-compatible endpoint
+- `backupStorage.bindingRef` or `backupStorage.fingerprint`
 - `assetStorage.bucket`
 - `assetStorage.endpoint`
+- `assetStorage.bindingRef` or `assetStorage.fingerprint`
 - `outboundComms.smtpHost` and/or environment-classified webhook target identifiers
 - `operatorCredentials.bindingRef` or `operatorCredentials.fingerprint`
 
@@ -119,6 +121,46 @@ Operator credential representation rule:
 - Use `operatorCredentials.bindingRef` when the environment binds operator access through a platform-native resource identifier (for example a cert-manager certificate binding, workload identity binding, or a named operator Secret reference).
 - Use `operatorCredentials.fingerprint` when the environment contract is anchored to a concrete certificate or key fingerprint rather than a stable platform binding identifier.
 - If both are available, `bindingRef` is the canonical expected-binding field and `fingerprint` may be included as supporting validation detail rather than a second competing source of truth.
+
+Storage binding representation rule:
+
+- Use `backupStorage.bindingRef` and `assetStorage.bindingRef` when the environment binds object-store credentials through a platform-native Secret, service account, or workload identity reference.
+- Use `backupStorage.fingerprint` and `assetStorage.fingerprint` only when the environment contract is anchored to a concrete credential or object-store identity fingerprint rather than a stable binding identifier.
+- If both are available, `bindingRef` is the canonical expected-binding field and `fingerprint` may be included as supporting validation detail rather than a second competing source of truth.
+
+Compact schema appendix for `expected-bindings.yaml`:
+
+- Required top-level sections:
+  - `internalBindings`
+  - `backupStorage`
+  - `assetStorage` when published/runtime assets use external object storage
+  - `outboundComms` when email or webhook integrations are enabled
+  - `operatorCredentials`
+  - `serviceDiscovery`
+- Required internal binding keys:
+  - `internalBindings.postgres.endpoint`
+  - `internalBindings.postgres.credentialsRef`
+  - `internalBindings.redis.coordination.endpoint`
+  - `internalBindings.redis.cache.endpoint`
+  - `internalBindings.jwt.signingKeysRef`
+  - `internalBindings.jwt.jwksRef`
+  - `internalBindings.certificates.issuerRef`
+  - `internalBindings.registry.imagePullSecretRef`
+- Required external binding keys:
+  - `backupStorage.bucket`
+  - `backupStorage.endpoint` when non-default
+  - `backupStorage.bindingRef` or `backupStorage.fingerprint`
+  - `assetStorage.bucket`
+  - `assetStorage.endpoint`
+  - `assetStorage.bindingRef` or `assetStorage.fingerprint`
+  - `outboundComms.smtpHost` and/or environment-classified webhook identifiers when enabled
+  - `operatorCredentials.bindingRef` or `operatorCredentials.fingerprint`
+- Precedence rules:
+  - When both `bindingRef` and `fingerprint` are present for the same binding, `bindingRef` is canonical and `fingerprint` is supporting validation detail only.
+  - The same precedence applies to `backupStorage`, `assetStorage`, and `operatorCredentials`.
+- Optional supporting sections:
+  - `observability`
+  - environment-owned non-secret shared values explicitly marked as shared with rationale
 
 Illustrative example:
 
@@ -143,9 +185,11 @@ internalBindings:
 backupStorage:
   bucket: firemud-staging-backups
   endpoint: https://minio.staging.internal
+  bindingRef: secret://firemud/staging-backup-object-store
 assetStorage:
   bucket: firemud-staging-assets
   endpoint: https://minio.staging.internal
+  bindingRef: secret://firemud/staging-asset-object-store
 outboundComms:
   smtpHost: smtp.staging.internal
   webhookTargets:

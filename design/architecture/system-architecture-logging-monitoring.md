@@ -283,15 +283,21 @@ When Alertmanager is unavailable but Prometheus is still accessible, Logging & A
   - Canonical fallback recordings should expose at least:
     - `backup_pipeline_recent_backup_slo_breached`
     - `backup_pipeline_recent_verification_slo_breached`
+    - `backup_pipeline_recent_restore_drill_slo_breached`
     - `backup_tick_pause_wait_budget_breached{scope_type,tenantId,regionId}`
     - `backup_tick_pause_duration_budget_breached{scope_type,tenantId,regionId}`
     - `backup_ticks_paused_budget_breached{scope_type,tenantId,regionId}`
+- **Tick state and recovery progress**
+  - Recording rules or gauges projecting `current_tick_state{tenantId,regionId,state}` and `current_tick_terminal_at_ms{tenantId,regionId}` from the Redis meta record so operators can see whether a region is `STAGED`, `RESOLVING`, `APPLIED`, or `ABANDONED` without inferring state from queue depth alone.
+- **Cross-region follow-ups**
+  - Recording rules for `remote_followups_due_total{tenantId,regionId}`, `remote_followups_drain_lag_ms{tenantId,regionId}`, and `remote_followups_backlog_over_budget_total{tenantId,regionId}` so scaling and recovery views can show drain pressure explicitly.
 
 Logging & Admin should:
 
 - Use these recording rules as the sole source of “active issues” when Alertmanager is unreachable, and clearly label the UI as “Alertmanager unavailable – showing fallback Prometheus conditions”.
 - Prefer Alertmanager as the source of truth whenever it is healthy; fallback conditions are a last resort to keep operators informed of the most critical SLO violations.
 - Treat broader observability-stack outages as only partially representable in fallback mode: Alertmanager-specific/routing conditions can still be surfaced when Prometheus is healthy, but Prometheus-down conditions cannot be reconstructed from fallback rules because the source of truth is itself unavailable.
+- When command convergence is involved, alerts should link operators to the durable `GetCommandStatus` surface defined in `system-architecture-tick-failures-and-operations.md` rather than relying on Redis queue inspection.
 
 #### Logging & Admin Alert-State Contract (Normative)
 

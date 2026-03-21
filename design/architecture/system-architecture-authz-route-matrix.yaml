@@ -6,6 +6,7 @@ classifications:
   - account_scoped
   - player_bootstrap_tenant
   - pre_tenant_discovery
+  - public_production_onboarding
   - tenant_regular
   - billing_safe_tenant
   - cross_tenant_support_safe
@@ -28,21 +29,31 @@ routes:
     roles:
       any_of: [player, moderator, designer, tenantAdmin]
   - service: game-session-service
+    route: REALMS
+    scope: tenant
+    classification: public_production_onboarding
+    required_live_checks: [public_production_admission, realm_access_grant, runtime_entitlements]
+    roles:
+      any_of: [player, moderator, designer, tenantAdmin]
+  - service: game-session-service
     route: CHARS
     scope: tenant
-    classification: tenant_regular
-    tenant_billing_watermark_applies: true
-    membership_watermark_applies: true
-    required_live_checks: [membership, runtime_entitlements]
+    classification: public_production_onboarding
+    tenant_billing_watermark_applies: false
+    membership_watermark_applies: false
+    required_live_checks: [public_production_admission, realm_access_grant, runtime_entitlements]
     roles:
       any_of: [player, moderator, designer, tenantAdmin]
   - service: game-session-service
     route: PLAY
     scope: tenant
-    classification: tenant_regular
-    tenant_billing_watermark_applies: true
-    membership_watermark_applies: true
-    required_live_checks: [membership, runtime_entitlements]
+    classification: public_production_onboarding
+    tenant_billing_watermark_applies: false
+    membership_watermark_applies: false
+    required_live_checks: [public_production_admission, realm_access_grant, runtime_entitlements]
+    mutation_contract: public_production_membership_atomic
+    canonical_errors:
+      any_of: [CONNECT_CONTEXT_INVALID, CONNECT_SCOPE_MISMATCH]
     roles:
       any_of: [player, moderator, designer, tenantAdmin]
   - service: game-session-service

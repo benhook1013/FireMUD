@@ -13,6 +13,7 @@ World creation is a long-running process that prepares the initial world state f
 World creation consumes a previously resolved immutable launch descriptor for the attempt. At minimum this descriptor carries:
 
 - `launchDescriptorId`
+- `controlPlaneRequestId`
 - `tenantId`
 - `gameTemplateId` when launch originated from a template
 - resolved `versionId`
@@ -33,6 +34,8 @@ Activation requests must carry both:
 - `expectedGenerationConfigRevision` so pre-activation generation steps can prove they used the frozen publish identity rather than mutable tenant defaults.
 
 These fields are sourced from the resolved launch descriptor and must remain immutable across retries of the same launch attempt. World Management must not re-read mutable template JSON, tenant defaults, or "latest READY patch" state during activation.
+
+The same `(tenantId, gameTemplateId, controlPlaneRequestId)` launch attempt must therefore replay against the same descriptor values on every retry, and a fresh launch attempt requires a new `controlPlaneRequestId` if it is allowed to resolve against newer valid published state.
 
 It never mutates template rows for Published versions; any structural changes to the world layout must occur through design-time workflows on Draft versions before publishing a new `versionId`. More broadly, world creation is allowed to invoke procedural generators only in **runtime/instance** mode as described in [Procedural Generation](../../system-architecture-procedural-generation.md); any attempt to write template rows from this Saga, even for non-Published versions, must be rejected by World Management validation. All template edits must flow through Game Design Service design-time APIs.
 

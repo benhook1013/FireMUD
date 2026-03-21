@@ -153,16 +153,14 @@ Publish gating should be treated as invalid if a service cannot provide a digest
 
 Publish completion must also persist an immutable release attestation in Game Design:
 
-- After all required digest participants pass and asset export has produced the final `manifestHash`, Game Design writes `published_release_bundle(tenantId, versionId, commitId, publishWorkflowId, participantDigests..., manifestHash, generationConfigRevision, publishedAt)`.
+- After all required digest participants pass and asset export has produced the final `manifestHash`, Game Design writes `published_release_bundle(tenantId, versionId, commitId, publishWorkflowId, participantDigests..., artifactDigests..., requiredManifestAssetKeys..., manifestHash, generationConfigRevision, publishedAt)`.
 - This row is the canonical record proving what was actually published.
 - Activation, repair, and rollback-preflight workflows must validate against this attestation instead of reconstructing release state from multiple service-local sources.
 - Game Design must expose this attestation through a read-only API such as `GetPublishedReleaseBundle(tenantId, versionId)` so runtime and operator workflows never depend on direct table access.
 
-For initial-slice releases that export derived world artifacts, the attestation should also carry typed artifact-digest entries for those payloads in addition to `participantDigests[]` and `manifestHash`, so publish/activation tooling can verify that the exported world bundles belong to the same attested release.
+For initial-slice releases that export derived world artifacts, the attestation must also carry typed `artifactDigests[]` entries for those payloads and `requiredManifestAssetKeys[]` for any stable manifest usage keys that are mandatory for launch/cutover validation, in addition to `participantDigests[]` and `manifestHash`.
 
-For exported world bundles in the initial slice, these `artifactDigests[]`
-entries are mandatory fields of the release attestation rather than optional
-extensions.
+For exported world bundles in the initial slice, these `artifactDigests[]` and `requiredManifestAssetKeys[]` entries are mandatory fields of the release attestation rather than optional extensions.
 
 ### Implementation Checklist
 

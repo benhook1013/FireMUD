@@ -52,16 +52,17 @@ Always leave `defaultVolumesToFsBackup` set to `false` so Velero backs up only K
 
 PostgreSQL dumps must capture a consistent view of gameplay state. Before a `pg_dump` begins, the Game Session Service exposes `PauseTicks` and `ResumeTicks` gRPC commands. The backup workflow:
 
-1. Calls `PauseTicks` with a reason string. This sets a `pause_requested` flag so the tick scheduler stops launching new ticks while allowing any in‑flight ticks to finish normally.
-2. Polls `GetTickStatus` until the service reports `PAUSED`, which indicates all in‑flight ticks have completed. Command queues continue accepting actions during this pause, but they execute only after ticks resume.
+1. Calls `PauseTicks` with a reason string. This sets a pause request for the selected scope, blocks new gameplay command intake for that scope, and prevents new durable tick-batch allocation while allowing any already in-flight executor work to drain, fail, or lose lease.
+2. Polls `GetRegionTickStatus` until the service reports the canonical `PAUSED` state for every affected region, which means `commandIntakeBlocked=true`, `batchAllocationBlocked=true`, and no executor in the scope can create new coordination state under the pre-pause epoch.
 3. Starts `pg_dump` immediately. Ticks may resume as soon as the dump command starts because PostgreSQL snapshots the data at launch time.
-4. Invokes `ResumeTicks` so queued commands continue processing.
+4. Invokes `ResumeTicks` so command intake and tick scheduling resume for the scope.
 
 Operational constraints:
 
 - Tick pausing is part of the production backup path, so it must be bounded and observable. Backup tooling should track:
   - How long it takes for a scope to transition to `PAUSED` (pause latency).
   - How long the scope remains paused (pause duration), even though the dump itself does not require ticks to stay paused.
+- Backup and reset tooling must use the same pause/status contract. `PauseTicks` / `ResumeTicks` and `GetRegionTickStatus` are the canonical control-plane boundary; backup automation must not invent weaker “scheduler paused but command intake still open” semantics.
 - Pause scope should be limited to the smallest safe blast radius (prefer tenant- or region-scoped pausing over global pausing) so backups do not create unnecessary player impact.
 - If a pause does not reach `PAUSED` within a documented budget, the backup Job should fail fast (skip the dump) and alert operators rather than silently holding the game in a paused state or producing an inconsistent backup.
   - Recommended budget: `max_pause_wait = max(10s, 2 * tick_interval_ms)` for the affected scope.
@@ -270,8 +271,9 @@ Every restore that rewinds PostgreSQL must select one explicit Coordination Redi
 - `cold_start_restore`
   - Use when Coordination Redis for the target environment is known to be empty because the PVC/data directory was intentionally replaced, lost, or wiped for the recovery event.
   - Required proof:
-    - the Coordination Redis deployment came up with an empty keyspace for coordination prefixes, and
-    - the environment then followed the documented cold-start/reset behavior before traffic reopen.
+    - the Coordination Redis deployment came up with an empty keyspace for coordination prefixes,
+    - the environment then followed the documented cold-start/reset behavior before traffic reopen, and
+    - the same post-restore hardening, external credential validation, and smoke-verification evidence required for scoped resets is present before player traffic reopens.
 - `scoped_reset_restore`
   - Use when Coordination Redis state may survive while PostgreSQL has been rewound to an earlier snapshot.
   - Required proof:
@@ -479,13 +481,13 @@ After PostgreSQL is restored, but before quarantine is lifted, the restore workf
 
 1. `cold_start_restore`
    - Verify the target Coordination Redis keyspace is empty for coordination prefixes because the recovery intentionally started from an empty coordination store.
-   - Allow services to re-establish coordination through the documented cold-start path.
+   - Complete the same pause/status validation, post-restore hardening, external credential validation, and smoke gate required for scoped reset recovery before traffic reopen.
    - Record evidence that reset-sensitive session/auth state was dropped or re-established under the restored environment.
 2. `scoped_reset_restore`
    - Run the authoritative reset handshake for the affected scope from `system-architecture-redis-reset-and-recovery.md`.
    - Record evidence for:
      - pause completion,
-     - `region_epoch` bump,
+     - `region_epoch` bump performed by the canonical reset control-plane operation,
      - scoped reset execution,
      - ledger reconcile / command convergence,
      - metadata reinitialization,
@@ -516,6 +518,7 @@ Required fields:
 - `preflightReportPath` when a traffic-reopen preflight gate ran for the same event
 - `expectedBindingsRef`
 - `coordinationRecoveryEvidence`
+- `sessionRecovery`
 - `jwtHardening`
 - `databaseCredentialRotation`
 - `certificateReissuance`
@@ -534,6 +537,13 @@ Nested control-group requirements:
 - `coordinationRecoveryEvidence` must prove exactly one restore mode:
   - `cold_start_restore`: empty-coordination proof and cold-start validation evidence.
   - `scoped_reset_restore`: pause/epoch-bump/reset/reconcile/init-meta/smoke evidence for the chosen scope.
+- `sessionRecovery` must make reset-sensitive session/auth handling machine-checkable for the restore event, including:
+  - `status`
+  - `gameSessionHandling` (`preserved`, `invalidated`, `reestablished`)
+  - `authSessionHandling` (`preserved`, `invalidated`, `reissued`)
+  - `policy` or `reason`
+  - `evidenceRefs`
+  This field is required for both `cold_start_restore` and `scoped_reset_restore`; restore evidence must not bury session/auth handling only in generic free-form references.
 
 Operator credential evidence representation:
 
@@ -573,6 +583,13 @@ Illustrative recovery record shape:
       "post-reset-smoke-complete"
     ]
   },
+  "sessionRecovery": {
+    "status": "pass",
+    "gameSessionHandling": "preserved",
+    "authSessionHandling": "reissued",
+    "policy": "tenant-scoped reset preserved resumable gameplay sessions while forcing fresh auth-token issuance",
+    "evidenceRefs": ["session-rebind-check-01", "auth-token-reissue-check-01"]
+  },
   "jwtHardening": {
     "status": "pass",
     "jobRef": "job/post-restore-secret-hardening-jwt",
@@ -600,6 +617,33 @@ Illustrative recovery record shape:
         "observedValue": "firemud-staging-backups",
         "isolationAssertion": "not production bucket",
         "evidenceRef": "ext-backup-check-01"
+      },
+      {
+        "credentialClass": "asset-storage",
+        "validationMethod": "bucket-bind-check",
+        "validatedAt": "2026-03-13T05:01:00Z",
+        "validatedBy": "operator@example",
+        "observedValue": "firemud-staging-assets",
+        "isolationAssertion": "not production bucket",
+        "evidenceRef": "ext-asset-check-01"
+      },
+      {
+        "credentialClass": "outbound-comms",
+        "validationMethod": "endpoint-bind-check",
+        "validatedAt": "2026-03-13T05:02:00Z",
+        "validatedBy": "operator@example",
+        "observedValue": "smtp.staging.firemud.internal",
+        "isolationAssertion": "not production mail relay",
+        "evidenceRef": "ext-outbound-check-01"
+      },
+      {
+        "credentialClass": "operator-credentials",
+        "validationMethod": "binding-check",
+        "validatedAt": "2026-03-13T05:03:00Z",
+        "validatedBy": "operator@example",
+        "observedValue": "cert-manager://firemud/staging-operator-client",
+        "isolationAssertion": "bound to staging operator identity",
+        "evidenceRef": "ext-operator-check-01"
       }
     ]
   },
@@ -633,6 +677,13 @@ Illustrative `cold_start_restore` recovery record variant:
       "sessions-reestablished-after-reset"
     ]
   },
+  "sessionRecovery": {
+    "status": "pass",
+    "gameSessionHandling": "reestablished",
+    "authSessionHandling": "reissued",
+    "policy": "cold-start restore dropped old coordination-backed sessions and required fresh login/token issuance before reopen",
+    "evidenceRefs": ["game-session-reestablished-check-01", "auth-token-reissue-check-02"]
+  },
   "jwtHardening": {
     "status": "pass",
     "jobRef": "job/post-restore-secret-hardening-jwt",
@@ -648,7 +699,44 @@ Illustrative `cold_start_restore` recovery record variant:
   },
   "externalCredentialValidation": {
     "status": "pass",
-    "results": []
+    "results": [
+      {
+        "credentialClass": "backup-storage",
+        "validationMethod": "bucket-bind-check",
+        "validatedAt": "2026-03-14T05:00:00Z",
+        "validatedBy": "operator@example",
+        "observedValue": "firemud-staging-backups",
+        "isolationAssertion": "not production bucket",
+        "evidenceRef": "ext-backup-check-02"
+      },
+      {
+        "credentialClass": "asset-storage",
+        "validationMethod": "bucket-bind-check",
+        "validatedAt": "2026-03-14T05:01:00Z",
+        "validatedBy": "operator@example",
+        "observedValue": "firemud-staging-assets",
+        "isolationAssertion": "not production bucket",
+        "evidenceRef": "ext-asset-check-02"
+      },
+      {
+        "credentialClass": "outbound-comms",
+        "validationMethod": "endpoint-bind-check",
+        "validatedAt": "2026-03-14T05:02:00Z",
+        "validatedBy": "operator@example",
+        "observedValue": "smtp.staging.firemud.internal",
+        "isolationAssertion": "not production mail relay",
+        "evidenceRef": "ext-outbound-check-02"
+      },
+      {
+        "credentialClass": "operator-credentials",
+        "validationMethod": "binding-check",
+        "validatedAt": "2026-03-14T05:03:00Z",
+        "validatedBy": "operator@example",
+        "observedValue": "cert-manager://firemud/staging-operator-client",
+        "isolationAssertion": "bound to staging operator identity",
+        "evidenceRef": "ext-operator-check-02"
+      }
+    ]
   },
   "smokeStatus": "pass",
   "smokeEvidence": ["design/operations/deployments/staging/smoke/2026-03-14-drill-02.json"],

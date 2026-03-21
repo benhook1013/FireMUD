@@ -91,7 +91,7 @@ Initial-slice discovery rule for derived world artifacts:
 
 - For the first implementation slice, exported world navmesh/path graph artifacts must be discoverable through the same attested release surfaces as other version assets.
 - For the first implementation slice, Game Design must publish a `manifest.json` entry keyed by a stable usage name for each exported world navmesh/path graph artifact.
-- `published_release_bundle` must attest the same artifact indirectly through the attested `manifestHash`; implementations may add explicit artifact references to the bundle later, but they are not the required discovery surface for the initial slice.
+- `GetPublishedReleaseBundle(tenantId, versionId)` is the canonical attestation surface. In the initial slice it must expose both `artifactDigests[]` for exported derived-world-artifact bytes and `requiredManifestAssetKeys[]` for launch-required manifest usage keys, together with the attested `manifestHash`.
 - The attested release contract must also declare which stable usage keys are required for launch of that specific release. Manifest integrity alone is not sufficient to infer whether an omitted key is valid or a launch-blocking defect.
 - Runtime consumers must treat those attested references as canonical and must not construct object-store paths by convention.
 
@@ -110,6 +110,20 @@ Illustrative `GetPublishedReleaseBundle` fragment:
   "tenantId": "t1",
   "versionId": "v42",
   "manifestHash": "sha256:2d4b2e...",
+  "artifactDigests": [
+    {
+      "artifactType": "WORLD_NAVMESH_BUNDLE",
+      "artifactPath": "versions/v42/world/navmesh.bundle",
+      "artifactDigest": "sha256:8fd0c4...",
+      "artifactSchemaVersion": 1
+    },
+    {
+      "artifactType": "WORLD_PATH_GRAPH_BUNDLE",
+      "artifactPath": "versions/v42/world/path-graph.bundle",
+      "artifactDigest": "sha256:91baf2...",
+      "artifactSchemaVersion": 1
+    }
+  ],
   "requiredManifestAssetKeys": ["world.navmesh", "world.pathGraph"],
   "assetContentHashes": {
     "world.navmesh": "sha256:8fd0c4...",

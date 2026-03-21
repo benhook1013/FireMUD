@@ -466,6 +466,11 @@ Common gameplay commands must use a bounded synchronous fan-out model:
 - Read-heavy commands with stable transcript shapes (for example `LOOK`) should prefer pre-rendered or pre-aggregated gameplay read models where available, such as Game Session-owned `view:room-look:*` caches, with authoritative recomputation on miss.
 - For `LOOK`-class reads, World Management remains the authority for room snapshot and occupancy, while Entity Management enriches caller-supplied occupant/entity references with entity-owned display state. Entity Management should not make a nested occupancy fetch back into World Management on the steady-state hot path.
 - New command designs that require synchronous calls to more than two downstream domain services in steady-state must document latency budgets, fallback behavior, and why a read model or pre-aggregation approach is insufficient.
+- Initial-slice movement and region-transition orchestration is the explicit exception to the two-downstream-service ceiling. That path may synchronously involve Game Logic, World Management, and Entity Management under Game Session orchestration only because occupancy, deterministic movement rules, and entity-side consequences must commit under one fenced tick/effect contract.
+- This exception is narrow and must preserve a concrete budget/fallback contract:
+  - target steady-state budget: one fenced movement orchestration attempt must complete within the command latency envelope for the active tick budget; if that budget cannot be met, the command fails closed rather than degrading into partial cross-service success;
+  - fallback behavior: if any required participant is unavailable or rejects the current fence/effect identity, the movement command is not partially committed and must converge through the same retry/reconciliation path documented for spatial/ambient effects rather than inventing a second hot-path repair flow;
+  - no additional downstream participant may be added to this steady-state synchronous movement path without a new architecture-level decision.
 
 This section is normative for service-level API design. Service docs must treat the bounded fan-out rule as a contract, not as optional performance guidance.
 

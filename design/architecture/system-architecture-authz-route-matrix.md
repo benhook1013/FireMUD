@@ -5,7 +5,7 @@ This document is the normative source of truth for protected route classificatio
 Every protected route must be listed here with:
 
 - route identifier (service + method/path),
-- classification (`public`, `account_scoped`, `player_bootstrap_tenant`, `pre_tenant_discovery`, `tenant_regular`, `billing_safe_tenant`, `cross_tenant_support_safe`, `cross_tenant_billing_safe`, `cross_tenant_data_bearing`),
+- classification (`public`, `account_scoped`, `player_bootstrap_tenant`, `pre_tenant_discovery`, `public_production_onboarding`, `tenant_regular`, `billing_safe_tenant`, `cross_tenant_support_safe`, `cross_tenant_billing_safe`, `cross_tenant_data_bearing`),
 - required allowlist scope,
 - required role checks,
 - tenant-billing watermark applicability,
@@ -61,6 +61,7 @@ Critical-domain inventory artifacts (required):
 | `account_scoped` | `account` | No | Account-level control-plane routes with subject binding (`accountId == caller`), plus explicit route-level admin overrides |
 | `player_bootstrap_tenant` | `account` | No tenant-billing watermark; No membership watermark | Player-bootstrap-authenticated routes targeting a tenant before gameplay socket auth is complete (for example `POST /auth/connect-token`); must declare live membership, entitlement, and admission-pointer checks |
 | `pre_tenant_discovery` | `account` | No | Authenticated discovery surfaces that run before a single `tenantId` is selected (for example `WORLDS`) |
+| `public_production_onboarding` | `account` | No tenant-billing watermark; No membership watermark | First-party lobby/discovery and admission path that supports both default public production onboarding and explicitly granted additional realms. Brand-new authenticated accounts may discover the default public production realm before a membership row exists, while non-public realms still require Account Service grant authority; first successful `PLAY` on the default public production realm must atomically create the caller's `player` membership |
 | `tenant_regular` | `account` + `tenant` | Tenant-billing watermark: Yes; membership watermark: Yes | Gameplay-affecting and regular tenant control-plane operations |
 | `billing_safe_tenant` | `account` | Tenant-billing watermark: No; membership watermark: Yes | Must remain reachable during `suspended`/`canceled`, but must fail immediately after caller-bound membership/role revocation |
 | `cross_tenant_support_safe` | `account` + `global` | No | High-level troubleshooting only |
@@ -91,7 +92,8 @@ Without these fields where applicable, a route entry is incomplete for governanc
 | --- | --- | --- | --- |
 | Game Session Service | `LOGIN` / `LOGON` | `public` | Credential entrypoint only; no JWT required |
 | Game Session Service | `WORLDS` | `pre_tenant_discovery` | Authenticated account discovery; tenant visibility derived server-side from membership + entitlements; global roles do not widen gameplay discovery |
-| Game Session Service | `CHARS` / `PLAY` | `tenant_regular` | Caller-bound gameplay membership plus `gameplayAdmissionAllowed`; global roles alone do not grant gameplay access |
+| Game Session Service | `REALMS` | `public_production_onboarding` | Visible realms for a selected world; the default public production realm may be discoverable before membership exists, while additional realms require explicit Account Service grant authority |
+| Game Session Service | `CHARS` / `PLAY` | `public_production_onboarding` | Admission evaluates either default public-production policy or explicit Account Service realm grant authority plus runtime entitlements; first successful `PLAY` atomically creates caller membership only for the default public production realm; first-party `/ws/game/**` `PLAY` also enforces validated connect-context errors (`CONNECT_CONTEXT_INVALID`, `CONNECT_SCOPE_MISMATCH`); global roles alone do not grant gameplay access |
 | Game Session Service | `StartSession` / `RestartSession` / `StopSession` / `RefreshRoles` | `tenant_regular` | `tenantAdmin`/`platformAdmin` |
 | Account Service | `AuthLogin` | `public` | Browser auth entrypoint |
 | Account Service | `PlayerBootstrapLogin` | `public` | First-party gameplay bootstrap entrypoint; issues `player-bootstrap` token profile only |

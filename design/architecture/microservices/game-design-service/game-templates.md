@@ -109,6 +109,7 @@ Game templates may optionally carry default runtime configuration alongside thei
 - Templates must not implicitly promise survival of instance-scoped world state across replacement-instance upgrades. Any persistent carry-forward behavior must be defined by the runtime-state upgrade contract in `system-architecture-versioning-runtime.md`.
 - When these defaults are present, instance-creation flows should apply them explicitly; when they are absent, callers must provide the desired `scriptPatchVersion` and runtime flags at creation time. Templates must not implicitly select “latest READY patch” or other moving targets without operator input.
 - If a template pins a default `scriptPatchVersion`, instance creation must validate that Automation & Scripting has marked that patch `READY` for the tenant before pinning it for a running instance; otherwise instance creation fails with a clear error and no instance rows are created.
+- Caller-supplied runtime overrides are only allowed to fill fields the template leaves unset. If the template already supplies a runtime default, any caller-supplied value for that field is a deterministic launch-resolution failure instead of being merged heuristically.
 
 ### Resolved Launch Descriptor
 
@@ -117,6 +118,7 @@ Template-driven instance creation must materialize one immutable resolved launch
 Canonical minimum fields:
 
 - `launchDescriptorId`
+- `controlPlaneRequestId`
 - `tenantId`
 - `gameTemplateId`
 - resolved `versionId`
@@ -135,7 +137,8 @@ Resolution invariants:
 Ownership and usage rules:
 
 - Game Design Service owns deterministic resolution of template metadata and normalized references into this descriptor, or exposes a read API that lets the instance-creation orchestrator do so deterministically from Game Design-owned state.
-- Retries for the same launch attempt must reuse the same descriptor values.
+- Retries for the same launch attempt, keyed by the same `controlPlaneRequestId` and the same input fields, must reuse the same descriptor values and must not re-resolve to a newer attestation, patch, or runtime default.
+- A fresh launch attempt with a new `controlPlaneRequestId` may resolve to newer valid state if the underlying published metadata has advanced.
 - World creation, Game Session admission, and script-patch pinning consume this descriptor as input; they must not fetch "latest READY patch" or re-parse template JSON mid-flight.
 - If descriptor resolution fails because a dependency is missing, not `READY`, not attested, or not enforceable under `GetTemplateReferencePhase`, the launch fails before any instance rows are created.
 
@@ -155,14 +158,15 @@ No service may create persistent instance rows before this preflight sequence co
 
 Illustrative control-plane schema:
 
-- Request: `ResolveLaunchDescriptorRequest { tenantId, gameTemplateId, requestedRuntimeFlags?, requestedScriptPatchVersion?, sourceVersionId?, targetVersionId? }`
+- Request: `ResolveLaunchDescriptorRequest { tenantId, gameTemplateId, controlPlaneRequestId, requestedRuntimeFlags?, requestedScriptPatchVersion?, sourceVersionId?, targetVersionId? }`
 - Response: `ResolveLaunchDescriptorResponse { launchDescriptorId, tenantId, gameTemplateId, versionId, scriptPatchVersion, runtimeFlags, generationConfigRevision, versionStateEpoch, remapSetId?, releaseBundleRef }`
 
 The exact transport schema may evolve, but every implementation must preserve the same contract shape:
 
-- request fields identify the template and any caller-supplied runtime overrides that are allowed to participate in deterministic resolution;
+- request fields identify the template, the launch attempt identity, and any caller-supplied runtime overrides that are allowed to participate in deterministic resolution;
 - response fields are the immutable resolved values consumed by launch-time workflows;
 - `releaseBundleRef` (or equivalent attestation identity) must let downstream workflows prove they are using the same published release attestation that supplied `generationConfigRevision`.
+- A request with the same `(tenantId, gameTemplateId, controlPlaneRequestId)` and the same input fields must return the same descriptor values; a request with a different `controlPlaneRequestId` is a new launch attempt and may resolve against newer valid state.
 
 Normative examples:
 
@@ -172,7 +176,8 @@ Normative examples:
 {
   "request": {
     "tenantId": "t1",
-    "gameTemplateId": "gt-default"
+    "gameTemplateId": "gt-default",
+    "controlPlaneRequestId": "ld-req-1001"
   },
   "response": {
     "launchDescriptorId": "ld-1001",
@@ -198,6 +203,7 @@ Normative examples:
   "request": {
     "tenantId": "t1",
     "gameTemplateId": "gt-default",
+    "controlPlaneRequestId": "ld-req-2001",
     "sourceVersionId": "v42",
     "targetVersionId": "v43"
   },
@@ -224,7 +230,8 @@ Normative examples:
 {
   "request": {
     "tenantId": "t1",
-    "gameTemplateId": "gt-invalid-mixed"
+    "gameTemplateId": "gt-invalid-mixed",
+    "controlPlaneRequestId": "ld-req-3001"
   },
   "error": {
     "code": "INVALID_TEMPLATE_CONFIGURATION",
@@ -238,6 +245,7 @@ Normative examples:
 ```json
 {
   "request": {
+    "controlPlaneRequestId": "ld-req-4001",
     "tenantId": "t1",
     "gameTemplateId": "gt-default"
   },

@@ -57,7 +57,7 @@ Because ticks treat `(region_epoch, tickId)` as the canonical coordination timel
    - This pause step is complete only once the scope reaches the control-plane `PAUSED` state defined in `system-architecture-redis-ops-access.md`: no executor in the target scope is allowed to create new durable tick batches or new Redis coordination state under the old epoch.
 
 2. **Bump `region_epoch` in PostgreSQL**
-   - For each affected `<tenantId, regionId>`, the control plane updates `region_epoch` in the coordination metadata table so that any surviving executors and locks become stale by definition.
+   - For each affected `<tenantId, regionId>`, the canonical reset control-plane operation (`RunScopedCoordinationReset(scope)` / `coordination-maintenance reset`) updates `region_epoch` in the coordination metadata table so that any surviving executors and locks become stale by definition.
    - This step is authoritative: new executors always treat the highest `region_epoch` as the only valid timeline, and tick heartbeat streams (`StreamTickHeartbeats`) will begin emitting the new `regionEpoch` for those regions so consumers can distinguish pre- and post-reset ticks.
 3. **Run the scoped reset tooling**
    - Use the versioned coordination maintenance CLI to clear keys in Coordination Redis for the chosen scope, using shared key builders and descriptors.

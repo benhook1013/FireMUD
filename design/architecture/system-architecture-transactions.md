@@ -242,6 +242,7 @@ FireMUD uses a **shared saga orchestration library**, not a separate microservic
   - Centralized in the **firemud-common** library (saga package) located under
     `services/common-library`
   - The engine and its Flyway migrations live in `services/common-library/src/main/resources/db/migration/saga`
+  - Consuming services run the saga migrations in a dedicated, ordered Flyway pass before their own service-local migrations so saga history does not share a version namespace with `V1__init.sql` service baselines
   - Hosts define saga flows declaratively using a fluent API or YAML/annotation declarations
   - Saga execution is initiated by services like Account or Game Design, but **coordination logic lives in the library**
   - Participating services include **Account**, **Game Design**, **Game Session**, **World Management**, **Automation Scripting**, **Social Groups**, and **Logging & Admin**

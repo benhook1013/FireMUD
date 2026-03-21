@@ -84,7 +84,7 @@ Derived world artifacts such as navmesh/path graph bundles need one canonical pu
 
 - World Management owns derivation, validation, and semantic versioning of these artifacts for `(tenantId, versionId)`.
 - Game Design Service remains the sole writer to the shared object store. World Management must not publish derived world artifacts by writing directly to object storage.
-- If derived world artifacts are exported outside World Management storage, they must be handed to the Game Design publish workflow as explicit publish inputs so Game Design can write them, attest them in `published_release_bundle`, and expose them through the same release bundle used by activation and repair tooling.
+- If derived world artifacts are exported outside World Management storage, they must be handed to the Game Design publish workflow as explicit publish inputs so Game Design can write them, attest them in `published_release_bundle` via typed `artifactDigests[]`, declare any launch-required manifest usage keys via `requiredManifestAssetKeys[]`, and expose them through the same release bundle used by activation and repair tooling.
 - If a deployment keeps these artifacts only in World Management storage, the read path must remain World-owned via gRPC or database-backed APIs and must not rely on unpublished object-store conventions.
 - Implementations must choose one of those two paths per artifact family and document the consumer read path. Mixing direct World writes to object storage with Game Design-managed asset publication is not allowed.
 
@@ -119,7 +119,7 @@ Initial-slice `contentDigest` manifest:
 Attestation rule for derived world artifacts:
 
 - In the initial slice, navmesh/path graph bundles are not folded into World Management’s `contentDigest`.
-- Instead, the publish workflow must compute and persist an explicit per-artifact digest in `published_release_bundle` alongside the participant digests and `manifestHash`.
+- Instead, the publish workflow must compute and persist explicit per-artifact digests in `published_release_bundle` alongside the participant digests, `manifestHash`, and any `requiredManifestAssetKeys[]` needed for launch/cutover validation.
 - The artifact digest must be bound to the same `(tenantId, versionId, commitId, publishWorkflowId)` as the World digest so runtime consumers can prove the published artifact came from the same attested release.
 
 Illustrative attestation fragment:
@@ -153,6 +153,7 @@ Illustrative attestation fragment:
     }
   ],
   "manifestHash": "sha256:manifest-789",
+  "requiredManifestAssetKeys": ["world.navmesh", "world.pathGraph"],
   "generationConfigRevision": "genrev-42a1"
 }
 ```
@@ -160,6 +161,7 @@ Illustrative attestation fragment:
 The exact attestation schema may evolve, but initial-slice implementations must preserve the same semantics:
 
 - each exported world artifact has its own typed digest entry;
+- `requiredManifestAssetKeys[]` declares which stable manifest usage keys are mandatory for launch/cutover validation of that release;
 - each entry is bound to the same release identity as the participant digests;
 - runtime consumers discover artifact locations through the attested `manifest.json`, not by reconstructing bucket paths from the digest entries alone.
 
@@ -413,6 +415,32 @@ Cross-service LOOK read consistency is fence-based:
 - Game Logic must send the same `asOfTickId` fence token from `GetRoomSnapshot` when calling Entity Management `ListRoomEntities`.
 - Entity Management must either answer from the same fence token or return `STALE_READ_FENCE` / `READ_FENCE_UNAVAILABLE`.
 - If fences do not match, Game Logic retries composition instead of returning mixed-state output.
+
+Illustrative `GetRoomSnapshot` fragments:
+
+- Success:
+
+```json
+{
+  "tenantId": "t1",
+  "gameInstanceId": "g1",
+  "roomInstanceId": "room-antechamber",
+  "worldSnapshotId": "worldsnap-184",
+  "asOfTickId": 184,
+  "roomName": "Candle-lit Antechamber"
+}
+```
+
+- Fence unavailable:
+
+```json
+{
+  "error": {
+    "code": "READ_FENCE_UNAVAILABLE",
+    "message": "Room snapshot could not be materialized for the requested read fence."
+  }
+}
+```
 
 Game Logic treats `worldSnapshotId` as the canonical cache key for LOOK-relevant world data for a specific `RoomInstanceRef` at a specific fence. When composing a full LOOK view, Game Logic combines:
 

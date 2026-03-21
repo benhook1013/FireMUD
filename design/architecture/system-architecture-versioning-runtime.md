@@ -29,7 +29,9 @@ The **Game Design Service** manages version metadata and publish workflows for g
    - `GetPublishedReleaseBundle` must return deterministic fields at minimum:
      - `tenantId`, `versionId`, `commitId`, `publishWorkflowId`, `publishedAt`
      - `participantDigests[] { serviceName, appliedCommitId, contentDigest, digestSchemaVersion }`
+     - `artifactDigests[] { artifactType, artifactPath?, artifactDigest, artifactSchemaVersion }` for any exported derived world artifacts in the release
      - `manifestHash`, `manifestSchemaVersion`
+     - `requiredManifestAssetKeys[]` for stable manifest usage keys that are mandatory for launch/cutover validation of that release
      - `generationConfigRevision`
      - `attestationSchemaVersion`
    - Error/caching contract:
@@ -60,15 +62,57 @@ The **Game Design Service** manages version metadata and publish workflows for g
       "digestSchemaVersion": 2
     }
   ],
+  "artifactDigests": [
+    {
+      "artifactType": "WORLD_NAVMESH_BUNDLE",
+      "artifactPath": "versions/v42/world/navmesh.bundle",
+      "artifactDigest": "sha256:navmesh42",
+      "artifactSchemaVersion": 1
+    },
+    {
+      "artifactType": "WORLD_PATH_GRAPH_BUNDLE",
+      "artifactPath": "versions/v42/world/path-graph.bundle",
+      "artifactDigest": "sha256:pathgraph42",
+      "artifactSchemaVersion": 1
+    }
+  ],
   "manifestHash": "sha256:manifest42",
   "manifestSchemaVersion": 1,
+  "requiredManifestAssetKeys": ["world.navmesh", "world.pathGraph"],
   "generationConfigRevision": "genrev-42a1",
   "attestationSchemaVersion": 1
 }
 ```
 
-In the initial slice, exported derived world artifacts such as navmesh/path graph bundles are discovered through entries in the attested version `manifest.json`. `published_release_bundle` attests those artifact references indirectly via `manifestHash`; callers should not expect a separate required top-level artifact field in the bundle.
-6. A notification or message informs the Game Session Service that a new version exists so game instances can be started or patched against it.
+In the initial slice, exported derived world artifacts such as navmesh/path graph bundles are discovered through entries in the attested version `manifest.json`. `GetPublishedReleaseBundle` attests the same release through `manifestHash`, typed `artifactDigests[]`, and `requiredManifestAssetKeys[]`; callers should not expect a separate ad hoc top-level artifact-path field outside that canonical bundle shape.
+
+Illustrative attestation payload for a release with no derived world artifacts:
+
+```json
+{
+  "tenantId": "t1",
+  "versionId": "v43",
+  "commitId": "c-9002",
+  "publishWorkflowId": "pub-43",
+  "publishedAt": "2026-03-13T11:00:00Z",
+  "participantDigests": [
+    {
+      "serviceName": "WORLD",
+      "appliedCommitId": "c-9002",
+      "contentDigest": "sha256:worlddigest43",
+      "digestSchemaVersion": 3
+    }
+  ],
+  "artifactDigests": [],
+  "manifestHash": "sha256:manifest43",
+  "manifestSchemaVersion": 1,
+  "requiredManifestAssetKeys": [],
+  "generationConfigRevision": "genrev-43b2",
+  "attestationSchemaVersion": 1
+}
+```
+
+1. A notification or message informs the Game Session Service that a new version exists so game instances can be started or patched against it.
 
 Published versions are immutable; further changes require publishing a new `version_id`. Services may keep additional draft or experimental versions internally, but only Published versions are eligible to be activated for live game instances.
 
@@ -220,13 +264,24 @@ Launch descriptor version-resolution rules:
 - `game_template_version_ref` is the canonical source for that base version; other normalized template references must agree with it.
 - Mixed-version template bundles are invalid for launch and must be rejected during template validation and launch-descriptor resolution rather than interpreted heuristically at runtime.
 - `scriptPatchVersion` is the only supported per-launch patch override and must reference the same `baseVersionId` as the resolved `versionId`.
+- `ResolveLaunchDescriptor` is idempotent per `controlPlaneRequestId`: a retry with the same `(tenantId, gameTemplateId, controlPlaneRequestId)` and the same input fields must return the same descriptor values, and it must not re-resolve to a newer attestation, patch, or runtime default.
+- A fresh launch attempt with a new `controlPlaneRequestId` may resolve against newer valid published state if the underlying template, attestation, or patch data has advanced.
+- Caller-supplied runtime overrides are only honored when the template leaves the corresponding field unset. If the template already supplies a default, any caller-supplied value for that field is a deterministic launch-descriptor failure instead of being merged heuristically.
+- `GetPublishedReleaseBundle(tenantId, versionId)` is the canonical release-attestation surface for launch, cutover, and repair. In the initial slice it must expose:
+  - `participantDigests[]`
+  - `artifactDigests[]` for each exported derived world artifact
+  - `manifestHash`
+  - `requiredManifestAssetKeys[]` for stable manifest usage keys that are mandatory for launch/cutover validation of that release
+- `artifactDigests[]` and `requiredManifestAssetKeys[]` are complementary, not competing fields: typed artifact digests attest the exact exported bytes, while `requiredManifestAssetKeys[]` declares which manifest entries are required for a valid launch of that release.
+- The contract intentionally does not introduce a separate top-level artifact-path reference field outside this attested bundle shape. Runtime consumers still discover artifact locations through the attested `manifest.json`, not through ad hoc object-store path reconstruction.
 
 Illustrative launch-descriptor examples:
 
 - Fresh launch:
-  - `ResolveLaunchDescriptor(tenantId=t1, gameTemplateId=gt-default)` resolves to exactly one `versionId` (for example `v42`) plus any explicit patch/defaults pinned to that same base version.
+  - `ResolveLaunchDescriptor(tenantId=t1, gameTemplateId=gt-default, controlPlaneRequestId=ld-req-1001)` resolves to exactly one `versionId` (for example `v42`) plus any explicit patch/defaults pinned to that same base version.
+  - Repeating the same launch attempt with the same `controlPlaneRequestId` returns the same `versionId`, `scriptPatchVersion`, and release attestation identity.
 - Replacement-instance upgrade:
-  - `ResolveLaunchDescriptor(tenantId=t1, gameTemplateId=gt-default, sourceVersionId=v42, targetVersionId=v43)` resolves to `versionId=v43` only when template references, release attestation, and any required `remapSetId` all validate against the target version.
+  - `ResolveLaunchDescriptor(tenantId=t1, gameTemplateId=gt-default, controlPlaneRequestId=ld-req-2001, sourceVersionId=v42, targetVersionId=v43)` resolves to `versionId=v43` only when template references, release attestation, and any required `remapSetId` all validate against the target version.
   - If `targetVersionId` would cause mixed-version dependencies or requires an unapproved remap, descriptor resolution fails before any instance rows are created.
 - Mixed-version rejection:
   - If `game_template_world_ref` resolves to `versionId=v42` while `game_template_entity_ref` resolves to `versionId=v43`, `ResolveLaunchDescriptor` must fail validation instead of choosing one version heuristically.

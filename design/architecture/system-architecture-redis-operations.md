@@ -259,11 +259,13 @@ To make coordination and tick health observable in a consistent way across servi
 - **Tick execution**
   - `tick_interval_ms{tenantId,regionId}` – effective tick cadence for each active region. This is a required companion metric for any environment that evaluates dynamic tail-loss or pause-budget rules derived from `tick_interval_ms`.
   - `tick_execution_time_ms_bucket{tenantId,regionId,le}` – histogram of tick execution time per `<tenantId, regionId>`.
-  - Recording rules derived from this histogram should expose:
-    - `tick_execution_time_ms_p95{tenantId,regionId}` – p95 tick execution time.
-    - `tick_execution_time_ms_p99{tenantId,regionId}` – p99 tick execution time.
+    - Recording rules derived from this histogram should expose:
+      - `tick_execution_time_ms_p95{tenantId,regionId}` – p95 tick execution time.
+      - `tick_execution_time_ms_p99{tenantId,regionId}` – p99 tick execution time.
   - `tick_lock_ttl_ms{tenantId,regionId}` – gauge or recording rule representing the effective lock TTL for ticks in each region.
   - `tick_status{tenantId,regionId,status}` – one-hot gauge that encodes region state via a bounded `status` label (for example `status="RUNNING"|"PAUSED"|"STALLED"|"DEGRADED"`). Exactly one series per `<tenantId, regionId>` should be `1` at a time.
+  - `current_tick_state{tenantId,regionId,state}` – one-hot projection of `tick:{tenantRegionTag}:meta.current_tick_state`, used as the canonical observability surface for whether a region is `STAGED`, `RESOLVING`, `APPLIED`, or `ABANDONED`.
+  - `current_tick_terminal_at_ms{tenantId,regionId}` – projection of the terminal timestamp stored in `tick:{tenantRegionTag}:meta.current_tick_terminal_at_ms`, used for bounded cleanup and stale-state visibility.
   - `tick_retry_queue_depth{tenantId,regionId}` – current depth of retry queues.
   - `tick_command_queue_depth{tenantId,regionId}` – aggregate per-region command queue depth.
   - `tick_current_id{tenantId,regionId}` – the last committed tick id for the region, used as a coarse tick progression watermark.
@@ -271,6 +273,10 @@ To make coordination and tick health observable in a consistent way across servi
   - `tick_durable_commit_total{tenantId,regionId}` – count of ticks that reached the durable commit boundary (heartbeat/RegionStatus watermark).
   - `tick_coordination_cleared_total{tenantId,regionId}` – count of ticks whose coordination state reached the in-flight clearance boundary.
   - `tick_cleanup_lag_ms{tenantId,regionId}` – lag from durable commit to coordination-cleared for each tick; sustained growth indicates cleanup/recovery pressure even when durable commit continues.
+- **Remote follow-up drainage**
+  - `remote_followups_due_total{tenantId,regionId}` – count of remote follow-ups pending for a region.
+  - `remote_followups_drain_lag_ms{tenantId,regionId}` – lag between scheduled follow-up readiness and observed drain completion.
+  - `remote_followups_backlog_over_budget_total{tenantId,regionId}` – count of times follow-up backlog exceeded the emitted budget.
 - **Tick effect ledger**
   - `tick_effects_pending_total{tenantId,regionId}` – count of ledger rows with `status=SCHEDULED`.
   - `tick_effects_applied_total{tenantId,regionId}` – cumulative applied effects.

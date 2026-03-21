@@ -13,7 +13,8 @@ This document explains how FireMUD manages PostgreSQL schema changes across its 
   module, which does not run Flyway itself).
 - Versioned SQL files live under each service in `src/main/resources/db/migration/`.
 - Migrations follow the `V<version>__<description>.sql` naming convention.
-- Every module begins with a `V1__init.sql` baseline and numbers sequentially from there.
+- Every service-local module begins with a `V1__init.sql` baseline and numbers sequentially from there.
+- Shared saga migrations from `common-library` are applied by consuming services in a separate, ordered Flyway pass before service-local migrations run. That pass uses the `services/common-library/src/main/resources/db/migration/saga` location and its own Flyway schema-history state so the saga migration sequence never shares a version namespace with service-local `V*__*.sql` files.
 - `spring.flyway.enabled=true` in `application.yml` triggers migration execution on startup.
 - Flyway reads connection settings from the `FIREMUD_POSTGRES_*` environment variables described in
   [Environment & Secrets](./infrastructure/environment-and-secrets.md).
@@ -33,11 +34,13 @@ This document explains how FireMUD manages PostgreSQL schema changes across its 
     [System Architecture – Transactions](./system-architecture-transactions.md).
   - Services that need these shared tables include the module as a dependency
     during their build.
-  - The library packages its migrations inside the JAR so Flyway automatically
-    picks them up from the classpath when each service starts.
+  - The library packages its migrations inside the JAR so the consuming
+    service's dedicated saga Flyway pass can pick them up from the classpath
+    before service-local migrations execute.
   - The `common-library` itself does not run Flyway; each consuming service
-    executes these migrations against its own database on startup, creating a
-    local `saga` schema as needed.
+    executes the saga pass against its own database on startup, creating a
+    local `saga` schema and its own Flyway history state before service-local
+    migrations run.
 - New migrations are committed alongside service code so history stays with the owning service.
 
 ### Version-Aware Migration Guidelines

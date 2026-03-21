@@ -214,8 +214,8 @@ Scripts that do not clearly fit one of these categories should be refactored unt
 
 Automation-related Lua scripts follow stricter cluster slotting rules to avoid `CROSSSLOT` errors and keep coordination boundaries clear:
 
-- Scripts that operate on `automation:tick:{tenantScriptTag}:*` keys are registered as **single-hash-slot** scripts:
-  - They may include multiple `automation:tick:{tenantScriptTag}:*` keys for the **same** `<tenantId>` + `<scriptId>` in `KEYS`, but they must not mix different `{tenantScriptTag}` values.
+- Scripts that operate on `automation:tick:{tenantInstanceScriptTag}:*` keys are registered as **single-hash-slot** scripts:
+  - They may include multiple `automation:tick:{tenantInstanceScriptTag}:*` keys for the **same** `<tenantId>` + `<gameInstanceId>` + `<scriptId>` in `KEYS`, but they must not mix different `{tenantInstanceScriptTag}` values.
   - They must not include any `tick:{tenantRegionTag}:*` keys in the same invocation.
 - Scripts that operate on `automation:queue:<tenantId>:*` keys:
   - Use only `automation:queue:<tenantId>:*` keys for a single tenant in `KEYS`.
