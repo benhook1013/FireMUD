@@ -46,6 +46,14 @@ jobs:
       - name: 🚀 Start Dev Stack (devUp)
         run: ./gradlew devUp
 
+      - name: 📦 Install WebSocket smoke dependency
+        run: python3 -m pip install --disable-pip-version-check websocket-client
+
+      - name: 🧪 Direct WebSocket LOGIN + LOOK (Game Session)
+        run: |
+          cd services/game-session-service
+          bash ./websocket-login-look-smoke.sh
+
       - name: 🧪 Telnet LOGIN + LOOK (TCP Proxy)
         run: |
           cd services/tcp-proxy-service

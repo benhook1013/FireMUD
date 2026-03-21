@@ -30,7 +30,8 @@ This checklist is for the remaining quality pass, observability tightening, and 
 - [x] Add a blackbox or Compose-level test that proves the full external behavior:
   - before readiness, Telnet receives the explicit startup-unavailable disconnect
   - after readiness, first-attempt `LOGIN -> LOOK` succeeds without retries
-- [ ] Decide whether the same blackbox test should assert equivalent behavior for the direct WebSocket path or whether Telnet-only coverage is sufficient for this slice.
+- [x] Decide whether the same blackbox test should assert equivalent behavior for the direct WebSocket path or whether Telnet-only coverage is sufficient for this slice.
+  Resolution: keep pre-readiness admission assertions at the Telnet boundary, and add direct WebSocket blackbox coverage only for post-readiness parity through `LOGIN -> LOOK`.
 - [x] Review smoke coverage and make sure it is still verifying readiness semantics rather than merely waiting for eventual convergence.
 
 ## Payload And Contract Cleanup
