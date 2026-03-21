@@ -52,8 +52,8 @@ grpc-stub = { module = "io.grpc:grpc-stub", version = "1.80.0" }
 grpc-inprocess = { module = "io.grpc:grpc-inprocess", version = "1.80.0" }
 protoc-gen-grpc-java = { module = "io.grpc:protoc-gen-grpc-java", version = "1.80.0" }
 
-protobuf-java = { module = "com.google.protobuf:protobuf-java", version = "4.34.0" }
-protoc = { module = "com.google.protobuf:protoc", version = "4.34.0" }
+protobuf-java = { module = "com.google.protobuf:protobuf-java", version = "4.34.1" }
+protoc = { module = "com.google.protobuf:protoc", version = "4.34.1" }
 
 opentelemetry-api = { module = "io.opentelemetry:opentelemetry-api", version = "1.60.1" }
 opentelemetry-sdk = { module = "io.opentelemetry:opentelemetry-sdk", version = "1.60.1" }
