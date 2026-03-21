@@ -5,6 +5,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import java.util.Collections;
+import java.util.Map;
 import net.firedevops.firemud.tcpproxy.telnet.TelnetServer;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.ObjectProvider;
@@ -21,9 +22,12 @@ class TcpProxyTrafficReadinessHealthIndicatorTest {
         new TcpProxyTrafficReadinessHealthIndicator(provider, probe);
 
     Health health = indicator.health();
+    @SuppressWarnings("unchecked")
+    Map<String, Map<String, Object>> dependencies =
+        (Map<String, Map<String, Object>>) health.getDetails().get("dependencies");
 
     assertEquals(Status.OUT_OF_SERVICE, health.getStatus());
-    assertEquals("DOWN", health.getDetails().get("telnetListener"));
+    assertEquals("DOWN", dependencies.get("telnetListener").get("status"));
   }
 
   @Test
@@ -38,10 +42,13 @@ class TcpProxyTrafficReadinessHealthIndicatorTest {
         new TcpProxyTrafficReadinessHealthIndicator(providerFor(telnetServer), probe);
 
     Health health = indicator.health();
+    @SuppressWarnings("unchecked")
+    Map<String, Map<String, Object>> dependencies =
+        (Map<String, Map<String, Object>>) health.getDetails().get("dependencies");
 
     assertEquals(Status.OUT_OF_SERVICE, health.getStatus());
-    assertEquals("UP", health.getDetails().get("telnetListener"));
-    assertEquals("DOWN", health.getDetails().get("gatewayReadiness"));
+    assertEquals("UP", dependencies.get("telnetListener").get("status"));
+    assertEquals("DOWN", dependencies.get("gatewayGameplayPath").get("status"));
   }
 
   @Test
@@ -56,10 +63,13 @@ class TcpProxyTrafficReadinessHealthIndicatorTest {
         new TcpProxyTrafficReadinessHealthIndicator(providerFor(telnetServer), probe);
 
     Health health = indicator.health();
+    @SuppressWarnings("unchecked")
+    Map<String, Map<String, Object>> dependencies =
+        (Map<String, Map<String, Object>>) health.getDetails().get("dependencies");
 
     assertEquals(Status.UP, health.getStatus());
-    assertEquals("UP", health.getDetails().get("telnetListener"));
-    assertEquals("UP", health.getDetails().get("gatewayReadiness"));
+    assertEquals("UP", dependencies.get("telnetListener").get("status"));
+    assertEquals("UP", dependencies.get("gatewayGameplayPath").get("status"));
   }
 
   private static ObjectProvider<TelnetServer> providerFor(TelnetServer telnetServer) {

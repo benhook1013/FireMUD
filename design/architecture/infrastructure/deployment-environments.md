@@ -150,8 +150,10 @@ A sample Terraform module for a local Kind cluster is provided in [k8s/terraform
   - **Readiness probes** call `/actuator/health/readiness` to determine whether a pod should receive new traffic.
   - **Liveness probes** call `/actuator/health/liveness` to detect wedged or dead processes.
 - Readiness must represent safe traffic admission for the service’s current public contract, not merely successful boot.
+- Dependency-aware readiness checks should prefer bounded, operation-shaped canaries over raw ping endpoints when the user-visible contract immediately depends on a downstream RPC path. These canaries must remain side-effect free. A synthetic probe that intentionally exercises an RPC with invalid or missing identifiers may still count as reachable when it returns an application-level error such as `INVALID_ARGUMENT`, `NOT_FOUND`, or `AUTH_INVALID_CREDENTIALS`; transport failures, timeouts, and upstream-failure responses do not count as ready.
 - Liveness must remain local-only and must not fail because a dependency is degraded.
 - When startup is materially slower than steady-state readiness evaluation, use a `startupProbe` rather than inflating liveness or readiness thresholds.
+- For the Telnet edge path, the TCP Proxy Service must refuse new sockets with an explicit startup-unavailable disconnect until the downstream `connect -> LOGIN -> first LOOK` path is ready rather than accepting the connection and allowing later gameplay commands to stall or fail.
 
 ### Kubernetes Auto Recovery
 

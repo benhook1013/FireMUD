@@ -1,14 +1,18 @@
 package net.firedevops.firemud.tcpproxy.health;
 
+import java.util.LinkedHashMap;
+import java.util.Map;
+import net.firedevops.firemud.common.health.DependencyReadinessSupport;
 import net.firedevops.firemud.tcpproxy.telnet.TelnetServer;
 import org.springframework.beans.factory.ObjectProvider;
-import org.springframework.boot.health.contributor.Health;
 import org.springframework.boot.health.contributor.HealthIndicator;
 import org.springframework.stereotype.Component;
 
 /** Readiness indicator for new Telnet traffic admission. */
 @Component("trafficAdmissionReadiness")
 public class TcpProxyTrafficReadinessHealthIndicator implements HealthIndicator {
+  private static final String CONTRACT = "Telnet connect->LOGIN->LOOK admission";
+
   private final ObjectProvider<TelnetServer> telnetServerProvider;
   private final GatewayGameplayReadinessProbe gatewayGameplayReadinessProbe;
 
@@ -20,24 +24,34 @@ public class TcpProxyTrafficReadinessHealthIndicator implements HealthIndicator 
   }
 
   @Override
-  public Health health() {
+  public org.springframework.boot.health.contributor.Health health() {
+    Map<String, Object> dependencies = new LinkedHashMap<>();
     TelnetServer server = telnetServerProvider.getIfAvailable();
     if (server == null || !server.isRunning()) {
-      return Health.outOfService().withDetail("telnetListener", "DOWN").build();
+      dependencies.put(
+          "telnetListener",
+          DependencyReadinessSupport.downDependency(
+              "bind", "tcp://0.0.0.0:telnet", "listener not running"));
+      return DependencyReadinessSupport.outOfService(CONTRACT, "telnetListener", dependencies);
     }
+    dependencies.put(
+        "telnetListener",
+        DependencyReadinessSupport.upDependency("bind", "tcp://0.0.0.0:telnet", "LISTENING"));
     if (!gatewayGameplayReadinessProbe.isReady()) {
-      return Health.outOfService()
-          .withDetail("telnetListener", "UP")
-          .withDetail("gatewayReadiness", "DOWN")
-          .withDetail(
-              "gatewayReadinessUri", String.valueOf(gatewayGameplayReadinessProbe.readinessUri()))
-          .build();
+      dependencies.put(
+          "gatewayGameplayPath",
+          DependencyReadinessSupport.downDependency(
+              "readinessProbe",
+              String.valueOf(gatewayGameplayReadinessProbe.readinessUri()),
+              "gateway readiness endpoint not healthy"));
+      return DependencyReadinessSupport.outOfService(CONTRACT, "gatewayGameplayPath", dependencies);
     }
-    return Health.up()
-        .withDetail("telnetListener", "UP")
-        .withDetail("gatewayReadiness", "UP")
-        .withDetail(
-            "gatewayReadinessUri", String.valueOf(gatewayGameplayReadinessProbe.readinessUri()))
-        .build();
+    dependencies.put(
+        "gatewayGameplayPath",
+        DependencyReadinessSupport.upDependency(
+            "readinessProbe",
+            String.valueOf(gatewayGameplayReadinessProbe.readinessUri()),
+            "READY"));
+    return DependencyReadinessSupport.up(CONTRACT, dependencies);
   }
 }

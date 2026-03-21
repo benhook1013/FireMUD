@@ -4,9 +4,10 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.WebSocket;
 import java.time.Duration;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
+import net.firedevops.firemud.common.health.DependencyReadinessSupport;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.health.contributor.Health;
 import org.springframework.boot.health.contributor.HealthIndicator;
 import org.springframework.stereotype.Component;
 
@@ -14,6 +15,7 @@ import org.springframework.stereotype.Component;
 @Component("gameplayRouteReadiness")
 public class GameplayRouteReadinessHealthIndicator implements HealthIndicator {
   private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(1);
+  private static final String CONTRACT = "Gateway /ws/game upgrade";
 
   private final int serverPort;
   private final HttpClient client = HttpClient.newBuilder().connectTimeout(CONNECT_TIMEOUT).build();
@@ -24,9 +26,9 @@ public class GameplayRouteReadinessHealthIndicator implements HealthIndicator {
   }
 
   @Override
-  public Health health() {
+  public org.springframework.boot.health.contributor.Health health() {
+    URI uri = URI.create("ws://127.0.0.1:" + serverPort + "/ws/game");
     try {
-      URI uri = URI.create("ws://127.0.0.1:" + serverPort + "/ws/game");
       WebSocket socket =
           client
               .newWebSocketBuilder()
@@ -35,12 +37,20 @@ public class GameplayRouteReadinessHealthIndicator implements HealthIndicator {
               .buildAsync(uri, new NoopListener())
               .get(2, TimeUnit.SECONDS);
       socket.abort();
-      return Health.up().withDetail("gameplayRoute", uri.toString()).build();
+      return DependencyReadinessSupport.up(
+          CONTRACT,
+          Map.of(
+              "gameplayRoute",
+              DependencyReadinessSupport.upDependency(
+                  "websocketUpgrade", uri.toString(), "UPGRADED")));
     } catch (Exception ex) {
-      return Health.outOfService()
-          .withDetail("gameplayRoute", "DOWN")
-          .withDetail("reason", message(ex))
-          .build();
+      return DependencyReadinessSupport.outOfService(
+          CONTRACT,
+          "gameplayRoute",
+          Map.of(
+              "gameplayRoute",
+              DependencyReadinessSupport.downDependency(
+                  "websocketUpgrade", uri.toString(), message(ex))));
     }
   }
 

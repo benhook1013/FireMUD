@@ -1,15 +1,25 @@
 package net.firedevops.firemud.gamelogic.health;
 
+import java.util.LinkedHashMap;
+import java.util.Map;
+import net.firedevops.firemud.common.health.DependencyReadinessSupport;
 import net.firedevops.firemud.entitymanagement.v1.EntityManagementServiceGrpc.EntityManagementServiceBlockingStub;
-import net.firedevops.firemud.entitymanagement.v1.PingRequest;
+import net.firedevops.firemud.entitymanagement.v1.ListRoomEntitiesRequest;
+import net.firedevops.firemud.entitymanagement.v1.ListRoomEntitiesResponse;
+import net.firedevops.firemud.shared.v1.RoomInstanceRef;
+import net.firedevops.firemud.worldmanagement.v1.GetRoomSnapshotRequest;
+import net.firedevops.firemud.worldmanagement.v1.GetRoomSnapshotResponse;
 import net.firedevops.firemud.worldmanagement.v1.WorldManagementServiceGrpc.WorldManagementServiceBlockingStub;
-import org.springframework.boot.health.contributor.Health;
 import org.springframework.boot.health.contributor.HealthIndicator;
 import org.springframework.stereotype.Component;
 
 /** Readiness indicator for the downstream services required by the LOOK path. */
 @Component("lookDependencyReadiness")
 public class LookDependencyReadinessHealthIndicator implements HealthIndicator {
+  private static final String CONTRACT = "ResolveLook";
+  private static final String PROBE_TENANT_ID = "0";
+  private static final String PROBE_ROOM_ID = "0";
+
   private final WorldManagementServiceBlockingStub worldStub;
   private final EntityManagementServiceBlockingStub entityStub;
 
@@ -21,30 +31,86 @@ public class LookDependencyReadinessHealthIndicator implements HealthIndicator {
   }
 
   @Override
-  public Health health() {
+  public org.springframework.boot.health.contributor.Health health() {
+    Map<String, Object> dependencies = new LinkedHashMap<>();
+
     try {
-      worldStub.ping(net.firedevops.firemud.worldmanagement.v1.PingRequest.getDefaultInstance());
+      GetRoomSnapshotResponse response =
+          worldStub.getRoomSnapshot(
+              GetRoomSnapshotRequest.newBuilder()
+                  .setTenantId(PROBE_TENANT_ID)
+                  .setRoomInstance(
+                      RoomInstanceRef.newBuilder()
+                          .setTenantId(PROBE_TENANT_ID)
+                          .setRoomInstanceId(PROBE_ROOM_ID)
+                          .build())
+                  .build());
+      if (response.hasError() && !isReachableAppError(response.getError().getCode())) {
+        dependencies.put(
+            "worldManagementService",
+            DependencyReadinessSupport.downDependency(
+                "getRoomSnapshot",
+                "grpc:WorldManagementService#GetRoomSnapshot",
+                response.getError().getCode() + ": " + response.getError().getMessage()));
+        return DependencyReadinessSupport.outOfService(
+            CONTRACT, "worldManagementService", dependencies);
+      }
+      dependencies.put(
+          "worldManagementService",
+          DependencyReadinessSupport.upDependency(
+              "getRoomSnapshot",
+              "grpc:WorldManagementService#GetRoomSnapshot",
+              response.hasError() ? response.getError().getCode() : "OK"));
     } catch (RuntimeException ex) {
-      return Health.outOfService()
-          .withDetail("worldManagementService", "DOWN")
-          .withDetail("reason", message(ex))
-          .build();
+      dependencies.put(
+          "worldManagementService",
+          DependencyReadinessSupport.downDependency(
+              "getRoomSnapshot", "grpc:WorldManagementService#GetRoomSnapshot", message(ex)));
+      return DependencyReadinessSupport.outOfService(
+          CONTRACT, "worldManagementService", dependencies);
     }
 
     try {
-      entityStub.ping(PingRequest.getDefaultInstance());
+      ListRoomEntitiesResponse response =
+          entityStub.listRoomEntities(
+              ListRoomEntitiesRequest.newBuilder()
+                  .setTenantId(PROBE_TENANT_ID)
+                  .setRoomInstance(
+                      RoomInstanceRef.newBuilder()
+                          .setTenantId(PROBE_TENANT_ID)
+                          .setRoomInstanceId(PROBE_ROOM_ID)
+                          .build())
+                  .build());
+      if (response.hasError() && !isReachableAppError(response.getError().getCode())) {
+        dependencies.put(
+            "entityManagementService",
+            DependencyReadinessSupport.downDependency(
+                "listRoomEntities",
+                "grpc:EntityManagementService#ListRoomEntities",
+                response.getError().getCode() + ": " + response.getError().getMessage()));
+        return DependencyReadinessSupport.outOfService(
+            CONTRACT, "entityManagementService", dependencies);
+      }
+      dependencies.put(
+          "entityManagementService",
+          DependencyReadinessSupport.upDependency(
+              "listRoomEntities",
+              "grpc:EntityManagementService#ListRoomEntities",
+              response.hasError() ? response.getError().getCode() : "OK"));
     } catch (RuntimeException ex) {
-      return Health.outOfService()
-          .withDetail("worldManagementService", "UP")
-          .withDetail("entityManagementService", "DOWN")
-          .withDetail("reason", message(ex))
-          .build();
+      dependencies.put(
+          "entityManagementService",
+          DependencyReadinessSupport.downDependency(
+              "listRoomEntities", "grpc:EntityManagementService#ListRoomEntities", message(ex)));
+      return DependencyReadinessSupport.outOfService(
+          CONTRACT, "entityManagementService", dependencies);
     }
 
-    return Health.up()
-        .withDetail("worldManagementService", "UP")
-        .withDetail("entityManagementService", "UP")
-        .build();
+    return DependencyReadinessSupport.up(CONTRACT, dependencies);
+  }
+
+  private static boolean isReachableAppError(String errorCode) {
+    return "INVALID_ARGUMENT".equals(errorCode) || "NOT_FOUND".equals(errorCode);
   }
 
   private static String message(RuntimeException ex) {
