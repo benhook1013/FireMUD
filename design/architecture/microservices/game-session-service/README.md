@@ -35,6 +35,7 @@ Orchestrates live game sessions, including tick execution, player input validati
   - Account Service authentication is reachable; and
   - Game Logic is reachable for the first gameplay command path, with Game Logic in turn proving readiness for the downstream services needed to satisfy the first `LOOK`.
 - A successful `LOGIN` without a safe first `LOOK` is not sufficient readiness for new player traffic.
+- Readiness transition observability uses the shared contract from [Deployment Environments](../../infrastructure/deployment-environments.md): `firemud.readiness.current`, `firemud.readiness.transitions`, and structured logs keyed by the curated dependency names `accountService` and `gameLogicService`.
 
 ## Architecture / Design Notes
 

@@ -48,6 +48,7 @@ public final class DependencyReadinessSupport {
       Map<String, Object> dependencies,
       String failingDependency) {
     builder.withDetail("contract", contract);
+    builder.withDetail("admissionMeaning", "safe for new traffic on " + contract);
     builder.withDetail("dependencies", dependencies);
     if (failingDependency != null && !failingDependency.isBlank()) {
       builder.withDetail("failingDependency", failingDependency);

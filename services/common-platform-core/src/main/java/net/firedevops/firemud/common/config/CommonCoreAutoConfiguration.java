@@ -8,6 +8,7 @@ import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcServerTlsReloader;
 import net.firedevops.firemud.common.grpc.GrpcTlsMaterialResolver;
 import net.firedevops.firemud.common.health.HttpEndpointAvailabilityChecker;
+import net.firedevops.firemud.common.health.ReadinessTransitionTracker;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
@@ -51,5 +52,11 @@ public class CommonCoreAutoConfiguration {
   @ConditionalOnMissingBean
   public HttpEndpointAvailabilityChecker httpEndpointAvailabilityChecker() {
     return new HttpEndpointAvailabilityChecker();
+  }
+
+  @Bean
+  @ConditionalOnMissingBean
+  public ReadinessTransitionTracker readinessTransitionTracker(MeterRegistry meterRegistry) {
+    return new ReadinessTransitionTracker(meterRegistry);
   }
 }

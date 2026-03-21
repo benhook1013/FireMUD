@@ -7,9 +7,11 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import io.grpc.StatusRuntimeException;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.Map;
 import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
+import net.firedevops.firemud.common.health.ReadinessTransitionTracker;
 import net.firedevops.firemud.gamesession.client.AccountClient;
 import net.firedevops.firemud.gamesession.client.GameLogicClient;
 import org.junit.jupiter.api.Test;
@@ -34,7 +36,7 @@ class GameplayPathReadinessHealthIndicatorTest {
         .when(gameLogicClient)
         .resolveLook(anyString(), anyString(), anyString(), anyString());
     GameplayPathReadinessHealthIndicator indicator =
-        new GameplayPathReadinessHealthIndicator(accountClient, gameLogicClient);
+        new GameplayPathReadinessHealthIndicator(accountClient, gameLogicClient, tracker());
 
     Health health = indicator.health();
     @SuppressWarnings("unchecked")
@@ -53,7 +55,8 @@ class GameplayPathReadinessHealthIndicatorTest {
         .when(accountClient)
         .authenticate(anyString(), anyString(), anyString(), anyString());
     GameplayPathReadinessHealthIndicator indicator =
-        new GameplayPathReadinessHealthIndicator(accountClient, mock(GameLogicClient.class));
+        new GameplayPathReadinessHealthIndicator(
+            accountClient, mock(GameLogicClient.class), tracker());
 
     Health health = indicator.health();
     @SuppressWarnings("unchecked")
@@ -80,7 +83,7 @@ class GameplayPathReadinessHealthIndicatorTest {
         .when(gameLogicClient)
         .resolveLook(anyString(), anyString(), anyString(), anyString());
     GameplayPathReadinessHealthIndicator indicator =
-        new GameplayPathReadinessHealthIndicator(accountClient, gameLogicClient);
+        new GameplayPathReadinessHealthIndicator(accountClient, gameLogicClient, tracker());
 
     Health health = indicator.health();
     @SuppressWarnings("unchecked")
@@ -90,5 +93,9 @@ class GameplayPathReadinessHealthIndicatorTest {
     assertEquals(Status.OUT_OF_SERVICE, health.getStatus());
     assertEquals("UP", dependencies.get("accountService").get("status"));
     assertEquals("DOWN", dependencies.get("gameLogicService").get("status"));
+  }
+
+  private static ReadinessTransitionTracker tracker() {
+    return new ReadinessTransitionTracker(new SimpleMeterRegistry());
   }
 }

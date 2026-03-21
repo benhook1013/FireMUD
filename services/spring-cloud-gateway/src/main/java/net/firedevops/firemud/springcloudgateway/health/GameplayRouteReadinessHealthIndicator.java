@@ -7,6 +7,7 @@ import java.time.Duration;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.common.health.DependencyReadinessSupport;
+import net.firedevops.firemud.common.health.ReadinessTransitionTracker;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.health.contributor.HealthIndicator;
 import org.springframework.stereotype.Component;
@@ -18,11 +19,14 @@ public class GameplayRouteReadinessHealthIndicator implements HealthIndicator {
   private static final String CONTRACT = "Gateway /ws/game upgrade";
 
   private final int serverPort;
+  private final ReadinessTransitionTracker readinessTransitionTracker;
   private final HttpClient client = HttpClient.newBuilder().connectTimeout(CONNECT_TIMEOUT).build();
 
   public GameplayRouteReadinessHealthIndicator(
-      @Value("${local.server.port:${server.port:8080}}") int serverPort) {
+      @Value("${local.server.port:${server.port:8080}}") int serverPort,
+      ReadinessTransitionTracker readinessTransitionTracker) {
     this.serverPort = serverPort;
+    this.readinessTransitionTracker = readinessTransitionTracker;
   }
 
   @Override
@@ -37,20 +41,24 @@ public class GameplayRouteReadinessHealthIndicator implements HealthIndicator {
               .buildAsync(uri, new NoopListener())
               .get(2, TimeUnit.SECONDS);
       socket.abort();
-      return DependencyReadinessSupport.up(
-          CONTRACT,
-          Map.of(
-              "gameplayRoute",
-              DependencyReadinessSupport.upDependency(
-                  "websocketUpgrade", uri.toString(), "UPGRADED")));
+      return readinessTransitionTracker.record(
+          "spring-cloud-gateway",
+          DependencyReadinessSupport.up(
+              CONTRACT,
+              Map.of(
+                  "gameplayRoute",
+                  DependencyReadinessSupport.upDependency(
+                      "websocketUpgrade", uri.toString(), "UPGRADED"))));
     } catch (Exception ex) {
-      return DependencyReadinessSupport.outOfService(
-          CONTRACT,
-          "gameplayRoute",
-          Map.of(
+      return readinessTransitionTracker.record(
+          "spring-cloud-gateway",
+          DependencyReadinessSupport.outOfService(
+              CONTRACT,
               "gameplayRoute",
-              DependencyReadinessSupport.downDependency(
-                  "websocketUpgrade", uri.toString(), message(ex))));
+              Map.of(
+                  "gameplayRoute",
+                  DependencyReadinessSupport.downDependency(
+                      "websocketUpgrade", uri.toString(), message(ex)))));
     }
   }
 

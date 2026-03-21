@@ -13,10 +13,10 @@ This checklist is for the remaining quality pass, observability tightening, and 
 
 ## Readiness Observability
 
-- [ ] Add readiness transition metrics for critical services so operators can see when readiness flips between accepting and refusing traffic.
-- [ ] Add structured logs on readiness state changes for `tcp-proxy`, `spring-cloud-gateway`, `game-session-service`, and `game-logic-service`, including the failing dependency name when readiness goes false.
-- [ ] Decide on a canonical metric or label set for dependency-aware readiness failures so dashboards and alerts can group by stable dependency names instead of parsing health payloads.
-- [ ] Document the readiness observability contract in the relevant architecture docs once the metric/log shape is finalized.
+- [x] Add readiness transition metrics for critical services so operators can see when readiness flips between accepting and refusing traffic.
+- [x] Add structured logs on readiness state changes for `tcp-proxy`, `spring-cloud-gateway`, `game-session-service`, and `game-logic-service`, including the failing dependency name when readiness goes false.
+- [x] Decide on a canonical metric or label set for dependency-aware readiness failures so dashboards and alerts can group by stable dependency names instead of parsing health payloads.
+- [x] Document the readiness observability contract in the relevant architecture docs once the metric/log shape is finalized.
 
 ## Stronger Critical-Path Canaries
 
@@ -35,8 +35,8 @@ This checklist is for the remaining quality pass, observability tightening, and 
 
 ## Payload And Contract Cleanup
 
-- [ ] Standardize dependency keys across readiness payloads so names such as `accountService`, `gameLogicService`, `gatewayGameplayPath`, `worldManagementService`, and `entityManagementService` remain stable and intentionally curated.
-- [ ] Review the shared readiness payload format and decide whether additional top-level fields are needed for operator use, such as `serviceContractVersion` or a short `admissionMeaning` string.
+- [x] Standardize dependency keys across readiness payloads so names such as `accountService`, `gameLogicService`, `gatewayGameplayPath`, `worldManagementService`, and `entityManagementService` remain stable and intentionally curated.
+- [x] Review the shared readiness payload format and decide whether additional top-level fields are needed for operator use, such as `serviceContractVersion` or a short `admissionMeaning` string.
 - [ ] Confirm actuator health payloads remain concise enough for operators and CI logs and do not accumulate low-value implementation detail.
 
 ## Wider Service Coverage

@@ -154,6 +154,15 @@ A sample Terraform module for a local Kind cluster is provided in [k8s/terraform
 - Liveness must remain local-only and must not fail because a dependency is degraded.
 - When startup is materially slower than steady-state readiness evaluation, use a `startupProbe` rather than inflating liveness or readiness thresholds.
 - For the Telnet edge path, the TCP Proxy Service must refuse new sockets with an explicit startup-unavailable disconnect until the downstream `connect -> LOGIN -> first LOOK` path is ready rather than accepting the connection and allowing later gameplay commands to stall or fail.
+- Dependency-aware readiness payloads use one shared shape:
+  - `contract`: the traffic contract protected by readiness.
+  - `admissionMeaning`: a short canonical statement of what `UP` means for new traffic.
+  - `dependencies`: curated dependency keys with per-dependency `status`, `check`, `target`, and `outcome` or `reason`.
+  - `failingDependency`: present only when readiness is refusing traffic.
+- Critical services emit readiness transition observability with one shared contract:
+  - metric `firemud.readiness.current{component="<service>"}` is `1` when the component is currently ready to admit new traffic and `0` otherwise.
+  - metric `firemud.readiness.transitions{component="<service>",to_status="<status>",failing_dependency="<dependency|none>"}` increments only when the effective readiness state changes.
+  - structured logs on readiness transitions include `component`, `contract`, `admissionMeaning`, and `failingDependency` when readiness goes false.
 
 ### Kubernetes Auto Recovery
 

@@ -4,8 +4,10 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.Collections;
 import java.util.Map;
+import net.firedevops.firemud.common.health.ReadinessTransitionTracker;
 import net.firedevops.firemud.tcpproxy.telnet.TelnetServer;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.ObjectProvider;
@@ -19,7 +21,7 @@ class TcpProxyTrafficReadinessHealthIndicatorTest {
     GatewayGameplayReadinessProbe probe = mock(GatewayGameplayReadinessProbe.class);
     ObjectProvider<TelnetServer> provider = providerFor(mock(TelnetServer.class));
     TcpProxyTrafficReadinessHealthIndicator indicator =
-        new TcpProxyTrafficReadinessHealthIndicator(provider, probe);
+        new TcpProxyTrafficReadinessHealthIndicator(provider, probe, tracker());
 
     Health health = indicator.health();
     @SuppressWarnings("unchecked")
@@ -39,7 +41,7 @@ class TcpProxyTrafficReadinessHealthIndicatorTest {
     when(probe.readinessUri())
         .thenReturn(java.net.URI.create("http://gateway/actuator/health/readiness"));
     TcpProxyTrafficReadinessHealthIndicator indicator =
-        new TcpProxyTrafficReadinessHealthIndicator(providerFor(telnetServer), probe);
+        new TcpProxyTrafficReadinessHealthIndicator(providerFor(telnetServer), probe, tracker());
 
     Health health = indicator.health();
     @SuppressWarnings("unchecked")
@@ -60,7 +62,7 @@ class TcpProxyTrafficReadinessHealthIndicatorTest {
     when(probe.readinessUri())
         .thenReturn(java.net.URI.create("http://gateway/actuator/health/readiness"));
     TcpProxyTrafficReadinessHealthIndicator indicator =
-        new TcpProxyTrafficReadinessHealthIndicator(providerFor(telnetServer), probe);
+        new TcpProxyTrafficReadinessHealthIndicator(providerFor(telnetServer), probe, tracker());
 
     Health health = indicator.health();
     @SuppressWarnings("unchecked")
@@ -99,5 +101,9 @@ class TcpProxyTrafficReadinessHealthIndicatorTest {
         return Collections.singleton(telnetServer).iterator();
       }
     };
+  }
+
+  private static ReadinessTransitionTracker tracker() {
+    return new ReadinessTransitionTracker(new SimpleMeterRegistry());
   }
 }

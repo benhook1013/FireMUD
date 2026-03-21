@@ -3,6 +3,7 @@ package net.firedevops.firemud.gamelogic.health;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import net.firedevops.firemud.common.health.DependencyReadinessSupport;
+import net.firedevops.firemud.common.health.ReadinessTransitionTracker;
 import net.firedevops.firemud.entitymanagement.v1.EntityManagementServiceGrpc.EntityManagementServiceBlockingStub;
 import net.firedevops.firemud.entitymanagement.v1.ListRoomEntitiesRequest;
 import net.firedevops.firemud.entitymanagement.v1.ListRoomEntitiesResponse;
@@ -22,12 +23,15 @@ public class LookDependencyReadinessHealthIndicator implements HealthIndicator {
 
   private final WorldManagementServiceBlockingStub worldStub;
   private final EntityManagementServiceBlockingStub entityStub;
+  private final ReadinessTransitionTracker readinessTransitionTracker;
 
   public LookDependencyReadinessHealthIndicator(
       WorldManagementServiceBlockingStub worldStub,
-      EntityManagementServiceBlockingStub entityStub) {
+      EntityManagementServiceBlockingStub entityStub,
+      ReadinessTransitionTracker readinessTransitionTracker) {
     this.worldStub = worldStub;
     this.entityStub = entityStub;
+    this.readinessTransitionTracker = readinessTransitionTracker;
   }
 
   @Override
@@ -52,8 +56,10 @@ public class LookDependencyReadinessHealthIndicator implements HealthIndicator {
                 "getRoomSnapshot",
                 "grpc:WorldManagementService#GetRoomSnapshot",
                 response.getError().getCode() + ": " + response.getError().getMessage()));
-        return DependencyReadinessSupport.outOfService(
-            CONTRACT, "worldManagementService", dependencies);
+        return readinessTransitionTracker.record(
+            "game-logic-service",
+            DependencyReadinessSupport.outOfService(
+                CONTRACT, "worldManagementService", dependencies));
       }
       dependencies.put(
           "worldManagementService",
@@ -66,8 +72,10 @@ public class LookDependencyReadinessHealthIndicator implements HealthIndicator {
           "worldManagementService",
           DependencyReadinessSupport.downDependency(
               "getRoomSnapshot", "grpc:WorldManagementService#GetRoomSnapshot", message(ex)));
-      return DependencyReadinessSupport.outOfService(
-          CONTRACT, "worldManagementService", dependencies);
+      return readinessTransitionTracker.record(
+          "game-logic-service",
+          DependencyReadinessSupport.outOfService(
+              CONTRACT, "worldManagementService", dependencies));
     }
 
     try {
@@ -88,8 +96,10 @@ public class LookDependencyReadinessHealthIndicator implements HealthIndicator {
                 "listRoomEntities",
                 "grpc:EntityManagementService#ListRoomEntities",
                 response.getError().getCode() + ": " + response.getError().getMessage()));
-        return DependencyReadinessSupport.outOfService(
-            CONTRACT, "entityManagementService", dependencies);
+        return readinessTransitionTracker.record(
+            "game-logic-service",
+            DependencyReadinessSupport.outOfService(
+                CONTRACT, "entityManagementService", dependencies));
       }
       dependencies.put(
           "entityManagementService",
@@ -102,11 +112,14 @@ public class LookDependencyReadinessHealthIndicator implements HealthIndicator {
           "entityManagementService",
           DependencyReadinessSupport.downDependency(
               "listRoomEntities", "grpc:EntityManagementService#ListRoomEntities", message(ex)));
-      return DependencyReadinessSupport.outOfService(
-          CONTRACT, "entityManagementService", dependencies);
+      return readinessTransitionTracker.record(
+          "game-logic-service",
+          DependencyReadinessSupport.outOfService(
+              CONTRACT, "entityManagementService", dependencies));
     }
 
-    return DependencyReadinessSupport.up(CONTRACT, dependencies);
+    return readinessTransitionTracker.record(
+        "game-logic-service", DependencyReadinessSupport.up(CONTRACT, dependencies));
   }
 
   private static boolean isReachableAppError(String errorCode) {

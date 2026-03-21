@@ -5,7 +5,9 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.Map;
+import net.firedevops.firemud.common.health.ReadinessTransitionTracker;
 import net.firedevops.firemud.entitymanagement.v1.EntityManagementServiceGrpc.EntityManagementServiceBlockingStub;
 import net.firedevops.firemud.entitymanagement.v1.ListRoomEntitiesResponse;
 import net.firedevops.firemud.worldmanagement.v1.GetRoomSnapshotResponse;
@@ -32,7 +34,7 @@ class LookDependencyReadinessHealthIndicatorTest {
     when(entityStub.listRoomEntities(org.mockito.ArgumentMatchers.any()))
         .thenReturn(ListRoomEntitiesResponse.newBuilder().build());
     LookDependencyReadinessHealthIndicator indicator =
-        new LookDependencyReadinessHealthIndicator(worldStub, entityStub);
+        new LookDependencyReadinessHealthIndicator(worldStub, entityStub, tracker());
 
     Health health = indicator.health();
     @SuppressWarnings("unchecked")
@@ -52,7 +54,7 @@ class LookDependencyReadinessHealthIndicatorTest {
         .getRoomSnapshot(org.mockito.ArgumentMatchers.any());
     LookDependencyReadinessHealthIndicator indicator =
         new LookDependencyReadinessHealthIndicator(
-            worldStub, mock(EntityManagementServiceBlockingStub.class));
+            worldStub, mock(EntityManagementServiceBlockingStub.class), tracker());
 
     Health health = indicator.health();
     @SuppressWarnings("unchecked")
@@ -74,7 +76,7 @@ class LookDependencyReadinessHealthIndicatorTest {
         .when(entityStub)
         .listRoomEntities(org.mockito.ArgumentMatchers.any());
     LookDependencyReadinessHealthIndicator indicator =
-        new LookDependencyReadinessHealthIndicator(worldStub, entityStub);
+        new LookDependencyReadinessHealthIndicator(worldStub, entityStub, tracker());
 
     Health health = indicator.health();
     @SuppressWarnings("unchecked")
@@ -84,5 +86,9 @@ class LookDependencyReadinessHealthIndicatorTest {
     assertEquals(Status.OUT_OF_SERVICE, health.getStatus());
     assertEquals("UP", dependencies.get("worldManagementService").get("status"));
     assertEquals("DOWN", dependencies.get("entityManagementService").get("status"));
+  }
+
+  private static ReadinessTransitionTracker tracker() {
+    return new ReadinessTransitionTracker(new SimpleMeterRegistry());
   }
 }

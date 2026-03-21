@@ -7,6 +7,7 @@ import java.util.Map;
 import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
 import net.firedevops.firemud.common.health.DependencyReadinessSupport;
+import net.firedevops.firemud.common.health.ReadinessTransitionTracker;
 import net.firedevops.firemud.gamesession.client.AccountClient;
 import net.firedevops.firemud.gamesession.client.GameLogicClient;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -30,11 +31,15 @@ public class GameplayPathReadinessHealthIndicator implements HealthIndicator {
 
   private final AccountClient accountClient;
   private final GameLogicClient gameLogicClient;
+  private final ReadinessTransitionTracker readinessTransitionTracker;
 
   public GameplayPathReadinessHealthIndicator(
-      AccountClient accountClient, GameLogicClient gameLogicClient) {
+      AccountClient accountClient,
+      GameLogicClient gameLogicClient,
+      ReadinessTransitionTracker readinessTransitionTracker) {
     this.accountClient = accountClient;
     this.gameLogicClient = gameLogicClient;
+    this.readinessTransitionTracker = readinessTransitionTracker;
   }
 
   @Override
@@ -52,7 +57,9 @@ public class GameplayPathReadinessHealthIndicator implements HealthIndicator {
                 "authenticate",
                 "grpc:AccountService#Authenticate",
                 "Authentication service unavailable"));
-        return DependencyReadinessSupport.outOfService(CONTRACT, "accountService", dependencies);
+        return readinessTransitionTracker.record(
+            "game-session-service",
+            DependencyReadinessSupport.outOfService(CONTRACT, "accountService", dependencies));
       }
       dependencies.put(
           "accountService",
@@ -63,7 +70,9 @@ public class GameplayPathReadinessHealthIndicator implements HealthIndicator {
           "accountService",
           DependencyReadinessSupport.downDependency(
               "authenticate", "grpc:AccountService#Authenticate", message(ex)));
-      return DependencyReadinessSupport.outOfService(CONTRACT, "accountService", dependencies);
+      return readinessTransitionTracker.record(
+          "game-session-service",
+          DependencyReadinessSupport.outOfService(CONTRACT, "accountService", dependencies));
     }
 
     try {
@@ -86,17 +95,22 @@ public class GameplayPathReadinessHealthIndicator implements HealthIndicator {
             "gameLogicService",
             DependencyReadinessSupport.downDependency(
                 "resolveLook", "grpc:GameLogicService#ResolveLook", message(ex)));
-        return DependencyReadinessSupport.outOfService(CONTRACT, "gameLogicService", dependencies);
+        return readinessTransitionTracker.record(
+            "game-session-service",
+            DependencyReadinessSupport.outOfService(CONTRACT, "gameLogicService", dependencies));
       }
     } catch (RuntimeException ex) {
       dependencies.put(
           "gameLogicService",
           DependencyReadinessSupport.downDependency(
               "resolveLook", "grpc:GameLogicService#ResolveLook", message(ex)));
-      return DependencyReadinessSupport.outOfService(CONTRACT, "gameLogicService", dependencies);
+      return readinessTransitionTracker.record(
+          "game-session-service",
+          DependencyReadinessSupport.outOfService(CONTRACT, "gameLogicService", dependencies));
     }
 
-    return DependencyReadinessSupport.up(CONTRACT, dependencies);
+    return readinessTransitionTracker.record(
+        "game-session-service", DependencyReadinessSupport.up(CONTRACT, dependencies));
   }
 
   private static boolean isReachableAppStatus(Status.Code code) {

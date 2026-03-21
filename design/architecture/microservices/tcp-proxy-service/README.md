@@ -67,6 +67,7 @@ For any shared or player-facing environment, operators should ensure at least:
   - the current downstream gameplay admission path is safe for `connect -> LOGIN -> first LOOK`.
 - While unready, the proxy must reject new Telnet sessions immediately with an explicit startup/unavailable message and close the connection. It must not silently accept the socket and let the first gameplay command discover startup races later.
 - Loss of downstream readiness after a session is already established blocks new sessions but does not by itself imply that the proxy process is dead.
+- Readiness transition observability uses the shared contract from [Deployment Environments](../../infrastructure/deployment-environments.md): `firemud.readiness.current`, `firemud.readiness.transitions`, and structured logs keyed by the curated dependency names `telnetListener` and `gatewayGameplayPath`.
 
 ## Architecture / Design Notes
 

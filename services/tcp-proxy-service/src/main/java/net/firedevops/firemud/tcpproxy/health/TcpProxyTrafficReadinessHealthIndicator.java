@@ -3,6 +3,7 @@ package net.firedevops.firemud.tcpproxy.health;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import net.firedevops.firemud.common.health.DependencyReadinessSupport;
+import net.firedevops.firemud.common.health.ReadinessTransitionTracker;
 import net.firedevops.firemud.tcpproxy.telnet.TelnetServer;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.health.contributor.HealthIndicator;
@@ -15,12 +16,15 @@ public class TcpProxyTrafficReadinessHealthIndicator implements HealthIndicator 
 
   private final ObjectProvider<TelnetServer> telnetServerProvider;
   private final GatewayGameplayReadinessProbe gatewayGameplayReadinessProbe;
+  private final ReadinessTransitionTracker readinessTransitionTracker;
 
   public TcpProxyTrafficReadinessHealthIndicator(
       ObjectProvider<TelnetServer> telnetServerProvider,
-      GatewayGameplayReadinessProbe gatewayGameplayReadinessProbe) {
+      GatewayGameplayReadinessProbe gatewayGameplayReadinessProbe,
+      ReadinessTransitionTracker readinessTransitionTracker) {
     this.telnetServerProvider = telnetServerProvider;
     this.gatewayGameplayReadinessProbe = gatewayGameplayReadinessProbe;
+    this.readinessTransitionTracker = readinessTransitionTracker;
   }
 
   @Override
@@ -32,7 +36,9 @@ public class TcpProxyTrafficReadinessHealthIndicator implements HealthIndicator 
           "telnetListener",
           DependencyReadinessSupport.downDependency(
               "bind", "tcp://0.0.0.0:telnet", "listener not running"));
-      return DependencyReadinessSupport.outOfService(CONTRACT, "telnetListener", dependencies);
+      return readinessTransitionTracker.record(
+          "tcp-proxy-service",
+          DependencyReadinessSupport.outOfService(CONTRACT, "telnetListener", dependencies));
     }
     dependencies.put(
         "telnetListener",
@@ -44,7 +50,9 @@ public class TcpProxyTrafficReadinessHealthIndicator implements HealthIndicator 
               "readinessProbe",
               String.valueOf(gatewayGameplayReadinessProbe.readinessUri()),
               "gateway readiness endpoint not healthy"));
-      return DependencyReadinessSupport.outOfService(CONTRACT, "gatewayGameplayPath", dependencies);
+      return readinessTransitionTracker.record(
+          "tcp-proxy-service",
+          DependencyReadinessSupport.outOfService(CONTRACT, "gatewayGameplayPath", dependencies));
     }
     dependencies.put(
         "gatewayGameplayPath",
@@ -52,6 +60,7 @@ public class TcpProxyTrafficReadinessHealthIndicator implements HealthIndicator 
             "readinessProbe",
             String.valueOf(gatewayGameplayReadinessProbe.readinessUri()),
             "READY"));
-    return DependencyReadinessSupport.up(CONTRACT, dependencies);
+    return readinessTransitionTracker.record(
+        "tcp-proxy-service", DependencyReadinessSupport.up(CONTRACT, dependencies));
   }
 }
