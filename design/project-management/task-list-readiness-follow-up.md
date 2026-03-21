@@ -45,8 +45,9 @@ This checklist is for the remaining quality pass, observability tightening, and 
   - local-only readiness
   - dependency-aware readiness
   - no special readiness work yet
-- [ ] Prevent new services from drifting back to generic “process is up” readiness by updating service templates/checklists if needed.
+- [x] Prevent new services from drifting back to generic “process is up” readiness by updating service templates/checklists if needed.
 
 ## Final Review Pass
 
 - [ ] Do another repo-wide pass over the readiness changes and look specifically for simplifications, duplicated logic, weak assumptions, misleading docs, or test scaffolding that is compensating for behavior instead of verifying it.
+- [ ] Update any design and architecture docs that drifted after the initial readiness/liveness documentation pass so the final documented model matches the implemented behavior and follow-up refinements.
