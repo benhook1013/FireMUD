@@ -22,6 +22,8 @@ jobs:
     name: Core Smoke Tests
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    env:
+      SMOKE_TIMEOUT_SECONDS: 20
     steps:
       - name: ⬇️ Checkout Code
         uses: actions/checkout@v6
@@ -46,20 +48,18 @@ jobs:
       - name: 🚀 Start Dev Stack (devUp)
         run: ./gradlew devUp
 
+      - name: 📦 Install WebSocket smoke dependency
+        run: python3 -m pip install --disable-pip-version-check websocket-client
+
+      - name: 🧪 Direct WebSocket LOGIN + LOOK (Game Session)
+        run: |
+          cd services/game-session-service
+          bash ./websocket-login-look-smoke.sh
+
       - name: 🧪 Telnet LOGIN + LOOK (TCP Proxy)
         run: |
           cd services/tcp-proxy-service
-          for attempt in 1 2 3; do
-            echo "Attempt ${attempt}: running Telnet LOGIN + LOOK smoke test..."
-            if bash ./telnet-login-look-smoke.sh; then
-              echo "Telnet smoke test succeeded on attempt ${attempt}."
-              exit 0
-            fi
-            echo "Telnet smoke test attempt ${attempt} failed; waiting before retry..."
-            sleep 10
-          done
-          echo "Telnet LOGIN + LOOK smoke test failed after 3 attempts."
-          exit 1
+          bash ./telnet-login-look-smoke.sh
 
       - name: 📜 Dump Docker Compose Logs on Failure
         if: failure()

@@ -11,7 +11,7 @@ buildscript {
         mavenCentral()
     }
     dependencies {
-        classpath("com.fasterxml.jackson.core:jackson-databind:2.21.1")
+        classpath("com.fasterxml.jackson.core:jackson-databind:2.21.2")
         classpath("org.flywaydb:flyway-database-postgresql:12.1.1")
         classpath("org.postgresql:postgresql:42.7.10")
     }
@@ -23,7 +23,7 @@ plugins {
     alias(libs.plugins.protobuf) apply false
     alias(libs.plugins.spring.boot) apply false
     alias(libs.plugins.flyway) apply false
-    id("com.diffplug.spotless") version "8.3.0"
+    id("com.diffplug.spotless") version "8.4.0"
     id("checkstyle")
     id("com.github.spotbugs") version "6.4.8"
     jacoco

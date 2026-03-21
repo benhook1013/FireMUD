@@ -31,3 +31,8 @@ game-session:
 
 # Keep this "env-style" key around as a placeholder for now.
 GAME_SESSION_DEV_ISOLATED: true
+
+management:
+  endpoint:
+    health:
+      validate-group-membership: false

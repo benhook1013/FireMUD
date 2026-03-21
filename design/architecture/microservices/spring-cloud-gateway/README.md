@@ -21,6 +21,17 @@ An OpenAPI specification for these REST endpoints lives in `services/spring-clou
 - Apply rate limits and basic abuse protections
 - Relay traffic to the Game Session Service and other backends
 - Expose gRPC management endpoints (for example, `Ping`) on port `6565` for basic health and diagnostics. Connections use mutual TLS for authentication and are reachable only from inside the cluster or a dedicated admin network segment, not from public Internet clients.
+- Fail readiness for new gameplay traffic when the `/ws/game/**` route is not safe to admit
+
+### Readiness and Liveness
+
+- `liveness` is local-only and indicates that the gateway process is alive and able to continue serving.
+- `readiness` is route-admission safety. For the currently implemented gameplay slice, the gateway is ready only when:
+  - baseline route configuration is loaded; and
+  - the `/ws/game/**` gameplay path can be upgraded and forwarded to Game Session successfully enough for new gameplay sockets to be admitted.
+- The gameplay-route canary is bounded and operation-shaped. It validates the actual `/ws/game/**` upgrade path with an explicit short timeout rather than relying on unrelated ping-style checks or long retry budgets.
+- Retry filters are resilience mechanisms, not readiness compensation. A gateway that still needs startup retries to survive ordinary new gameplay admission is not ready.
+- Readiness transition observability uses the shared contract from [Deployment Environments](../../infrastructure/deployment-environments.md): `firemud.readiness.current`, `firemud.readiness.transitions`, and structured logs keyed by the curated dependency name `gameplayRoute`.
 
 ## Architecture / Design Notes
 
@@ -109,7 +120,7 @@ Spring Cloud Gateway exposes both HTTP and gRPC management interfaces for operat
 
 ## Operational Notes
 
-- Runs as a Kubernetes Deployment (Docker Compose for local dev) with `/actuator/health` probes. See [Deployment Environments](../../infrastructure/deployment-environments.md).
+- Runs as a Kubernetes Deployment (Docker Compose for local dev) with `/actuator/health/readiness` and `/actuator/health/liveness` probes. See [Deployment Environments](../../infrastructure/deployment-environments.md).
 - Logging, metrics, and tracing follow the standard [Logging & Monitoring](../../system-architecture-logging-monitoring.md) pipeline.
 
 ## Configuration Sources

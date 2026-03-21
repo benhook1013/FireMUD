@@ -7,6 +7,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.SpringBootConfiguration;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.boot.health.contributor.Health;
+import org.springframework.boot.health.contributor.HealthIndicator;
 import org.springframework.context.annotation.Bean;
 import org.springframework.http.HttpHeaders;
 import org.springframework.web.reactive.handler.SimpleUrlHandlerMapping;
@@ -57,6 +59,16 @@ public class GatewayStubApplication {
   @Bean
   WebSocketHandlerAdapter gatewayStubWebSocketHandlerAdapter() {
     return new WebSocketHandlerAdapter();
+  }
+
+  @Bean("gameplayRouteReadiness")
+  HealthIndicator gameplayRouteReadinessHealthIndicator() {
+    return () -> Health.up().withDetail("stub", "UP").build();
+  }
+
+  @Bean("trafficAdmissionReadiness")
+  HealthIndicator trafficAdmissionReadinessHealthIndicator() {
+    return () -> Health.up().withDetail("stub", "UP").build();
   }
 
   private static final List<String> FORWARDED_HEADER_NAMES =

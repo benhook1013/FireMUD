@@ -33,7 +33,7 @@ It complements the degraded-mode expectations in `design/architecture/system-arc
 ## Common Fallbacks (When Dashboards Are Unavailable)
 
 - **Service health**
-  - Use `/actuator/health` endpoints (and Kubernetes readiness/liveness) as the first source of truth for whether pods are healthy.
+  - Use `/actuator/health/readiness` and `/actuator/health/liveness` endpoints (and Kubernetes readiness/liveness) as the first source of truth for whether pods are healthy.
   - Prefer querying the owning service directly (Gateway, Game Session, Account, etc.) rather than relying on a missing dashboard.
 - **Kubernetes signals**
   - Check pod restarts, crash loops, and events for the affected namespace(s).

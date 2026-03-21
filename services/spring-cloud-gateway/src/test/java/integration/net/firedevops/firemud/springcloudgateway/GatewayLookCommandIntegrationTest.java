@@ -11,6 +11,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.command.text.LookCommandConstants;
+import net.firedevops.firemud.springcloudgateway.health.GameplayRouteReadinessHealthIndicator;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.SpringBootConfiguration;
@@ -94,7 +95,8 @@ class GatewayLookCommandIntegrationTest {
             .properties(
                 "server.port=0",
                 "spring.main.web-application-type=reactive",
-                "spring.main.allow-bean-definition-overriding=true")
+                "spring.main.allow-bean-definition-overriding=true",
+                "management.endpoint.health.group.readiness.include=readinessState")
             .run();
     int port = ((WebServerApplicationContext) context).getWebServer().getPort();
     return new GatewayHolder(context, port);
@@ -124,7 +126,7 @@ class GatewayLookCommandIntegrationTest {
         "org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration",
         "org.springframework.boot.data.redis.autoconfigure.DataRedisAutoConfiguration"
       })
-  @Import(GatewayStubConfiguration.class)
+  @Import({GatewayStubConfiguration.class, GameplayRouteReadinessHealthIndicator.class})
   static class GatewayStubApplication {}
 
   @Configuration

@@ -44,25 +44,20 @@ class TelnetServerHandlerTest {
   private final LookCacheService lookCacheService = mock(LookCacheService.class);
 
   private TelnetServerHandler newHandler(SimpleMeterRegistry registry, boolean advertiseMcp) {
-    return new TelnetServerHandler(
-        "ws://localhost/ws",
-        false,
-        () -> {},
-        () -> {},
-        registry.counter("test"),
-        registry.counter("discarded"),
-        advertiseMcp,
-        registry,
-        TelnetServerHandler::createWebSocket,
-        Mockito.mock(TcpProxyEventService.class),
-        new AtomicInteger(),
-        lookCacheService,
-        0);
+    return newHandler(registry, advertiseMcp, () -> true, TelnetServerHandler::createWebSocket);
   }
 
   private TelnetServerHandler newHandler(
       SimpleMeterRegistry registry,
       boolean advertiseMcp,
+      TelnetServerHandler.WebSocketConnector connector) {
+    return newHandler(registry, advertiseMcp, () -> true, connector);
+  }
+
+  private TelnetServerHandler newHandler(
+      SimpleMeterRegistry registry,
+      boolean advertiseMcp,
+      java.util.function.BooleanSupplier gameplayTrafficReady,
       TelnetServerHandler.WebSocketConnector connector) {
     return new TelnetServerHandler(
         "ws://localhost/ws",
@@ -73,6 +68,7 @@ class TelnetServerHandlerTest {
         registry.counter("discarded"),
         advertiseMcp,
         registry,
+        gameplayTrafficReady,
         connector,
         Mockito.mock(TcpProxyEventService.class),
         new AtomicInteger(),
@@ -111,6 +107,7 @@ class TelnetServerHandlerTest {
             registry.counter("discarded"),
             false,
             registry,
+            () -> true,
             connector,
             Mockito.mock(TcpProxyEventService.class),
             new AtomicInteger(),
@@ -158,6 +155,34 @@ class TelnetServerHandlerTest {
 
     verify(ws, times(2)).sendText(anyString(), eq(true));
     assertEquals(0, handler.getBufferedSize());
+  }
+
+  @Test
+  void connectionRejectedWhileGameplayPathIsUnready() {
+    SimpleMeterRegistry registry = new SimpleMeterRegistry();
+    TelnetServerHandler handler =
+        newHandler(
+            registry,
+            false,
+            () -> false,
+            (url, ip, proxyConnectionId, session, tenant, listener) ->
+                CompletableFuture.failedFuture(new IllegalStateException("should not connect")));
+    ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
+    ChannelFuture future = mock(ChannelFuture.class);
+    Channel channel = mock(Channel.class);
+    DefaultEventExecutor executor = new DefaultEventExecutor();
+    when(ctx.channel()).thenReturn(channel);
+    when(ctx.executor()).thenReturn(executor);
+    when(channel.remoteAddress()).thenReturn(new InetSocketAddress("127.0.0.1", 0));
+    when(ctx.writeAndFlush(any())).thenReturn(future);
+    when(future.addListener(any(ChannelFutureListener.class))).thenReturn(future);
+
+    handler.channelActive(ctx);
+
+    verify(ctx)
+        .writeAndFlush("DISCONNECT startup_unavailable Gameplay path starting; please reconnect\n");
+    verify(future).addListener(any(ChannelFutureListener.class));
+    executor.shutdownGracefully();
   }
 
   @Test
@@ -519,6 +544,7 @@ class TelnetServerHandlerTest {
             registry.counter("discarded"),
             false,
             registry,
+            () -> true,
             connector,
             Mockito.mock(TcpProxyEventService.class),
             new AtomicInteger(),
@@ -553,6 +579,7 @@ class TelnetServerHandlerTest {
             registry.counter("discarded"),
             false,
             registry,
+            () -> true,
             connector,
             Mockito.mock(TcpProxyEventService.class),
             new AtomicInteger(),
@@ -587,6 +614,7 @@ class TelnetServerHandlerTest {
             registry.counter("discarded"),
             false,
             registry,
+            () -> true,
             connector,
             Mockito.mock(TcpProxyEventService.class),
             new AtomicInteger(),
@@ -621,6 +649,7 @@ class TelnetServerHandlerTest {
             registry.counter("discarded"),
             false,
             registry,
+            () -> true,
             connector,
             Mockito.mock(TcpProxyEventService.class),
             new AtomicInteger(),
@@ -655,6 +684,7 @@ class TelnetServerHandlerTest {
             registry.counter("discarded"),
             false,
             registry,
+            () -> true,
             (url, ip, proxyConnectionId, session, tenant, listener) -> {
               listener.onOpen(new RecordingWebSocket());
               return CompletableFuture.completedFuture(new RecordingWebSocket());
@@ -711,6 +741,7 @@ class TelnetServerHandlerTest {
             registry.counter("discarded"),
             false,
             registry,
+            () -> true,
             (url, ip, proxyConnectionId, session, tenant, listener) -> {
               listenerRef.set(listener);
               if (connectAttempts.getAndIncrement() == 0) {
@@ -759,6 +790,7 @@ class TelnetServerHandlerTest {
             registry.counter("discarded"),
             false,
             registry,
+            () -> true,
             TelnetServerHandler::createWebSocket,
             eventService,
             new AtomicInteger(),

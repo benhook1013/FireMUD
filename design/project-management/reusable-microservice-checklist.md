@@ -13,7 +13,12 @@ These tasks apply to every FireMUD service unless noted otherwise. Gateway and T
 - Add the service to the GitHub Actions build matrix and Buf lint step.
 - Include the service in the Docker image workflow (`buildDockerImages`).
 - Define Kubernetes `Deployment` and `Service` manifests.
-- Expose `/actuator/health` for readiness and liveness probes.
+- Expose `/actuator/health/readiness` and `/actuator/health/liveness` for readiness and liveness probes.
+- Do not use plain `/actuator/health` as an orchestration contract; readiness and liveness must be consumed explicitly.
+- Define what `readiness` means for the service’s current exposed traffic contract before implementing probes.
+- Keep `liveness` local-only so downstream outages do not create restart loops.
+- For player-facing or immediately downstream gameplay-path services, make readiness dependency-aware rather than process-only.
+- If readiness uses canaries, keep them bounded, side-effect free, and clearly reserved for readiness-only traffic.
 
 ## API Definition
 
@@ -85,5 +90,10 @@ These tasks apply to every FireMUD service unless noted otherwise. Gateway and T
 - Document required environment variables and configuration.
   - Note `tenantId` handling and cross-service dependencies.
   - Add a design document under `design/architecture/microservices/<service>/README.md`.
+- Add an explicit `Readiness and Liveness` section to the service design doc describing:
+  - what `liveness` means;
+  - what `readiness` means;
+  - whether readiness is local-only or dependency-aware; and
+  - what new traffic should observe while the service is unready.
 
 Game-specific services may define additional commands or entity behavior but follow the same deployment conventions.

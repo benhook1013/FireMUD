@@ -24,6 +24,20 @@ Orchestrates live game sessions, including tick execution, player input validati
 - Front gameplay login commands and session binding, calling Account Service to verify credentials and obtain JWTs/tokens while enforcing single-session control for each character.
 - For first-party `/ws/game/**`, accept bootstrap-backed bare `LOGIN` after Gateway connect-token validation and signed connect-context verification; this path is intentionally credentialless and must not prompt the browser to replay username/password/OTP.
 - Mint and attach short-lived internal `SessionAttestation` payloads on gameplay-service gRPC calls so downstream gameplay services can verify delegated player identity (`accountId`, `tenantId`, `gameInstanceId`, `characterId`, `sessionId`) plus destination service/method scope in addition to mTLS caller identity.
+- Fail readiness for new gameplay traffic when the currently exposed `LOGIN` + first-command path is not safe
+
+### Readiness and Liveness
+
+- `liveness` is local-only and indicates that the process is alive and not wedged.
+- `readiness` is gameplay admission safety for the commands this service currently exposes at the session front door. For the currently implemented slice, Game Session is ready only when:
+  - local persistence required for login/session state is usable;
+  - required Redis-backed session and tick infrastructure is usable;
+  - the readiness-only local round-trip canaries for session-context storage and command-queue storage both succeed;
+  - Account Service authentication is reachable through a bounded readiness-only authentication probe; and
+  - Game Logic is reachable for the first gameplay command path through a bounded readiness-only `ResolveLook` probe, with Game Logic in turn proving readiness for the downstream services needed to satisfy the first `LOOK`.
+- A successful `LOGIN` without a safe first `LOOK` is not sufficient readiness for new player traffic.
+- Synthetic identifiers used by these canaries are explicitly reserved for readiness-only traffic so they cannot collide with real gameplay state.
+- Readiness transition observability uses the shared contract from [Deployment Environments](../../infrastructure/deployment-environments.md): `firemud.readiness.current`, `firemud.readiness.transitions`, and structured logs keyed by the curated dependency names `accountService`, `sessionContextStore`, `commandQueueStore`, and `gameLogicService`.
 
 ## Architecture / Design Notes
 
@@ -211,7 +225,7 @@ The internal front-end to lease-owner path is a fenced gameplay contract, not a 
 
 ## Operational Notes
 
-- Runs as a Kubernetes Deployment (Docker Compose for local dev) with `/actuator/health` probes. See [Deployment Environments](../../infrastructure/deployment-environments.md).
+- Runs as a Kubernetes Deployment (Docker Compose for local dev) with `/actuator/health/readiness` and `/actuator/health/liveness` probes. See [Deployment Environments](../../infrastructure/deployment-environments.md).
 - Logging, metrics, and tracing follow the standard [Logging & Monitoring](../../system-architecture-logging-monitoring.md) pipeline.
 
 ### Scaling and Region Rebalancing
@@ -224,6 +238,7 @@ The internal front-end to lease-owner path is a fenced gameplay contract, not a 
 ## Dev-isolated Mode
 
 - Use `./gradlew :game-session-service:bootRunDevIsolated` (or set `GAME_SESSION_DEV_ISOLATED=true`) when you need to exercise the Game Session Service without PostgreSQL, Redis, or downstream gRPC dependencies. The dev-isolated beans acknowledge commands and lifecycle requests while only recording informational logs instead of accessing external systems.
+- `dev-isolated` is an explicit opt-in for dependency-free local development only. The standard `dev` profile used by Docker Compose and readiness-based smoke tests keeps the canonical readiness group rather than downgrading readiness to local `readinessState` only.
 - The `DevIsolatedGameSessionSmokeTest` in `services/game-session-service/src/test/java/integration/net/firedevops/firemud/DevIsolatedGameSessionSmokeTest.java` starts the dev profile in dev-isolated mode, posts to `POST /sessions`, and asserts the request is accepted and logged, proving the fast-path smoke test that only touches in-memory components.
 - The dev-isolated smoke/integration tests (`DevIsolatedGameSessionSmokeTest`, `GameSessionLoginIntegrationTest`, `GameSessionWebSocketHandlerIntegrationTest`, `SessionResumptionFlowTest`) are currently decorated with `@Disabled` so they only act as TODO reminders until the real Account/Redis/GameInstance wiring exists (see `design/project-management/vertical-slices/02-task-list-login-and-session-vertical-slice.md#7-dev-mode-stubs-and-real-service-rollout`).
 

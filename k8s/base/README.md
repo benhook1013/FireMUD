@@ -28,7 +28,7 @@ Ports align with the design documents:
 - The TCP proxy listens on `2323` for Telnet connections.
 - Spring Cloud Gateway is reachable via port `80`.
 
-All deployments include basic readiness and liveness probes that hit the `/actuator/health` endpoint (or open a TCP socket for the proxy service) as described in the design docs.
+All deployments include readiness probes against `/actuator/health/readiness`, liveness probes against `/actuator/health/liveness`, and startup probes against `/actuator/health/liveness` as described in the design docs.
 
 ## Database Settings
 

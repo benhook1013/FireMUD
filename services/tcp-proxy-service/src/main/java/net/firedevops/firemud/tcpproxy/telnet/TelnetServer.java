@@ -26,8 +26,10 @@ import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.BooleanSupplier;
 import javax.net.ssl.SSLException;
 import net.firedevops.firemud.cache.LookCacheService;
+import net.firedevops.firemud.tcpproxy.health.GatewayGameplayReadinessProbe;
 import net.firedevops.firemud.tcpproxy.service.TcpProxyEventService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -77,6 +79,7 @@ public final class TelnetServer {
   private final Counter connectionLimitExceededCounter;
   private final MeterRegistry meterRegistry;
   private final TcpProxyEventService eventService;
+  private final BooleanSupplier gameplayTrafficReady;
   private final Map<String, java.util.concurrent.atomic.AtomicInteger> connectionsByIp =
       new ConcurrentHashMap<>();
   private volatile int boundPort;
@@ -107,6 +110,7 @@ public final class TelnetServer {
       @Value("${TCP_PROXY_MAX_MALFORMED_ENVELOPES:5}") int maxMalformedSessionEnvelopes,
       MeterRegistry meterRegistry,
       TcpProxyEventService eventService,
+      GatewayGameplayReadinessProbe gatewayGameplayReadinessProbe,
       @Nullable LookCacheService lookCacheService) {
     this.port = port;
     this.boundPort = port;
@@ -127,6 +131,7 @@ public final class TelnetServer {
     this.connectionLimitExceededCounter =
         meterRegistry.counter("tcpproxy.connections.limit.exceeded");
     this.eventService = eventService;
+    this.gameplayTrafficReady = gatewayGameplayReadinessProbe::isReady;
     this.lookCacheService = lookCacheService != null ? lookCacheService : NOOP_LOOK_CACHE_SERVICE;
     Gauge.builder(
             "tcpproxy.connections.active",
@@ -227,6 +232,7 @@ public final class TelnetServer {
                               discardedCommandCounter,
                               advertiseMcp,
                               meterRegistry,
+                              gameplayTrafficReady,
                               TelnetServerHandler::createWebSocket,
                               eventService,
                               bufferDepth,
@@ -272,6 +278,10 @@ public final class TelnetServer {
   /** Expose the configured port for testing purposes. */
   public int getPort() {
     return boundPort;
+  }
+
+  public boolean isRunning() {
+    return running.get() && serverChannel != null;
   }
 
   /** Current active connection count for metrics testing. */

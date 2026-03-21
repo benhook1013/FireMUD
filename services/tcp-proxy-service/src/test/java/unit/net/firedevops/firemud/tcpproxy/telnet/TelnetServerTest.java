@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Path;
 import net.firedevops.firemud.cache.LookCacheService;
+import net.firedevops.firemud.tcpproxy.health.GatewayGameplayReadinessProbe;
 import net.firedevops.firemud.tcpproxy.service.TcpProxyEventService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -39,6 +40,7 @@ class TelnetServerTest {
             5,
             new io.micrometer.core.instrument.simple.SimpleMeterRegistry(),
             Mockito.mock(TcpProxyEventService.class),
+            readyProbe(),
             Mockito.mock(LookCacheService.class));
     server.start();
     server.stop();
@@ -69,9 +71,16 @@ class TelnetServerTest {
                     5,
                     registry,
                     Mockito.mock(TcpProxyEventService.class),
+                    readyProbe(),
                     Mockito.mock(LookCacheService.class)));
 
     assertTrue(ex.getMessage().contains("TLS"));
     assertEquals(1.0, registry.counter("tcpproxy.tls.misconfig").count());
+  }
+
+  private GatewayGameplayReadinessProbe readyProbe() {
+    GatewayGameplayReadinessProbe probe = Mockito.mock(GatewayGameplayReadinessProbe.class);
+    Mockito.when(probe.isReady()).thenReturn(true);
+    return probe;
   }
 }

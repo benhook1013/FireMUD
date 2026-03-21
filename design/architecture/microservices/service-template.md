@@ -27,6 +27,14 @@
 
 {{ Brief description of important tables or storage schemas. }}
 
+### Readiness and Liveness
+
+- `liveness` is {{ local process health meaning; keep this local-only and do not fail it only because downstream dependencies are degraded. }}
+- `readiness` is {{ safe admission meaning for the service's current exposed traffic contract. }}
+- Readiness is {{ local-only or dependency-aware }} for this service because {{ short reason tied to the current contract. }}
+- While unready, new traffic should {{ be refused, receive an explicit unavailable/startup response, or remain unrouted by orchestration }} rather than relying on retries or delayed convergence to hide startup races.
+- If readiness uses synthetic canaries, document the reserved probe identifiers and confirm they are bounded, side-effect free, and clearly separated from real gameplay or operator state.
+
 ### gRPC APIs
 
 - `{{ Method }}` – {{ Brief description. }}
@@ -52,7 +60,7 @@
 
 ## Operational Notes
 
-- Runs as a Kubernetes Deployment (Docker Compose for local dev) with `/actuator/health` probes. See [Deployment Environments](../infrastructure/deployment-environments.md).
+- Runs as a Kubernetes Deployment (Docker Compose for local dev) with `/actuator/health/readiness` and `/actuator/health/liveness` probes. Do not treat plain `/actuator/health` as an orchestration contract. See [Deployment Environments](../infrastructure/deployment-environments.md).
 - Logging, metrics, and tracing follow the standard [Logging & Monitoring](../system-architecture-logging-monitoring.md) pipeline.
 The OpenTelemetry collector endpoint can be overridden via `OTEL_ENDPOINT` (see [Environment Variables & Secrets Management](../infrastructure/environment-and-secrets.md)).
 

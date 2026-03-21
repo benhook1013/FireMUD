@@ -34,6 +34,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
 import org.springframework.boot.builder.SpringApplicationBuilder;
+import org.springframework.boot.health.contributor.Health;
+import org.springframework.boot.health.contributor.HealthIndicator;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.boot.test.web.server.LocalServerPort;
@@ -182,7 +184,9 @@ class TelnetGatewayGameSessionCrossServiceIntegrationTest {
               .properties(
                   "server.port=0",
                   "spring.main.web-application-type=reactive",
-                  "spring.grpc.server.port=0")
+                  "spring.grpc.server.port=0",
+                  "management.endpoint.health.group.liveness.include=livenessState",
+                  "management.endpoint.health.group.readiness.include=readinessState,gameplayPathReadiness")
               .run();
       int port = ((WebServerApplicationContext) context).getWebServer().getPort();
       return new GameSessionStubHolder(context, port, context.getBean(GameSessionStub.class));
@@ -199,7 +203,9 @@ class TelnetGatewayGameSessionCrossServiceIntegrationTest {
               .properties(
                   "server.port=0",
                   "spring.main.web-application-type=reactive",
-                  "gateway.stub.target-uri=ws://localhost:" + gameSessionPort + "/ws/game")
+                  "gateway.stub.target-uri=ws://localhost:" + gameSessionPort + "/ws/game",
+                  "management.endpoint.health.group.liveness.include=livenessState",
+                  "management.endpoint.health.group.readiness.include=readinessState,gameplayRouteReadiness")
               .run();
       int port = ((WebServerApplicationContext) context).getWebServer().getPort();
       return new GatewayHolder(context, port);
@@ -285,6 +291,16 @@ class TelnetGatewayGameSessionCrossServiceIntegrationTest {
     @Bean
     WebSocketHandlerAdapter webSocketHandlerAdapter() {
       return new WebSocketHandlerAdapter();
+    }
+
+    @Bean("gameplayPathReadiness")
+    HealthIndicator gameplayPathReadinessHealthIndicator() {
+      return () -> Health.up().withDetail("stub", "UP").build();
+    }
+
+    @Bean("trafficAdmissionReadiness")
+    HealthIndicator trafficAdmissionReadinessHealthIndicator() {
+      return () -> Health.up().withDetail("stub", "UP").build();
     }
   }
 

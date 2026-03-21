@@ -16,6 +16,16 @@ Executes the core gameplay rules and command parsing. It processes player action
   Service and character state via the Entity Management Service
 - See the [Service Responsibility Matrix](../../service-responsibility-matrix.md)
   for how this service fits into the overall architecture.
+- Fail readiness when the downstream dependencies required for the currently exposed gameplay command path are unavailable
+
+### Readiness and Liveness
+
+- `liveness` is local-only and indicates that the process is alive and able to continue serving.
+- `readiness` is command-path safety. For the currently implemented player slice, Game Logic is ready only when the downstream services required for `ResolveLook` are reachable, specifically World Management and Entity Management.
+- This service is not ready for new gameplay traffic if it can answer `Ping` locally but cannot satisfy the first `LOOK` dependency chain.
+- The readiness canary for this slice is a dedicated internal `ResolveLook`-shaped helper rather than a second, unrelated dependency check path, so readiness and the command path stay aligned on request shape and dependency naming.
+- The helper uses explicit short deadlines on its downstream world/entity RPCs and reserved readiness-only sentinel identifiers so readiness remains bounded and cannot collide with real gameplay state.
+- Readiness transition observability uses the shared contract from [Deployment Environments](../../infrastructure/deployment-environments.md): `firemud.readiness.current`, `firemud.readiness.transitions`, and structured logs keyed by the curated dependency names `worldManagementService` and `entityManagementService`.
 
 ## Architecture / Design Notes
 
@@ -155,7 +165,7 @@ details on shared infrastructure components.
 
 ## Operational Notes
 
-- Runs as a Kubernetes Deployment (Docker Compose for local dev) with `/actuator/health` probes. See [Deployment Environments](../../infrastructure/deployment-environments.md).
+- Runs as a Kubernetes Deployment (Docker Compose for local dev) with `/actuator/health/readiness` and `/actuator/health/liveness` probes. See [Deployment Environments](../../infrastructure/deployment-environments.md).
 - Logging, metrics, and tracing follow the standard [Logging & Monitoring](../../system-architecture-logging-monitoring.md) pipeline.
 
 ## Environment Variables

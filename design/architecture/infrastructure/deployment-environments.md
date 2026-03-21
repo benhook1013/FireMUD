@@ -87,21 +87,31 @@ FireMUD uses Docker Compose for local development and testing:
 
 ### Docker Health Checks
 
-- Services expose Spring Boot’s `/actuator/health` for basic health status.
+- Services expose Spring Boot actuator health groups and must publish:
+  - `/actuator/health/liveness` for process-local liveness only.
+  - `/actuator/health/readiness` for traffic-admission readiness.
+- Liveness means the process is alive and not wedged. It must not fail only because a downstream dependency is unavailable.
+- Readiness means the service can safely accept new traffic for the contract it currently exposes. For user-facing and gameplay-path services, readiness is dependency-aware rather than process-only.
 - Docker Compose can monitor health using `healthcheck` blocks in `docker/docker-compose.yml`.
 - Health status is visible via `docker ps` (e.g., `healthy`, `unhealthy`), but:
   - Docker does **not** automatically restart containers that become `unhealthy`.
       Even with `restart: unless-stopped` configured, services remain running
       until manually restarted.
-    - `depends_on` waits for initial health checks, but ongoing readiness still
-      requires manual monitoring.
+    - `depends_on` is bootstrap ordering only. It does not make a service safe for player traffic unless that service’s own readiness semantics are truthful.
+    - Ongoing readiness still requires manual monitoring in Docker Compose because Compose does not remove unhealthy containers from traffic automatically.
     - See [Reconnection Strategy](../system-architecture-reconnection.md) for how sessions survive service restarts in Docker Compose.
 
-💡 **Tip**: For more reliable startup coordination, use **Gateway retry filters** or utilities like `wait-for-it.sh`.
-The gateway now includes a default *Retry* filter in `application.yml` so failed
-requests to services are retried automatically during startup. Each service's
-Dockerfile runs `docker/start-service.sh`, which invokes `wait-for-it.sh` to
-pause startup until PostgreSQL and Redis are reachable.
+Readiness rules for the currently implemented player path:
+
+- `tcp-proxy-service` is ready only when its Telnet listener is bound and the downstream gameplay admission path is safe for new connections.
+- `spring-cloud-gateway` is ready only when `/ws/game/**` can be upgraded and the Game Session backend path required for new gameplay sockets is reachable.
+- `game-session-service` is ready only when its local persistence is usable and the currently exposed `LOGIN` + first-command gameplay path is safe.
+- For `game-session-service`, that safety check includes reserved readiness-only round trips through the session-context store and command-queue store so the first command path is not admitted on downstream reachability alone. Readiness-only downstream gRPC canaries also run with explicit short per-call deadlines rather than inheriting ambient channel timing.
+- `game-logic-service` is ready only when the downstream services required for `ResolveLook` are reachable.
+- `account-service`, `world-management-service`, and `entity-management-service` use truthful local readiness for the currently implemented slice.
+- `game-session-service` may still run in `dev-isolated` mode for intentionally dependency-free local development, but the normal `dev` profile no longer weakens the canonical readiness group for Docker Compose or smoke environments.
+
+Gateway retry filters, `wait-for-it.sh`, and similar startup helpers are convenience/bootstrap mechanisms only. They must not be treated as substitutes for correct readiness semantics.
 
 ---
 
@@ -138,9 +148,25 @@ A sample Terraform module for a local Kind cluster is provided in [k8s/terraform
 
 ### Kubernetes Health Monitoring
 
-- Kubernetes uses Spring Boot’s `/actuator/health` for both:
-  - **Readiness probes** — to determine if a service is ready to handle requests.
-  - **Liveness probes** — to detect and restart stuck or unresponsive containers.
+- Kubernetes uses explicit actuator health groups:
+  - **Readiness probes** call `/actuator/health/readiness` to determine whether a pod should receive new traffic.
+  - **Liveness probes** call `/actuator/health/liveness` to detect wedged or dead processes.
+- Readiness must represent safe traffic admission for the service’s current public contract, not merely successful boot.
+- Dependency-aware readiness checks should prefer bounded, operation-shaped canaries over raw ping endpoints when the user-visible contract immediately depends on a downstream RPC path. These canaries must remain side-effect free. A synthetic probe that intentionally exercises an RPC with invalid or missing identifiers may still count as reachable when it returns an application-level error such as `INVALID_ARGUMENT`, `NOT_FOUND`, or `AUTH_INVALID_CREDENTIALS`; transport failures, timeouts, and upstream-failure responses do not count as ready.
+- Readiness-only downstream RPC canaries must use explicit short deadlines so readiness timing remains bounded even when the normal client channel uses a longer retry or timeout budget.
+- Synthetic probe identifiers must be explicitly reserved for readiness-only traffic rather than borrowing plausible real IDs like `0`. Use obvious sentinel values such as `__readiness__` or dedicated out-of-band numeric ranges for internal probes.
+- Liveness must remain local-only and must not fail because a dependency is degraded.
+- When startup is materially slower than steady-state readiness evaluation, use a `startupProbe` rather than inflating liveness or readiness thresholds.
+- For the Telnet edge path, the TCP Proxy Service must refuse new sockets with an explicit startup-unavailable disconnect until the downstream `connect -> LOGIN -> first LOOK` path is ready rather than accepting the connection and allowing later gameplay commands to stall or fail.
+- Dependency-aware readiness payloads use one shared shape:
+  - `contract`: the traffic contract protected by readiness.
+  - `admissionMeaning`: a short canonical statement of what `UP` means for new traffic.
+  - `dependencies`: curated dependency keys with per-dependency `status`, `check`, `target`, and `outcome` or `reason`.
+  - `failingDependency`: present only when readiness is refusing traffic.
+- Critical services emit readiness transition observability with one shared contract:
+  - metric `firemud.readiness.current{component="<service>"}` is `1` when the component is currently ready to admit new traffic and `0` otherwise.
+  - metric `firemud.readiness.transitions{component="<service>",to_status="<status>",failing_dependency="<dependency|none>"}` increments only when the effective readiness state changes.
+  - structured logs on readiness transitions include `component`, `contract`, `admissionMeaning`, and `failingDependency` when readiness goes false.
 
 ### Kubernetes Auto Recovery
 

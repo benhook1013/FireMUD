@@ -251,6 +251,7 @@ services:
       dockerfile: services/tcp-proxy-service/Dockerfile
     ports:
       - "2323:2323"
+      - "8089:8080"
     <<: *service-resources
     environment:
       <<: *service-env
@@ -271,7 +272,7 @@ services:
       context: ..
       dockerfile: services/world-management-service/Dockerfile
     ports:
-      - "8089:8080"
+      - "8090:8080"
     <<: *service-resources
     environment:
       <<: *service-env
