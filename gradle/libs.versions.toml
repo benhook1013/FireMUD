@@ -1,15 +1,15 @@
 [versions]
-spring-boot = "4.0.3"
+spring-boot = "4.0.4"
 flyway = "12.1.1"
 mapstruct = "1.6.3"
 lombok = "1.18.42"
 lombok-mapstruct-binding = "0.2.0"
-grpc = "1.79.0"
-protobuf = "4.33.5"
+grpc = "1.80.0"
+protobuf = "4.34.1"
 opentelemetry = "1.58.0"
 micrometer = "1.16.2"
 jjwt = "0.13.0"
-aws-sdk = "2.41.23"
+aws-sdk = "2.42.18"
 argon2 = "2.12"
 h2 = "2.4.240"
 testcontainers = "1.21.4"
@@ -52,8 +52,8 @@ grpc-stub = { module = "io.grpc:grpc-stub", version = "1.80.0" }
 grpc-inprocess = { module = "io.grpc:grpc-inprocess", version = "1.80.0" }
 protoc-gen-grpc-java = { module = "io.grpc:protoc-gen-grpc-java", version = "1.80.0" }
 
-protobuf-java = { module = "com.google.protobuf:protobuf-java", version = "4.34.0" }
-protoc = { module = "com.google.protobuf:protoc", version = "4.34.0" }
+protobuf-java = { module = "com.google.protobuf:protobuf-java", version = "4.34.1" }
+protoc = { module = "com.google.protobuf:protoc", version = "4.34.1" }
 
 opentelemetry-api = { module = "io.opentelemetry:opentelemetry-api", version = "1.60.1" }
 opentelemetry-sdk = { module = "io.opentelemetry:opentelemetry-sdk", version = "1.60.1" }
@@ -69,7 +69,7 @@ argon2 = { module = "de.mkammerer:argon2-jvm", version = "2.12" }
 
 grpc-spring-boot-starter = { module = "org.springframework.grpc:spring-grpc-spring-boot-starter", version = "1.0.2" }
 postgresql = { module = "org.postgresql:postgresql", version = "42.7.10" }
-aws-sdk-s3 = { module = "software.amazon.awssdk:s3", version = "2.42.14" }
+aws-sdk-s3 = { module = "software.amazon.awssdk:s3", version = "2.42.18" }
 h2 = { module = "com.h2database:h2", version = "2.4.240" }
 
 springdoc-openapi = { module = "org.springdoc:springdoc-openapi-starter-webmvc-ui", version = "3.0.2" }
