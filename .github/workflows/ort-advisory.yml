@@ -1,23 +1,20 @@
-name: License Checks
+name: ORT Advisory Scan
 
 on:
-  push:
-    branches: [ main, develop ]
-  pull_request:
-    branches: [ main, develop ]
+  schedule:
+    - cron: '0 6 * * 0'  # Weekly on Sundays at 06:00 UTC
   workflow_dispatch:
 
 permissions:
   contents: read
-  pull-requests: write
 
 concurrency:
-  group: license-${{ github.workflow }}-${{ github.ref }}
+  group: ort-advisory-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  ort-scan:
-    name: License Gate
+  ort-advisory:
+    name: ORT Advisory Scan
     runs-on: ubuntu-latest
     steps:
       - name: Use HTTPS for Git
@@ -47,26 +44,18 @@ jobs:
         with:
           cache-read-only: false
 
-      - name: Run ORT License Scan
+      - name: Run ORT advisory scan
         id: ort
         uses: oss-review-toolkit/ort-ci-github-action@v1
         with:
           ort-cli-args: '-P ort.analyzer.enabledPackageManagers=Gradle,NPM'
-          run: 'cache-dependencies,labels,analyzer,evaluator,reporter,upload-results'
-          fail-on: policy-violation
+          run: 'cache-dependencies,labels,analyzer,evaluator,advisor,reporter,upload-results'
+          fail-on: 'violations'
           report-formats: 'CycloneDx,WebApp'
           ort-cli-report-args: '-O CycloneDX=output.file.formats=json,xml'
 
-      - name: Upload ORT results
+      - name: Upload ORT advisory results
         uses: actions/upload-artifact@v7
         with:
-          name: ort-result-${{ github.sha }}
+          name: ort-advisory-result-${{ github.sha }}
           path: ${{ steps.ort.outputs.results-path }}
-      - name: Summarize ORT report
-        if: github.event_name == 'pull_request'
-        run: |
-          SUMMARY_FILE=$(ls "${{ steps.ort.outputs.results-path }}/scan-summary-*.md" 2>/dev/null | head -n 1)
-          if [ -f "$SUMMARY_FILE" ]; then
-            echo "### 📜 License Scan Summary" >> $GITHUB_STEP_SUMMARY
-            cat "$SUMMARY_FILE" >> $GITHUB_STEP_SUMMARY
-          fi
