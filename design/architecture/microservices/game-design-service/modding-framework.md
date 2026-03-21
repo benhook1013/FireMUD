@@ -175,6 +175,20 @@ Required write path:
   - Success moves the version to `PUBLISHED` and emits `PluginVersionStatusChanged`.
 - Re-invoking either call with the same `(tenantId, pluginId, pluginVersionId)` must be idempotent: once a version is immutable, callers may observe the existing status but must not overwrite signed content in place.
 
+### Plugin Activation Failure Matrix
+
+Runtime/operator-facing activation outcomes must remain deterministic:
+
+| Condition | Canonical outcome |
+| --- | --- |
+| Plugin version is not `PUBLISHED` (including `SUPERSEDED`) | Reject activation as ineligible historical or unpublished version |
+| Signer revoked or no longer trusted | Reject activation; published history remains readable but runtime enablement is blocked |
+| Signer-policy lookup unavailable | Fail closed for activation until policy can be evaluated |
+| `baseVersionId` does not match the instance runtime version | Reject activation |
+| `abilitySchemaDigest` does not match the instance-bound digest | Reject activation |
+| Required component/capability policy blocks the plugin | Reject activation with deterministic policy error |
+| Activation reconciliation/writeback fails after intent is recorded | Leave runtime state unchanged or mark reconciliation failure explicitly; do not pretend activation succeeded |
+
 ### Minimal Bundle Example
 
 This example shows the minimum signed authoring shape expected by the publication pipeline:

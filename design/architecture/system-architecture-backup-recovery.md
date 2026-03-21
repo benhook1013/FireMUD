@@ -19,7 +19,7 @@ The main body of this document describes the target-state backup workflow. Curre
 - `PauseTicksForScope` / `ResumeTicksForScope` support pausing by `tenant_id` + `game_instance_id` today; `region_id` scoping exists in the proto contract but is not yet enforced end-to-end.
 - Backup-related spans and metrics should still use the target-state names and units documented here so dashboards and alert rules remain stable as scope support is expanded.
 - Player-facing prod-like environments are not considered coordinated-backup-ready until automated backups invoke `PauseTicksForScope` / `ResumeTicksForScope` with canonical `tenant_id + region_id` scope end-to-end. Alias scope remains a migration aid, not a steady-state operating mode.
-- Until that convergence is complete, production releases that would depend on restore-point recovery rather than binary rollback are non-compliant for promotion.
+- Until that convergence is complete, player-facing production releases that would depend on restore-point recovery rather than binary rollback are non-compliant for promotion. In current implementation, `roll-forward-only` production promotion is therefore disallowed for player-facing production until coordinated-backup readiness reaches canonical `tenant_id + region_id` scope end-to-end.
 - The alias-scope migration notes in this document are temporary implementation-bridge guidance. Once canonical `tenant_id + region_id` pause scope is enforced end-to-end, these migration-only notes and phase descriptions should be removed so the architecture returns to one steady-state scope contract.
 
 ## PostgreSQL Logical Backups
@@ -481,7 +481,7 @@ After PostgreSQL is restored, but before quarantine is lifted, the restore workf
 
 1. `cold_start_restore`
    - Verify the target Coordination Redis keyspace is empty for coordination prefixes because the recovery intentionally started from an empty coordination store.
-   - Complete the same pause/status validation, post-restore hardening, external credential validation, and smoke gate required for scoped reset recovery before traffic reopen.
+   - Complete the same recovery gate discipline required for scoped reset recovery before traffic reopen: verify the restored environment begins from empty coordination state, run the normal smoke/resume validation for the reopened environment, complete post-restore hardening, validate external credentials, and record the evidence in the recovery artifact. `cold_start_restore` does not require a synthetic pre-reopen pause/resume cycle against already-empty coordination Redis, but it does require the same reopen evidence quality as scoped reset recovery.
    - Record evidence that reset-sensitive session/auth state was dropped or re-established under the restored environment.
 2. `scoped_reset_restore`
    - Run the authoritative reset handshake for the affected scope from `system-architecture-redis-reset-and-recovery.md`.

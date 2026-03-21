@@ -159,6 +159,7 @@ Minimum credential classes to track (canonical record keys shown in parentheses)
 | JWT signing keys / JWKS (`jwt-signing-keys-jwks`) | Last rotation timestamp, key IDs, rotation job outcome |
 | PostgreSQL application credentials (`postgres-application-credentials`) | Last rotation timestamp, rollout restart completion evidence |
 | Backup/object-store credentials (`backup-object-store-credentials`) | Validation of expected bucket/endpoint and non-production isolation |
+| Asset-store credentials (`asset-store-credentials`) | Validation of expected bucket/endpoint, binding identity, and non-production isolation when external asset storage is enabled |
 | Operator credentials (`operator-credentials`) | Last issuance/rotation timestamp and revocation traceability |
 
 If a required compliance record is missing or stale, the environment is treated as non-compliant for promotion and DR-readiness reporting.

@@ -46,8 +46,14 @@ This document explains how FireMUD manages PostgreSQL schema changes across its 
 ### Version-Aware Migration Guidelines
 
 Because game data is versioned and previously published `version_id` values may
-be reactivated for rollback, migrations must be written to preserve the ability
-to load existing versioned graphs:
+be reactivated for rollback, migrations in live or retention-bearing environments
+must be written to preserve the ability to load existing versioned graphs.
+This guidance is scoped to environments/services that already need to preserve
+non-Retired versions or mixed live deployment history. During initial
+development bootstrap, the repo-wide rule in `AGENTS.md` remains authoritative:
+prefer direct replacement and avoid unnecessary dual-read/dual-write or phased
+migration scaffolding until a service actually has live-version preservation
+requirements.
 
 - Prefer **additive** changes (adding tables/columns, widening types) while any
   published versions still depend on the existing schema shape.
@@ -70,7 +76,9 @@ that rollback and historical analysis remain viable across deployments.
 
 Before applying destructive or shape-changing migrations in a service that owns
 versioned/template data (for example templates keyed by `(tenantId, versionId)`),
-engineers should follow this checklist:
+engineers should follow this checklist once that service has crossed out of the
+initial-bootstrap phase and must preserve existing non-Retired/live data across
+deployments:
 
 1. **Enumerate non-Retired versions**
    - Query the Game Design Service’s version metadata (or the service-local
@@ -114,6 +122,16 @@ engineers should follow this checklist:
 Services that own versioned templates (such as Game Design, World Management,
 Entity Management, and Asset Storage) should reference this checklist in their
 local docs and treat it as part of their migration review process.
+
+Initial-development exception:
+
+- If a service is still in initial bootstrap and has no preservation requirement
+  for old readers/writers or non-Retired historical versions, it may replace
+  schema and contracts directly in one change, provided all call sites, tests,
+  and docs are updated together.
+- Once a service begins carrying live/version-retention obligations, this
+  document's version-aware rules become authoritative for subsequent
+  destructive migrations.
 
 ### Cross-Service Identifier Migration
 

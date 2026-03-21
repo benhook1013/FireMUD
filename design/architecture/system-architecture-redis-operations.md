@@ -58,7 +58,7 @@ This section centralizes the **normative targets** for Redis behavior that other
   - Rate-limit prefixes (`ratelimit:<tenantId>:<bucket>:<timeWindow>[:<shard>]`) should stay within a **few thousand active keys per tenant** across all live windows for small/self-hosted deployments; larger clusters may raise this envelope with explicit review.
   - Chat and similar TTL-only caches should remain within a modest, documented number of keys per tenant; sustained growth beyond those envelopes should trigger investigation for missing TTLs or mis-keyed prefixes.
 
-Alerts and dashboards should reference these SLOs explicitly (for example, “tail_loss_ms > 2000 for region X” or “coordination used_memory / maxmemory > 0.4 for Y minutes”) so incidents are tied directly to the agreed budgets.
+Alerts and dashboards should reference these SLOs explicitly (for example, “`redis_coordination_tail_loss_ms > 2000` for region X” or “coordination used_memory / maxmemory > 0.4 for Y minutes”) so incidents are tied directly to the agreed budgets.
 
 ### Cache SLOs & Alerting
 

@@ -399,6 +399,13 @@ Required postconditions for the first successful public-production join:
 - future `WORLDS` results for that account may rely on membership rather than public discovery alone; and
 - if character creation or admission fails before `OK PLAY`, the service must not persist a partial membership grant.
 
+Canonical character-creation contract for this flow:
+
+- The player-facing control-plane surface is `POST /characters` using the current bootstrap-authenticated account identity plus the selected `{worldSlug, realmSlug}` target.
+- Entity Management owns the underlying `CreateCharacter` semantics and persistence contract; Account Service/authentication docs define the admission prerequisites for when this route may be called.
+- `POST /characters` is allowed only after bootstrap discovery has selected a caller-visible realm target and before `POST /auth/connect-token` / gameplay `PLAY` succeed for that new character.
+- The route must reject requests for realms that are not currently visible/admissible to the bootstrap-authenticated account.
+
 Example first-party browser sequence for a playtest fork:
 
 ```text
@@ -633,6 +640,7 @@ To keep trust boundaries clear, FireMUD distinguishes between three JWT profiles
   - Intended audience: bootstrap-only gameplay surfaces (for example an `aud` claim exactly `player-bootstrap`).
   - Carried only by first-party gameplay SPAs or mobile clients, stored in memory only, and used only for bootstrap discovery and `POST /auth/connect-token`.
   - Lifetime: intentionally short (target <= 5 minutes). Expiry or revocation requires the first-party gameplay client to obtain a fresh bootstrap token before continuing gameplay bootstrap.
+  - Full-page reload or process restart is treated the same way as token loss: the client re-enters the bootstrap flow from `POST /auth/player-bootstrap` (or an equivalent future explicit bootstrap-restoration endpoint if one is added). The architecture does not currently define a hidden refresh token or silent bootstrap-restoration mechanism.
 
 - **Service JWTs**
   - Issued by the Account Service for backend callers (for example, Game Session, Logging & Admin, Game Design) via the gRPC `Authenticate` or equivalent internal flows.

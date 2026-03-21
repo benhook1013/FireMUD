@@ -165,6 +165,13 @@ Resulting replay semantics:
 
 This rule makes generated scaffolding safe to refine manually while preserving one deterministic answer to “what does replay regenerate versus preserve?”
 
+Concrete replay example:
+
+- Revision `r-gen-002` creates an empty-region scaffold for `regionTemplateId:northern-wilds` under `SEED_APPEND_ONLY`.
+- A later manual revision renames room `nw-entrance` to `Pine Gate` and adds a custom exit to `nw-watch-post`.
+- Replay must reproduce the generator-authored scaffold first, then replay the manual rename and exit addition in commit/revision order.
+- If a later generator replay for `r-gen-002` would need to delete `Pine Gate`, rewrite the authored exit, or otherwise erase those later manual edits without an explicit replacement revision, Draft convergence must fail as `OUT_OF_SYNC`.
+
 ---
 
 ### 2. `OverworldMapGenerator`

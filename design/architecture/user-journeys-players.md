@@ -126,6 +126,7 @@ OK PLAY Entered Emberfall / Live Realm as Mara
 ```
 
 After this first successful join, the player's account now has normal `player` membership for Emberfall, so later discovery no longer depends on public-production visibility alone.
+The player-facing character-creation call in this sequence is the canonical `POST /characters` surface backed by Entity Management's `CreateCharacter` contract. It is permitted only for the currently bootstrap-visible realm target and must complete before the new character is admissible through `PLAY`.
 
 ---
 

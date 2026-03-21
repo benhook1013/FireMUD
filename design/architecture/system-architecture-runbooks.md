@@ -77,7 +77,7 @@ For a single-admin operator, most “what do I do now?” coordination/tick ques
 - **Named operations**
   - Tail-loss incidents first choose a **replay-first** or **reset-first** recovery mode. Scope selection for resets happens only after `reset-first` is chosen.
   - **Per-region reset** – clear coordination state (`tick:*`, timers, retries, leases) for a single `<tenantId, regionId>` and allow ticks to rebuild from PostgreSQL and the tick effect ledger.
-  - **Per-tenant reset** – clear coordination state (all regions and sessions) for a single tenant and treat it as a tenant-scoped maintenance/reset event.
+  - **Per-tenant reset** – clear coordination state for all regions for a single tenant and treat it as a tenant-scoped maintenance/reset event. Preserve `session:game:*` / `session:auth:*` by default unless the operator explicitly selects session invalidation for that reset.
   - **Cluster reset** – clear coordination state for all tenants/regions on a Coordination Redis deployment; reserved for catastrophic incidents or planned migrations.
 
 - **How to choose**

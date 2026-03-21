@@ -142,7 +142,7 @@ PLAY demo production Mara
 OK PLAY Resumed session
 ```
 
-This reconnect flow assumes the player still holds a valid in-memory `player-bootstrap` token. If the bootstrap token has expired or the page was reloaded, the client must obtain a new bootstrap token first, then repeat bootstrap discovery as needed and request a fresh connect token. In all cases, first-party reconnects must not prompt the browser to replay username/password/OTP after bootstrap has been re-established. Clients may skip visible `WORLDS` / `REALMS` steps only when they already retain a valid world/realm choice and still drive the same canonical `PLAY <world> [realm] [character]` selection on reconnect.
+This reconnect flow assumes the player still holds a valid in-memory `player-bootstrap` token. If the bootstrap token has expired or the page was reloaded, the client must obtain a new bootstrap token first, then repeat bootstrap discovery as needed and request a fresh connect token. There is no separate silent refresh/bootstrap-restoration mechanism in the current architecture; reload behaves like bootstrap-token loss and restarts the first-party bootstrap flow. In all cases, first-party reconnects must not prompt the browser to replay username/password/OTP after bootstrap has been re-established. Clients may skip visible `WORLDS` / `REALMS` steps only when they already retain a valid world/realm choice and still drive the same canonical `PLAY <world> [realm] [character]` selection on reconnect.
 
 ## API Usage Patterns
 
