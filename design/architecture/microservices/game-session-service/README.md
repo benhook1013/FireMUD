@@ -32,10 +32,11 @@ Orchestrates live game sessions, including tick execution, player input validati
 - `readiness` is gameplay admission safety for the commands this service currently exposes at the session front door. For the currently implemented slice, Game Session is ready only when:
   - local persistence required for login/session state is usable;
   - required Redis-backed session and tick infrastructure is usable;
+  - the readiness-only local round-trip canaries for session-context storage and command-queue storage both succeed;
   - Account Service authentication is reachable; and
   - Game Logic is reachable for the first gameplay command path, with Game Logic in turn proving readiness for the downstream services needed to satisfy the first `LOOK`.
 - A successful `LOGIN` without a safe first `LOOK` is not sufficient readiness for new player traffic.
-- Readiness transition observability uses the shared contract from [Deployment Environments](../../infrastructure/deployment-environments.md): `firemud.readiness.current`, `firemud.readiness.transitions`, and structured logs keyed by the curated dependency names `accountService` and `gameLogicService`.
+- Readiness transition observability uses the shared contract from [Deployment Environments](../../infrastructure/deployment-environments.md): `firemud.readiness.current`, `firemud.readiness.transitions`, and structured logs keyed by the curated dependency names `accountService`, `sessionContextStore`, `commandQueueStore`, and `gameLogicService`.
 
 ## Architecture / Design Notes
 

@@ -106,6 +106,7 @@ Readiness rules for the currently implemented player path:
 - `tcp-proxy-service` is ready only when its Telnet listener is bound and the downstream gameplay admission path is safe for new connections.
 - `spring-cloud-gateway` is ready only when `/ws/game/**` can be upgraded and the Game Session backend path required for new gameplay sockets is reachable.
 - `game-session-service` is ready only when its local persistence is usable and the currently exposed `LOGIN` + first-command gameplay path is safe.
+- For `game-session-service`, that safety check includes reserved readiness-only round trips through the session-context store and command-queue store so the first command path is not admitted on downstream reachability alone.
 - `game-logic-service` is ready only when the downstream services required for `ResolveLook` are reachable.
 - `account-service`, `world-management-service`, and `entity-management-service` use truthful local readiness for the currently implemented slice.
 

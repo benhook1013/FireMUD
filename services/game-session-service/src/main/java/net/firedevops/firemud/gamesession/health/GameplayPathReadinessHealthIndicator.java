@@ -10,6 +10,7 @@ import net.firedevops.firemud.common.health.DependencyReadinessSupport;
 import net.firedevops.firemud.common.health.ReadinessTransitionTracker;
 import net.firedevops.firemud.gamesession.client.AccountClient;
 import net.firedevops.firemud.gamesession.client.GameLogicClient;
+import net.firedevops.firemud.gamesession.health.GameplayLocalPathReadinessProbe.ProbeResult;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.health.contributor.HealthIndicator;
 import org.springframework.stereotype.Component;
@@ -31,14 +32,17 @@ public class GameplayPathReadinessHealthIndicator implements HealthIndicator {
 
   private final AccountClient accountClient;
   private final GameLogicClient gameLogicClient;
+  private final GameplayLocalPathReadinessProbe gameplayLocalPathReadinessProbe;
   private final ReadinessTransitionTracker readinessTransitionTracker;
 
   public GameplayPathReadinessHealthIndicator(
       AccountClient accountClient,
       GameLogicClient gameLogicClient,
+      GameplayLocalPathReadinessProbe gameplayLocalPathReadinessProbe,
       ReadinessTransitionTracker readinessTransitionTracker) {
     this.accountClient = accountClient;
     this.gameLogicClient = gameLogicClient;
+    this.gameplayLocalPathReadinessProbe = gameplayLocalPathReadinessProbe;
     this.readinessTransitionTracker = readinessTransitionTracker;
   }
 
@@ -74,6 +78,36 @@ public class GameplayPathReadinessHealthIndicator implements HealthIndicator {
           "game-session-service",
           DependencyReadinessSupport.outOfService(CONTRACT, "accountService", dependencies));
     }
+
+    ProbeResult sessionContextProbe = gameplayLocalPathReadinessProbe.probeSessionContextStore();
+    if (!sessionContextProbe.ready()) {
+      dependencies.put(
+          "sessionContextStore",
+          DependencyReadinessSupport.downDependency(
+              "roundTrip", "redis:session-context", sessionContextProbe.detail()));
+      return readinessTransitionTracker.record(
+          "game-session-service",
+          DependencyReadinessSupport.outOfService(CONTRACT, "sessionContextStore", dependencies));
+    }
+    dependencies.put(
+        "sessionContextStore",
+        DependencyReadinessSupport.upDependency(
+            "roundTrip", "redis:session-context", sessionContextProbe.detail()));
+
+    ProbeResult commandQueueProbe = gameplayLocalPathReadinessProbe.probeCommandQueueStore();
+    if (!commandQueueProbe.ready()) {
+      dependencies.put(
+          "commandQueueStore",
+          DependencyReadinessSupport.downDependency(
+              "roundTrip", "redis:tick-queue", commandQueueProbe.detail()));
+      return readinessTransitionTracker.record(
+          "game-session-service",
+          DependencyReadinessSupport.outOfService(CONTRACT, "commandQueueStore", dependencies));
+    }
+    dependencies.put(
+        "commandQueueStore",
+        DependencyReadinessSupport.upDependency(
+            "roundTrip", "redis:tick-queue", commandQueueProbe.detail()));
 
     try {
       gameLogicClient.resolveLook(

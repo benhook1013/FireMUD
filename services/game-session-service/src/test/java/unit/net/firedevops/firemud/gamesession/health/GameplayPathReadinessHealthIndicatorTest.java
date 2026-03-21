@@ -14,6 +14,7 @@ import net.firedevops.firemud.account.v1.AuthenticateResponse;
 import net.firedevops.firemud.common.health.ReadinessTransitionTracker;
 import net.firedevops.firemud.gamesession.client.AccountClient;
 import net.firedevops.firemud.gamesession.client.GameLogicClient;
+import net.firedevops.firemud.gamesession.health.GameplayLocalPathReadinessProbe.ProbeResult;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.health.contributor.Health;
 import org.springframework.boot.health.contributor.Status;
@@ -35,8 +36,12 @@ class GameplayPathReadinessHealthIndicatorTest {
     doThrow(new StatusRuntimeException(io.grpc.Status.NOT_FOUND.withDescription("room missing")))
         .when(gameLogicClient)
         .resolveLook(anyString(), anyString(), anyString(), anyString());
+    GameplayLocalPathReadinessProbe localPathProbe = mock(GameplayLocalPathReadinessProbe.class);
+    when(localPathProbe.probeSessionContextStore()).thenReturn(ProbeResult.up("ROUND_TRIP_OK"));
+    when(localPathProbe.probeCommandQueueStore()).thenReturn(ProbeResult.up("QUEUE_WRITE_OK"));
     GameplayPathReadinessHealthIndicator indicator =
-        new GameplayPathReadinessHealthIndicator(accountClient, gameLogicClient, tracker());
+        new GameplayPathReadinessHealthIndicator(
+            accountClient, gameLogicClient, localPathProbe, tracker());
 
     Health health = indicator.health();
     @SuppressWarnings("unchecked")
@@ -56,7 +61,10 @@ class GameplayPathReadinessHealthIndicatorTest {
         .authenticate(anyString(), anyString(), anyString(), anyString());
     GameplayPathReadinessHealthIndicator indicator =
         new GameplayPathReadinessHealthIndicator(
-            accountClient, mock(GameLogicClient.class), tracker());
+            accountClient,
+            mock(GameLogicClient.class),
+            mock(GameplayLocalPathReadinessProbe.class),
+            tracker());
 
     Health health = indicator.health();
     @SuppressWarnings("unchecked")
@@ -82,8 +90,12 @@ class GameplayPathReadinessHealthIndicatorTest {
     doThrow(new StatusRuntimeException(io.grpc.Status.UNAVAILABLE.withDescription("logic down")))
         .when(gameLogicClient)
         .resolveLook(anyString(), anyString(), anyString(), anyString());
+    GameplayLocalPathReadinessProbe localPathProbe = mock(GameplayLocalPathReadinessProbe.class);
+    when(localPathProbe.probeSessionContextStore()).thenReturn(ProbeResult.up("ROUND_TRIP_OK"));
+    when(localPathProbe.probeCommandQueueStore()).thenReturn(ProbeResult.up("QUEUE_WRITE_OK"));
     GameplayPathReadinessHealthIndicator indicator =
-        new GameplayPathReadinessHealthIndicator(accountClient, gameLogicClient, tracker());
+        new GameplayPathReadinessHealthIndicator(
+            accountClient, gameLogicClient, localPathProbe, tracker());
 
     Health health = indicator.health();
     @SuppressWarnings("unchecked")
@@ -93,6 +105,33 @@ class GameplayPathReadinessHealthIndicatorTest {
     assertEquals(Status.OUT_OF_SERVICE, health.getStatus());
     assertEquals("UP", dependencies.get("accountService").get("status"));
     assertEquals("DOWN", dependencies.get("gameLogicService").get("status"));
+  }
+
+  @Test
+  void healthReturnsOutOfServiceWhenLocalSessionContextProbeFails() {
+    AccountClient accountClient = mock(AccountClient.class);
+    when(accountClient.authenticate(anyString(), anyString(), anyString(), anyString()))
+        .thenReturn(
+            AuthenticateResponse.newBuilder()
+                .setError(
+                    net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
+                        .setCode(AuthenticationErrorCodes.INVALID_CREDENTIALS)
+                        .setMessage("Invalid credentials"))
+                .build());
+    GameplayLocalPathReadinessProbe localPathProbe = mock(GameplayLocalPathReadinessProbe.class);
+    when(localPathProbe.probeSessionContextStore())
+        .thenReturn(ProbeResult.down("redis write failed"));
+    GameplayPathReadinessHealthIndicator indicator =
+        new GameplayPathReadinessHealthIndicator(
+            accountClient, mock(GameLogicClient.class), localPathProbe, tracker());
+
+    Health health = indicator.health();
+    @SuppressWarnings("unchecked")
+    Map<String, Map<String, Object>> dependencies =
+        (Map<String, Map<String, Object>>) health.getDetails().get("dependencies");
+
+    assertEquals(Status.OUT_OF_SERVICE, health.getStatus());
+    assertEquals("DOWN", dependencies.get("sessionContextStore").get("status"));
   }
 
   private static ReadinessTransitionTracker tracker() {
