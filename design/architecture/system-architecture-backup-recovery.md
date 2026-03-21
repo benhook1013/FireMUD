@@ -277,8 +277,10 @@ Every restore that rewinds PostgreSQL must select one explicit Coordination Redi
 - `scoped_reset_restore`
   - Use when Coordination Redis state may survive while PostgreSQL has been rewound to an earlier snapshot.
   - Required proof:
-    - operators ran the authoritative reset handshake for the affected scope (`pause -> epoch bump -> reset -> ledger/command convergence -> init-meta -> smoke-check -> resume`), and
-    - reset-sensitive session/auth state was either invalidated or explicitly handled according to reset policy before traffic reopen.
+    - operators ran the authoritative reset handshake for the affected scope (`pause -> reset -> ledger/command convergence -> init-meta -> smoke-check -> resume`, with `coordination-maintenance reset` owning and auditing the epoch bump), and
+    - reset-sensitive session/auth state was handled according to the canonical reset policy before traffic reopen.
+
+Operator shortcut: restore-mode selection and recovery recording should use the same control-plane contract described in `system-architecture-redis-ops-access.md`, and the recovery artifact should explicitly capture session handling plus the reset/restore evidence fields defined later in this document.
 
 Ambiguous restore behavior is not allowed:
 

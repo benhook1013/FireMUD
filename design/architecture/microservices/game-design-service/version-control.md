@@ -9,7 +9,7 @@ Design assets are versioned to enable rollback and collaborative workflows. This
   Script-only fixes use a `scriptPatchVersion` tied to a `baseVersionId` so minor
   automation updates can go live without republishing all assets.
 - To provide Git-style history, revisions are grouped under branches and commits stored in the database.
-- The service exposes APIs to create branches, merge changes and list commit history.
+- The service exposes APIs to create branches and list commit history. Canonical multi-branch merge semantics are deferred until explicitly specified; the first-slice model is optimistic concurrency plus deterministic replay order.
 - External Git repositories can be synchronized using webhook triggers for advanced workflows.
 
 ### History and Provenance Across Services

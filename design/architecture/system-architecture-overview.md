@@ -25,7 +25,7 @@ The documents linked from this overview describe the target-state design, but th
 - **Coordination Redis ownership boundary:** Coordination Redis prefixes are owner-governed (Game Session for gameplay coordination prefixes such as `session:game:*`, `tick:*`, `timer:*`, `retry:*`, and `tick-executor-lease:*`; Account Service for `session:auth:*`; Automation & Scripting for `automation:*`), and non-owner participation is allowed only through documented shared-helper contracts. See `design/architecture/decisions/adr-0009-coordination-redis-ownership-boundary.md`.
 - **TCP Proxy identity canonicalization:** For Gateway header trust on the TCP Proxy → Gateway mTLS hop, URI SAN identity is canonical in production; DNS SAN is transitional and fingerprint pinning is break-glass only. See `design/architecture/decisions/adr-0010-tcp-proxy-identity-canonicalization.md`.
 - **Canonical room-read fence:** Canonical room-state reads that combine occupancy from World Management with containment/entity presentation from Entity Management must be served under a shared tick/read fence minted by Game Session for the requesting gameplay action or room-view refresh. World and Entity responses must echo the fence token they satisfied; if either side cannot satisfy the requested fence, Game Session must retry with a new fence or fail the room-view refresh explicitly rather than composing mixed-tick state. See [Canonical Room Runtime Contract](#canonical-room-runtime-contract).
-- **Canonical room-read fence interoperability minimum:** The room-read fence is an opaque Game Session-minted token, but every implementation must treat it as scoped to exactly one tenant, one game instance, one canonical room-view attempt, and one caller ordering point. Fence-carrying APIs must echo the exact token satisfied, reject unsatisfied requests explicitly as `fence_unsatisfied`, and never silently substitute a newer or best-effort snapshot. Fence retries mint a fresh token and invalidate the old read attempt from the caller’s perspective; a fence token is not reusable across independent commands or room-refresh attempts.
+- **Canonical room-read fence interoperability minimum:** `LOOK` and same-fence room reads use one canonical fence token: `asOfTickId`. World Management produces it on `GetRoomSnapshot`, Game Logic propagates it unchanged to Entity Management `ListRoomEntities`, and participants must either satisfy that same fence or reject the read as `STALE_READ_FENCE` / `READ_FENCE_UNAVAILABLE`. Services must not silently substitute a newer or best-effort snapshot.
 - **Game Session region-transition contract:** The session front-end owns connection-local sequencing and the character’s current execution-region pointer, while the lease owner owns region-scoped mutation rights. Cross-region actions are serialized by the session front-end under a monotonically increasing per-session sequence; region transition commits are atomic from the caller’s perspective only after the old region owner has acknowledged release, the new region owner has accepted the fenced command, and the session front-end has durably updated the execution-region pointer. Multi-region effects must designate one primary execution region or be decomposed into ordered fenced sub-operations; they must not issue concurrent unfenced writes to multiple region owners. See [Session Sharding & Routing](#session-sharding--routing).
 
 ## Core Architecture Principles
@@ -332,26 +332,27 @@ Minimal canonical Game Session PostgreSQL write split examples:
 
 Minimal canonical room-read sequence:
 
-1. Game Session mints `roomReadFence`.
-2. Game Session requests occupancy from World Management and containment/presentation from Entity Management using that fence.
-3. Each service either returns data with the same fence echoed or rejects the request as `fence_unsatisfied`.
-4. Game Session retries with a new fence only when caller ordering semantics permit; otherwise it returns an explicit room-view failure instead of composing mixed-tick state.
+1. Game Session receives `LOOK` and delegates the gameplay read to Game Logic `ResolveLook`.
+2. Game Logic requests `GetRoomSnapshot` from World Management and receives `asOfTickId`.
+3. Game Logic calls Entity Management `ListRoomEntities` with the same `asOfTickId`.
+4. World Management and Entity Management either satisfy that same fence or reject with `STALE_READ_FENCE` / `READ_FENCE_UNAVAILABLE`.
+5. Game Logic composes one `LookResult` only when both downstream reads align on the same fence, then Game Session renders and caches the transcript.
 
 Minimal interoperability requirements for the fence token:
 
-- The token is opaque to World Management and Entity Management; they validate satisfiability, not token structure.
-- A token is valid for one tenant, one game instance, one room-view attempt, and one caller ordering point only.
-- Responses must echo the exact token value they satisfied so Game Session can reject mixed-token joins.
-- `fence_unsatisfied` is the required rejection shape for a missed fence; services must not silently upgrade to a newer snapshot.
-- A retry always uses a newly minted token; an older token is not reusable across later commands or refresh attempts.
+- `asOfTickId` is valid only within one `(tenantId, gameInstanceId, roomInstanceId)` room-read scope.
+- World Management is the canonical producer of the fence token for room snapshots.
+- Entity Management must not mint or substitute its own fence; it either serves the requested `asOfTickId` or rejects the read.
+- `STALE_READ_FENCE` / `READ_FENCE_UNAVAILABLE` are the canonical rejection shapes for missed fences; services must not silently upgrade to a newer snapshot.
+- A retry obtains a fresh room snapshot and therefore a fresh `asOfTickId`; an older fence is not reused across later room-refresh attempts.
 
 Minimal canonical room-read example:
 
-1. Game Session handling `LOOK` for `{tenantId=T1, gameInstanceId=G1, characterId=C7}` mints `roomReadFence=rf_9c2a`.
-2. Game Session calls World Management with `{tenantId:T1, gameInstanceId:G1, roomInstanceRef:R44, roomReadFence:"rf_9c2a"}`.
-3. Game Session calls Entity Management with `{tenantId:T1, gameInstanceId:G1, roomInstanceRef:R44, roomReadFence:"rf_9c2a"}`.
-4. Success path: both services return payloads that echo `roomReadFence:"rf_9c2a"`, and only then may Game Session compose canonical room state.
-5. Rejection path: if either service cannot satisfy that fence, it returns `fence_unsatisfied` for `rf_9c2a`; Game Session either retries with a freshly minted fence or returns an explicit room-view failure, but it must not join `rf_9c2a` data with a newer fence.
+1. Game Session handling `LOOK` for `{tenantId=T1, gameInstanceId=G1, characterId=C7}` calls Game Logic `ResolveLook`.
+2. Game Logic calls World Management with `{tenantId:T1, gameInstanceId:G1, roomInstanceRef:R44}` and receives `asOfTickId=184`.
+3. Game Logic calls Entity Management with `{tenantId:T1, gameInstanceId:G1, roomInstanceRef:R44, asOfTickId:184, occupantEntityIds:[...]}`.
+4. Success path: both downstream reads satisfy `asOfTickId=184`, and only then may Game Logic compose canonical room state for Game Session to render.
+5. Rejection path: if Entity Management or a retried World read cannot satisfy `asOfTickId=184`, it returns `STALE_READ_FENCE` / `READ_FENCE_UNAVAILABLE`; Game Logic retries with a fresh world snapshot or returns an explicit room-view failure, but it must not join fence `184` data with a newer fence.
 
 > 🔗 See [Redis Architecture](./system-architecture-redis.md) for key structure and durability strategies.
 

@@ -175,7 +175,7 @@ See the [CI/CD Pipeline](../architecture/system-architecture-cicd.md) for workfl
 - Tick regions operate independently for scalability but rely on Redis for atomic coordination.
 - Redis runs with **AOF persistence**; replication remains asynchronous, and tick state is treated as volatile coordination data that can be reconstructed via idempotent replay after failover.
 - Lua scripts in Redis ensure atomic, shard-local tick updates on the primary; correctness and recovery rely on AOF plus idempotent replays against PostgreSQL rather than synchronous replica acknowledgments.
-- A layered reconnection model—**TCP Proxy Service → Spring Cloud Gateway → Game Session Service**—allows transparent service restarts.
+- A layered reconnection model—**TCP Proxy Service → Spring Cloud Gateway → Game Session Service**—allows bounded disruption recovery: clients reconnect through the same path and complete fresh `LOGIN` plus canonical lobby/`PLAY` flow rather than depending on fully transparent service restarts.
 See [Tick System](../architecture/system-architecture-ticks.md) and [Reconnection Strategy](../architecture/system-architecture-reconnection.md) for implementation details.
 
 ---

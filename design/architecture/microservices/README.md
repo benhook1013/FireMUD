@@ -10,7 +10,7 @@ Service READMEs may not create new classes of externally writable bypass-safe wo
 
 When a service README designates an edge-routable write as bypass-safe, it must include the minimum checklist from the overview: exact route shape and method, domain-local ownership rationale, statement that no Logging & Admin-owned policy is involved, statement that no cross-domain write orchestration is involved, required audit behavior, and an explicit `bypass-safe` designation.
 
-When a service participates in the canonical room-read fence contract, its README should include a shared request/response example that shows `roomReadFence` input, echoed-fence success, and `fence_unsatisfied` failure semantics so cross-service contract tests can align on one shape.
+When a service participates in the canonical room-read fence contract, its README should include a shared request/response example that shows `asOfTickId` input, same-fence success, and `STALE_READ_FENCE` / `READ_FENCE_UNAVAILABLE` failure semantics so cross-service contract tests can align on one shape.
 
 ---
 

@@ -370,6 +370,8 @@ The `player-bootstrap` token profile is distinct from both Browser JWTs and Serv
 - It is backed by `session:auth:account:<accountId>:<tokenHash>` so account-level logout/revocation semantics remain consistent.
 - `POST /auth/logout` and `POST /auth/logout-all` must accept this profile so first-party gameplay UIs can explicitly revoke bootstrap capability on sign-out rather than waiting for expiry.
 
+Gameplay clients never hold control-plane Browser JWTs or internal Service JWTs. The only JWT profile first-party gameplay clients may hold directly is this short-lived `player-bootstrap` token.
+
 The Account Service is the sole writer for auth revocation watermark keys (`session:auth:revoked_after:account:*`, `session:auth:revoked_after:tenant:*`, `session:auth:revoked_after:membership:<accountId>:<tenantId>`). Other services request revocation via events or APIs and must not write watermark keys directly.
 
 Billing-safe mutation authority contract:

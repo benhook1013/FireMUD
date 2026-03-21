@@ -15,7 +15,7 @@
 - Describe the service’s ingress and egress surfaces using the canonical top-level terms: `player traffic plane`, `external admin/creator API plane`, and `infrastructure management plane` where applicable.
 - If the service exposes an edge-routable admin route, state whether it is a read-only contract, an explicitly documented bypass-safe workflow, or internal-only by default.
 - If the service marks an edge-routable write as bypass-safe, document the route shape and method, why it is domain-local, why it avoids Logging & Admin-owned policy and cross-domain orchestration, and what audit behavior it emits.
-- If the service participates in the canonical room-read fence contract, include a shared request/response example showing `roomReadFence`, echoed-fence success, and `fence_unsatisfied` failure.
+- If the service participates in the canonical room-read fence contract, include a shared request/response example showing `asOfTickId`, same-fence success, and `STALE_READ_FENCE` / `READ_FENCE_UNAVAILABLE` failure.
 
 ## Key Features
 

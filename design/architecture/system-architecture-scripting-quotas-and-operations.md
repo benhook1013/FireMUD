@@ -486,7 +486,7 @@ This section summarizes common failure and rollback scenarios and how operators 
     - The modding framework keeps `activeVersionId` unchanged when a new plugin version fails validation or initialization; triggers for the failed version are rejected.
   - Operator actions:
     - Use Logging & Admin APIs to set the plugin to a disabled or drain state for affected tenants.
-    - Roll back to a previous `pluginVersionId` by promoting it to `activeVersionId` if still trusted, or require a new signed bundle upload via the Game Design Service.
+    - If the desired rollback target is older logic, publish a new signed bundle `pluginVersionId` that reintroduces that logic, then promote the new published version to `activeVersionId`. Historical `SUPERSEDED` versions are not reactivated directly.
 
 - **Heavy timer drops or throttled `onInterval` handlers**
   - Symptoms:

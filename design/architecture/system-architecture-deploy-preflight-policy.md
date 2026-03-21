@@ -145,6 +145,10 @@ Compact schema appendix for `expected-bindings.yaml`:
   - `internalBindings.jwt.signingKeysRef`
   - `internalBindings.jwt.jwksRef`
   - `internalBindings.certificates.issuerRef`
+  - `internalBindings.certificates.workloadMtlsRef`
+  - `internalBindings.certificates.gatewayInternalWsListenerRef` when the environment exposes the Gateway internal mTLS WebSocket listener
+  - `internalBindings.certificates.tcpProxyBridgeClientRef` when the TCP Proxy bridge uses mTLS
+  - `internalBindings.certificates.backupControlPlaneClientRef` when backup automation invokes `PauseTicks` / `ResumeTicks`
   - `internalBindings.registry.imagePullSecretRef`
 - Required external binding keys:
   - `backupStorage.bucket`
@@ -180,6 +184,10 @@ internalBindings:
     jwksRef: secret://firemud/jwt-jwks
   certificates:
     issuerRef: cert-manager://firemud/clusterissuers/firemud-staging
+    workloadMtlsRef: cert-manager://firemud/staging-workload-mtls
+    gatewayInternalWsListenerRef: cert-manager://firemud/staging-gateway-internal-ws
+    tcpProxyBridgeClientRef: cert-manager://firemud/staging-tcp-proxy-bridge
+    backupControlPlaneClientRef: cert-manager://firemud/staging-backup-control-plane
   registry:
     imagePullSecretRef: secret://firemud/ghcr-pull-staging
 backupStorage:

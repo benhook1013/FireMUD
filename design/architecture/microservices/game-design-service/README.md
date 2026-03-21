@@ -97,7 +97,7 @@ Compatibility contract requirement:
   version metadata is recorded. Runtime services manage the active script
   registry and are notified when a patch version is published.
 - [Item & Equipment Balancing Tools](item-equipment-balancing.md)
-- Import/export of design assets for sharing between game worlds.
+- Import/export of design assets is deferred until a canonical contract exists for ID remapping, cross-service reference validation, asset/plugin inclusion, and conflict handling.
 - Version control integration for design assets.
 - In-game modding and plugin framework for runtime customization.
 

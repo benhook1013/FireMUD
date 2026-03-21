@@ -28,7 +28,7 @@ Coordination Redis is treated as a **long‑lived, tail‑loss‑bounded coordin
 
 - **Tenant‑scoped reset** – affects a single `tenantId`:
   - Clears coordination keys for all regions under one tenant.
-  - Preserves `session:game:*` by default; operators may request an explicit tenant-session invalidation step when the incident requires fresh login/binding state.
+  - Preserves `session:game:*` only when operators explicitly choose `--preserve-sessions`; `session:auth:*` is always invalidated and reissued for tenant resets.
   - Often combined with an in‑game maintenance window or a revert/repin of tenant‑specific published content.
   - Used when:
     - A full in‑game reset is acceptable for a single tenant.
@@ -186,7 +186,7 @@ Service design docs and per-service READMEs should link to this matrix (or any f
 | `tick:{tenantRegionTag}:meta` | Coordination | **Reset-tolerant** | Epoch/tick guard metadata is dropped; scripts reinitialize metadata under the region lease and/or reset tooling re-establishes it from durable RegionStatus baselines for the new epoch. | `tick:{tenantRegionTag}:meta` is a monotonic guard and coordination helper only; authoritative baselines for `(region_epoch, tickId)` come from PostgreSQL RegionStatus/ledger plus heartbeats. Reset tooling reinitializes `region_epoch` and `current_tick_id` during the tick reset handshake. |
 | `timer:{tenantRegionTag}` and `retry:{tenantRegionTag}` | Coordination | **Reset-tolerant** | Timers and retries for affected regions are discarded; future ticks process only newly scheduled timers/retries. | Only timers/retries that are also represented durably elsewhere (for example, PostgreSQL-backed automation schedules or durable follow-ups) are re-discovered after a reset; region-scoped timer/retry coordination keys themselves are not treated as reconstructible logs. |
 | `tick-executor-lease:{tenantRegionTag}` and tick lock keys (`tick:{tenantRegionTag}:lock:*`) | Coordination | **Reset-tolerant** | Existing leases/locks vanish; new executors reacquire leadership and locks as ticks resume. | Leases and locks are transient; executors reacquire leases and lock state after reset. |
-| `session:game:<tenantId>:<gameInstanceId>:<sessionId>` | Coordination | **Reset-sensitive** | Region- and tenant-scoped resets preserve active sessions by default; cluster-scoped resets invalidate sessions by default, and tenant-scoped resets do so only when an explicit invalidate-sessions option is invoked. | Non-authoritative but player-visible. Region resets should avoid session eviction unless explicitly requested; tenant resets require an explicit operator choice to invalidate sessions; cluster resets require clear operator communication. |
+| `session:game:<tenantId>:<gameInstanceId>:<sessionId>` | Coordination | **Reset-sensitive** | Region-scoped resets preserve active sessions by default. Tenant-scoped resets preserve gameplay sessions only when an explicit `--preserve-sessions` option is invoked. Cluster-scoped resets invalidate sessions by default. | Non-authoritative but player-visible. Region resets should avoid session eviction unless explicitly requested; tenant resets require an explicit operator choice for gameplay-session preservation; cluster resets require clear operator communication. |
 | `session:auth:<scope>:<tokenHash>` (for example `session:auth:account:<accountId>:<tokenHash>`, `session:auth:tenant:<tenantId>:<tokenHash>`, `session:auth:global:<accountId>:<tokenHash>`) | Coordination | **Reset-sensitive** | JWT allowlist entries are dropped; internal calls must re-authenticate and obtain new tokens. | Security-critical but non-authoritative. Resets force re-authentication and token re-issuance; see `system-architecture-authentication.md` for full semantics. |
 | `remote:<tenantId>:*` hint markers | Coordination | **Reset-tolerant** | Cross-region follow-ups rely solely on durable tables; hints may be temporarily missing, increasing latency only. Region-scoped coordination resets leave these tenant-scoped hints intact; tenant- and cluster-scoped resets may clear them. | Best-effort cross-region wake-up hints only; durable follow-ups live in PostgreSQL so dropping or retaining hints (including during tenant/cluster resets) affects latency, not correctness. Hint keys are TTL-bounded (default `remote_hint_ttl_ms = 60_000`) so stale hints age out automatically. |
 | `ratelimit:<tenantId>:*` (and optional `:<shard>`) | Cache/Rate-Limit | **Reset-tolerant** | Rate-limit counters reset; future requests rebuild bucket state from zero. | Token buckets are best-effort; resets clear buckets and counters but do not affect authoritative state. Temporary post-reset bursts are acceptable as long as gateway policies still enforce global abuse limits. |
@@ -198,7 +198,7 @@ Service design docs and per-service READMEs should link to this matrix (or any f
 | `chat:say:<tenantId>:*`, `chat:tell:<tenantId>:*`, `chat:guild:<tenantId>:*`, `chat:account:<tenantId>:*` | Cache | **Reset-tolerant** | Short-lived chat buffers are cleared; subsequent reads fall back to PostgreSQL or rebuild windows from persisted history. | Treated as TTL-only rolling windows; resets drop recent in-memory history but do not lose persisted moderation logs where required. Clients must tolerate gaps and non-contiguous windows after resets. |
 | `script-scheduler:{tenantRegionTag}:lastTickId` | Coordination | **Reset-tolerant** | Automation scheduler treats the next heartbeat as its baseline and may re-scan due interval boundaries, but durable trigger-instance uniqueness prevents duplicate logical trigger creation. | Automation scheduler checkpoint for “every N ticks” triggers; losing it causes the scheduler to re-establish its baseline from the heartbeat stream while PostgreSQL-backed trigger-instance rows remain the de-duplication boundary. |
 | `automation:timer:{tenantRegionTag}` | Coordination | **Reset-tolerant** | Automation timer indexes for affected regions are discarded and rebuilt from durable schedules, trigger-instance rows, and heartbeat progress. | Region-scoped coordination index for script timers/intervals. Entries must remain instance-aware in payload and rebuild logic (`gameInstanceId`, and plugin identifiers when applicable) even though the Redis key is region-scoped for slotting/locality. |
-| `automation:tick:{tenantScriptTag}:*` (lock/queue/pending) | Coordination | **Reset-tolerant** | In-flight automation ticks are dropped; new tick-driven triggers rebuild coordination state. | Automation tick staging keys are treated like other coordination state and may be dropped during scoped resets; authoritative script triggers and audit trails remain in PostgreSQL. |
+| `automation:tick:{tenantInstanceScriptTag}:*` (lock/queue/pending) | Coordination | **Reset-tolerant** | In-flight automation ticks are dropped; new tick-driven triggers rebuild coordination state. | Automation tick staging keys are treated like other coordination state and may be dropped during scoped resets; authoritative script triggers and audit trails remain in PostgreSQL. The hash tag is scoped to `<tenantId> + <gameInstanceId> + <scriptId>` so multiple runtime instances never collapse into one coordination family. |
 | `automation:queue:<tenantId>:*`, `automation:quota:<tenantId>:*` and other automation caches | Cache/Rate-Limit | **Reset-tolerant** | Queued work and quotas restart from an empty state; automation re-enqueues work based on durable triggers and budgets. | Best-effort buffers and counters; resets clear them but do not affect authoritative state. Repeated resets may temporarily relax fairness/throughput limits but must not change which work eventually runs. |
 | `tick-events-lease:{tenantRegionTag}` | Coordination | **Reset-tolerant** | Observer leases are dropped; consumers reacquire leases and may duplicate best-effort processing until offsets are re-established. | Used only to avoid duplicate tick-event consumption work. Losing it is safe because tick events are observers/hints; correctness derives from the committed heartbeat/RegionStatus timeline and durable domain state. |
 | `tick-events:{tenantRegionTag}` and `tick-events-offset:{tenantRegionTag}` | Coordination | **Reset-tolerant** | Tick event streams and consumer offsets are dropped; observers re-establish their baselines from the gRPC heartbeat and domain state. | Tick event streams are best-effort observer/wakeup hints (for example, reconnection hints and faster scheduler discovery). Streams are retention-capped (default `tick_events_maxlen = 2048` per region). Correctness derives from the committed heartbeat/RegionStatus timeline plus durable PostgreSQL schedules/effects; missing or duplicated events must not change which schedules eventually fire. |
@@ -273,8 +273,7 @@ Recommended actions:
 
 - Execute the canonical region-scoped workflow:
   - `coordination-maintenance pause --scope region --tenant <tenantId> --region <regionId>`
-  - bump `region_epoch` for the region
-  - `coordination-maintenance reset --scope region --tenant <tenantId> --region <regionId>`
+  - `coordination-maintenance reset --scope region --tenant <tenantId> --region <regionId>` (this command performs and audits the `region_epoch` bump)
   - `coordination-maintenance reconcile-ledger --scope region --tenant <tenantId> --region <regionId> --old-region-epoch <epoch>`
   - `coordination-maintenance converge-commands --scope region --tenant <tenantId> --region <regionId> --old-region-epoch <epoch>`
   - `coordination-maintenance init-meta --scope region --tenant <tenantId> --region <regionId> --region-epoch <epoch> --current-tick-id -1`
@@ -300,8 +299,7 @@ Recommended actions:
 - Roll out a fixed script version.
 - Execute the canonical tenant-scoped workflow:
   - `coordination-maintenance pause --scope tenant --tenant <tenantId>`
-  - bump `region_epoch` for all affected tenant regions
-  - `coordination-maintenance reset --scope tenant --tenant <tenantId> [--preserve-sessions|--invalidate-sessions]`
+  - `coordination-maintenance reset --scope tenant --tenant <tenantId> [--preserve-sessions]` (this command performs and audits the `region_epoch` bump; auth sessions are still invalidated)
   - `coordination-maintenance reconcile-ledger --scope tenant --tenant <tenantId> --old-region-epoch-map <path>`
   - `coordination-maintenance converge-commands --scope tenant --tenant <tenantId> --old-region-epoch-map <path>`
   - `coordination-maintenance init-meta --scope tenant --tenant <tenantId> --region-epoch-map <path> --current-tick-id -1`
@@ -344,7 +342,7 @@ Recommended actions:
 
 Expected impact:
 
-- All coordination state is reset; ticks restart from a clean slate, and tenant/cluster scope resets invalidate `session:game:*` and `session:auth:*` bindings.
+- All coordination state is reset; ticks restart from a clean slate. Tenant/cluster scope resets always invalidate `session:auth:*`; gameplay-session preservation for tenant scope is allowed only when the reset command explicitly records `--preserve-sessions`.
 - Domain data (PostgreSQL) remains authoritative.
 
 ---
