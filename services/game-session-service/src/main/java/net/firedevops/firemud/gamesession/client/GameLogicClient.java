@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamesession.client;
 
 import jakarta.annotation.PostConstruct;
 import java.util.Locale;
+import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.AbstractBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
@@ -20,6 +21,7 @@ import org.springframework.stereotype.Component;
 @Component
 public class GameLogicClient
     extends AbstractBlockingGrpcClient<GameLogicServiceGrpc.GameLogicServiceBlockingStub> {
+  private static final long READINESS_DEADLINE_SECONDS = 2L;
 
   public GameLogicClient(
       ServiceEndpointsProperties endpoints,
@@ -62,6 +64,24 @@ public class GameLogicClient
                     .build())
             .build();
     return stub().resolveLook(request);
+  }
+
+  public LookResult resolveLookForReadiness(
+      String tenantId, String sessionId, String playerId, String roomId) {
+    LookRequest request =
+        LookRequest.newBuilder()
+            .setTenantId(tenantId)
+            .setSessionId(sessionId)
+            .setPlayerId(playerId)
+            .setRoomInstance(
+                RoomInstanceRef.newBuilder()
+                    .setTenantId(tenantId)
+                    .setRoomInstanceId(roomId)
+                    .build())
+            .build();
+    return stub()
+        .withDeadlineAfter(READINESS_DEADLINE_SECONDS, TimeUnit.SECONDS)
+        .resolveLook(request);
   }
 
   public BroadcastSayResponse broadcastSay(

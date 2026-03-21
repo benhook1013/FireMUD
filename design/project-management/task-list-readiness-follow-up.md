@@ -22,7 +22,8 @@ This checklist is for the remaining quality pass, observability tightening, and 
 
 - [x] Tighten `game-session-service` readiness beyond downstream reachability by adding a bounded internal check for the session-state / command-enqueue path that first `LOOK` actually depends on.
 - [x] Review whether `game-logic-service` should expose a single internal `resolveLook`-shaped canary helper instead of independently probing `GetRoomSnapshot` and `ListRoomEntities`.
-- [ ] Keep all readiness canaries side-effect free and bounded; if a candidate check would mutate durable state, do not use it for readiness.
+- [x] Keep all readiness canaries side-effect free and bounded; if a candidate check would mutate durable state, do not use it for readiness.
+  Resolution: local Redis probes now have explicit cleanup coverage on failure paths, and readiness-only gRPC canaries use short per-call deadlines rather than ambient channel behavior.
 - [x] Revisit the synthetic probe identifiers used by the current canaries and confirm they are clearly reserved for readiness-only traffic and cannot collide with real gameplay state.
 
 ## Edge And Blackbox Verification
@@ -38,7 +39,8 @@ This checklist is for the remaining quality pass, observability tightening, and 
 
 - [x] Standardize dependency keys across readiness payloads so names such as `accountService`, `gameLogicService`, `gatewayGameplayPath`, `worldManagementService`, and `entityManagementService` remain stable and intentionally curated.
 - [x] Review the shared readiness payload format and decide whether additional top-level fields are needed for operator use, such as `serviceContractVersion` or a short `admissionMeaning` string.
-- [ ] Confirm actuator health payloads remain concise enough for operators and CI logs and do not accumulate low-value implementation detail.
+- [x] Confirm actuator health payloads remain concise enough for operators and CI logs and do not accumulate low-value implementation detail.
+  Resolution: keep the current compact `contract`, `admissionMeaning`, `dependencies`, and conditional `failingDependency` shape, and lock it with unit tests so it does not silently grow.
 
 ## Wider Service Coverage
 
@@ -50,5 +52,6 @@ This checklist is for the remaining quality pass, observability tightening, and 
 
 ## Final Review Pass
 
-- [ ] Do another repo-wide pass over the readiness changes and look specifically for simplifications, duplicated logic, weak assumptions, misleading docs, or test scaffolding that is compensating for behavior instead of verifying it.
+- [x] Do another repo-wide pass over the readiness changes and look specifically for simplifications, duplicated logic, weak assumptions, misleading docs, or test scaffolding that is compensating for behavior instead of verifying it.
+  Resolution: shared readiness plumbing was consolidated, bounded readiness-only gRPC calls were added, and the `game-session-service` dev profile no longer downgrades readiness to `readinessState` only.
 - [ ] Update any design and architecture docs that drifted after the initial readiness/liveness documentation pass so the final documented model matches the implemented behavior and follow-up refinements.

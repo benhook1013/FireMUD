@@ -15,6 +15,7 @@ import org.springframework.stereotype.Component;
 /** Readiness indicator that verifies the gameplay WebSocket route can be upgraded locally. */
 @Component("gameplayRouteReadiness")
 public class GameplayRouteReadinessHealthIndicator implements HealthIndicator {
+  private static final String COMPONENT = "spring-cloud-gateway";
   private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(1);
   private static final String CONTRACT = "Gateway /ws/game upgrade";
 
@@ -41,31 +42,25 @@ public class GameplayRouteReadinessHealthIndicator implements HealthIndicator {
               .buildAsync(uri, new NoopListener())
               .get(2, TimeUnit.SECONDS);
       socket.abort();
-      return readinessTransitionTracker.record(
-          "spring-cloud-gateway",
-          DependencyReadinessSupport.up(
-              CONTRACT,
-              Map.of(
-                  "gameplayRoute",
-                  DependencyReadinessSupport.upDependency(
-                      "websocketUpgrade", uri.toString(), "UPGRADED"))));
-    } catch (Exception ex) {
-      return readinessTransitionTracker.record(
-          "spring-cloud-gateway",
-          DependencyReadinessSupport.outOfService(
-              CONTRACT,
+      return DependencyReadinessSupport.recordUp(
+          readinessTransitionTracker,
+          COMPONENT,
+          CONTRACT,
+          Map.of(
               "gameplayRoute",
-              Map.of(
-                  "gameplayRoute",
-                  DependencyReadinessSupport.downDependency(
-                      "websocketUpgrade", uri.toString(), message(ex)))));
+              DependencyReadinessSupport.upDependency(
+                  "websocketUpgrade", uri.toString(), "UPGRADED")));
+    } catch (Exception ex) {
+      return DependencyReadinessSupport.recordOutOfService(
+          readinessTransitionTracker,
+          COMPONENT,
+          CONTRACT,
+          "gameplayRoute",
+          Map.of(
+              "gameplayRoute",
+              DependencyReadinessSupport.downDependency(
+                  "websocketUpgrade", uri.toString(), DependencyReadinessSupport.message(ex))));
     }
-  }
-
-  private static String message(Exception ex) {
-    return ex.getMessage() == null || ex.getMessage().isBlank()
-        ? ex.getClass().getSimpleName()
-        : ex.getMessage();
   }
 
   private static final class NoopListener implements WebSocket.Listener {}

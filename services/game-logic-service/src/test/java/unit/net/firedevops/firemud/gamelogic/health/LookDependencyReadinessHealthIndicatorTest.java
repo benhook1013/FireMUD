@@ -1,11 +1,13 @@
 package net.firedevops.firemud.gamelogic.health;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertIterableEquals;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import net.firedevops.firemud.common.health.DependencyReadinessSupport;
 import net.firedevops.firemud.common.health.ReadinessTransitionTracker;
@@ -44,6 +46,8 @@ class LookDependencyReadinessHealthIndicatorTest {
         (Map<String, Map<String, Object>>) health.getDetails().get("dependencies");
 
     assertEquals(Status.UP, health.getStatus());
+    assertIterableEquals(
+        List.of("contract", "admissionMeaning", "dependencies"), health.getDetails().keySet());
     assertEquals("NOT_FOUND", dependencies.get("worldManagementService").get("outcome"));
     assertEquals("OK", dependencies.get("entityManagementService").get("outcome"));
   }
@@ -67,6 +71,9 @@ class LookDependencyReadinessHealthIndicatorTest {
         (Map<String, Map<String, Object>>) health.getDetails().get("dependencies");
 
     assertEquals(Status.OUT_OF_SERVICE, health.getStatus());
+    assertIterableEquals(
+        List.of("contract", "admissionMeaning", "dependencies", "failingDependency"),
+        health.getDetails().keySet());
     assertEquals("DOWN", dependencies.get("worldManagementService").get("status"));
   }
 
@@ -93,6 +100,9 @@ class LookDependencyReadinessHealthIndicatorTest {
         (Map<String, Map<String, Object>>) health.getDetails().get("dependencies");
 
     assertEquals(Status.OUT_OF_SERVICE, health.getStatus());
+    assertIterableEquals(
+        List.of("contract", "admissionMeaning", "dependencies", "failingDependency"),
+        health.getDetails().keySet());
     assertEquals("UP", dependencies.get("worldManagementService").get("status"));
     assertEquals("DOWN", dependencies.get("entityManagementService").get("status"));
   }

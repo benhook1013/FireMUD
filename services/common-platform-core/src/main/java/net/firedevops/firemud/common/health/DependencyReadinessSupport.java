@@ -8,6 +8,23 @@ import org.springframework.boot.health.contributor.Health;
 public final class DependencyReadinessSupport {
   private DependencyReadinessSupport() {}
 
+  public static Health recordUp(
+      ReadinessTransitionTracker tracker,
+      String component,
+      String contract,
+      Map<String, Object> dependencies) {
+    return tracker.record(component, up(contract, dependencies));
+  }
+
+  public static Health recordOutOfService(
+      ReadinessTransitionTracker tracker,
+      String component,
+      String contract,
+      String failingDependency,
+      Map<String, Object> dependencies) {
+    return tracker.record(component, outOfService(contract, failingDependency, dependencies));
+  }
+
   public static Map<String, Object> upDependency(String check, String target, String outcome) {
     return dependency("UP", check, target, outcome, null);
   }
@@ -23,6 +40,15 @@ public final class DependencyReadinessSupport {
   public static Health outOfService(
       String contract, String failingDependency, Map<String, Object> dependencies) {
     return base(Health.outOfService(), contract, dependencies, failingDependency).build();
+  }
+
+  public static String normalizeOutcome(String outcome) {
+    return outcome == null || outcome.isBlank() ? "OK" : outcome;
+  }
+
+  public static String message(Throwable throwable) {
+    String message = throwable.getMessage();
+    return message == null || message.isBlank() ? throwable.getClass().getSimpleName() : message;
   }
 
   private static Map<String, Object> dependency(

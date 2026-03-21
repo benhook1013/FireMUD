@@ -12,6 +12,7 @@ import org.springframework.stereotype.Component;
 /** Readiness indicator for new Telnet traffic admission. */
 @Component("trafficAdmissionReadiness")
 public class TcpProxyTrafficReadinessHealthIndicator implements HealthIndicator {
+  private static final String COMPONENT = "tcp-proxy-service";
   private static final String CONTRACT = "Telnet connect->LOGIN->LOOK admission";
 
   private final ObjectProvider<TelnetServer> telnetServerProvider;
@@ -36,9 +37,8 @@ public class TcpProxyTrafficReadinessHealthIndicator implements HealthIndicator 
           "telnetListener",
           DependencyReadinessSupport.downDependency(
               "bind", "tcp://0.0.0.0:telnet", "listener not running"));
-      return readinessTransitionTracker.record(
-          "tcp-proxy-service",
-          DependencyReadinessSupport.outOfService(CONTRACT, "telnetListener", dependencies));
+      return DependencyReadinessSupport.recordOutOfService(
+          readinessTransitionTracker, COMPONENT, CONTRACT, "telnetListener", dependencies);
     }
     dependencies.put(
         "telnetListener",
@@ -50,9 +50,8 @@ public class TcpProxyTrafficReadinessHealthIndicator implements HealthIndicator 
               "readinessProbe",
               String.valueOf(gatewayGameplayReadinessProbe.readinessUri()),
               "gateway readiness endpoint not healthy"));
-      return readinessTransitionTracker.record(
-          "tcp-proxy-service",
-          DependencyReadinessSupport.outOfService(CONTRACT, "gatewayGameplayPath", dependencies));
+      return DependencyReadinessSupport.recordOutOfService(
+          readinessTransitionTracker, COMPONENT, CONTRACT, "gatewayGameplayPath", dependencies);
     }
     dependencies.put(
         "gatewayGameplayPath",
@@ -60,7 +59,7 @@ public class TcpProxyTrafficReadinessHealthIndicator implements HealthIndicator 
             "readinessProbe",
             String.valueOf(gatewayGameplayReadinessProbe.readinessUri()),
             "READY"));
-    return readinessTransitionTracker.record(
-        "tcp-proxy-service", DependencyReadinessSupport.up(CONTRACT, dependencies));
+    return DependencyReadinessSupport.recordUp(
+        readinessTransitionTracker, COMPONENT, CONTRACT, dependencies);
   }
 }

@@ -35,6 +35,4 @@ GAME_SESSION_DEV_ISOLATED: true
 management:
   endpoint:
     health:
-      group:
-        readiness:
-          include: readinessState
+      validate-group-membership: false

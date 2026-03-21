@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamesession.health;
 
 import java.util.Objects;
+import net.firedevops.firemud.common.health.DependencyReadinessSupport;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import org.springframework.data.redis.core.RedisTemplate;
@@ -52,7 +53,7 @@ public final class GameplayLocalPathReadinessProbe {
       }
       return ProbeResult.up("ROUND_TRIP_OK");
     } catch (RuntimeException ex) {
-      return ProbeResult.down(message(ex));
+      return ProbeResult.down(DependencyReadinessSupport.message(ex));
     } finally {
       cleanupSessionContext();
     }
@@ -68,7 +69,7 @@ public final class GameplayLocalPathReadinessProbe {
       }
       return ProbeResult.up("QUEUE_WRITE_OK");
     } catch (RuntimeException ex) {
-      return ProbeResult.down(message(ex));
+      return ProbeResult.down(DependencyReadinessSupport.message(ex));
     } finally {
       redisTemplate.delete(key);
     }
@@ -84,12 +85,6 @@ public final class GameplayLocalPathReadinessProbe {
 
   private String queueKey() {
     return QUEUE_PREFIX + PROBE_TENANT_ID + ":" + PROBE_SESSION_ID;
-  }
-
-  private static String message(RuntimeException ex) {
-    return ex.getMessage() == null || ex.getMessage().isBlank()
-        ? ex.getClass().getSimpleName()
-        : ex.getMessage();
   }
 
   public record ProbeResult(boolean ready, String detail) {

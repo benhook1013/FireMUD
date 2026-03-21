@@ -1,8 +1,10 @@
 package net.firedevops.firemud.springcloudgateway.health;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertIterableEquals;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.util.List;
 import java.util.Map;
 import net.firedevops.firemud.common.health.ReadinessTransitionTracker;
 import org.junit.jupiter.api.Test;
@@ -22,6 +24,9 @@ class GameplayRouteReadinessHealthIndicatorTest {
         (Map<String, Map<String, Object>>) health.getDetails().get("dependencies");
 
     assertEquals(Status.OUT_OF_SERVICE, health.getStatus());
+    assertIterableEquals(
+        List.of("contract", "admissionMeaning", "dependencies", "failingDependency"),
+        health.getDetails().keySet());
     assertEquals("DOWN", dependencies.get("gameplayRoute").get("status"));
   }
 

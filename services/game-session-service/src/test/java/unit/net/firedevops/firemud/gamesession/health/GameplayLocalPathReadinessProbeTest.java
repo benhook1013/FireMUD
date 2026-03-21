@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -63,6 +64,45 @@ class GameplayLocalPathReadinessProbeTest {
 
     assertTrue(result.ready());
     assertEquals("QUEUE_WRITE_OK", result.detail());
+    verify(listOperations).rightPush(anyString(), anyString());
+    verify(redisTemplate).delete(anyString());
+  }
+
+  @Test
+  void sessionContextProbeCleansUpEvenWhenRoundTripFails() {
+    SessionContextService sessionContextService = mock(SessionContextService.class);
+    @SuppressWarnings("unchecked")
+    RedisTemplate<String, Object> redisTemplate = mock(RedisTemplate.class);
+    when(sessionContextService.findByTenantAndSessionId(anyLong(), anyLong()))
+        .thenReturn(Optional.empty());
+
+    GameplayLocalPathReadinessProbe probe =
+        new GameplayLocalPathReadinessProbe(sessionContextService, redisTemplate);
+
+    ProbeResult result = probe.probeSessionContextStore();
+
+    assertEquals(false, result.ready());
+    verify(sessionContextService).save(any(SessionContext.class));
+    verify(sessionContextService).deleteBySessionId(0L, 9_223_372_036_854_770_000L);
+    verify(redisTemplate, never()).delete(anyString());
+  }
+
+  @Test
+  void commandQueueProbeDeletesKeyWhenRoundTripFails() {
+    SessionContextService sessionContextService = mock(SessionContextService.class);
+    @SuppressWarnings("unchecked")
+    RedisTemplate<String, Object> redisTemplate = mock(RedisTemplate.class);
+    @SuppressWarnings("unchecked")
+    ListOperations<String, Object> listOperations = mock(ListOperations.class);
+    when(redisTemplate.opsForList()).thenReturn(listOperations);
+    when(listOperations.index(anyString(), anyLong())).thenReturn("WRONG");
+
+    GameplayLocalPathReadinessProbe probe =
+        new GameplayLocalPathReadinessProbe(sessionContextService, redisTemplate);
+
+    ProbeResult result = probe.probeCommandQueueStore();
+
+    assertEquals(false, result.ready());
     verify(listOperations).rightPush(anyString(), anyString());
     verify(redisTemplate).delete(anyString());
   }

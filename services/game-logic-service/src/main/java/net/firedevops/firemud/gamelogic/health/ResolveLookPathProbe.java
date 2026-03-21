@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamelogic.health;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.common.health.DependencyReadinessSupport;
 import net.firedevops.firemud.entitymanagement.v1.EntityManagementServiceGrpc.EntityManagementServiceBlockingStub;
 import net.firedevops.firemud.entitymanagement.v1.ListRoomEntitiesRequest;
@@ -15,6 +16,7 @@ import org.springframework.stereotype.Component;
 /** Shared internal canary for the downstream calls made by {@code ResolveLook}. */
 @Component
 public final class ResolveLookPathProbe {
+  private static final long READINESS_DEADLINE_SECONDS = 2L;
   private static final String WORLD_DEPENDENCY = "worldManagementService";
   private static final String ENTITY_DEPENDENCY = "entityManagementService";
 
@@ -35,11 +37,13 @@ public final class ResolveLookPathProbe {
 
     try {
       GetRoomSnapshotResponse response =
-          worldStub.getRoomSnapshot(
-              GetRoomSnapshotRequest.newBuilder()
-                  .setTenantId(tenantId)
-                  .setRoomInstance(roomInstance)
-                  .build());
+          worldStub
+              .withDeadlineAfter(READINESS_DEADLINE_SECONDS, TimeUnit.SECONDS)
+              .getRoomSnapshot(
+                  GetRoomSnapshotRequest.newBuilder()
+                      .setTenantId(tenantId)
+                      .setRoomInstance(roomInstance)
+                      .build());
       if (response.hasError() && !isReachableAppError(response.getError().getCode())) {
         dependencies.put(
             WORLD_DEPENDENCY,
@@ -59,17 +63,21 @@ public final class ResolveLookPathProbe {
       dependencies.put(
           WORLD_DEPENDENCY,
           DependencyReadinessSupport.downDependency(
-              "getRoomSnapshot", "grpc:WorldManagementService#GetRoomSnapshot", message(ex)));
+              "getRoomSnapshot",
+              "grpc:WorldManagementService#GetRoomSnapshot",
+              DependencyReadinessSupport.message(ex)));
       return ProbeResult.outOfService(WORLD_DEPENDENCY, dependencies);
     }
 
     try {
       ListRoomEntitiesResponse response =
-          entityStub.listRoomEntities(
-              ListRoomEntitiesRequest.newBuilder()
-                  .setTenantId(tenantId)
-                  .setRoomInstance(roomInstance)
-                  .build());
+          entityStub
+              .withDeadlineAfter(READINESS_DEADLINE_SECONDS, TimeUnit.SECONDS)
+              .listRoomEntities(
+                  ListRoomEntitiesRequest.newBuilder()
+                      .setTenantId(tenantId)
+                      .setRoomInstance(roomInstance)
+                      .build());
       if (response.hasError() && !isReachableAppError(response.getError().getCode())) {
         dependencies.put(
             ENTITY_DEPENDENCY,
@@ -89,7 +97,9 @@ public final class ResolveLookPathProbe {
       dependencies.put(
           ENTITY_DEPENDENCY,
           DependencyReadinessSupport.downDependency(
-              "listRoomEntities", "grpc:EntityManagementService#ListRoomEntities", message(ex)));
+              "listRoomEntities",
+              "grpc:EntityManagementService#ListRoomEntities",
+              DependencyReadinessSupport.message(ex)));
       return ProbeResult.outOfService(ENTITY_DEPENDENCY, dependencies);
     }
 
@@ -98,12 +108,6 @@ public final class ResolveLookPathProbe {
 
   private static boolean isReachableAppError(String errorCode) {
     return "INVALID_ARGUMENT".equals(errorCode) || "NOT_FOUND".equals(errorCode);
-  }
-
-  private static String message(RuntimeException ex) {
-    return ex.getMessage() == null || ex.getMessage().isBlank()
-        ? ex.getClass().getSimpleName()
-        : ex.getMessage();
   }
 
   public record ProbeResult(

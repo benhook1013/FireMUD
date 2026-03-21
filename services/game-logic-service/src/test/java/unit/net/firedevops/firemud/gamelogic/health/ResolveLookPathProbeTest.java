@@ -2,8 +2,10 @@ package net.firedevops.firemud.gamelogic.health;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import net.firedevops.firemud.entitymanagement.v1.EntityManagementServiceGrpc.EntityManagementServiceBlockingStub;
@@ -18,6 +20,8 @@ class ResolveLookPathProbeTest {
   @Test
   void probeReturnsUpWhenResolveLookDependenciesAreReachable() {
     WorldManagementServiceBlockingStub worldStub = mock(WorldManagementServiceBlockingStub.class);
+    when(worldStub.withDeadlineAfter(anyLong(), org.mockito.ArgumentMatchers.any()))
+        .thenReturn(worldStub);
     when(worldStub.getRoomSnapshot(org.mockito.ArgumentMatchers.any()))
         .thenReturn(
             GetRoomSnapshotResponse.newBuilder()
@@ -28,6 +32,8 @@ class ResolveLookPathProbeTest {
                 .build());
     EntityManagementServiceBlockingStub entityStub =
         mock(EntityManagementServiceBlockingStub.class);
+    when(entityStub.withDeadlineAfter(anyLong(), org.mockito.ArgumentMatchers.any()))
+        .thenReturn(entityStub);
     when(entityStub.listRoomEntities(org.mockito.ArgumentMatchers.any()))
         .thenReturn(ListRoomEntitiesResponse.newBuilder().build());
 
@@ -43,11 +49,15 @@ class ResolveLookPathProbeTest {
         (java.util.Map<String, Object>) result.dependencies().get("entityManagementService");
     assertEquals("NOT_FOUND", world.get("outcome"));
     assertEquals("OK", entity.get("outcome"));
+    verify(worldStub).withDeadlineAfter(anyLong(), org.mockito.ArgumentMatchers.any());
+    verify(entityStub).withDeadlineAfter(anyLong(), org.mockito.ArgumentMatchers.any());
   }
 
   @Test
   void probeReturnsOutOfServiceWhenWorldDependencyFails() {
     WorldManagementServiceBlockingStub worldStub = mock(WorldManagementServiceBlockingStub.class);
+    when(worldStub.withDeadlineAfter(anyLong(), org.mockito.ArgumentMatchers.any()))
+        .thenReturn(worldStub);
     doThrow(new IllegalStateException("world down"))
         .when(worldStub)
         .getRoomSnapshot(org.mockito.ArgumentMatchers.any());

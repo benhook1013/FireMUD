@@ -3,6 +3,7 @@ package net.firedevops.firemud.gamesession.client;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import jakarta.annotation.PostConstruct;
+import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.account.v1.AccountServiceGrpc;
 import net.firedevops.firemud.account.v1.AuthenticateRequest;
@@ -23,6 +24,7 @@ import org.springframework.stereotype.Component;
 @Component
 public final class AccountClient
     extends AbstractBlockingGrpcClient<AccountServiceGrpc.AccountServiceBlockingStub> {
+  private static final long READINESS_DEADLINE_SECONDS = 2L;
   private static final Logger logger = LoggingUtil.getLogger(AccountClient.class);
 
   private final DevIsolatedProperties devIsolatedProperties;
@@ -82,6 +84,23 @@ public final class AccountClient
                 .setCode(AuthenticationErrorCodes.UPSTREAM_FAILURE)
                 .setMessage("Authentication service unavailable"))
         .build();
+  }
+
+  public AuthenticateResponse authenticateForReadiness(
+      String tenantId, String username, String password, String otp) {
+    if (devIsolatedProperties.isDevIsolated() || stub() == null) {
+      return AuthenticateResponse.newBuilder().setAuthToken("dev-isolated").build();
+    }
+    AuthenticateRequest request =
+        AuthenticateRequest.newBuilder()
+            .setTenantId(tenantId)
+            .setUsername(username)
+            .setPassword(password)
+            .setOtp(otp == null ? "" : otp)
+            .build();
+    return stub()
+        .withDeadlineAfter(READINESS_DEADLINE_SECONDS, TimeUnit.SECONDS)
+        .authenticate(request);
   }
 
   public PingResponse ping() {

@@ -1,11 +1,13 @@
 package net.firedevops.firemud.tcpproxy.health;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertIterableEquals;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.Collections;
+import java.util.List;
 import java.util.Map;
 import net.firedevops.firemud.common.health.ReadinessTransitionTracker;
 import net.firedevops.firemud.tcpproxy.telnet.TelnetServer;
@@ -29,6 +31,9 @@ class TcpProxyTrafficReadinessHealthIndicatorTest {
         (Map<String, Map<String, Object>>) health.getDetails().get("dependencies");
 
     assertEquals(Status.OUT_OF_SERVICE, health.getStatus());
+    assertIterableEquals(
+        List.of("contract", "admissionMeaning", "dependencies", "failingDependency"),
+        health.getDetails().keySet());
     assertEquals("DOWN", dependencies.get("telnetListener").get("status"));
   }
 
@@ -49,6 +54,9 @@ class TcpProxyTrafficReadinessHealthIndicatorTest {
         (Map<String, Map<String, Object>>) health.getDetails().get("dependencies");
 
     assertEquals(Status.OUT_OF_SERVICE, health.getStatus());
+    assertIterableEquals(
+        List.of("contract", "admissionMeaning", "dependencies", "failingDependency"),
+        health.getDetails().keySet());
     assertEquals("UP", dependencies.get("telnetListener").get("status"));
     assertEquals("DOWN", dependencies.get("gatewayGameplayPath").get("status"));
   }
@@ -70,6 +78,8 @@ class TcpProxyTrafficReadinessHealthIndicatorTest {
         (Map<String, Map<String, Object>>) health.getDetails().get("dependencies");
 
     assertEquals(Status.UP, health.getStatus());
+    assertIterableEquals(
+        List.of("contract", "admissionMeaning", "dependencies"), health.getDetails().keySet());
     assertEquals("UP", dependencies.get("telnetListener").get("status"));
     assertEquals("UP", dependencies.get("gatewayGameplayPath").get("status"));
   }
