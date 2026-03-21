@@ -1,5 +1,5 @@
 [versions]
-spring-boot = "4.0.3"
+spring-boot = "4.0.4"
 flyway = "12.1.1"
 mapstruct = "1.6.3"
 lombok = "1.18.42"
