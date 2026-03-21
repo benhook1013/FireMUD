@@ -21,7 +21,7 @@ This checklist is for the remaining quality pass, observability tightening, and 
 ## Stronger Critical-Path Canaries
 
 - [x] Tighten `game-session-service` readiness beyond downstream reachability by adding a bounded internal check for the session-state / command-enqueue path that first `LOOK` actually depends on.
-- [ ] Review whether `game-logic-service` should expose a single internal `resolveLook`-shaped canary helper instead of independently probing `GetRoomSnapshot` and `ListRoomEntities`.
+- [x] Review whether `game-logic-service` should expose a single internal `resolveLook`-shaped canary helper instead of independently probing `GetRoomSnapshot` and `ListRoomEntities`.
 - [ ] Keep all readiness canaries side-effect free and bounded; if a candidate check would mutate durable state, do not use it for readiness.
 - [ ] Revisit the synthetic probe identifiers used by the current canaries and confirm they are clearly reserved for readiness-only traffic and cannot collide with real gameplay state.
 

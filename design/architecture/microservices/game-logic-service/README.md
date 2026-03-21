@@ -23,6 +23,7 @@ Executes the core gameplay rules and command parsing. It processes player action
 - `liveness` is local-only and indicates that the process is alive and able to continue serving.
 - `readiness` is command-path safety. For the currently implemented player slice, Game Logic is ready only when the downstream services required for `ResolveLook` are reachable, specifically World Management and Entity Management.
 - This service is not ready for new gameplay traffic if it can answer `Ping` locally but cannot satisfy the first `LOOK` dependency chain.
+- The readiness canary for this slice is a dedicated internal `ResolveLook`-shaped helper rather than a second, unrelated dependency check path, so readiness and the command path stay aligned on request shape and dependency naming.
 - Readiness transition observability uses the shared contract from [Deployment Environments](../../infrastructure/deployment-environments.md): `firemud.readiness.current`, `firemud.readiness.transitions`, and structured logs keyed by the curated dependency names `worldManagementService` and `entityManagementService`.
 
 ## Architecture / Design Notes
