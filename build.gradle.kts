@@ -323,16 +323,7 @@ tasks.register("codeqlClasses") {
     description = "Compiles the source sets needed for CodeQL analysis without running tests."
     dependsOn(
         subprojects.flatMap { project ->
-            buildList {
-                add("${project.path}:classes")
-                add("${project.path}:testClasses")
-                if (project.file("src/test/java/integration").exists()) {
-                    add("${project.path}:integrationTestClasses")
-                }
-                if (project.file("src/test/java/crossservice").exists()) {
-                    add("${project.path}:crossServiceTestClasses")
-                }
-            }
+            listOf("${project.path}:classes", "${project.path}:testClasses")
         }
     )
 }
