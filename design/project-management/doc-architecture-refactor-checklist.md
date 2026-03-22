@@ -213,7 +213,12 @@ Planned split:
 
 Files:
 
-- [ ] Refactor [`design/architecture/system-architecture-backup-recovery.md`](../architecture/system-architecture-backup-recovery.md)
+- [x] Create untouched backup copy for [`design/architecture/system-architecture-backup-recovery.md`](../architecture/system-architecture-backup-recovery.md)
+- [x] First split pass completed for [`design/architecture/system-architecture-backup-recovery.md`](../architecture/system-architecture-backup-recovery.md)
+- [x] First backup-vs-refactor subagent review completed
+- [x] Restore omissions found by the first review pass
+- [x] Run second backup-vs-refactor subagent review
+- [x] Second review was clean enough to move on
 
 Why:
 
