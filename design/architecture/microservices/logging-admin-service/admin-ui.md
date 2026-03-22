@@ -30,6 +30,6 @@ GET  /sagas
 GET  /sagas/{id}/steps
 ```
 
-The UI is packaged as a separate web module served by the Logging & Admin Service. Styling relies on Material‑UI components, and all API calls are protected by the existing security interceptors described in the [Logging & Admin Service design](./README.md).
+The UI is packaged as a separate web module served by the Logging & Admin Service. Styling relies on Material‑UI components, and all API calls are protected by the existing security interceptors described in the [API contracts](./api-contracts.md) and [runtime model](./runtime-and-data.md).
 
-Backend endpoints for these features are available as described in the [service design](./README.md), and the React interface consumes them directly.
+Backend endpoints for these features are available as described in the [API contracts](./api-contracts.md), and the React interface consumes them directly.
