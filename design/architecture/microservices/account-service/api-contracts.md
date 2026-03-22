@@ -1,0 +1,260 @@
+# Account Service API Contracts
+
+This document defines the Account Service REST and gRPC contracts, authentication classes, subject-binding rules, and runtime membership and entitlement response semantics.
+
+The authoritative REST schema source lives in [../../../../services/account-service/src/main/resources/openapi.yaml](../../../../services/account-service/src/main/resources/openapi.yaml). Proto definitions are the authoritative gRPC source.
+
+## gRPC APIs
+
+- `Ping(PingRequest) returns (PingResponse)` – connectivity check defined in `account_service.proto`.
+- `CreateAccount` – registers a new user and returns its `accountId` so internal services can establish their own sessions using the authentication flows described below.
+- `SendNotification` – deliver account notifications asynchronously.
+- `Authenticate` – verifies credentials and issues a Service JWT (internal token profile) backed by `session:auth:*` allowlist entries for meta/control APIs.
+- `GetProfile` – retrieves profile information for the current account.
+- `UpdateProfile` – modifies profile fields and triggers notification emails.
+- `ExportAccount` – exports all account and profile data.
+- `DeleteAccount` – permanently removes an account.
+- `RequestPasswordReset` – initiate a password reset email.
+- `CompletePasswordReset` – update the password using a token.
+- `LinkExternalAccount` – attach a Google, Discord, or Steam ID.
+- `IssuePlayerBootstrapToken` – authenticate a first-party player account and issue the short-lived `player-bootstrap` token profile used only for gameplay bootstrap.
+- `ListBootstrapWorlds` – list caller-visible worlds for first-party gameplay bootstrap.
+- `ListBootstrapRealms` – list caller-visible realms for a selected world during first-party gameplay bootstrap.
+- `ListBootstrapCharacters` – list caller-visible characters for a selected world/realm during first-party gameplay bootstrap.
+- `IssueConnectToken` – issue short-lived gameplay connect token for `/ws/game/**` handshake policy after resolving discovery `connectScopeId`, validating live membership/public admission, runtime entitlements, and the current admission pointer for the target `{tenantId, realmSlug, gameInstanceId}`.
+- `EnsurePublicProductionPlayerMembership` – idempotently create or return the caller's `player` membership for first admission through the default public production realm and return the resulting `membershipVersion`.
+- `GetCallerTenantMembership` – return authoritative caller-bound account-tenant membership and roles for billing-safe mutation checks.
+- `GetTenantMembershipForAccount` – cross-tenant membership lookup for billing/reporting workflows (`billingAdmin`/`platformAdmin` only).
+- `GetTenantMembershipForRuntime` – authoritative internal membership read for gameplay admission, reconnect/resume, and membership-gap reconciliation.
+- `GetTenantEntitlementsForRuntime` – internal runtime/admission entitlement snapshot for Game Session and other gameplay-affecting services.
+- `GetRealmAccessGrant` / `ListRealmAccessGrantsForAccount` – authoritative internal realm-grant reads for non-public realm bootstrap discovery and gameplay admission.
+- `GetTenantEntitlementsTenant` – caller-bound tenant-admin entitlement view for billing-safe control-plane UX.
+- `GetTenantEntitlementsCrossTenantSupportSafe` – cross-tenant support-safe entitlement view with redacted, high-level fields only.
+- `RequestEmailVerification` – send a verification email.
+- `VerifyEmail` – confirm an email verification token.
+- `CreatePaymentIntent` – initiate a Stripe payment.
+- `CreateSubscription` – start a recurring subscription.
+- `CreateDonation` – process a donation payment.
+- `RefundPayment` – issue a refund for a payment.
+- `GetBalance` – retrieve a virtual currency balance.
+- `AddCurrency` – increase virtual currency for an account.
+- `SpendCurrency` – deduct virtual currency from an account.
+
+## REST APIs
+
+| Method | Path | Description |
+| --- | --- | --- |
+| `GET` | `/ping` | Simple health check |
+| `POST` | `/auth/login` | Authenticate and establish a control-plane session for first-party UIs by returning a Browser JWT; the token is allowlisted server-side via `session:auth:*` entries for revocation |
+| `POST` | `/auth/logout` | Revoke the currently presented control-plane token (`session:auth:*:<tokenHash>` delete for that token) |
+| `POST` | `/auth/logout-all` | Revoke all active control-plane tokens for the authenticated account by advancing `session:auth:revoked_after:account:<accountId>`; the account watermark is the immediate revocation authority and existing tenant/global allowlist keys may be cleaned up asynchronously |
+| `POST` | `/auth/request-password-reset` | Request password reset |
+| `POST` | `/auth/complete-password-reset` | Complete password reset |
+| `POST` | `/auth/request-email-verification` | Send verification email |
+| `POST` | `/auth/verify-email` | Verify email token |
+| `POST` | `/auth/recover-username` | Send username reminder |
+| `POST` | `/accounts` | Create a new user account |
+| `GET` | `/accounts/{accountId}/export` | Export account data |
+| `DELETE` | `/accounts/{accountId}` | Delete an account |
+| `POST` | `/accounts/{accountId}/external` | Link external account |
+| `POST` | `/auth/player-bootstrap` | Authenticate a first-party player account and return a short-lived `player-bootstrap` token for gameplay bootstrap only |
+| `GET` | `/auth/bootstrap/worlds` | List caller-visible worlds for first-party gameplay bootstrap |
+| `GET` | `/auth/bootstrap/worlds/{world}/realms` | List caller-visible realms for a selected world during first-party gameplay bootstrap |
+| `GET` | `/auth/bootstrap/worlds/{world}/realms/{realm}/characters` | List caller-visible characters for a selected world and realm during first-party gameplay bootstrap |
+| `POST` | `/internal/runtime/public-production-membership` | Idempotently create or return the caller's `player` membership for first admission through the default public production realm |
+| `GET` | `/internal/runtime/realm-access-grants/{tenantId}/{realmSlug}/{accountId}` | Internal-only authoritative lookup for one non-public realm-access grant |
+| `GET` | `/internal/runtime/accounts/{accountId}/realm-access-grants` | Internal-only authoritative listing of the caller's non-public realm-access grants for discovery/admission filtering |
+| `GET` | `/profiles/{accountId}` | Retrieve profile information |
+| `PUT` | `/profiles/{accountId}` | Update profile information |
+| `GET` | `/tenants/{tenantId}/memberships/me` | Authoritative caller-bound membership and roles for billing-safe mutation guards |
+| `GET` | `/tenants/{tenantId}/memberships/{accountId}` | Cross-tenant membership lookup for billing/reporting roles (`billingAdmin`/`platformAdmin`) |
+| `POST` | `/auth/connect-token` | Issue a short-lived gameplay connect token for one discovery-selected realm target using caller-bound player bootstrap identity after live membership/public-admission, runtime entitlement, and admission-pointer validation |
+| `GET` | `/internal/runtime/tenants/{tenantId}/entitlements` | Internal runtime/admission entitlement snapshot for gameplay-affecting services |
+| `GET` | `/tenants/{tenantId}/entitlements/me` | Caller-bound tenant-admin entitlement view for billing-safe UX |
+| `GET` | `/support/tenants/{tenantId}/entitlements` | Cross-tenant support-safe entitlement view with redacted fields |
+| `GET` | `/.well-known/jwks.json` | JWKS for verifying issued JWTs |
+
+Canonical `/auth/login` success shape:
+
+```json
+{
+  "status": "SUCCESS",
+  "data": {
+    "token": "jwt-token-here",
+    "expiresAt": "2025-01-01T12:00:00Z",
+    "account": {
+      "accountId": "user-123",
+      "email": "demo@example.com"
+    },
+    "scopedRoles": {
+      "tenant-abc": ["tenantAdmin", "designer"],
+      "tenant-def": ["player"]
+    },
+    "globalRoles": ["platformAdmin"]
+  }
+}
+```
+
+Error responses use the standard `shared.v1.ErrorDetail` structure and `AuthenticationErrorCodes`.
+
+## Endpoint Authentication Classes
+
+| Surface | Examples | Required auth path | Notes |
+| --- | --- | --- | --- |
+| Public auth/bootstrap | `/auth/login`, `/auth/request-password-reset`, `/auth/complete-password-reset`, `/auth/request-email-verification`, `/auth/verify-email`, `/auth/recover-username`, `/.well-known/jwks.json` | No pre-existing user JWT; endpoint-specific validation and abuse controls | Intended for initial auth/bootstrap flows. |
+| Player bootstrap issuance | `/auth/player-bootstrap` | First-party player account authentication bootstrap | Issues the `player-bootstrap` token profile only; must not return a control-plane Browser JWT or perform tenant-scoped admission checks. |
+| Player bootstrap | `/auth/bootstrap/worlds`, `/auth/bootstrap/worlds/{world}/realms`, `/auth/bootstrap/worlds/{world}/realms/{realm}/characters`, `/auth/connect-token` | Short-lived, memory-only `player-bootstrap` token in `Authorization: Bearer ...` | Caller identity is derived from bootstrap auth context; discovery endpoints must apply the same membership, realm-visibility, and entitlement filtering as the in-band lobby discovery surfaces and return only caller-visible worlds/realms/characters plus a canonical `connectScopeId`. `/auth/connect-token` must not accept arbitrary `accountId` and must perform live membership/public-admission, runtime entitlement, and admission-pointer checks for the discovery-selected target. |
+| Authenticated account control-plane APIs | `/auth/logout`, `/auth/logout-all`, `/profiles/*`, `/accounts/*/export`, `/tenants/{tenantId}/memberships/me`, `/tenants/{tenantId}/memberships/{accountId}` | JWT middleware (`AuthTokenInterceptor` + route classification) | Must enforce route class, subject-binding rules, and tenant/global role checks. |
+| Internal service gRPC | `Authenticate`, `GetCallerTenantMembership`, `GetTenantMembershipForAccount`, `GetTenantMembershipForRuntime`, `GetTenantEntitlementsForRuntime`, payment and profile gRPC APIs | mTLS caller identity plus method-level auth policy | Internal service surfaces are not edge-exposed directly. |
+
+## Runtime Membership and Entitlement Response Shapes
+
+The internal runtime auth/admission methods must return deterministic response fields because gameplay admission, reconnect, and entitlement freshness rules depend on them.
+
+Illustrative `GetTenantMembershipForRuntime(accountId, tenantId)` response:
+
+```json
+{
+  "accountId": "acct_123",
+  "tenantId": "tenant-demo",
+  "gameplayAdmissionAllowed": true,
+  "roles": ["player"],
+  "membershipVersion": 42,
+  "evaluatedAt": "2026-03-13T09:15:30Z"
+}
+```
+
+Required semantics:
+
+- `gameplayAdmissionAllowed` is the authoritative boolean for gameplay admission.
+- `membershipVersion` advances monotonically for the `{accountId, tenantId}` membership scope whenever gameplay-relevant membership or role authority changes.
+- `evaluatedAt` timestamps the live membership decision used for admission or resume.
+- `GetTenantMembershipForRuntime` is an internal-only gameplay/runtime authority surface and must not be reused as a caller-facing tenant membership endpoint or as a substitute for `GetCallerTenantMembership`.
+
+Illustrative `GetRealmAccessGrant(accountId, tenantId, realmSlug)` response:
+
+```json
+{
+  "accountId": "acct_123",
+  "tenantId": "tenant-demo",
+  "realmSlug": "playtest-docks",
+  "accessAllowed": true,
+  "grantedByAccountId": "acct_admin_9",
+  "grantedAt": "2026-03-13T09:10:00Z",
+  "expiresAt": "2026-03-20T09:10:00Z",
+  "evaluatedAt": "2026-03-13T09:15:31Z"
+}
+```
+
+Required semantics:
+
+- Realm-access grants are authoritative only in Account Service; other services must not persist or infer their own non-public realm grant state.
+- `accessAllowed=false` is returned when the grant is missing, revoked, or expired.
+- Reads are used by bootstrap discovery, in-band `REALMS`, `POST /auth/connect-token`, and `PLAY` for non-public realms; these surfaces must share this authority rather than re-implementing grant logic separately.
+- Successful create/revoke operations must be immediately visible to subsequent runtime reads for the same `{accountId, tenantId, realmSlug}`.
+- If grant authority is unavailable, discovery/admission for non-public realms fails closed.
+
+Illustrative `GetTenantEntitlementsForRuntime(tenantId)` response:
+
+```json
+{
+  "tenantId": "tenant-demo",
+  "subscriptionStatus": "active",
+  "gameplayAvailable": true,
+  "allowNewInstanceStarts": true,
+  "quotas": {
+    "maxActiveSessions": 250,
+    "maxConcurrentInstances": 1
+  },
+  "entitlementVersion": 19,
+  "tenantBillingSequence": 311,
+  "evaluatedAt": "2026-03-13T09:15:32Z"
+}
+```
+
+Required semantics:
+
+- `subscriptionStatus` uses the canonical billing lifecycle values (`trialing`, `active`, `past_due`, `grace`, `suspended`, `canceled`).
+- `gameplayAvailable` is the admission-critical availability flag consumed by gameplay-affecting services.
+- `entitlementVersion` identifies the evaluated entitlement snapshot.
+- `tenantBillingSequence` allows consumers to detect stale or gapped billing-event application before admitting gameplay.
+- `evaluatedAt` is used with the admission freshness SLA from the authentication and subscription-management designs.
+
+## Subject-Binding Rules (Normative)
+
+- `GET /profiles/{accountId}`, `PUT /profiles/{accountId}`, `GET /accounts/{accountId}/export`, `DELETE /accounts/{accountId}`, and `POST /accounts/{accountId}/external` are subject-bound routes:
+  - Default rule: `path accountId` must equal authenticated `accountId` from JWT (`sub`/`accountId` claim).
+  - Exception: cross-account access is allowed only for explicitly authorized global roles (`platformAdmin`) on routes that explicitly document this override.
+  - On mismatch without eligible role, return canonical authorization failure (`AUTH_FORBIDDEN_SUBJECT_MISMATCH` or service-equivalent).
+- `GET /tenants/{tenantId}/memberships/me` must ignore any caller-supplied account identifier and always bind subject from authenticated caller context.
+- `GET /tenants/{tenantId}/memberships/{accountId}` is cross-subject by design and is restricted to `billingAdmin`/`platformAdmin`; every call must be audit-logged with caller identity and target `{tenantId, accountId}`.
+
+## Billing and Support Variant Contract (Normative)
+
+Billing, entitlement, and subscription APIs must expose distinct route/method variants per authorization class. A single endpoint must not multiplex tenant-safe, support-safe, and cross-tenant billing-safe behavior via optional flags or query parameters.
+
+- Tenant-scoped billing-safe variants (`billing_safe_tenant`) are caller-bound and require live `GetCallerTenantMembership(tenantId)` checks.
+- Cross-tenant support-safe variants (`cross_tenant_support_safe`) are separate methods/routes and return only high-level response profiles (status/plan/derived entitlement summaries).
+- Cross-tenant billing-safe variants (`cross_tenant_billing_safe`) are separate methods/routes restricted to `billingAdmin`/`platformAdmin` and may include billing-reporting fields.
+- Shared response-profile identifiers (`high_level_only`, `billing_reporting`, `membership_self_only`, `membership_reporting`) must be declared in the auth route matrix YAML entry for each variant so CI can enforce redaction tests by class.
+
+## Two-Factor Authentication
+
+Two-factor authentication is optional and applies only when a `two_factor_secret` is configured on an account. This is typically enabled for administrator or moderator accounts. When present, the `/auth/login` endpoint requires an `otp` field. Codes are validated using the Base32 secret as outlined in the [Security Architecture](../../system-architecture-security.md).
+
+When `FIREMUD_AUTH_REQUIRE_2FA_FOR_PLAINTEXT_TCP` is enabled (the default), logins over plaintext Telnet are additionally constrained:
+
+- Only accounts that have a `two_factor_secret` configured and
+- Have explicitly opted in to allow plaintext Telnet login in their account settings
+
+may authenticate via the raw TCP Telnet port. The account model includes a boolean flag (for example `allowPlaintextTelnetLogin`) that is exposed both:
+
+- As a checkbox in the web portal account settings (default: unchecked, with a clear explanation of the risks of plaintext Telnet), and
+- As an option in the Telnet account setup flow (default: off, with matching wording).
+
+Accounts that do not meet these conditions must use the TLS Telnet port or the web client instead; the `Authenticate` gRPC response returns a dedicated error code so the Game Session Service can present a clear message to the player. `/auth/login` remains a browser/control-plane endpoint.
+
+## Login Error Codes
+
+Both the `/auth/login` REST endpoint and the gRPC `Authenticate` method return structured `shared.v1.ErrorDetail` responses when authentication fails. Responses use the canonical codes defined in `AuthenticationErrorCodes` so downstream services can rely on stable semantics:
+
+- `AUTH_INVALID_CREDENTIALS` - wrong username or password
+- `AUTH_OTP_REQUIRED` - invalid or missing OTP for a two-factor-protected account
+- `AUTH_ACCOUNT_LOCKED` - account suspended or locked by policy (reserved for future enforcement)
+- `AUTH_2FA_REQUIRED_FOR_PLAINTEXT_TCP` - account attempted to log in over plaintext Telnet but does not yet have two-factor authentication enabled while `FIREMUD_AUTH_REQUIRE_2FA_FOR_PLAINTEXT_TCP` is true
+- `AUTH_PLAINTEXT_TCP_NOT_PERMITTED` - account attempted to log in over plaintext Telnet without having opted in to allow this transport (for example `allowPlaintextTelnetLogin=false`)
+- `AUTH_UPSTREAM_FAILURE` - infrastructure/grpc failures before authentication could complete
+
+The Game Session Service translates these codes into the text-protocol `ERROR <CODE>` responses (`ERROR INVALID_CREDENTIALS`, `ERROR OTP_REQUIRED`, etc.) so Telnet and WebSocket clients always see consistent login error semantics even when human-facing messages evolve.
+
+Canonical non-login authorization/entitlement errors:
+
+- `MEMBERSHIP_AUTH_UNAVAILABLE` - authoritative membership/role lookup is unavailable for a billing-safe mutation; callers must fail closed.
+- `BILLING_SHARED_INSTRUMENT_ACK_REQUIRED` - a tenant-scoped billing-safe mutation attempted to modify an account-shared payment instrument without explicit caller acknowledgement of cross-tenant impact; callers must re-submit only after the acknowledgement field is set.
+- `ENTITLEMENT_UNAVAILABLE` - authoritative entitlement snapshot could not be produced at required freshness/sequence guarantees.
+
+## Examples
+
+Example account creation request:
+
+```bash
+curl -X POST http://localhost:8080/accounts \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"demo","email":"demo@example.com","password":"secret"}'
+```
+
+Example login request:
+
+`otp` is only required when two-factor authentication is enabled for the account.
+
+```bash
+curl -X POST http://localhost:8080/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"demo","password":"secret","otp":"123456"}'
+```
+
+Call the gRPC method with:
+
+```bash
+grpcurl -plaintext localhost:6565 account.v1.AccountService/Ping
+```

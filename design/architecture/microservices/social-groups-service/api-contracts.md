@@ -1,0 +1,61 @@
+# Social & Groups Service API Contracts
+
+This document defines the Social & Groups Service REST and gRPC surfaces, chat-delivery APIs, and voice-token endpoint contract.
+
+An OpenAPI specification for the REST endpoints is available at `src/main/resources/openapi.yaml` in the service repository.
+
+## REST APIs
+
+| Method | Path | Description |
+| --- | --- | --- |
+| `GET` | `/ping` | Basic health check returning `"pong"` |
+| `POST` | `/friends` | Create a friend link |
+| `POST` | `/mail` | Send an asynchronous in-game mail message; mail retrieval endpoints are also available |
+| `POST` | `/guilds` | Create a guild |
+| `POST` | `/guilds/storage` | Add an item to guild storage |
+| `POST` | `/guilds/alliances` | Create a guild alliance |
+| `POST` | `/guilds/members` | Add a guild member |
+| `POST` | `/guilds/members/role` | Update a guild member's role |
+| `POST` | `/guilds/members/remove` | Remove a guild member |
+| `POST` | `/chat` | Send a chat message filtered for profanity |
+| `POST` | `/voice/token` | Issue a temporary WebRTC token for voice chat; the gateway relays media between participants |
+
+Example health check:
+
+```bash
+curl http://localhost:8080/ping
+```
+
+Example chat request:
+
+```bash
+curl -X POST http://localhost:8080/chat \
+  -H 'Content-Type: application/json' \
+  -d '{"tenantId":"tenant-abc","senderAccountId":100,"content":"hello"}'
+```
+
+Example voice-token request:
+
+```bash
+curl -X POST http://localhost:8080/voice/token \
+  -H 'Content-Type: application/json' \
+  -d '{"tenantId":"tenant-abc","accountId":100,"channelId":"guild-10"}'
+```
+
+## gRPC APIs
+
+- `Ping(PingRequest) returns (PingResponse)` – connectivity check defined in `social_groups_service.proto`
+- `SendMessage` – publishes a chat message to an in-game channel or player
+- `CreateGuild` – establishes a new guild with an owner account
+- `AddFriend` – adds a friend relationship at the game or account level
+- `SendMail` – stores asynchronous player mail for later retrieval
+
+```bash
+grpcurl -plaintext localhost:6565 social_groups.v1.SocialGroupsService/Ping
+```
+
+## Delivery Semantics
+
+- In-game chat commands such as say, tell, guild chat, and mail originate in the Game Logic Service and incorporate context from the World Management and Entity Management services.
+- The Game Logic Service invokes this service to deliver messages, run profanity checks, and log all communications for audit and moderation.
+- Voice chat is an optional feature layered on a lightweight WebRTC gateway; the service issues temporary tokens via `/voice/token` and records voice activity for moderation.

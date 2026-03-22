@@ -15,7 +15,8 @@ and permissions are enforced using the `globalRoles` claim. The
 - Search and filter logs with Kibana-like syntax.
 - Review player reports and apply moderation actions.
 - Toggle runtime feature flags for a specific tenant.
-- Inspect saga workflows and view step details; ability to retry failed steps is available.
+- Issue tick-remediation pause and resume requests for operator-approved scopes.
+- Inspect saga workflows and view step details.
 - Reference [Moderation Policies](./moderation-policies.md) when issuing bans or warnings.
 - View analytics dashboards built with Grafana and Kibana.
 
@@ -26,10 +27,12 @@ GET  /logs
 POST /reports
 POST /moderation/actions
 POST /feature-flags/toggle
+POST /admin/tick-remediation/pause
+POST /admin/tick-remediation/resume
 GET  /sagas
 GET  /sagas/{id}/steps
 ```
 
-The UI is packaged as a separate web module served by the Logging & Admin Service. Styling relies on Material‑UI components, and all API calls are protected by the existing security interceptors described in the [Logging & Admin Service design](./README.md).
+The UI is packaged as a separate web module served by the Logging & Admin Service. Styling relies on Material‑UI components, and all API calls are protected by the existing security interceptors described in the [API contracts](./api-contracts.md) and [runtime model](./runtime-and-data.md).
 
-Backend endpoints for these features are available as described in the [service design](./README.md), and the React interface consumes them directly.
+Backend endpoints for these features are available as described in the [API contracts](./api-contracts.md), and the React interface consumes them directly.
