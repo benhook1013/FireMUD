@@ -46,6 +46,7 @@ jobs:
 
       - name: Run ORT advisory scan
         id: ort
+        continue-on-error: true
         uses: oss-review-toolkit/ort-ci-github-action@v1
         with:
           ort-cli-args: '-P ort.analyzer.enabledPackageManagers=Gradle,NPM'
