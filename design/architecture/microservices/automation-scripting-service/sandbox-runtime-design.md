@@ -234,16 +234,16 @@ The combined effect is that noisy or buggy scripts are throttled or disabled qui
 
 ## Configuration Knobs
 
-Sandbox behavior is shaped by a combination of in-code defaults and environment variables exposed by the Automation & Scripting Service. The authoritative list of environment variables and their defaults lives in the service README (`design/architecture/microservices/automation-scripting-service/README.md#environment-variables`); this section highlights the ones most directly related to the budgets described above:
+Sandbox behavior is shaped by a combination of in-code defaults and environment variables exposed by the Automation & Scripting Service. The authoritative list of environment variables and their defaults lives in the service configuration doc (`design/architecture/microservices/automation-scripting-service/configuration.md`); this section highlights the ones most directly related to the budgets described above:
 
 - `AUTOMATION_TICK_DURATION_MS` – bounds the wall-clock duration of an automation tick. This, together with the scheduler’s batching strategy, constrains how often sandboxed runs are admitted.
 - `AUTOMATION_TICK_MAX_EVENTS` – caps how many automation events (including script runs) are staged from `automation:queue` per automation tick.
 - `AUTOMATION_TICK_BUDGET_MS` – provides a soft execution budget for script work performed inside a single automation tick; it informs the per-run budget tokens allocated to sandboxed evaluations.
 - `SCRIPT_EVENT_AUDIT_RETENTION_DAYS` / `SCRIPT_EVENT_AUDIT_MAX_ROWS` – control how long sandbox outcomes (for example, `sandbox_error` with `cpu_budget_exceeded` or `memory_budget_exceeded`) remain queryable in `script_event_audit`.
 
-Per-script and per-tenant quotas (for example, `SCRIPT_QUOTA_LIMIT` and `SCRIPT_QUOTA_WINDOWSECONDS`) are documented in the service README and in `design/architecture/system-architecture-scripting-quotas-and-operations.md`; they work in tandem with the sandbox budgets to determine whether a run is admitted and how much CPU and memory it can consume.
+Per-script and per-tenant quotas (for example, `SCRIPT_QUOTA_LIMIT` and `SCRIPT_QUOTA_WINDOWSECONDS`) are documented in the service configuration and operations docs and in `design/architecture/system-architecture-scripting-quotas-and-operations.md`; they work in tandem with the sandbox budgets to determine whether a run is admitted and how much CPU and memory it can consume.
 
-Additional resource-related environment variables may be introduced over time. New knobs should be documented first in the Automation & Scripting Service README and, where they materially affect sandbox semantics, referenced from this section so operators and implementers can correlate configuration changes with the behavior described above.
+Additional resource-related environment variables may be introduced over time. New knobs should be documented first in the Automation & Scripting Service configuration doc and, where they materially affect sandbox semantics, referenced from this section so operators and implementers can correlate configuration changes with the behavior described above.
 
 ---
 
