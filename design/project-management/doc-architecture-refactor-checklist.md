@@ -25,7 +25,18 @@ The goal is not to force every document under an arbitrary line count. The goal 
 - [x] Seventh backup-vs-refactor subagent comparison pass completed.
 - [x] TCP Proxy pilot accepted as converged enough to move on, even though a few low-value follow-ups could still be found with more passes.
 - [ ] Optional later cleanup-only pass for waived low-level TCP Proxy follow-ups if they become worth the time.
-- [ ] Next active refactor target: Game Session Service.
+- [x] Next active refactor target: Game Session Service.
+- [x] Game Session untouched backup copy created: `README.pre-doc-refactor-backup.md`.
+- [x] First Game Session split created (`README.md`, `api-contracts.md`, `runtime-and-data.md`, `operations.md`, `configuration.md`, `protocols.md`).
+- [x] First Game Session backup-vs-refactor subagent comparison pass completed and produced useful omission findings.
+- [x] First Game Session omission-repair pass complete and rechecked locally.
+- [x] Second Game Session backup-vs-refactor subagent comparison pass completed and reduced to low-level but valid omissions.
+- [x] Second Game Session omission-repair pass complete and rechecked locally.
+- [x] Third Game Session backup-vs-refactor subagent comparison pass completed and found a final small set of useful omissions.
+- [x] Third Game Session omission-repair pass complete and rechecked locally.
+- [x] Fourth Game Session backup-vs-refactor subagent comparison pass completed.
+- [x] Fourth Game Session verification pass was effectively clean; one reviewer reported no meaningful omissions and the other only repeated an already-restored plaintext-Telnet warning concern.
+- [x] Game Session refactor accepted as converged enough to move on.
 
 ## Non-Negotiable Safety Rules
 
@@ -127,7 +138,16 @@ Planned split:
 
 Files:
 
-- [ ] Refactor [`design/architecture/microservices/game-session-service/README.md`](../architecture/microservices/game-session-service/README.md)
+- [x] Create untouched backup copy for [`design/architecture/microservices/game-session-service/README.md`](../architecture/microservices/game-session-service/README.md)
+- [x] First split pass completed for [`design/architecture/microservices/game-session-service/README.md`](../architecture/microservices/game-session-service/README.md)
+- [x] First backup-vs-refactor subagent review completed
+- [x] Restore omissions found by the first review pass
+- [x] Run second backup-vs-refactor subagent review
+- [x] Second review still found low-level but useful omissions
+- [x] Run third backup-vs-refactor subagent review
+- [x] Third review still found a final small set of useful omissions
+- [x] Run fourth backup-vs-refactor subagent review
+- [x] Fourth review was effectively clean enough to move on
 
 Why:
 
