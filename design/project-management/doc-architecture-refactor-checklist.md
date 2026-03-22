@@ -37,6 +37,14 @@ The goal is not to force every document under an arbitrary line count. The goal 
 - [x] Fourth Game Session backup-vs-refactor subagent comparison pass completed.
 - [x] Fourth Game Session verification pass was effectively clean; one reviewer reported no meaningful omissions and the other only repeated an already-restored plaintext-Telnet warning concern.
 - [x] Game Session refactor accepted as converged enough to move on.
+- [x] World Management Service selected as the next active refactor target.
+- [x] World Management untouched backup copy created: `README.pre-doc-refactor-backup.md`.
+- [x] First World Management split created (`README.md`, `api-contracts.md`, `runtime-and-data.md`, `operations.md`, `configuration.md`, `procedural-generation-control.md`).
+- [x] First World Management backup-vs-refactor subagent comparison pass completed and produced useful omission findings.
+- [x] First World Management omission-repair pass complete and rechecked locally.
+- [x] Second World Management backup-vs-refactor subagent comparison pass completed.
+- [x] Second World Management verification pass was effectively clean; one reviewer reported no meaningful omissions and the other only repeated details already restored in the split docs.
+- [x] World Management refactor accepted as converged enough to move on.
 
 ## Non-Negotiable Safety Rules
 
@@ -89,6 +97,21 @@ Rules for using the template:
   - subagent backup-vs-new comparison
   - `./gradlew linkCheck lintMarkdown`
   - human review
+
+## Final Consistency Pass
+
+- [ ] After the high-priority refactor targets are complete, run a final consistency pass across all service doc directories under `design/architecture/microservices/`.
+- [ ] Verify that each service uses the standard document shape consistently where applicable:
+  - `README.md`
+  - `api-contracts.md`
+  - `runtime-and-data.md`
+  - `operations.md`
+  - `configuration.md`
+  - `protocols.md` or `client-behavior.md` when the service has a wire/client contract
+  - focused extra docs such as `procedural-generation-control.md` only where the service has a real additional concern
+- [ ] For services that do not yet need every subdoc, add the missing-task placeholders to this checklist so the shape gap is tracked intentionally rather than drifting accidentally.
+- [ ] Confirm that cross-service naming is consistent for equivalent concerns, for example API, runtime/data, operations, configuration, and protocol/client-behavior docs.
+- [ ] Confirm that each service `README.md` links to its subdocs and states the canonical ownership boundaries for that service doc set.
 
 ## Phase 2: High-Priority Refactor Targets
 
@@ -166,7 +189,12 @@ Planned split:
 
 Files:
 
-- [ ] Refactor [`design/architecture/microservices/world-management-service/README.md`](../architecture/microservices/world-management-service/README.md)
+- [x] Create untouched backup copy for [`design/architecture/microservices/world-management-service/README.md`](../architecture/microservices/world-management-service/README.md)
+- [x] First split pass completed for [`design/architecture/microservices/world-management-service/README.md`](../architecture/microservices/world-management-service/README.md)
+- [x] First backup-vs-refactor subagent review completed
+- [x] Restore omissions found by the first review pass
+- [x] Run second backup-vs-refactor subagent review
+- [x] Second review was effectively clean enough to move on
 
 Why:
 

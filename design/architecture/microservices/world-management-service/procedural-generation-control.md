@@ -1,0 +1,75 @@
+# World Management Service Procedural Generation Control
+
+## Derived World Artifact Publication
+
+Derived world artifacts such as navmesh/path graph bundles follow one canonical publication path:
+
+- World Management owns derivation, validation, and semantic versioning of these artifacts for `(tenantId, versionId)`.
+- Game Design remains the sole writer to the shared object store. World Management must not publish derived world artifacts by writing directly to object storage.
+- If derived artifacts are exported outside World Management storage, they must be handed to the Game Design publish workflow as explicit publish inputs so Game Design can write them, attest them in `published_release_bundle` through typed `artifactDigests[]`, declare launch-required manifest usage keys through `requiredManifestAssetKeys[]`, and expose them through the same release bundle used by activation and repair tooling.
+- If a deployment keeps these artifacts only in World Management storage, the read path must remain World-owned via gRPC or database-backed APIs and must not rely on unpublished object-store conventions.
+- Implementations must choose one of those paths per artifact family and document the consumer read path. Mixing direct World writes to object storage with Game Design-managed asset publication for the same artifact family is not allowed.
+
+Initial-slice decision:
+
+- Navmesh/path graph artifacts use the Game Design-managed object-store publication path.
+- World Management derives and validates the artifact payload for `(tenantId, versionId)`, then hands it to the publish workflow as an explicit publish input.
+- Game Design writes the artifact under the version-scoped published prefix, records it in the attested version `manifest.json`, and attests that manifest through the immutable `published_release_bundle`.
+- Game Logic and any other runtime consumer must discover the artifact through the attested version manifest for that release rather than reconstructing object-store paths from digest records alone.
+
+## Draft Digest Manifest Notes
+
+World Management is a required full-publish digest participant, so `GetDraftDesignDigest` must attest one explicit and testable input set for `(tenantId, versionId)`.
+
+Initial-slice `contentDigest` participation includes world-owned version-scoped semantic rows such as:
+
+- `region_template`, `zone_template`, `room_template`, and normalized exit/topology relations;
+- `terrain_template` and other version-scoped generated or authored topology rows;
+- version-scoped declarative population/spawn bindings owned by World Management; and
+- `generation_rule_template`, or equivalent version-scoped generation-input rows, that affect published topology or activation-time generated instance topology for that version.
+
+Excluded rows and fields include:
+
+- all runtime/instance-scoped rows keyed by `gameInstanceId`;
+- audit/provenance/history rows such as applied-revision ledgers and `generation_run` artifacts;
+- non-semantic timestamps and write-time metadata; and
+- derived world artifacts stored outside template tables, including navmesh/path graph payload bytes and object-store metadata.
+
+Canonicalization rules:
+
+- serialize included object families in fixed table/type order;
+- within each family, order by full primary key; and
+- serialize only documented semantic fields in deterministic encoding.
+
+`digestSchemaVersion` must be bumped whenever the included row families, selected semantic fields, canonical ordering, or artifact-attestation rules change.
+
+Attestation rule for derived world artifacts:
+
+- in the initial slice, navmesh/path graph bundles are not folded into World Management’s `contentDigest`;
+- the publish workflow instead persists explicit per-artifact digests in `artifactDigests[]` plus any required `requiredManifestAssetKeys[]`; and
+- each artifact entry must be bound to the same `(tenantId, versionId, commitId, publishWorkflowId)` release identity as the World participant digest.
+
+## Procedural Generation Control APIs
+
+Procedural-generation control surfaces are split by ownership and persistence scope:
+
+- Design-time generation-input APIs are owned by Game Design workflows and mutate version-scoped generation design rows in World Management only for Draft versions.
+- Operational runtime-default APIs are owned by World Management and mutate only tenant-scoped `generation_runtime_default` rows that are explicitly excluded from publish inputs and draft digests.
+
+Operational runtime-default API:
+
+- `POST /generation/runtime-defaults` – create or update runtime-only defaults for a tenant.
+- `GET /generation/runtime-defaults?tenantId=...` – list runtime-only defaults for a tenant.
+
+These endpoints are limited to live operational tuning for future runtime-only generation runs. They must not mutate `generation_rule_template`, any other version-scoped design rows, or any input that contributes to `generationConfigRevision`.
+
+Ownership note:
+
+- Publish-affecting generation inputs are stored in World Management but authored only through Game Design-controlled design workflows.
+- World Management remains the schema owner and runtime executor, not the independent authority for publishable generation history.
+
+## Audit and Publish-Gating Notes
+
+- Every publish-affecting generation-input update must persist provenance fields such as `changedBy`, `changedAt`, `changeReason`, `changeDigest`, and source `commitId` / `revisionId`.
+- When draft generation inputs change for a version, that version’s `designSyncStatus` must transition to `OUT_OF_SYNC` until publish-gate digests are recomputed and converged.
+- Operational runtime-default changes must never mutate or reinterpret already-published generation inputs and must never be read by publish, activation, or draft-digest workflows.
