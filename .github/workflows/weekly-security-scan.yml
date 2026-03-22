@@ -42,3 +42,4 @@ jobs:
           format: 'table'
           output: 'trivy-report.txt'
           exit-code: '1'
+          severity: 'HIGH,CRITICAL'
