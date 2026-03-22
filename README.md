@@ -27,7 +27,7 @@ FireMUD is a modern engine for classic text-based online RPGs: creators use it t
     - [Tech Stack](#tech-stack)
       - [Backend](#backend)
       - [Frontend](#frontend)
-      - [Deployment \& Infrastructure](#deployment--infrastructure)
+      - [Deployment & Infrastructure](#deployment--infrastructure)
       - [Monetization](#monetization)
       - [Testing](#testing)
     - [Design Goals](#design-goals)
