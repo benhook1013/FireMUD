@@ -71,13 +71,14 @@ For a single-admin operator, most “what do I do now?” coordination/tick ques
 - Tick effect ledger:
   - `tick_effects_pending_total`, `tick_effects_applied_total`, `tick_effects_abandoned_total{reason}`.
   - `tick_durable_commit_total`, `tick_coordination_cleared_total`, `tick_cleanup_lag_ms` to detect durable/cleanup divergence.
+  - `current_tick_state`, `current_tick_terminal_at_ms`, `tick_effects_replay_slo_breached`, and `tick_effects_replay_starved` to detect replay and cleanup pressure.
 - Cluster health:
-  - Redis primary/replica health, split-brain/sentinel alerts.
+  - Redis primary/replica health and coordination-topology alerts.
 
 - **Named operations**
   - Tail-loss incidents first choose a **replay-first** or **reset-first** recovery mode. Scope selection for resets happens only after `reset-first` is chosen.
   - **Per-region reset** – clear coordination state (`tick:*`, timers, retries, leases) for a single `<tenantId, regionId>` and allow ticks to rebuild from PostgreSQL and the tick effect ledger.
-  - **Per-tenant reset** – clear coordination state (all regions and sessions) for a single tenant and treat it as a tenant-scoped maintenance/reset event.
+  - **Per-tenant reset** – clear coordination state for all regions for a single tenant and treat it as a tenant-scoped maintenance/reset event. Tenant resets always invalidate `session:auth:*`; preserve `session:game:*` only when the operator explicitly chooses that option for the reset.
   - **Cluster reset** – clear coordination state for all tenants/regions on a Coordination Redis deployment; reserved for catastrophic incidents or planned migrations.
 
 - **How to choose**

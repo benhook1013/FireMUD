@@ -58,7 +58,7 @@ This section centralizes the **normative targets** for Redis behavior that other
   - Rate-limit prefixes (`ratelimit:<tenantId>:<bucket>:<timeWindow>[:<shard>]`) should stay within a **few thousand active keys per tenant** across all live windows for small/self-hosted deployments; larger clusters may raise this envelope with explicit review.
   - Chat and similar TTL-only caches should remain within a modest, documented number of keys per tenant; sustained growth beyond those envelopes should trigger investigation for missing TTLs or mis-keyed prefixes.
 
-Alerts and dashboards should reference these SLOs explicitly (for example, “tail_loss_ms > 2000 for region X” or “coordination used_memory / maxmemory > 0.4 for Y minutes”) so incidents are tied directly to the agreed budgets.
+Alerts and dashboards should reference these SLOs explicitly (for example, “`redis_coordination_tail_loss_ms > 2000` for region X” or “coordination used_memory / maxmemory > 0.4 for Y minutes”) so incidents are tied directly to the agreed budgets.
 
 ### Cache SLOs & Alerting
 
@@ -259,18 +259,24 @@ To make coordination and tick health observable in a consistent way across servi
 - **Tick execution**
   - `tick_interval_ms{tenantId,regionId}` – effective tick cadence for each active region. This is a required companion metric for any environment that evaluates dynamic tail-loss or pause-budget rules derived from `tick_interval_ms`.
   - `tick_execution_time_ms_bucket{tenantId,regionId,le}` – histogram of tick execution time per `<tenantId, regionId>`.
-  - Recording rules derived from this histogram should expose:
-    - `tick_execution_time_ms_p95{tenantId,regionId}` – p95 tick execution time.
-    - `tick_execution_time_ms_p99{tenantId,regionId}` – p99 tick execution time.
+    - Recording rules derived from this histogram should expose:
+      - `tick_execution_time_ms_p95{tenantId,regionId}` – p95 tick execution time.
+      - `tick_execution_time_ms_p99{tenantId,regionId}` – p99 tick execution time.
   - `tick_lock_ttl_ms{tenantId,regionId}` – gauge or recording rule representing the effective lock TTL for ticks in each region.
   - `tick_status{tenantId,regionId,status}` – one-hot gauge that encodes region state via a bounded `status` label (for example `status="RUNNING"|"PAUSED"|"STALLED"|"DEGRADED"`). Exactly one series per `<tenantId, regionId>` should be `1` at a time.
+  - `current_tick_state{tenantId,regionId,state}` – one-hot projection of `tick:{tenantRegionTag}:meta.current_tick_state`, used as the canonical observability surface for whether a region is `STAGED`, `RESOLVING`, `APPLIED`, or `ABANDONED`.
+  - `current_tick_terminal_at_ms{tenantId,regionId}` – projection of the terminal timestamp stored in `tick:{tenantRegionTag}:meta.current_tick_terminal_at_ms`, used for bounded cleanup and stale-state visibility.
   - `tick_retry_queue_depth{tenantId,regionId}` – current depth of retry queues.
   - `tick_command_queue_depth{tenantId,regionId}` – aggregate per-region command queue depth.
-  - `tick_current_id{tenantId,regionId}` – the last committed tick id for the region, used as a coarse tick progression watermark.
+  - `tick_current_id{tenantId,regionId}` – the last durably committed tick id for the region, sourced from the heartbeat/RegionStatus watermark rather than directly from `tick:{tenantRegionTag}:meta.current_tick_id`. This keeps the metric distinct from the Redis-side “highest staged tick” guard.
   - `tick_pending_oldest_id{tenantId,regionId}` – the oldest tick id still considered “in-flight” (pending, retrying, or awaiting ledger convergence), used to estimate effective loss/replay windows.
   - `tick_durable_commit_total{tenantId,regionId}` – count of ticks that reached the durable commit boundary (heartbeat/RegionStatus watermark).
   - `tick_coordination_cleared_total{tenantId,regionId}` – count of ticks whose coordination state reached the in-flight clearance boundary.
   - `tick_cleanup_lag_ms{tenantId,regionId}` – lag from durable commit to coordination-cleared for each tick; sustained growth indicates cleanup/recovery pressure even when durable commit continues.
+- **Remote follow-up drainage**
+  - `remote_followups_due_total{tenantId,regionId}` – count of remote follow-ups pending for a region.
+  - `remote_followups_drain_lag_ms{tenantId,regionId}` – lag between scheduled follow-up readiness and observed drain completion.
+  - `remote_followups_backlog_over_budget_total{tenantId,regionId}` – count of times follow-up backlog exceeded the emitted budget.
 - **Tick effect ledger**
   - `tick_effects_pending_total{tenantId,regionId}` – count of ledger rows with `status=SCHEDULED`.
   - `tick_effects_applied_total{tenantId,regionId}` – cumulative applied effects.

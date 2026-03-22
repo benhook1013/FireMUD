@@ -68,9 +68,9 @@ The first successful session for a new player follows a single canonical onboard
 1. **Authenticate the Platform Account**
    - **First-party web client** – Obtains a short-lived player bootstrap token through the [Account Service](./microservices/account-service/README.md), uses bootstrap-backed discovery endpoints to choose a world/realm/character target, then requests a connect token and opens the gameplay WebSocket through the [Spring Cloud Gateway](./microservices/spring-cloud-gateway/README.md).
    - **Telnet / MCP client** – Connects through the [TCP Proxy Service](./microservices/tcp-proxy-service/README.md) and authenticates in-band with `LOGIN`.
-2. **Discover Joinable Worlds** – After authentication, the player uses the canonical discovery contract to list worlds they can enter. Existing memberships always qualify. In v1, a live default production realm may also be publicly discoverable even before the player has joined that tenant. Responses use world slugs and friendly names rather than raw IDs, as defined in [Authentication & Authorization](./system-architecture-authentication.md) and [Multi-Tenancy](./system-architecture-multi-tenancy.md).
-3. **Choose a Realm** – If the selected world exposes more than one visible realm, the player uses `REALMS <world>` to choose between the default production realm and any explicitly authorized additional realms such as a playtest fork. Hidden or unauthorized realms are never disclosed. Public discovery applies only to the default production realm in v1; any additional realm requires an explicit access grant from the creator or operator.
-4. **List Characters or Create New** – The player uses `CHARS <world> [realm]` to view existing characters. If none exist, the client must complete the world's character-creation flow before `PLAY` succeeds. For playtest forks, a player may arrive with copied fork-local character state from the source snapshot. If no visible fork-local character exists for that account, fork policy determines whether the player may create a fresh fork-local character or whether the fork is restricted to copied characters only; whichever policy a fork uses must be surfaced consistently in the lobby/client UX. If a fork permits both copied and newly created fork-local characters, `CHARS` returns them in one fork-local list and the client does not need a separate mode switch.
+2. **Discover Joinable Worlds** – After authentication, the player uses the canonical discovery contract to list worlds they can enter. Existing memberships always qualify. In v1, a live default production realm may also be publicly discoverable even before the player has joined that tenant, so brand-new authenticated accounts can still enter through the public-production onboarding path. Responses use world slugs and friendly names rather than raw IDs, as defined in [Authentication & Authorization](./system-architecture-authentication.md) and [Multi-Tenancy](./system-architecture-multi-tenancy.md).
+3. **Choose a Realm** – If the selected world exposes more than one visible realm, the player uses `REALMS <world>` to choose between the default production realm and any explicitly authorized additional realms such as a playtest fork. Hidden or unauthorized realms are never disclosed. Public discovery applies only to the default production realm in v1; any additional realm requires an explicit access grant from the creator or operator. On the default public production realm, the first successful `PLAY` creates the player's `player` membership atomically as part of admission.
+4. **List Characters or Create New** – The player uses `CHARS <world> [realm]` to view existing characters. If none exist, the client must complete the world's character-creation flow before `PLAY` succeeds. The authoritative character-creation owner for this step is the [Entity Management Service](./microservices/entity-management-service/README.md), whose `CreateCharacter` contract defines how new player characters are created from published templates. For playtest forks, a player may arrive with copied fork-local character state from the source snapshot. If no visible fork-local character exists for that account, fork policy determines whether the player may create a fresh fork-local character or whether the fork is restricted to copied characters only; whichever policy a fork uses must be surfaced consistently in the lobby/client UX. If a fork permits both copied and newly created fork-local characters, `CHARS` returns them in one fork-local list and the client does not need a separate mode switch.
 5. **Bind to Gameplay** – `PLAY <world> [realm] [character]` resolves to canonical `{tenantId, gameInstanceId, characterId}` values and binds the session to the selected realm. After this step, normal gameplay commands become available.
 
 For a first-time join through a publicly discoverable production realm, the first successful `PLAY` creates the player's `player` membership atomically as part of admission. Failed joins do not leave behind partial membership rows.
@@ -103,7 +103,7 @@ Example first-party web flow:
 POST /auth/player-bootstrap
 GET /auth/bootstrap/worlds
 GET /auth/bootstrap/worlds/{world}/realms
-GET /auth/bootstrap/worlds/{world}/characters?realm={realm}
+GET /auth/bootstrap/worlds/{world}/realms/{realm}/characters
 POST /auth/connect-token { connectScopeId=cs_demo_production_v17 }
 GET /ws/game/** with X-Firemud-Connect-Token
 LOGIN
@@ -116,7 +116,7 @@ Example first-time public production join:
 POST /auth/player-bootstrap
 GET /auth/bootstrap/worlds
 GET /auth/bootstrap/worlds/emberfall/realms
-GET /auth/bootstrap/worlds/emberfall/characters?realm=production
+GET /auth/bootstrap/worlds/emberfall/realms/production/characters
 POST /characters { world=emberfall, realm=production, name=Mara, template=human-fighter }
 POST /auth/connect-token { connectScopeId=cs_emberfall_production_v1 }
 GET /ws/game/** with X-Firemud-Connect-Token
@@ -126,6 +126,8 @@ OK PLAY Entered Emberfall / Live Realm as Mara
 ```
 
 After this first successful join, the player's account now has normal `player` membership for Emberfall, so later discovery no longer depends on public-production visibility alone.
+The player-facing character-creation call in this sequence is the canonical `POST /characters` surface backed by Entity Management's `CreateCharacter` contract. It is permitted only for the currently bootstrap-visible realm target and must complete before the new character is admissible through `PLAY`.
+Any non-production realm shown in fork/playtest examples is assumed to already be grant-visible to that caller; non-public realms are not publicly discoverable by default.
 
 ---
 

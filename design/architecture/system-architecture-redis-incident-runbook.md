@@ -91,7 +91,7 @@ The following Redis-focused incident flows build on the general recovery steps a
 ### Coordination AOF Tail-Loss SLO Breach
 
 1. **Detect**
-   - Tail-loss indicators such as `redis_coordination_tail_loss_ms` or `tail_loss_ticks` regularly exceed the canonical envelope (`tail_loss_budget_ms = max(2000, 2 * tick_interval_ms)` from `system-architecture-redis-operations.md`) for one or more `<tenantId, regionId>` shards.
+   - Tail-loss indicators such as `redis_coordination_tail_loss_ms` regularly exceed the canonical envelope (`tail_loss_budget_ms = max(2000, 2 * tick_interval_ms)` from `system-architecture-redis-operations.md`) for one or more `<tenantId, regionId>` shards.
    - Region health shows sustained `DEGRADED` or `STALLED` state for those shards.
 2. **Decide**
    - For short-lived degradations where gameplay impact is minimal, investigate disk/replication performance, but keep serving traffic.
@@ -105,7 +105,7 @@ The following Redis-focused incident flows build on the general recovery steps a
 3. **Act**
    1. If the chosen mode is `replay_first`:
       - Run `coordination-maintenance reconcile-ledger ...` for the affected scope without bumping `region_epoch`; this is the canonical operator entrypoint for the replay controller / maintenance API path.
-      - Watch `tick_effects_pending_oldest_age_seconds`, `tick_effects_replay_slo_breached`, and command convergence for one emitted replay-convergence budget window.
+      - Watch `tick_effects_pending_oldest_age_seconds`, `tick_effects_replay_slo_breached`, and command convergence for one emitted replay-convergence budget window. Verify that command outcomes settle into the canonical terminal vocabulary described in `system-architecture-tick-execution-flows.md` rather than inventing a replay-only local interpretation.
       - Escalate to `reset_first` immediately if replay cannot make bounded progress, if inconsistent-state signals appear, or if the region transitions to `STALLED`.
       - Worked example:
         1. Region `(T1, R7)` remains on `region_epoch = 13`, `tick_effects_pending_oldest_age_seconds` exceeds budget, and there is no evidence of mixed-epoch state or duplicate durable batches.
@@ -121,7 +121,7 @@ The following Redis-focused incident flows build on the general recovery steps a
         - `init-meta`
         - `smoke-check`
         - `resume`
-   3. Verify region health returns to `RUNNING` or bounded `DEGRADED` and `tail_loss_ms` drops back into the SLO envelope after the chosen recovery mode completes.
+   3. Verify region health returns to `RUNNING` or bounded `DEGRADED` and `redis_coordination_tail_loss_ms` drops back into the SLO envelope after the chosen recovery mode completes.
 
 Alerts based on `redis_coordination_tail_loss_ms` should follow the conventions in `design/observability/grafana/core-alerts-snippets.md` so they carry `owner` and `runbook` annotations that point back to this section.
 

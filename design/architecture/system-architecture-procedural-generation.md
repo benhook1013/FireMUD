@@ -165,6 +165,13 @@ Resulting replay semantics:
 
 This rule makes generated scaffolding safe to refine manually while preserving one deterministic answer to “what does replay regenerate versus preserve?”
 
+Concrete replay example:
+
+- Revision `r-gen-002` creates an empty-region scaffold for `regionTemplateId:northern-wilds` under `SEED_APPEND_ONLY`.
+- A later manual revision renames room `nw-entrance` to `Pine Gate` and adds a custom exit to `nw-watch-post`.
+- Replay must reproduce the generator-authored scaffold first, then replay the manual rename and exit addition in commit/revision order.
+- If a later generator replay for `r-gen-002` would need to delete `Pine Gate`, rewrite the authored exit, or otherwise erase those later manual edits without an explicit replacement revision, Draft convergence must fail as `OUT_OF_SYNC`.
+
 ---
 
 ### 2. `OverworldMapGenerator`
@@ -221,7 +228,7 @@ Generator outputs must not embed or assume these persisted identifiers; they are
 
 The following rules align generators with the core runtime and tooling:
 
-1. **Solo Tick Scheduling** – Runtime generation is queued like any other command but includes `requiresSoloTick: true`. The Game Session Service executes it in an isolated tick and, if extra runtime is required, must use the canonical `solo_tick_budget_ms` mode defined by the tick invariants rather than an ad-hoc extended budget.
+1. **Solo Tick Scheduling** – Post-activation or dynamic runtime generation is queued like any other command but includes `requiresSoloTick: true`. The Game Session Service executes it in an isolated tick and, if extra runtime is required, must use the canonical `solo_tick_budget_ms` mode defined by the tick invariants rather than an ad-hoc extended budget.
 2. **Heavy Post‑Gen Population** – Population scripts may declare `requiresSoloTick: true`. The Game Session Service schedules these in dedicated ticks to avoid fairness regressions and may only exceed the normal budget when `solo_tick_budget_ms` is enabled for that deployment/profile.
 3. **Seed & Metadata Persistence** – All generation requests include a seed. **World Management Service** persists `seed`, `generatorType`, and raw params alongside region/room records. For design-time generation this metadata is stored on template rows keyed by `(tenantId, versionId)`; for runtime/instance generation it is stored on instance rows keyed by `(tenantId, gameInstanceId)`.
 4. **Tenant Scoping** – All generation inputs/outputs are tenant‑scoped. For publish-affecting or activation-time generation, the effective inputs must come from version-scoped design rows and the frozen `generationConfigRevision`, not mutable tenant feature flags or operational defaults. Runtime-only operational knobs may affect scheduling or non-semantic execution details, but they must not change persisted topology semantics.
@@ -231,7 +238,7 @@ The following rules align generators with the core runtime and tooling:
    Failure and retry semantics:
 
    - Population is treated as a **retryable, idempotent** follow-up phase, not as part of topology persistence.
-   - Topology generation/persistence is a pre-activation workflow (Class A rollback semantics in `system-architecture-transactions.md`); post-activation population and subsequent gameplay effects follow Class B retry-until-convergence semantics.
+   - Launch-time topology generation/persistence for instance creation is a pre-activation workflow owned by World Management (Class A rollback semantics in `system-architecture-transactions.md`) and is not routed through Game Session ticks. Post-activation population and subsequent dynamic generation follow Class B retry-until-convergence semantics, with runtime generation using the `requiresSoloTick` command path.
    - Topology persistence (template or instance rows) must complete atomically in World Management before population is admitted.
    - Population commands must carry the same canonical identity used for tick idempotency (`EffectId`) plus the runtime scope (`RoomInstanceRef` for runtime, `(tenantId, versionId)` plus template ids for design-time) so downstream services can safely no-op on replays.
    - If population partially succeeds (for example some spawns created in Entity Management but later commands fail), the system retries until convergence using the original identities. It must not attempt to “undo” already-persisted topology or “roll back” created entities by issuing compensating deletes from within the tick loop.

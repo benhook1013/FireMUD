@@ -393,7 +393,7 @@ When used, the envelope is a plain-text line that starts with `SESSION`
 SESSION <gameInstanceId> <tenantId>
 ```
 
-Both `gameInstanceId` and `tenantId` are UUIDs across the system and must be supplied in canonical UUID string form. Gameplay aliases such as `primary` are not valid on the wire in the `SESSION` envelope; if a client conceptually wants the primary gameplay instance, that resolution happens later inside Game Session during admission after `LOGIN` / `PLAY`.
+Both `gameInstanceId` and `tenantId` are opaque internal identifiers across the system and must be supplied in the canonical server-issued string form for the active deployment contract. Clients must not invent aliases or alternate local encodings in the `SESSION` envelope; any default-instance or gameplay alias resolution happens later inside Game Session during admission after `LOGIN` / `PLAY`.
 
 The `TelnetSessionContext.captureFromEnvelope` helper trims and upper-cases the
 prefix, splits on the first colon or whitespace, and ignores envelopes that are
@@ -419,7 +419,7 @@ Malformed or partially specified envelopes are treated as best-effort hints only
 - **Consumed vs forwarded** – during the envelope capture window, lines beginning with `SESSION` are treated as envelope attempts and are **consumed by the TCP Proxy Service** (never forwarded to Spring Cloud Gateway / Game Session Service). MCP control lines and all other non-`SESSION` text are forwarded upstream. After the attach-hint phase ends, any lines beginning with `SESSION` are forwarded verbatim as normal gameplay text and have no special meaning at the proxy layer.
 - **Without any `SESSION` envelope** – all lines, including `LOGIN`, are forwarded verbatim to the gateway; the proxy does not drop or delay gameplay commands.
 - **With a valid `SESSION` envelope** – once the first valid `SESSION` line is parsed, the connection is bound to that `{gameInstanceId, tenantId}` pair for its lifetime and those identifiers are propagated via headers and metrics. The envelope window closes immediately after a valid capture; any subsequent `SESSION` lines are forwarded as normal text and do not rebind the connection.
-- **Malformed `SESSION` lines** – if either `gameInstanceId` or `tenantId` is missing or is not a valid UUID, the line is logged and ignored; no error is sent back to the client. Clients that choose to use `SESSION` may resend a corrected envelope as long as the envelope window is still open, or they may proceed with `LOGIN` only. Each malformed envelope also increments a per-connection counter; once the number of malformed envelopes exceeds `TCP_PROXY_MAX_MALFORMED_ENVELOPES`, the proxy closes the connection as abusive and emits the corresponding metrics.
+- **Malformed `SESSION` lines** – if either `gameInstanceId` or `tenantId` is missing or is not a valid canonical identifier for the active deployment contract, the line is logged and ignored; no error is sent back to the client. Clients that choose to use `SESSION` may resend a corrected envelope as long as the envelope window is still open, or they may proceed with `LOGIN` only. Each malformed envelope also increments a per-connection counter; once the number of malformed envelopes exceeds `TCP_PROXY_MAX_MALFORMED_ENVELOPES`, the proxy closes the connection as abusive and emits the corresponding metrics.
 - **Diagnostics mode (future enhancement)** – a debug/diagnostics mode may surface
   explicit warnings or errors for malformed or repeated `SESSION` envelopes to
   help advanced Telnet clients detect configuration issues. Until that mode ships,
@@ -440,7 +440,7 @@ multi-tenant safety:
   known sessions/tenants is treated as a cross-tenant hijack attempt, rejected
   during admission with a canonical error, and logged with enough context for
   audit/alerting (without leaking sensitive credentials).
-- `SESSION` carries only canonical UUID identifiers. Any higher-level gameplay aliasing or default-instance selection (for example a conceptual “primary” instance) happens after authentication inside Game Session and must not be encoded as a special edge-level `SESSION` value.
+- `SESSION` carries only canonical server-issued identifiers for the deployment. Any higher-level gameplay aliasing or default-instance selection happens after authentication inside Game Session and must not be encoded as a special edge-level `SESSION` value.
 - If a `SESSION` hint resolves to an instance that is not admissible for the authenticated account, Game Session rejects the enter-game attempt with a canonical admission error and emits a bounded metric/log signal so stale clients can be migrated. The canonical `PLAY` admission error set lives in [Authentication & Authorization](../../system-architecture-authentication.md#play-returns-canonical-stable-error-codes-so-clients-can-recover-deterministically); TCP Proxy must not define a separate Telnet-only error name for this case.
 
 Metrics give observability into each Telnet connection while keeping

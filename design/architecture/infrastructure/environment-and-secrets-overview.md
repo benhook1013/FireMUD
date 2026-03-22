@@ -112,6 +112,7 @@ JWT signing key and JWKS behavior differs slightly by environment to balance saf
   - The same `jwt-rotation` CronJob template used in production may be enabled on a low-frequency schedule (for example monthly) to exercise the rotation path; leaving it operator-triggered is also acceptable when staging is being kept closer to production change control than to rotation-path testing.
 - **PR preview**
   - Each preview namespace must receive PR-unique JWT signing material and JWKS data, even when those resources are treated as low-sensitivity test material.
+  - Canonical default: store the preview signing key in a preview-unique Kubernetes `Secret` and publish the corresponding preview-unique JWKS document via a namespace-local `ConfigMap`.
   - Reusing one shared preview signing key across namespaces is non-compliant because it allows tokens minted in one PR environment to validate in another.
 - **Production**
   - Required to use a persistent `jwt-signing-keys` Secret and JWKS document; JWKS is the canonical trust source for all validating services.
@@ -159,6 +160,7 @@ Minimum credential classes to track (canonical record keys shown in parentheses)
 | JWT signing keys / JWKS (`jwt-signing-keys-jwks`) | Last rotation timestamp, key IDs, rotation job outcome |
 | PostgreSQL application credentials (`postgres-application-credentials`) | Last rotation timestamp, rollout restart completion evidence |
 | Backup/object-store credentials (`backup-object-store-credentials`) | Validation of expected bucket/endpoint and non-production isolation |
+| Asset-store credentials (`asset-store-credentials`) | Validation of expected bucket/endpoint, binding identity, and non-production isolation when external asset storage is enabled |
 | Operator credentials (`operator-credentials`) | Last issuance/rotation timestamp and revocation traceability |
 
 If a required compliance record is missing or stale, the environment is treated as non-compliant for promotion and DR-readiness reporting.
@@ -229,17 +231,28 @@ Before the first deployment into `hobby-self-hosted`, `staging`, or `production`
 - `jwt-signing-keys`
 - `jwt-jwks`
 - cert-manager issuer or issuer reference used by workload and bridge certificates
+- concrete certificate bindings for workload gRPC mTLS, the Gateway internal mTLS WebSocket listener where used, the TCP Proxy bridge client identity where used, and the backup control-plane client identity where backup automation invokes `PauseTicks` / `ResumeTicks`
 - registry pull credential secret
-- backup/object-store credentials when the environment requires backups
-- asset-store credentials when the environment publishes or serves assets from external object storage
+- backup/object-store credentials when the environment requires backups, including the binding identity used to prove the intended environment owns the bucket or object-store target
+- asset-store credentials when the environment publishes or serves assets from external object storage, including the binding identity used to prove the intended environment owns the asset bucket or object-store target
 - outbound communications credentials when email or webhook integrations are enabled
 - operator credential binding used for environment-scoped control-plane access
 
 Bootstrap resources must be unique to the environment boundary. Shared namespace names such as `firemud` do not relax the requirement for separate staging and production secret sources, bucket bindings, or operator trust bindings. For cluster-local internal bindings, uniqueness is evaluated by environment ownership of the underlying resource, not by requiring globally unique literal names.
 
-Expected bindings for player-facing deployment and recovery checks must be declared once per environment in `design/operations/environments/<environment>/expected-bindings.yaml`. Deploy preflight and restore validation both consume this same manifest so internal state/trust bindings (PostgreSQL, Redis, JWT/JWKS, certificate issuer, registry pull credentials) and external bindings (backup storage, asset storage, outbound communications, operator credential bindings) do not drift between deployment and recovery procedures. Internal bindings are evaluated relative to the target environment boundary, so the same cluster-local literal may appear in multiple manifests when it resolves to environment-owned resources in separate boundaries.
+Expected bindings for player-facing deployment and recovery checks must be declared once per environment in `design/operations/environments/<environment>/expected-bindings.yaml`. Deploy preflight and restore validation both consume this same manifest so internal state/trust bindings (PostgreSQL, Redis, JWT/JWKS, certificate issuer, concrete workload/bridge/backup control-plane certificate bindings, registry pull credentials) and external bindings (backup storage, asset storage, outbound communications, operator credential bindings) do not drift between deployment and recovery procedures. For backup and asset storage, the manifest must also prove the credential binding identity that owns the bucket or endpoint. Internal bindings are evaluated relative to the target environment boundary, so the same cluster-local literal may appear in multiple manifests when it resolves to environment-owned resources in separate boundaries.
 
 Player-facing preflight must fail when this bootstrap set is incomplete or when an external binding resolves to another environment’s target. The authoritative preflight policy IDs and evidence contract for these checks are defined in `../system-architecture-deploy-preflight-policy.md`.
+
+Operator bootstrap matrix:
+
+| Environment class | Always required | Conditionally required |
+| --- | --- | --- |
+| `hobby-self-hosted` | PostgreSQL credentials, JWT signing/JWKS resources, certificate/issuer binding when TLS automation is used, registry pull credentials when private images are used, operator credential binding, canonical `expected-bindings.yaml` | backup/object-store bindings when backups are enabled, asset-store bindings when published/runtime assets use external object storage, outbound communications bindings when email/webhooks are enabled |
+| `staging` | PostgreSQL credentials, JWT signing/JWKS resources, cert-manager issuer binding, registry pull credentials, operator credential binding, canonical `expected-bindings.yaml` | backup/object-store bindings, asset-store bindings when published/runtime assets use external object storage, outbound communications bindings when email/webhooks are enabled |
+| `production` | PostgreSQL credentials, JWT signing/JWKS resources, cert-manager issuer binding, registry pull credentials, operator credential binding, canonical `expected-bindings.yaml`, backup/object-store bindings | asset-store bindings when published/runtime assets use external object storage, outbound communications bindings when email/webhooks are enabled |
+
+Use this matrix only as a quick operator checklist. The canonical field-by-field schema and `bindingRef` versus `fingerprint` precedence rules live in `../system-architecture-deploy-preflight-policy.md`.
 
 ---
 

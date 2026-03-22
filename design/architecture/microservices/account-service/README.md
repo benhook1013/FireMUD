@@ -366,8 +366,11 @@ The `player-bootstrap` token profile is distinct from both Browser JWTs and Serv
 - It establishes account identity for first-party gameplay bootstrap only; tenant membership/public-admission and runtime entitlement checks occur later during `POST /auth/connect-token` for the discovery-selected realm target.
 - It is stored in memory only by first-party gameplay UIs and is accepted only on gameplay-bootstrap surfaces such as bootstrap discovery and `POST /auth/connect-token`.
 - For first-party `/ws/game/**`, subsequent gameplay `LOGIN` must complete from the bootstrap/connect context already established for that socket; browser clients must not be required to replay account credentials after bootstrap.
+- If the token is lost because the page/app process is restarted, the client must restart bootstrap from `POST /auth/player-bootstrap`; the current architecture does not define a hidden silent-bootstrap refresh mechanism.
 - It is backed by `session:auth:account:<accountId>:<tokenHash>` so account-level logout/revocation semantics remain consistent.
 - `POST /auth/logout` and `POST /auth/logout-all` must accept this profile so first-party gameplay UIs can explicitly revoke bootstrap capability on sign-out rather than waiting for expiry.
+
+Gameplay clients never hold control-plane Browser JWTs or internal Service JWTs. The only JWT profile first-party gameplay clients may hold directly is this short-lived `player-bootstrap` token.
 
 The Account Service is the sole writer for auth revocation watermark keys (`session:auth:revoked_after:account:*`, `session:auth:revoked_after:tenant:*`, `session:auth:revoked_after:membership:<accountId>:<tenantId>`). Other services request revocation via events or APIs and must not write watermark keys directly.
 

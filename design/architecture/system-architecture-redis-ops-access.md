@@ -139,6 +139,8 @@ To keep reset/replay behavior implementation-safe, the maintenance/tooling surfa
     - accepts the scope grammar above.
     - accepts `--preserve-sessions` / `--invalidate-sessions` where session policy allows an operator choice.
     - never infers session invalidation from scope alone when the design says it is optional.
+    - is the canonical operator entrypoint that performs and audits the mandatory PostgreSQL `region_epoch` bump before clearing Redis coordination state for the selected scope.
+    - must emit the resulting bumped epoch per affected region in its audit output so downstream reconcile/init-meta steps consume one authoritative old/new epoch record.
   - `coordination-maintenance reconcile-ledger`
     - accepts the scope grammar above.
     - accepts either `--old-region-epoch <epoch>` for `--scope region` or `--old-region-epoch-map <path>` for tenant/cluster scopes.
@@ -162,6 +164,10 @@ To keep reset/replay behavior implementation-safe, the maintenance/tooling surfa
     - exits non-zero unless the scope currently satisfies the resume gate: reset complete, old-epoch ledger converged, command convergence complete, and smoke check passing.
 - Required execution rule:
   - The CLI subcommands above are the only supported write-path entrypoints for coordinated reset/recovery flows. Helm hooks, Jobs, and admin dashboards call these verbs rather than re-encoding reset logic themselves.
+- Epoch-bump ownership rule:
+  - `RunScopedCoordinationReset(scope)` / `coordination-maintenance reset` is the canonical owner of the PostgreSQL `region_epoch` bump for reset and restore flows.
+  - No separate runbook-only or ad hoc SQL step is allowed to silently bump `region_epoch` out of band from that reset operation.
+  - Backup restore automation and reset runbooks must record the epoch bump evidence emitted by this operation rather than inventing a second audit trail.
 - Required version rule:
   - The CLI and control-plane implementation must ship from the same build/version set as the services and Lua registry they operate on. Mixed-version reset orchestration is unsupported.
 
@@ -272,7 +278,7 @@ Direct `redis-cli` writes to coordination prefixes are reserved for **break-glas
 - Any break-glass write that mutates `tick:*`, `timer:*`, `retry:*`, `remote:*`, `session:*`, or `tick-executor-lease:*` must be followed by a reset/cleanup scope that actually covers the mutated prefix before normal tick processing resumes:
   - For region-scoped families (`tick:*`, `timer:*`, `retry:*`, `tick-executor-lease:*`), run a region- or tenant-scoped coordination reset as appropriate.
   - For tenant-scoped `remote:*`, run a tenant-scoped reset or an explicit tenant-scoped `remote:<tenantId>:*` cleanup workflow (with audit trail), not a region-only reset.
-  - For session prefixes, follow session reset policy (region resets preserve `session:game:*` by default; tenant resets preserve sessions unless an explicit invalidate-sessions option is invoked; cluster resets invalidate sessions by default).
+  - For session prefixes, follow session reset policy (region resets preserve `session:game:*` by default; tenant resets always invalidate `session:auth:*` and preserve `session:game:*` only when an explicit `--preserve-sessions` option is invoked; cluster resets invalidate both by default).
 - Operators must treat such writes as equivalent to “coordination state may be inconsistent” and use the Coordination Reset Model to bring the region/tenant/cluster back to a known-good state, rather than leaving ad-hoc edits in place as a permanent fix.
 - Break-glass flows should go through a small wrapper (CLI or Logging & Admin action) that:
   - Executes the minimal required Redis mutation.

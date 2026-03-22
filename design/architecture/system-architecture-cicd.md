@@ -238,6 +238,7 @@ For production releases classified as `roll-forward-only`, promotion evidence mu
 The canonical evidence path is `design/operations/deployments/production/backup-readiness/<deployment-ref>.json`, and production CI/preflight must reject `roll-forward-only` promotions when that evidence is missing, stale, or not bound to the attestation/digest set being promoted.
 Traffic-open readiness for production first-live or reopen events uses the same `design/operations/deployments/production/backup-readiness/` artifact family with the specialized naming pattern `first-live-<deployment-ref>.json` defined in `system-architecture-backup-recovery.md`; this is distinct by purpose, not by schema lineage.
 For player-facing production promotions, the referenced coordinated-backup evidence must use canonical `tenant_id + region_id` scope. A release that depends on alias-scoped coordinated backup evidence is not eligible for `roll-forward-only` production promotion.
+Current implementation note: because `system-architecture-backup-recovery.md` still marks player-facing coordinated-backup readiness as incomplete until canonical `tenant_id + region_id` pause scope is enforced end-to-end, player-facing production `roll-forward-only` promotion is currently non-compliant in practice. CI/preflight must reject such promotions until that implementation note is removed.
 
 Pre-apply policy checks for staging and production must run through the canonical preflight contract in `system-architecture-deploy-preflight-policy.md`. Static checks run in overlay PR CI, and resolved-manifest/runtime checks run in operator preflight execution. Both use the same policy IDs and evidence shape.
 
@@ -268,6 +269,7 @@ Terminology note:
 - `promotion evidence` is the subset of evidence used to prove a staging deployment is eligible to be promoted into production, primarily the attestation plus its referenced deployment and compliance records.
 - `traffic-open evidence` is the evidence family used to prove an environment may be opened or reopened to player traffic, for example the production traffic-open backup-readiness artifact or hobby traffic-open records.
 - `promotion candidate` means a staging deployment record that is eligible to produce production promotion evidence; quarantined or detached staging drills can remain valid deployment evidence without becoming promotion candidates.
+- `deployment-ref` is the canonical environment-agnostic identity for one deployment event and is used by preflight, attestation, and backup-readiness artifacts. For Git-managed staging/production overlays, the canonical `deployment-ref` is the same Git SHA recorded as `overlayCommitSha`; the docs use `overlayCommitSha` only where the Git-derived source of the deployment-ref matters.
 
 Illustrative deployment record shape:
 

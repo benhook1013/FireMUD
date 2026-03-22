@@ -13,7 +13,8 @@ This document explains how FireMUD manages PostgreSQL schema changes across its 
   module, which does not run Flyway itself).
 - Versioned SQL files live under each service in `src/main/resources/db/migration/`.
 - Migrations follow the `V<version>__<description>.sql` naming convention.
-- Every module begins with a `V1__init.sql` baseline and numbers sequentially from there.
+- Every service-local module begins with a `V1__init.sql` baseline and numbers sequentially from there.
+- Shared saga migrations from `common-library` are applied by consuming services in a separate, ordered Flyway pass before service-local migrations run. That pass uses the `services/common-library/src/main/resources/db/migration/saga` location and its own Flyway schema-history state so the saga migration sequence never shares a version namespace with service-local `V*__*.sql` files.
 - `spring.flyway.enabled=true` in `application.yml` triggers migration execution on startup.
 - Flyway reads connection settings from the `FIREMUD_POSTGRES_*` environment variables described in
   [Environment & Secrets](./infrastructure/environment-and-secrets.md).
@@ -33,18 +34,26 @@ This document explains how FireMUD manages PostgreSQL schema changes across its 
     [System Architecture – Transactions](./system-architecture-transactions.md).
   - Services that need these shared tables include the module as a dependency
     during their build.
-  - The library packages its migrations inside the JAR so Flyway automatically
-    picks them up from the classpath when each service starts.
+  - The library packages its migrations inside the JAR so the consuming
+    service's dedicated saga Flyway pass can pick them up from the classpath
+    before service-local migrations execute.
   - The `common-library` itself does not run Flyway; each consuming service
-    executes these migrations against its own database on startup, creating a
-    local `saga` schema as needed.
+    executes the saga pass against its own database on startup, creating a
+    local `saga` schema and its own Flyway history state before service-local
+    migrations run.
 - New migrations are committed alongside service code so history stays with the owning service.
 
 ### Version-Aware Migration Guidelines
 
 Because game data is versioned and previously published `version_id` values may
-be reactivated for rollback, migrations must be written to preserve the ability
-to load existing versioned graphs:
+be reactivated for rollback, migrations in live or retention-bearing environments
+must be written to preserve the ability to load existing versioned graphs.
+This guidance is scoped to environments/services that already need to preserve
+non-Retired versions or mixed live deployment history. During initial
+development bootstrap, the repo-wide rule in `AGENTS.md` remains authoritative:
+prefer direct replacement and avoid unnecessary dual-read/dual-write or phased
+migration scaffolding until a service actually has live-version preservation
+requirements.
 
 - Prefer **additive** changes (adding tables/columns, widening types) while any
   published versions still depend on the existing schema shape.
@@ -67,7 +76,9 @@ that rollback and historical analysis remain viable across deployments.
 
 Before applying destructive or shape-changing migrations in a service that owns
 versioned/template data (for example templates keyed by `(tenantId, versionId)`),
-engineers should follow this checklist:
+engineers should follow this checklist once that service has crossed out of the
+initial-bootstrap phase and must preserve existing non-Retired/live data across
+deployments:
 
 1. **Enumerate non-Retired versions**
    - Query the Game Design Service’s version metadata (or the service-local
@@ -111,6 +122,16 @@ engineers should follow this checklist:
 Services that own versioned templates (such as Game Design, World Management,
 Entity Management, and Asset Storage) should reference this checklist in their
 local docs and treat it as part of their migration review process.
+
+Initial-development exception:
+
+- If a service is still in initial bootstrap and has no preservation requirement
+  for old readers/writers or non-Retired historical versions, it may replace
+  schema and contracts directly in one change, provided all call sites, tests,
+  and docs are updated together.
+- Once a service begins carrying live/version-retention obligations, this
+  document's version-aware rules become authoritative for subsequent
+  destructive migrations.
 
 ### Cross-Service Identifier Migration
 

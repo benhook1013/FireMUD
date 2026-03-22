@@ -132,6 +132,22 @@ For any consumer or operator that needs to locate “where a region is” on the
     - Optional only for deployments/features that do not use backlog-aware admission or cross-region shedding; such profiles must document that reduced contract explicitly rather than assuming the main control-plane surface can omit these fields silently.
   - Update rule: `lastCommittedTickId` advances only after a tick is committed; it is monotonic within an epoch and resets only when `regionEpoch` is bumped by a scoped reset or explicit timeline-severing maintenance. In steady state it advances by exactly `+1` per committed tick. Direct “fast-forward” of `lastCommittedTickId` within a live epoch is forbidden because follow-up eligibility, remote deadlines, and automation schedules derive from the committed timeline.
   - Epoch-start sentinel: on a newly created epoch, `lastCommittedTickId = -1` (default), so the first committable tick in that epoch is `tickId=0`.
+  - Illustrative response shape:
+
+    ```json
+    {
+      "tenantId": "tenant-demo",
+      "regionId": "room:starter-village",
+      "regionEpoch": 14,
+      "lastCommittedTickId": 9284,
+      "executorFence": 51,
+      "status": "RUNNING",
+      "retryQueueDepth": 2,
+      "remoteFollowupOldestAgeMs": 180,
+      "updatedAt": "2026-03-22T04:15:26Z"
+    }
+    ```
+
 - **Follow** via streaming heartbeats:
   - After bootstrapping, consumers attach to `StreamTickHeartbeats` and treat the combination of the bootstrap status and the live heartbeat as the authoritative progression of the timeline.
   - If the heartbeat stream drops or a reset bumps `regionEpoch`, consumers use the new `(regionEpoch, tickId)` from the stream plus durable state to re-establish their position.

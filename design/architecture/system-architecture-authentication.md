@@ -120,7 +120,7 @@ Global roles must not be interpreted as broad tenant access shortcuts. Authoriza
 | `billingAdmin` | `cross_tenant_billing_safe` | `tenant_regular`, `billing_safe_tenant`, `cross_tenant_data_bearing`, gameplay admission/switching |
 | `support` | `cross_tenant_support_safe` | `tenant_regular`, `billing_safe_tenant` mutations, `cross_tenant_billing_safe`, `cross_tenant_data_bearing`, gameplay admission/switching |
 
-Tenant-scoped operational/design/runtime actions may allow `platformAdmin` per the route-class matrix, but gameplay admission and gameplay switching must not. Gameplay entry (`WORLDS`/`CHARS`/`PLAY`) requires caller-bound tenant gameplay authority from authoritative membership data for the target tenant; global roles alone must never grant gameplay access. `billingAdmin` and `support` must never gain gameplay/design authority by virtue of being global roles.
+Tenant-scoped operational/design/runtime actions may allow `platformAdmin` per the route-class matrix, but gameplay admission and gameplay switching must not. Gameplay entry (`WORLDS`/`REALMS`/`CHARS`/`PLAY`) requires caller-bound tenant gameplay authority from authoritative membership data or the canonical public-production admission policy for the target realm; global roles alone must never grant gameplay access. `billingAdmin` and `support` must never gain gameplay/design authority by virtue of being global roles.
 `account_scoped` routes are authorized by authenticated account context and explicit subject-binding rules; global roles do not broaden `account_scoped` access unless a specific route explicitly allows a `platformAdmin` override.
 
 ### Tenant Authorization Contract
@@ -333,7 +333,7 @@ Authorization: Bearer <bootstrapToken>
      connectScopeId: "cs_demo_production_v17"
    }]
 
-GET /auth/bootstrap/worlds/demo/characters?realm=production
+GET /auth/bootstrap/worlds/demo/realms/production/characters
 Authorization: Bearer <bootstrapToken>
 -> [{ characterName: "Mara" }]
 
@@ -373,7 +373,7 @@ Authorization: Bearer <bootstrapToken>
      connectScopeId: "cs_emberfall_production_v1"
    }]
 
-GET /auth/bootstrap/worlds/emberfall/characters?realm=production
+GET /auth/bootstrap/worlds/emberfall/realms/production/characters
 Authorization: Bearer <bootstrapToken>
 -> []
 
@@ -398,6 +398,13 @@ Required postconditions for the first successful public-production join:
 - the account now has canonical `player` membership for the tenant;
 - future `WORLDS` results for that account may rely on membership rather than public discovery alone; and
 - if character creation or admission fails before `OK PLAY`, the service must not persist a partial membership grant.
+
+Canonical character-creation contract for this flow:
+
+- The player-facing control-plane surface is `POST /characters` using the current bootstrap-authenticated account identity plus the selected `{worldSlug, realmSlug}` target.
+- Entity Management owns the underlying `CreateCharacter` semantics and persistence contract; Account Service/authentication docs define the admission prerequisites for when this route may be called.
+- `POST /characters` is allowed only after bootstrap discovery has selected a caller-visible realm target and before `POST /auth/connect-token` / gameplay `PLAY` succeed for that new character.
+- The route must reject requests for realms that are not currently visible/admissible to the bootstrap-authenticated account.
 
 Example first-party browser sequence for a playtest fork:
 
@@ -428,7 +435,7 @@ Authorization: Bearer <bootstrapToken>
      }
    ]
 
-GET /auth/bootstrap/worlds/demo/characters?realm=playtest-docks
+GET /auth/bootstrap/worlds/demo/realms/playtest-docks/characters
 Authorization: Bearer <bootstrapToken>
 -> [{ characterName: "Mara" }]
 
@@ -475,10 +482,12 @@ After `LOGIN` succeeds, the Game Session Service requires an explicit lobby sele
 - `CHARS <world> [realm]` – list characters for the selected world and optional realm.
 - `PLAY <world> [realm] [character]` – enter gameplay by selecting a world, an optional realm, and an optional character.
 
+`public_production_onboarding` is the first-party lobby route class for the default public production realm. Brand-new authenticated accounts may see that realm before a tenant membership row exists, but the first successful `PLAY` must still atomically create the caller's `player` membership before gameplay binding is committed.
+
 Realm discovery and routing contract:
 
 - A tenant may expose multiple player-addressable realms. Each visible realm resolves to exactly one admissible `gameInstanceId` at a time through the authoritative realm-routing records owned by Game Session.
-- One realm may be designated as the default public production realm. In v1, this production realm is the only realm that may be publicly discoverable without an existing tenant membership row.
+- One realm may be designated as the default public production realm. In v1, this production realm is the only realm that may be publicly discoverable without an existing tenant membership row, and `public_production_onboarding` governs the first-join path through that realm.
 - Additional realms are access-controlled in v1. Unauthorized or hidden realms must not appear in discovery, and non-production realms such as playtest forks require explicit access grants.
 - Explicit access grants for non-public realms are sourced from Account Service runtime grant authority, not from Game Session-local configuration or frontend-cached state.
 - Connect-token issuance, `REALMS`, `CHARS`, and `PLAY` must all consume the same realm-routing state so clients never infer realm identity from transport-side hints alone.
@@ -496,7 +505,8 @@ Lobby discovery source-of-truth contract:
 Lobby command classification contract:
 
 - `WORLDS` is an authenticated **pre-tenant discovery** operation, not a normal tenant-scoped route. It runs after account authentication but before a single `tenantId` has been selected.
-- `REALMS <world>` is a tenant-scoped discovery operation after `<world>` resolves to a canonical `tenantId`, but before the client is bound to one `gameInstanceId`.
+- `REALMS <world>`, `CHARS <world> [realm]`, and `PLAY <world> [realm] [character]` participate in `public_production_onboarding` when the selected realm is the default public production realm. Brand-new authenticated accounts may discover that realm without a pre-existing membership row, but the first successful `PLAY` must atomically create the caller's `player` membership before gameplay binding is committed.
+- `REALMS <world>` remains a tenant-scoped discovery operation after `<world>` resolves to a canonical `tenantId`, but before the client is bound to one `gameInstanceId`.
 - `CHARS <world> [realm]` and `PLAY <world> [realm] [character]` become tenant/realm-scoped only after `<world>` and optional `[realm]` are resolved server-side to canonical `{tenantId, gameInstanceId}`.
 - Shared auth middleware and route-matrix entries must not model all lobby commands as one undifferentiated tenant-scoped surface.
 
@@ -626,10 +636,11 @@ To keep trust boundaries clear, FireMUD distinguishes between three JWT profiles
   - Lifetime: short (for example 15–30 minutes) and not automatically refreshed; when a Browser JWT expires or is revoked, UIs must treat this as a hard logout condition and require re-authentication.
 
 - **Player-bootstrap JWTs**
-  - Issued via the `/auth/player-bootstrap` HTTP endpoint on the Account Service after a successful first-party gameplay login.
+  - Issued via the `/auth/player-bootstrap` HTTP endpoint on the Account Service as the first step of the first-party gameplay bootstrap flow, before discovery, connect-token issuance, and gameplay `LOGIN`.
   - Intended audience: bootstrap-only gameplay surfaces (for example an `aud` claim exactly `player-bootstrap`).
   - Carried only by first-party gameplay SPAs or mobile clients, stored in memory only, and used only for bootstrap discovery and `POST /auth/connect-token`.
   - Lifetime: intentionally short (target <= 5 minutes). Expiry or revocation requires the first-party gameplay client to obtain a fresh bootstrap token before continuing gameplay bootstrap.
+  - Full-page reload or process restart is treated the same way as token loss: the client re-enters the bootstrap flow from `POST /auth/player-bootstrap` (or an equivalent future explicit bootstrap-restoration endpoint if one is added). The architecture does not currently define a hidden refresh token or silent bootstrap-restoration mechanism.
 
 - **Service JWTs**
   - Issued by the Account Service for backend callers (for example, Game Session, Logging & Admin, Game Design) via the gRPC `Authenticate` or equivalent internal flows.

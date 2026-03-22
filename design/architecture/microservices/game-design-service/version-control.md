@@ -9,7 +9,7 @@ Design assets are versioned to enable rollback and collaborative workflows. This
   Script-only fixes use a `scriptPatchVersion` tied to a `baseVersionId` so minor
   automation updates can go live without republishing all assets.
 - To provide Git-style history, revisions are grouped under branches and commits stored in the database.
-- The service exposes APIs to create branches, merge changes and list commit history.
+- The service exposes APIs to create branches and list commit history. Canonical multi-branch merge semantics are deferred until explicitly specified; the first-slice model is optimistic concurrency plus deterministic replay order.
 - External Git repositories can be synchronized using webhook triggers for advanced workflows.
 
 ### History and Provenance Across Services
@@ -118,6 +118,18 @@ Publish workflows must use an explicit participant matrix so digest gating is de
 | --- | --- | --- | --- |
 | `PublishVersion` (full version) | World Management, Entity Management, Game Logic, Automation & Scripting (for version-scoped script/binding templates) | Required for normalized references and publish-critical metadata (for example `game_template_*_ref`, `version_asset`) | Asset export/object-store bytes (validated by `manifestHash` in publish saga), Game Design internal history/audit tables that do not affect launchability |
 | `PublishScriptPatchVersion` (script-only) | Automation & Scripting (for the target `<tenantId, scriptPatchVersion>` design graph) | Required for patch metadata/wiring for the same base version scope | World Management, Entity Management, Game Logic template digests (must remain unchanged for base version) |
+
+### Change Vehicle Selection Matrix
+
+Use the smallest canonical change vehicle that matches the desired outcome:
+
+| Desired change | Canonical vehicle | Must not be used for |
+| --- | --- | --- |
+| Change world/entity/assets or any publish-attested runtime design graph | `PublishVersion` | Script-only edits, plugin activation, template-default tweaks that do not change a published release |
+| Change only script/runtime automation logic for one existing `baseVersionId` | `PublishScriptPatchVersion` | Asset changes, world/entity template changes, base-version changes |
+| Publish a signed plugin bundle into immutable design-time history | `PublishPluginVersion` | Full design publish, runtime activation by itself |
+| Activate/deactivate one already published plugin version for matching runtime instances | `SetPluginActiveVersion` / related plugin runtime controls | Publishing unsigned or non-`PUBLISHED` plugin versions |
+| Change default launch wiring or operator defaults for future instance creation without changing an existing published release bundle | Game template update | Mutating already published release attestation or runtime state of existing launched instances |
 
 Rules:
 

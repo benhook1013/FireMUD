@@ -160,7 +160,7 @@ Changing `FIREMUD_AUTH_JWT_EXPIRATION_MS` or `FIREMUD_AUTH_SESSION_SAFETY_MARGIN
 
 In player-facing environments (`hobby-self-hosted`, staging, production), JWT signing keys are stored in a `jwt-signing-keys` Secret and exposed to the Account Service via the file pointed to by `FIREMUD_AUTH_JWT_SECRET_PATH`. The JWKS document is also stored in a `jwt-jwks` Secret in these environments. Rotation is handled by a dedicated `jwt-rotation` Kubernetes Job as described in `../system-architecture-security.md#jwt-key--jwks-rotation-workflow`; this Job updates both the signing key Secret and JWKS so validators always see the current public keys.
 In non-player-facing environments (`local-dev`, `pr-preview`, `dev-demo-cluster`), a JWKS ConfigMap may be used for convenience when keys are explicitly non-sensitive test material.
-Hosted `pr-preview` environments must still use PR-unique signing material and JWKS content even when they use a ConfigMap or test-only Secret. Shared preview JWT material across namespaces is not allowed.
+Hosted `pr-preview` environments use this as the canonical default: a preview-unique signing-key `Secret` plus a preview-unique JWKS `ConfigMap` in the preview namespace. Shared preview JWT material across namespaces is not allowed.
 In player-facing environments (`hobby-self-hosted`, staging, production), `FIREMUD_AUTH_JWT_SECRET_PATH` is required and startup should fail if the service is configured with only `FIREMUD_AUTH_JWT_SECRET`.
 
 For local development and explicitly ephemeral test setups, it is acceptable to set `FIREMUD_AUTH_REQUIRE_2FA_FOR_PLAINTEXT_TCP=false` while iterating on Telnet tooling or before 2FA flows are configured. In any player-facing environment (`hobby-self-hosted`, staging, production), this flag should remain `true` so plaintext Telnet access is restricted to 2FA-enabled accounts that have explicitly opted in, with all other players connecting via TLS Telnet or the web client. Recommended Telnet deployment patterns by environment are summarized in `../system-architecture-protocol-bridging.md#recommended-telnet-deployment-modes`.
@@ -218,6 +218,7 @@ Published game assets are uploaded to an S3-compatible bucket. The following var
 | `ASSET_STORE_SECRET_KEY` | Secret key credential | *(none)* |
 
 In Kubernetes environments, these values should be sourced from a per-environment Secret and must not be shared between staging and production. After any cluster restore, operators should confirm the restored environment is bound to the correct asset-store credentials and that staging cannot publish to production buckets.
+For player-facing environments, the canonical expected-binding manifest must also name the credential-binding identity for the asset-store Secret or workload identity used by these settings, so preflight can prove the environment owns the object-store target rather than only matching bucket and endpoint text.
 
 ---
 
@@ -237,6 +238,7 @@ Operational scripts and CronJobs rely on the following variables when uploading 
 In Kubernetes environments, object-store credentials should be stored in per-environment Secrets and must not be shared between staging and production. `PG_DUMP_ENDPOINT` is required only for S3-compatible endpoints such as MinIO; when unset, tooling uses the AWS default endpoint behavior.
 Each environment boundary uses the standard `firemud` namespace by default (same namespace name, separate environment credentials/secrets). `FIREMUD_K8S_NAMESPACE` is primarily an explicit override for throwaway-namespace restore tests and rehearsals.
 For player-facing environments, these bindings are part of both bootstrap validation and normal deployment preflight, not just restore validation. Operators must be able to prove that backup/object-store, asset-store, outbound-communications, and operator credential bindings resolve to the intended environment before traffic is opened. The canonical enforcement point for those checks is `../system-architecture-deploy-preflight-policy.md`.
+For backup and asset storage specifically, that proof must include the binding identity used for the per-environment Secret or workload identity, not only the bucket/endpoint pair.
 These variables cover the external-binding side of that contract. Internal state/trust bindings such as PostgreSQL, Redis, JWT/JWKS, certificate issuer, and registry pull credentials are validated through the same `design/operations/environments/<environment>/expected-bindings.yaml` manifest, but they are checked as environment-owned cluster-local bindings rather than as globally unique external targets.
 
 See `../system-architecture-backup-recovery.md` for schedules and retention policies.

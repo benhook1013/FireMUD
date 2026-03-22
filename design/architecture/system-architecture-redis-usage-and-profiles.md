@@ -83,7 +83,7 @@ A small set of automation/scheduler-specific prefixes live on Coordination Redis
   - Owner: Automation & Scripting Service.
   - Purpose: per-region timer/index structure for script intervals and timer-driven triggers; stored entries remain instance-aware via payload identity such as `gameInstanceId`.
   - Reset behavior: classified as reset-tolerant in the reset policy matrix; keys may be dropped by scoped coordination resets and are rebuilt from PostgreSQL-backed schedules, trigger-instance rows, and heartbeat progress.
-- `automation:tick:{tenantScriptTag}:*`
+- `automation:tick:{tenantInstanceScriptTag}:*`
   - Role: Coordination Redis.
   - Owner: Automation & Scripting Service.
   - Purpose: shard-local automation tick locks and staging structures that participate directly in tick timelines.
@@ -147,7 +147,7 @@ The following table summarizes how core services interact with Coordination Redi
 | Service | Redis Usage |
 | --- | --- |
 | **Game Session Service** | Owns **Coordination Redis**: tick queues, locks, timers, retry metadata, region leases, and Redis‑backed session state used for reconnection. All tick/coordination key prefixes and their Lua scripts are registered and owned here. |
-| **Automation & Scripting Service** | Participates in coordination via **registered Lua helpers** and automation‑specific staging keys (`automation:tick:{tenantScriptTag}:...`) but does **not** own tick queues or locks directly. It reads tick heartbeats via gRPC and uses **Cache/Rate‑Limit Redis** for script quotas and best‑effort internal queues where documented. |
+| **Automation & Scripting Service** | Participates in coordination via **registered Lua helpers** and automation‑specific staging keys (`automation:tick:{tenantInstanceScriptTag}:...`) but does **not** own tick queues or locks directly. It reads tick heartbeats via gRPC and uses **Cache/Rate‑Limit Redis** for script quotas and best‑effort internal queues where documented. |
 | **Spring Cloud Gateway** | Uses **Cache/Rate‑Limit Redis** for token‑bucket rate limiting and best‑effort caches only; it never touches tick/coordination prefixes directly and always connects via the cache profile configured in `FIREMUD_REDIS_CACHE_HOST` / `FIREMUD_REDIS_CACHE_PORT`. |
 | **Other microservices (Game Logic, Entity Management, World Management, Social & Groups, etc.)** | Do not define or own coordination prefixes; they participate in Coordination Redis **only** through shared helpers and Lua descriptors owned by Game Session (for example, `tick:{tenantRegionTag}:lock:<entityId>` for tick locks). Where they cache read‑heavy aggregates, they use **Cache/Rate‑Limit Redis** and the key patterns from the Redis Cache & Rate Limiting design. |
 

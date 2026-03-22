@@ -85,6 +85,9 @@ The Lua Script Registry is the source of truth for each script’s specific outc
 - **Contention / capacity (non-mutating, bounded retry or defer)**
   - Examples: `"LOCK_HELD_BY_OTHER"`, `"QUEUE_FULL"`, `"BUDGET_EXCEEDED"`.
   - Meaning: the script refused to mutate due to current contention or a fairness/capacity guard. Callers must apply the documented backoff/defer policy (typically “retry in a later tick” rather than tight-looping).
+- **Fairness / admission deferral (non-mutating, defer to the next eligible scheduling point)**
+  - Examples: `"DEFER_TO_NEXT_TICK"`, `"REMOTE_FOLLOWUP_BACKLOG"`, `"FAIRNESS_WINDOW_EXHAUSTED"`.
+  - Meaning: the script preserved correctness by declining work that would violate fairness or backlog-admission policy for the current scheduling window. Callers must record the bounded deferral outcome, avoid tight retries in the same tick, and rely on the next eligible tick or backlog-clearing signal before retrying.
 
 Hard requirements:
 
@@ -214,8 +217,8 @@ Scripts that do not clearly fit one of these categories should be refactored unt
 
 Automation-related Lua scripts follow stricter cluster slotting rules to avoid `CROSSSLOT` errors and keep coordination boundaries clear:
 
-- Scripts that operate on `automation:tick:{tenantScriptTag}:*` keys are registered as **single-hash-slot** scripts:
-  - They may include multiple `automation:tick:{tenantScriptTag}:*` keys for the **same** `<tenantId>` + `<scriptId>` in `KEYS`, but they must not mix different `{tenantScriptTag}` values.
+- Scripts that operate on `automation:tick:{tenantInstanceScriptTag}:*` keys are registered as **single-hash-slot** scripts:
+  - They may include multiple `automation:tick:{tenantInstanceScriptTag}:*` keys for the **same** `<tenantId>` + `<gameInstanceId>` + `<scriptId>` in `KEYS`, but they must not mix different `{tenantInstanceScriptTag}` values.
   - They must not include any `tick:{tenantRegionTag}:*` keys in the same invocation.
 - Scripts that operate on `automation:queue:<tenantId>:*` keys:
   - Use only `automation:queue:<tenantId>:*` keys for a single tenant in `KEYS`.

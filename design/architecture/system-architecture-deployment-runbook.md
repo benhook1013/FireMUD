@@ -87,9 +87,10 @@ This is a traffic-open gate, not a routine steady-state rollout gate.
    - Confirm that the game session tick loop is running and that players can connect via both Web client and Telnet.
 9. **Record Rollback Classification**
    - Mark the deployment evidence as `rollback-compatible` when previous digests are safe to re-apply against the current schema, secret/config contract, mounted file-path contract, and external bindings.
-   - Mark as `roll-forward-only` when schema, secret/config, file-path, or external-binding changes make old-binary rollback unsafe; include the forward-remediation or restore-point path.
-   - For `roll-forward-only` production releases, attach the fresh backup-readiness evidence record from `design/operations/deployments/production/backup-readiness/<deployment-ref>.json`.
+   - Mark as `roll-forward-only` when schema, secret/config, file-path, or external-binding changes make old-binary rollback unsafe; include the forward-remediation or restore-point path. In the current implementation, this classification is still useful for staging, rehearsals, and future-ready evidence, but it is not an approvable player-facing production release mode yet.
+   - For any future `roll-forward-only` production release that becomes compliant after coordinated-backup readiness is fully implemented, attach the fresh backup-readiness evidence record from `design/operations/deployments/production/backup-readiness/<deployment-ref>.json`.
    - Ensure the backup-readiness record is explicitly bound to the production attestation path and promoted digest set before attach.
+   - Current implementation note: while player-facing coordinated-backup readiness remains incomplete for canonical `tenant_id + region_id` scope, player-facing production `roll-forward-only` releases are not approvable. Record `rollback-compatible` or stop the promotion; do not approve on the theory that restore-point recovery will cover it later.
 10. **Record Deployment State Authoritatively**
 
     Write or update the canonical deployment record for the exact deployment event. The deployment record is the source of truth for current deployability status and must include deployment input reference, preflight report path, live-state evidence, smoke evidence, rollback classification, secret-compliance snapshot, and any backup or traffic-open gate evidence required by the environment. Retries or re-applies must update the same deployment record lineage with a new apply timestamp and new evidence rather than relying on ad hoc operator notes.

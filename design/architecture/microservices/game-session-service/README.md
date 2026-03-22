@@ -7,7 +7,7 @@ Orchestrates live game sessions, including tick execution, player input validati
 ### Terminology
 
 - **Tenant** – a hosted game world or project, identified by `tenantId`. All database rows and Redis keys include this prefix so data is isolated between games.
-- **Game instance** – a specific running instance of a tenant’s world, identified by a `gameInstanceId` in the database and runtime APIs as described in [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md#version-activation--rollback). Even if a deployment runs at most one instance per tenant, APIs and persistence models still carry `gameInstanceId` explicitly (for example using a stable default like `"primary"`) so multi-instance support does not require rewriting identifiers later.
+- **Game instance** – a specific running instance of a tenant’s world, identified by an opaque internal `gameInstanceId` in the database and runtime APIs as described in [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md#version-activation--rollback). Even if a deployment runs at most one instance per tenant, APIs and persistence models still carry `gameInstanceId` explicitly so multi-instance support does not require rewriting identifiers later; clients must treat the identifier as server-issued and opaque rather than inferring special values.
 - **Character identity** – gameplay identity keyed by `characterId`; legacy `playerId` fields are temporary aliases and map one-to-one to `characterId`.
 - **Player gameplay session** – a single player’s live connection and gameplay context bound to a specific game instance and character identity. Gameplay sessions are stored in Redis under `session:game:<tenantId>:<gameInstanceId>:<sessionId>` and are purged when the session ends.
 - **Region / region shard** – a subdivision of the world used for tick execution and scaling. Tick coordination keys are scoped per `<tenantId, regionId>` and do not follow individual player session lifecycles.
@@ -169,7 +169,8 @@ The Game Session Service acts as the **authoritative tick executor** for each `<
   - Drive `tick:{tenantRegionTag}:pending` and commit/rollback flow.
   - Issue tick-scoped gRPC calls on behalf of that region’s commands.
 - On crash or deliberate handoff, another instance acquires the lease and resumes tick processing from Redis using the epoch-scoped `(regionEpoch, tickId)` timeline and EffectId/effect-guard rules from the Tick System design.
-- The executor monitors `tick_execution_time_ms_p99` and `tick_lock_ttl_ms` for each region; when a region repeatedly produces over-TTL ticks according to the thresholds described in the Redis and Tick architecture docs, it marks that region as degraded, automatically reduces tick fan-out and/or slightly lengthens the tick interval for that region, emits explicit “region degraded” metrics, and, if the condition persists beyond a configured window, may halt new ticks and reject new commands for that region until operators intervene.
+- The executor monitors `tick_execution_time_ms_p99` and `tick_lock_ttl_ms` for each region; when a region repeatedly produces over-TTL ticks according to the thresholds described in the Redis and Tick architecture docs, it marks that region as degraded, automatically reduces tick fan-out, emits explicit “region degraded” metrics, and, if the condition persists beyond a configured window, may halt new ticks and reject new commands for that region until operators intervene.
+- Changing `tick_interval_ms` is not part of this in-place degradation path. Any live cadence change that alters timer ordering must run as an epoch-bumped maintenance operation with pause, timer re-derivation, and resume on the new `regionEpoch`, as defined in the tick and scaling docs.
   These degraded and halt transitions follow the same thresholds and policies
   captured under
   [Redis Architecture – Operational SLOs & Alert Thresholds](../../system-architecture-redis.md#operational-slos--alert-thresholds)
@@ -210,7 +211,7 @@ The internal front-end to lease-owner path is a fenced gameplay contract, not a 
 - `ToggleFeatureFlag` – updates runtime flags for a tenant.
 - `PauseTicks` – temporarily halt tick execution before a backup.
 - `ResumeTicks` – resume tick processing after the backup begins.
-- `GetTickStatus` – returns `RUNNING` or `PAUSED` for backup orchestration.
+- `GetRegionTickStatus` – returns the canonical per-region pause/status surface for backup orchestration, reset tooling, and recovery gates.
 
 ## Dependencies
 
@@ -296,10 +297,10 @@ At the protocol level, commands are split into two groups:
 | ------- | ------- | ------- |
 | `LOGIN <username> <password> [otp]` | Authenticates a session and binds it to an account on credential-bearing transports; append an OTP when two-factor auth is enabled. First-party `/ws/game/**` may instead use bare `LOGIN` after bootstrap/connect-token validation. | `LOGIN demo@example.com swordfish 123456` |
 | `LOGON <username> <password> [otp]` | Exact alias for `LOGIN`; Telnet users often prefer the shorter name when typing from prompts. | `LOGON demo@example.com swordfish` |
-| `WORLDS` | Lists worlds the authenticated account can enter (numbered menu + stable world slug) from Account Service membership, public-production discovery, and entitlement state. | `WORLDS` |
-| `REALMS <world>` | Lists visible realms for a world (`<world>` is a world slug or a menu index from `WORLDS`) from the authoritative realm-routing contract. | `REALMS demo` |
-| `CHARS <world> [realm]` | Lists characters for a world and optional realm from the authoritative character store, filtered to `{accountId, tenantId, gameInstanceId}` ownership. | `CHARS demo production` |
-| `PLAY <world> [realm] [character]` | Binds the authenticated connection to a world, realm, and character after `LOGIN`, enforcing tenant authorization/public-admission rules, realm routing, and entitlements. `<world>` is a slug or menu index; `[realm]` is a realm slug or menu index from `REALMS`; `[character]` is an optional name/index only when exactly one visible character exists for the resolved realm. | `PLAY demo production 1` |
+| `WORLDS` | Lists worlds the authenticated account can enter (numbered menu + stable world slug) from Account Service membership, public-production discovery, and entitlement state. Brand-new authenticated accounts may still see the default public production realm. | `WORLDS` |
+| `REALMS <world>` | Lists visible realms for a world (`<world>` is a world slug or a menu index from `WORLDS`) from the authoritative realm-routing contract. The default public production realm may be visible before membership exists; additional realms require explicit grants. | `REALMS demo` |
+| `CHARS <world> [realm]` | Lists characters for a world and optional realm from the authoritative character store, filtered to `{accountId, tenantId, gameInstanceId}` ownership. This participates in the public-production onboarding path for the default public production realm. | `CHARS demo production` |
+| `PLAY <world> [realm] [character]` | Binds the authenticated connection to a world, realm, and character after `LOGIN`, enforcing tenant authorization/public-admission rules, realm routing, and entitlements. For the default public production realm, the first successful `PLAY` creates the caller's `player` membership atomically via Account Service. `<world>` is a slug or menu index; `[realm]` is a realm slug or menu index from `REALMS`; `[character]` is an optional name/index only when exactly one visible character exists for the resolved realm. | `PLAY demo production 1` |
 | `LOOK` | Requests the current room snapshot (name, descriptions, exits, and visible entities) aggregated from Game Logic plus World and Entity services. | `LOOK` |
 | `SAY <text>` | Broadcasts chat text to everyone in the same room. | `SAY Hello travelers` |
 | `YELL <text>` | Alias for `SAY` that is rendered with higher emphasis but still delivers to the current room. | `YELL Hear me, comrades` |

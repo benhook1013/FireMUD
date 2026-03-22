@@ -48,7 +48,7 @@ When using a self-hosted MinIO cluster as the asset store:
 
 4. **Service configuration**
    - The Game Design Service is the **sole writer** to the asset bucket and uses `ASSET_STORE_*` environment variables to export assets and manifests during publish workflows. Runtime services and clients consume published assets via CDN or gateway URLs derived from the manifest; they do not write directly to the bucket.
-   - When the gateway proxies `/assets/**` to MinIO, set `ASSET_STORE_ENDPOINT` to `https://<gateway-domain>/assets` so published manifests generate public URLs.
+   - Anonymous bucket reads are optional and apply only to direct/CDN-style delivery. When the gateway proxies `/assets/**` to MinIO, set `ASSET_STORE_ENDPOINT` to `https://<gateway-domain>/assets` so published manifests generate public URLs and do not assume anonymous object-store access.
 5. **Scope of stored data**
 
    The asset store holds only binary design-time assets and version-scoped `manifest.json` files managed by the Game Design Service. Logical world and entity templates remain in PostgreSQL schemas owned by World Management, Entity Management, and related domain services as described in their architecture documents; they are **not** stored in the object store.
@@ -73,9 +73,11 @@ When using a self-hosted MinIO cluster as the asset store:
    - If object-store contents drift from the database (for example missing objects for
      a still-published version), operators should re-run the `ExportAssets` Saga step
      for the affected `(tenantId, versionId)` so the manifest and prefix are rebuilt
-     from the authoritative `version_asset` mappings rather than attempting manual
-     repair.
-   - Because Published/Active versions are immutable, rerunning `ExportAssets` for a Published/Active version must produce bit-for-bit identical bytes matching the existing `published_release_bundle` attestation returned by `GetPublishedReleaseBundle(tenantId, versionId)`. If a rerun would change outputs or require changing the attestation, treat it as a process bug or data corruption incident rather than “fixing” the published version in place.
+     from the authoritative repair sources rather than attempting manual repair:
+     ordinary binary assets rebuild from Game Design asset metadata and `version_asset`
+     mappings, while derived artifacts rebuild from the producer-owned immutable
+     artifact contracts defined in `asset-storage.md`.
+   - Because Published/Active versions are immutable, rerunning `ExportAssets` for a Published/Active version must produce bit-for-bit identical bytes matching the existing `published_release_bundle` attestation returned by `GetPublishedReleaseBundle(tenantId, versionId)`. If any required producer-owned derived artifact can no longer reproduce the attested bytes, fail closed and treat it as a recovery-blocking process bug or data-corruption incident rather than “fixing” the published version in place.
    - Prefer invoking a higher-level admin workflow (for example a `RetireVersion` operation in the Game Design or Logging & Admin Service) that verifies retirement eligibility, updates manifests/internal metadata to retired state, and deletes the corresponding `<tenant>/<version>/` prefix from the object store.
 
    Directly deleting a prefix with `mc rm` should be treated as a last-resort

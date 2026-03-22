@@ -48,7 +48,7 @@ Frontend flows are split between **player gameplay sessions** and **admin/creato
   - Explicit player logout must clear any in-memory `player-bootstrap` token immediately in addition to closing gameplay sockets and clearing reconnect state.
   - Canonical player logout order is: stop reconnect attempts, close the gameplay socket, clear remembered world/character selection plus reconnect metadata, clear the in-memory `player-bootstrap` token, and render the logged-out player state.
   - Tenant membership, non-public realm-access-grant checks, and runtime entitlement checks for first-party gameplay happen during bootstrap discovery and `POST /auth/connect-token`, not during `POST /auth/player-bootstrap`. The first implementation is realm-aware: the chosen target must come from the canonical discovery contract and may be the production realm or an explicitly authorized alternate realm such as a playtest fork.  
-  - After login, the client participates in an explicit **lobby world-selection** step by issuing `WORLDS` / `REALMS <world>` / `CHARS <world> [realm]` and then `PLAY <world> [realm] [character]` as described in [Tenant Selection for Gameplay](./system-architecture-authentication.md#tenant-selection-for-gameplay-lobby-selection). The Game Session Service resolves the selected world/realm/character into internal identifiers (`tenantId`, `gameInstanceId`, `characterId`), enforces tenant authorization, public-production admission, and entitlements, returns the resolved realm bundle metadata, and then binds the socket to a gameplay session in Redis.  
+  - After login, the client participates in an explicit **lobby world-selection** step by issuing `WORLDS` / `REALMS <world>` / `CHARS <world> [realm]` and then `PLAY <world> [realm] [character]` as described in [Tenant Selection for Gameplay](./system-architecture-authentication.md#tenant-selection-for-gameplay-lobby-selection). The Game Session Service resolves the selected world/realm/character into internal identifiers (`tenantId`, `gameInstanceId`, `characterId`), enforces tenant authorization, public-production admission, and entitlements, returns the resolved realm bundle metadata, and then binds the socket to a gameplay session in Redis. Brand-new authenticated accounts can discover the default public production realm during this flow, and the first successful `PLAY` creates membership atomically before gameplay binding is committed.  
   - On page reload or connectivity loss, the client requests a fresh connect token, reconnects the WebSocket, then replays `LOGIN` and tenant-selection without prompting for credentials again; the Game Session Service uses Redis gameplay session bindings, current membership authority, and fresh backend token rebinding to restore gameplay state when allowed by server-side TTLs and revocation rules.
 
 - **Admin and creator UIs**  
@@ -93,7 +93,7 @@ Authorization: Bearer <bootstrapToken>
      connectScopeId: "cs_demo_production_v17"
    }]
 
-GET /auth/bootstrap/worlds/demo/characters?realm=production
+GET /auth/bootstrap/worlds/demo/realms/production/characters
 Authorization: Bearer <bootstrapToken>
 -> [{ characterName: "Mara" }]
 
@@ -142,7 +142,7 @@ PLAY demo production Mara
 OK PLAY Resumed session
 ```
 
-This reconnect flow assumes the player still holds a valid in-memory `player-bootstrap` token. If the bootstrap token has expired or the page was reloaded, the client must obtain a new bootstrap token first, then repeat bootstrap discovery as needed and request a fresh connect token. In all cases, first-party reconnects must not prompt the browser to replay username/password/OTP after bootstrap has been re-established. Clients may skip visible `WORLDS` / `REALMS` steps only when they already retain a valid world/realm choice and still drive the same canonical `PLAY <world> [realm] [character]` selection on reconnect.
+This reconnect flow assumes the player still holds a valid in-memory `player-bootstrap` token. If the bootstrap token has expired or the page was reloaded, the client must obtain a new bootstrap token first, then repeat bootstrap discovery as needed and request a fresh connect token. There is no separate silent refresh/bootstrap-restoration mechanism in the current architecture; reload behaves like bootstrap-token loss and restarts the first-party bootstrap flow. In all cases, first-party reconnects must not prompt the browser to replay username/password/OTP after bootstrap has been re-established. Clients may skip visible `WORLDS` / `REALMS` steps only when they already retain a valid world/realm choice and still drive the same canonical `PLAY <world> [realm] [character]` selection on reconnect.
 
 ## API Usage Patterns
 

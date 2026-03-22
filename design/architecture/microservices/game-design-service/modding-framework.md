@@ -153,11 +153,12 @@ Each `(tenantId, pluginId, pluginVersionId)` must have one canonical design-time
 - `SIGNATURE_VERIFIED` – the bundle passed canonicalization and signature verification and its signed metadata has been persisted. This is a durable operator-visible state, not merely an internal transient step; a version may remain here indefinitely until publication is requested or abandoned.
 - `VALIDATION_FAILED_DESIGN` – Game Design completed design-time validation and rejected the version due to deterministic authoring errors such as invalid bindings, disallowed components, `baseVersionId` mismatch, or `abilitySchemaDigest` mismatch.
 - `PUBLISHED` – the plugin version is accepted into immutable design-time history and is eligible for runtime activation against matching instances.
-- `SUPERSEDED` – a later plugin version for the same `pluginId` exists; older versions remain immutable and may still be rolled back to if otherwise valid.
+- `SUPERSEDED` – a later plugin version for the same `pluginId` exists; older versions remain immutable historical records and are not eligible for runtime activation.
 
 Required lifecycle semantics:
 
 - Only `PUBLISHED` plugin versions are eligible inputs to runtime activation APIs such as `SetPluginActiveVersion`.
+- Transitioning a plugin version to `SUPERSEDED` removes it from the set of activatable versions. If operators need to return to equivalent plugin logic later, they must publish a new `pluginVersionId` rather than reactivating the superseded historical version.
 - `UPLOAD_REJECTED` and `VALIDATION_FAILED_DESIGN` are design-time terminal failures and must not create or mutate runtime registry rows.
 - Transition into `PUBLISHED` records the indexed manifest metadata, validation results, signer metadata, and publication timestamp in Game Design.
 - Logging & Admin may inspect all design-time states, but it must not bypass them by attempting to activate a non-`PUBLISHED` plugin version.
@@ -173,6 +174,20 @@ Required write path:
   - Validation failures move the version to `VALIDATION_FAILED_DESIGN`.
   - Success moves the version to `PUBLISHED` and emits `PluginVersionStatusChanged`.
 - Re-invoking either call with the same `(tenantId, pluginId, pluginVersionId)` must be idempotent: once a version is immutable, callers may observe the existing status but must not overwrite signed content in place.
+
+### Plugin Activation Failure Matrix
+
+Runtime/operator-facing activation outcomes must remain deterministic:
+
+| Condition | Canonical outcome |
+| --- | --- |
+| Plugin version is not `PUBLISHED` (including `SUPERSEDED`) | Reject activation as ineligible historical or unpublished version |
+| Signer revoked or no longer trusted | Reject activation; published history remains readable but runtime enablement is blocked |
+| Signer-policy lookup unavailable | Fail closed for activation until policy can be evaluated |
+| `baseVersionId` does not match the instance runtime version | Reject activation |
+| `abilitySchemaDigest` does not match the instance-bound digest | Reject activation |
+| Required component/capability policy blocks the plugin | Reject activation with deterministic policy error |
+| Activation reconciliation/writeback fails after intent is recorded | Leave runtime state unchanged or mark reconciliation failure explicitly; do not pretend activation succeeded |
 
 ### Minimal Bundle Example
 
@@ -324,7 +339,7 @@ Policy configs should be versioned so operators can roll back to a previous allo
 
 Operationally, the **Logging & Admin Service** acts as the control plane for plugin lifecycle management. Enabling, disabling, draining, and rolling back plugin versions are all performed via Logging & Admin APIs that update the registry in the Automation & Scripting Service; tenants do not manipulate `activeVersionId` or `pluginState` directly inside game traffic.
 
-To roll back a misbehaving plugin, operators promote a previously trusted `pluginVersionId` to `activeVersionId` for the affected `<tenantId, gameInstanceId, pluginId>` via Logging & Admin. The Automation & Scripting Service then resumes admitting triggers for the restored version while continuing to enforce quotas, budgets, and sandbox limits as described in `design/architecture/system-architecture-scripting-quotas-and-operations.md`.
+To roll back a misbehaving plugin, operators must publish a new trusted `pluginVersionId` that reintroduces the desired logic, then promote that newly published version to `activeVersionId` for the affected `<tenantId, gameInstanceId, pluginId>` via Logging & Admin. Historical `SUPERSEDED` versions remain immutable audit records and are not reactivated. The Automation & Scripting Service then resumes admitting triggers for the restored logic version while continuing to enforce quotas, budgets, and sandbox limits as described in `design/architecture/system-architecture-scripting-quotas-and-operations.md`.
 
 Plugin rollback/disable/revocation flows must also cancel pending outbox work for the displaced plugin version (for example via `CancelPendingWorkItemsForPluginVersion`) before or alongside queue purges, so stale plugin-version work cannot continue to hand off after control-plane changes.
 
