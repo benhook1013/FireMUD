@@ -137,6 +137,7 @@ Runtime population materialization is documented separately from published spawn
 - Instance-scoped population schedules/materializations are runtime rows keyed by `(tenantId, gameInstanceId, scheduleId or roomInstanceId, sourceBindingId)` and derived from published bindings during world creation or runtime instancing.
 - These runtime schedule rows must record provenance back to the published binding and, when relevant, the `generationRunId` that materialized them.
 - Runtime schedules are not part of publish digests and must be recreated or restored only through runtime workflows.
+- Active schedule rows survive normal restarts for the same `(tenantId, gameInstanceId)` and are cleaned up only through the documented termination or recovery lifecycle.
 - `InstanceTermination` hard-deletes schedule rows for the terminating instance after any bounded diagnostic export has completed.
 - Optional diagnostics for failed activation or termination must live in separate bounded-retention diagnostic tables or exports.
 
@@ -144,7 +145,7 @@ Initial-slice scope:
 
 - Instance-scoped population schedules are materialized only during world creation for the primary `gameInstanceId`.
 - Later runtime instancing or portal-driven population scheduling may reuse the same lifecycle contract, but those flows are not part of the initial slice.
-- Until a concrete schema is published, implementation docs must use one stable row-family name for these rows and map it explicitly to the concrete table names used by the service.
+- Until a concrete schema is published, implementation docs must use one stable row-family name for these rows, map it explicitly to the concrete table names used by the service, and document cleanup ordering for termination, backup, and replay tooling.
 
 ## World Events
 

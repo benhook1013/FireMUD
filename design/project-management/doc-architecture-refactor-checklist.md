@@ -100,8 +100,8 @@ Rules for using the template:
 
 ## Final Consistency Pass
 
-- [ ] After the high-priority refactor targets are complete, run a final consistency pass across all service doc directories under `design/architecture/microservices/`.
-- [ ] Verify that each service uses the standard document shape consistently where applicable:
+- [x] After the high-priority refactor targets are complete, run a final consistency pass across all service doc directories under `design/architecture/microservices/`.
+- [x] Verify that each service uses the standard document shape consistently where applicable:
   - `README.md`
   - `api-contracts.md`
   - `runtime-and-data.md`
@@ -109,9 +109,9 @@ Rules for using the template:
   - `configuration.md`
   - `protocols.md` or `client-behavior.md` when the service has a wire/client contract
   - focused extra docs such as `procedural-generation-control.md` only where the service has a real additional concern
-- [ ] For services that do not yet need every subdoc, add the missing-task placeholders to this checklist so the shape gap is tracked intentionally rather than drifting accidentally.
-- [ ] Confirm that cross-service naming is consistent for equivalent concerns, for example API, runtime/data, operations, configuration, and protocol/client-behavior docs.
-- [ ] Confirm that each service `README.md` links to its subdocs and states the canonical ownership boundaries for that service doc set.
+- [x] For services that do not yet need every subdoc, add the missing-task placeholders to this checklist so the shape gap is tracked intentionally rather than drifting accidentally.
+- [x] Confirm that cross-service naming is consistent for equivalent concerns, for example API, runtime/data, operations, configuration, and protocol/client-behavior docs.
+- [x] Confirm that each service `README.md` links to its subdocs and states the canonical ownership boundaries for that service doc set.
 
 ## Phase 2: High-Priority Refactor Targets
 
@@ -468,13 +468,13 @@ For each individual refactor target:
 - [x] 4. Split the three biggest cross-cutting docs: Backup/Recovery, Redis Operations, Authentication.
 - [x] 5. Tackle the scripting doc cluster.
 - [x] 6. Sweep remaining service directories for standard-shape placeholders and splitouts.
-- [ ] 7. Run a final multi-lane subagent verification pass over the refactored doc set to catch dropped details and new drift.
+- [x] 7. Run a final multi-lane subagent verification pass over the refactored doc set to catch dropped details and new drift.
 
 ## Done Criteria
 
-- [ ] Each targeted long doc has a clear canonical parent plus focused subdocs.
-- [ ] Each service directory has a recognizable standard documentation shape, even if some subdocs are intentionally lightweight.
-- [ ] No refactor was performed without an untouched original backup copy.
-- [ ] Each refactor received a backup-vs-new subagent comparison pass.
-- [ ] `./gradlew linkCheck lintMarkdown` passes after each completed batch.
-- [ ] The resulting structure reduces mixed-concern docs instead of simply moving the same sprawl into more files.
+- [x] Each targeted long doc has a clear canonical parent plus focused subdocs.
+- [x] Each service directory has a recognizable standard documentation shape, even if some subdocs are intentionally lightweight.
+- [x] No refactor was performed without an untouched original backup copy.
+- [x] Each refactor received a backup-vs-new subagent comparison pass.
+- [x] `./gradlew linkCheck lintMarkdown` passes after each completed batch.
+- [x] The resulting structure reduces mixed-concern docs instead of simply moving the same sprawl into more files.

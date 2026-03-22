@@ -2,6 +2,8 @@
 
 This document defines the Entity Management REST and gRPC surfaces, design-time APIs, digest contract, and the LOOK entity-listing contract.
 
+The authoritative REST schema source lives in [../../../../services/entity-management-service/src/main/resources/openapi.yaml](../../../../services/entity-management-service/src/main/resources/openapi.yaml). Proto definitions are the authoritative gRPC source.
+
 ## REST
 
 - `GET /ping` – basic health check returning `"pong"`.
@@ -15,7 +17,7 @@ curl http://localhost:8080/ping
 - `Ping(PingRequest) returns (PingResponse)` – connectivity check defined in `entity_management_service.proto`.
 - `CreateCharacter(CreateCharacterRequest) returns (CreateCharacterResponse)` – builds a new player character from a template.
 - `UpdateEntity(UpdateEntityRequest) returns (UpdateEntityResponse)` – updates stats or equipment for a character or NPC.
-- `QueryInventory(QueryInventoryRequest) returns (QueryInventoryResponse)` – lists items for an entity.
+- `QueryInventory(QueryInventoryRequest) returns (QueryInventoryResponse)` – lists items for an entity with pagination.
 - `ListCharactersByAccount` – returns all characters owned by an account across tenants.
 - `ListRoomEntities(ListRoomEntitiesRequest) returns (ListRoomEntitiesResponse)` – returns players, NPCs, and visible items present in a room, scoped by `RoomInstanceRef`.
 - `GetDraftDesignDigest` – returns publish-gating digest for Draft entity templates using typed scope request `GetDraftDesignDigestRequest { tenantId, scope: oneof { versionId, scriptPatchVersion } }`. Entity Management supports `versionId` scope only and must return `UNSUPPORTED_SCOPE` for `scriptPatchVersion`. Minimum response fields are `{tenantId, scope, appliedCommitId, contentDigest, digestSchemaVersion}`. `appliedCommitId` means the highest Game Design commit whose full revision set has been durably applied to the target Draft entity scope. `contentDigest` must cover only version-scoped entity template/binding rows and must exclude live runtime entities and audit/history metadata.

@@ -27,6 +27,21 @@ Manages user accounts and authentication for the platform. It stores profile dat
 - Link accounts to player characters for ownership and permissions.
 - gRPC APIs expose account management, external account linking, and payment operations.
 
+## Document Map
+
+- [API Contracts](./api-contracts.md)
+  - public and internal auth/account/payment surfaces, canonical errors, and proto/OpenAPI ownership.
+- [Runtime and Data](./runtime-and-data.md)
+  - JWT issuance, session-related data ownership, PostgreSQL/Redis boundaries, and account-state invariants.
+- [Operations](./operations.md)
+  - readiness/liveness, operational notes, and local verification or testing guidance.
+- [Configuration](./configuration.md)
+  - environment variables, service discovery, TLS, and service-local configuration source locations.
+- [Subscription Management Design](./subscription-management.md)
+  - subscription lifecycle and entitlement-specific design detail.
+- [Stripe Integration Design](./stripe-integration.md)
+  - Stripe-specific payment and webhook integration contracts.
+
 ## Dependencies
 
 - **Internal:**
@@ -41,10 +56,6 @@ details on shared infrastructure components.
 
 ## Related Documentation
 
-- [API Contracts](./api-contracts.md)
-- [Runtime and Data](./runtime-and-data.md)
-- [Operations](./operations.md)
-- [Configuration](./configuration.md)
 - [Subscription Management Design](./subscription-management.md)
 - [Stripe Integration Design](./stripe-integration.md)
 - [Authentication & Authorization](../../system-architecture-authentication.md)

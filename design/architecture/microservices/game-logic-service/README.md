@@ -42,6 +42,17 @@ Implementation notes:
 - Stubbed: room and entity context still comes from seeded demo fixtures, and chat delivery still uses the regression Social & Groups stub so canonical transcripts remain deterministic.
 - Deferred: richer LOOK prose, combat and effect annotations, NPC reply behavior, localized listening areas, and profanity-escalation flows remain future slices.
 
+## Document Map
+
+- [API Contracts](./api-contracts.md)
+  - gameplay-facing REST/gRPC surfaces, `LOOK` and `BroadcastSay` contract ownership, and source-of-truth pointers.
+- [Runtime and Data](./runtime-and-data.md)
+  - runtime rule ownership, Redis-role boundaries, publish-gating/digest rules, and gameplay-state invariants.
+- [Operations](./operations.md)
+  - readiness/liveness, runtime slice status, and operator-facing behavior.
+- [Configuration](./configuration.md)
+  - environment variables, service discovery, TLS, and service-local configuration source locations.
+
 ## Dependencies
 
 - **Internal:**
@@ -58,10 +69,6 @@ details on shared infrastructure components.
 
 ## Related Documentation
 
-- [API Contracts](./api-contracts.md)
-- [Runtime and Data](./runtime-and-data.md)
-- [Operations](./operations.md)
-- [Configuration](./configuration.md)
 - [System Architecture Overview](../../system-architecture-overview.md)
 - [Tick System and Runtime Design](../../system-architecture-ticks.md)
 - [Redis Architecture](../../system-architecture-redis.md)

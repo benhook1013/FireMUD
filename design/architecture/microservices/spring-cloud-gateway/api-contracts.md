@@ -61,6 +61,8 @@ curl -X DELETE http://localhost:8080/routes/demo
 ### gRPC
 
 - `Ping(PingRequest) returns (PingResponse)` -> connectivity check defined in [`gateway_management_service.proto`](../../../../protos/spring-cloud-gateway/v1/gateway_management_service.proto).
+- `UpsertRoute(UpsertRouteRequest) returns (UpsertRouteResponse)` -> add or replace an in-memory route override on the active gateway instance.
+- `RemoveRoute(RemoveRouteRequest) returns (RemoveRouteResponse)` -> remove an in-memory route override from the active gateway instance.
 
 ```bash
 # Local development only (no mTLS)
@@ -79,5 +81,5 @@ grpcurl \
 
 Gateway-related proto definitions are stored in [../../../../protos/spring-cloud-gateway/v1](../../../../protos/spring-cloud-gateway/v1).
 
-- `gateway_management_service.proto` defines the gateway management and health RPCs used by operators and tooling.
+- `gateway_management_service.proto` defines the gateway management and health RPCs used by operators and tooling, including `Ping`, `UpsertRoute`, and `RemoveRoute`.
 - After proto edits, run `./gradlew generateProto` to regenerate gateway stubs.

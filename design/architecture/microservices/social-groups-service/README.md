@@ -24,6 +24,17 @@ Provides chat, guild, and social networking features across games. Basic REST an
 - Presence indicators notify when friends come online
 - Game creators can broadcast announcements and send out-of-game emails
 
+## Document Map
+
+- [API Contracts](./api-contracts.md)
+  - chat/guild/friends/mail API surfaces, delivery contracts, and proto/OpenAPI ownership.
+- [Runtime and Data](./runtime-and-data.md)
+  - social-data ownership, Redis/cache behavior, and real-time delivery invariants.
+- [Operations](./operations.md)
+  - readiness/liveness, moderation/delivery operational notes, and local verification guidance.
+- [Configuration](./configuration.md)
+  - environment variables, service discovery, TLS, and service-local configuration locations.
+
 ## Dependencies
 
 - **Internal:**
@@ -33,10 +44,6 @@ Provides chat, guild, and social networking features across games. Basic REST an
 
 ## Related Documentation
 
-- [API Contracts](./api-contracts.md)
-- [Runtime and Data](./runtime-and-data.md)
-- [Operations](./operations.md)
-- [Configuration](./configuration.md)
 - [System Architecture Overview](../../system-architecture-overview.md)
 - [Multi-Tenancy](../../system-architecture-multi-tenancy.md)
 - [Service Responsibility Matrix](../../service-responsibility-matrix.md)

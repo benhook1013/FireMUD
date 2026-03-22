@@ -2,13 +2,13 @@
 
 ## gRPC APIs
 
-- `GetRoom` – retrieves room data including exits and environmental effects.
+- `GetRoom` – retrieves room data including exits and environmental effects. The legacy `room_id` field is deprecated; callers should provide a `RoomInstanceRef`.
 - `GetRoomSnapshot` – returns a minimal, LOOK-focused view scoped by `RoomInstanceRef`.
 - `ListRoomOccupants` – returns the authoritative typed occupant list for actors in a room, scoped by `RoomInstanceRef`. The legacy `occupantEntityIds` list is a derived compatibility mirror only.
 - `ApplyRoomAmbientStatePatch` – applies an ambient state patch to the target `RoomInstanceRef`, guarded by `EffectId`.
 - `GetDraftDesignDigest` – returns the publish-gating digest for Draft world templates using the typed scope request `GetDraftDesignDigestRequest { tenantId, scope: oneof { versionId, scriptPatchVersion } }`. World Management supports `versionId` scope only and must return `UNSUPPORTED_SCOPE` for `scriptPatchVersion`.
 - `ValidateWorldUpgradeMappings` – validates world-owned durable references and approved remap sets for replacement-instance cutover to a target `(tenantId, versionId)`.
-- `UpdateWorldState` – legacy bulk update surface scheduled for removal on June 30, 2026. Runtime mutation requests on this RPC must return `UNSUPPORTED_OPERATION`, and callers must use effect-shaped mutation RPCs instead.
+- `UpdateWorldState` – legacy bulk update surface scheduled for removal on June 30, 2026. Runtime mutation requests on this RPC must return `UNSUPPORTED_OPERATION`, and callers must use effect-shaped mutation RPCs instead. Until removal, this endpoint exists only for migration telemetry and controlled caller cleanup.
 
 The gRPC contract for world operations is located in [../../../../protos/world-management/v1](../../../../protos/world-management/v1). Run `./gradlew generateProto` to regenerate sources after editing these files.
 
@@ -39,7 +39,7 @@ The service exposes an OpenAPI specification under `/v3/api-docs` with a Swagger
 curl http://localhost:8080/ping
 ```
 
-Requests to this service come from other internal services. Player identity is established by Game Session, so no JWT header is required here. See [Security Architecture](../../system-architecture-security.md) for the shared trust model.
+Runtime/gameplay-facing requests to this service come from other internal services. Player identity is established by Game Session for those calls, so no JWT header is required on that runtime path. Design-time APIs are separate and must validate JWTs as described below. See [Security Architecture](../../system-architecture-security.md) for the shared trust model.
 
 ## Design-Time APIs
 
@@ -111,6 +111,8 @@ Illustrative responses:
 - optional `roomFlags` for gameplay/UI warning surfaces.
 
 Room snapshots deliberately exclude live entities, items, and inventory contents. Those are fetched from Entity Management using room- and instance-scoped queries.
+
+Game Logic may cache snapshots for the duration of a tick but must refresh them after movement. World Management publishes room-mutation change events so downstream LOOK caches stay coherent and `worldSnapshotId` invalidation remains explicit rather than time-based guesswork.
 
 Cross-service LOOK read consistency is fence-based:
 

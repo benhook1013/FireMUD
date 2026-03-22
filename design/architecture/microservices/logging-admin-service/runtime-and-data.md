@@ -41,15 +41,15 @@ The architecture treats these as two runtime partitions even when they are deliv
 - Thread pools, connection pools, and timeout budgets for observability integrations must be isolated from the core control plane so expensive search/dashboard failures cannot starve moderation or remediation requests.
 - If a future implementation cannot preserve those guarantees inside one service boundary, the architecture should split the deployable into separate operator-control and observability surfaces rather than weakening the availability rule.
 
-## Script Patch and Plugin Control Plane
+## Script Patch and Plugin Control-Plane Coordination
 
-Logging & Admin is the operator-facing control plane for:
+Logging & Admin provides the operator-facing audit and coordination layer around script patch and plugin changes:
 
-- enabling/disabling and draining automation scripts through the Game Design and Automation & Scripting control-plane APIs;
-- enabling/disabling and rolling back plugins as described in [`modding-framework.md`](../game-design-service/modding-framework.md); and
-- repinning and rolling back `scriptPatchVersion` for running game instances by calling the Game Session control-plane APIs and following the rollback protocol specified in [Scripting & Automation: Control Plane API](../../system-architecture-scripting-control-plane-api.md).
+- operators review automation or plugin state here and then invoke the owning control-plane APIs exposed by Game Design, Automation & Scripting, and Game Session;
+- audit trails and operator intent for those changes are recorded here; and
+- runtime mutation authority remains with the owning domain services rather than with Logging & Admin itself.
 
-Logging & Admin does not write to Redis directly. It drives all runtime changes through documented service APIs and records audit trails so operators can explain why automation behavior changed.
+Logging & Admin does not write to Redis directly and does not define a competing script/plugin state-mutation API. It coordinates operator UX and audit around the documented service-owned APIs so operators can explain why automation behavior changed.
 
 ## Data Model
 

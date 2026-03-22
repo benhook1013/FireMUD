@@ -8,6 +8,13 @@ This document collects the service readiness model, quota and fairness behavior,
 - Logging, metrics, and tracing follow the standard [Logging & Monitoring](../../system-architecture-logging-monitoring.md) pipeline.
 - Operators and SREs should pair this document with [Scripting Quotas and Operations](../../system-architecture-scripting-quotas-and-operations.md), [Scripting Operations Cookbook](../../system-architecture-scripting-operations-cookbook.md), [Scripting Observability Contract](../../system-architecture-scripting-observability-contract.md), and [Redis Architecture](../../system-architecture-redis.md).
 
+## Readiness and Liveness
+
+- `liveness` is local-only and indicates that the process is alive and the scheduler/runtime loops are not wedged.
+- `readiness` is runtime-safety for the currently exposed automation slice. The service is ready only when its durable PostgreSQL state, required Redis coordination paths, and the script-patch readiness ingestion loop are able to accept and reconcile new work safely.
+- A process that can answer `Ping` locally but cannot ingest tenant patch updates, persist automation work, or reconcile runtime-scope pin changes is not ready for new automation traffic.
+- Readiness must reflect rollback and convergence safety as well as simple process health, so partially initialized runtimes or failed reload loops remain unready until they return to a safe state.
+
 ## Fairness Quotas and Budgets
 
 `ScriptQuotaService` limits how many times a script may execute within a configurable window. Counters are stored in Redis using keys of the form `automation:quota:<tenantId>:<scriptId>`. When a quota is exceeded the event is ignored and `script_quota_denied_total{tenantId, scriptId, reason}` is incremented. Saga orchestration emits separate Saga-specific metrics and must not be conflated with quota enforcement.

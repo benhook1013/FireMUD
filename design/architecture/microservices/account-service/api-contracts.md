@@ -2,6 +2,8 @@
 
 This document defines the Account Service REST and gRPC contracts, authentication classes, subject-binding rules, and runtime membership and entitlement response semantics.
 
+The authoritative REST schema source lives in [../../../../services/account-service/src/main/resources/openapi.yaml](../../../../services/account-service/src/main/resources/openapi.yaml). Proto definitions are the authoritative gRPC source.
+
 ## gRPC APIs
 
 - `Ping(PingRequest) returns (PingResponse)` – connectivity check defined in `account_service.proto`.
@@ -71,6 +73,29 @@ This document defines the Account Service REST and gRPC contracts, authenticatio
 | `GET` | `/tenants/{tenantId}/entitlements/me` | Caller-bound tenant-admin entitlement view for billing-safe UX |
 | `GET` | `/support/tenants/{tenantId}/entitlements` | Cross-tenant support-safe entitlement view with redacted fields |
 | `GET` | `/.well-known/jwks.json` | JWKS for verifying issued JWTs |
+
+Canonical `/auth/login` success shape:
+
+```json
+{
+  "status": "SUCCESS",
+  "data": {
+    "token": "jwt-token-here",
+    "expiresAt": "2025-01-01T12:00:00Z",
+    "account": {
+      "accountId": "user-123",
+      "email": "demo@example.com"
+    },
+    "scopedRoles": {
+      "tenant-abc": ["tenantAdmin", "designer"],
+      "tenant-def": ["player"]
+    },
+    "globalRoles": ["platformAdmin"]
+  }
+}
+```
+
+Error responses use the standard `shared.v1.ErrorDetail` structure and `AuthenticationErrorCodes`.
 
 ## Endpoint Authentication Classes
 

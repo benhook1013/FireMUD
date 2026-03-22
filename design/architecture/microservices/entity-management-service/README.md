@@ -26,6 +26,17 @@ For canonical naming and scoping rules, see [Identifier Glossary](../../system-a
 - Crafting recipe management with validation
 - Cross-game character listing via account linkage
 
+## Document Map
+
+- [API Contracts](./api-contracts.md)
+  - CRUD/query surfaces, gameplay-facing entity contracts, and proto/OpenAPI ownership.
+- [Runtime and Data](./runtime-and-data.md)
+  - PostgreSQL ownership, containment/inventory rules, and runtime invariants shared with World and Game Session.
+- [Operations](./operations.md)
+  - readiness/liveness, operational notes, and local verification guidance.
+- [Configuration](./configuration.md)
+  - environment variables, service discovery, TLS, and configuration source locations.
+
 ## Dependencies
 
 - **Internal:**
@@ -37,10 +48,6 @@ See [Gateway Architecture](../../system-architecture-gateway.md), [Deployment En
 
 ## Related Documentation
 
-- [API Contracts](./api-contracts.md)
-- [Runtime and Data](./runtime-and-data.md)
-- [Operations](./operations.md)
-- [Configuration](./configuration.md)
 - [System Architecture Overview](../../system-architecture-overview.md)
 - [Tick System and Runtime Design](../../system-architecture-ticks.md)
 - [Redis Architecture](../../system-architecture-redis.md)

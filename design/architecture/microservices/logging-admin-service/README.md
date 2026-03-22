@@ -27,6 +27,23 @@ Centralized logging and administration tools for the platform. The service colle
 - Real-time analytics on game performance.
 - Optional TOTP-based two-factor authentication for administrator accounts.
 
+## Document Map
+
+- [API Contracts](./api-contracts.md)
+  - admin/moderation/control-plane surfaces and canonical API ownership.
+- [Runtime and Data](./runtime-and-data.md)
+  - observability-state ownership, moderation/audit data boundaries, and durability assumptions.
+- [Operations](./operations.md)
+  - readiness/liveness, operator workflows, and operational guidance for dashboards and remediation flows.
+- [Configuration](./configuration.md)
+  - environment variables, embedding/trust configuration, and source-location notes.
+- [Role-Based Admin UI](./admin-ui.md)
+  - operator-facing UI ownership and interaction model.
+- [Analytics Dashboards](./analytics-dashboards.md)
+  - dashboard-specific ownership and visualization detail.
+- [Moderation Policies](./moderation-policies.md)
+  - moderation rules, escalation behavior, and policy-specific detail.
+
 ## Dependencies
 
 - **Internal:**
@@ -39,10 +56,6 @@ See [Gateway Architecture](../../system-architecture-gateway.md), [Deployment En
 
 ## Related Documentation
 
-- [API Contracts](./api-contracts.md)
-- [Runtime and Data](./runtime-and-data.md)
-- [Operations](./operations.md)
-- [Configuration](./configuration.md)
 - [Role-Based Admin UI](./admin-ui.md)
 - [Analytics Dashboards](./analytics-dashboards.md)
 - [Moderation Policies](./moderation-policies.md)

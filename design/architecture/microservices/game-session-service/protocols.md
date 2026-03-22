@@ -276,8 +276,9 @@ Entities:
 
 SAY Hello travelers
 OK SAY
-You say: Hello travelers
-EVENT SAY
+Speaker: Emberline
+Delivered-To: Emberline, Sora, Kobold Scout
+Message: Hello travelers
 A kobold says: Stay sharp.
 
 DANCE

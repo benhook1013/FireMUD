@@ -66,7 +66,7 @@ For operators and developers, `NotifyDisconnect` is designed to be easy to corre
 - The TCP Proxy logs Telnet socket lifecycle events with a stable `proxyConnectionId` field, along with connection-level tags such as `tenantId`, `gameInstanceId` when known, and client IP or `X-Proxy-Client-IP`.
 - Spring Cloud Gateway propagates `X-Proxy-Connection-Id` only on authenticated TCP Proxy -> Gateway hops and strips it from public ingress, then produces a canonical `X-Client-IP` header.
 - Game Session logs login, resume, takeover, and disconnect-processing events using the same `proxyConnectionId` and `{gameInstanceId, tenantId}` values captured during session binding.
-- The `tcpproxy.disconnect.notify.transport_failure` and `tcpproxy.disconnect.notify.app_error` meters reference `{proxyConnectionId, disconnectSequence}` so failures and retries can be tied back to specific Telnet connections and Game Session events.
+- The `tcpproxy.disconnect.notify.transport_failure` and `tcpproxy.disconnect.notify.app_error` meters remain bounded-label metrics only. Correlation to specific `{proxyConnectionId, disconnectSequence}` values belongs in structured logs and traces rather than metric labels.
 
 Their definitions live in [`tcp_proxy_service.proto`](../../../../protos/tcp-proxy/v1/tcp_proxy_service.proto).
 

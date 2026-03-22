@@ -15,7 +15,8 @@ and permissions are enforced using the `globalRoles` claim. The
 - Search and filter logs with Kibana-like syntax.
 - Review player reports and apply moderation actions.
 - Toggle runtime feature flags for a specific tenant.
-- Inspect saga workflows and view step details; ability to retry failed steps is available.
+- Issue tick-remediation pause and resume requests for operator-approved scopes.
+- Inspect saga workflows and view step details.
 - Reference [Moderation Policies](./moderation-policies.md) when issuing bans or warnings.
 - View analytics dashboards built with Grafana and Kibana.
 
@@ -26,6 +27,8 @@ GET  /logs
 POST /reports
 POST /moderation/actions
 POST /feature-flags/toggle
+POST /admin/tick-remediation/pause
+POST /admin/tick-remediation/resume
 GET  /sagas
 GET  /sagas/{id}/steps
 ```

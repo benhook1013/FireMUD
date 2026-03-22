@@ -4,7 +4,7 @@
 
 Game Session coordinates with Redis to store volatile session state and command queues and with PostgreSQL to persist durable game-instance control-plane metadata. It provides a single point of truth for current tick and world time while exposing gameplay-session state to the protocol front door.
 
-- PostgreSQL stores game-instance rows, pinned runtime-version/script-patch selections, active runtime feature-flag overrides, and audit-relevant disconnect/remediation metadata.
+- PostgreSQL stores `game_instances`, `game_manifest`, pinned runtime-version/script-patch selections, active runtime feature-flag overrides, and audit-relevant disconnect/remediation metadata.
 - Redis stores gameplay session bindings, tick queues, timers, retries, and region leases.
 - Game Session uses PostgreSQL for durable control-plane metadata and Redis as the coordination plane for gameplay-session bindings, tick queues, timers, retries, and region leases.
 - Session objects are created as soon as a client connects. They remain unauthenticated until Account Service verifies credentials and issues a token.
@@ -36,7 +36,9 @@ Game Session treats Redis Coordination and Cache/Rate-Limit roles as separate co
   - `retry:{tenantRegionTag}`
   - `tick-executor-lease:{tenantRegionTag}`
   - `remote:<tenantId>:<entityId>` and related coordination prefixes listed in the [Redis Cheat Sheet](../../system-architecture-redis-cheatsheet.md)
+- `remote:<tenantId>:<entityId>` remains a best-effort hint marker for cross-region follow-ups; durable follow-up state lives in PostgreSQL via the tick effect ledger and follow-up tables.
 - Coordination keys must be constructed through the shared key builders and script-registry contracts rather than ad-hoc string concatenation in service code.
+- Changes to Game Session Redis usage must also be reviewed against the [Redis Design Checklist](../../system-architecture-redis-design-checklist.md) in addition to the core Redis architecture docs.
 - Game Session may rely on Cache/Rate-Limit Redis for read-side caches that help serve hot-path session views, most notably pre-rendered room LOOK aggregates under `view:room-look:<tenantId>:<gameInstanceId>:<roomInstanceId>` as defined in [Redis Cache & Rate Limiting](../../system-architecture-redis-cache.md#cache-rate-limit-key-catalog).
 - `view:room-look:*` entries are Class B, TTL-only caches. They may become stale briefly, but gameplay correctness still comes from authoritative reads and tick execution rather than cache contents. Underlying world or entity changes do not require synchronous invalidation of these keys; recomputation happens on cache miss or TTL expiry, and correctness-critical flows must not treat the cache as authoritative.
 - Cache prefixes must never be silently repurposed onto Coordination Redis, and new cache usage should be introduced only through the central cache-key catalog rather than ad-hoc per-service naming.

@@ -31,6 +31,19 @@ An OpenAPI specification for the REST endpoints is available at `src/main/resour
 - Procedural population hooks populate rooms with NPCs and loot based on biome and depth by emitting idempotent, tick-driven commands; scripts do not persist world topology and do not directly mutate World Management instance rows.
 - `ScriptQuotaService` enforces fairness quotas and per-script resource limits.
 
+## Document Map
+
+- [API Contracts](./api-contracts.md)
+  - event ingress, control/read APIs, and wire-level ownership for automation-facing contracts.
+- [Runtime and Data](./runtime-and-data.md)
+  - Redis/PostgreSQL ownership, queue/outbox boundaries, quota state, and runtime invariants.
+- [Operations](./operations.md)
+  - readiness/liveness, reload and rollback behavior, and operator-facing runtime guidance.
+- [Configuration](./configuration.md)
+  - environment variables, service discovery, TLS, and configuration source locations.
+- [Script Sandbox & Resource Limits](./sandbox-runtime-design.md)
+  - sandbox execution model, isolation, and detailed resource-limit rules.
+
 ## Dependencies
 
 - **Internal:**
@@ -45,10 +58,6 @@ See [Gateway Architecture](../../system-architecture-gateway.md), [Deployment En
 
 ## Related Documentation
 
-- [API Contracts](./api-contracts.md)
-- [Runtime and Data](./runtime-and-data.md)
-- [Operations](./operations.md)
-- [Configuration](./configuration.md)
 - [Script Sandbox & Resource Limits](./sandbox-runtime-design.md)
 - [System Architecture: Scripting & Automation](../../system-architecture-scripting.md)
 - [Tick System and Runtime Design](../../system-architecture-ticks.md)

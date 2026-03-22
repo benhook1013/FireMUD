@@ -147,6 +147,7 @@ optional metadata.
 - [API Contracts](api-contracts.md) owns the REST/gRPC surface, endpoint index, and proto/OpenAPI pointers.
 - [Configuration](configuration.md) owns environment variables, Redis-role statements, and asset-store configuration.
 - [Operations](operations.md) owns readiness/liveness, saga-operation notes, and local-dev operational guidance.
+- There is intentionally no `runtime-and-data.md` sibling for this service. Runtime/data ownership is split across the narrower canonical docs below because this service is design-time only and its durable concerns are not one coherent runtime surface.
 - [Asset Storage Setup](asset-storage.md) owns asset publishing, manifest, and object-store lifecycle rules.
 - [Game Templates and Configuration Tools](game-templates.md) owns template structure, launch-resolution rules, and launch orchestration boundaries.
 - [Version Control for Design Assets](version-control.md) owns publish history, digests, provenance, and change-vehicle selection.
