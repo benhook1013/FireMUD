@@ -2,7 +2,7 @@
 
 ## 1. Introduction
 
-For a one-page overview, see `core-requirements-summary.md`.
+This document is the canonical product requirements summary and detail set for FireMUD.
 
 ### 1.1 Purpose
 

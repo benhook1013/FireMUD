@@ -127,4 +127,4 @@ These transcripts make it easy to add regression assertions for failure paths an
 
 ---
 
-Note: After completing tasks in this checklist, reconcile any overlapping items in the existing per-service task lists and design docs so the architecture docs reflect the new chat slice instead of duplicating details.
+Note: After completing tasks in this checklist, reconcile any overlapping items in the existing per-service status docs and design docs so the architecture docs reflect the new chat slice instead of duplicating details.

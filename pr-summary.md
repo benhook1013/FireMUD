@@ -1,25 +1,35 @@
 ## Summary
-- bump the Checkstyle toolchain again as a normal upstream dependency refresh
-- keep the earlier SpotBugs/tool-version alignment in place from the previous follow-up commit
-- reduce the remaining ORT advisory surface without adding transitive override hacks
-- make the weekly ORT workflow report-only so it stays useful while the remaining accepted transitive/tooling debt is still unresolved
+- rename the per-service planning docs from `task-list-*.md` to `service-status-*.md`
+- convert those files from stale backlogs into short implementation-status summaries
+- make `design/project-management/task-list.md` a thin planning index instead of a historical mega-backlog
+- remove the redundant `core-requirements-summary.md` file and trim `design-assumptions.md` into a short orientation note
 
 ## What changed
-- updates the root Checkstyle tool version in `build.gradle.kts` from `12.1.1` to `13.3.0`
-- keeps Checkstyle / SpotBugs version alignment centralized in the root build so analysis-tool dependencies do not drift between root and subprojects
-- changes `.github/workflows/ort-advisory.yml` so the ORT scan still evaluates `fail-on: violations`, but the workflow itself does not stay permanently red on the currently accepted remaining findings
-- preserves ORT artifact/report generation so the weekly job remains a useful monitoring signal
-- intentionally stops short of forcing recursive transitive overrides for the remaining ORT findings (`commons-lang3` under Doxia, SpotBugs/log4j, and the older Netty path)
+- added `design/project-management/service-status-*.md` files for:
+  - account-service
+  - automation-scripting-service
+  - entity-management-service
+  - game-design-service
+  - game-logic-service
+  - game-session-service
+  - logging-admin-service
+  - social-groups-service
+  - spring-cloud-gateway
+  - tcp-proxy-service
+  - web-client
+  - world-management-service
+- removed the old per-service `task-list-*.md` files they replace
+- rewrote `design/project-management/task-list.md` as a top-level planning index that points to:
+  - active vertical-slice task docs
+  - per-service status summaries
+- updated references in project-management, architecture, and vertical-slice docs to use the new `service-status-*` naming
+- removed `design/project-management/core-requirements-summary.md`
+- updated references to point back to `design/project-management/core-requirements.md`
+- trimmed `design/project-management/design-assumptions.md` into a short orientation/defaults snapshot instead of a duplicate architecture summary
 
 ## Validation
-- `./gradlew :account-service:dependencyInsight --dependency commons-beanutils --configuration checkstyle`
-- `./gradlew :account-service:dependencyInsight --dependency commons-lang3 --configuration checkstyle`
-- `./gradlew :account-service:checkstyleMain -PfullCheck`
-- `./gradlew spotlessApply`
-- `./gradlew check`
+- `./gradlew linkCheck lintMarkdown`
 
 ## Notes
-- This is a follow-on PR after `#2170` merged.
-- The clean Checkstyle bump moved `commons-beanutils` to `1.11.0`.
-- Remaining ORT issues now look like deeper transitive/tooling debt rather than straightforward version bumps, so they were deliberately left out of this PR.
-- The ORT workflow change is meant to avoid training everyone to ignore a permanently red weekly job while still keeping the advisory output visible.
+- active implementation planning now lives in `design/project-management/vertical-slices/`
+- per-service project-management docs are now narrative status summaries rather than working TODO lists

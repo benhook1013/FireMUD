@@ -1,63 +1,39 @@
 # FireMUD Design Assumptions
 
-This document outlines high-level design and technology assumptions for the FireMUD platform. These are not strict requirements but represent current architectural choices. Alternative approaches may still be considered where appropriate.
+This document is a short orientation note for the default architectural assumptions behind FireMUD. It is not the source of truth for detailed design decisions; use the architecture docs under [`design/architecture/`](../architecture/) for canonical contracts and current target-state behavior.
 
-## Backend
+## Product and Platform Shape
 
-### Core Technologies
+- FireMUD is a multi-tenant MUD hosting platform.
+- The platform supports creator-managed games, shared platform accounts, and per-game characters.
+- The runtime is text-first and supports both WebSocket and Telnet gameplay clients.
+- The system is designed as a microservice platform with strong service ownership boundaries.
 
-- **Language**: Java 21+
-- **Framework**: Spring Boot 3.x
-- **Architecture**: Microservices (see [System Architecture Overview](../architecture/system-architecture-overview.md))
-- **Boilerplate Reduction**: Lombok
-- **DTO Mapping**: MapStruct
-- **Build Integration**: Each service declares Lombok and MapStruct dependencies with annotation processors enabled.
-- **Data-Driven Rules**: Game definitions and rules can be edited via tooling without redeploying code. See [Game Design Service](../architecture/microservices/game-design-service/README.md).
+## Technical Defaults
 
-### Deployment & Networking
+- Backend: Java 21+, Spring Boot, gRPC, PostgreSQL, Redis.
+- Frontend: React and TypeScript.
+- Deployment: Docker and Kubernetes.
+- Internal service-to-service communication: gRPC secured with mTLS.
+- External/browser gameplay ingress: Spring Cloud Gateway.
+- Telnet ingress: TCP Proxy Service bridging into the shared gameplay path.
 
-- **Containerization**: Docker
-- **Orchestration**: Kubernetes
-- **Service Discovery**:
-  - **Local Development**: Docker internal DNS-based discovery
-  - **Production**: Kubernetes DNS-based discovery
-- **API Gateway**: Spring Cloud Gateway
-- **TCP Proxy Service** bridges Telnet clients to the Gateway via WebSocket
-- **Inter-Service Communication**: gRPC secured with mTLS and instrumented with logging, metrics, and tracing interceptors (see [gRPC Architecture](../architecture/system-architecture-grpc.md))
-- **Real-Time Networking**: WebSocket/TCP
+## Data and Runtime Defaults
 
-### Data & Session Management
+- PostgreSQL is the authoritative system of record.
+- Redis is used only for transient coordination, session state, and cache/rate-limit behavior defined in the architecture docs.
+- Game Session owns gameplay-session ingress, session binding, and tick coordination responsibilities.
+- Design-time data and runtime data are intentionally separated.
 
-- **Database**: PostgreSQL
-- **Database Access**: Spring Data JPA
-- **Caching**: Redis for transient session and gameplay state
-- **Redis Coordination Semantics**: Lua scripts provide atomic, shard-local updates on a single primary. Replication remains asynchronous; the platform assumes that some recent coordination writes may be lost or rolled back around failover and relies on idempotent tick replays plus PostgreSQL as the source of truth to repair or reapply state (see [Redis Architecture](../architecture/system-architecture-redis.md) and [Tick System](../architecture/system-architecture-ticks.md#crash-recovery-and-replay)).
-- **Game Session Service** orchestrates ticks using Redis and loads runtime feature flags from PostgreSQL (see [Tick System](../architecture/system-architecture-ticks.md) and [Versioning & Runtime Configuration](../architecture/system-architecture-versioning-runtime.md))
-- **Feature Flags** are defined in the Game Design Service and toggled at runtime via the Logging & Admin Service.
-- **Single Session** per character with layered reconnection (Proxy → Gateway → Session) (see [Reconnection Strategy](../architecture/system-architecture-reconnection.md))
-- **Multi-Tenancy**: `tenantId` column on all tables with isolation enforced in each service (see [Multi-Tenancy Architecture](../architecture/system-architecture-multi-tenancy.md))
+## Operational Defaults
 
-### Operations & Support
+- Observability uses Prometheus, Grafana, OpenTelemetry, and centralized log aggregation.
+- CI/CD runs through GitHub Actions.
+- TLS and mTLS certificate management is based on cert-manager in Kubernetes-oriented environments.
+- Backups, recovery, deployment, and rollback behavior are defined in the operations architecture docs rather than here.
 
-- **Monitoring & Logging**: Fluent Bit, Elasticsearch, Kibana, Grafana, Prometheus, OpenTelemetry, Alertmanager with Micrometer instrumentation (see [Logging & Monitoring](../architecture/system-architecture-logging-monitoring.md))
-- **CI/CD**: [GitHub Actions](../architecture/system-architecture-cicd.md)
-- **Certificate Management**: cert-manager issues TLS and mTLS certificates stored as Kubernetes Secrets with hot reload via shared watchers (see [Security Architecture](../architecture/system-architecture-security.md))
-- **Cluster Backups**: **Velero** backs up Kubernetes manifests only. PostgreSQL volumes are dumped via a CronJob. See [Backup & Disaster Recovery](../architecture/system-architecture-backup-recovery.md) for the backup schedule.
-- **Payment Gateway**: Stripe (with custom subscription integration)
+## How To Use This File
 
-## Frontend
-
-- **Language**: TypeScript
-- **Framework**: React
-- **Styling**: Material-UI
-
-## Platform Interfaces
-
-- **Web-based MUD Client**: Browser-based interface for players. See [web-client README](../../web-client/README.md).
-- **Web-based MUD Game Editor**: Browser-based editor for designing game content, built on the Game Design Service UI.
-
-## Testing
-
-- **Unit Testing**: JUnit, Mockito
-- **Integration Testing**: Spring Test
-- **Load Testing**: Gatling (module `dev-tools/load-testing`)
+- Use this file when you need a quick “what kind of system is this?” summary.
+- Do not use this file as a planning document, implementation checklist, or architecture authority.
+- When this file and the architecture docs disagree, the architecture docs win.

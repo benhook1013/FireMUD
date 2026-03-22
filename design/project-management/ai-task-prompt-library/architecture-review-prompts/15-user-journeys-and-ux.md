@@ -9,7 +9,7 @@ Read the following documents. Follow references only when a listed document clea
 - `design/user-guides/game-creator-guide.md`
 - `design/architecture/game-customization-options.md`
 - `design/project-management/core-requirements.md`
-- `design/project-management/core-requirements-summary.md`
+- `design/project-management/core-requirements.md`
 
 Then:
 
