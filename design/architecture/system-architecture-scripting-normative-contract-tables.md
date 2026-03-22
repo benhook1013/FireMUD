@@ -11,7 +11,7 @@ When documents disagree, resolve conflicts in this order:
 1. `system-architecture-scripting-normative-contract-tables.md` (this document)
 2. `system-architecture-scripting-observability-contract.md` (metric/audit behavior not fully enumerated in tables)
 3. `system-architecture-scripting-contracts.md` (cross-service invariants)
-4. `system-architecture-scripting-control-plane-api.md` (operator API/event shapes)
+4. `system-architecture-scripting-control-plane-api.md`, `system-architecture-scripting-control-plane-events.md`, and `system-architecture-scripting-control-plane-operations.md` (operator API shapes, event families, and workflow sequencing)
 5. DSL/service/hub docs (`system-architecture-scripting-dsl-reference-and-lifecycle.md`, service READMEs, and overview hubs)
 
 ## Table of Contents

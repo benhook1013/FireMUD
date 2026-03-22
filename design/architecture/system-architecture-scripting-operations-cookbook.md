@@ -147,7 +147,7 @@ At a minimum, rollback consists of:
    - Return Automation & Scripting admission to normal only after cancel/purge completes and rollback draining confirms that pre-pause executions and cancelable outbox work for the current rollback-scope `admissionEpoch` have quiesced, then resume ticks.
    - If an old-epoch execution reaches persist or handoff checks after rollback pause has advanced the scope `admissionEpoch`, it must fail as a non-success canceled outcome rather than creating new live work. Operators should expect to see these rows in `script_event_audit` during rollback convergence and draining.
 
-Rollback orchestration should be modeled as a durable state machine (`PAUSING`, `REPINNING`, `CANCELING`, `PURGING`, `CONVERGING`, `DRAINING`, `RESUMING`, `COMPLETED`, terminal `TIMED_OUT`) keyed by `controlPlaneRequestId` so partial failures can be resumed deterministically.
+Rollback orchestration should be modeled as a durable state machine (`PAUSING`, `REPINNING`, `CANCELING`, `PURGING`, `CONVERGING`, `DRAINING`, `RESUMING`, `COMPLETED`, terminal `ROLLBACK_CONVERGENCE_TIMEOUT`) keyed by `controlPlaneRequestId` so partial failures can be resumed deterministically.
 
 Concrete rollback sequence example:
 
@@ -191,7 +191,7 @@ Operator actions:
 3. Roll back the active script patch if necessary.
    - If regressions are widespread or difficult to isolate, use Logging & Admin or Game Session tooling to repin the game back to the previous known-good `scriptPatchVersion` for the affected tenant and game instance. Concretely:
      - Query the Automation & Scripting Service via read-only APIs such as `GetScriptPatchStatus(tenantId, scriptPatchVersion)` and `GetScriptPatchInstanceRolloutStatus(...)` (or consume `ScriptPatchTenantStatusChanged` / `ScriptPatchInstanceRolloutChanged` events) to confirm tenant readiness and instance rollout state.
-     - Call the Game Session control-plane APIs to update the pin (for example `SetPinnedScriptPatchVersion` or `RollbackScriptPatchVersion`) following the contract in [Scripting & Automation: Control Plane API](./system-architecture-scripting-control-plane-api.md).
+     - Call the Game Session control-plane APIs to update the pin (for example `SetPinnedScriptPatchVersion` or `RollbackScriptPatchVersion`) following the request/response contracts in [Scripting & Automation: Control Plane API](./system-architecture-scripting-control-plane-api.md) and the sequencing rules in [Scripting & Automation: Control Plane Operations](./system-architecture-scripting-control-plane-operations.md).
    - Repinning does not attempt to backfill skipped triggers or rewrite existing automation queues; automation and tick processing continue from the current point in time under the older patch, and at-most-once guarantees for past triggers are preserved.
    - Repinning must also ensure rollback safety:
      - Automation admission should remain paused for the affected scope while repin and cancel/purge steps run.

@@ -45,6 +45,9 @@ spec:
         - record: backup_pipeline_recent_verification_slo_breached
           expr: |
             time() - backup_verify_last_success_timestamp_seconds > 24 * 60 * 60
+        - record: backup_pipeline_recent_restore_drill_slo_breached
+          expr: |
+            time() - backup_restore_drill_last_success_timestamp_seconds > 14 * 24 * 60 * 60
         - record: backup_tick_pause_wait_budget_breached
           expr: |
             backup_tick_pause_wait_seconds > backup_tick_pause_wait_budget_seconds
@@ -275,6 +278,17 @@ spec:
           annotations:
             summary: Backup verification has not succeeded recently
             description: No successful backup verification run has been recorded in the last 24 hours. Investigate the verify-backups CronJob and storage configuration.
+        - alert: BackupPipelineNoRecentRestoreDrill
+          expr: backup_pipeline_recent_restore_drill_slo_breached > 0
+          for: 30m
+          labels:
+            service: postgres-backup
+            severity: P1
+            owner: infra
+            runbook: design/architecture/system-architecture-backup-recovery.md#backup-verification-restoration-testing
+          annotations:
+            summary: Restore drill proof is stale
+            description: No successful restore drill has been recorded within the required restore-proof freshness window. Investigate drill cadence and recovery evidence before traffic reopen decisions.
         - alert: BackupTickPauseTooLongScoped
           expr: backup_tick_pause_duration_budget_breached > 0
           for: 5m
@@ -315,7 +329,7 @@ spec:
             service: postgres-backup
             severity: P2
             owner: infra
-            runbook: design/architecture/system-architecture-backup-recovery.md#tick-pause-scope-migration-plan-normative
+            runbook: design/architecture/system-architecture-backup-recovery.md#tick-pause-scope-migration-plan
           annotations:
             summary: Backup controls still use alias scope
             description: One or more backup pause/resume requests still relied on game_instance_id alias scope during the last 24 hours.

@@ -32,7 +32,7 @@ Rollback orchestration rules:
 - Pinning must satisfy base-version cohesion (`patch.baseVersionId == runtimeVersionId` for the instance).
 - Rollback convergence waiting is bounded. If `GetAutomationPinConvergence` plus Game Session convergence checks do not match the expected `controlPlaneRequestId` before the configured timeout, rollback enters terminal timeout state (`ROLLBACK_CONVERGENCE_TIMEOUT`) and admission and ticks remain paused until explicit operator action.
 - Timeout transition must emit `ScriptRollbackConvergenceTimedOut` and increment `automation_rollback_convergence_timeout_total{tenantId, gameInstanceId, reason}`.
-- Rollback orchestration should be implemented as an explicit durable state machine (`PAUSING`, `REPINNING`, `CANCELING`, `PURGING`, `CONVERGING`, `DRAINING`, `RESUMING`, `COMPLETED`, terminal `TIMED_OUT`) so partial failures can resume from last durable state instead of restarting or accidentally unpausing.
+- Rollback orchestration should be implemented as an explicit durable state machine (`PAUSING`, `REPINNING`, `CANCELING`, `PURGING`, `CONVERGING`, `DRAINING`, `RESUMING`, `COMPLETED`, terminal `ROLLBACK_CONVERGENCE_TIMEOUT`) so partial failures can resume from last durable state instead of restarting or accidentally unpausing.
 - `DRAINING` remains active until `GetAutomationDrainStatus` confirms that the current rollback-scope `admissionEpoch` has no active pre-pause executions and no remaining cancelable outbox work.
 
 ## Metrics and Audit Guidance

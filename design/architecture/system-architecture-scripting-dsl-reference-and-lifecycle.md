@@ -1,6 +1,6 @@
 # FireMUD System Architecture: Scripting DSL Reference & Event Lifecycle
 
-This document is the **canonical reference** for the scripting DSL’s terminology, execution lifecycle, semantics, and failure modes. It is intended for implementers and backend developers integrating with the Automation & Scripting Service, Tick System, and related infrastructure. For sandbox enforcement details (CPU, time, and memory budgets, and how failures surface in `script_event_audit`), pair this document with `design/architecture/microservices/automation-scripting-service/sandbox-runtime-design.md`, which is the canonical spec for the sandbox engine itself.
+This document is the **canonical reference** for the scripting DSL’s terminology, lifecycle states, semantics, determinism rules, and author-facing behavior. It is intended for implementers and backend developers integrating with the Automation & Scripting Service, Tick System, and related infrastructure. Runtime execution flow, outbox behavior, Redis/runtime integration, and execution-state ownership now live in the sibling document `design/architecture/system-architecture-scripting-runtime-execution.md`; scheduler/timer leadership remains in `design/architecture/system-architecture-scripting-scheduler-and-timers.md`. For sandbox enforcement details (CPU, time, and memory budgets, and how failures surface in `script_event_audit`), pair these docs with `design/architecture/microservices/automation-scripting-service/sandbox-runtime-design.md`, which is the canonical spec for the sandbox engine itself.
 
 Document conflict resolution order is defined in `design/architecture/system-architecture-scripting-normative-contract-tables.md#document-precedence-normative`. This document provides DSL/runtime semantics and must align with higher-precedence contract documents.
 
@@ -12,6 +12,7 @@ It is a companion to:
 - `design/architecture/system-architecture-ticks.md` – tick model, idempotency rules, and replay semantics.
 - `design/architecture/system-architecture-transactions.md` – transaction patterns and idempotent downstream operations.
 - `design/architecture/system-architecture-versioning-runtime.md` – script-only patch versions and runtime configuration.
+- `design/architecture/system-architecture-scripting-runtime-execution.md` – runtime execution flow, outbox behavior, Redis/runtime integration, and execution-state ownership.
 - `design/architecture/microservices/automation-scripting-service/README.md` – service-level design and implementation details.
 
 For a higher-level routing guide to all scripting and automation docs, see the **Who Should Read What** and **Where to Find Details** sections in `design/architecture/system-architecture-scripting.md`.
@@ -22,6 +23,7 @@ For a higher-level routing guide to all scripting and automation docs, see the *
 - [Terminology Glossary](#terminology-glossary)
 - [Versioning Terms](#versioning-terms)
 - [Script Execution Lifecycle](#script-execution-lifecycle)
+- [Work Item Outbox Contract](#work-item-outbox-contract-normative)
 - [`scriptEventId` Lifecycle and Deduplication](#scripteventid-lifecycle-and-deduplication)
 - [Supported Script Events](#supported-script-events)
 - [Event Fan-Out and Handler Ordering](#event-fan-out-and-handler-ordering)
@@ -83,76 +85,13 @@ Triggers lead to DSL runs, which produce script work items in the automation que
 
 ## Work Item Outbox Contract (Normative)
 
-The Automation & Scripting Service must treat Redis automation queues (`automation:queue:*`) as derived indexes/pointers only. The authoritative record of admitted post-DSL work is the durable work item outbox.
-
-This section defines the minimum contract that makes “persist → index → drain → handoff” interoperable and rollback-safe across services and operational tooling.
-
-### Minimum Outbox Record Fields
-
-Each persisted script work item must include:
-
-- Trigger Identity fields from `design/architecture/system-architecture-scripting-normative-contract-tables.md#table-1-trigger-identity-required-fields` (including `gameInstanceId` and, for gameplay/runtime triggers, `regionEpoch`).
-- `outboxWorkItemId` (stable unique identifier).
-- `createdAt` and `updatedAt`.
-- `workItemStatus` (see below).
-- `commands` (the domain commands payload, stored durably).
-- `commandCount` (for budgeting/inspection).
-- `cancelReason` (nullable; required when canceled).
-
-### Minimum Status Model
-
-Statuses are a target-state contract; implementations may use different internal names as long as they are mapped 1:1:
-
-- `PENDING` – persisted, eligible for indexing and draining.
-- `INDEXED` – a pointer/index has been published into `automation:queue:*` (best-effort; may be rederived).
-- `HANDOFF_IN_FLIGHT` – being handed off to Game Session (idempotent retries allowed).
-- `HANDED_OFF` – Game Session has accepted the corresponding tick commands into tick queues (`script_event_audit.finalStage=TICK_HANDOFF` is now eligible for `finalOutcome=success`).
-- `CANCELED` – permanently canceled by control plane (for example rollback, disable, or operator purge).
-- `DEAD_LETTERED` – permanently non-progressing due to repeated infrastructure failures; bounded retention and operator visibility are required.
-
-### Pointer Payload Contract for `automation:queue:*`
-
-Entries in `automation:queue:{tenantInstanceTag}:<entityId>` must contain enough information to locate and safely process the durable outbox record:
-
-- `outboxWorkItemId`
-- A minimal identity checksum (for example `gameInstanceId`, `scriptPatchVersion`, optional `pluginVersionId`) so rebuild/drain logic can detect version-fence mismatches early without reading full payloads.
-
-The pointer/index format must be forward-compatible (versioned envelope) so it can evolve without requiring out-of-band Redis migrations.
-
-### Rebuild and Deduplication Rules
-
-- Rebuilding `automation:queue:*` from the outbox must be safe to run repeatedly and concurrently (idempotent projection).
-- `ScriptTickService` must dedupe drain/handoff by `outboxWorkItemId` (not by Redis list position) so queue resets, re-indexing, and retries do not cause double-handoff.
-- `CancelPendingWorkItemsForPatch` and `CancelPendingWorkItemsForPluginVersion` must be implemented as outbox state transitions (`workItemStatus=CANCELED`) so cancellation is durable even if Redis is reset. Cancellation must be reflected in `script_event_audit` stage-aware outcomes (for example `finalStage=ADMISSION` with a cancel outcome/reason for newly arriving triggers, and non-success outcomes for already persisted work that is canceled before handoff).
-
-### Operational Constraints
-
-- Outbox scanning for rebuild and cancellation must be bounded and backpressured (pagination, time windows, per-tenant limits) so it cannot become an unbounded full-table scan on large tenants.
-- Outbox retention must be explicitly defined for `HANDED_OFF`, `CANCELED`, and `DEAD_LETTERED` records, and must preserve enough history for rollback diagnosis and audit queries.
+The authoritative outbox, queue-pointer contract, and drain/handoff semantics now live in [Scripting Runtime Execution](./system-architecture-scripting-runtime-execution.md#work-item-outbox-contract-normative). This DSL reference keeps the anchor so existing readers can jump to the runtime owner without losing the lifecycle overview.
 
 ---
 
 ## `scriptEventId` Lifecycle and Deduplication
 
-`scriptEventId` is the canonical identifier for a single script trigger/run; it appears on automation queue entries, tick commands, and `script_event_audit` rows so behavior can be correlated end-to-end.
-
-- **Generation rules**
-  - For **external events** (for example, `onEnterRegion`, `onSpawn`, `onCommand`, and custom service events), the **event source** that owns the trigger (typically the Game Session Service or another domain service) creates a `scriptEventId` when the event is first emitted and includes it in the `TriggerScriptEvent` payload. If the caller retries the gRPC call due to infrastructure errors, it must reuse the same `scriptEventId` so the Automation & Scripting Service can recognize the trigger as the same logical event.
-  - For **scheduler-originated events** such as `onInterval` and `onTimerExpire`, the **Automation & Scripting Service scheduler** creates the `scriptEventId` when the timer or interval becomes due.
-  - For **dry-run/test invocations**, the Automation & Scripting Service generates `scriptEventId` by default so test tooling does not create cross-client collisions. If caller-supplied IDs are allowed for specific tooling, they must still be validated in the dry-run namespace and rejected on collision.
-
-- **Uniqueness scope**
-  - Uniqueness is enforced over the full **Trigger Identity** field set, including `gameInstanceId` and (for gameplay/tick-aligned triggers) `regionEpoch`. The authoritative field list and required due-point rules for scheduler triggers live in `design/architecture/system-architecture-scripting-normative-contract-tables.md#table-1-trigger-identity-required-fields`.
-  - There is no requirement for global uniqueness across all tenants; downstream idempotency keys are derived from stable tuples such as `<tenantId, regionId, regionEpoch, entityId, scriptId, scriptEventId, tickId, scriptPatchVersion>` depending on the call path.
-
-- **Deterministic scheduler IDs**
-  - Scheduler-originated `scriptEventId` values must be deterministic so leader failover and bounded catch-up do not double-fire.
-  - The specific encoding is an implementation detail, but it must be derived from stable inputs (for example `<tenantId, gameInstanceId, regionId, regionEpoch, entityId, scriptId, eventType, dueTickId|dueAt, scriptPatchVersion[, pluginId, pluginVersionId]>`), not from process-local randomness.
-
-- **Handling retries and duplicates**
-  - The Automation & Scripting Service treats script execution as **at-most-once per Trigger Identity**, as defined in the uniqueness scope above. If it receives a duplicate delivery for the same Trigger Identity—for example, because the caller retried a gRPC call—it does **not** re-run the DSL graph for that trigger. Instead it consults existing `script_event_audit` state and treats the duplicate as a replay of an already completed or skipped trigger.
-  - Duplicate delivery handling must preserve a single `script_event_audit` row per Trigger Identity with monotonic stage progression; retries update existing state and must not create parallel audit rows.
-  - Downstream services and replay tools rely on stable idempotency tokens derived from Trigger Identity plus tick context when applicable (for example including `tickId` and `regionEpoch`). Commands produced by scripts must carry enough metadata to correlate retries with the original trigger without introducing new high-cardinality metric labels.
+`scriptEventId` remains the canonical identifier for a single script trigger/run, but the runtime ownership, downstream propagation, and deduplication contract now live in [Scripting Runtime Execution](./system-architecture-scripting-runtime-execution.md#scripteventid-lifecycle-and-deduplication). Use this DSL reference for event meaning and author-facing lifecycle, and the runtime doc for queueing, handoff, and idempotent replay behavior.
 
 ---
 
@@ -499,63 +438,7 @@ Script executions are treated as **at-most-once per trigger** at the scheduler l
 
 ## Integration with Game Logic & Tick System
 
-- **Scripts do not execute inside the tick system.** The Automation & Scripting Service evaluates scripts independently—on a schedule, via timers, or in response to events—and enqueues the resulting commands into each entity's command queue.
-- These queued commands run during the **next tick cycle** via the normal Game Session and Game Logic flow, ensuring deterministic, replayable behavior that follows the tick system's fairness and retry rules.
-- Script evaluation never blocks or interferes with tick execution. Scripts can still react to world events, NPC states, or timers provided by the tick system.
-- Script-generated commands—like any gameplay command—may fail due to lock contention or target remote regions. These cases are automatically handled by the Game Session Service via standard tick rescheduling and cross-region routing logic.
-- The Automation & Scripting Service only determines which commands to inject. It may query world state via gRPC but never mutates entity or world data directly—every action passes through the Game Session Service so tick regions remain consistent.
-
-### Output Budgeting and Command Fan-Out
-
-Admission and sandboxing must bound not only how often a handler runs, but also how much work a single admitted run can emit:
-
-- Each DSL run must enforce explicit output budgets before a work item is persisted, including:
-  - `maxCommandsPerRun`
-  - `maxCommandsPerEntityPerTrigger`
-  - `maxSerializedWorkItemBytes`
-  - Optional per-command payload ceilings for known large command families
-- Exceeding an output budget must fail deterministically with a non-success stage-aware outcome. Implementations may classify this at `DSL_EVAL` or `WORK_ITEM_PERSIST`, but `finalReason` must use bounded canonical codes such as `command_count_exceeded`, `per_entity_command_limit_exceeded`, or `work_item_size_exceeded` rather than collapsing the failure into an undifferentiated sandbox error.
-- Output budgets apply equally to core scripts and plugins.
-- Publish-time validation in Game Design should perform conservative worst-case fan-out analysis for bounded loops and bulk action nodes. Graphs whose statically bounded output exceeds runtime ceilings should be rejected before publish whenever feasible.
-
-### Budget Charge Points
-
-Quota and budget accounting must be deterministic so operators can reason about load and so retries do not double-charge:
-
-- **Event-scope ingress admission** does not itself consume per-script quota windows or tenant runtime budgets. Charging begins only after bindings have been resolved into handler-scoped Trigger Identities.
-- **Per-script quota windows** are charged once per resolved handler at handler admission time:
-  - a handler admitted immediately to sandbox work consumes one quota slot at admission;
-  - a handler accepted into a bounded `queue_until_free` waiting queue also consumes one quota slot immediately and must not be charged again when execution later starts;
-  - duplicate deliveries for the same handler-scoped Trigger Identity must not consume additional quota.
-- **Per-tenant and cluster execution budgets** are charged when a handler-scoped run leaves admission and is reserved onto sandbox execution capacity. These budgets are not charged for runs rejected at `ADMISSION`.
-- Budget consumption is **not refunded** for runs that later fail with `sandbox_error`, `validation_error`, output-budget failure, rollback-epoch cancellation, or downstream infrastructure failure after the charge point. The consumed capacity was still spent or reserved.
-- `onLoad` readiness work uses a separate publish-time budget class and must never consume the ordinary live per-script quota window or tenant runtime execution budget.
-- Implementations may expose additional budget dimensions, but they must map to one of the charge points above rather than inventing ad hoc charging semantics per caller or per service.
-
-### Ordering Between Player and Script Commands
-
-- Each entity has a **single authoritative command queue** in Redis (for example, `tick:{tenantRegionTag}:queue:<entityId>`) that contains both player-originated commands and script-generated commands.
-- Commands are appended to this queue in the order they are accepted by the Game Session Service. Script-generated commands are accepted via internal gRPC from Automation & Scripting and then enqueued by Game Session using the same tick queue append semantics as player commands. Within a given entity’s queue, commands are therefore processed in **FIFO order**, regardless of whether they came from a player or a script.
-- During tick processing, the Game Session Service:
-  - Reads at most one command per entity per tick from this combined queue.
-  - Applies its existing fairness and conflict-resolution rules (as described in the tick architecture) when deciding which entities to service on a given tick.
-- Script-generated commands carry `scriptEventId`, `scriptId`, and (when applicable) upstream ordering tokens such as `tickId` from custom events. Combined with the per-entity FIFO queue and the monotonic `tickId` stream, this ensures that:
-  - The order in which commands affect an entity is deterministic for a given event stream and configuration.
-  - Automation ticks cannot “jump ahead of” or reorder already-queued player commands for the same entity; they simply contribute additional commands into the same ordered queue that ticks consume.
-
-### Redis Key Summary for Scripting
-
-The main Redis keys used by the Automation & Scripting Service are:
-
-| Key pattern | Owner / service | Purpose | Hash tag / shard scope | TTL / retention expectations |
-| --- | --- | --- | --- | --- |
-| `automation:queue:{tenantInstanceTag}:<entityId>` | Automation & Scripting | Per-instance, per-entity queue of post-DSL script work item *indexes* awaiting automation ticks. | Single-key queue per entity within an instance scope; automation ticks drain these and hand off resulting commands to Game Session for enqueue into tick queues. | Reset-tolerant, best-effort derived index; authoritative pending work items are persisted durably in PostgreSQL (outbox) so this queue can be rebuilt. Loss/reset must be observable (metrics + `script_event_audit`). Any TTL is a short safety valve, not long-term storage. |
-| `automation:tick:{tenantInstanceScriptTag}:lock` | Automation & Scripting (`ScriptTickService`) | Per-instance, per-script automation tick lock to serialize staging for a script’s work batch. | Hash-tagged on `{tenantInstanceScriptTag}` so multi-key operations remain shard-local. | Short-lived lock; lifetime bounded by a single automation tick batch and its retry window. |
-| `automation:tick:{tenantInstanceScriptTag}:queue` | Automation & Scripting (`ScriptTickService`) | Staging queue for batched script events before they are written into per-entity tick queues. | Hash-tagged on `{tenantInstanceScriptTag}` so staging, draining, and metrics are shard-local. | Short-lived staging; drained quickly by automation ticks. |
-| `automation:timer:{tenantRegionTag}` | Automation & Scripting scheduler | Region-scoped index of script timers and intervals (`onTimerExpire`, `onInterval`, `intervalTicks`). Stored entries and durable identities remain instance-aware (`gameInstanceId`, and plugin identifiers when applicable) even though the Redis key is region-scoped. | Hash-tagged on `{tenantRegionTag}` so scheduler coordination stays shard-local with the region's authoritative tick stream and reset scope. | Persistent while timers are active; entries are added and removed as timers are created and satisfied. |
-| `script-leader:{<tenantId>}` | Automation & Scripting scheduler | Leadership lease for scheduler coordination per tenant. | Hash-tagged per tenant. | Short-lived lease refreshed by the active scheduler instance. |
-
-For additional details and any new key patterns, see the Automation & Scripting Service README and Redis design docs.
+Runtime integration, output budgeting, command ordering, and Redis key ownership now live in [Scripting Runtime Execution](./system-architecture-scripting-runtime-execution.md#runtime-execution-flow). This DSL reference keeps the heading as a stable entry point because readers often arrive here first when tracing event semantics into runtime behavior.
 
 ---
 
@@ -569,94 +452,4 @@ The detailed timer, scheduler, and reload lifecycle contracts now live in a focu
 
 ## Failure Modes and Error Handling
 
-Script executions are treated as **at-most-once per trigger**. Combined with quotas and circuit breakers (covered in `design/architecture/system-architecture-scripting-quotas-and-operations.md`), this ensures that misbehaving scripts cannot hot-loop or consume unbounded resources.
-
-Common outcome classes include:
-
-- `success` – script ran and enqueued commands.
-- `quota_denied` – `ScriptQuotaService` limit exceeded before execution.
-- `sandbox_error` – exception in the sandboxed DSL runtime or validation failure.
-- `validation_error` – static validation on inputs or script configuration failed.
-- `disabled_due_to_errors` – failure-rate circuit breaker opened for the script.
-- `version_unavailable` – trigger referenced a script patch version that failed reload or is unknown.
-- `signer_policy_unavailable` – plugin trigger could not be admitted because signer policy could not be refreshed/verified.
-- `infrastructure_error` – transient infrastructure issues such as gRPC `UNAVAILABLE` or Redis timeouts.
-- `validation_error` with `finalReason=unsafe_component` – script was refused because it depends on a DSL component version marked `UNSAFE`.
-
-Component safety classification for **core scripts** is fixed at validation and readiness time, not reevaluated as a live runtime policy on already-`READY` patches:
-
-- When a component version is reclassified as `UNSAFE`, new publishes, republish attempts, and tenant readiness transitions that reference it must fail with `validation_error` / `unsafe_component`.
-- A patch that is already `READY` or currently pinned does not automatically become unrunnable solely because a component was reclassified later.
-- Immediate containment of live traffic in that situation remains an explicit operator action (`runtimeStatus=DISABLED`, patch rollback, or both), not an implicit safety-policy rollout.
-
-Outcome taxonomy must distinguish “DSL evaluated” from “commands were accepted into the tick system”. Do not record `success` for a trigger if the resulting commands were not accepted into the tick queues.
-
-For audit records, outcomes are **stage-aware** (admission vs DSL evaluation vs work-item persistence vs tick handoff) and are recorded as `finalStage` + `finalOutcome` / `finalReason` (and optionally a per-stage breakdown) as specified in `design/architecture/system-architecture-scripting-observability-contract.md`.
-
-Retry behavior:
-
-- Logical failures (`sandbox_error`, `validation_error`, `quota_denied`, `disabled_due_to_errors`, `version_unavailable`) are treated as **final** for a trigger; the scheduler does not re-run the script body for the same `scriptEventId`.
-- Backpressure outcomes (for example `finalOutcome=skipped_reloading` or `finalOutcome=skipped_rollback_pause` at `finalStage=ADMISSION`) are not treated as final for low-rate external events; callers may retry the same Trigger Identity until admitted or until their bounded retry policy expires.
-- Infrastructure errors **may be retried** by lower layers following platform-wide retry policies and idempotency contracts, but those retries operate only on idempotent downstream operations, not on the DSL body.
-
-When script components call other services over gRPC, they must pass a stable idempotency key derived from Trigger Identity plus tick context when applicable (for example including `entityId`, `eventType`, `scriptPatchVersion`, `scriptEventId`, and `tickId`/`regionEpoch`) and rely on the transaction strategies in `design/architecture/system-architecture-transactions.md` so those downstream operations can be safely retried without duplicating effects.
-
-## Version Fencing and Rollback Safety
-
-Rollback of a script patch must not allow previously queued work from the rolled-back patch to continue affecting gameplay.
-
-To achieve this:
-
-- Script work items and tick commands carry the effective `scriptPatchVersion` used to produce them.
-- Game Session enforces a version fence at execution time: commands whose `scriptPatchVersion` does not match the game instance’s currently pinned value are rejected and recorded for audit/diagnosis.
-- Operational rollback flows include a drain/purge step for queued automation work items and staging entries that cannot satisfy the version fence.
-
-See `design/architecture/system-architecture-scripting-contracts.md#3-version-fencing-rollback-safety` for the non-negotiable contract.
-
-### Timer Failure Semantics
-
-Timer-based triggers such as `onInterval` and `onTimerExpire` are subject to the same **at-most-once per trigger** semantics as other events:
-
-- When a timer becomes due, the scheduler attempts to admit the corresponding trigger subject to per-script quotas, per-tenant budgets, cluster ceilings, and automation tick budgets.
-- If a timer trigger is skipped because of quotas or budgets (for example, tenant budget exhaustion or cluster ceilings), or because the associated patch is `FAILED` or `version_unavailable`, the scheduler records the skip in `script_event_audit` with `finalStage=ADMISSION`, a canonical `finalOutcome` (for example, `quota_denied`, `tenant_budget_exceeded`, `version_unavailable`), and an explicit `finalReason`, and updates the corresponding metrics. The skipped firing is **not automatically re-run later**, although subsequent firings based on the cadence may still occur.
-- If a timer trigger fails with `infrastructure_error` (for example, Redis timeouts, gRPC transport failures) after admission, the DSL body is not re-executed for the same `scriptEventId`. Downstream operations may be retried in an idempotent fashion as part of infrastructure-level retries, but the engine does not replay the handler logic.
-- The scheduler’s responsibility is to *attempt* to fire timers that fit within configured budgets and capacity; there is no guarantee of eventual execution for every individual interval or timer firing.
-
-Operators and designers should rely on automation metrics and `script_event_audit` entries to detect missed or heavily throttled timers and adjust cadence, budgets, or script design accordingly.
-
----
-
-### `onLoad` Semantics and Failure Handling
-
-The `onLoad` lifecycle event is used to initialize shared script state for scripts in a given `<tenantId, scriptPatchVersion>` before that patch becomes active:
-
-- `onLoad` handlers run **after** static validation and compilation succeed, but **before** the patch is marked `READY` for a tenant and before the Game Session Service pins it as the active `scriptPatchVersion` for any game in that tenant.
-- Each `onLoad` execution is keyed by `<tenantId, scriptId, scriptPatchVersion>` and is treated as at-most-once; repeated attempts (for example, after transient infrastructure errors) must be idempotent.
-- Handlers are expected to:
-  - Use idempotent operations and stable idempotency keys when calling downstream services, following patterns from `design/architecture/system-architecture-transactions.md`.
-  - Avoid irreversible side effects that cannot be safely retried or compensated.
-
-`onLoad` is intentionally **not** a general-purpose migration hook for durable gameplay state:
-
-- In the first implementation slice, allowed uses are limited to **ephemeral or trivially recomputable** runtime initialization such as in-process cache warmup, read-through cache priming, and validation of external configuration needed for live admission.
-- `onLoad` must not create durable or semi-durable artifacts in databases, Redis, object storage, or other shared stores.
-- `onLoad` must not create durable world/player/NPC state whose continued existence is required after patch rollback.
-- There is no compensating `onUnload` / `onDeactivate` lifecycle in the current architecture. Rollback safety therefore depends on keeping `onLoad` side effects disposable or explicitly version-fenced.
-- If future requirements demand durable patch-managed shared state, the platform must add a symmetric deactivation/cleanup lifecycle and rollback ordering before expanding `onLoad` semantics.
-- Designers and implementers should treat `onLoad` as a readiness gate, not as a storage-creation hook. If a feature needs patch-scoped durable shared state, the design must be expanded first with explicit artifact lifecycle, operator visibility, and rollback cleanup semantics.
-
-Failure handling:
-
-- `onLoad` admission uses a dedicated publish-time initialization budget, not the normal live-trigger quota windows enforced by `ScriptQuotaService`.
-- This publish-time budget must be deterministic and operator-visible: implementations must define bounded concurrency, timeout, and retry ceilings for `onLoad`, reserve capacity so normal live traffic cannot starve patch readiness forever, and surface exhaustion with explicit reasons.
-- If `onLoad` completes successfully for a tenant, the Automation & Scripting Service may mark the patch as `READY` for that tenant and allow Game Session to pin it for specific instances during later rollout.
-- If `onLoad` fails with a logical or sandbox-level error (for example, misconfiguration, quota denial, sandbox guard), the patch is marked `FAILED` for that tenant:
-  - Running instances remain on their previously pinned patch for live execution.
-  - Events referencing the failed patch are rejected explicitly at admission with `script_event_audit.finalStage=ADMISSION`, `finalOutcome=version_unavailable` (or a more specific variant such as `onload_failed`), and corresponding metrics.
-  - No automatic retries of the `onLoad` handler occur; an operator or designer must fix the underlying configuration and republish.
-- If the dedicated `onLoad` initialization budget is exhausted before completion, the patch must fail deterministically with an explicit bounded reason (for example `onload_budget_exceeded`) rather than consuming arbitrary live runtime quota or waiting indefinitely behind ordinary trigger traffic.
-- If `onLoad` fails with `infrastructure_error`, the service may optionally retry the initialization a bounded number of times using the same `scriptEventId` and idempotent operations. If retries are exhausted, the patch is treated as `FAILED` for that tenant as above.
-
-All `onLoad` runs are recorded in `script_event_audit` with `eventType=onLoad`, the target `scriptPatchVersion`, and their final stage-aware outcome (`finalStage`, `finalOutcome`, `finalReason`), so operators can verify tenant readiness state for each patch and tenant.
-
-Patch-level readiness for `<tenantId, scriptPatchVersion>` is derived from the aggregate of per-script `onLoad` runs: a patch becomes `READY` for a tenant only after all `onLoad` handlers for scripts in that patch have completed successfully, and any script-level `onLoad` failure leaves the patch in a `FAILED` state while running instances continue on their previously pinned patch.
+Runtime failure taxonomy, version fencing, timer failure handling, and `onLoad` retry/rollback behavior now live in [Scripting Runtime Execution](./system-architecture-scripting-runtime-execution.md#failure-modes-and-error-handling). The DSL reference keeps the anchor so event/lifecycle readers can still navigate directly into the runtime owner for the operational half of the contract.
