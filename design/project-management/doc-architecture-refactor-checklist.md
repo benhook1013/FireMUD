@@ -349,10 +349,13 @@ Even services that do not yet strictly need every subdoc should receive placehol
 
 ### Account Service
 
-- [ ] Review [`design/architecture/microservices/account-service/README.md`](../architecture/microservices/account-service/README.md) against the standard target shape.
-- [ ] Add `api-contracts.md` if API material is still embedded in the README.
-- [ ] Add `configuration.md` if env/secret material is embedded in the README.
-- [ ] Add `operations.md` if readiness, abuse controls, rotation notes, or operational details are large enough to justify separation.
+- [x] Review [`design/architecture/microservices/account-service/README.md`](../architecture/microservices/account-service/README.md) against the standard target shape.
+- [x] Create untouched backup copy for [`design/architecture/microservices/account-service/README.md`](../architecture/microservices/account-service/README.md)
+- [x] First split pass completed for Account Service (`README.md`, `api-contracts.md`, `runtime-and-data.md`, `operations.md`, `configuration.md`)
+- [x] First backup-vs-refactor subagent review completed
+- [x] Restore omissions found by the first review pass
+- [x] Run second backup-vs-refactor subagent review
+- [x] Second review was clean enough to move on
 
 ### Automation & Scripting Service
 
