@@ -283,6 +283,12 @@ API. Activation, cutover preflight, and repair tooling must consume the API
 instead of reconstructing asset state from `version_asset_artifact` and version
 metadata separately.
 
+`published_release_bundle` is persisted in the Game Design Service schema. Game
+Design owns the table shape, Flyway migrations, and attestation writes for that
+record; other services consume the attestation only through
+`GetPublishedReleaseBundle(tenantId, versionId)` and must not treat it as a
+shared-schema artifact.
+
 ### Interaction with Script-Only Patches
 
 Script-only patches (see `system-architecture-versioning-runtime.md`) do not change assets or any data stored in `game_assets` / `version_asset`. Because assets are always bound to `(tenantId, versionId)` and exported during full `PublishVersion` flows, any change that requires adding, removing, or updating assets must be shipped as part of a new `versionId`, not as a script-only patch.

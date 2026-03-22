@@ -2,6 +2,12 @@
 
 This document is the **canonical reference** for the scripting DSL’s terminology, lifecycle states, semantics, determinism rules, and author-facing behavior. It is intended for implementers and backend developers integrating with the Automation & Scripting Service, Tick System, and related infrastructure. Runtime execution flow, outbox behavior, Redis/runtime integration, and execution-state ownership now live in the sibling document `design/architecture/system-architecture-scripting-runtime-execution.md`; scheduler/timer leadership remains in `design/architecture/system-architecture-scripting-scheduler-and-timers.md`. For sandbox enforcement details (CPU, time, and memory budgets, and how failures surface in `script_event_audit`), pair these docs with `design/architecture/microservices/automation-scripting-service/sandbox-runtime-design.md`, which is the canonical spec for the sandbox engine itself.
 
+Routing note:
+
+- Use this document for DSL shape, authoring-time lifecycle, and what constitutes a valid published scripting artifact.
+- Use `design/architecture/system-architecture-scripting-runtime-execution.md` for runtime admission, execution-state, and tick-time behavior.
+- Use `design/architecture/system-architecture-scripting-quotas-and-operations.md` for quota enforcement and operator-facing runtime controls.
+
 Document conflict resolution order is defined in `design/architecture/system-architecture-scripting-normative-contract-tables.md#document-precedence-normative`. This document provides DSL/runtime semantics and must align with higher-precedence contract documents.
 
 It is a companion to:

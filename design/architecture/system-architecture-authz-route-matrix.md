@@ -91,16 +91,17 @@ Without these fields where applicable, a route entry is incomplete for governanc
 | Service | Route | Classification | Required roles/capability |
 | --- | --- | --- | --- |
 | Game Session Service | `LOGIN` / `LOGON` | `public` | Credential entrypoint only; no JWT required |
-| Game Session Service | `WORLDS` | `pre_tenant_discovery` | Authenticated account discovery; tenant visibility derived server-side from membership + entitlements; global roles do not widen gameplay discovery |
-| Game Session Service | `REALMS` | `public_production_onboarding` | Visible realms for a selected world; the default public production realm may be discoverable before membership exists, while additional realms require explicit Account Service grant authority |
-| Game Session Service | `CHARS` / `PLAY` | `public_production_onboarding` | Admission evaluates either default public-production policy or explicit Account Service realm grant authority plus runtime entitlements; first successful `PLAY` atomically creates caller membership only for the default public production realm; first-party `/ws/game/**` `PLAY` also enforces validated connect-context errors (`CONNECT_CONTEXT_INVALID`, `CONNECT_SCOPE_MISMATCH`); global roles alone do not grant gameplay access |
+| Game Session Service | `WORLDS` | `pre_tenant_discovery` | Authenticated account discovery only; no pre-existing tenant role is required. Tenant visibility is derived server-side from membership, public-production visibility, and entitlement state; global roles do not widen gameplay discovery |
+| Game Session Service | `REALMS` | `public_production_onboarding` | Visible realms for a selected world; no pre-existing tenant role is required. The default public production realm may be discoverable before membership exists, while additional realms still require explicit Account Service grant authority |
+| Game Session Service | `CHARS` / `PLAY` | `public_production_onboarding` | Admission does not require a pre-existing tenant role. It evaluates either default public-production policy or explicit Account Service realm grant authority plus runtime entitlements; first successful `PLAY` atomically creates caller membership only for the default public production realm; first-party `/ws/game/**` `PLAY` also enforces validated connect-context errors (`CONNECT_CONTEXT_INVALID`, `CONNECT_SCOPE_MISMATCH`); global roles alone do not grant gameplay access |
+| Entity Management Service | `POST /characters` | `public_production_onboarding` | Bootstrap-authenticated character creation for the currently caller-visible `{world, realm}` target only; no pre-existing tenant role is required. It uses the same public-production-admission or explicit realm-grant checks as bootstrap `CHARS`, plus runtime entitlement validation and caller-bound realm visibility |
 | Game Session Service | `StartSession` / `RestartSession` / `StopSession` / `RefreshRoles` | `tenant_regular` | `tenantAdmin`/`platformAdmin` |
 | Account Service | `AuthLogin` | `public` | Browser auth entrypoint |
 | Account Service | `PlayerBootstrapLogin` | `public` | First-party gameplay bootstrap entrypoint; issues `player-bootstrap` token profile only |
 | Account Service | `AuthLogout` / `AuthLogoutAll` | `account_scoped` | Authenticated account scope |
 | Account Service | `GetProfile` / `UpdateProfile` (`/profiles/{accountId}`) | `account_scoped` | Subject-bound to caller `accountId`; `platformAdmin` override only |
 | Account Service | `ExportAccount` / `DeleteAccount` / `LinkExternalAccount` (`/accounts/{accountId}/...`) | `account_scoped` | Subject-bound to caller `accountId`; `platformAdmin` override only |
-| Account Service | `IssueConnectToken` | `player_bootstrap_tenant` | Caller-bound player-bootstrap auth; live tenant membership, runtime entitlement, and admission-pointer checks required |
+| Account Service | `IssueConnectToken` | `player_bootstrap_tenant` | Caller-bound player-bootstrap auth only; global roles alone never grant gameplay admission or connect-token issuance. Live tenant membership, runtime entitlement, and admission-pointer checks remain required |
 | Account Service | `GetTenantEntitlementsForRuntime` | `tenant_regular` | Internal gameplay/runtime caller only; not edge exposed |
 | Account Service | `GetTenantEntitlementsTenant` | `billing_safe_tenant` | `tenantAdmin` (tenant-scoped) |
 | Account Service | `GetTenantEntitlementsCrossTenantSupportSafe` | `cross_tenant_support_safe` | `support`/`platformAdmin` |
@@ -113,5 +114,14 @@ Without these fields where applicable, a route entry is incomplete for governanc
 | Account Service | `GetTenantMembershipForAccountCrossTenant` | `cross_tenant_billing_safe` | `billingAdmin`/`platformAdmin` |
 | Account Service | invoice/payment method APIs tenant-scoped variant | `billing_safe_tenant` | `tenantAdmin` (tenant-scoped); shared-instrument acknowledgement contract required when mutation affects account-wide payment instrument |
 | Account Service | invoice/payment method APIs cross-tenant variant | `cross_tenant_billing_safe` | `billingAdmin`/`platformAdmin` |
+
+### Public Production Onboarding Example
+
+1. A brand-new authenticated account completes `LOGIN` and issues `WORLDS`.
+2. `WORLDS` may list the world's default public production realm even though no tenant membership row exists yet.
+3. `REALMS <world>` returns that default public production realm plus any separately granted additional realms.
+4. `CHARS <world> [realm]` and `POST /characters` use the same caller-bound public-production or explicit-grant checks for the currently visible `{world, realm}` target.
+5. The first successful `PLAY <world> [realm] [character]` on the default public production realm atomically creates the caller's `player` membership before gameplay binding is committed.
+6. Global roles alone never bypass this flow or grant gameplay admission/connect-token issuance without the same live checks.
 
 The matrix should be expanded as service API surfaces evolve. Service docs may include local excerpts, but this file is the canonical list used by governance checks.

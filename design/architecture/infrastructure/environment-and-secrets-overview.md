@@ -46,6 +46,7 @@ Key rules:
 - **Never** point Coordination Redis and Cache/Rate‑Limit Redis at the same instance in any non-ephemeral environment (including local development, staging, and production).
 - Player‑facing environments must use **distinct logical Redis deployments** for coordination and cache/rate‑limit roles.
 - Truly ephemeral CI/preview stacks may collapse roles into a single Redis instance only when explicitly documented as ephemeral and not used to validate coordination SLOs; see `system-architecture-redis-usage-and-profiles.md#environment-mappings`.
+- `pr-preview` keeps the normal Redis role split and preview-unique trust material, but it uses a preview-scoped expected-bindings/preflight posture rather than the full player-facing backup/admission binding contract used for staging and production traffic-open decisions.
 
 Operational notes:
 

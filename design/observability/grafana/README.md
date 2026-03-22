@@ -23,6 +23,11 @@ These JSON files can be imported into a Grafana instance connected to the projec
 
 To import a dashboard, use Grafana’s “Import dashboard” feature and either upload the JSON file directly or paste its contents into the “Import via panel JSON” field, then bind it to the correct Prometheus data source.
 
+Canonical alert-family registry:
+
+- The split alert snippet files in this directory are the canonical registry for alert-family names, severity expectations, and Alertmanager-vs-fallback family mapping.
+- Logging & Admin fallback dedupe must reuse these family names instead of maintaining an independent alert-family mapping table.
+
 ## Conventions (Contract)
 
 - Shared alert snippet templates must follow the alert label contract in `design/architecture/system-architecture-logging-monitoring.md` (especially `severity ∈ {P0,P1,P2}`, plus `owner` and `runbook` labels).

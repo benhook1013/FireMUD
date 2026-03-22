@@ -6,6 +6,12 @@ It exists to remove ambiguity from “conceptual APIs” referenced in service R
 
 Workflow sequencing for rollback, pause/resume, drain/purge, dead-letter recovery, and operator audit flows lives in [Scripting & Automation: Control Plane Operations](./system-architecture-scripting-control-plane-operations.md).
 
+Routing note:
+
+- Use this document for control-plane API shape, authoritative ownership, and state-mutation contracts.
+- Use [system-architecture-scripting-rollout-and-rollback.md](./system-architecture-scripting-rollout-and-rollback.md) for drain/rollback workflow sequencing.
+- Use [system-architecture-scripting-control-plane-operations.md](./system-architecture-scripting-control-plane-operations.md) for operator workflow execution details.
+
 ## Table of Contents
 
 - [Scope](#scope)
@@ -27,6 +33,13 @@ This document covers:
 - Event-ingress admission contracts and canonical application errors for control-plane decisions.
 
 This document does not define the designer-facing DSL, sandbox internals, per-trigger runtime semantics, or workflow sequencing (see the scripting DSL reference, sandbox runtime docs, and Control Plane Operations).
+
+Compact publication-to-runtime sequence:
+
+| Flow | Design-time acceptance owner | Runtime readiness / eligibility | Runtime activation owner |
+| --- | --- | --- | --- |
+| Script patch publish -> runtime pin | Game Design publishes the immutable patch artifact | Automation & Scripting reports tenant readiness for `scriptPatchVersion` | Game Session pins the ready patch per `{tenantId, gameInstanceId}` |
+| Plugin upload/publish -> runtime activation | Game Design publishes the immutable plugin version and signer-policy-visible status | Automation & Scripting exposes plugin runtime/status visibility and signer-policy convergence | Automation & Scripting activates/drains/disables the plugin per `{tenantId, gameInstanceId, pluginId}` |
 
 ## Principles
 

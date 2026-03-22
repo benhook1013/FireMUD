@@ -21,6 +21,12 @@ The main body of this document describes the target-state backup workflow. Curre
 - Until that convergence is complete, player-facing production releases that would depend on restore-point recovery rather than binary rollback are non-compliant for promotion.
 - Alias-scope migration notes in this doc are temporary bridge guidance and should be removed once canonical region scope is enforced end to end.
 
+Canonical current-state note:
+
+- Player-facing target state is canonical `tenant_id + region_id` scope.
+- Alias-scoped `game_instance_id` maintenance remains a temporary bridge for non-player-facing drills, quarantined rehearsals, and explicitly recorded manual maintenance only.
+- When region-scoped pause/resume is enforced end to end, the migration-plan sections in this doc and related runbooks should be removed rather than preserved as standing operator guidance.
+
 ## Documentation Map
 
 - [`system-architecture-backup-recovery-evidence-and-compliance.md`](./system-architecture-backup-recovery-evidence-and-compliance.md)
@@ -59,6 +65,15 @@ Operational constraints:
 - If a pause does not reach `PAUSED` within budget, the backup job must fail fast and alert operators instead of producing an inconsistent dump.
 - Recommended pause-wait budget is `max(10s, 2 * tick_interval_ms)` for the affected scope.
 - For player-facing scopes, “pause wait exceeded” and “scope still paused” are `P0`; freshness and verification failures remain `P1`.
+
+Canonical backup/recovery severity matrix:
+
+| Condition family | Canonical severity | Notes |
+| --- | --- | --- |
+| `backup_tick_pause_wait_budget_breached`, `backup_tick_pause_duration_budget_breached`, `backup_ticks_paused_budget_breached` on player-facing scopes | `P0` | Active player-facing safety breach during coordinated backup or recovery gating |
+| `backup_pipeline_recent_backup_slo_breached` | `P1` | Fresh backup signal missing for required environment class |
+| `backup_pipeline_recent_verification_slo_breached` | `P1` by default (`P2` only where environment policy explicitly downgrades) | Verification freshness degraded |
+| `backup_pipeline_recent_restore_drill_slo_breached` | `P1` | Restore-proof freshness degraded for reopen/promotion decisions |
 
 For convenience, `dev-tools/backups/firemud-backup.sh` automates the pause, wait, dump, and resume sequence.
 

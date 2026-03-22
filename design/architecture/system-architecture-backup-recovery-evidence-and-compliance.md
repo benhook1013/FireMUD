@@ -34,6 +34,9 @@ Alerting policy:
 - missed backups are `P1`
 - missed verification is `P1` or `P2` depending on environment class
 - player-facing pause-budget breaches are `P0`
+- stale restore-drill proof is `P1`
+
+The canonical backup/recovery severity matrix lives in `system-architecture-backup-recovery.md`. This document and Grafana alert snippets must mirror that matrix rather than redefining severities independently.
 
 Prometheus and Alertmanager should also carry clear `service`, `severity`, `owner`, and `runbook` annotations on these alerts, and Grafana should include a dedicated Backups section or dashboard that visualizes freshness, restore-proof age, recent backup/verify success vs failure, restore-drill results by recovery mode, and pause-safety signals.
 

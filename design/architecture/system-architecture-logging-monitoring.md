@@ -289,6 +289,8 @@ When Alertmanager is unavailable but Prometheus is still accessible, Logging & A
     - `backup_ticks_paused_budget_breached{scope_type,tenantId,regionId}`
 - **Tick state and recovery progress**
   - Recording rules or gauges projecting `current_tick_state{tenantId,regionId,state}` and `current_tick_terminal_at_ms{tenantId,regionId}` from the Redis meta record so operators can see whether a region is `STAGED`, `RESOLVING`, `APPLIED`, or `ABANDONED` without inferring state from queue depth alone.
+- **Maintenance mode visibility**
+  - Recording rules or gauges exposing `coordination_maintenance_active{scope_type,tenantId,regionId,operation}` (or the equivalent health/readiness field) so operators can tell when reset, cleanup, or migration workflows intentionally hold a scope in maintenance-active state.
 - **Cross-region follow-ups**
   - Recording rules for `remote_followups_due_total{tenantId,regionId}`, `remote_followups_drain_lag_ms{tenantId,regionId}`, and `remote_followups_backlog_over_budget_total{tenantId,regionId}` so scaling and recovery views can show drain pressure explicitly.
 
@@ -314,6 +316,7 @@ When Logging & Admin renders alert state, it must expose enough metadata for ope
 - Duplicate-suppression rules:
   - A fallback condition must not appear as a separate active issue when the matching Alertmanager alert is already healthy and visible.
   - If exact alert-name equivalence is unavailable, dedupe by the canonical identity tuple of condition family plus bounded labels (for example `service`, `component`, `tenantId`, `regionId`, `path`, `command` as applicable).
+  - The canonical family registry is the shared alert snippet set under `design/observability/grafana/`; fallback implementations must use the same alert-family names there rather than inventing local equivalence tables.
 - Failure-mode rules:
   - If both Alertmanager and Prometheus are unavailable, Logging & Admin must display that alert state is unavailable rather than presenting stale fallback conditions as current.
   - Logging & Admin should preserve the last known `observed_at` timestamp for degraded views, but must not imply continued freshness after the freshness budget expires.

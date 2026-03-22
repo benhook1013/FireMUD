@@ -4,6 +4,12 @@ This document focuses on **sandboxing, quotas, budgets, and operational workflow
 
 It is intended as the main reference for operators, SREs, and platform engineers responsible for safe multi-tenant operation of scripts.
 
+Routing note:
+
+- Use this document for quota policy, enforcement, and runtime/operator controls.
+- Use `design/architecture/system-architecture-scripting-dsl-reference-and-lifecycle.md` for DSL/lifecycle semantics.
+- Use `design/architecture/system-architecture-scripting-runtime-execution.md` for execution-state behavior.
+
 Companion docs:
 
 - `design/architecture/system-architecture-scripting-dsl-reference-and-lifecycle.md` – terminology, DSL semantics, event lifecycle, determinism.

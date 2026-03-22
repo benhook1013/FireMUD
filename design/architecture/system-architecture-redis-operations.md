@@ -199,6 +199,11 @@ Redis maintenance flows such as session cleanup, scoped resets, normalization mi
 - fine-grained locks such as `session-cleanup-lock:<tenantId>` and `coord-reset:{tenantRegionTag}` should still be used inside the broader “one heavy job at a time” rule
 - maintenance jobs must back off or abort when Redis health signals show elevated latency, `used_cpu_sys`, `used_memory`, or elevated error rates
 
+Canonical maintenance-active signal:
+
+- metric: `coordination_maintenance_active{scope_type,tenantId,regionId,operation}`
+- health/readiness projection: environments may expose an equivalent health field, but the metric name above is the canonical observability contract used by dashboards and Logging & Admin.
+
 ## Dual-Leader Detection and Coordination Reset
 
 Goal: detect Redis split-brain or conflicting primaries and recover through a coordinated reset before duplicate logical effects can escape the tick subsystem.
