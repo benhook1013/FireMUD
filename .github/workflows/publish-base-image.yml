@@ -1,4 +1,4 @@
-name: Publish FireMUD Base Image
+name: Weekly FireMUD Base Image Refresh
 
 on:
   schedule:
