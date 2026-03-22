@@ -42,7 +42,7 @@ java {
 }
 
 val fullCheck = project.hasProperty("fullCheck") || System.getenv("CI") != null
-val checkstyleToolVersion = "10.24.0"
+val checkstyleToolVersion = "13.3.0"
 val spotbugsToolVersion = "4.9.8"
 
 allprojects {
