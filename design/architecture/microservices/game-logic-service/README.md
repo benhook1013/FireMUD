@@ -2,7 +2,7 @@
 
 ## Overview
 
-Executes the core gameplay rules and command parsing. It processes player actions and determines outcomes.
+Executes the core gameplay rules and command parsing. It processes player actions and determines outcomes, while Game Session owns queueing, tick context, and final client delivery.
 
 ### Responsibilities
 
@@ -17,69 +17,6 @@ Executes the core gameplay rules and command parsing. It processes player action
 - See the [Service Responsibility Matrix](../../service-responsibility-matrix.md)
   for how this service fits into the overall architecture.
 - Fail readiness when the downstream dependencies required for the currently exposed gameplay command path are unavailable
-
-### Readiness and Liveness
-
-- `liveness` is local-only and indicates that the process is alive and able to continue serving.
-- `readiness` is command-path safety. For the currently implemented player slice, Game Logic is ready only when the downstream services required for `ResolveLook` are reachable, specifically World Management and Entity Management.
-- This service is not ready for new gameplay traffic if it can answer `Ping` locally but cannot satisfy the first `LOOK` dependency chain.
-- The readiness canary for this slice is a dedicated internal `ResolveLook`-shaped helper rather than a second, unrelated dependency check path, so readiness and the command path stay aligned on request shape and dependency naming.
-- The helper uses explicit short deadlines on its downstream world/entity RPCs and reserved readiness-only sentinel identifiers so readiness remains bounded and cannot collide with real gameplay state.
-- Readiness transition observability uses the shared contract from [Deployment Environments](../../infrastructure/deployment-environments.md): `firemud.readiness.current`, `firemud.readiness.transitions`, and structured logs keyed by the curated dependency names `worldManagementService` and `entityManagementService`.
-
-## Architecture / Design Notes
-
-- Stateless service accessed over gRPC by other microservices.
-- Uses a modular command parser for extensibility. The text protocol’s **system commands** (such as `LOGIN`, `LOGON`, and `PING`) are interpreted and completed by the Game Session Service; this service focuses on **gameplay commands** only, as described in the [Game Session Service](../game-session-service/README.md#minimal-text-command-protocol) documentation.
-- Deterministic rule execution; random seeds come from the Game Session Service.
-- Fetches contextual world and entity data on demand via gRPC.
-- Gameplay rules are read from this service's own versioned data when a version
-  is activated; the runtime service does not query design or admin databases.
-- Integrates with the tick system described in [Tick System and Runtime Design](../../system-architecture-ticks.md) to ensure deterministic command ordering.
-- Cross-service combat or trade operations run within ticks and rely on Redis-based rollback, not sagas. See [Transaction Strategies](../../system-architecture-transactions.md).
-- All commands are scoped by `tenantId` so that rules execute only against data
-  for the active game instance. The Game Session Service passes this context on
-  every request. See [Multi-Tenancy](../../system-architecture-multi-tenancy.md).
-- Gameplay gRPC requests do not include JWTs. The Game Session Service provides
-  player identity from Redis via `SessionContext`. It may refresh a JWT from the
-  Account Service if roles change but does not validate tokens for gameplay.
-  Communications use mutual TLS certificates as outlined in the
-  [Security Architecture](../../system-architecture-security.md).
-- Utilizes the [Shared Libraries](../../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
-- Flyway is enabled for consistency with other services, but the initial migration is empty because no tables are required.
-
-### Saga Participation
-
-The Game Logic Service does not orchestrate or own any Saga workflows. All
-gameplay commands execute inside ticks using Redis-based rollback and the
-transaction model described in [Transaction Strategies](../../system-architecture-transactions.md).
-When a game version is published, its rule data is prepared and finalized by
-the Game Design and Game Session services; this service simply reads the
-already-published, versioned rule data for the active `runtime_version` and
-does not participate directly in the publish Saga.
-
-### Digest Input Manifest Requirements
-
-For full-version publish gating, this service is still a required digest participant even though it does not orchestrate Saga steps. It must expose `GetDraftDesignDigest(tenantId, versionId)` and publish a service-local digest input manifest with:
-
-- Included objects (for example version-scoped rule/config tables this service owns that affect runtime command behavior).
-- Excluded objects (for example runtime queues/caches, telemetry tables, and other non-launchability data).
-- Canonicalization rules (stable ordering, normalization, and null/default handling before hashing).
-- `digestSchemaVersion` bump criteria (any include/exclude/canonicalization change requires an explicit schema bump and replay/re-record workflow).
-
-Publish gating must fail closed if this service cannot attest a digest under its documented manifest for the reported `digestSchemaVersion`.
-
-Role classification: Game Logic is a **digest-gate participant** for full publishes, not a **saga-step participant**, unless future publish workflows add explicit finalize/compensation steps owned by this service.
-
-### Redis Role and Prefixes
-
-- **Coordination Redis**
-  - This service does **not** access Coordination Redis directly. It never issues commands against `tick:*`, `timer:*`, `retry:*`, `session:*`, or other coordination prefixes; all tick scheduling, locking, and staging live in the Game Session Service and its Lua registry as described in [Redis Architecture](../../system-architecture-redis.md).
-  - Tick context is provided by Game Session via gRPC (for example, `tickId`, region metadata, and effect-guard identifiers) rather than by reading Redis state.
-- **Cache/Rate-Limit Redis**
-  - The Game Logic Service does not maintain its own Redis-backed caches today; any future read-side caches for rules or computed aggregates must use **Cache/Rate-Limit Redis** and the key naming/TTL/versioning patterns in [Redis Cache & Rate Limiting](../../system-architecture-redis-cache.md), never Coordination Redis.
-  - Game Logic does not read or write shared cache prefixes owned by other services (for example `view:room-look:*`, `inventory:*`, `character-cache:*`, or `chat:*`) directly; it treats World Management, Entity Management, and Social & Groups as the owners of those aggregates and accesses them via their gRPC APIs. Correctness-critical flows (combat, visibility, movement, chat delivery decisions) are always driven from authoritative service APIs and Class A caches, not from TTL-only caches such as `view:room-look:*`. This matches the restrictions documented for `view:room-look:*` in the central Redis cache design: Game Session is the sole writer for that prefix, and Game Logic consumes LOOK results only via gRPC.
-- Any future Redis usage in this service should adhere to the [Redis Design Checklist](../../system-architecture-redis-design-checklist.md), including prefix registration, role selection, and slotting rules.
 
 ## Key Features
 
@@ -99,55 +36,11 @@ Role classification: Game Logic is a **digest-gate participant** for full publis
 - Scripting hooks let creators inject custom actions into the command engine.
 - Optimized rule evaluation supports large-scale battles.
 
-### LOOK aggregation & formatting
+Implementation notes:
 
-- `ResolveLook` orchestrates World Management and Entity Management: World provides room topology, ambient state, and the authoritative occupant set for the target room/instance, while Entity enriches those caller-supplied occupant/entity references with live entity and ground-item display data to build a deterministic `LookResult` that Game Session renders for clients.
-- A dedicated `LookResultRenderer` keeps the canonical textual output in sync with the documented protocol transcripts (room name/desc/exits/entities) so the service can log or inspect the text while keeping the structured DTO clean.
-- Downstream errors from World or Entity services are labeled (`WorldManagement`, `EntityManagement`) so they surface as precise error codes (`ROOM_NOT_FOUND`, `WORLD_UNAVAILABLE`, `ENTITY_UNAVAILABLE`) when Game Session formats replies for Telnet and WebSocket clients.
-- Game Logic is the orchestration boundary for these gameplay reads; downstream services on the hot path should answer from owned state, caches, or caller-supplied references rather than recursively building additional cross-service fan-out trees for steady-state command handling.
-
-### Implementation status (LOOK slice)
-
-- **Live:** The data-driven `LOOK` path is wired into the command pipeline via `ResolveLook`; it orchestrates World Management snapshots and Entity Management listings, hands the structured `LookResult` to the `LookResultRenderer`, and publishes the telemetry described in `../../../project-management/look-instrumentation.md`.
-- **Stubbed:** Room and entity context still comes from the seeded demo world and entity fixtures so the canonical transcript remains deterministic; scripted descriptions, complex lighting, and dynamic hazard cues are not yet integrated.
-- **Deferred:** Future slices will expand the renderer with richer prose, annotate `LookResult` with combat/effect metadata, and surface additional visibility hints once the core text shape proves stable.
-
-### Implementation status (chat slice)
-
-- **Live:** `BroadcastSay` accepts authenticated `SAY`/`YELL`/`WHISPER` payloads, validates length, aggregates recipient/NPC metadata, and forwards the normalized message to the Social & Groups Service stub. The API returns delivery metadata and `shared.v1.ErrorDetail` codes so Game Session can render the canonical transcript and surface `gamesession.command.say.*` instrumentation.
-- **Stubbed:** Delivery currently uses the regression stubbed Social & Groups Service that records `SendMessage` calls and echoes success while the cross-service WebSocket and Telnet tests assert the structured response before adding a narrative layer for listeners.
-- **Deferred:** Richer behavior (NPC roleplay replies, localized listening areas, channel filters, profanity escalation) will arrive in later slices once the foundational flow proves stable and the instrumentation captures both success and failure paths.
-
-### SAY broadcast flow
-
-- Game Session channels authenticated commands through `BroadcastSay`, supplying the same `RoomInstanceRef` context (`tenantId`, `gameInstanceId`, `roomInstanceId`) that guards `LOOK`. The command parser normalizes `SAY`/`YELL`/`WHISPER` aliases before forwarding trimmed text so downstream services can enforce consistent validation.
-- Game Logic validates message length/whitelist checks, determines the occupied room, and delegates delivery (currently via a stubbed Social & Groups Service hook) rather than rendering the chat locally. The resulting delivery metadata (recipient list, NPC echoes) is returned to Game Session while failures populate `shared.v1.ErrorDetail` so TextCommandInterpreter can emit `ERROR SAY_NOT_DELIVERED` or similar protocol responses.
-- This pathway mirrors the `LOOK` guard: unauthenticated requests never reach BroadcastSay, and any Social/Group service outage is surfaced as a structured `PERMISSION_DENIED`/`UNAVAILABLE` error so Game Session can keep its `ERROR NOT_AUTHENTICATED` gating predictable for Telnet and WebSocket clients.
-
-### Data Model
-
-This service is largely stateless. It relies on:
-
-- Contextual entity and world data fetched from other services via gRPC.
-- Temporary command queues stored in Redis by the Game Session Service.
-
-### Command Flow
-
-1. Commands are queued in Redis by the Game Session Service.
-2. The lease-owning Game Session executor invokes this service over gRPC with
-   the queued command plus tick/session context, and this service loads the
-   required world/entity context to resolve the action.
-3. The gRPC response returns the structured result to Game Session for commit
-   and delivery to players.
-
-### gRPC APIs
-
-- `Ping` – basic connectivity check.
-- `ExecuteCommand` – evaluates a parsed command and returns the outcome.
-- `BroadcastSay` – accepts `tenant_id`, `session_id`, `player_id`, and a `RoomInstanceRef` (`tenant_id`, `game_instance_id`, `room_instance_id`), plus normalized `text` and an alias indicator (`SAY`/`YELL`/`WHISPER`). The handler validates length, enforces room chat controls, and returns delivery metadata (recipient identifiers, NPC echoes, optional acknowledgements) along with structured status codes so Game Session can render the canonical response. Failures populate `shared.v1.ErrorDetail` while the gRPC status remains `OK`, keeping `gamesession.command.say.*` metrics aligned with the existing instrumentation.
-- All responses include a `shared.v1.ErrorDetail` field for standardized error handling.
-  Application errors are returned in this field while the gRPC status remains
-  `OK`, and a `grpc.app_error` metric is recorded with the error code.
+- Live: the data-driven `LOOK` path is wired into the command pipeline via `ResolveLook`, and `BroadcastSay` forwards normalized room chat payloads to the Social & Groups stub.
+- Stubbed: room and entity context still comes from seeded demo fixtures, and chat delivery still uses the regression Social & Groups stub so canonical transcripts remain deterministic.
+- Deferred: richer LOOK prose, combat and effect annotations, NPC reply behavior, localized listening areas, and profanity-escalation flows remain future slices.
 
 ## Dependencies
 
@@ -163,40 +56,12 @@ This service is largely stateless. It relies on:
 and [**Protocol Bridging**](../../system-architecture-protocol-bridging.md) for
 details on shared infrastructure components.
 
-## Operational Notes
-
-- Runs as a Kubernetes Deployment (Docker Compose for local dev) with `/actuator/health/readiness` and `/actuator/health/liveness` probes. See [Deployment Environments](../../infrastructure/deployment-environments.md).
-- Logging, metrics, and tracing follow the standard [Logging & Monitoring](../../system-architecture-logging-monitoring.md) pipeline.
-
-## Environment Variables
-
-This service follows the conventions in
-[Environment Variables & Secrets Management](../../infrastructure/environment-and-secrets.md).
-Unlike other services, it does not connect to PostgreSQL or Redis at runtime;
-those credentials are present in the shared `.env` file only for consistency.
-TLS certificates are supplied via [`FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, `FIREMUD_GRPC_CA_CERT_PATH`](../../infrastructure/environment-and-secrets.md#grpc-tls-certificates).
-Peer services are discovered using variables prefixed `FIREMUD_SERVICES_`, and the implementation consumes them for gRPC endpoint resolution.
-The gRPC server listens on port `6565` by default as configured in `application.yml`.
-The OpenTelemetry collector endpoint can be overridden via `OTEL_ENDPOINT` (see [Environment Variables & Secrets Management](../../infrastructure/environment-and-secrets.md)).
-
-Additional variables referencing dependent services:
-
-| Variable | Purpose | Default |
-| -------- | ------- | ------- |
-| `FIREMUD_SERVICES_ENTITY_MANAGEMENT_SERVICE` | gRPC endpoint (host:port) for the Entity Management Service | *(none)* |
-| `FIREMUD_SERVICES_WORLD_MANAGEMENT_SERVICE` | gRPC endpoint for the World Management Service | *(none)* |
-| `FIREMUD_SERVICES_GAME_SESSION_SERVICE` | gRPC endpoint for the Game Session Service | *(none)* |
-| `FIREMUD_SERVICES_AUTOMATION_SCRIPTING_SERVICE` | gRPC endpoint for the Automation & Scripting Service | *(none)* |
-| `FIREMUD_SERVICES_SOCIAL_GROUPS_SERVICE` | gRPC endpoint for the Social & Groups Service | *(none)* |
-
-## Proto Files
-
-gRPC service definitions can be found in
-[../../../../protos/game-logic/v1](../../../../protos/game-logic/v1). Rebuild
-the generated code with `./gradlew generateProto` after making changes.
-
 ## Related Documentation
 
+- [API Contracts](./api-contracts.md)
+- [Runtime and Data](./runtime-and-data.md)
+- [Operations](./operations.md)
+- [Configuration](./configuration.md)
 - [System Architecture Overview](../../system-architecture-overview.md)
 - [Tick System and Runtime Design](../../system-architecture-ticks.md)
 - [Redis Architecture](../../system-architecture-redis.md)
@@ -210,77 +75,5 @@ the generated code with `./gradlew generateProto` after making changes.
 - [User Journeys – Player Login and Gameplay](../../user-journeys-players.md#3-player-login-and-gameplay)
 - [Testing Strategy](../../system-architecture-testing.md)
 - [CI/CD Pipeline](../../system-architecture-cicd.md)
-
-## Additional Details
-
-### REST & gRPC Endpoints
-
-### Exposure Class
-
-- gRPC gameplay APIs are **internal-only** service-to-service contracts invoked from Game Session and other trusted backend services.
-- The documented REST endpoints are **local-dev/test conveniences only** and are not part of the Gateway allowlist or the production external API surface.
-
-#### REST
-
-- `GET /ping` – returns `ApiResponse` with the string `pong` in `data`.
-- `POST /command` – submit a gameplay command body as plain text and receive an `ApiResponse<String>` result.
-These are the only REST endpoints; gameplay commands are primarily processed through the gRPC interface.
-
-```bash
-curl http://localhost:8080/ping
-```
-
-Expected response:
-
-```json
-{
-  "status": "SUCCESS",
-  "data": "pong",
-  "error": null
-}
-```
-
-#### gRPC
-
-- `Ping(PingRequest) returns (PingResponse)` – connectivity check defined in [`game_logic_service.proto`](../../../../protos/game-logic/v1/game_logic_service.proto).
-- `ExecuteCommand(ExecuteCommandRequest) returns (ExecuteCommandResponse)` – process a command and return the result.
-
-```bash
-grpcurl -plaintext localhost:6565 game_logic.v1.GameLogicService/Ping
-```
-
-Expected response:
-
-```json
-{
-  "message": "pong"
-}
-```
-
-Call `ExecuteCommand` with:
-
-```bash
-grpcurl -plaintext -d '{"tenant_id":"demo","session_id":"demo","command":"look"}' \
-  localhost:6565 game_logic.v1.GameLogicService/ExecuteCommand
-```
-
-- [Service Responsibility Matrix](../../service-responsibility-matrix.md)
-
 - [System Architecture Diagram](../../system-architecture-diagram.md)
 - [System Context Diagram](../../system-context-diagram.md)
-
-### Local Development Notes
-
-The `smoke-test.sh` script under `services/game-logic-service` verifies both REST
-and gRPC endpoints.
-
-### Cross-Service Integration Test
-
-An integration test at
-`services/game-session-service/src/test/java/crossservice/net/firedevops/firemud/GameSessionCrossServiceIntegrationTest.java`
-starts this service alongside the Game Session Service using **Testcontainers**.
-Run it manually after building the Docker images:
-
-```bash
-./gradlew :game-session-service:test --tests "*CrossServiceIntegrationTest"
-```
