@@ -1,6 +1,6 @@
 # FireMUD Scripting & Automation: Rollout and Rollback
 
-This document defines operator-driven promotion, rollback, convergence, timeout, and degraded-operations workflows for scripting and plugin control-plane changes. It complements [Scripting & Automation: Control Plane API](./system-architecture-scripting-control-plane-api.md), which defines the underlying RPC contracts and mutable state boundaries.
+This document defines operator-driven promotion, rollback, convergence, timeout, and degraded-operations workflows for scripting and plugin control-plane changes. It complements [Scripting & Automation: Control Plane API](./system-architecture-scripting-control-plane-api.md), which defines the underlying RPC contracts and mutable state boundaries, and [Scripting & Automation: Control Plane Operations](./system-architecture-scripting-control-plane-operations.md), which defines the workflow sequencing and cleanup steps.
 
 ## Patch Promotion (Operator-Driven)
 
@@ -62,7 +62,7 @@ Ownership and source-of-truth requirements:
 Required states:
 
 - `PAUSING` -> `REPINNING` -> `CANCELING` -> `PURGING` -> `CONVERGING` -> `DRAINING` -> `RESUMING` -> `COMPLETED`
-- Terminal failure state: `TIMED_OUT`
+- Terminal failure state: `ROLLBACK_CONVERGENCE_TIMEOUT`
 
 State rules:
 
@@ -70,7 +70,7 @@ State rules:
 - Re-running a request in the same state must return current state, not restart from scratch.
 - Failures in `CANCELING` or `PURGING` must not auto-resume admission or ticks.
 - Operator retries must continue from the last durable state.
-- `TIMED_OUT` keeps admission and ticks paused until explicit operator action.
+- `ROLLBACK_CONVERGENCE_TIMEOUT` keeps admission and ticks paused until explicit operator action.
 - `DRAINING` is required. Rollback must not resume admission or ticks until the current rollback-scope `admissionEpoch` has no active pre-pause executions and no remaining cancelable outbox work according to `GetAutomationDrainStatus`.
 
 Convergence timeout semantics (required):

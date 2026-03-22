@@ -26,6 +26,9 @@ For the full design and invariants, see:
 3. **Repair**
    - Follow cluster or node failover procedures documented in `design/architecture/system-architecture-redis-operations.md`.
    - If a reset is required, use the coordination reset model and key enumeration strategy from `design/architecture/system-architecture-redis-reset-and-recovery.md` to clear affected prefixes safely.
+4. **Inspect durable command outcomes**
+   - After replay/reset work, use the canonical `GetCommandStatus` surface described in `design/architecture/system-architecture-tick-failures-and-operations.md` to confirm commands converged to their final durable outcomes.
+   - Do not treat raw Redis queue/key inspection as the primary operator answer for player-visible command status after remediation.
 
 ### Coordination Redis Recovery Behaviour
 
@@ -123,7 +126,7 @@ The following Redis-focused incident flows build on the general recovery steps a
         - `resume`
    3. Verify region health returns to `RUNNING` or bounded `DEGRADED` and `redis_coordination_tail_loss_ms` drops back into the SLO envelope after the chosen recovery mode completes.
 
-Alerts based on `redis_coordination_tail_loss_ms` should follow the conventions in `design/observability/grafana/core-alerts-snippets.md` so they carry `owner` and `runbook` annotations that point back to this section.
+Alerts based on `redis_coordination_tail_loss_ms` should follow the conventions in `design/observability/grafana/redis-alerts-snippets.md` so they carry `owner` and `runbook` annotations that point back to this section.
 
 ### Mis-Sharded or Mis-Keyed Tick/Coordination Keys
 

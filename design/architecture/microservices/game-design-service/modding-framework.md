@@ -350,7 +350,7 @@ Rollback/disable/revocation flows must also reconcile durable plugin-owned timer
 - If a newer plugin version preserves the same schedule, the scheduler may carry it forward only when the old and new definitions share the same stable `scheduleDefinitionId`; reconciliation must then explicitly rewrite ownership to the new `pluginVersionId`.
 
 The normative control-plane API shapes and required events for plugin management are defined in `design/architecture/system-architecture-scripting-control-plane-api.md` (for example `SetPluginActiveVersion`, `DisablePlugin`, and `DrainPlugin`).
-For operator verification during rollback, disablement, or signer revocation, use the same control-plane read surfaces that gate scripting convergence for the affected runtime scope, including plugin-state reads and the scripting drain/convergence APIs delegated from `design/architecture/system-architecture-scripting-control-plane-api.md`.
+For operator verification during rollback, disablement, or signer revocation, use the same control-plane read surfaces that gate scripting convergence for the affected runtime scope, including plugin-state reads from `design/architecture/system-architecture-scripting-control-plane-api.md` and the scripting drain/convergence workflow reads delegated from `design/architecture/system-architecture-scripting-control-plane-operations.md`.
 
 ## Monitoring & Debugging
 

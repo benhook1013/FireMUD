@@ -13,6 +13,7 @@ SMOKE_GAME_SESSION_API_BASE=${SMOKE_GAME_SESSION_API_BASE:-http://localhost:8086
 SMOKE_LOGIN_EXPECT=${SMOKE_LOGIN_EXPECT:-"OK LOGIN"}
 SMOKE_LOOK_EXPECT=${SMOKE_LOOK_EXPECT:-"OK LOOK"}
 SMOKE_TIMEOUT_SECONDS=${SMOKE_TIMEOUT_SECONDS:-10}
+SMOKE_LOOK_TIMEOUT_SECONDS=${SMOKE_LOOK_TIMEOUT_SECONDS:-60}
 
 if command -v python3 >/dev/null 2>&1; then
   PYTHON=python3
@@ -55,6 +56,7 @@ game_session_api_base = os.environ.get("SMOKE_GAME_SESSION_API_BASE", "http://lo
 login_expect = os.environ.get("SMOKE_LOGIN_EXPECT", "OK LOGIN")
 look_expect = os.environ.get("SMOKE_LOOK_EXPECT", "OK LOOK")
 timeout_seconds = int(os.environ.get("SMOKE_TIMEOUT_SECONDS", "10"))
+look_timeout_seconds = int(os.environ.get("SMOKE_LOOK_TIMEOUT_SECONDS", "60"))
 startup_wait_seconds = int(os.environ.get("SMOKE_STARTUP_WAIT_SECONDS", "90"))
 
 
@@ -143,6 +145,23 @@ def wait_for_http_readiness(name, base_url):
     raise RuntimeError(f"{name} readiness did not report UP at {readiness_url}")
 
 
+def recv_text(ws, label, timeout):
+    deadline = time.time() + timeout
+    last_error = None
+    while time.time() < deadline:
+        remaining = deadline - time.time()
+        ws.settimeout(min(1.0, max(0.1, remaining)))
+        try:
+            return ws.recv()
+        except Exception as exc:
+            if exc.__class__.__name__ != "WebSocketTimeoutException" and not isinstance(
+                exc, TimeoutError
+            ):
+                raise
+            last_error = exc
+    raise RuntimeError(f"Timed out waiting for {label} after {timeout}s") from last_error
+
+
 def sync_session_owner_account():
     query = (
         "select id from accounts "
@@ -205,7 +224,7 @@ def websocket_smoke():
     )
     try:
         ws.send(f"LOGIN {username} {password}")
-        login_response = ws.recv()
+        login_response = recv_text(ws, "LOGIN response", timeout_seconds)
         print("=== LOGIN response ===")
         print(login_response.strip() or "<empty>")
         if login_expect not in login_response:
@@ -214,7 +233,7 @@ def websocket_smoke():
             )
 
         ws.send("LOOK")
-        look_response = ws.recv()
+        look_response = recv_text(ws, "LOOK response", look_timeout_seconds)
         print("=== LOOK response ===")
         print(look_response.strip() or "<empty>")
         if look_expect not in look_response:

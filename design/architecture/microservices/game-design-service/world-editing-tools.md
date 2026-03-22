@@ -10,6 +10,18 @@ Game creators use these interfaces to craft rooms, items and NPCs without modify
 - **Entity Designer** – define NPCs, items and equipment with validation rules. Entities are stored as versioned records in the Entity Management Service and associated with draft or published versions by `version_id` during design and publish workflows.
 - **Import/Export (deferred)** – bulk JSON import/export is not part of the canonical initial slice. Designers edit drafts through the web UI and service-owned design APIs; any future import/export contract must be specified explicitly before the docs present it as a supported capability.
 
+Illustrative generation/revision sequence:
+
+1. Create or update a generation revision for a declared target scope.
+2. Publish the revision under either `REPLACE_SCOPE` or `SEED_APPEND_ONLY`.
+3. Apply later manual edits in Game Design revision history.
+4. On replay or regeneration, later manual edits remain authoritative unless a later generation revision explicitly declared `REPLACE_SCOPE` for that same scope.
+
+Example consequence:
+
+- `SEED_APPEND_ONLY` may add scaffold content but must fail as `OUT_OF_SYNC` if replay would require deleting or rewriting later manual edits.
+- `REPLACE_SCOPE` may overwrite prior authored topology inside its declared scope, so creators must treat it as an explicit destructive regeneration boundary rather than a passive refresh.
+
 ## Workflow
 
 1. Use the web UI to modify rooms, items or NPC definitions.

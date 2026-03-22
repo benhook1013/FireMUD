@@ -9,7 +9,13 @@ This document lists automated jobs that run on a schedule. Each entry links to t
 | CI — Build and Security | Daily at 03:00 | [CI/CD Pipeline](../system-architecture-cicd.md) | [.github/workflows/ci.yml](../../../.github/workflows/ci.yml) |
 | CodeQL Analysis | Weekly on Sundays at 00:00 | [CI/CD Pipeline](../system-architecture-cicd.md) | [.github/workflows/codeql.yml](../../../.github/workflows/codeql.yml) |
 | Weekly Security Scan | Weekly on Sundays at 03:00 | [CI/CD Pipeline](../system-architecture-cicd.md) | [.github/workflows/weekly-security-scan.yml](../../../.github/workflows/weekly-security-scan.yml) |
+| Weekly FireMUD Base Image Refresh | Weekly on Sundays at 02:00 | [CI/CD Pipeline](../system-architecture-cicd.md) | [.github/workflows/publish-base-image.yml](../../../.github/workflows/publish-base-image.yml) |
+| Weekly ORT Advisory Scan | Weekly on Sundays at 06:00 | [CI/CD Pipeline](../system-architecture-cicd.md) | [.github/workflows/ort-advisory.yml](../../../.github/workflows/ort-advisory.yml) |
 | Dependabot dependency updates | Weekly on Saturdays at 16:00 (Sunday 04:00 Pacific/Auckland) | [CI/CD Pipeline](../system-architecture-cicd.md) | [.github/dependabot.yml](../../../.github/dependabot.yml) |
+
+Publication guardrail:
+
+- Scheduled and manually dispatched publication workflows may validate on other branches, but production-looking publication is allowed only from `develop` and `main`. This applies to GitHub Pages publishing and the shared base-image publication path.
 
 ## Kubernetes Cluster (Production)
 

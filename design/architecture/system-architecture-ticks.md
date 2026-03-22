@@ -154,7 +154,7 @@ For any consumer or operator that needs to locate “where a region is” on the
 
 Redis coordination keys remain a volatile buffer; neither `tick:*` nor event-stream prefixes are considered sources of truth for epoch or tick counters.
 
-Tick execution never depends on external buses; external services consume the heartbeat stream and/or tick event stream only. See `system-architecture-tick-concepts-and-invariants.md` and `system-architecture-scripting-dsl-and-lifecycle.md` for details.
+Tick execution never depends on external buses; external services consume the heartbeat stream and/or tick event stream only. See `system-architecture-tick-concepts-and-invariants.md`, `system-architecture-scripting-dsl-reference-and-lifecycle.md`, and `system-architecture-scripting-runtime-execution.md` for details.
 
 ---
 
@@ -372,7 +372,7 @@ Automation & Scripting uses the tick heartbeat plus durable PostgreSQL schedules
   - Tracks progression purely from the heartbeat stream and updates `next_due_tickId` in PostgreSQL as intervals elapse.
   - Uses Redis coordination keys such as `script-scheduler:{tenantRegionTag}:lastTickId` as hints/checkpoints only; losing them affects when work is next discovered, not which durably-configured schedules eventually execute, because durable trigger-instance uniqueness remains the de-duplication boundary.
 
-Details of timer key shapes and scaling strategies live in `system-architecture-tick-concepts-and-invariants.md` and `system-architecture-scripting-dsl-and-lifecycle.md`.
+Details of timer key shapes and scaling strategies live in `system-architecture-tick-concepts-and-invariants.md` and `system-architecture-scripting-scheduler-and-timers.md`.
 
 ---
 

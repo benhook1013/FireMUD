@@ -1,8 +1,16 @@
-# FireMUD Scripting & Automation: Control Plane API and Events
+# FireMUD Scripting & Automation: Control Plane API
 
-This document specifies the **control plane** operations and event contracts required to operate scripting and automation safely across Game Session, Automation & Scripting, Game Design, and Logging & Admin.
+This document specifies the direct **control plane API** surface required to operate scripting and automation safely across Game Session, Automation & Scripting, Game Design, and Logging & Admin.
 
 It exists to remove ambiguity from “conceptual APIs” referenced in service READMEs: this is the target-state contract that must be implemented in protos/services over time.
+
+Workflow sequencing for rollback, pause/resume, drain/purge, dead-letter recovery, and operator audit flows lives in [Scripting & Automation: Control Plane Operations](./system-architecture-scripting-control-plane-operations.md).
+
+Routing note:
+
+- Use this document for control-plane API shape, authoritative ownership, and state-mutation contracts.
+- Use [system-architecture-scripting-rollout-and-rollback.md](./system-architecture-scripting-rollout-and-rollback.md) for drain/rollback workflow sequencing.
+- Use [system-architecture-scripting-control-plane-operations.md](./system-architecture-scripting-control-plane-operations.md) for operator workflow execution details.
 
 ## Table of Contents
 
@@ -21,10 +29,17 @@ This document covers:
 
 - Pinning and rolling back `scriptPatchVersion` for a running `gameInstanceId`.
 - Patch lifecycle visibility (`READY`, `FAILED`, `SUPERSEDED`) plus per-instance rollout/rollback visibility as an operator-facing contract.
-- Operational interactions needed for safe rollback (pause/resume, drain/purge).
-- Plugin lifecycle operations (enable/disable/rollback) scoped to a running `gameInstanceId`, as part of the same operational surface as scripts.
+- Plugin lifecycle operations (enable/disable/drain) scoped to a running `gameInstanceId`.
+- Event-ingress admission contracts and canonical application errors for control-plane decisions.
 
-This document does not define the designer-facing DSL, sandbox internals, or per-trigger runtime semantics (see the scripting DSL reference and sandbox runtime docs).
+This document does not define the designer-facing DSL, sandbox internals, per-trigger runtime semantics, or workflow sequencing (see the scripting DSL reference, sandbox runtime docs, and Control Plane Operations).
+
+Compact publication-to-runtime sequence:
+
+| Flow | Design-time acceptance owner | Runtime readiness / eligibility | Runtime activation owner |
+| --- | --- | --- | --- |
+| Script patch publish -> runtime pin | Game Design publishes the immutable patch artifact | Automation & Scripting reports tenant readiness for `scriptPatchVersion` | Game Session pins the ready patch per `{tenantId, gameInstanceId}` |
+| Plugin upload/publish -> runtime activation | Game Design publishes the immutable plugin version and signer-policy-visible status | Automation & Scripting exposes plugin runtime/status visibility and signer-policy convergence | Automation & Scripting activates/drains/disables the plugin per `{tenantId, gameInstanceId, pluginId}` |
 
 ## Principles
 
@@ -33,7 +48,7 @@ This document does not define the designer-facing DSL, sandbox internals, or per
 - **Control plane is idempotent.** Every mutating operation must accept a caller-provided `controlPlaneRequestId` and be safely retryable.
 - **Auditable and observable.** Every mutating action must emit an audit entry and a durable status event that downstream tooling can consume.
 - **Pin visibility is bounded-staleness.** Services that cache pinned patch/plugin versions must enforce a max staleness bound and fail closed on stale/unknown pin state for admission-critical decisions.
-- **Runtime scope is instance-first.** Tenant-level patch readiness is only an eligibility gate; pause/resume, rollback convergence, timer ownership, and plugin lifecycle actions must preserve `(tenantId, gameInstanceId)` isolation.
+- **Runtime scope is instance-first.** Tenant-level patch readiness is only an eligibility gate; direct API mutations and read surfaces must preserve `(tenantId, gameInstanceId)` isolation.
 
 ## Actors and Responsibilities
 
@@ -56,7 +71,7 @@ This document does not define the designer-facing DSL, sandbox internals, or per
   - Emits a pin change event after a successful pin update.
 
 - **Logging & Admin Service (operator control plane)**
-  - Presents operator workflows for patch rollout/rollback and plugin management.
+  - Presents operator workflows by orchestrating the operations companion doc, and surfaces the direct API responses to operators.
   - Drives changes by calling Game Session and Automation & Scripting APIs, never by writing Redis keys directly.
   - Consumes lifecycle and pin events to render status to operators.
 
@@ -119,196 +134,12 @@ Inputs:
 
 Semantics:
 
-- Equivalent to `SetPinnedScriptPatchVersion` but semantically indicates rollback; tooling may treat it as higher urgency.
+- Equivalent to `SetPinnedScriptPatchVersion` but semantically indicates rollback; tooling may treat it as higher urgency. Operational sequencing and convergence checks live in [Control Plane Operations](./system-architecture-scripting-control-plane-operations.md).
 - Target patch readiness requirements are identical to `SetPinnedScriptPatchVersion`: rollback targets must be `READY` for the tenant or the request fails with a deterministic application error (`SCRIPT_PATCH_NOT_READY`).
 - Base-version cohesion requirements are identical to `SetPinnedScriptPatchVersion`: rollback targets must have `baseVersionId` equal to the instance `runtimeVersionId` or the request fails with `SCRIPT_PATCH_BASE_VERSION_MISMATCH`.
 - On success, emits `ScriptPatchRollbackRequested` (or `ScriptPatchPinChanged` with `changeType=ROLLBACK`).
 
 Outputs: same as `SetPinnedScriptPatchVersion`.
-
-### Game Session: Tick Pause/Resume (Rollback Support)
-
-Rollback protocols require a coordination barrier so gameplay does not execute mixed-version work during the transition.
-
-#### `PauseTicks`
-
-Inputs:
-
-- `tenantId`
-- `gameInstanceId` (required for rollback-safe orchestration scope)
-- Optional narrower scope: `regionId` (allowed only for targeted operational interventions, not as a substitute for full-instance rollback fencing)
-- `controlPlaneRequestId`
-- `actor`
-- `reason`
-
-Semantics:
-
-- Idempotent.
-- Prevents new tick scheduling and new command intake for the scope.
-
-#### `ResumeTicks`
-
-Inputs: same scope model as `PauseTicks` + `controlPlaneRequestId` + `actor` + `reason`.
-
-Semantics:
-
-- Idempotent.
-- Resumes normal scheduling after rollback/drain steps complete.
-
-### Automation & Scripting: Admission Pause/Resume (Rollback Support)
-
-Rollback requires an Automation-side admission barrier in addition to tick pause so new triggers are not admitted while control-plane cleanup is in progress.
-
-#### `SetAutomationAdmissionMode`
-
-Inputs:
-
-- `tenantId`
-- `gameInstanceId` (required for rollback-safe orchestration scope)
-- Optional narrower scope: `regionId` (allowed only for targeted operational interventions, not as a substitute for full-instance rollback fencing)
-- `mode` (`NORMAL` | `PAUSED_FOR_ROLLBACK`)
-- `controlPlaneRequestId`
-- `actor`
-- `reason`
-
-Semantics:
-
-- Idempotent.
-- `PAUSED_FOR_ROLLBACK` prevents admission of new external and scheduler triggers for the scope while allowing already-admitted work to be drained or canceled.
-- During pause, ingress calls return explicit rollback backpressure outcomes (`finalOutcome=skipped_rollback_pause`) and remain audit-visible.
-- Entering `PAUSED_FOR_ROLLBACK` must also advance a scope-local **admission epoch**. Every already-admitted execution carries the epoch under which it was accepted, and any later outbox-persist or tick-handoff attempt must re-check that epoch before committing side effects.
-- If an execution admitted under an earlier epoch reaches persist or handoff after the scope has advanced to a newer rollback epoch, it must not create new live work. The execution transitions to a non-success canceled outcome and remains visible in `script_event_audit`.
-
-#### `GetAutomationDrainStatus`
-
-Inputs:
-
-- `tenantId`
-- `gameInstanceId`
-- Optional narrower scope: `regionId`
-
-Outputs:
-
-- `tenantId`, `gameInstanceId`
-- Optional `regionId`
-- `admissionEpoch`
-- `activeExecutionCount`
-- `oldestActiveExecutionStartedAt` (nullable)
-- `pendingCancelableWorkItemCount`
-- `observedAt`
-
-Semantics:
-
-- Read-only.
-- Reports whether any pre-pause executions or already-persisted work remain in the rollback scope after the current `admissionEpoch` took effect.
-- Rollback orchestration uses this API together with cancel/purge hooks to decide when it is safe to resume normal admission.
-
-### Rollback Convergence Readiness (Required)
-
-Rollback orchestration must verify that runtime services have observed the new pin before admission/ticks resume.
-
-#### `GetAutomationPinConvergence`
-
-Inputs:
-
-- `tenantId`
-- `gameInstanceId`
-
-Outputs:
-
-- `tenantId`, `gameInstanceId`
-- `observedPinnedScriptPatchVersion`
-- `lastObservedControlPlaneRequestId`
-- `observedAt`
-
-Semantics:
-
-- Read-only.
-- Reports the latest pin observation used by admission and scheduler logic.
-
-#### `GetGameSessionPinConvergence`
-
-Inputs:
-
-- `tenantId`
-- `gameInstanceId`
-
-Outputs:
-
-- `tenantId`, `gameInstanceId`
-- `observedPinnedScriptPatchVersion`
-- `lastObservedControlPlaneRequestId`
-- `observedAt`
-
-Semantics:
-
-- Read-only.
-- Reports the latest pin observation used by tick command intake and execution-time version fences.
-
-### Signer Policy Convergence (Required)
-
-Signer-policy enforcement for plugins must be observable the same way pin convergence is observable.
-
-#### `GetSignerPolicyConvergence`
-
-Inputs:
-
-- Optional scope: `tenantId`, `gameInstanceId`
-
-Outputs:
-
-- `serviceName`
-- `serviceInstanceId` (optional for aggregated views)
-- `observedSignerPolicyVersion`
-- `observedAt`
-- `refreshLagMs`
-- `enforcementMode` (`REPORT_ONLY` | `ENFORCING`)
-
-Semantics:
-
-- Read-only.
-- Used by operator tooling to confirm signer allowlist/revocation policy has propagated before declaring revocation complete.
-
-### Game Session: Purge Queued Tick Commands (Rollback Support)
-
-Rollback safety relies on execution-time fences, but operators also need a deterministic cleanup hook so queues do not accumulate mismatched entries after a pin/disable event.
-
-#### `PurgeQueuedTickCommandsForScriptPatch`
-
-Inputs:
-
-- `tenantId`
-- `gameInstanceId`
-- Optional scope: `regionId`
-- `scriptPatchVersion` (the patch version to remove from queues)
-- `controlPlaneRequestId`
-- `actor`
-- `reason`
-
-Semantics:
-
-- Idempotent.
-- Removes (or moves to a bounded dead-letter store) any queued tick commands whose embedded `scriptPatchVersion` matches the supplied value for the scope.
-- Emits an operator-visible metric for purge activity and for version-fence drops (exact metric names and label sets follow the observability contract, including separate script and plugin version-fence metric families).
-
-Outputs:
-
-- `purgedCount` (best-effort count; may be approximate for large batches)
-
-#### `PurgeQueuedTickCommandsForPluginVersion`
-
-Inputs:
-
-- `tenantId`
-- `gameInstanceId`
-- Optional scope: `regionId`
-- `pluginId`
-- `pluginVersionId` (the plugin version to remove from queues)
-- `controlPlaneRequestId`
-- `actor`
-- `reason`
-
-Semantics and outputs: same as `PurgeQueuedTickCommandsForScriptPatch`, scoped to plugin-produced commands.
 
 ### Automation & Scripting: Patch Lifecycle Visibility
 
@@ -463,53 +294,6 @@ Semantics:
 - Transitions the plugin to `DRAINING` so no new triggers are admitted while previously admitted work is allowed to complete within bounded limits.
 - Emits `PluginVersionDisabled(newState=DRAINING)` (or a dedicated draining event if introduced later).
 
-### Automation & Scripting: Drain/Purge Hooks (Rollback Support)
-
-Rollback safety requires draining or invalidating pending automation work items produced under the rolled-back patch.
-
-#### `CancelPendingWorkItemsForPatch`
-
-Inputs:
-
-- `tenantId`
-- `scriptPatchVersion`
-- Optional scope: `gameInstanceId`, `regionId`
-- `controlPlaneRequestId`
-- `actor`
-- `reason`
-
-Semantics:
-
-- Idempotent.
-- Marks all pending outbox work items for the specified patch/scope as canceled so they are never handed off again.
-- Emits an operator audit entry and increments a rollback-specific metric (exact metric names are defined by the observability contract).
-
-Outputs:
-
-- `canceledCount` (best-effort count; may be approximate for large batches)
-
-### Automation & Scripting: Outbox and Dead-Letter Operations (Required)
-
-These APIs provide deterministic operator hooks for stuck/canceled work so control-plane rollback and recovery do not depend on ad-hoc database access.
-
-#### `ListOutboxWorkItems`
-
-Inputs:
-
-- `tenantId`
-- Optional filters: `gameInstanceId`, `regionId`, `scriptPatchVersion`, `pluginId`, `pluginVersionId`, `workItemStatus`, `createdAfter`, `createdBefore`
-- Pagination: `pageSize`, `pageToken`
-
-Semantics:
-
-- Read-only.
-- Must support bounded pagination and stable sort order so large tenants can be inspected without full scans.
-
-Outputs:
-
-- `items[]` (including `outboxWorkItemId`, Trigger Identity, `workItemStatus`, `createdAt`, `updatedAt`, `cancelReason`)
-- `nextPageToken`
-
 ### Automation & Scripting: Event Ingress Admission Contract (Normative)
 
 `TriggerScriptEvent` and equivalent ingress RPCs must return a structured admission result so callers can implement retries without inferring behavior from transport errors.
@@ -538,7 +322,7 @@ Contract rules:
 
 - Backpressure outcomes (`*_BACKPRESSURE_*`) must include bounded `retryAfterMs`.
 - `admissionOutcome` and `admissionReason` describe the **event-scope ingress decision** only. They must not be interpreted as a summary of all handler-scoped outcomes created after binding resolution.
-- Event-scope `admissionOutcome` and `admissionReason` must map 1:1 to the ingress-time admission result recorded in ingress audit/logging surfaces for that request.
+- Event-scope `admissionOutcome` and `admissionReason` must map directly to the ingress-time admission result recorded in ingress audit/logging surfaces for that request; they are not the same thing as later handler-scoped `finalOutcome` values recorded in `script_event_audit`.
 - Admission failures are application-level outcomes and must not be surfaced as transport errors.
 - For events that fan out to multiple handlers:
   - `admitted=true` means the request passed ingress-time fences and was accepted for handler resolution.
@@ -546,89 +330,13 @@ Contract rules:
   - If all handlers later fail individually, the ingress response still remains `admitted=true`; callers do not retry based on those handler-level outcomes.
 - Implementations may expose optional informational fields such as `resolvedHandlerCount`, but those fields must not replace per-handler audit records as the source of truth.
 
-#### `ReplayDeadLetteredWorkItems`
-
-Inputs:
-
-- `tenantId`
-- Optional scope: `gameInstanceId`, `regionId`
-- Selector: explicit `outboxWorkItemIds[]` or bounded filter (`scriptPatchVersion`, `pluginVersionId`, `createdAfter`, `createdBefore`)
-- `controlPlaneRequestId`
-- `actor`
-- `reason`
-
-Semantics:
-
-- Idempotent.
-- Transitions selected `DEAD_LETTERED` work items back to replayable state (`PENDING` or equivalent) without re-running DSL evaluation for original triggers.
-- Must enforce bounded batch size per request.
-- Must enforce replay eligibility against current control-plane state before transition:
-  - Work items with `scriptPatchVersion` that is not currently pinned for the scoped instance must be rejected from replay.
-  - Plugin work items whose `(pluginId, pluginVersionId)` do not match currently active plugin state for the scoped instance must be rejected from replay.
-  - Ineligible rows must return deterministic bounded application errors (for example `REPLAY_VERSION_FENCE_MISMATCH`) and must remain `DEAD_LETTERED`.
-
-Outputs:
-
-- `replayedCount` (best-effort count; may be approximate for large batches)
-
-#### `PurgeOutboxWorkItems`
-
-Inputs:
-
-- `tenantId`
-- Optional scope: `gameInstanceId`, `regionId`
-- Selector: explicit `outboxWorkItemIds[]` or bounded filter (`workItemStatus`, `scriptPatchVersion`, `pluginVersionId`, `createdBefore`)
-- `controlPlaneRequestId`
-- `actor`
-- `reason`
-
-Semantics:
-
-- Idempotent.
-- Permanently removes selected outbox rows or marks them purged in bounded batches.
-- Must emit operator-auditable records for every purge request.
-
-Outputs:
-
-- `purgedCount` (best-effort count; may be approximate for large batches)
-
-#### `CancelPendingWorkItemsForPluginVersion`
-
-Inputs:
-
-- `tenantId`
-- `pluginId`
-- `pluginVersionId`
-- Optional scope: `gameInstanceId`, `regionId`
-- `controlPlaneRequestId`
-- `actor`
-- `reason`
-
-Semantics:
-
-- Idempotent.
-- Marks pending outbox work items produced by the specified plugin version as canceled so they are never handed off again.
-- Required for plugin disable/rollback/revocation workflows to avoid repeated execution-time plugin version fence drops and queue growth.
-
-Outputs:
-
-- `canceledCount` (best-effort count; may be approximate for large batches)
-
-### Logging & Admin: Operator Workflow APIs
-
-Logging & Admin may expose a single high-level orchestration API (internally driving the lower-level calls above) for operators:
-
-- `RequestScriptPatchRollback(tenantId, gameInstanceId, targetScriptPatchVersion, controlPlaneRequestId, actor, reason)`
-- `RequestScriptPatchPromotion(tenantId, gameInstanceId, targetScriptPatchVersion, controlPlaneRequestId, actor, reason)`
-
-If implemented, these APIs must remain thin orchestration and must not become another source of truth for the pinned version.
-
 ## Related Control Plane Contracts
 
 The detailed event and orchestration contracts now live in focused sibling docs:
 
 - [Scripting Control Plane Events](./system-architecture-scripting-control-plane-events.md) defines durable event families, transport/ordering guarantees, and required event payloads.
-- [Scripting Rollout and Rollback](./system-architecture-scripting-rollout-and-rollback.md) defines promotion, rollback, convergence, timeout, and degraded-operations workflows.
+- [Scripting Control Plane Operations](./system-architecture-scripting-control-plane-operations.md) defines promotion, rollback, pause/resume, drain/purge, dead-letter, convergence, timeout, and degraded-operations workflows.
+- [Scripting Rollout and Rollback](./system-architecture-scripting-rollout-and-rollback.md) provides the higher-level operator workflow summary.
 
 ## Idempotency, AuthZ, and Audit
 

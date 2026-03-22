@@ -1,6 +1,6 @@
 # FireMUD Player Experience Incident Runbook
 
-This runbook describes operator actions for **player-facing SLO breaches** on login, command latency, and chat delivery. It complements the Player Experience SLIs/SLOs in `system-architecture-logging-monitoring.md` and the alert rules in `design/observability/grafana/core-alerts-snippets.md`.
+This runbook describes operator actions for **player-facing SLO breaches** on login, command latency, and chat delivery. It complements the Player Experience SLIs/SLOs in `system-architecture-logging-monitoring.md` and the alert rules in `design/observability/grafana/player-experience-alerts-snippets.md`.
 
 ## Incident Types
 

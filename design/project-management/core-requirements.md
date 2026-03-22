@@ -144,7 +144,7 @@ See [Game Design Service](../architecture/microservices/game-design-service/READ
 - **WebSocket/TCP-based real-time networking** for low-latency gameplay.
 - **TCP Proxy Service** bridges legacy **Telnet** clients to WebSockets before reaching the Gateway.
 - **API Gateway** manages requests between microservices and handles external integrations.
-- **Gameplay login is handled by the Game Session Service**; any JWT on admin or REST endpoints is validated by the consuming service. The Gateway and Game Session Service do not validate tokens for gameplay.
+- **Gameplay login is handled by the Game Session Service**; any JWT on admin or REST endpoints is validated by the consuming service. For first-party `/ws/game/**` handshakes, Spring Cloud Gateway validates the short-lived connect token at the edge and Game Session validates the signed Gateway-issued connect context before gameplay admission. Gameplay credentials and admission still remain `LOGIN` / `PLAY`-driven rather than JWT-on-every-message.
 - **Internal microservices communicate over gRPC**, secured by **mTLS** certificates issued via Kubernetes.
 - **Cert-manager** provisions and rotates these certificates as **Kubernetes Secrets**.
 - Multi-server support enables **scaling hosted games separately**.

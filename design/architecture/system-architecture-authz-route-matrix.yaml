@@ -26,15 +26,11 @@ routes:
     scope: account
     classification: pre_tenant_discovery
     required_live_checks: [membership, runtime_entitlements]
-    roles:
-      any_of: [player, moderator, designer, tenantAdmin]
   - service: game-session-service
     route: REALMS
     scope: tenant
     classification: public_production_onboarding
     required_live_checks: [public_production_admission, realm_access_grant, runtime_entitlements]
-    roles:
-      any_of: [player, moderator, designer, tenantAdmin]
   - service: game-session-service
     route: CHARS
     scope: tenant
@@ -42,8 +38,6 @@ routes:
     tenant_billing_watermark_applies: false
     membership_watermark_applies: false
     required_live_checks: [public_production_admission, realm_access_grant, runtime_entitlements]
-    roles:
-      any_of: [player, moderator, designer, tenantAdmin]
   - service: game-session-service
     route: PLAY
     scope: tenant
@@ -54,8 +48,14 @@ routes:
     mutation_contract: public_production_membership_atomic
     canonical_errors:
       any_of: [CONNECT_CONTEXT_INVALID, CONNECT_SCOPE_MISMATCH]
-    roles:
-      any_of: [player, moderator, designer, tenantAdmin]
+  - service: entity-management-service
+    route: POST /characters
+    scope: tenant
+    classification: public_production_onboarding
+    auth_path: player_bootstrap
+    tenant_billing_watermark_applies: false
+    membership_watermark_applies: false
+    required_live_checks: [public_production_admission, realm_access_grant, runtime_entitlements]
   - service: game-session-service
     route: StartSession
     scope: tenant
@@ -157,7 +157,7 @@ routes:
     canonical_errors:
       any_of: [ADMISSION_POINTER_UNAVAILABLE, CONNECT_SCOPE_MISMATCH, ENTITLEMENT_UNAVAILABLE]
     roles:
-      any_of: [player, moderator, designer, tenantAdmin, platformAdmin]
+      any_of: [player, moderator, designer, tenantAdmin]
   - service: account-service
     route: GetTenantEntitlementsForRuntime
     scope: tenant

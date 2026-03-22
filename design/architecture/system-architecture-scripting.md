@@ -4,7 +4,8 @@ This document is the **hub** for FireMUD’s scripting and automation architectu
 
 Document conflict resolution order is defined in `design/architecture/system-architecture-scripting-normative-contract-tables.md#document-precedence-normative`.
 
-For control-plane operations (pinning/rollback of `scriptPatchVersion`, pause/resume, and required status events), see `design/architecture/system-architecture-scripting-control-plane-api.md`.
+For control-plane API contracts, see `design/architecture/system-architecture-scripting-control-plane-api.md`.
+For workflow sequencing (pin/rollback orchestration, pause/resume, drain/purge, and convergence), see `design/architecture/system-architecture-scripting-control-plane-operations.md`.
 
 It complements:
 

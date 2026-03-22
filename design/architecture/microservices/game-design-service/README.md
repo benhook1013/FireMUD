@@ -8,6 +8,12 @@ This service is used only at design time. Runtime clients never request logos,
 favicons, or themes from it; published assets are served from object storage via
 manifest files.
 
+Authoritative read surfaces worth wiring into creator/operator tooling:
+
+- script patch tenant-readiness and rollout visibility defined in [Scripting Control Plane API](../../system-architecture-scripting-control-plane-api.md)
+- plugin version publication status, signer-policy convergence, and status-change events defined in [modding-framework.md](./modding-framework.md)
+- template resolution and launch-default semantics defined in [game-templates.md](./game-templates.md)
+
 ### Responsibilities
 
 - Provide REST/gRPC tools and a web UI for editing game assets.

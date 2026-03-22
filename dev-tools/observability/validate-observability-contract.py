@@ -14,6 +14,14 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 ALLOWED_SEVERITIES = {"P0", "P1", "P2"}
 REQUIRED_ALERT_LABELS = {"service", "severity", "owner", "runbook"}
 DISALLOWED_ALERT_SERVICE_LABELS = {"gateway", "game-session"}
+GRAFANA_DIR = REPO_ROOT / "design" / "observability" / "grafana"
+CORE_ALERT_SNIPPET_PATHS = [
+    GRAFANA_DIR / "redis-alerts-snippets.md",
+    GRAFANA_DIR / "tick-alerts-snippets.md",
+    GRAFANA_DIR / "backup-alerts-snippets.md",
+    GRAFANA_DIR / "player-experience-alerts-snippets.md",
+    GRAFANA_DIR / "observability-stack-alerts-snippets.md",
+]
 
 
 @dataclass(frozen=True)
@@ -311,41 +319,41 @@ def _validate_doc_semantics() -> list[Finding]:
             )
         )
 
-    core_alerts = REPO_ROOT / "design" / "observability" / "grafana" / "core-alerts-snippets.md"
-    core_text = _read_text(core_alerts)
-    for yaml_block in _extract_fenced_blocks(core_text, "yaml"):
-        for rule_lines in _split_alert_rules(yaml_block):
-            alert_name = None
-            first_line = rule_lines[0] if rule_lines else ""
-            match = re.match(r"^\s*-\s*alert:\s*(\S+)", first_line)
-            if match:
-                alert_name = match.group(1).strip()
-            if not alert_name:
-                continue
-            labels = _parse_labels(rule_lines)
-            expr = _parse_expr(rule_lines) or ""
-            compact_expr = re.sub(r"\s+", "", expr)
+    for core_alerts in CORE_ALERT_SNIPPET_PATHS:
+        core_text = _read_text(core_alerts)
+        for yaml_block in _extract_fenced_blocks(core_text, "yaml"):
+            for rule_lines in _split_alert_rules(yaml_block):
+                alert_name = None
+                first_line = rule_lines[0] if rule_lines else ""
+                match = re.match(r"^\s*-\s*alert:\s*(\S+)", first_line)
+                if match:
+                    alert_name = match.group(1).strip()
+                if not alert_name:
+                    continue
+                labels = _parse_labels(rule_lines)
+                expr = _parse_expr(rule_lines) or ""
+                compact_expr = re.sub(r"\s+", "", expr)
 
-            if alert_name == "LoginSuccessRatioLowGateway":
-                if labels.get("service") != "spring-cloud-gateway":
-                    findings.append(Finding(path=core_alerts, message="LoginSuccessRatioLowGateway must use labels.service=spring-cloud-gateway"))
-                if 'login_requests_total{service="spring-cloud-gateway"' not in compact_expr:
-                    findings.append(Finding(path=core_alerts, message="LoginSuccessRatioLowGateway must scope expr to service=\"spring-cloud-gateway\""))
-            if alert_name == "LoginSuccessRatioLowTcpProxy":
-                if labels.get("service") != "tcp-proxy-service":
-                    findings.append(Finding(path=core_alerts, message="LoginSuccessRatioLowTcpProxy must use labels.service=tcp-proxy-service"))
-                if 'login_requests_total{service="tcp-proxy-service"' not in compact_expr:
-                    findings.append(Finding(path=core_alerts, message="LoginSuccessRatioLowTcpProxy must scope expr to service=\"tcp-proxy-service\""))
-            if alert_name == "CommandLatencyP99HighGateway":
-                if labels.get("service") != "spring-cloud-gateway":
-                    findings.append(Finding(path=core_alerts, message="CommandLatencyP99HighGateway must use labels.service=spring-cloud-gateway"))
-                if 'command_end_to_end_latency_ms_bucket{service="spring-cloud-gateway"' not in compact_expr:
-                    findings.append(Finding(path=core_alerts, message="CommandLatencyP99HighGateway must scope expr to service=\"spring-cloud-gateway\""))
-            if alert_name == "CommandLatencyP99HighTcpProxy":
-                if labels.get("service") != "tcp-proxy-service":
-                    findings.append(Finding(path=core_alerts, message="CommandLatencyP99HighTcpProxy must use labels.service=tcp-proxy-service"))
-                if 'command_end_to_end_latency_ms_bucket{service="tcp-proxy-service"' not in compact_expr:
-                    findings.append(Finding(path=core_alerts, message="CommandLatencyP99HighTcpProxy must scope expr to service=\"tcp-proxy-service\""))
+                if alert_name == "LoginSuccessRatioLowGateway":
+                    if labels.get("service") != "spring-cloud-gateway":
+                        findings.append(Finding(path=core_alerts, message="LoginSuccessRatioLowGateway must use labels.service=spring-cloud-gateway"))
+                    if 'login_requests_total{service="spring-cloud-gateway"' not in compact_expr:
+                        findings.append(Finding(path=core_alerts, message="LoginSuccessRatioLowGateway must scope expr to service=\"spring-cloud-gateway\""))
+                if alert_name == "LoginSuccessRatioLowTcpProxy":
+                    if labels.get("service") != "tcp-proxy-service":
+                        findings.append(Finding(path=core_alerts, message="LoginSuccessRatioLowTcpProxy must use labels.service=tcp-proxy-service"))
+                    if 'login_requests_total{service="tcp-proxy-service"' not in compact_expr:
+                        findings.append(Finding(path=core_alerts, message="LoginSuccessRatioLowTcpProxy must scope expr to service=\"tcp-proxy-service\""))
+                if alert_name == "CommandLatencyP99HighGateway":
+                    if labels.get("service") != "spring-cloud-gateway":
+                        findings.append(Finding(path=core_alerts, message="CommandLatencyP99HighGateway must use labels.service=spring-cloud-gateway"))
+                    if 'command_end_to_end_latency_ms_bucket{service="spring-cloud-gateway"' not in compact_expr:
+                        findings.append(Finding(path=core_alerts, message="CommandLatencyP99HighGateway must scope expr to service=\"spring-cloud-gateway\""))
+                if alert_name == "CommandLatencyP99HighTcpProxy":
+                    if labels.get("service") != "tcp-proxy-service":
+                        findings.append(Finding(path=core_alerts, message="CommandLatencyP99HighTcpProxy must use labels.service=tcp-proxy-service"))
+                    if 'command_end_to_end_latency_ms_bucket{service="tcp-proxy-service"' not in compact_expr:
+                        findings.append(Finding(path=core_alerts, message="CommandLatencyP99HighTcpProxy must scope expr to service=\"tcp-proxy-service\""))
 
     player_runbook = REPO_ROOT / "design" / "architecture" / "system-architecture-player-experience-incident-runbook.md"
     player_runbook_text = _read_text(player_runbook)
@@ -496,6 +504,7 @@ def _validate_reference_prometheus_rules(path: Path) -> list[Finding]:
         "TickExecutionUnsafeRatio",
         "BackupPipelineNoRecentBackup",
         "BackupPipelineNoRecentVerification",
+        "BackupPipelineNoRecentRestoreDrill",
         "BackupTickPauseTooLongScoped",
         "BackupTickPauseWaitTooLongScoped",
         "BackupTicksPausedTooLong",
@@ -544,9 +553,13 @@ def _validate_reference_prometheus_rules(path: Path) -> list[Finding]:
 def main() -> int:
     findings: list[Finding] = []
 
-    grafana_dir = REPO_ROOT / "design" / "observability" / "grafana"
-    findings.extend(_validate_alert_snippet(grafana_dir / "core-alerts-snippets.md"))
-    findings.extend(_validate_alert_snippet(grafana_dir / "tcp-proxy-alerts-snippets.md"))
+    grafana_dir = GRAFANA_DIR
+    for alert_snippet in [
+        grafana_dir / "core-alerts-snippets.md",
+        *CORE_ALERT_SNIPPET_PATHS,
+        grafana_dir / "tcp-proxy-alerts-snippets.md",
+    ]:
+        findings.extend(_validate_alert_snippet(alert_snippet))
     findings.extend(_validate_grafana_dashboards(grafana_dir))
     findings.extend(_validate_kibana_saved_objects(REPO_ROOT / "design" / "observability" / "kibana"))
     findings.extend(_validate_doc_semantics())

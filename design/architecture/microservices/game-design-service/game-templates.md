@@ -25,6 +25,12 @@ The `config` payload does not embed authoritative copies of world, entity, or sc
 - References to starter items, NPCs, and equipment using stable identifiers owned by the Entity Management Service and scoped by `(tenantId, versionId)`.
 - References to rulesets and scripts via identifiers defined by the Automation & Scripting Service.
 
+Creator-facing launch-default note:
+
+- A template-pinned `scriptPatchVersion` is an explicit default chosen at authoring time.
+- Caller overrides may fill unset launch fields, but they must not silently replace a template-pinned script patch.
+- If a creator wants a different default patch, the template itself must be updated and republished rather than relying on arbitrary per-launch override behavior.
+
 Canonical schemas, identifiers, and versioned template rows remain in the owning domain services; `GameTemplateDto.config` is a configuration and wiring layer that composes these existing templates for bootstrapping new games.
 
 ### Normalized Reference Storage
