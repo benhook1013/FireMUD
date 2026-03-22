@@ -259,7 +259,7 @@ Example alerts for missed backups and verification runs:
     service: postgres-backup
     severity: P2
     owner: infra
-    runbook: design/architecture/system-architecture-backup-recovery.md#tick-pause-scope-migration-plan-normative
+    runbook: design/architecture/system-architecture-backup-recovery.md#tick-pause-scope-migration-plan
   annotations:
     summary: Backup controls still use alias scope
     description: One or more backup pause/resume requests still relied on game_instance_id alias scope during the last 24 hours. Migrate automation to canonical region scope.
