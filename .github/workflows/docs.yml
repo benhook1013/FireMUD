@@ -29,7 +29,9 @@ jobs:
         env:
           LYCHEE_CACHE: true
         with:
-          args: --no-progress --verbose --exclude-file .lycheeignore './**/*.md' --exclude './**/node_modules/**' --exclude './**/build/**' --exclude './**/.gradle/**'
+          # Keep docs publishing resilient to third-party outages. Full external
+          # link validation remains in CI via `./gradlew lintMarkdown linkCheck -PfullCheck`.
+          args: --no-progress --verbose --scheme file --exclude-path './**/node_modules/**' --exclude-path './**/build/**' --exclude-path './**/.gradle/**' './**/*.md'
           fail: true
           jobSummary: true
       - uses: actions/configure-pages@v5
