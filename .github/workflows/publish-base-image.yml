@@ -1,6 +1,8 @@
 name: Publish FireMUD Base Image
 
 on:
+  schedule:
+    - cron: '0 2 * * 0'  # Weekly on Sundays at 02:00 UTC
   push:
     branches:
       - develop
