@@ -326,7 +326,12 @@ Planned split:
 
 Files:
 
-- [ ] Refactor [`design/architecture/system-architecture-scripting-quotas-and-operations.md`](../architecture/system-architecture-scripting-quotas-and-operations.md)
+- [x] Create untouched backup copy for [`design/architecture/system-architecture-scripting-quotas-and-operations.md`](../architecture/system-architecture-scripting-quotas-and-operations.md)
+- [x] First split pass completed for [`design/architecture/system-architecture-scripting-quotas-and-operations.md`](../architecture/system-architecture-scripting-quotas-and-operations.md)
+- [x] First backup-vs-refactor subagent review completed
+- [x] First review was clean; no omission-repair pass was required
+- [x] Run second backup-vs-refactor subagent review
+- [x] Second review was clean enough to move on
 
 Why:
 
