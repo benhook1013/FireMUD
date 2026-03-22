@@ -126,6 +126,8 @@ For dev-only plaintext verification:
 grpcurl -plaintext localhost:6565 tcp_proxy.v1.TcpProxyService/Ping
 ```
 
+Even though the proxy has no public API, the supporting event messages are defined in [`../../../../protos/tcp-proxy/v1`](../../../../protos/tcp-proxy/v1). Regenerate stubs with `./gradlew generateProto` when the proto files change.
+
 ## Local Development and Echo Loop
 
 There are two common local flows, depending on whether you want to test the full Telnet -> WebSocket bridge or run the proxy completely standalone.
@@ -165,3 +167,15 @@ Stop the stack when finished:
 ```bash
 docker compose -f docker/docker-compose.tcp-proxy-devisolated.yml --profile tcp-proxy-devisolated down
 ```
+
+## Cross-Service Integration Test
+
+The `src/test/java/crossservice` directory contains an integration test that launches this service alongside Spring Cloud Gateway with Testcontainers.
+
+This test requires the Spring Cloud Gateway Docker image to be available. Build it with `./gradlew :spring-cloud-gateway:bootBuildImage` or pull from the registry.
+
+```bash
+./gradlew :tcp-proxy-service:test --tests "*CrossServiceIntegrationTest"
+```
+
+See [System Architecture Testing](../../system-architecture-testing.md) for more information.

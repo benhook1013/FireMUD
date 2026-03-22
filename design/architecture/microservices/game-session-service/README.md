@@ -65,6 +65,7 @@ This split keeps `/ws/game/**` and Telnet gameplay sessions stable at the edge w
 - [`api-contracts.md#session-front-end-and-lease-owner-routing`](./api-contracts.md#session-front-end-and-lease-owner-routing)
 - [`runtime-and-data.md#redis-ownership-and-coordination-rules`](./runtime-and-data.md#redis-ownership-and-coordination-rules)
 - [`operations.md#readiness-and-liveness`](./operations.md#readiness-and-liveness)
+- [`protocols.md#login-and-play-flow`](./protocols.md#login-and-play-flow)
 - [`protocols.md#minimal-text-command-protocol`](./protocols.md#minimal-text-command-protocol)
 - [`configuration.md#environment-variables`](./configuration.md#environment-variables)
 

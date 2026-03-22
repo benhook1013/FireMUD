@@ -31,8 +31,7 @@
 
 - Use `./gradlew :game-session-service:bootRunDevIsolated` or set `GAME_SESSION_DEV_ISOLATED=true` when you need to exercise Game Session without PostgreSQL, Redis, or downstream gRPC dependencies. The dev-isolated beans acknowledge commands and lifecycle requests while only recording informational logs instead of accessing external systems.
 - `dev-isolated` is an explicit opt-in for dependency-free local development only. The standard `dev` profile used by Docker Compose and readiness-based smoke tests keeps the canonical readiness group rather than downgrading readiness to local `readinessState` only.
-- `DevIsolatedGameSessionSmokeTest` in `services/game-session-service/src/test/java/integration/net/firedevops/firemud/DevIsolatedGameSessionSmokeTest.java` starts the dev profile in dev-isolated mode, posts to `POST /sessions`, and asserts the request is accepted and logged, proving the fast-path smoke test that only touches in-memory components.
-- The dev-isolated smoke/integration tests (`DevIsolatedGameSessionSmokeTest`, `GameSessionLoginIntegrationTest`, `GameSessionWebSocketHandlerIntegrationTest`, `SessionResumptionFlowTest`) are currently decorated with `@Disabled` so they act as TODO reminders until the real Account/Redis/GameInstance wiring exists. See [`02-task-list-login-and-session-vertical-slice.md`](../../../project-management/vertical-slices/02-task-list-login-and-session-vertical-slice.md#7-dev-mode-stubs-and-real-service-rollout).
+- The dev-isolated smoke path is covered by dedicated integration tests under `services/game-session-service/src/test/java/integration`, and the broader rollout status remains tracked in [`02-task-list-login-and-session-vertical-slice.md`](../../../project-management/vertical-slices/02-task-list-login-and-session-vertical-slice.md#7-dev-mode-stubs-and-real-service-rollout).
 
 ## Cross-Service Integration Test
 

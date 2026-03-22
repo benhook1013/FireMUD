@@ -57,6 +57,8 @@ See [Identifier Glossary](../../system-architecture-identifier-glossary.md) for 
   - environment variables, secrets, service discovery, and local override notes.
 - [`procedural-generation-control.md`](./procedural-generation-control.md)
   - generation-input ownership, runtime-default APIs, artifact publication path, and draft-digest implications.
+- [`world-creation-workflow.md`](./world-creation-workflow.md)
+  - per-instance world-creation Saga steps and rollback boundaries.
 
 ## Quick Canonical Links
 
@@ -65,6 +67,7 @@ See [Identifier Glossary](../../system-architecture-identifier-glossary.md) for 
 - [`runtime-and-data.md#redis-role-and-cache-usage`](./runtime-and-data.md#redis-role-and-cache-usage)
 - [`runtime-and-data.md#character-location-ownership`](./runtime-and-data.md#character-location-ownership)
 - [`procedural-generation-control.md#procedural-generation-control-apis`](./procedural-generation-control.md#procedural-generation-control-apis)
+- [`world-creation-workflow.md`](./world-creation-workflow.md)
 - [`configuration.md#environment-variables`](./configuration.md#environment-variables)
 
 ## Dependencies

@@ -15,7 +15,7 @@ The service creates temporary instances of zones for dungeons or housing. Instan
 - Direct periodic deletion of instance rows is not a valid cleanup path.
 - Scheduled expiry jobs must participate in the same fenced lifecycle workflow documented in the service API/runtime contracts.
 
-## LOOK Slice Status
+## Current LOOK Slice Status
 
 - **Live:** `GetRoomSnapshot` returns room metadata, descriptions, and exit labels needed by Game Logic to render the canonical `LOOK` transcript, and telemetry for this pipeline is documented in [`look-instrumentation.md`](../../../project-management/look-instrumentation.md).
 - **Stubbed:** Current snapshot data comes from the seeded demo rooms so scripted room events, line-of-sight lighting, and procedural text remain deterministic for regression tests.

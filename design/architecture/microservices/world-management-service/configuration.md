@@ -17,6 +17,12 @@ Additional variables configure world-data caching and housekeeping:
 | `WORLD_INSTANCE_EXPIRATION_HOURS` | Hours before a transient instance expires | `24` |
 | `WORLD_EVENT_CHECK_DELAY_MS` | Delay between event-processing checks in ms | `60000` |
 
+## Configuration Source Locations
+
+- Runtime configuration defaults live in `services/world-management-service/src/main/resources/application.yml`.
+- gRPC contract definitions referenced by this service live under [`../../../../protos/world-management/v1`](../../../../protos/world-management/v1).
+- Design-time API semantics and service behavior remain owned by [`api-contracts.md`](./api-contracts.md), while this document owns the service-local configuration surface and discovery overrides.
+
 ## Local Override Notes
 
 - Override the World Management endpoint locally via `FIREMUD_SERVICES_WORLD_MANAGEMENT_SERVICE` when running Gateway or Game Session against custom world servers.

@@ -153,7 +153,7 @@ World Management owns the lifecycle of `gameInstanceId` rows, but teardown is cr
 - Lifecycle fencing is mandatory. Termination acquires the same per-instance lifecycle fence used by activation. If activation and termination race, termination is authoritative unless admission has already opened and `ACTIVE` is committed.
 - Game Session finalizes runtime `game_instances` termination only after World reports `TERMINATED`.
 
-## `/ws/game/**` LOOK Contract Notes
+## LOOK Consumer Notes
 
 Telnet and WebSocket clients both route through the `/ws/game/**` gameplay path, so `LOOK` commands hit the same `LookCommandHandler` regardless of transport.
 

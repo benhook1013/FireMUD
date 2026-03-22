@@ -71,6 +71,7 @@ These are the primary canonical references for proxy behaviour:
 
 - [`protocols.md#telnet-session-envelope--event-metrics`](./protocols.md#telnet-session-envelope--event-metrics)
 - [`api-contracts.md#service-interactions`](./api-contracts.md#service-interactions)
+- [`runtime-and-data.md#reconnection-behaviour-at-the-proxy-layer`](./runtime-and-data.md#reconnection-behaviour-at-the-proxy-layer)
 - [`operations.md#metrics-summary`](./operations.md#metrics-summary)
 - [`configuration.md#websocket-mtls-to-spring-cloud-gateway`](./configuration.md#websocket-mtls-to-spring-cloud-gateway)
 - [`configuration.md#environment-variables`](./configuration.md#environment-variables)

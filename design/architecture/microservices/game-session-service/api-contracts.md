@@ -84,19 +84,3 @@ Game Session owns the gameplay session front door and the split between protocol
 - If a command would produce both immediate text and enqueue metadata, enqueue failure wins. Game Session returns a single `ERROR` response instead of reporting success and silently dropping gameplay work.
 
 For the player-visible line protocol and examples, see [`protocols.md`](./protocols.md).
-
-## Script Patch Version Pinning and Rollback
-
-Each running game instance has a pinned `scriptPatchVersion` alongside its `runtimeVersion`:
-
-- Event ingress to the Automation & Scripting Service includes the currently pinned `scriptPatchVersion` so script evaluation is tied to the active patch for the instance.
-- Script-generated commands accepted from the Automation & Scripting Service must carry the originating `scriptPatchVersion`, `scriptId`, and `scriptEventId`.
-- On execution, Game Session enforces a version fence: if a queued command’s `scriptPatchVersion` does not match the instance’s currently pinned value, it must not be executed and the drop must be observable for operators.
-
-Control-plane operations that change the pinned patch are admin-only and idempotent. Their required request/response fields and the associated event contracts are specified in [Scripting Control Plane API](../../system-architecture-scripting-control-plane-api.md) and are represented in `protos/game-session/v1/game_session_service.proto` under `GameSessionControlPlaneService`.
-
-For cross-service invariants, see [Scripting Contracts](../../system-architecture-scripting-contracts.md).
-
-## Saga Participation
-
-Game startup and shutdown are coordinated using the shared `Saga` helpers from `firemud-common`. Each dependent service, including World Management, Entity Management, and Game Logic, confirms its part of the workflow before the session becomes active. Failures trigger compensating steps so session activation and shutdown remain consistent. See [Transaction Strategies](../../system-architecture-transactions.md) for the shared saga model.

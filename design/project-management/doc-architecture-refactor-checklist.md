@@ -431,7 +431,7 @@ Even services that do not yet strictly need every subdoc should receive placehol
 
 ### TCP Proxy, Game Session, World Management
 
-- [ ] Standardize the new split docs created in Phase 2 so these services become the pilot examples for the rest of the repo.
+- [x] Standardize the new split docs created in Phase 2 so these services become the pilot examples for the rest of the repo.
 
 ## Phase 4: Cross-Cutting System-Doc Cleanup
 
