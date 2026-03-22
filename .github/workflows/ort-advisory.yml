@@ -1,4 +1,4 @@
-name: ORT Advisory Scan
+name: Weekly ORT Advisory Scan
 
 on:
   schedule:
@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   ort-advisory:
-    name: ORT Advisory Scan
+    name: Weekly ORT Advisory Scan
     runs-on: ubuntu-latest
     steps:
       - name: Use HTTPS for Git

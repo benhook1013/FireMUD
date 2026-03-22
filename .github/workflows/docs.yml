@@ -19,6 +19,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
       - name: Cache link check results
         uses: actions/cache@v5
         with:
@@ -35,14 +39,15 @@ jobs:
           fail: true
           jobSummary: true
       - uses: actions/configure-pages@v5
+      - name: Install MkDocs
+        run: python3 -m pip install --disable-pip-version-check mkdocs
       - name: Build documentation
         run: |
-          mkdir -p public/design
-          cp -r design/* public/design/
-          cp README.md public/index.md
+          python3 dev-tools/docs/build_pages_site.py
+          python3 -m mkdocs build --clean
       - uses: actions/upload-pages-artifact@v4
         with:
-          path: ./public
+          path: ./build/public-site
 
   deploy:
     needs: build

@@ -1,0 +1,18 @@
+site_name: FireMUD Documentation
+site_url: https://benhook1013.github.io/FireMUD/
+repo_url: https://github.com/benhook1013/FireMUD
+repo_name: benhook1013/FireMUD
+docs_dir: build/pages-docs
+site_dir: build/public-site
+use_directory_urls: true
+
+theme:
+  name: mkdocs
+
+plugins:
+  - search
+
+markdown_extensions:
+  - tables
+  - toc:
+      permalink: true
