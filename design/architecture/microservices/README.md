@@ -1,65 +1,57 @@
-# FireMUD Microservices Documentation
+# Service Documentation Structure
 
-This directory contains detailed design documents for each core microservice in the FireMUD Game Platform. These documents outline the responsibilities, APIs, data models, and interactions of each service.
+This directory uses a standard documentation shape for service-level design docs so ownership stays clear as services grow.
 
-Service READMEs must not contradict the canonical contracts in [System Architecture Overview](../system-architecture-overview.md) and [Service Responsibility Matrix](../service-responsibility-matrix.md). If a service-level design needs to change an edge exposure rule, ownership boundary, Redis prefix owner, moderation/operator write path, or other canonical cross-service contract, update the architecture docs first or in the same change. For shared terminology such as `session front-end`, `lease owner`, `canonical room state`, and `bypass-safe workflow`, use the canonical definitions in the [architecture index glossary](../README.md#canonical-terms).
+## Standard Shape
 
-Service READMEs must also treat the overview’s `Gameplay Hot Path Policy (Canonical)` as normative. A service doc may not introduce a steady-state gameplay API design that depends on synchronous fan-out to more than two downstream domain services unless the architecture docs are updated with the required latency-budget and fallback rationale.
+- `README.md`
+  - Service overview, boundaries, major responsibilities, ownership map, and links to subdocs.
+- `api-contracts.md`
+  - REST/gRPC/control-plane surfaces, canonical errors, and wire/source-of-truth references.
+- `runtime-and-data.md`
+  - Runtime state ownership, Redis/PostgreSQL/object-store boundaries, lifecycle invariants, and durable versus transient data rules.
+- `operations.md`
+  - Readiness/liveness, observability, operator-facing behavior, local/dev verification, and runbook-adjacent notes.
+- `configuration.md`
+  - Environment variables, service discovery, TLS/trust knobs, and service-local configuration source locations.
+- `protocols.md` or `client-behavior.md`
+  - Only when a service owns a wire/text/browser/client-flow contract that would otherwise dominate the README.
+- `appendix-*.md`
+  - Optional. Use only for worked examples, catalogs, or supporting reference material that would blur the core owner docs.
 
-Service READMEs may not create new classes of externally writable bypass-safe workflows on their own. If an external write path is not explicitly allowlisted by the overview or responsibility matrix, it is not bypass-safe until the architecture docs are updated.
+Not every service needs every file immediately, but every service should trend toward this shape so future growth has an obvious home.
 
-When a service README designates an edge-routable write as bypass-safe, it must include the minimum checklist from the overview: exact route shape and method, domain-local ownership rationale, statement that no Logging & Admin-owned policy is involved, statement that no cross-domain write orchestration is involved, required audit behavior, and an explicit `bypass-safe` designation.
+## Canonical Ownership Rules
 
-When a service participates in the canonical room-read fence contract, its README should include a shared request/response example that shows `asOfTickId` input, same-fence success, and `STALE_READ_FENCE` / `READ_FENCE_UNAVAILABLE` failure semantics so cross-service contract tests can align on one shape.
+- Keep one canonical parent doc per major concept.
+- Do not split invariants across many peers without a clear owner.
+- Move catalogs, worked examples, cookbooks, and protocol appendices out of the parent doc first.
+- `README.md` should link to every active sibling doc in the set and should state what the service doc set owns versus what other services or system docs own.
 
----
+## Backup Convention
 
-## Core Microservices
+- Before refactoring an existing service doc, create an untouched backup copy in the same directory.
+- The default naming convention is `README.pre-doc-refactor-backup.md` for README refactors and `<original-name>.pre-doc-refactor-backup.md` for other files.
+- Backup copies must preserve the exact pre-refactor content and must not be edited during the refactor pass.
 
-| Microservice | Purpose |
-| --- | --- |
-| [Account Service](./account-service/) | Manages user accounts, authentication, profiles, and admin/API session tokens (credentials and JWTs, not gameplay sessions). |
-| [Automation & Scripting Service](./automation-scripting-service/) | Handles AI behaviors, event scripting, and dynamic interactions. |
-| [Entity Management Service](./entity-management-service/) | Controls player characters, NPCs, items, and inventory management. |
-| [Game Design Service](./game-design-service/) | Provides tools for designing worlds, actions, items, and game events. |
-| [Game Logic Service](./game-logic-service/) | Implements core gameplay mechanics, command parsing, and actions. |
-| [Game Session Service](./game-session-service/) | Orchestrates live gameplay sessions and tick execution; owns gameplay session bindings and tick coordination in Redis plus durable game-instance/runtime control metadata in PostgreSQL. |
-| [Logging & Admin Service](./logging-admin-service/) | Provides centralized logging, analytics, and administration tools; owns moderation policy and audit logs; provides operator UX and auditing for quota/limit overrides represented as an overlay on Account Service entitlements. |
-| [Social & Groups Service](./social-groups-service/) | Manages chat, guilds, and cross-game social networking features. |
-| [Spring Cloud Gateway](./spring-cloud-gateway/) | Routes WebSocket and HTTP traffic to backend services. |
-| [TCP Proxy Service](./tcp-proxy-service/) | Bridges Telnet clients into the WebSocket-based backend. |
-| [World Management Service](./world-management-service/) | Handles world maps, regions, and pathfinding/procedural-generation metadata publishing; runtime pathfinding algorithms execute in Game Logic, and procedural generation runs in design/publish workflows unless a dedicated runtime design update is accepted. |
-| [Service Template](./service-template.md) | Template for creating new microservice docs. |
+## Required Refactor Tracking
 
-All services share the same Kubernetes cluster and core datastores. Each PostgreSQL table stores a `tenantId` and Redis keys use a matching prefix so data stays isolated between games. In non-ephemeral environments (including local development), Redis runs as two separate deployments for Coordination vs Cache/Rate-Limit roles; truly ephemeral CI/preview stacks may collapse roles into a single Redis instance only when explicitly documented as an ephemeral topology. See [Multi-Tenancy](../system-architecture-multi-tenancy.md), [Redis Architecture](../system-architecture-redis.md), and [Redis Usage & Profiles](../system-architecture-redis-usage-and-profiles.md) for details. Service-specific Redis behavior (Coordination vs Cache/Rate-Limit roles and key prefixes) is documented in each service README under its **Redis Role and Prefixes** section.
+For each moved section in a refactor checklist, capture:
 
----
+- the original owner file
+- the new owner file
+- whether the section was moved verbatim, condensed, or intentionally split
+- whether a backup-vs-refactor subagent pass found omissions that required restoration
 
-## Usage
+## Required Verification Loop
 
-Each microservice document follows a consistent structure, covering:
+For each refactor target:
 
-- **Service Overview**
-- **Architecture and Key Responsibilities**
-- **Key Features, Data Models, and APIs**
-- **External and Internal Dependencies**
-- **Operational Notes and Task Tracking**
-
-For cross-service systems (e.g., networking, infrastructure), refer to:
-
-> See [**Infrastructure Overview**](../infrastructure/README.md) for shared architecture, deployment environments, and networking patterns.
-
-For new services, start from the [Service Template](./service-template.md) so documentation follows the same layout.
-
-All gRPC schema files are organized under the top-level
-[`protos/`](../../../protos) directory. Individual service documents link to their
-corresponding versioned proto folders.
-
-## Related Documentation
-
-- [System Architecture Overview](../system-architecture-overview.md)
-- [Service Responsibility Matrix](../service-responsibility-matrix.md)
-- [Infrastructure Overview](../infrastructure/README.md)
-- [System Architecture Diagram](../system-architecture-diagram.md)
-- [System Context Diagram](../system-context-diagram.md)
-- [User Journeys](../user-journeys.md)
+1. Create the untouched backup copy.
+2. Draft the new file map before moving sections.
+3. Move sections into new files and rewrite the parent doc as an index plus canonical owner where appropriate.
+4. Update local links and references in the doc set.
+5. Run a subagent comparison pass against the backup copy and the new split docs.
+6. Restore any missing-but-still-valid details found by the comparison pass.
+7. Run `./gradlew linkCheck lintMarkdown`.
+8. Record any follow-up cleanup items separately instead of bloating the completed refactor.

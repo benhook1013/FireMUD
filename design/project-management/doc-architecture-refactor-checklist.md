@@ -83,14 +83,14 @@ Rules for using the template:
 
 ## Phase 1: Define Conventions Before Moving Content
 
-- [ ] Add a short service-documentation structure guide under `design/project-management` or `design/architecture/microservices/README.md`.
-- [ ] Define naming conventions for backup copies, for example `README.pre-doc-refactor-backup.md` or `backup/README.2026-03-22.pre-refactor.md`.
-- [ ] Define a required refactor checklist item for every moved section:
+- [x] Add a short service-documentation structure guide under `design/project-management` or `design/architecture/microservices/README.md`.
+- [x] Define naming conventions for backup copies, for example `README.pre-doc-refactor-backup.md` or `backup/README.2026-03-22.pre-refactor.md`.
+- [x] Define a required refactor checklist item for every moved section:
   - section moved
   - destination file
   - canonical owner after move
   - whether links/anchors need redirects or replacement links
-- [ ] Define the standard post-refactor verification loop:
+- [x] Define the standard post-refactor verification loop:
   - backup copy created
   - content moved
   - links updated
@@ -146,16 +146,16 @@ Files:
 
 Why:
 
-- [ ] It currently mixes service overview, Telnet protocol contract, event metrics, operational notes, environment variables, proto references, and protocol appendices in one file.
+- [x] It currently mixes service overview, Telnet protocol contract, event metrics, operational notes, environment variables, proto references, and protocol appendices in one file.
 
 Planned split:
 
-- [ ] Keep `README.md` as service overview, responsibilities, boundaries, dependency map, and links.
-- [ ] Create `protocols.md` for Telnet session envelope, MCP/Telnet handling rules, and bridge behavior.
-- [ ] Create `api-contracts.md` for gRPC and externally visible service-facing contracts.
-- [ ] Create `operations.md` for logging/correlation, readiness/liveness, abuse metrics, and operational notes.
-- [ ] Create `configuration.md` for environment variables and TLS/bridge config.
-- [ ] Run a subagent pass against the backup copy to verify no Telnet edge-case or metric rule was lost.
+- [x] Keep `README.md` as service overview, responsibilities, boundaries, dependency map, and links.
+- [x] Create `protocols.md` for Telnet session envelope, MCP/Telnet handling rules, and bridge behavior.
+- [x] Create `api-contracts.md` for gRPC and externally visible service-facing contracts.
+- [x] Create `operations.md` for logging/correlation, readiness/liveness, abuse metrics, and operational notes.
+- [x] Create `configuration.md` for environment variables and TLS/bridge config.
+- [x] Run a subagent pass against the backup copy to verify no Telnet edge-case or metric rule was lost.
 
 ### 2. Game Session Service
 
@@ -174,16 +174,16 @@ Files:
 
 Why:
 
-- [ ] It mixes service overview, runtime/data ownership, text command protocol, readiness/liveness, Redis usage, and extended appendices.
+- [x] It mixes service overview, runtime/data ownership, text command protocol, readiness/liveness, Redis usage, and extended appendices.
 
 Planned split:
 
-- [ ] Keep `README.md` as service overview and major responsibilities.
-- [ ] Create `api-contracts.md` for gameplay/session/control APIs and command-front-door contract.
-- [ ] Create `runtime-and-data.md` for Redis/PostgreSQL ownership, session state, tick coordination, and attestation/runtime rules.
-- [ ] Create `operations.md` for readiness/liveness, failure modes, and operator-facing recovery notes.
-- [ ] Create `protocols.md` or `client-behavior.md` for text command protocol and connection behavior that should not dominate the service overview.
-- [ ] Run a subagent pass against the backup copy to verify no session-front-door, reconnect, or attestation rule was dropped.
+- [x] Keep `README.md` as service overview and major responsibilities.
+- [x] Create `api-contracts.md` for gameplay/session/control APIs and command-front-door contract.
+- [x] Create `runtime-and-data.md` for Redis/PostgreSQL ownership, session state, tick coordination, and attestation/runtime rules.
+- [x] Create `operations.md` for readiness/liveness, failure modes, and operator-facing recovery notes.
+- [x] Create `protocols.md` or `client-behavior.md` for text command protocol and connection behavior that should not dominate the service overview.
+- [x] Run a subagent pass against the backup copy to verify no session-front-door, reconnect, or attestation rule was dropped.
 
 ### 3. World Management Service
 
@@ -198,16 +198,16 @@ Files:
 
 Why:
 
-- [ ] It currently behaves like a combined README, deep architecture spec, and procedural-generation API document.
+- [x] It currently behaves like a combined README, deep architecture spec, and procedural-generation API document.
 
 Planned split:
 
-- [ ] Keep `README.md` as ownership, responsibilities, and data/domain boundaries.
-- [ ] Create `api-contracts.md` for design-time and runtime APIs.
-- [ ] Create `runtime-and-data.md` for world data ownership, template/runtime separation, and read-fence behavior.
-- [ ] Create `procedural-generation-control.md` for the procedural generation control API and its lifecycle.
-- [ ] Create `operations.md` if operational material remains large enough to justify it.
-- [ ] Run a subagent pass against the backup copy to verify no room-read fence, generation, or world/template rule was lost.
+- [x] Keep `README.md` as ownership, responsibilities, and data/domain boundaries.
+- [x] Create `api-contracts.md` for design-time and runtime APIs.
+- [x] Create `runtime-and-data.md` for world data ownership, template/runtime separation, and read-fence behavior.
+- [x] Create `procedural-generation-control.md` for the procedural generation control API and its lifecycle.
+- [x] Create `operations.md` if operational material remains large enough to justify it.
+- [x] Run a subagent pass against the backup copy to verify no room-read fence, generation, or world/template rule was lost.
 
 ### 4. Backup and Recovery
 
@@ -222,15 +222,15 @@ Files:
 
 Why:
 
-- [ ] It mixes backup policy, restore workflow, secret hardening, credential rotation, and backup evidence/compliance reporting.
+- [x] It mixes backup policy, restore workflow, secret hardening, credential rotation, and backup evidence/compliance reporting.
 
 Planned split:
 
-- [ ] Keep `system-architecture-backup-recovery.md` as canonical backup/restore and recovery model.
-- [ ] Create `system-architecture-backup-evidence-and-compliance.md` for readiness evidence, traffic-open evidence, and compliance records.
-- [ ] Create `system-architecture-secret-hardening-and-rotation.md` or a similarly named doc for post-restore hardening and rotation workflows.
-- [ ] Keep summary links in the parent doc so the main recovery path remains easy to review.
-- [ ] Run a subagent pass against the backup copy to verify no restore-evidence or credential-hardening rules were lost.
+- [x] Keep `system-architecture-backup-recovery.md` as canonical backup/restore and recovery model.
+- [x] Create `system-architecture-backup-evidence-and-compliance.md` for readiness evidence, traffic-open evidence, and compliance records.
+- [x] Create `system-architecture-secret-hardening-and-rotation.md` or a similarly named doc for post-restore hardening and rotation workflows.
+- [x] Keep summary links in the parent doc so the main recovery path remains easy to review.
+- [x] Run a subagent pass against the backup copy to verify no restore-evidence or credential-hardening rules were lost.
 
 ### 5. Redis Operations
 
@@ -245,15 +245,15 @@ Files:
 
 Why:
 
-- [ ] It mixes SLOs, metrics catalog, reset classes, compatibility rollout matrix, migration guidance, and incident recovery details.
+- [x] It mixes SLOs, metrics catalog, reset classes, compatibility rollout matrix, migration guidance, and incident recovery details.
 
 Planned split:
 
-- [ ] Keep `system-architecture-redis-operations.md` as the canonical operator model and SLO/budget doc.
-- [ ] Create `system-architecture-redis-metrics-catalog.md` for the long metrics catalog.
-- [ ] Create `system-architecture-redis-script-rollout-and-compatibility.md` for script compatibility and rollout matrix details.
-- [ ] Keep reset/recovery concepts linked cleanly to the existing reset/recovery docs instead of duplicating them.
-- [ ] Run a subagent pass against the backup copy to verify no metric definition, SLO, or rollout invariant was dropped.
+- [x] Keep `system-architecture-redis-operations.md` as the canonical operator model and SLO/budget doc.
+- [x] Create `system-architecture-redis-metrics-catalog.md` for the long metrics catalog.
+- [x] Create `system-architecture-redis-script-rollout-and-compatibility.md` for script compatibility and rollout matrix details.
+- [x] Keep reset/recovery concepts linked cleanly to the existing reset/recovery docs instead of duplicating them.
+- [x] Run a subagent pass against the backup copy to verify no metric definition, SLO, or rollout invariant was dropped.
 
 ### 6. Authentication and Authorization
 
@@ -268,14 +268,14 @@ Files:
 
 Why:
 
-- [ ] It mixes identity model, login/session flow, JWT format, authorization matrix concepts, trust boundaries, and multi-client/session behavior.
+- [x] It mixes identity model, login/session flow, JWT format, authorization matrix concepts, trust boundaries, and multi-client/session behavior.
 
 Planned split:
 
-- [ ] Keep `system-architecture-authentication.md` as the canonical authn/authz model and end-to-end flow.
-- [ ] Create `system-architecture-jwt-and-token-contracts.md` for JWT structure, validation rules, and token semantics.
-- [ ] Create `system-architecture-session-behavior.md` for takeover, multi-client behavior, mid-session role updates, and related lifecycle rules if the parent doc remains too large after the first split.
-- [ ] Run a subagent pass against the backup copy to verify no login-flow edge case, token-validation invariant, or session-takeover rule was dropped.
+- [x] Keep `system-architecture-authentication.md` as the canonical authn/authz model and end-to-end flow.
+- [x] Create `system-architecture-jwt-and-token-contracts.md` for JWT structure, validation rules, and token semantics.
+- [x] Create `system-architecture-session-behavior.md` for takeover, multi-client behavior, mid-session role updates, and related lifecycle rules if the parent doc remains too large after the first split.
+- [x] Run a subagent pass against the backup copy to verify no login-flow edge case, token-validation invariant, or session-takeover rule was dropped.
 
 ### 7. Scripting Control Plane API
 
@@ -290,15 +290,15 @@ Files:
 
 Why:
 
-- [ ] It mixes API contracts, control-plane events, rollout/rollback protocols, and auth/audit semantics.
+- [x] It mixes API contracts, control-plane events, rollout/rollback protocols, and auth/audit semantics.
 
 Planned split:
 
-- [ ] Keep the parent doc focused on control-plane APIs and responsibilities.
-- [ ] Create `system-architecture-scripting-control-plane-events.md` for event contracts.
-- [ ] Create `system-architecture-scripting-rollout-and-rollback.md` for rollout/rollback protocols.
-- [ ] Keep authz/audit material either in the parent doc or in a short focused appendix depending on size after the move.
-- [ ] Run a subagent pass against the backup copy to verify no event or rollout contract was dropped.
+- [x] Keep the parent doc focused on control-plane APIs and responsibilities.
+- [x] Create `system-architecture-scripting-control-plane-events.md` for event contracts.
+- [x] Create `system-architecture-scripting-rollout-and-rollback.md` for rollout/rollback protocols.
+- [x] Keep authz/audit material either in the parent doc or in a short focused appendix depending on size after the move.
+- [x] Run a subagent pass against the backup copy to verify no event or rollout contract was dropped.
 
 ### 8. Scripting DSL Reference and Lifecycle
 
@@ -313,14 +313,14 @@ Files:
 
 Why:
 
-- [ ] It mixes DSL semantics, lifecycle, event model, scheduler behavior, timers, failure modes, and rollback fencing.
+- [x] It mixes DSL semantics, lifecycle, event model, scheduler behavior, timers, failure modes, and rollback fencing.
 
 Planned split:
 
-- [ ] Keep the parent doc as the DSL and lifecycle owner.
-- [ ] Create `system-architecture-scripting-events.md` if the event-model material remains large after cleanup.
-- [ ] Create `system-architecture-scripting-scheduler-and-timers.md` for scheduler leadership, timer lifecycle, and hot reload/resume behavior if needed.
-- [ ] Run a subagent pass against the backup copy to verify no determinism, dedup, timer, or rollback-safety rule was dropped.
+- [x] Keep the parent doc as the DSL and lifecycle owner.
+- [x] Create `system-architecture-scripting-events.md` if the event-model material remains large after cleanup.
+- [x] Create `system-architecture-scripting-scheduler-and-timers.md` for scheduler leadership, timer lifecycle, and hot reload/resume behavior if needed.
+- [x] Run a subagent pass against the backup copy to verify no determinism, dedup, timer, or rollback-safety rule was dropped.
 
 ### 9. Scripting Quotas and Operations
 
@@ -335,13 +335,13 @@ Files:
 
 Why:
 
-- [ ] It mixes steady-state quota model with operator cookbook and rollback/recovery cookbook material.
+- [x] It mixes steady-state quota model with operator cookbook and rollback/recovery cookbook material.
 
 Planned split:
 
-- [ ] Keep the parent doc focused on quotas, budgets, security, fairness, and metrics ownership.
-- [ ] Create `system-architecture-scripting-operations-cookbook.md` for operator disable/throttle and rollback/recovery flows.
-- [ ] Run a subagent pass against the backup copy to verify no quota or operational recovery detail was dropped.
+- [x] Keep the parent doc focused on quotas, budgets, security, fairness, and metrics ownership.
+- [x] Create `system-architecture-scripting-operations-cookbook.md` for operator disable/throttle and rollback/recovery flows.
+- [x] Run a subagent pass against the backup copy to verify no quota or operational recovery detail was dropped.
 
 ## Phase 3: Standardize Service-Doc Shape Across All Service Directories
 
@@ -435,13 +435,13 @@ Even services that do not yet strictly need every subdoc should receive placehol
 
 ## Phase 4: Cross-Cutting System-Doc Cleanup
 
-- [ ] Review whether the same structure should be applied to long cross-cutting docs:
+- [x] Review whether the same structure should be applied to long cross-cutting docs:
   - canonical contract doc
   - operations/runbook doc
   - reference/catalog doc
   - appendix/examples doc
-- [ ] Apply that pattern to Authentication, Backup/Recovery, Redis Operations, and Scripting docs first.
-- [ ] Avoid fragmenting core invariants from their canonical owner doc; move examples, catalogs, and cookbooks first.
+- [x] Apply that pattern to Authentication, Backup/Recovery, Redis Operations, and Scripting docs first.
+- [x] Avoid fragmenting core invariants from their canonical owner doc; move examples, catalogs, and cookbooks first.
 
 ## Required Verification Loop Per Refactor
 
@@ -462,12 +462,12 @@ For each individual refactor target:
 
 ## Suggested Execution Order
 
-- [ ] 1. Define the template and backup convention.
-- [ ] 2. Pilot the process on TCP Proxy Service.
-- [ ] 3. Apply the same shape to Game Session Service and World Management Service.
-- [ ] 4. Split the three biggest cross-cutting docs: Backup/Recovery, Redis Operations, Authentication.
-- [ ] 5. Tackle the scripting doc cluster.
-- [ ] 6. Sweep remaining service directories for standard-shape placeholders and splitouts.
+- [x] 1. Define the template and backup convention.
+- [x] 2. Pilot the process on TCP Proxy Service.
+- [x] 3. Apply the same shape to Game Session Service and World Management Service.
+- [x] 4. Split the three biggest cross-cutting docs: Backup/Recovery, Redis Operations, Authentication.
+- [x] 5. Tackle the scripting doc cluster.
+- [x] 6. Sweep remaining service directories for standard-shape placeholders and splitouts.
 - [ ] 7. Run a final multi-lane subagent verification pass over the refactored doc set to catch dropped details and new drift.
 
 ## Done Criteria
