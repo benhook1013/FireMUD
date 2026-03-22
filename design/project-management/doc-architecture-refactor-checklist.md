@@ -24,7 +24,6 @@ The goal is not to force every document under an arbitrary line count. The goal 
 - [x] Sixth TCP Proxy omission-repair pass complete and rechecked.
 - [x] Seventh backup-vs-refactor subagent comparison pass completed.
 - [x] TCP Proxy pilot accepted as converged enough to move on, even though a few low-value follow-ups could still be found with more passes.
-- [ ] Optional later cleanup-only pass for waived low-level TCP Proxy follow-ups if they become worth the time.
 - [x] Next active refactor target: Game Session Service.
 - [x] Game Session untouched backup copy created: `README.pre-doc-refactor-backup.md`.
 - [x] First Game Session split created (`README.md`, `api-contracts.md`, `runtime-and-data.md`, `operations.md`, `configuration.md`, `protocols.md`).
