@@ -42,11 +42,22 @@ java {
 }
 
 val fullCheck = project.hasProperty("fullCheck") || System.getenv("CI") != null
+val checkstyleToolVersion = "10.24.0"
+val spotbugsToolVersion = "4.9.8"
 
 allprojects {
     repositories {
         mavenCentral()
     }
+}
+
+checkstyle {
+    configFile = rootProject.file("config/checkstyle/checkstyle.xml")
+    toolVersion = checkstyleToolVersion
+}
+
+spotbugs {
+    toolVersion.set(spotbugsToolVersion)
 }
 
 subprojects {
@@ -211,11 +222,11 @@ subprojects {
 
     checkstyle {
         configFile = rootProject.file("config/checkstyle/checkstyle.xml")
-        toolVersion = "10.12.1"
+        toolVersion = checkstyleToolVersion
     }
 
     spotbugs {
-        toolVersion.set("4.9.3")
+        toolVersion.set(spotbugsToolVersion)
     }
 
     // --- Gate Checkstyle & SpotBugs ---
