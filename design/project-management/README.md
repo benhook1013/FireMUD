@@ -8,5 +8,4 @@ Key files include:
 - [**ai-formatting-rules.md**](./ai-formatting-rules.md) – Project-management folder formatting guidance.
 - [**core-requirements.md**](./core-requirements.md) – High-level feature requirements.
 - [**task-list.md**](./task-list.md) – Active development tasks and backlog.
-- [**task-list-manual-checks.md**](./task-list-manual-checks.md) – Manual verification steps for developer tooling.
 - [**design-assumptions.md**](./design-assumptions.md) – Supporting materials and research notes.

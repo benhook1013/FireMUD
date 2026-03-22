@@ -35,7 +35,7 @@
 
 ## Reusable Microservice Checklist
 
-These tasks apply to every FireMUD service unless noted otherwise. For the shared checklist, see `design/project-management/reusable-microservice-checklist.md`. TCP Proxy still follows those conventions for health checks and gRPC wiring but skips the database items and does not initiate outbound gameplay gRPC calls to other services.
+These tasks apply to every FireMUD service unless noted otherwise. TCP Proxy still follows the shared service conventions for health checks and gRPC wiring but skips the database items and does not initiate outbound gameplay gRPC calls to other services.
 
 ## Project Setup & CI
 

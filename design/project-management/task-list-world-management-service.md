@@ -42,7 +42,7 @@
 
 ## Reusable Microservice Checklist
 
-These tasks apply to every FireMUD service unless noted otherwise. For the shared checklist, see `design/project-management/reusable-microservice-checklist.md`.
+These tasks apply to every FireMUD service unless noted otherwise.
 
 ## Project Setup & CI
 
