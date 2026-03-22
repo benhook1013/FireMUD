@@ -4,6 +4,7 @@ Read the following documents. Follow references only when a listed document clea
 
 - `design/architecture/system-architecture-redis.md`
 - `design/architecture/system-architecture-redis-cache.md`
+- `design/architecture/system-architecture-redis-cache-reference.md`
 - `design/architecture/system-architecture-redis-usage-and-profiles.md`
 - `design/architecture/system-architecture-redis-design-checklist.md`
 - `design/architecture/system-architecture-redis-lua-patterns.md`

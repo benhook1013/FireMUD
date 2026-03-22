@@ -6,7 +6,10 @@ Read the following documents. Follow references only when a listed document expl
 - `design/architecture/system-architecture-scripting-dsl-and-lifecycle.md`
 - `design/architecture/system-architecture-scripting-dsl-for-designers.md`
 - `design/architecture/system-architecture-scripting-dsl-reference-and-lifecycle.md`
+- `design/architecture/system-architecture-scripting-runtime-execution.md`
+- `design/architecture/system-architecture-scripting-scheduler-and-timers.md`
 - `design/architecture/system-architecture-scripting-examples-and-patterns.md`
+- `design/architecture/system-architecture-scripting-rollout-and-rollback.md`
 - `design/architecture/system-architecture-scripting-quotas-and-operations.md`
 - `design/architecture/microservices/automation-scripting-service/README.md`
 - `design/architecture/microservices/automation-scripting-service/sandbox-runtime-design.md`

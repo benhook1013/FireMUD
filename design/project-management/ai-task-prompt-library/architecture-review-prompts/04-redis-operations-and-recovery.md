@@ -3,6 +3,8 @@
 Read the following documents. Follow references only when a listed document clearly points to another canonical source needed to resolve an implementation-blocking contradiction or missing operational contract. Do not recursively expand beyond that.
 
 - `design/architecture/system-architecture-redis-operations.md`
+- `design/architecture/system-architecture-redis-metrics-catalog.md`
+- `design/architecture/system-architecture-redis-script-rollout-and-compatibility.md`
 - `design/architecture/system-architecture-redis-ops-access.md`
 - `design/architecture/system-architecture-redis-reset-and-recovery.md`
 - `design/architecture/system-architecture-redis-incident-runbook.md`

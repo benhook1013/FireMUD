@@ -7,6 +7,12 @@ Read the following documents. Follow references only when a listed document poin
 - `design/architecture/system-architecture-testing.md`
 - `design/observability/README.md`
 - `design/observability/grafana/README.md`
+- `design/observability/grafana/core-alerts-snippets.md`
+- `design/observability/grafana/redis-alerts-snippets.md`
+- `design/observability/grafana/tick-alerts-snippets.md`
+- `design/observability/grafana/backup-alerts-snippets.md`
+- `design/observability/grafana/player-experience-alerts-snippets.md`
+- `design/observability/grafana/observability-stack-alerts-snippets.md`
 - `design/observability/kibana/README.md`
 
 Then:

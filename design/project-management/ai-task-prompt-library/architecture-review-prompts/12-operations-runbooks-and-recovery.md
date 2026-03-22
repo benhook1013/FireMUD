@@ -4,6 +4,7 @@ Read the following documents. Follow references only when a listed document poin
 
 - `design/architecture/system-architecture-runbooks.md`
 - `design/architecture/system-architecture-backup-recovery.md`
+- `design/architecture/system-architecture-backup-recovery-evidence-and-compliance.md`
 - `design/architecture/system-architecture-scaling-runbook.md`
 - `design/architecture/system-architecture-redis-operations.md`
 - `design/architecture/system-architecture-redis-incident-runbook.md`
