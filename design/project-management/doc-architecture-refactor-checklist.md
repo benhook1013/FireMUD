@@ -367,11 +367,13 @@ Even services that do not yet strictly need every subdoc should receive placehol
 
 ### Entity Management Service
 
-- [ ] Review [`design/architecture/microservices/entity-management-service/README.md`](../architecture/microservices/entity-management-service/README.md) against the standard target shape.
-- [ ] Add `api-contracts.md`.
-- [ ] Add `runtime-and-data.md`.
-- [ ] Add `configuration.md`.
-- [ ] Add `operations.md` if rollback/cutover/readiness content keeps growing.
+- [x] Review [`design/architecture/microservices/entity-management-service/README.md`](../architecture/microservices/entity-management-service/README.md) against the standard target shape.
+- [x] Create untouched backup copy for [`design/architecture/microservices/entity-management-service/README.md`](../architecture/microservices/entity-management-service/README.md)
+- [x] First split pass completed for Entity Management (`README.md`, `api-contracts.md`, `runtime-and-data.md`, `operations.md`, `configuration.md`)
+- [x] First backup-vs-refactor subagent review completed
+- [x] First review was clean; no omission-repair pass was required
+- [x] Run second backup-vs-refactor subagent review
+- [x] Second review was clean enough to move on
 
 ### Game Design Service
 
