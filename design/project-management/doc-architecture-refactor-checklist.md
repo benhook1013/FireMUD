@@ -359,11 +359,13 @@ Even services that do not yet strictly need every subdoc should receive placehol
 
 ### Automation & Scripting Service
 
-- [ ] Review [`design/architecture/microservices/automation-scripting-service/README.md`](../architecture/microservices/automation-scripting-service/README.md) against the standard target shape.
-- [ ] Add `api-contracts.md`.
-- [ ] Add `runtime-and-data.md`.
-- [ ] Add `configuration.md`.
-- [ ] Add `operations.md` if operational material is already growing.
+- [x] Review [`design/architecture/microservices/automation-scripting-service/README.md`](../architecture/microservices/automation-scripting-service/README.md) against the standard target shape.
+- [x] Create untouched backup copy for [`design/architecture/microservices/automation-scripting-service/README.md`](../architecture/microservices/automation-scripting-service/README.md)
+- [x] First split pass completed for Automation & Scripting (`README.md`, `api-contracts.md`, `runtime-and-data.md`, `operations.md`, `configuration.md`)
+- [x] First backup-vs-refactor subagent review completed
+- [x] First review was clean enough to move on
+- [x] Run second backup-vs-refactor subagent review
+- [x] Second review was clean enough to move on
 
 ### Entity Management Service
 
@@ -377,42 +379,55 @@ Even services that do not yet strictly need every subdoc should receive placehol
 
 ### Game Design Service
 
-- [ ] Review [`design/architecture/microservices/game-design-service/README.md`](../architecture/microservices/game-design-service/README.md) plus sibling docs against the standard target shape.
-- [ ] Keep `README.md` as the service index and owner map.
-- [ ] Add or normalize `api-contracts.md` if control-plane and publish APIs are still spread across too many siblings without a clear owner.
-- [ ] Add `configuration.md` if configuration material is not already cleanly housed elsewhere.
-- [ ] Confirm sibling docs such as `asset-storage.md`, `modding-framework.md`, `version-control.md`, and `world-editing-tools.md` still have clear ownership and are linked from the parent index.
+- [x] Review [`design/architecture/microservices/game-design-service/README.md`](../architecture/microservices/game-design-service/README.md) plus sibling docs against the standard target shape.
+- [x] Create untouched backup copy for [`design/architecture/microservices/game-design-service/README.md`](../architecture/microservices/game-design-service/README.md)
+- [x] Keep `README.md` as the service index and owner map.
+- [x] Add `api-contracts.md` so control-plane and publish API ownership is explicit.
+- [x] Add `configuration.md`.
+- [x] Add `operations.md` for service-local operational and local-dev guidance.
+- [x] Confirm sibling docs such as `asset-storage.md`, `modding-framework.md`, `version-control.md`, and `world-editing-tools.md` still have clear ownership and are linked from the parent index.
+- [x] Backup-vs-refactor subagent review completed
+- [x] Review was clean enough to move on
 
 ### Game Logic Service
 
-- [ ] Review [`design/architecture/microservices/game-logic-service/README.md`](../architecture/microservices/game-logic-service/README.md) against the standard target shape.
-- [ ] Add `api-contracts.md`.
-- [ ] Add `runtime-and-data.md` if gameplay-state or effect-handling rules are currently packed into the README.
-- [ ] Add `operations.md` if tick/error/replay behavior is large enough to justify separation.
-- [ ] Add `configuration.md`.
+- [x] Review [`design/architecture/microservices/game-logic-service/README.md`](../architecture/microservices/game-logic-service/README.md) against the standard target shape.
+- [x] Create untouched backup copy for [`design/architecture/microservices/game-logic-service/README.md`](../architecture/microservices/game-logic-service/README.md)
+- [x] First split pass completed for Game Logic (`README.md`, `api-contracts.md`, `runtime-and-data.md`, `operations.md`, `configuration.md`)
+- [x] First backup-vs-refactor subagent review completed
+- [x] Restore omissions found by the first review pass
+- [x] Run second backup-vs-refactor subagent review
+- [x] Second review was clean enough to move on
 
 ### Logging & Admin Service
 
-- [ ] Review [`design/architecture/microservices/logging-admin-service/README.md`](../architecture/microservices/logging-admin-service/README.md) against the standard target shape.
-- [ ] Add `api-contracts.md`.
-- [ ] Add `operations.md`.
-- [ ] Add `configuration.md`.
+- [x] Review [`design/architecture/microservices/logging-admin-service/README.md`](../architecture/microservices/logging-admin-service/README.md) against the standard target shape.
+- [x] Create untouched backup copy for [`design/architecture/microservices/logging-admin-service/README.md`](../architecture/microservices/logging-admin-service/README.md)
+- [x] First split pass completed for Logging & Admin (`README.md`, `api-contracts.md`, `runtime-and-data.md`, `operations.md`, `configuration.md`)
+- [x] First backup-vs-refactor subagent review completed
+- [x] First review was clean enough to move on
+- [x] Run second backup-vs-refactor subagent review
+- [x] Second review was clean enough to move on
 
 ### Social & Groups Service
 
-- [ ] Review [`design/architecture/microservices/social-groups-service/README.md`](../architecture/microservices/social-groups-service/README.md) against the standard target shape.
-- [ ] Add `api-contracts.md`.
-- [ ] Add `runtime-and-data.md`.
-- [ ] Add `configuration.md`.
-- [ ] Add `operations.md` if moderation or messaging operations have enough weight to justify separation.
+- [x] Review [`design/architecture/microservices/social-groups-service/README.md`](../architecture/microservices/social-groups-service/README.md) against the standard target shape.
+- [x] Create untouched backup copy for [`design/architecture/microservices/social-groups-service/README.md`](../architecture/microservices/social-groups-service/README.md)
+- [x] First split pass completed for Social & Groups (`README.md`, `api-contracts.md`, `runtime-and-data.md`, `operations.md`, `configuration.md`)
+- [x] First backup-vs-refactor subagent review completed
+- [x] First review restored the readiness/liveness wording omission
+- [x] Run second backup-vs-refactor subagent review
+- [x] Second review was clean enough to move on
 
 ### Spring Cloud Gateway
 
-- [ ] Review [`design/architecture/microservices/spring-cloud-gateway/README.md`](../architecture/microservices/spring-cloud-gateway/README.md) against the standard target shape.
-- [ ] Add `api-contracts.md` for route and edge contract ownership.
-- [ ] Add `operations.md` for ingress/readiness/rate-limit/operator-facing behavior.
-- [ ] Add `configuration.md`.
-- [ ] Add `client-behavior.md` only if browser/bootstrap/connect-token behavior is too detailed for the README.
+- [x] Review [`design/architecture/microservices/spring-cloud-gateway/README.md`](../architecture/microservices/spring-cloud-gateway/README.md) against the standard target shape.
+- [x] Create untouched backup copy for [`design/architecture/microservices/spring-cloud-gateway/README.md`](../architecture/microservices/spring-cloud-gateway/README.md)
+- [x] First split pass completed for Spring Cloud Gateway (`README.md`, `api-contracts.md`, `operations.md`, `configuration.md`, `client-behavior.md`)
+- [x] First backup-vs-refactor subagent review completed
+- [x] Restore omissions found by the first review pass
+- [x] Run second backup-vs-refactor subagent review
+- [x] Second review was clean enough to move on
 
 ### TCP Proxy, Game Session, World Management
 

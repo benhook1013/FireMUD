@@ -10,6 +10,7 @@ Spring Cloud Gateway reads its configuration from a small set of sources. The fu
 | `routes-dev.yml` / `routes-prod.yml` | Profile-specific route definitions for HTTP and WebSocket paths and backend URIs. | Service-local baseline route set referenced by `spring.config.import` in `application.yml`. |
 | `FIREMUD_SERVICES_*` | Service discovery overrides for backend targets reached from the gateway. | See [Service Discovery](../../infrastructure/environment-and-secrets.md#service-discovery). |
 | `FIREMUD_REDIS_CACHE_HOST` / `FIREMUD_REDIS_CACHE_PORT` | Cache/Rate-Limit Redis endpoint used by the gateway `RequestRateLimiter` filter. | See [Redis Connection](../../infrastructure/environment-and-secrets.md#redis-connection). |
+| `firemud.gateway.header-trust.*` | Header-trust and canonicalization configuration enforced by `HeaderTrustFilter` for public ingress versus trusted proxy sources. | Service-local gateway trust boundary; behavior must stay aligned with [Gateway Architecture](../../system-architecture-gateway.md#header-trust-model). |
 | `firemud.gateway.backendUnavailableGraceMs` / `firemud.gateway.backendUnavailableRecoverySuccessCount` | Gameplay-route backend-unavailable grace window and recovery hysteresis knobs that must stay aligned with the TCP Proxy bridge-availability contract. | Canonical behavior lives in [Gateway Architecture](../../system-architecture-gateway.md#backend-unavailable-grace-window) and [Reconnection Strategy](../../system-architecture-reconnection.md#backend-unavailable-scenarios). |
 | `FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, `FIREMUD_GRPC_CA_CERT_PATH` | TLS certificate and key paths for the gateway internal gRPC management plane. | See [gRPC TLS Certificates](../../infrastructure/environment-and-secrets.md#grpc-tls-certificates). |
 | `OTEL_ENDPOINT` | OpenTelemetry collector endpoint for traces. | See [Observability](../../infrastructure/environment-and-secrets.md#observability). |
@@ -56,7 +57,7 @@ Any additional gateway-local caches must explicitly declare whether they are str
 - Admin and other meta/control services validate JWTs themselves. The gateway `JwtAuthFilter` only enforces the presence of an `Authorization` header on protected routes and forwards tokens unchanged.
 - External TLS is terminated by the load balancer.
 - Spring Cloud Gateway routes to backend services over in-cluster `http://` and `ws://` endpoints, while internal service-to-service traffic uses mTLS gRPC as described in the [Security Architecture](../../system-architecture-security.md).
-- When internal WebSocket clients such as the TCP Proxy Service connect over `wss://` to `/ws/game/**`, the host used in `GATEWAY_WS_URL` must match a name present in the Gateway certificate SANs so SNI and hostname verification succeed.
+- When internal WebSocket clients such as the TCP Proxy Service connect over `wss://` to `/ws/game/**`, the host used in `GATEWAY_WS_URL` must match a name present in the Gateway certificate SANs so SNI and hostname verification succeed. Using a bare IP or an unrelated hostname causes client-side TLS failure, and those failures should remain visible in TCP Proxy bridge metrics and logs.
 
 ## Dependencies
 

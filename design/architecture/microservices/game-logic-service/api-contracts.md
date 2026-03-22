@@ -12,7 +12,7 @@ This document defines the Game Logic Service REST and gRPC surfaces, exposure cl
 - `GET /ping` returns `ApiResponse` with the string `pong` in `data`.
 - `POST /command` submits a gameplay command body as plain text and receives an `ApiResponse<String>` result.
 
-These are the only REST endpoints; gameplay commands are primarily processed through the gRPC interface.
+These are the only REST endpoints; gameplay commands are primarily processed through the gRPC interface. There is no separate service-local OpenAPI contract file for this slice today, so any change to these REST semantics should update this document and the implementation/tests in the same change.
 
 ```bash
 curl http://localhost:8080/ping

@@ -7,7 +7,8 @@ Gateway route mutation APIs are internal-only control-plane surfaces:
 - REST and gRPC upsert/remove operations apply in-memory route overrides on top of the baseline route set loaded from configuration.
 - Configuration files remain the canonical source of truth. Dynamic route changes revert on restart unless a higher-level control-plane tool also updates baseline config.
 - Dynamic route mutation is dev/test scope only until shared persistence, multi-pod convergence, and full route-change auditing are implemented.
-- Player-facing environments must fail startup when dynamic route mutation is enabled without those controls. The required readiness predicates are `dynamic_routes.persistence_ready`, `dynamic_routes.convergence_ready`, `dynamic_routes.audit_ready`, and aggregate `dynamic_routes_ready`.
+- Player-facing environments must fail startup when dynamic route mutation is enabled without those controls, for example when `firemud.gateway.dynamic-routes.enabled=true` is combined with `firemud.gateway.dynamic-routes.allow-player-facing=true` before persistence, convergence, and audit guarantees exist.
+- The required readiness predicates are `dynamic_routes.persistence_ready`, `dynamic_routes.convergence_ready`, `dynamic_routes.audit_ready`, and aggregate `dynamic_routes_ready`.
 
 ## Management Plane Security
 
