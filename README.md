@@ -90,7 +90,7 @@ This repository serves as the **central mono-repo** for the FireMUD Game Platfor
 #### Deployment & Infrastructure
 
 - **Containerization**: [Docker & Docker Compose](design/architecture/infrastructure/deployment-environments.md)
-- **Orchestration**: [Kubernetes deployments](design/architecture/infrastructure/deployment-environments.md)
+- **Orchestration**: [Kubernetes Deployments](design/architecture/infrastructure/deployment-environments.md)
 - **CI/CD**: [GitHub Actions](design/architecture/system-architecture-cicd.md)
 - **Monitoring and Logging**: Fluent Bit, Elasticsearch, Kibana, Grafana, Prometheus, OpenTelemetry, Alertmanager (see [Logging & Monitoring](design/architecture/system-architecture-logging-monitoring.md))
 
@@ -104,7 +104,7 @@ This repository serves as the **central mono-repo** for the FireMUD Game Platfor
 - **Unit Testing**: JUnit, Mockito
 - **Integration Testing**: Spring Test
 - **Load Testing**: Gatling (see `dev-tools/load-testing` module)
-- **Accessibility Audit**: axe-core CLI (see [Developer Setup](DEVELOPER_SETUP.md#frontend-lint--accessibility)
+- **Accessibility Audit**: axe-core CLI (see [Developer Setup](DEVELOPER_SETUP.md#frontend-lint--accessibility))
 - **Cross-Service Regression**: `./gradlew crossServiceTest`
 
 ### Design Goals
