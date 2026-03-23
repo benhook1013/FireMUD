@@ -88,11 +88,11 @@ jobs:
           cat <<'EOF'
           Hosted PR preview deployments are partially wired.
 
-          The preview cluster, DNS, TLS, and self-hosted preview runner exist.
+          The preview cluster, DNS, and TLS path exist.
           Main CI still covers stack startup, smoke, and cross-service verification.
-          GitHub-hosted CI currently handles planning and orchestration only.
-          Cluster-touching preview steps run on the Hetzner self-hosted runner,
-          where the workflow prepares the target namespace, required secrets,
+          Preview orchestration now runs on GitHub-hosted CI and talks to the
+          Hetzner preview cluster remotely through a kubeconfig secret.
+          The workflow prepares the target namespace, required secrets,
           and validates the preview manifests against the live cluster API.
           The final Helm apply is still gated because the application/database bootstrap
           and frontend delivery path are still under active implementation.
@@ -129,16 +129,17 @@ jobs:
 
   preview-deploy-disabled:
     name: Deploy Preview Release
-    runs-on:
-      - self-hosted
-      - Linux
-      - X64
-      - preview
+    runs-on: ubuntu-latest
     needs: preview-plan
     if: ${{ needs.preview-plan.outputs.action == 'deploy' }}
     environment: pr-preview
     steps:
       - uses: actions/checkout@v6
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: v1.33.4
 
       - name: Set up Helm
         run: |
@@ -154,17 +155,18 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           helm version
 
-      - name: Use local preview kubeconfig
+      - name: Write preview kubeconfig
+        env:
+          PREVIEW_KUBECONFIG: ${{ secrets.PREVIEW_KUBECONFIG }}
         run: |
-          KUBECONFIG_PATH="$HOME/.kube/firemud-preview-ci.yaml"
-          test -f "$KUBECONFIG_PATH"
+          KUBECONFIG_PATH="$(./dev-tools/preview/write-kubeconfig.sh)"
           echo "KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"
 
       - name: Verify preview cluster access
         run: |
           kubectl get namespace kube-system >/dev/null
-          kubectl auth can-i get clusterissuers.cert-manager.io
-          kubectl auth can-i list namespaces
+          kubectl auth can-i get clusterissuers.cert-manager.io --all-namespaces
+          kubectl auth can-i list namespaces --all-namespaces
 
       - name: Enforce preview capacity
         env:
@@ -235,7 +237,7 @@ jobs:
           - the target namespace exists
           - the GHCR pull secret exists
           - the preview gRPC TLS secret exists
-          - cluster access is performed from the self-hosted preview runner
+          - cluster access is performed from GitHub-hosted CI over secret-backed kubeconfig
           - preview values can be generated from CI inputs
           - the current preview chart renders successfully
           - the rendered manifests pass server-side Kubernetes validation on the preview cluster
@@ -247,16 +249,17 @@ jobs:
 
   preview-destroy:
     name: Destroy Preview Release
-    runs-on:
-      - self-hosted
-      - Linux
-      - X64
-      - preview
+    runs-on: ubuntu-latest
     needs: preview-plan
     if: ${{ needs.preview-plan.outputs.action == 'destroy' }}
     environment: pr-preview
     steps:
       - uses: actions/checkout@v6
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: v1.33.4
 
       - name: Set up Helm
         run: |
@@ -272,10 +275,11 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           helm version
 
-      - name: Use local preview kubeconfig
+      - name: Write preview kubeconfig
+        env:
+          PREVIEW_KUBECONFIG: ${{ secrets.PREVIEW_KUBECONFIG }}
         run: |
-          KUBECONFIG_PATH="$HOME/.kube/firemud-preview-ci.yaml"
-          test -f "$KUBECONFIG_PATH"
+          KUBECONFIG_PATH="$(./dev-tools/preview/write-kubeconfig.sh)"
           echo "KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"
 
       - name: Uninstall preview release if present

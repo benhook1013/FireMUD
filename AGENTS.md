@@ -60,3 +60,7 @@ FireMUD is in initial development. Optimize for direct convergence to a clean ca
 - If a feature branch has an open PR and the task updates behavior, keep the PR summary accurate.
 - If `pr-summary.md` exists and the user asks to refresh the PR description, prefer `gh pr edit --body-file pr-summary.md`.
 - When writing PR bodies, pass Markdown through a file or stdin with real newlines, not literal `\\n` strings.
+
+## Hetzner Preview Host
+
+- Preview host: `77.42.29.156`; normal SSH user: `firemud`; current self-hosted runner label: `preview`. Treat it as preview infrastructure first, and check live host/runner state before using it for anything heavier.
