@@ -103,6 +103,7 @@ This repository serves as the **central mono-repo** for the FireMUD Game Platfor
 
 - **Unit Testing**: JUnit, Mockito
 - **Integration Testing**: Spring Test
+- **Smoke Testing**: Per-service `smoke-test.sh` scripts (see [Developer Setup](DEVELOPER_SETUP.md))
 - **Load Testing**: Gatling (see `dev-tools/load-testing` module)
 - **Accessibility Audit**: axe-core CLI (see [Developer Setup](DEVELOPER_SETUP.md#frontend-lint--accessibility))
 - **Cross-Service Regression**: `./gradlew crossServiceTest`
@@ -202,7 +203,7 @@ Stop the stack with:
 Common helper commands:
 
 - `./gradlew check` – compile, test, and run static analysis (Spotless, Checkstyle, SpotBugs, Hadolint, coverage).
-- `./gradlew crossServiceTest` – run cross-service regression tests.
+- `./gradlew crossServiceTest` – run the cross-service LOOK regression suite.
 - `./gradlew lintMarkdown` – lint Markdown docs; see [Developer Setup](DEVELOPER_SETUP.md#-markdown-linting-via-gradle) for details.
 - `npm --prefix config/openapi run openapi:lint` – lint OpenAPI specs.
 - `./dev-tools/docs/link-check.sh` – run the link checker over Markdown docs.
