@@ -1,4 +1,4 @@
-package net.firedevops.firemud.socialgroups.repository;
+package net.firedevops.firemud.automationscripting.repository;
 
 import org.springframework.stereotype.Repository;
 
