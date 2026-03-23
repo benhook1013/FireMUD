@@ -60,7 +60,3 @@ FireMUD is in initial development. Optimize for direct convergence to a clean ca
 - If a feature branch has an open PR and the task updates behavior, keep the PR summary accurate.
 - If `pr-summary.md` exists and the user asks to refresh the PR description, prefer `gh pr edit --body-file pr-summary.md`.
 - When writing PR bodies, pass Markdown through a file or stdin with real newlines, not literal `\\n` strings.
-
-## Self-Hosted Runner Note
-
-- For the Hetzner preview/self-hosted GitHub Actions runner, see [design/operations/hetzner-preview-runner.md](design/operations/hetzner-preview-runner.md) before changing preview or self-hosted smoke CI. It records the current host, runner path, labels, access model, and box-side isolation steps.
