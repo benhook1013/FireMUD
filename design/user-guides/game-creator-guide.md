@@ -56,9 +56,9 @@ Consult the generated [gRPC docs](../grpc-docs/grpc-api.md) for full protobuf de
 ### Example Script Snippet
 
 ```java
-// Pseudo-code for scheduling a greeting when a player enters a room
-scriptService.schedule("onEnter", playerId, roomId, () -> {
-    sessionService.sendMessage(playerId, "Welcome to the training grounds!");
+// Pseudo-code for scheduling a greeting when a character enters a room
+scriptService.schedule("onEnter", characterId, roomInstanceId, () -> {
+    sessionService.sendMessage(characterId, "Welcome to the training grounds!");
 });
 ```
 

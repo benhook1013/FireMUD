@@ -216,7 +216,7 @@ Redis stores transient gameplay session state for each connected player under ke
 These keys capture:
 
 - Socket binding metadata and transport details.
-- Active `playerId` / `tenantId` context.
+- Active `characterId` / `tenantId` context.
 - Server-side auth token identity used for backend calls on behalf of this session (for example `authTokenHash` and `authTokenIssuedAt`), so resume and mid-session revocation checks can be performed without exposing JWTs to gameplay clients.
 - Authoritative tenant membership freshness metadata (for example `membershipVersion`) so reconnect/resume can verify that gameplay admission authority still exists before rebinding.
 - Tick-region participation metadata (for example active region bindings and reconnect context). Per-entity command queues remain under `tick:{tenantRegionTag}:queue:<entityId>` and are reset-tolerant coordination state, not durable session payload.

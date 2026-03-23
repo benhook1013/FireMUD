@@ -31,7 +31,7 @@ This document defines the Social & Groups Service runtime model, persistent data
   - It does not touch `tick:*`, `timer:*`, `retry:*`, `session:*`, or automation coordination keys; gameplay coordination and automation ticks remain the responsibility of the Game Session and Automation & Scripting services as described in [Redis Architecture](../../system-architecture-redis.md)
 - **Cache/Rate-Limit Redis**
   - Uses Cache/Rate-Limit Redis for chat history buffers and similar transient social aggregates under prefixes such as:
-    - `chat:say:<tenantId>:<playerId>`
+    - `chat:say:<tenantId>:<characterId>`
     - `chat:tell:<tenantId>:<conversationId>`
     - `chat:guild:<tenantId>:<guildId>`
     - `chat:account:<tenantId>:<accountId>`
@@ -53,8 +53,8 @@ If you change Redis usage for this service, you must read and apply:
 - Messages are cached in Redis lists and delivered to WebSocket channels through the Spring Cloud Gateway
 - Guild and direct messages share a common persistence model for history
 - Recent history is retained in Redis with type-specific TTLs and message caps:
-  - Says: 2 hours or 50 messages per player
-  - Tells: 48 hours or 50 messages per player
+  - Says: 2 hours or 50 messages per character
+  - Tells: 48 hours or 50 messages per character
   - Guild/City chat: 48 hours or 50 messages per guild or city
   - Account messages: 48 hours or 50 messages
 - Older messages remain in PostgreSQL for moderation and historical logs
