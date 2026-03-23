@@ -165,8 +165,8 @@ jobs:
       - name: Verify preview cluster access
         run: |
           kubectl get namespace kube-system >/dev/null
-          kubectl auth can-i get clusterissuers.cert-manager.io
-          kubectl auth can-i list namespaces
+          kubectl auth can-i get clusterissuers.cert-manager.io --all-namespaces
+          kubectl auth can-i list namespaces --all-namespaces
 
       - name: Enforce preview capacity
         env:
