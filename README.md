@@ -169,7 +169,7 @@ Before contributing, we recommend reviewing the following key documents:
 - **Improve Documentation**: Help keep our docs accurate and beginner-friendly by fixing typos, clarifying explanations, adding examples, or expanding the FAQ.
 - **Follow the [Code of Conduct](CODE_OF_CONDUCT.md)**: Treat everyone with respect and help maintain a welcoming community.
 - **Report Bugs or Suggest Features**: Open an issue in the relevant repository with detailed information. Be clear, respectful, and constructive.
-- **Report Security Issues**: If you discover a security vulnerability, please **do not** file a public issue. Instead, report it privately to [Ben.Hook@firedevops.net](mailto:Ben.Hook@firedevops.net). We take security seriously and will respond promptly.
+- **Report Security Issues**: If you discover a security vulnerability, please **do not** file a public issue. Instead, report it privately to [security@firedevops.net](mailto:security@firedevops.net). We take security seriously and will respond promptly.
 
 ---
 
@@ -227,9 +227,9 @@ Your support can make a significant difference in the development and success of
 
 ## Contact
 
-- **Project Lead**: Ben Hook
-  - **Email**: [Ben.Hook@firedevops.net](mailto:Ben.Hook@firedevops.net)
-  - **GitHub**: [github.com/benhook1013](https://github.com/benhook1013)
+- **General Contact**: [firemud@firedevops.net](mailto:firemud@firedevops.net)
+- **Security Reports**: [security@firedevops.net](mailto:security@firedevops.net)
+- **GitHub Repository**: [github.com/benhook1013/FireMUD](https://github.com/benhook1013/FireMUD)
 - **FireDevOps.net**: [firedevops.net](https://firedevops.net)
 
 ---
