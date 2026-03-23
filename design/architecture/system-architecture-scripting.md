@@ -15,7 +15,7 @@ It complements:
 
 ## Implementation Status
 
-This section is a high-level snapshot. For the current implementation ledger and fine-grained progress, use `design/project-management/task-list-automation-scripting-service.md` as the source of truth. For sandbox-specific status, see `design/architecture/microservices/automation-scripting-service/sandbox-runtime-design.md#implementation-status`.
+This section is a high-level snapshot. For the current implementation summary, use `design/project-management/service-status-automation-scripting-service.md`. For sandbox-specific status, see `design/architecture/microservices/automation-scripting-service/sandbox-runtime-design.md#implementation-status`.
 
 - **Implemented and in active use**
   - Sandboxed script runtime and core Automation & Scripting Service, including quota enforcement via `ScriptQuotaService` and Redis-backed `ScriptTickService` staging.

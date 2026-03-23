@@ -3,7 +3,6 @@ name: Static Analysis Summary
 on:
   workflow_run:
     workflows:
-      - CodeQL Analysis
       - License Checks
     types:
       - completed
