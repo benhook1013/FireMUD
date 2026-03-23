@@ -7,6 +7,7 @@ Use this file as the canonical AI instruction source for this repository.
 - Use Gradle task paths without a `services:` prefix (for example `./gradlew :tcp-proxy-service:test`, not `./gradlew :services:tcp-proxy-service:test`).
 - For heavier local Gradle tasks, run from WSL in this repo path (for example `/mnt/c/.../FireMUD`) to avoid Windows file-locking issues.
 - Do not manually hard-wrap lines in docs; let lines flow naturally.
+- For larger tasks that span multiple domain areas, prefer using subagents when the work can be split cleanly. This helps avoid dragging unnecessary context through the main thread, reduces token cost, and can safely parallelize independent work.
 - For code changes, run `./gradlew spotlessApply` before commit so formatting is normalized locally rather than relying on `check` or CI to catch drift.
 - For code changes, run `./gradlew check` before hand-off.
 - After `spotlessApply`, run the relevant `spotlessCheck` or `spotlessJavaCheck` task for touched services when formatting-sensitive files changed.

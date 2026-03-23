@@ -16,7 +16,7 @@ This doc set is the authoritative source for:
 
 - **Tenant** – a hosted game world or project, identified by `tenantId`. All database rows and Redis keys include this prefix so data is isolated between games.
 - **Game instance** – a specific running instance of a tenant’s world, identified by an opaque internal `gameInstanceId` in the database and runtime APIs as described in [Versioning & Runtime Configuration](../../system-architecture-versioning-runtime.md#version-activation--rollback). Even if a deployment runs at most one instance per tenant, APIs and persistence models still carry `gameInstanceId` explicitly so multi-instance support does not require rewriting identifiers later; clients must treat the identifier as server-issued and opaque rather than inferring special values.
-- **Character identity** – gameplay identity keyed by `characterId`; legacy `playerId` fields are temporary aliases and map one-to-one to `characterId`.
+- **Character identity** – gameplay identity keyed by `characterId`.
 - **Player gameplay session** – a single player’s live connection and gameplay context bound to a specific game instance and character identity. Gameplay sessions are stored in Redis under `session:game:<tenantId>:<gameInstanceId>:<sessionId>` and are purged when the session ends.
 - **Region / region shard** – a subdivision of the world used for tick execution and scaling. Tick coordination keys are scoped per `<tenantId, regionId>` and do not follow individual player session lifecycles.
 

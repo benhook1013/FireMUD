@@ -31,7 +31,6 @@ import reactor.core.publisher.Mono;
 @Component
 public class HeaderTrustFilter implements WebFilter, Ordered {
   private static final String HDR_CLIENT_IP = "X-Client-IP";
-  private static final String HDR_SESSION_ID = "X-Session-Id";
   private static final String HDR_GAME_INSTANCE_ID = "X-Game-Instance-Id";
   private static final String HDR_TENANT_ID = "X-Tenant-Id";
 
@@ -118,9 +117,6 @@ public class HeaderTrustFilter implements WebFilter, Ordered {
                             if (incomingProxyGameInstanceId != null
                                 && !incomingProxyGameInstanceId.isBlank()) {
                               headers.set(HDR_GAME_INSTANCE_ID, incomingProxyGameInstanceId);
-                              if (properties.isEmitLegacySessionId()) {
-                                headers.set(HDR_SESSION_ID, incomingProxyGameInstanceId);
-                              }
                             }
                             if (incomingProxyTenantId != null && !incomingProxyTenantId.isBlank()) {
                               headers.set(HDR_TENANT_ID, incomingProxyTenantId);
@@ -141,7 +137,6 @@ public class HeaderTrustFilter implements WebFilter, Ordered {
 
   private void stripGatewayOwnedHeaders(HttpHeaders headers) {
     headers.remove(HDR_CLIENT_IP);
-    headers.remove(HDR_SESSION_ID);
     headers.remove(HDR_GAME_INSTANCE_ID);
     headers.remove(HDR_TENANT_ID);
 

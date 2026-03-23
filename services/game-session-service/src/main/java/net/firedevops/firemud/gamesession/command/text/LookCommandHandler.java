@@ -71,7 +71,7 @@ public final class LookCommandHandler {
     return gameLogicClient.resolveLook(
         Long.toString(context.tenantId()),
         Long.toString(context.sessionId()),
-        Long.toString(context.playerId()),
+        Long.toString(context.characterId()),
         gameLogicProperties.getDefaultRoomId());
   }
 
@@ -151,12 +151,7 @@ public final class LookCommandHandler {
     return "OK LOOK\n" + rendered + "\n\n";
   }
 
-  @SuppressWarnings("deprecation")
   private String lookRoomId(LookResult lookResult) {
-    if (lookResult.hasRoomInstance()
-        && !lookResult.getRoomInstance().getRoomInstanceId().isBlank()) {
-      return lookResult.getRoomInstance().getRoomInstanceId();
-    }
-    return lookResult.getRoomId();
+    return lookResult.getRoomInstance().getRoomInstanceId();
   }
 }

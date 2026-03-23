@@ -10,6 +10,7 @@ readarray -t PROTO_FILES < <(find protos -name '*.proto' | sort)
 TEMP_FILE="$(mktemp)"
 
 protoc -I protos \
+  --experimental_allow_proto3_optional \
   --doc_out="$OUT_DIR" \
   --doc_opt=markdown,"$(basename "$TEMP_FILE")" \
   "${PROTO_FILES[@]}"

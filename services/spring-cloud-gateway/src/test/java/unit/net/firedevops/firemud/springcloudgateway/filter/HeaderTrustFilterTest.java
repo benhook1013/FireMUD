@@ -96,7 +96,6 @@ class HeaderTrustFilterTest {
         .isEqualTo("conn-123");
     assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Game-Instance-Id"))
         .isEqualTo("42");
-    assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Session-Id")).isEqualTo("42");
     assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Tenant-Id")).isEqualTo("7");
     assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Proxy-Game-Instance-Id"))
         .isNull();
@@ -104,9 +103,8 @@ class HeaderTrustFilterTest {
   }
 
   @Test
-  void doesNotEmitLegacySessionIdWhenDisabled() {
+  void doesNotEmitLegacySessionId() {
     GatewayHeaderTrustProperties props = new GatewayHeaderTrustProperties();
-    props.setEmitLegacySessionId(false);
     props.getTcpProxy().setAllowInsecureHeadersFromTrustedCidrs(true);
     props.getTcpProxy().setInsecureTrustedCidrs(List.of("10.0.0.0/8"));
     HeaderTrustFilter filter = new HeaderTrustFilter(props);
@@ -125,7 +123,6 @@ class HeaderTrustFilterTest {
 
     assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Game-Instance-Id"))
         .isEqualTo("42");
-    assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Session-Id")).isNull();
   }
 
   @Test

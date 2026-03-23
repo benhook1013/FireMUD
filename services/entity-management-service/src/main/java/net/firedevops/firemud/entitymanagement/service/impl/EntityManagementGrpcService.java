@@ -277,18 +277,17 @@ public class EntityManagementGrpcService
   }
 
   private String resolveTenantId(ListRoomEntitiesRequest request) {
-    if (request.hasRoomInstance() && !request.getRoomInstance().getTenantId().isBlank()) {
-      return request.getRoomInstance().getTenantId();
+    if (request.getRoomInstance().getTenantId().isBlank()) {
+      return request.getTenantId();
     }
-    return request.getTenantId();
+    return request.getRoomInstance().getTenantId();
   }
 
-  @SuppressWarnings("deprecation")
   private String resolveRoomId(ListRoomEntitiesRequest request) {
-    if (request.hasRoomInstance() && !request.getRoomInstance().getRoomInstanceId().isBlank()) {
-      return request.getRoomInstance().getRoomInstanceId();
+    if (request.getRoomInstance().getRoomInstanceId().isBlank()) {
+      throw new IllegalArgumentException("room_instance.room_instance_id is required");
     }
-    return request.getRoomId();
+    return request.getRoomInstance().getRoomInstanceId();
   }
 
   private Character toProto(CharacterDto dto) {

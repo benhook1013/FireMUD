@@ -28,7 +28,7 @@ Operators can adjust queries or add panels to suit their games.
 - **Search by Trace ID** – correlate logs and traces using the `traceId` field.
 
 These dashboards rely on structured JSON logs shipped via Fluent Bit. Saved
-searches make it easy to pivot on `tenantId` or `playerId`.
+searches make it easy to pivot on `tenantId` or `characterId`.
 
 ## Additional Capabilities
 

@@ -21,10 +21,10 @@ public class FactionController {
   @PatchMapping("/{id}/reputation")
   public ResponseEntity<ApiResponse<Integer>> adjustReputation(
       @PathVariable Long id,
-      @RequestParam Long playerId,
+      @RequestParam Long characterId,
       @RequestParam int delta,
       @RequestParam Long tenantId) {
-    int result = factionService.adjustReputation(tenantId, playerId, id, delta);
+    int result = factionService.adjustReputation(tenantId, characterId, id, delta);
     return ResponseEntity.ok(ApiResponse.success(result));
   }
 }

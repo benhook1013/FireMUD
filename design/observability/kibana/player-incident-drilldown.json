@@ -3,13 +3,13 @@
   "id": "firemud-player-incident-drilldown",
   "attributes": {
     "title": "FireMUD Player Incident Drilldown",
-    "description": "Saved search for investigating player-visible incidents by playerId, tenantId, traceId, and service.",
+    "description": "Saved search for investigating player-visible incidents by characterId, tenantId, traceId, and service.",
     "columns": [
       "@timestamp",
       "service",
       "tenantId",
       "regionId",
-      "playerId",
+      "characterId",
       "traceId",
       "correlationId",
       "message"
@@ -19,7 +19,7 @@
       "desc"
     ],
     "kibanaSavedObjectMeta": {
-      "searchSourceJSON": "{\"indexRefName\":\"searchSourceJSON.index\",\"query\":{\"language\":\"kuery\",\"query\":\"playerId:* and tenantId:* and traceId:*\"},\"filter\":[]}"
+      "searchSourceJSON": "{\"indexRefName\":\"searchSourceJSON.index\",\"query\":{\"language\":\"kuery\",\"query\":\"characterId:* and tenantId:* and traceId:*\"},\"filter\":[]}"
     },
     "version": 1
   },

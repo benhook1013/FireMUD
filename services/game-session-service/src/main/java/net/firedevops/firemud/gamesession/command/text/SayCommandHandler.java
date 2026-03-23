@@ -65,7 +65,7 @@ public class SayCommandHandler {
           gameLogicClient.broadcastSay(
               Long.toString(context.tenantId()),
               Long.toString(context.sessionId()),
-              Long.toString(context.playerId()),
+              Long.toString(context.characterId()),
               gameLogicProperties.getDefaultRoomId(),
               aliasToken,
               message);

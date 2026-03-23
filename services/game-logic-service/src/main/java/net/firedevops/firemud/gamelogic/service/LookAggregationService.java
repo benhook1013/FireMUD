@@ -9,9 +9,11 @@ import net.firedevops.firemud.entitymanagement.v1.EntityManagementServiceGrpc;
 import net.firedevops.firemud.entitymanagement.v1.ListRoomEntitiesRequest;
 import net.firedevops.firemud.entitymanagement.v1.ListRoomEntitiesResponse;
 import net.firedevops.firemud.gamelogic.v1.EntityType;
+import net.firedevops.firemud.gamelogic.v1.HazardAmbientState;
 import net.firedevops.firemud.gamelogic.v1.LookExit;
 import net.firedevops.firemud.gamelogic.v1.LookRequest;
 import net.firedevops.firemud.gamelogic.v1.LookResult;
+import net.firedevops.firemud.gamelogic.v1.RoomAmbientState;
 import net.firedevops.firemud.gamelogic.v1.RoomEntity;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.shared.v1.RoomInstanceRef;
@@ -49,8 +51,8 @@ public class LookAggregationService {
             .setRoomName(snapshot.getRoomName())
             .setShortDescription(snapshot.getShortDescription())
             .setLongDescription(snapshot.getLongDescription())
-            .addAllRoomFlags(snapshot.getRoomFlagsList());
-    applyLegacyAmbientState(builder, snapshot);
+            .addAllRoomFlags(snapshot.getRoomFlagsList())
+            .setAmbientState(toAmbientState(snapshot.getAmbientState()));
 
     snapshot.getExitsList().forEach(exit -> builder.addExits(toLookExit(exit)));
     entityResponse.getEntitiesList().stream().map(this::toRoomEntity).forEach(builder::addEntities);
@@ -133,9 +135,33 @@ public class LookAggregationService {
         .build();
   }
 
-  @SuppressWarnings("deprecation")
-  private void applyLegacyAmbientState(LookResult.Builder builder, RoomSnapshot snapshot) {
-    builder.putAllAmbientState(snapshot.getAmbientStateMap());
+  private RoomAmbientState toAmbientState(
+      net.firedevops.firemud.worldmanagement.v1.RoomAmbientState ambientState) {
+    RoomAmbientState.Builder builder =
+        RoomAmbientState.newBuilder()
+            .setSchemaVersion(ambientState.getSchemaVersion())
+            .setWeather(ambientState.getWeather());
+    ambientState.getDoorsList().forEach(door -> builder.addDoors(toDoorAmbientState(door)));
+    ambientState
+        .getHazardsList()
+        .forEach(hazard -> builder.addHazards(toHazardAmbientState(hazard)));
+    return builder.build();
+  }
+
+  private net.firedevops.firemud.gamelogic.v1.DoorAmbientState toDoorAmbientState(
+      net.firedevops.firemud.worldmanagement.v1.DoorAmbientState door) {
+    return net.firedevops.firemud.gamelogic.v1.DoorAmbientState.newBuilder()
+        .setDoorId(door.getDoorId())
+        .setState(net.firedevops.firemud.gamelogic.v1.DoorState.forNumber(door.getStateValue()))
+        .build();
+  }
+
+  private HazardAmbientState toHazardAmbientState(
+      net.firedevops.firemud.worldmanagement.v1.HazardAmbientState hazard) {
+    return HazardAmbientState.newBuilder()
+        .setHazardId(hazard.getHazardId())
+        .setState(net.firedevops.firemud.gamelogic.v1.HazardState.forNumber(hazard.getStateValue()))
+        .build();
   }
 
   private String resolveTenantId(LookRequest request) {
@@ -145,15 +171,13 @@ public class LookAggregationService {
     return request.getTenantId();
   }
 
-  @SuppressWarnings("deprecation")
   private RoomInstanceRef resolveRoomInstance(LookRequest request) {
-    if (request.hasRoomInstance()) {
-      return request.getRoomInstance();
+    if (request.getRoomInstance().getRoomInstanceId().isBlank()) {
+      throw Status.INVALID_ARGUMENT
+          .withDescription("room_instance.room_instance_id is required")
+          .asRuntimeException();
     }
-    return RoomInstanceRef.newBuilder()
-        .setTenantId(request.getTenantId())
-        .setRoomInstanceId(request.getRoomId())
-        .build();
+    return request.getRoomInstance();
   }
 
   private RoomEntity toRoomEntity(net.firedevops.firemud.entitymanagement.v1.RoomEntity entity) {

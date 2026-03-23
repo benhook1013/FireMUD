@@ -20,8 +20,6 @@ import net.firedevops.firemud.worldmanagement.v1.PingRequest;
 import net.firedevops.firemud.worldmanagement.v1.PingResponse;
 import net.firedevops.firemud.worldmanagement.v1.RoomExitSnapshot;
 import net.firedevops.firemud.worldmanagement.v1.RoomSnapshot;
-import net.firedevops.firemud.worldmanagement.v1.UpdateWorldStateRequest;
-import net.firedevops.firemud.worldmanagement.v1.UpdateWorldStateResponse;
 import net.firedevops.firemud.worldmanagement.v1.WorldManagementServiceGrpc;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -40,7 +38,6 @@ public class WorldManagementGrpcService
   private static final Logger logger = LoggerFactory.getLogger(WorldManagementGrpcService.class);
   private final PingService pingService;
   private final RoomService roomService;
-  private final net.firedevops.firemud.worldmanagement.service.WorldEventService worldEventService;
   private final MeterRegistry meterRegistry;
   private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -161,41 +158,6 @@ public class WorldManagementGrpcService
     }
   }
 
-  @Override
-  @Timed(value = "worldGrpc.updateState")
-  public void updateWorldState(
-      UpdateWorldStateRequest request, StreamObserver<UpdateWorldStateResponse> responseObserver) {
-    try {
-      worldEventService.processDueEvents();
-      UpdateWorldStateResponse response =
-          UpdateWorldStateResponse.newBuilder().setSuccess(true).build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
-    } catch (IllegalArgumentException ex) {
-      UpdateWorldStateResponse response =
-          UpdateWorldStateResponse.newBuilder()
-              .setSuccess(false)
-              .setError(
-                  GrpcAppErrors.error(
-                      meterRegistry,
-                      logger,
-                      "UpdateWorldState",
-                      "INVALID_ARGUMENT",
-                      ex.getMessage()))
-              .build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
-    } catch (Exception ex) {
-      UpdateWorldStateResponse response =
-          UpdateWorldStateResponse.newBuilder()
-              .setSuccess(false)
-              .setError(GrpcAppErrors.internal(meterRegistry, logger, "UpdateWorldState", ex))
-              .build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
-    }
-  }
-
   private RoomSnapshot toProto(RoomSnapshotDto snapshot) {
     RoomSnapshot.Builder builder =
         RoomSnapshot.newBuilder()
@@ -206,7 +168,7 @@ public class WorldManagementGrpcService
             .setLongDescription(snapshot.longDescription());
     snapshot.exits().forEach(exit -> builder.addExits(toProto(exit)));
     if (snapshot.ambientState() != null) {
-      applyLegacyAmbientState(builder, snapshot);
+      applyAmbientState(builder, snapshot);
     }
     if (snapshot.roomFlags() != null) {
       builder.addAllRoomFlags(snapshot.roomFlags());
@@ -214,9 +176,16 @@ public class WorldManagementGrpcService
     return builder.build();
   }
 
-  @SuppressWarnings("deprecation")
-  private void applyLegacyAmbientState(RoomSnapshot.Builder builder, RoomSnapshotDto snapshot) {
-    builder.putAllAmbientState(snapshot.ambientState());
+  private void applyAmbientState(RoomSnapshot.Builder builder, RoomSnapshotDto snapshot) {
+    String weather = snapshot.ambientState().get("weather");
+    if (weather == null || weather.isBlank()) {
+      return;
+    }
+    builder.setAmbientState(
+        net.firedevops.firemud.worldmanagement.v1.RoomAmbientState.newBuilder()
+            .setSchemaVersion(1)
+            .setWeather(weather)
+            .build());
   }
 
   private RoomExitSnapshot toProto(RoomExitSnapshotDto exit) {
@@ -242,32 +211,30 @@ public class WorldManagementGrpcService
   }
 
   private String resolveTenantId(GetRoomRequest request) {
-    if (request.hasRoomInstance() && !request.getRoomInstance().getTenantId().isBlank()) {
-      return request.getRoomInstance().getTenantId();
+    if (request.getRoomInstance().getTenantId().isBlank()) {
+      return request.getTenantId();
     }
-    return request.getTenantId();
+    return request.getRoomInstance().getTenantId();
   }
 
-  @SuppressWarnings("deprecation")
   private String resolveRoomId(GetRoomRequest request) {
-    if (request.hasRoomInstance() && !request.getRoomInstance().getRoomInstanceId().isBlank()) {
-      return request.getRoomInstance().getRoomInstanceId();
+    if (request.getRoomInstance().getRoomInstanceId().isBlank()) {
+      throw new IllegalArgumentException("room_instance.room_instance_id is required");
     }
-    return request.getRoomId();
+    return request.getRoomInstance().getRoomInstanceId();
   }
 
   private String resolveTenantId(GetRoomSnapshotRequest request) {
-    if (request.hasRoomInstance() && !request.getRoomInstance().getTenantId().isBlank()) {
-      return request.getRoomInstance().getTenantId();
+    if (request.getRoomInstance().getTenantId().isBlank()) {
+      return request.getTenantId();
     }
-    return request.getTenantId();
+    return request.getRoomInstance().getTenantId();
   }
 
-  @SuppressWarnings("deprecation")
   private String resolveRoomId(GetRoomSnapshotRequest request) {
-    if (request.hasRoomInstance() && !request.getRoomInstance().getRoomInstanceId().isBlank()) {
-      return request.getRoomInstance().getRoomInstanceId();
+    if (request.getRoomInstance().getRoomInstanceId().isBlank()) {
+      throw new IllegalArgumentException("room_instance.room_instance_id is required");
     }
-    return request.getRoomId();
+    return request.getRoomInstance().getRoomInstanceId();
   }
 }

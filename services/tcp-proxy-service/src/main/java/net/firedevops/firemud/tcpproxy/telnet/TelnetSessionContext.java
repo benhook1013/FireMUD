@@ -28,19 +28,13 @@ final class TelnetSessionContext {
       return false;
     }
 
-    if (payload.contains(":")) {
-      String[] tokens = payload.split(":", 2);
-      gameInstanceId = tokens[0];
-      tenantId = tokens.length > 1 ? tokens[1] : null;
-    } else {
-      String[] parts = payload.split("\\s+");
-      if (parts.length < 2) {
-        logger.warn("Ignoring malformed session envelope: {}", envelope);
-        return false;
-      }
-      gameInstanceId = parts[0];
-      tenantId = parts[1];
+    String[] parts = payload.split("\\s+");
+    if (parts.length < 2) {
+      logger.warn("Ignoring malformed session envelope: {}", envelope);
+      return false;
     }
+    gameInstanceId = parts[0];
+    tenantId = parts[1];
 
     if (!StringUtils.hasText(gameInstanceId) || !StringUtils.hasText(tenantId)) {
       logger.warn("Ignoring session envelope missing gameInstanceId or tenantId: {}", envelope);

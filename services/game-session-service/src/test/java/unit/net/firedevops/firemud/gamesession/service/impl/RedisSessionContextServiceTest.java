@@ -49,11 +49,11 @@ class RedisSessionContextServiceTest {
   }
 
   @Test
-  void findByAccountAndPlayerReturnsPersistedContext() {
+  void findByAccountAndCharacterReturnsPersistedContext() {
     SessionContext context = new SessionContext(1L, 10L, 20L, 30L, 40L, "jwt");
     when(valueOperations.get("sessionctx:10:identity:20:30:context")).thenReturn(context);
 
-    Optional<SessionContext> result = service.findByAccountAndPlayer(10L, 20L, 30L);
+    Optional<SessionContext> result = service.findByAccountAndCharacter(10L, 20L, 30L);
 
     assertEquals(Optional.of(context), result);
   }

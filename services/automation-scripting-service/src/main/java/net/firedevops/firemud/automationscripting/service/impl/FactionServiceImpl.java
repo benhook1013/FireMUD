@@ -19,16 +19,16 @@ public class FactionServiceImpl implements FactionService {
   @Override
   @Transactional
   @Timed(value = "faction.adjustReputation")
-  public int adjustReputation(Long tenantId, Long playerId, Long factionId, int delta) {
+  public int adjustReputation(Long tenantId, Long characterId, Long factionId, int delta) {
     FactionStanding standing =
         standingRepository
-            .findByTenantIdAndPlayerIdAndFaction_Id(tenantId, playerId, factionId)
+            .findByTenantIdAndCharacterIdAndFaction_Id(tenantId, characterId, factionId)
             .orElseGet(
                 () -> {
                   Faction faction = factionRepository.findById(factionId).orElseThrow();
                   FactionStanding fs = new FactionStanding();
                   fs.setTenantId(tenantId);
-                  fs.setPlayerId(playerId);
+                  fs.setCharacterId(characterId);
                   fs.setFaction(faction);
                   return fs;
                 });
@@ -40,9 +40,9 @@ public class FactionServiceImpl implements FactionService {
   @Override
   @Transactional(readOnly = true)
   @Timed(value = "faction.getReputation")
-  public int getReputation(Long tenantId, Long playerId, Long factionId) {
+  public int getReputation(Long tenantId, Long characterId, Long factionId) {
     return standingRepository
-        .findByTenantIdAndPlayerIdAndFaction_Id(tenantId, playerId, factionId)
+        .findByTenantIdAndCharacterIdAndFaction_Id(tenantId, characterId, factionId)
         .map(FactionStanding::getReputation)
         .orElse(0);
   }

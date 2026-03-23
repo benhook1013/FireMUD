@@ -18,7 +18,7 @@ The service creates temporary instances of zones for dungeons or housing. Instan
 ## Current LOOK Slice Status
 
 - **Live:** `GetRoomSnapshot` returns room metadata, descriptions, and exit labels needed by Game Logic to render the canonical `LOOK` transcript, and telemetry for this pipeline is documented in [`look-instrumentation.md`](../../../project-management/look-instrumentation.md).
-- **Stubbed:** Current snapshot data comes from the seeded demo rooms so scripted room events, line-of-sight lighting, and procedural text remain deterministic for regression tests.
+- **Stubbed:** Current snapshot data comes from the deterministic LOOK test fixtures so scripted room events, line-of-sight lighting, and procedural text remain deterministic for regression tests.
 - **Deferred:** Future work will push live snapshot updates through `/ws/game/**` so Gateway and TCP Proxy clients can react to world changes as soon as they happen.
 
 ## Saga Participation

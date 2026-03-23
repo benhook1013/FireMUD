@@ -76,7 +76,7 @@ class LookAggregationServiceTest {
         LookRequest.newBuilder()
             .setTenantId("tenant-1")
             .setSessionId("session-1")
-            .setPlayerId("player-1")
+            .setCharacterId("player-1")
             .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("1021").build())
             .build();
   }
@@ -92,7 +92,7 @@ class LookAggregationServiceTest {
         .containsExactly("2045");
     assertThat(result.getEntitiesList()).hasSize(1);
     assertThat(result.getEntitiesList().get(0).getDisplayName()).isEqualTo("Kobold");
-    assertLegacyAmbientState(result);
+    assertThat(result.getAmbientState().getWeather()).isEqualTo("dim");
   }
 
   @Test
@@ -124,13 +124,11 @@ class LookAggregationServiceTest {
         .hasMessageContaining("room missing");
   }
 
-  @SuppressWarnings("deprecation")
   private static void applyLegacyAmbientState(RoomSnapshot.Builder builder) {
-    builder.putAmbientState("lighting", "dim");
-  }
-
-  @SuppressWarnings("deprecation")
-  private static void assertLegacyAmbientState(LookResult result) {
-    assertThat(result.getAmbientStateMap()).containsEntry("lighting", "dim");
+    builder.setAmbientState(
+        net.firedevops.firemud.worldmanagement.v1.RoomAmbientState.newBuilder()
+            .setSchemaVersion(1)
+            .setWeather("dim")
+            .build());
   }
 }

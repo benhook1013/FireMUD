@@ -154,7 +154,7 @@ Any additional Telnet-specific reasons introduced in the TCP Proxy implementatio
 
 ### Cross-Client Takeover Examples
 
-The underlying authentication and gameplay services enforce a **single active gameplay binding per `{tenantId, gameInstanceId, characterId}`** (legacy `playerId` is alias-only), as described in [Authentication & Authorization](./system-architecture-authentication.md#multi-client-behavior-and-session-takeover) and [Reconnection Strategy](./system-architecture-reconnection.md#resume-vs-reload-scenarios). From the networking and protocol edge, this manifests as follows:
+The underlying authentication and gameplay services enforce a **single active gameplay binding per `{tenantId, gameInstanceId, characterId}`**, as described in [Authentication & Authorization](./system-architecture-authentication.md#multi-client-behavior-and-session-takeover) and [Reconnection Strategy](./system-architecture-reconnection.md#resume-vs-reload-scenarios). From the networking and protocol edge, this manifests as follows:
 
 - **Telnet → Web takeover**
   - A Telnet client connects via the TCP Proxy, issues `LOGIN`, and enters gameplay with `PLAY` for a character.

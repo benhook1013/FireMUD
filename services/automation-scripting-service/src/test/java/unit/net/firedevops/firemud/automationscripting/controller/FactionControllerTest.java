@@ -25,7 +25,7 @@ class FactionControllerTest {
     mockMvc
         .perform(
             patch("/factions/3/reputation")
-                .param("playerId", "2")
+                .param("characterId", "2")
                 .param("delta", "5")
                 .param("tenantId", "1"))
         .andExpect(status().isOk())

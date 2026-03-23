@@ -20,7 +20,7 @@ At the protocol level, commands are split into two groups:
 | `LOOK` | Requests the current room snapshot aggregated from Game Logic plus World and Entity services. | `LOOK` |
 | `SAY <text>` | Broadcasts chat text to everyone in the same room. | `SAY Hello travelers` |
 | `YELL <text>` | Alias for `SAY` rendered with higher emphasis while still delivering to the current room. | `YELL Hear me, comrades` |
-| `WHISPER <player> <text>` | Directed chat that points at a single nearby player. | `WHISPER Sora The forge smells of brimstone` |
+| `WHISPER <character> <text>` | Directed chat that points at a single nearby character. | `WHISPER Sora The forge smells of brimstone` |
 
 Selector rules for `PLAY` match the lobby helpers: `<world>` accepts a stable world slug or a menu index from `WORLDS`, `[realm]` accepts a realm slug or a menu index from `REALMS`, and `[character]` is an optional name or index when the resolved realm exposes exactly one visible character choice.
 
@@ -221,7 +221,7 @@ Entities:
 ### LOOK request flow
 
 1. Game Session validates the Redis-backed session context created by a successful `LOGIN` or `LOGON`. If the guard fails, it immediately returns `ERROR NOT_AUTHENTICATED`.
-2. Authenticated `LOOK` commands call Game Logic's `ResolveLook`, passing `tenantId`, `gameInstanceId`, `sessionId`, `playerId`, and `roomInstanceId`.
+2. Authenticated `LOOK` commands call Game Logic's `ResolveLook`, passing `tenantId`, `gameInstanceId`, `sessionId`, `characterId`, and `roomInstanceId`.
 3. Game Logic returns a structured `LookResult`, which Game Session renders into the `OK LOOK` text response, emits `gamesession.command.look.*` metrics/logs, and caches per session so reconnections can replay it quickly.
 4. Reconnecting Telnet or WebSocket clients receive the cached snapshot before buffered commands replay. If the snapshot is missing or stale, Game Session reruns `ResolveLook`.
 
@@ -240,7 +240,7 @@ Metrics `gamesession.command.look.invocations` and `gamesession.command.look.fai
 ### SAY request flow
 
 1. Game Session validates the same Redis-backed session context leveraged by `LOOK`; unauthenticated inputs are rejected with `ERROR NOT_AUTHENTICATED`.
-2. Authenticated `SAY`/`YELL`/`WHISPER` commands route through `SayCommandHandler`, which packages `tenantId`, `gameInstanceId`, `sessionId`, `playerId`, `roomInstanceId`, normalized text, and alias metadata into a `BroadcastSay` gRPC request to Game Logic.
+2. Authenticated `SAY`/`YELL`/`WHISPER` commands route through `SayCommandHandler`, which packages `tenantId`, `gameInstanceId`, `sessionId`, `characterId`, `roomInstanceId`, normalized text, and alias metadata into a `BroadcastSay` gRPC request to Game Logic.
 3. Game Logic evaluates room visibility, enforces message constraints, and forwards the payload, or a stubbed notification, to Social & Groups Service for delivery and logging.
 4. Backend failures propagate protocol-mapped errors such as `ERROR SAY_NOT_DELIVERED` while `ERROR NOT_AUTHENTICATED` remains the consistent pre-flight guard.
 

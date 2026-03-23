@@ -51,10 +51,10 @@ To make traces consistently useful across services and runbooks, FireMUD uses a 
 
 - **Gateway and command path**
   - Gateway spans:
-    - `gateway_request` – inbound HTTP and WebSocket and Telnet-bridged request into Spring Cloud Gateway or the TCP Proxy Service, tagged with `route`, `method`, `tenantId`, and, where applicable, `playerId`.
-    - `gateway_command_dispatch` – dispatch from Gateway/Proxy into Game Session or other domain services, tagged with `command`, `tenantId`, `regionId`, and `playerId`.
+    - `gateway_request` – inbound HTTP and WebSocket and Telnet-bridged request into Spring Cloud Gateway or the TCP Proxy Service, tagged with `route`, `method`, `tenantId`, and, where applicable, `characterId`.
+    - `gateway_command_dispatch` – dispatch from Gateway/Proxy into Game Session or other domain services, tagged with `command`, `tenantId`, `regionId`, and `characterId`.
   - Game Session and domain spans:
-    - `gamesession_handle_command` – top-level span for handling a gameplay command, tagged with `command`, `tenantId`, `regionId`, `playerId`, and `instanceId`.
+    - `gamesession_handle_command` – top-level span for handling a gameplay command, tagged with `command`, `tenantId`, `regionId`, `characterId`, and `instanceId`.
     - Domain-specific spans such as `entity_apply_damage`, `inventory_transfer`, `room_resolve_look`, and `quest_update_state`, tagged with `tenantId`, `regionId`, and any relevant aggregate identifiers.
 - **Tick executor and coordination**
   - `tick_schedule` – scheduling of ticks for a `<tenantId, regionId>`, tagged with `tenantId`, `regionId`, `tickId`, and `region_epoch`.
@@ -62,8 +62,8 @@ To make traces consistently useful across services and runbooks, FireMUD uses a 
   - `tick_apply_effect` – per-effect spans for calls into domain services, tagged with `tenantId`, `regionId`, `tickId`, `effectKey`, `effect_type`, and `targetAggregateType`.
 - **Telnet/TCP Proxy and WebSocket bridge**
   - `tcpproxy_connection` – lifecycle of a Telnet connection at the DMZ edge, tagged with `remote_ip_hash` (and optionally `remote_ip_prefix`), `tenantId`, and high-level `connection_outcome` (for example `ok`, `limit_exceeded`, `malformed`).
-  - `tcpproxy_command` – command forwarding from Telnet to Gateway, tagged with `command`, `tenantId`, and `playerId`.
-  - `tcpproxy_notify_disconnect` – spans for `NotifyDisconnect` calls into Game Session, tagged with `tenantId`, `playerId`, and `disconnect_reason`.
+  - `tcpproxy_command` – command forwarding from Telnet to Gateway, tagged with `command`, `tenantId`, and `characterId`.
+  - `tcpproxy_notify_disconnect` – spans for `NotifyDisconnect` calls into Game Session, tagged with `tenantId`, `characterId`, and `disconnect_reason`.
 - **Cross-region and saga flows**
   - `gamesession_remote_followup_enqueue` – span for enqueuing cross-region follow-ups, tagged with origin and target `regionId`, `tenantId`, and a coarse `followup_type`.
   - `gamesession_remote_followup_drain` – span for draining remote follow-ups in the target region, tagged similarly and correlated with tick execution spans.
@@ -74,7 +74,7 @@ To make traces consistently useful across services and runbooks, FireMUD uses a 
 
 All spans should include, where applicable:
 
-- `tenantId`, `regionId`, `playerId`, and `trace_locale` (for example `prod-us-east-1` or `dev-local`) so traces can be filtered by tenant and environment.
+- `tenantId`, `regionId`, `characterId`, and `trace_locale` (for example `prod-us-east-1` or `dev-local`) so traces can be filtered by tenant and environment.
 - Error attributes such as `error.code` and `error.type` drawn from the same bounded catalogs used by `grpc.app_error` and domain error handling.
 
 ## Sampling and Sensitive Attributes
@@ -86,8 +86,8 @@ All spans should include, where applicable:
   - Runbooks must treat traces as a best-effort diagnostic: when sampling is too low to find a representative trace, operators should pivot to metrics (SLO/SLI panels) and logs (Kibana searches filtered by `tenantId`, `regionId`, and `traceId` when available).
   - If a workflow requires trace availability as part of an operational contract (for example debugging a recurring tick stall), document the minimum sampling expectations for that workflow explicitly in the owning runbook.
 - **Sensitive attributes**
-  - Attributes such as `playerId` are operationally useful but should be treated as sensitive data and kept bounded (IDs only, no message payloads).
-  - `playerId` is allowed in production traces as an identifier for correlation and incident drilldown, but it must be protected by access controls and retention policies appropriate to player-linked data.
+  - Attributes such as `characterId` are operationally useful but should be treated as sensitive data and kept bounded (IDs only, no message payloads).
+  - `characterId` is allowed in production traces as an identifier for correlation and incident drilldown, but it must be protected by access controls and retention policies appropriate to player-linked data.
   - Client address attributes in production traces must be privacy-safe and bounded: use `remote_ip_hash` for stable correlation and optionally `remote_ip_prefix` (`/24` for IPv4, `/56` for IPv6) for coarse network triage. Do not store raw full client IP addresses in long-retention traces.
   - Do not attach user-provided text (chat content, command payloads, free-form error messages) as span attributes; keep that data in logs with appropriate redaction and retention controls.
   - When exporting traces outside of the cluster or into shared tooling, ensure access controls and retention policies match the sensitivity of these identifiers.

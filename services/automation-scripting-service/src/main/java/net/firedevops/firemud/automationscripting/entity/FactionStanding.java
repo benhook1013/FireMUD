@@ -14,8 +14,8 @@ public class FactionStanding {
   @Column(nullable = false)
   private Long tenantId;
 
-  @Column(nullable = false)
-  private Long playerId;
+  @Column(name = "character_id", nullable = false)
+  private Long characterId;
 
   @ManyToOne(fetch = FetchType.LAZY)
   @JoinColumn(name = "faction_id", nullable = false)

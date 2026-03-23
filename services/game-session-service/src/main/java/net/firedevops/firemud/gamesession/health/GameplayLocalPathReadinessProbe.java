@@ -18,7 +18,7 @@ public final class GameplayLocalPathReadinessProbe {
   private static final long PROBE_TENANT_ID = 0L;
   private static final long PROBE_SESSION_ID = 9_223_372_036_854_770_000L;
   private static final long PROBE_ACCOUNT_ID = 9_223_372_036_854_770_001L;
-  private static final long PROBE_PLAYER_ID = 9_223_372_036_854_770_002L;
+  private static final long PROBE_CHARACTER_ID = 9_223_372_036_854_770_002L;
   private static final long PROBE_GAME_INSTANCE_ID = 0L;
   private static final String PROBE_JWT = "readiness-probe";
   private static final String QUEUE_PREFIX = "tick:queue:";
@@ -39,7 +39,7 @@ public final class GameplayLocalPathReadinessProbe {
             PROBE_SESSION_ID,
             PROBE_TENANT_ID,
             PROBE_ACCOUNT_ID,
-            PROBE_PLAYER_ID,
+            PROBE_CHARACTER_ID,
             PROBE_GAME_INSTANCE_ID,
             PROBE_JWT);
     try {

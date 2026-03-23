@@ -8,7 +8,8 @@ public interface SessionContextService {
 
   Optional<SessionContext> findByTenantAndSessionId(long tenantId, long sessionId);
 
-  Optional<SessionContext> findByAccountAndPlayer(long tenantId, long accountId, long playerId);
+  Optional<SessionContext> findByAccountAndCharacter(
+      long tenantId, long accountId, long characterId);
 
   void deleteBySessionId(long tenantId, long sessionId);
 }

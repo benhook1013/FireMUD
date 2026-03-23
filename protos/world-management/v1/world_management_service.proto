@@ -12,11 +12,6 @@ service WorldManagementService {
   rpc Ping(PingRequest) returns (PingResponse);
   rpc GetRoom(GetRoomRequest) returns (GetRoomResponse);
   rpc GetRoomSnapshot(GetRoomSnapshotRequest) returns (GetRoomSnapshotResponse);
-  // Deprecated: this bulk mutation surface is no longer authoritative for runtime world changes.
-  // Use effect-shaped, instance-scoped mutation RPCs such as ApplyRoomAmbientStatePatch.
-  rpc UpdateWorldState(UpdateWorldStateRequest) returns (UpdateWorldStateResponse) {
-    option deprecated = true;
-  }
   rpc GetDraftDesignDigest(GetDraftDesignDigestRequest) returns (GetDraftDesignDigestResponse);
   rpc ListRoomOccupants(ListRoomOccupantsRequest) returns (ListRoomOccupantsResponse);
   rpc ApplyRoomAmbientStatePatch(ApplyRoomAmbientStatePatchRequest) returns (ApplyRoomAmbientStatePatchResponse);
@@ -24,8 +19,7 @@ service WorldManagementService {
 
 message GetRoomRequest {
   string tenant_id = 1;
-  string room_id = 2 [deprecated = true];
-  shared.v1.RoomInstanceRef room_instance = 3;
+  shared.v1.RoomInstanceRef room_instance = 2;
 }
 
 message GetRoomResponse {
@@ -35,8 +29,7 @@ message GetRoomResponse {
 
 message GetRoomSnapshotRequest {
   string tenant_id = 1;
-  string room_id = 2 [deprecated = true];
-  shared.v1.RoomInstanceRef room_instance = 3;
+  shared.v1.RoomInstanceRef room_instance = 2;
 }
 
 message GetRoomSnapshotResponse {
@@ -45,37 +38,25 @@ message GetRoomSnapshotResponse {
 }
 
 message RoomSnapshot {
-  string room_id = 1 [deprecated = true];
-  string tenant_id = 2;
-  string room_name = 3;
-  string short_description = 4;
-  string long_description = 5;
-  repeated RoomExitSnapshot exits = 6;
-  map<string, string> ambient_state = 7 [deprecated = true];
-  repeated string room_flags = 8;
-  string game_instance_id = 9;
-  string room_instance_id = 10;
-  string world_snapshot_id = 11;
-  RoomAmbientState ambient_state_v2 = 12;
+  string tenant_id = 1;
+  string room_name = 2;
+  string short_description = 3;
+  string long_description = 4;
+  repeated RoomExitSnapshot exits = 5;
+  repeated string room_flags = 6;
+  string game_instance_id = 7;
+  string room_instance_id = 8;
+  string world_snapshot_id = 9;
+  RoomAmbientState ambient_state = 10;
 }
 
 message RoomExitSnapshot {
   string exit_id = 1;
-  string target_room_id = 2 [deprecated = true];
-  string target_room_name = 3;
-  string label = 4;
-  string description = 5;
-  int32 cost = 6;
-  string target_room_instance_id = 7;
-}
-
-message UpdateWorldStateRequest {
-  string tenant_id = 1;
-}
-
-message UpdateWorldStateResponse {
-  bool success = 1;
-  shared.v1.ErrorDetail error = 2;
+  string target_room_name = 2;
+  string label = 3;
+  string description = 4;
+  int32 cost = 5;
+  string target_room_instance_id = 6;
 }
 
 message ListRoomOccupantsRequest {
@@ -84,20 +65,15 @@ message ListRoomOccupantsRequest {
 
 message ListRoomOccupantsResponse {
   shared.v1.RoomInstanceRef room_instance = 1;
-  // Deprecated: derived mirror of occupants.entity_id (actors only) for legacy clients.
-  // New writers must populate occupants as canonical and derive this field from it.
-  repeated string occupant_entity_ids = 2 [deprecated = true];
-  string occupant_snapshot_id = 3;
-  shared.v1.ErrorDetail error = 4;
-  repeated RoomOccupant occupants = 5;
+  string occupant_snapshot_id = 2;
+  shared.v1.ErrorDetail error = 3;
+  repeated RoomOccupant occupants = 4;
 }
 
 message ApplyRoomAmbientStatePatchRequest {
   shared.v1.RoomInstanceRef room_instance = 1;
   string effect_id = 2;
-  // Deprecated: use ambient_state_patch_v2 as canonical and derive legacy map fields only for compatibility.
-  map<string, string> ambient_state_patch = 3 [deprecated = true];
-  RoomAmbientStatePatch ambient_state_patch_v2 = 4;
+  RoomAmbientStatePatch ambient_state_patch = 3;
 }
 
 message ApplyRoomAmbientStatePatchResponse {

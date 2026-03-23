@@ -22,7 +22,7 @@ class FactionServiceImplTest {
     Faction faction = new Faction();
     faction.setId(1L);
     when(factionRepository.findById(1L)).thenReturn(Optional.of(faction));
-    when(standingRepository.findByTenantIdAndPlayerIdAndFaction_Id(1L, 2L, 1L))
+    when(standingRepository.findByTenantIdAndCharacterIdAndFaction_Id(1L, 2L, 1L))
         .thenReturn(Optional.empty());
     ArgumentCaptor<FactionStanding> captor = ArgumentCaptor.forClass(FactionStanding.class);
     when(standingRepository.save(captor.capture()))

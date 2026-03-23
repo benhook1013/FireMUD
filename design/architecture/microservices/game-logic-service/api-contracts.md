@@ -32,7 +32,7 @@ Expected response:
 
 - `Ping(PingRequest) returns (PingResponse)` is the basic connectivity check defined in [`game_logic_service.proto`](../../../../protos/game-logic/v1/game_logic_service.proto).
 - `ExecuteCommand(ExecuteCommandRequest) returns (ExecuteCommandResponse)` evaluates a parsed gameplay command and returns the outcome.
-- `BroadcastSay` accepts `tenant_id`, `session_id`, `player_id`, and a `RoomInstanceRef` (`tenant_id`, `game_instance_id`, `room_instance_id`), plus normalized `text` and an alias indicator (`SAY` / `YELL` / `WHISPER`). The handler validates length, enforces room chat controls, and returns delivery metadata (recipient identifiers, NPC echoes, optional acknowledgements) along with structured status codes so Game Session can render the canonical response.
+- `BroadcastSay` accepts `tenant_id`, `session_id`, `character_id`, and a `RoomInstanceRef` (`tenant_id`, `game_instance_id`, `room_instance_id`), plus normalized `text` and an alias indicator (`SAY` / `YELL` / `WHISPER`). The handler validates length, enforces room chat controls, and returns delivery metadata (recipient identifiers, NPC echoes, optional acknowledgements) along with structured status codes so Game Session can render the canonical response.
 - All application-level failures are returned via `shared.v1.ErrorDetail` while the gRPC status remains `OK`; `grpc.app_error` must be recorded with the error code.
 
 ```bash
@@ -74,7 +74,7 @@ grpcurl -plaintext -d '{"tenant_id":"demo","session_id":"demo","command":"look"}
 ### LOOK Slice
 
 - Live: `ResolveLook` is wired into the command pipeline, orchestrates World Management snapshots and Entity Management listings, hands the structured `LookResult` to `LookResultRenderer`, and publishes the telemetry captured in [`look-instrumentation.md`](../../../project-management/look-instrumentation.md).
-- Stubbed: room and entity context still comes from seeded demo fixtures so the canonical transcript remains deterministic; scripted descriptions, complex lighting, and dynamic hazard cues are not yet integrated.
+- Stubbed: room and entity context still comes from the deterministic LOOK fixtures so the canonical transcript remains deterministic; scripted descriptions, complex lighting, and dynamic hazard cues are not yet integrated.
 - Deferred: future slices will enrich prose, annotate `LookResult` with combat and effect metadata, and surface additional visibility hints once the core text shape proves stable.
 
 ### Chat Slice
