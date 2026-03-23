@@ -8,9 +8,10 @@ import net.firedevops.firemud.metrics.SagaMetrics;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.boot.data.jpa.autoconfigure.DataJpaRepositoriesAutoConfiguration;
 import org.springframework.context.annotation.Bean;
 
-@AutoConfiguration
+@AutoConfiguration(after = DataJpaRepositoriesAutoConfiguration.class)
 public class CommonSagaAutoConfiguration {
 
   @Bean
