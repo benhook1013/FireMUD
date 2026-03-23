@@ -72,6 +72,87 @@ jobs:
         if: always()
         run: ./gradlew devDown
 
+  smoke-core-hetzner:
+    name: Core Smoke Tests (Hetzner)
+    runs-on:
+      - self-hosted
+      - Linux
+      - X64
+      - ci-smoke
+    if: ${{ github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' }}
+    timeout-minutes: 25
+    env:
+      SMOKE_TIMEOUT_SECONDS: 20
+    steps:
+      - name: ⬇️ Checkout Code
+        uses: actions/checkout@v6
+
+      - name: 🔎 Show runner resources
+        run: |
+          uname -a
+          echo
+          free -h || true
+          echo
+          df -h || true
+
+      - name: 🔎 Verify Docker tooling
+        run: |
+          docker version
+          docker compose version
+
+      - name: 🧹 Clean up any stale smoke stack before run
+        run: |
+          docker compose -f docker/docker-compose.yml down -v --remove-orphans || true
+
+      - name: ⚙️ Set Up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: ⚙️ Set Up Gradle
+        uses: gradle/actions/setup-gradle@v5
+        with:
+          cache-read-only: false
+
+      - name: 📝 Create CI .env placeholder
+        run: touch .env
+
+      - name: Generate Dev Certificates
+        run: ./dev-tools/generate-dev-certs.sh dev-tools/certs
+
+      - name: 🚀 Start Dev Stack (devUp)
+        run: ./gradlew devUp
+
+      - name: 📦 Install WebSocket smoke dependency
+        run: python3 -m pip install --disable-pip-version-check websocket-client
+
+      - name: 🧪 Direct WebSocket LOGIN + LOOK (Game Session)
+        run: |
+          cd services/game-session-service
+          bash ./websocket-login-look-smoke.sh
+
+      - name: 🧪 Telnet LOGIN + LOOK (TCP Proxy)
+        run: |
+          cd services/tcp-proxy-service
+          bash ./telnet-login-look-smoke.sh
+
+      - name: 📜 Dump Docker Compose Logs on Failure
+        if: failure()
+        run: |
+          if [ -f docker/docker-compose.yml ]; then
+            docker compose -f docker/docker-compose.yml logs || true
+          fi
+
+      - name: 🧹 Stop Dev Stack (devDown)
+        if: always()
+        run: ./gradlew devDown
+
+      - name: 🧹 Clean up Docker leftovers
+        if: always()
+        run: |
+          docker compose -f docker/docker-compose.yml down -v --remove-orphans || true
+
   smoke-gate:
     name: Smoke Gate
     runs-on: ubuntu-latest
@@ -88,7 +169,7 @@ jobs:
   smoke-summary:
     name: Smoke Summary
     runs-on: ubuntu-latest
-    needs: [smoke-core, smoke-gate]
+    needs: [smoke-core, smoke-core-hetzner, smoke-gate]
     if: github.event_name == 'pull_request' && always()
     steps:
       - name: 💬 Publish Smoke Summary Comment
@@ -96,6 +177,7 @@ jobs:
         with:
           script: |
             const result = "${{ needs.smoke-core.result }}";
+            const hetznerResult = "${{ needs.smoke-core-hetzner.result }}";
             const statusIcon = (value) => {
               if (value === "success") return "✅";
               if (value === "failure") return "❌";
@@ -112,6 +194,7 @@ jobs:
               headline,
               "",
               `- ${statusIcon(result)} Core Smoke Tests: \`${result}\``,
+              `- ${statusIcon(hetznerResult)} Core Smoke Tests (Hetzner): \`${hetznerResult}\``,
             ].join("\n");
 
             const { data: comments } = await github.rest.issues.listComments({
