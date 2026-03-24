@@ -1,0 +1,86 @@
+name: ZAP Baseline
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zap-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  zap-web-client:
+    name: ZAP Baseline (web-client)
+    runs-on: ubuntu-latest
+    steps:
+      - name: ⬇️ Checkout Code
+        uses: actions/checkout@v6
+
+      - name: ⚙️ Set Up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: web-client/package-lock.json
+
+      - name: 📦 Install Frontend Dependencies
+        run: npm ci
+        working-directory: web-client
+
+      - name: 🏗️ Build Web Client
+        run: npm run build
+        working-directory: web-client
+
+      - name: 🌐 Start Preview Server
+        run: |
+          npx serve dist -l 5000 > /tmp/firemud-zap-serve.log 2>&1 &
+          echo $! > /tmp/firemud-zap-serve.pid
+        working-directory: web-client
+
+      - name: ⏳ Wait for Preview Server
+        run: npx wait-on http://127.0.0.1:5000/index.html
+        working-directory: web-client
+
+      - name: 🔎 Run OWASP ZAP Baseline
+        run: |
+          mkdir -p build/zap
+          chmod 777 build/zap
+          docker run --rm --network=host -u root \
+            -v "${PWD}/build/zap:/zap/wrk/:rw" \
+            ghcr.io/zaproxy/zaproxy:stable \
+            zap-baseline.py \
+            -t http://127.0.0.1:5000 \
+            -m 3 \
+            -I \
+            -r zap-report.html \
+            -w zap-warnings.md \
+            -x zap-report.xml \
+            -J zap-report.json
+
+      - name: 📄 Publish ZAP Summary
+        if: always()
+        run: |
+          if [ -f build/zap/zap-warnings.md ]; then
+            echo "### OWASP ZAP Baseline Summary" >> "$GITHUB_STEP_SUMMARY"
+            cat build/zap/zap-warnings.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: 📤 Upload ZAP Report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: zap-baseline-${{ github.sha }}
+          path: build/zap/
+
+      - name: 🛑 Stop Preview Server
+        if: always()
+        run: |
+          if [ -f /tmp/firemud-zap-serve.pid ]; then
+            kill "$(cat /tmp/firemud-zap-serve.pid)" || true
+          fi
