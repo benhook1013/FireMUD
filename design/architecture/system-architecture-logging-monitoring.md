@@ -451,7 +451,7 @@ For scripting and automation workloads, dashboards and alerts must include both 
 ## Health Checks
 
 - Spring Boot `/actuator/health/readiness` and `/actuator/health/liveness` endpoints feed Kubernetes readiness and liveness probes.
-- See [Deployment Environments](./infrastructure/deployment-environments.md#🩺-kubernetes-health-monitoring) for probe behavior.
+- See [Deployment Environments](./infrastructure/deployment-environments.md#kubernetes-health-monitoring) for probe behavior.
 
 ## Error Tracking and Hotfixes
 
