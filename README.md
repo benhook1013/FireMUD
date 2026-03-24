@@ -15,7 +15,7 @@ Welcome to the **FireMUD Game Platform**, a modular and scalable system under th
 
 FireMUD is a modern engine for classic text-based online RPGs: creators use it to build persistent shared worlds with rooms, items, NPCs, and quests, and players connect over the web or Telnet to explore, chat, and adventure together in real time.
 
-*This project uses the [Business Source License 1.1](LICENSE.md). Each release converts to the Apache 2.0 License two years after publication. See our [FAQ](FAQ.md) for details.*
+*This project uses the [Business Source License 1.1](LICENSE.md). Each official release records its own Apache 2.0 conversion date two years after publication. See our [FAQ](FAQ.md) and [release process](design/operations/release-process.md) for details.*
 
 ## Table of Contents
 

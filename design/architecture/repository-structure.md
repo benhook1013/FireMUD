@@ -92,7 +92,8 @@ root
 - `gradle.properties` – Shared Gradle settings.
 - `gradlew` & `gradlew.bat` – Wrapper scripts for invoking Gradle.
 - `LICENSE.md` – Licensing terms for the project.
-- `NOTICE.md` – Third-party notices required by the license.
+- `NOTICE.md` – Repository notice describing how release-specific licensing and notice artifacts are produced.
+- `NOTICE.template.md` – Template used to generate the release-specific NOTICE file distributed with official releases.
 - `README.md` – High-level project overview and quick-start.
 - `SECURITY.md` – Responsible disclosure and security reporting guidance.
 
