@@ -1,6 +1,6 @@
 # Contributor Covenant Code of Conduct
 
-This project adheres to the [Contributor Covenant](https://www.contributor-covenant.org) to foster a welcoming and harassment-free community.
+This project adheres to the [Contributor Covenant](https://www.contributor-covenant.org/version/3/0/) to foster a welcoming and harassment-free community.
 
 ## Our Pledge
 
@@ -17,7 +17,7 @@ Examples of behavior that contributes to a positive environment include:
 
 Unacceptable behaviors include:
 
-- Trolling, insulting/derogatory comments, and personal or political attacks
+- Trolling, insulting or derogatory comments, and personal or political attacks
 - Public or private harassment
 - Publishing others' private information without explicit permission
 
@@ -35,4 +35,4 @@ Instances of abusive, harassing, or otherwise unacceptable behavior may be repor
 
 ## Attribution
 
-This Code of Conduct is adapted from the [Contributor Covenant](https://www.contributor-covenant.org), version 2.1.
+This Code of Conduct is adapted from the [Contributor Covenant](https://www.contributor-covenant.org/version/3/0/), version 3.0.

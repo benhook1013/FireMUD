@@ -147,7 +147,7 @@ Gatling scenarios simulate thousands of concurrent connections to measure servic
 
 ### Security Testing
 
-OWASP ZAP crawls the web client and Gateway endpoints during CI to surface common web vulnerabilities. Penetration tests and rate-limiting checks run before major releases.
+OWASP ZAP baseline scans the built web client preview during CI to surface common web vulnerabilities. Gateway-target scanning should be added once the gateway exposes a stable CI scan target. Penetration tests and rate-limiting checks run before major releases.
 
 ### Observability Tests
 
