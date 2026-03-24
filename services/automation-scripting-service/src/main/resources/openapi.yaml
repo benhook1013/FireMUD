@@ -74,7 +74,7 @@ paths:
           required: true
           schema:
             type: integer
-        - name: playerId
+        - name: characterId
           in: query
           required: true
           schema:

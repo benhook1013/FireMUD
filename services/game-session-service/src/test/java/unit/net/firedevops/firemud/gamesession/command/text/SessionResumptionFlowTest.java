@@ -175,9 +175,9 @@ class SessionResumptionFlowTest {
     }
 
     @Override
-    public Optional<SessionContext> findByAccountAndPlayer(
-        long tenantId, long accountId, long playerId) {
-      return Optional.ofNullable(identityMap.get(identityKey(tenantId, accountId, playerId)));
+    public Optional<SessionContext> findByAccountAndCharacter(
+        long tenantId, long accountId, long characterId) {
+      return Optional.ofNullable(identityMap.get(identityKey(tenantId, accountId, characterId)));
     }
 
     @Override
@@ -189,11 +189,11 @@ class SessionResumptionFlowTest {
     }
 
     private String identityKey(SessionContext context) {
-      return identityKey(context.tenantId(), context.accountId(), context.playerId());
+      return identityKey(context.tenantId(), context.accountId(), context.characterId());
     }
 
-    private String identityKey(long tenantId, long accountId, long playerId) {
-      return tenantId + ":" + accountId + ":" + playerId;
+    private String identityKey(long tenantId, long accountId, long characterId) {
+      return tenantId + ":" + accountId + ":" + characterId;
     }
   }
 }

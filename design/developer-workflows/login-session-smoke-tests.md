@@ -21,7 +21,7 @@ LOGIN demo@example.com swordfish
 LOOK
 ```
 
-Replace the `X-Game-Instance-Id` and `X-Tenant-Id` header values with the game instance and tenant identifiers for your environment. `X-Session-Id` is a deprecated alias and should not be used in new tooling.
+Replace the `X-Game-Instance-Id` and `X-Tenant-Id` header values with the game instance and tenant identifiers for your environment.
 
 Expected output (two newline-separated responses):
 

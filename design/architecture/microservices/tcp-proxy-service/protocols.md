@@ -81,7 +81,7 @@ SESSION <gameInstanceId> <tenantId>
 
 Both `gameInstanceId` and `tenantId` are opaque internal identifiers across the system and must be supplied in the canonical server-issued string form for the active deployment contract. Clients must not invent aliases or alternate local encodings in the `SESSION` envelope.
 
-The token is case-insensitive on the wire: the proxy trims and upper-cases the `SESSION` prefix before parsing, then applies canonical identifier validation to the arguments. For compatibility, the parser still accepts the historical colon-separated form by splitting on the first colon or whitespace; the whitespace-separated form above remains the canonical documented shape for new clients.
+The token is case-insensitive on the wire: the proxy trims and upper-cases the `SESSION` prefix before parsing, then applies canonical identifier validation to the arguments. The proxy only accepts the whitespace-separated canonical form shown above.
 
 ### Where `gameInstanceId` and `tenantId` Come From
 

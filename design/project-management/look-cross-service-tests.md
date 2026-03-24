@@ -11,13 +11,13 @@ This plan documents how the cross-service WebSocket and Telnet tests exercise th
 
 ## Test data and prerequisites
 
-- Seed the sample world (rooms, exits) and entities via `V10__seed_demo_world.sql` and the entity fixtures so room `R-1021` and NPCs like `Kobold Scout` exist.
+- Provide the sample world and entities through dedicated test fixtures or stub gRPC servers so room `R-1021` and NPCs like `Kobold Scout` exist.
 - Capture the tenant/session IDs from a `POST /sessions` call (Game Session service) when exercising advanced "attach to existing session" flows; reuse them in both WebSocket and Telnet flows that explicitly use the optional `SESSION` envelope.
 - Ensure TLS certificates (or plaintext overrides) are available by mounting `certs/` or setting `firemud.grpc.plaintext=true` for local execution.
 
 ## Implementation notes
 
-- Stub the World and Entity services via lightweight gRPC servers that return the seeded room snapshot and entity list referenced earlier so the tests control the `LOOK` response and failure modes. Point Game Logic at these stubs (`firemud.services.world-management-service`, `firemud.services.entity-management-service`) and the Game Session service at the sprung-up Game Logic instance (`firemud.services.game-logic-service`). For WebSocket/Telnet runs driven by Testcontainers, expose the stub ports via dynamic properties so each test can create reproducible transcripts.
+- Stub the World and Entity services via lightweight gRPC servers that return the deterministic room snapshot and entity list referenced earlier so the tests control the `LOOK` response and failure modes. Point Game Logic at these stubs (`firemud.services.world-management-service`, `firemud.services.entity-management-service`) and the Game Session service at the sprung-up Game Logic instance (`firemud.services.game-logic-service`). For WebSocket/Telnet runs driven by Testcontainers, expose the stub ports via dynamic properties so each test can create reproducible transcripts.
 - Exercise the full `LOGIN` → `LOOK` flow: authenticate via `AccountService` (stubbed to accept `demo@example.com`/`swordfish`), send the authenticated `LOOK` request through WebSocket or Telnet, and assert both the structured `LookResult` and rendered text match the documented transcript in Section 1. Toggle `game.logic.default-room-id` to a missing room so the failure paths (`ERROR ROOM_NOT_FOUND`, `ERROR WORLD_UNAVAILABLE`, `ERROR ENTITY_UNAVAILABLE`) are also covered.
 - Capture the new observability signals before/after each attempt using `design/project-management/look-instrumentation.md`: hit `/actuator/prometheus` to verify `gamesession.command.look.invocations` increments and `gamesession.command.look.failures{error=<CODE>}` tags the expected code, and tail Game Session/Game Logic logs to ensure `LookCommandHandler`/`LookAggregationService` emit the `Rendered LOOK text`/`LOG WARN LOOK failed <ERROR>` lines.
 

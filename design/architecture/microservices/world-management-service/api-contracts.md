@@ -2,13 +2,12 @@
 
 ## gRPC APIs
 
-- `GetRoom` – retrieves room data including exits and environmental effects. The legacy `room_id` field is deprecated; callers should provide a `RoomInstanceRef`.
+- `GetRoom` – retrieves room data including exits and environmental effects through `RoomInstanceRef`.
 - `GetRoomSnapshot` – returns a minimal, LOOK-focused view scoped by `RoomInstanceRef`.
-- `ListRoomOccupants` – returns the authoritative typed occupant list for actors in a room, scoped by `RoomInstanceRef`. The legacy `occupantEntityIds` list is a derived compatibility mirror only.
+- `ListRoomOccupants` – returns the authoritative typed occupant list for actors in a room, scoped by `RoomInstanceRef`.
 - `ApplyRoomAmbientStatePatch` – applies an ambient state patch to the target `RoomInstanceRef`, guarded by `EffectId`.
 - `GetDraftDesignDigest` – returns the publish-gating digest for Draft world templates using the typed scope request `GetDraftDesignDigestRequest { tenantId, scope: oneof { versionId, scriptPatchVersion } }`. World Management supports `versionId` scope only and must return `UNSUPPORTED_SCOPE` for `scriptPatchVersion`.
 - `ValidateWorldUpgradeMappings` – validates world-owned durable references and approved remap sets for replacement-instance cutover to a target `(tenantId, versionId)`.
-- `UpdateWorldState` – legacy bulk update surface scheduled for removal on June 30, 2026. Runtime mutation requests on this RPC must return `UNSUPPORTED_OPERATION`, and callers must use effect-shaped mutation RPCs instead. Until removal, this endpoint exists only for migration telemetry and controlled caller cleanup.
 
 The gRPC contract for world operations is located in [../../../../protos/world-management/v1](../../../../protos/world-management/v1). Run `./gradlew generateProto` to regenerate sources after editing these files.
 
@@ -107,7 +106,7 @@ Illustrative responses:
 - `roomName` and optional slug;
 - `shortDescription` and `longDescription`, with truncation rules governed by `LOOK_MAX_DESCRIPTION_CHARS`;
 - `exits`, including label, `targetRoomInstanceId`, and human-friendly direction text;
-- `ambientState` fields for compatibility and `ambientStateV2` as the typed canonical form; and
+- `ambientState` as the typed canonical form; and
 - optional `roomFlags` for gameplay/UI warning surfaces.
 
 Room snapshots deliberately exclude live entities, items, and inventory contents. Those are fetched from Entity Management using room- and instance-scoped queries.
@@ -163,4 +162,4 @@ Telnet and WebSocket clients both route through the `/ws/game/**` gameplay path,
 - Game Session renders the `LookResult` returned by Game Logic, which already includes both world and entity projections, into the textual transcript via `LookResultRenderer`.
 - Error responses emit `ERROR <CODE> <message>` covering `ROOM_NOT_FOUND`, `WORLD_UNAVAILABLE`, `ENTITY_UNAVAILABLE`, `LOOK_UNAVAILABLE`, and `NOT_AUTHENTICATED`.
 
-The `V10__seed_demo_world.sql` migration seeds the demo rooms referenced by the LOOK lifecycle so integration tests and transcript examples remain stable.
+The sample rooms referenced by the LOOK lifecycle are provided by the test fixtures described in the LOOK vertical slice so integration tests and transcript examples remain stable.

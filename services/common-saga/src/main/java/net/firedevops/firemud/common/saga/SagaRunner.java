@@ -11,12 +11,8 @@ import net.firedevops.firemud.common.saga.persistence.SagaStep;
 import net.firedevops.firemud.common.saga.persistence.SagaStepRepository;
 import net.firedevops.firemud.metrics.SagaMetrics;
 import org.slf4j.MDC;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
-import org.springframework.stereotype.Component;
 
 /** Executes sagas with correlation ID handling and metrics. */
-@Component
-@ConditionalOnBean({SagaInstanceRepository.class, SagaStepRepository.class})
 @SuppressFBWarnings(
     value = "EI_EXPOSE_REP2",
     justification = "Repositories and metrics are injected and immutable")

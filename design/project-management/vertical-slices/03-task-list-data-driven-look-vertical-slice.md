@@ -17,27 +17,27 @@ This checklist builds on the **Telnet to Gameplay** and **Login and Session** sl
 ## 2. World Management Service: Minimal Room Data for the Slice
 
 - [x] Before changing this service for the slice, run `./gradlew :world-management-service:test` and either get the existing tests passing or clearly document/temporarily disable any failing tests so the baseline is stable. *(ran successfully prior to these edits; see build log above or `./gradlew :world-management-service:test` locally).*
-- [x] Define or refine a minimal gRPC API in the World Management Service that can return room metadata needed for `LOOK` (e.g., `GetRoomSnapshot` or equivalent) including room id, name, descriptions, and exits for a given `tenantId` and `roomId`.
+- [x] Define or refine a minimal gRPC API in the World Management Service that can return room metadata needed for `LOOK` (e.g., `GetRoomSnapshot` or equivalent) including `roomInstanceId`, name, descriptions, and exits for a given `tenantId` and `roomInstance`.
 - [x] Add or update the World Management proto files so the room snapshot response includes everything the vertical slice needs but nothing extra (for example, omit combat or scripting hooks that are not yet used by LOOK).
-- [x] Seed a tiny test world in World Management (for example, 3–5 rooms connected in a simple loop) via Flyway migrations, a test-only data initializer, or fixtures referenced by integration tests.
-- [x] Add unit and/or integration tests in `services/world-management-service` that exercise the room snapshot API for the seeded test world, verifying correct exits and descriptions for at least one room used by the vertical slice scenarios.
+- [x] Provide a tiny deterministic test world in World Management (for example, 3–5 rooms connected in a simple loop) via fixtures or a test-only data initializer referenced by integration tests.
+- [x] Add unit and/or integration tests in `services/world-management-service` that exercise the room snapshot API for the deterministic test world, verifying correct exits and descriptions for at least one room used by the vertical slice scenarios.
 - [x] Update the World Management Service README/design docs with a short section that explains how the `LOOK` slice uses the room snapshot API and how to extend the sample world for future slices.
 
 ## 3. Entity Management Service: Visible Entity Listings
 
 - [x] Before changing this service for the slice, run `./gradlew :entity-management-service:test` and either get the existing tests passing or clearly document/temporarily disable any failing tests so the baseline is stable. *(ran successfully prior to these edits; see build log above or `./gradlew :entity-management-service:test` locally).*
-- [x] Define or refine a minimal gRPC API in the Entity Management Service that can list entities visible in a room for `LOOK` (players, NPCs, key items), keyed by `tenantId` and `roomId` at minimum.
+- [x] Define or refine a minimal gRPC API in the Entity Management Service that can list entities visible in a room for `LOOK` (characters, NPCs, key items), keyed by `tenantId` and `roomInstance` at minimum.
 - [x] Ensure the entity listing response is structured for gameplay text rendering (e.g., includes stable display names and simple flags like `isPlayer` / `isNpc` / `isItem` instead of eagerly exposing internal stats).
 - [x] Seed a minimal set of entities in the rooms used by the test world (e.g., one demo player character, one NPC, and one visible item) with deterministic IDs and names to keep transcripts stable.
-- [x] Add unit and/or integration tests in `services/entity-management-service` that verify the entity listing API returns the expected entities for the seeded rooms, including empty-room and multi-entity cases.
+- [x] Add unit and/or integration tests in `services/entity-management-service` that verify the entity listing API returns the expected entities for the target rooms, including empty-room and multi-entity cases.
 - [x] Update the Entity Management Service README/design docs with a subsection describing the `LOOK`-oriented entity listing API and how it fits with broader character and inventory design.
 
-Sample data for this slice lives in the same seed artifacts referenced above: `services/world-management-service/src/main/resources/db/migration/V10__seed_demo_world.sql` defines the demo rooms and exits, while `services/entity-management-service/src/main/resources/application.yml` holds the `firemud.look.rooms` entries that drive the entity transcripts. When future slices or transcripts need different rooms, add or edit entries in those files so the migration and configuration stay in sync with the documented scenarios.
+Sample data for this slice lives in the test fixtures referenced above: the World Management room fixtures define the rooms and exits, while `services/entity-management-service/src/main/resources/application.yml` holds the `firemud.look.rooms` entries that drive the entity transcripts. When future slices or transcripts need different rooms, add or edit entries in those fixtures and configuration so the documented scenarios stay in sync.
 
 ## 4. Game Logic Service: LOOK Aggregation and Formatting
 
 - [x] Before changing this service for the slice, run `./gradlew :game-logic-service:test` and either get the existing tests passing or clearly document/temporarily disable any failing tests so the baseline is stable.
-- [x] Introduce or refine a `LOOK`-oriented gRPC method in the Game Logic Service (for example `ResolveLook` or `GetLookDescription`) that accepts identity context (`tenantId`, `session_id`, `playerId`, and `roomId`) and returns a high-level `LookResult` DTO.
+- [x] Introduce or refine a `LOOK`-oriented gRPC method in the Game Logic Service (for example `ResolveLook` or `GetLookDescription`) that accepts identity context (`tenantId`, `session_id`, `characterId`, and `roomInstance`) and returns a high-level `LookResult` DTO.
 - [x] Implement the Game Logic `LOOK` handler so it orchestrates calls to World Management (room snapshot) and Entity Management (visible entities), applies any simple rules needed for this slice (for example, hiding entities the player should not see), and produces a structured `LookResult`.
 - [x] Implement a straightforward text rendering routine in Game Logic that converts `LookResult` into a minimal but pleasant textual description (room name, blank line, room long description, exits line, then entity list), leaving hooks for richer formatting in future slices.
 - [x] Add unit tests around the Game Logic `LOOK` handler and text rendering to cover at least: empty room, room with exits only, room with multiple entities, and error propagation when World or Entity services fail.
@@ -46,7 +46,7 @@ Sample data for this slice lives in the same seed artifacts referenced above: `s
 ## 5. Game Session Service: Wiring Text LOOK to Game Logic
 
 - [x] Before changing this service for the slice, run `./gradlew :game-session-service:test` and either get the existing tests passing or clearly document/temporarily disable any failing tests so the baseline is stable.
-- [x] Replace the current hard-coded `LookCommandHandler` (or equivalent) in Game Session with a flow that calls Game Logic’s `LOOK`/`ResolveLook` gRPC method, passing along `tenantId`, `sessionId`, and `playerId` from the Redis session context.
+- [x] Replace the current hard-coded `LookCommandHandler` (or equivalent) in Game Session with a flow that calls Game Logic’s `LOOK`/`ResolveLook` gRPC method, passing along `tenantId`, `sessionId`, and `characterId` from the Redis session context.
 - [x] Add a dedicated Spring client/component that encapsulates the World and Entity service calls, captures Micrometer timers for the remote invocations, and can fall back to the existing dev-isolated stub when `game-session.dev-isolated=true` so developers can run without dependencies.
 - [x] Ensure that the text command interpreter continues to enforce authentication before invoking the `LOOK` gRPC call and that unauthenticated requests still return `ERROR NOT_AUTHENTICATED` without hitting downstream services.
 - [x] Keep the textual `LOOK` output compatible with the existing smoke tests (same `OK LOOK` framing) while expanding the body to include the new data-driven content.

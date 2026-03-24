@@ -48,15 +48,4 @@ class WorldCreationServiceImplTest {
     assertDoesNotThrow(() -> service.createWorld(1L, 1L));
     verify(regionRepository).save(argThat(r -> r.getShardId() == 0));
   }
-
-  @Test
-  void createWorldRunsWithoutSagaRunner() {
-    when(regionRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
-    service =
-        new WorldCreationServiceImpl(
-            regionRepository, meterRegistry, worldProperties, gameDesignClient, null);
-
-    assertDoesNotThrow(() -> service.createWorld(1L, 1L));
-    verify(regionRepository, atLeastOnce()).save(argThat(r -> r.getShardId() == 0));
-  }
 }

@@ -90,7 +90,7 @@ This repository serves as the **central mono-repo** for the FireMUD Game Platfor
 #### Deployment & Infrastructure
 
 - **Containerization**: [Docker & Docker Compose](design/architecture/infrastructure/deployment-environments.md)
-- **Orchestration**: [Kubernetes deployments](design/architecture/infrastructure/deployment-environments.md)
+- **Orchestration**: [Kubernetes Deployments](design/architecture/infrastructure/deployment-environments.md)
 - **CI/CD**: [GitHub Actions](design/architecture/system-architecture-cicd.md)
 - **Monitoring and Logging**: Fluent Bit, Elasticsearch, Kibana, Grafana, Prometheus, OpenTelemetry, Alertmanager (see [Logging & Monitoring](design/architecture/system-architecture-logging-monitoring.md))
 
@@ -103,8 +103,9 @@ This repository serves as the **central mono-repo** for the FireMUD Game Platfor
 
 - **Unit Testing**: JUnit, Mockito
 - **Integration Testing**: Spring Test
+- **Smoke Testing**: Per-service `smoke-test.sh` scripts (see [Developer Setup](DEVELOPER_SETUP.md))
 - **Load Testing**: Gatling (see `dev-tools/load-testing` module)
-- **Accessibility Audit**: axe-core CLI (see [Developer Setup](DEVELOPER_SETUP.md#frontend-lint--accessibility)
+- **Accessibility Audit**: axe-core CLI (see [Developer Setup](DEVELOPER_SETUP.md#frontend-lint--accessibility))
 - **Cross-Service Regression**: `./gradlew crossServiceTest`
 
 ### Design Goals
@@ -155,7 +156,7 @@ Before contributing, we recommend reviewing the following key documents:
 - **[Security Architecture](design/architecture/system-architecture-security.md)** – JWT secrets, TLS, and cross-service trust.
 - **[Versioning & Runtime Configuration](design/architecture/system-architecture-versioning-runtime.md)** – publishing versions and controlling runtime flags.
 - **[Example User Journeys](design/architecture/user-journeys.md)** – step-by-step workflows for creators and players.
-- **[Task List](design/project-management/task-list.md)** – planned features and development progress.
+- **[Task List](design/project-management/task-list.md)** – planning index for active vertical slices and service-status summaries.
 - **[Game Creator Guide](design/user-guides/game-creator-guide.md)** – customizing worlds and using the scripting API.
 - **[FAQ](FAQ.md)** – frequently asked questions for quick context.
 
@@ -168,7 +169,7 @@ Before contributing, we recommend reviewing the following key documents:
 - **Improve Documentation**: Help keep our docs accurate and beginner-friendly by fixing typos, clarifying explanations, adding examples, or expanding the FAQ.
 - **Follow the [Code of Conduct](CODE_OF_CONDUCT.md)**: Treat everyone with respect and help maintain a welcoming community.
 - **Report Bugs or Suggest Features**: Open an issue in the relevant repository with detailed information. Be clear, respectful, and constructive.
-- **Report Security Issues**: If you discover a security vulnerability, please **do not** file a public issue. Instead, report it privately to [Ben.Hook@firedevops.net](mailto:Ben.Hook@firedevops.net). We take security seriously and will respond promptly.
+- **Report Security Issues**: If you discover a security vulnerability, please **do not** file a public issue. Instead, report it privately to [security@firedevops.net](mailto:security@firedevops.net). We take security seriously and will respond promptly.
 
 ---
 
@@ -202,7 +203,7 @@ Stop the stack with:
 Common helper commands:
 
 - `./gradlew check` – compile, test, and run static analysis (Spotless, Checkstyle, SpotBugs, Hadolint, coverage).
-- `./gradlew crossServiceTest` – run cross-service regression tests.
+- `./gradlew crossServiceTest` – run the cross-service LOOK regression suite.
 - `./gradlew lintMarkdown` – lint Markdown docs; see [Developer Setup](DEVELOPER_SETUP.md#-markdown-linting-via-gradle) for details.
 - `npm --prefix config/openapi run openapi:lint` – lint OpenAPI specs.
 - `./dev-tools/docs/link-check.sh` – run the link checker over Markdown docs.
@@ -226,9 +227,9 @@ Your support can make a significant difference in the development and success of
 
 ## Contact
 
-- **Project Lead**: Ben Hook
-  - **Email**: [Ben.Hook@firedevops.net](mailto:Ben.Hook@firedevops.net)
-  - **GitHub**: [github.com/benhook1013](https://github.com/benhook1013)
+- **General Contact**: [firemud@firedevops.net](mailto:firemud@firedevops.net)
+- **Security Reports**: [security@firedevops.net](mailto:security@firedevops.net)
+- **GitHub Repository**: [github.com/benhook1013/FireMUD](https://github.com/benhook1013/FireMUD)
 - **FireDevOps.net**: [firedevops.net](https://firedevops.net)
 
 ---

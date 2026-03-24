@@ -70,7 +70,7 @@ Trace-driven triage is optional but often decisive for command-latency incidents
 5. **Verify recovery**
    - Confirm the login success SLI panel returns to acceptable levels.
    - Ensure `LoginSuccessRatioLowGateway` and/or `LoginSuccessRatioLowTcpProxy` clear (as applicable) and player reports subside.
-   - Use the `player-incident-drilldown.json` Kibana saved search to spot-check representative player logs by `playerId`, `tenantId`, and `traceId` to confirm that errors have returned to normal levels.
+   - Use the `player-incident-drilldown.json` Kibana saved search to spot-check representative player logs by `characterId`, `tenantId`, and `traceId` to confirm that errors have returned to normal levels.
 6. **Degraded-mode branch (if observability backends are unavailable)**
    - If Grafana is down: query Prometheus directly for login success ratio by ingress path and tenant, plus `playerflow_canary_success{flow="login",path=...}`.
    - If Kibana is down: use service logs from Gateway/TCP Proxy/Account pods filtered by `tenantId` and `correlationId`.

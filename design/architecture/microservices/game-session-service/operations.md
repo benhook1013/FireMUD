@@ -54,7 +54,7 @@ See [System Architecture Testing](../../system-architecture-testing.md) for the 
 ### LOOK slice status
 
 - **Live:** Data-driven `LOOK` flows route through Game Logic's `ResolveLook`; Game Session renders the canonical text, caches the last snapshot per session, and emits the instrumentation metrics/logs documented in [`look-instrumentation.md`](../../../project-management/look-instrumentation.md) before replying over Telnet or WebSocket.
-- **Stubbed:** Room/exit metadata and visible entities still derive from the seeded demo world migration and the `firemud.look.rooms` fixtures so transcripts and regression tests stay stable while the cross-service WebSocket and Telnet flows rely on the shared stub utilities.
+- **Stubbed:** Room/exit metadata and visible entities still derive from the deterministic LOOK test fixtures and the `firemud.look.rooms` entries so transcripts and regression tests stay stable while the cross-service WebSocket and Telnet flows rely on the shared stub utilities.
 - **Deferred:** Dynamic lighting, line-of-sight filtering, script-driven room prose, and optional reconnection replay of cached snapshots remain future work once instrumentation, metrics, and cross-service regression coverage stabilize.
 
 ## Out-of-Scope Note

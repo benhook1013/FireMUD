@@ -24,7 +24,7 @@ CREATE TABLE factions (
 CREATE TABLE faction_standing (
     id BIGSERIAL PRIMARY KEY,
     tenant_id BIGINT NOT NULL,
-    player_id BIGINT NOT NULL,
+    character_id BIGINT NOT NULL,
     faction_id BIGINT NOT NULL REFERENCES factions(id),
     reputation INT NOT NULL DEFAULT 0
 );

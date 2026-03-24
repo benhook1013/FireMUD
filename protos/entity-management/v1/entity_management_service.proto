@@ -73,8 +73,7 @@ message ListCharactersByAccountResponse {
 
 message ListRoomEntitiesRequest {
   string tenant_id = 1;
-  string room_id = 2 [deprecated = true];
-  shared.v1.RoomInstanceRef room_instance = 3;
+  shared.v1.RoomInstanceRef room_instance = 2;
 }
 
 enum EntityType {

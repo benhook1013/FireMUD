@@ -90,7 +90,7 @@ Gameplay resumes cleanly when a session is resumed — whether due to reconnect 
 
 At most one active gameplay binding is supported per uniqueness key `{tenantId, gameInstanceId, characterId}` at any point in time.
 
-Legacy `playerId` wording maps one-to-one to `characterId` and is not a separate identity domain. When a new client successfully issues `LOGIN` for an identity that is already bound to another connection (whether Telnet or WebSocket), Game Session treats this as a **takeover**:
+The active gameplay identity is `characterId`. When a new client successfully issues `LOGIN` for an identity that is already bound to another connection (whether Telnet or WebSocket), Game Session treats this as a **takeover**:
 
 - The previous connection is disconnected or demoted according to the takeover rules in the authentication design.
 - No ordering guarantees are provided between the last few commands on the old connection and the first commands on the new one; only **per-connection FIFO** is maintained as described in [Protocol Bridging](./system-architecture-protocol-bridging.md#ordering--delivery-invariants).

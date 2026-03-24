@@ -14,8 +14,8 @@ This checklist focuses on turning the Telnet TCP Proxy + Gateway + Game Session 
 
 ## 2. Telnet Session Envelope and Event Metrics
 
-- [x] Document the Telnet session envelope format in the TCP Proxy design so MUD tools and scripts know how to bind a Telnet connection to a session, using the canonical [Telnet Session Envelope & Event Metrics](../../architecture/microservices/tcp-proxy-service/README.md#telnet-session-envelope--event-metrics) section as the single source of truth. The space-separated form (`SESSION <sessionId> <tenantId>`) is canonical for all new clients and examples; the historical compact form (`SESSION <sessionId>:<tenantId>`) remains accepted on the wire for backwards compatibility but is treated as deprecated and may be removed once remaining callers are migrated.
-- [x] Add focused unit tests for `TelnetSessionContext` covering valid envelopes (space-separated, colon-separated) and invalid/malformed cases, asserting sessionId/tenantId handling and log behaviour.
+- [x] Document the Telnet session envelope format in the TCP Proxy design so MUD tools and scripts know how to bind a Telnet connection to a session, using the canonical [Telnet Session Envelope & Event Metrics](../../architecture/microservices/tcp-proxy-service/README.md#telnet-session-envelope--event-metrics) section as the single source of truth. The space-separated form (`SESSION <sessionId> <tenantId>`) is canonical for all new clients and examples.
+- [x] Add focused unit tests for `TelnetSessionContext` covering valid envelopes (space-separated) and invalid/malformed cases, asserting sessionId/tenantId handling and log behaviour.
 - [x] Add a Spring Boot test for `TelnetServerHandler` that opens a Netty channel, sends a valid `SESSION` envelope followed by a command, and asserts that `TcpProxyEventService.recordConnectEvent` is invoked with the expected sessionId, tenantId, and client IP.
 
 ## 3. Reconnection and Buffered Input Behaviour

@@ -173,7 +173,7 @@ It complements the degraded-mode expectations in `design/architecture/system-arc
 
 1. Restore collector + Jaeger.
 2. Verify at least one trace appears for a known request path (login or a representative command).
-3. Verify that traces include required attributes (`tenantId`, `regionId`, and when applicable `playerId`).
+3. Verify that traces include required attributes (`tenantId`, `regionId`, and when applicable `characterId`).
 
 ## Post-Incident Checklist
 

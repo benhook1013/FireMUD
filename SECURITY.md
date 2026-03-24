@@ -14,7 +14,7 @@ Click the **"Report a vulnerability"** button on the repository’s main page to
 
 ### 📧 Alternative Method: Email
 
-If you prefer not to use GitHub, please email [Ben.Hook@firedevops.net](mailto:Ben.Hook@firedevops.net) with details so we can coordinate a fix. We will respond promptly and may request additional information to reproduce the issue.
+If you prefer not to use GitHub, please email [security@firedevops.net](mailto:security@firedevops.net) with details so we can coordinate a fix. We will respond promptly and may request additional information to reproduce the issue.
 
 Once resolved, credit will be given in the release notes unless you prefer to remain anonymous.
 

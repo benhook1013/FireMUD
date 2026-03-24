@@ -39,7 +39,7 @@ Executes the core gameplay rules and command parsing. It processes player action
 Implementation notes:
 
 - Live: the data-driven `LOOK` path is wired into the command pipeline via `ResolveLook`, and `BroadcastSay` forwards normalized room chat payloads to the Social & Groups stub.
-- Stubbed: room and entity context still comes from seeded demo fixtures, and chat delivery still uses the regression Social & Groups stub so canonical transcripts remain deterministic.
+- Stubbed: room and entity context still comes from the deterministic LOOK fixtures, and chat delivery still uses the regression Social & Groups stub so canonical transcripts remain deterministic.
 - Deferred: richer LOOK prose, combat and effect annotations, NPC reply behavior, localized listening areas, and profanity-escalation flows remain future slices.
 
 ## Document Map

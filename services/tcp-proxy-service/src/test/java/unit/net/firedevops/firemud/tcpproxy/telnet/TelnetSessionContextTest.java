@@ -54,20 +54,20 @@ class TelnetSessionContextTest {
   }
 
   @Test
-  void captureFromEnvelope_colonSeparatedSetsIdsAndLogsSuccess() {
+  void captureFromEnvelope_colonSeparatedLogsWarningAndResets() {
     boolean captured = sessionContext.captureFromEnvelope("SESSION colon-sess:tenant-beta");
 
-    assertTrue(captured);
-    assertEquals("colon-sess", sessionContext.gameInstanceId());
-    assertEquals("tenant-beta", sessionContext.tenantId());
-    assertTrue(sessionContext.isReady());
+    assertFalse(captured);
+    assertNull(sessionContext.gameInstanceId());
+    assertNull(sessionContext.tenantId());
+    assertFalse(sessionContext.isReady());
 
     List<ILoggingEvent> events = listAppender.list;
     assertEquals(1, events.size());
     ILoggingEvent event = events.get(0);
-    assertEquals(Level.INFO, event.getLevel());
+    assertEquals(Level.WARN, event.getLevel());
     assertEquals(
-        "Captured Telnet gameInstance colon-sess for tenant tenant-beta",
+        "Ignoring malformed session envelope: SESSION colon-sess:tenant-beta",
         event.getFormattedMessage());
   }
 
@@ -89,7 +89,7 @@ class TelnetSessionContextTest {
   }
 
   @Test
-  void captureFromEnvelope_colonMissingSessionLogsWarningAndResets() {
+  void captureFromEnvelope_missingGameInstanceLogsWarningAndResets() {
     boolean captured = sessionContext.captureFromEnvelope("SESSION :tenant");
 
     assertFalse(captured);
@@ -102,7 +102,6 @@ class TelnetSessionContextTest {
     ILoggingEvent event = events.get(0);
     assertEquals(Level.WARN, event.getLevel());
     assertEquals(
-        "Ignoring session envelope missing gameInstanceId or tenantId: SESSION :tenant",
-        event.getFormattedMessage());
+        "Ignoring malformed session envelope: SESSION :tenant", event.getFormattedMessage());
   }
 }

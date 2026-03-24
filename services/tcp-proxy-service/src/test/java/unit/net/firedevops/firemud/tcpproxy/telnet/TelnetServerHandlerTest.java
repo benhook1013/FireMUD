@@ -566,7 +566,7 @@ class TelnetServerHandlerTest {
   }
 
   @Test
-  void sessionEnvelopeSupportsColonSeparatedPayload() {
+  void sessionEnvelopeRejectsColonSeparatedPayload() {
     SimpleMeterRegistry registry = new SimpleMeterRegistry();
     RecordingConnector connector = new RecordingConnector();
     TelnetServerHandler handler =
@@ -595,8 +595,8 @@ class TelnetServerHandlerTest {
     handler.channelActive(ctx);
     handler.channelRead0(ctx, "SESSION sess-1:tenant-7");
 
-    assertEquals("sess-1", connector.getSessionId());
-    assertEquals("tenant-7", connector.getTenantId());
+    assertEquals(null, connector.getSessionId());
+    assertEquals(null, connector.getTenantId());
     executor.shutdownGracefully();
   }
 

@@ -50,7 +50,7 @@ Illustrative retained evidence shape for a prod-like observability smoke or hobb
     "traceId": "9c8d7e6f5a4b3210",
     "queryPath": "firemud-logs-*",
     "queryableWithinSeconds": 74,
-    "verifiedFields": ["service", "traceId", "tenantId", "regionId", "playerId"]
+    "verifiedFields": ["service", "traceId", "tenantId", "regionId", "characterId"]
   }
 }
 ```
@@ -164,7 +164,7 @@ In addition to functional, load, and security tests, FireMUD treats observabilit
     - Where Redis coordination is enabled, a basic tail-loss or coordination metric such as `redis_coordination_tail_loss_ms` is exposed, even if its value is near zero in CI.
     - Where coordinated backups are enabled, backup pause metrics expose both observed values and budget gauges (`backup_tick_pause_wait_seconds`, `backup_tick_pause_wait_budget_seconds`, `backup_tick_pause_duration_seconds`, `backup_tick_pause_duration_budget_seconds`).
     - Where alias-scope pause/resume is still supported, `backup_pause_scope_alias_requests_total` is exported.
-  - These checks should confirm that metrics follow the cardinality guardrails defined in the Logging & Monitoring doc (for example, no `traceId` or `playerId` labels).
+    - These checks should confirm that metrics follow the cardinality guardrails defined in the Logging & Monitoring doc (for example, no `traceId` or `characterId` labels).
 - **Alert wiring smoke tests**
   - Define one or more **test-only** alert rules (for example `ObservabilitySmokeTestAlert`) in non-production Alertmanager configurations with `alert_class="test"` and notifications routed only to low-noise channels or logging sinks, not to paging integrations.
   - Provide a short-lived probe in CI that intentionally pushes the corresponding test-only metric over its threshold in a non-production environment and verifies that Alertmanager receives and routes the alert with the expected labels (`service`, `severity="P2"`, `alert_class="test"`, `owner`, `runbook`).
@@ -182,7 +182,7 @@ In addition to functional, load, and security tests, FireMUD treats observabilit
 - **Tracing checks**
   - In at least one non-production pipeline where Jaeger (or an OTLP-compatible trace backend) is available, run a small smoke test that:
     - Exercises a login flow and a representative gameplay command.
-    - Verifies the presence of at least one `gamesession_handle_command` span with attributes such as `tenantId`, `regionId`, and `playerId`.
+    - Verifies the presence of at least one `gamesession_handle_command` span with attributes such as `tenantId`, `regionId`, and `characterId`.
     - Verifies the presence of at least one `tick_execute` span in environments where ticks are enabled.
     - Verifies the presence of at least one TCP edge incident span (`tcpproxy_notify_disconnect` or `tcpproxy_connection`) in environments that expose the Telnet path.
     - Verifies the presence of at least one backup coordination span (`backup_pause_ticks` and `backup_resume_ticks`) in environments that run coordinated backup workflows.
@@ -197,12 +197,12 @@ In addition to functional, load, and security tests, FireMUD treats observabilit
   - After a short synthetic login + command + tick smoke flow, assert that representative log lines from Gateway, Game Session, and TCP Proxy contain the structured fields required by the logging contract:
     - Required for request/tick handling paths: `service`, `traceId`, `correlationId`.
     - Required when known in context: `tenantId`, `regionId`.
-    - Required when a player session is authenticated/bound: `playerId`.
+    - Required when a player session is authenticated/bound: `characterId`.
   - Fail the check if any expected service path emits only free-form messages without these fields, because incident runbooks and Kibana drilldowns depend on those keys.
   - In prod-like observability smoke, also verify end-to-end log pipeline queryability:
     - run a synthetic login + command + tick flow that records expected `traceId` values,
     - verify the resulting records arrive in the canonical Elasticsearch/Kibana log-query path within the environment's bounded indexing delay (default starting point: within 2 minutes unless the environment documents a stricter bound),
-    - verify those records are retrievable by `service` and `traceId`, plus `tenantId` / `regionId` / `playerId` when applicable,
+    - verify those records are retrievable by `service` and `traceId`, plus `tenantId` / `regionId` / `characterId` when applicable,
     - fail readiness if structured logs are emitted but not queryable end-to-end through the documented log-query path.
 
 New services and features that add critical metrics or alerts should extend these observability tests where feasible so configuration errors are caught in CI rather than only in staging or production.
@@ -236,7 +236,7 @@ To keep PR feedback fast while still preventing “it only breaks in staging” 
   - External edge blackbox smoke: verify prod-like environments expose an independent synthetic probe metric for each public entry path and that a forced probe failure (or equivalent test target) trips the non-production blackbox alert path.
   - Player-flow canary smoke: verify the prod-like environment exposes mirrored `playerflow_canary_success` and `playerflow_canary_latency_ms` signals for login and the representative command path, and that a controlled non-production failure can trip the canary alert path.
   - Tracing smoke: run a login + representative command flow and verify at least one `gamesession_handle_command` span (and one `tick_execute` span where ticks run) is present in the trace backend. In environments that expose Telnet and coordinated backups, also verify at least one `tcpproxy_notify_disconnect`/`tcpproxy_connection` span and one `backup_pause_ticks` + `backup_resume_ticks` pair.
-  - Structured log contract smoke: verify sampled logs from critical paths contain required structured fields (`service`, `traceId`, `correlationId`, plus contextual `tenantId`/`regionId`/`playerId`).
+  - Structured log contract smoke: verify sampled logs from critical paths contain required structured fields (`service`, `traceId`, `correlationId`, plus contextual `tenantId`/`regionId`/`characterId`).
   - Log pipeline queryability smoke: verify those same synthetic records are queryable end-to-end in the canonical Elasticsearch/Kibana or documented compatible log-query path.
   - Prometheus rules conformance smoke: query the Prometheus rules API and verify the required fallback/recording rules are loaded (tail-loss fallback, tick safety ratio recording, login success ratio recording, command p99 latency recording, entry-path availability recording, and chat delivery latency recording).
     - This includes the canonical dynamic tail-loss pair (`redis_coordination_tail_loss_budget_ms`, `redis_coordination_tail_loss_slo_breached`) and both short-window and 1-day entry-path availability recordings.

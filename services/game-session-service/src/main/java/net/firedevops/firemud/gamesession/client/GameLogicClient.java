@@ -51,12 +51,13 @@ public class GameLogicClient
     return GameLogicServiceGrpc.newBlockingStub(channel).withCompression("gzip");
   }
 
-  public LookResult resolveLook(String tenantId, String sessionId, String playerId, String roomId) {
+  public LookResult resolveLook(
+      String tenantId, String sessionId, String characterId, String roomId) {
     LookRequest request =
         LookRequest.newBuilder()
             .setTenantId(tenantId)
             .setSessionId(sessionId)
-            .setPlayerId(playerId)
+            .setCharacterId(characterId)
             .setRoomInstance(
                 RoomInstanceRef.newBuilder()
                     .setTenantId(tenantId)
@@ -67,12 +68,12 @@ public class GameLogicClient
   }
 
   public LookResult resolveLookForReadiness(
-      String tenantId, String sessionId, String playerId, String roomId) {
+      String tenantId, String sessionId, String characterId, String roomId) {
     LookRequest request =
         LookRequest.newBuilder()
             .setTenantId(tenantId)
             .setSessionId(sessionId)
-            .setPlayerId(playerId)
+            .setCharacterId(characterId)
             .setRoomInstance(
                 RoomInstanceRef.newBuilder()
                     .setTenantId(tenantId)
@@ -87,7 +88,7 @@ public class GameLogicClient
   public BroadcastSayResponse broadcastSay(
       String tenantId,
       String sessionId,
-      String playerId,
+      String characterId,
       String roomId,
       String aliasToken,
       String text) {
@@ -95,7 +96,7 @@ public class GameLogicClient
         BroadcastSayRequest.newBuilder()
             .setTenantId(tenantId)
             .setSessionId(sessionId)
-            .setPlayerId(playerId)
+            .setCharacterId(characterId)
             .setRoomInstance(
                 RoomInstanceRef.newBuilder()
                     .setTenantId(tenantId)

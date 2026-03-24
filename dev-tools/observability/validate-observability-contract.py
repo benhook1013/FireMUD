@@ -276,7 +276,7 @@ def _validate_kibana_saved_objects(kibana_dir: Path) -> list[Finding]:
     findings: list[Finding] = []
     required_columns: dict[str, set[str]] = {
         "log-volume.json": {"service", "tenantId", "regionId", "message"},
-        "player-incident-drilldown.json": {"service", "tenantId", "playerId", "traceId", "correlationId", "message"},
+        "player-incident-drilldown.json": {"service", "tenantId", "characterId", "traceId", "correlationId", "message"},
         "tick-region-logs.json": {"service", "tenantId", "regionId", "tickId", "traceId", "correlationId", "message"},
     }
 

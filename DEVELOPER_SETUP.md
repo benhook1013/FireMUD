@@ -352,8 +352,8 @@ raw commands like:
 
 ```text
 LOGIN user pass
-MOVE north
-CAST "fireball"
+LOOK
+SAY Hello travelers
 ```
 
 Add or modify requests directly in Insomnia and re-export the workspace if you

@@ -79,25 +79,50 @@ for conventions on schema evolution and error handling. See each service's
 - [automation-scripting/v1/automation_scripting_service.proto](#automation-scripting_v1_automation_scripting_service-proto)
     - [AddFormationMemberRequest](#automation_scripting-v1-AddFormationMemberRequest)
     - [AddFormationMemberResponse](#automation_scripting-v1-AddFormationMemberResponse)
+    - [CancelPendingWorkItemsForPatchRequest](#automation_scripting-v1-CancelPendingWorkItemsForPatchRequest)
+    - [CancelPendingWorkItemsForPatchResponse](#automation_scripting-v1-CancelPendingWorkItemsForPatchResponse)
     - [CreateFormationRequest](#automation_scripting-v1-CreateFormationRequest)
     - [CreateFormationResponse](#automation_scripting-v1-CreateFormationResponse)
+    - [DisablePluginRequest](#automation_scripting-v1-DisablePluginRequest)
+    - [DisablePluginResponse](#automation_scripting-v1-DisablePluginResponse)
+    - [DrainPluginRequest](#automation_scripting-v1-DrainPluginRequest)
+    - [DrainPluginResponse](#automation_scripting-v1-DrainPluginResponse)
+    - [GetPluginStatusRequest](#automation_scripting-v1-GetPluginStatusRequest)
+    - [GetPluginStatusResponse](#automation_scripting-v1-GetPluginStatusResponse)
+    - [GetScriptPatchStatusRequest](#automation_scripting-v1-GetScriptPatchStatusRequest)
+    - [GetScriptPatchStatusResponse](#automation_scripting-v1-GetScriptPatchStatusResponse)
     - [GetScriptStatusRequest](#automation_scripting-v1-GetScriptStatusRequest)
     - [GetScriptStatusResponse](#automation_scripting-v1-GetScriptStatusResponse)
     - [ListFormationMembersRequest](#automation_scripting-v1-ListFormationMembersRequest)
     - [ListFormationMembersResponse](#automation_scripting-v1-ListFormationMembersResponse)
+    - [ListScriptPatchStatusesRequest](#automation_scripting-v1-ListScriptPatchStatusesRequest)
+    - [ListScriptPatchStatusesResponse](#automation_scripting-v1-ListScriptPatchStatusesResponse)
     - [NotifyScriptVersionUpdateRequest](#automation_scripting-v1-NotifyScriptVersionUpdateRequest)
     - [NotifyScriptVersionUpdateResponse](#automation_scripting-v1-NotifyScriptVersionUpdateResponse)
     - [PingRequest](#automation_scripting-v1-PingRequest)
     - [PingResponse](#automation_scripting-v1-PingResponse)
+    - [ScriptPatchStatusEntry](#automation_scripting-v1-ScriptPatchStatusEntry)
+    - [SetPluginActiveVersionRequest](#automation_scripting-v1-SetPluginActiveVersionRequest)
+    - [SetPluginActiveVersionResponse](#automation_scripting-v1-SetPluginActiveVersionResponse)
+    - [TriggerScriptEventRequest](#automation_scripting-v1-TriggerScriptEventRequest)
+    - [TriggerScriptEventResponse](#automation_scripting-v1-TriggerScriptEventResponse)
     - [UpdateScriptRequest](#automation_scripting-v1-UpdateScriptRequest)
     - [UpdateScriptResponse](#automation_scripting-v1-UpdateScriptResponse)
   
+    - [PluginState](#automation_scripting-v1-PluginState)
+    - [ScriptPatchStatus](#automation_scripting-v1-ScriptPatchStatus)
+    - [TriggerAdmissionOutcome](#automation_scripting-v1-TriggerAdmissionOutcome)
+    - [TriggerMode](#automation_scripting-v1-TriggerMode)
+  
+    - [AutomationScriptingControlPlaneService](#automation_scripting-v1-AutomationScriptingControlPlaneService)
     - [AutomationScriptingService](#automation_scripting-v1-AutomationScriptingService)
   
 - [entity-management/v1/entity_management_service.proto](#entity-management_v1_entity_management_service-proto)
     - [Character](#entity_management-v1-Character)
     - [CreateCharacterRequest](#entity_management-v1-CreateCharacterRequest)
     - [CreateCharacterResponse](#entity_management-v1-CreateCharacterResponse)
+    - [GetDraftDesignDigestRequest](#entity_management-v1-GetDraftDesignDigestRequest)
+    - [GetDraftDesignDigestResponse](#entity_management-v1-GetDraftDesignDigestResponse)
     - [ListCharactersByAccountRequest](#entity_management-v1-ListCharactersByAccountRequest)
     - [ListCharactersByAccountResponse](#entity_management-v1-ListCharactersByAccountResponse)
     - [ListRoomEntitiesRequest](#entity_management-v1-ListRoomEntitiesRequest)
@@ -133,36 +158,54 @@ for conventions on schema evolution and error handling. See each service's
 - [game-logic/v1/game_logic_service.proto](#game-logic_v1_game_logic_service-proto)
     - [BroadcastSayRequest](#game_logic-v1-BroadcastSayRequest)
     - [BroadcastSayResponse](#game_logic-v1-BroadcastSayResponse)
+    - [DoorAmbientState](#game_logic-v1-DoorAmbientState)
     - [ExecuteCommandRequest](#game_logic-v1-ExecuteCommandRequest)
     - [ExecuteCommandResponse](#game_logic-v1-ExecuteCommandResponse)
+    - [HazardAmbientState](#game_logic-v1-HazardAmbientState)
     - [LookExit](#game_logic-v1-LookExit)
     - [LookRequest](#game_logic-v1-LookRequest)
     - [LookResult](#game_logic-v1-LookResult)
-    - [LookResult.AmbientStateEntry](#game_logic-v1-LookResult-AmbientStateEntry)
     - [PingRequest](#game_logic-v1-PingRequest)
     - [PingResponse](#game_logic-v1-PingResponse)
+    - [RoomAmbientState](#game_logic-v1-RoomAmbientState)
     - [RoomEntity](#game_logic-v1-RoomEntity)
   
     - [ChatAlias](#game_logic-v1-ChatAlias)
+    - [DoorState](#game_logic-v1-DoorState)
     - [EntityType](#game_logic-v1-EntityType)
+    - [HazardState](#game_logic-v1-HazardState)
   
     - [GameLogicService](#game_logic-v1-GameLogicService)
   
 - [game-session/v1/game_session_service.proto](#game-session_v1_game_session_service-proto)
     - [EnqueueCommandRequest](#game_session-v1-EnqueueCommandRequest)
     - [EnqueueCommandResponse](#game_session-v1-EnqueueCommandResponse)
+    - [GetPinnedScriptPatchVersionRequest](#game_session-v1-GetPinnedScriptPatchVersionRequest)
+    - [GetPinnedScriptPatchVersionResponse](#game_session-v1-GetPinnedScriptPatchVersionResponse)
     - [GetTickStatusRequest](#game_session-v1-GetTickStatusRequest)
     - [GetTickStatusResponse](#game_session-v1-GetTickStatusResponse)
+    - [PauseTicksForScopeRequest](#game_session-v1-PauseTicksForScopeRequest)
+    - [PauseTicksForScopeResponse](#game_session-v1-PauseTicksForScopeResponse)
     - [PauseTicksRequest](#game_session-v1-PauseTicksRequest)
     - [PauseTicksResponse](#game_session-v1-PauseTicksResponse)
     - [PingRequest](#game_session-v1-PingRequest)
     - [PingResponse](#game_session-v1-PingResponse)
+    - [PurgeQueuedTickCommandsForPluginVersionRequest](#game_session-v1-PurgeQueuedTickCommandsForPluginVersionRequest)
+    - [PurgeQueuedTickCommandsForPluginVersionResponse](#game_session-v1-PurgeQueuedTickCommandsForPluginVersionResponse)
+    - [PurgeQueuedTickCommandsForScriptPatchRequest](#game_session-v1-PurgeQueuedTickCommandsForScriptPatchRequest)
+    - [PurgeQueuedTickCommandsForScriptPatchResponse](#game_session-v1-PurgeQueuedTickCommandsForScriptPatchResponse)
     - [QueryStateRequest](#game_session-v1-QueryStateRequest)
     - [QueryStateResponse](#game_session-v1-QueryStateResponse)
     - [RestartSessionRequest](#game_session-v1-RestartSessionRequest)
     - [RestartSessionResponse](#game_session-v1-RestartSessionResponse)
+    - [ResumeTicksForScopeRequest](#game_session-v1-ResumeTicksForScopeRequest)
+    - [ResumeTicksForScopeResponse](#game_session-v1-ResumeTicksForScopeResponse)
     - [ResumeTicksRequest](#game_session-v1-ResumeTicksRequest)
     - [ResumeTicksResponse](#game_session-v1-ResumeTicksResponse)
+    - [RollbackScriptPatchVersionRequest](#game_session-v1-RollbackScriptPatchVersionRequest)
+    - [RollbackScriptPatchVersionResponse](#game_session-v1-RollbackScriptPatchVersionResponse)
+    - [SetPinnedScriptPatchVersionRequest](#game_session-v1-SetPinnedScriptPatchVersionRequest)
+    - [SetPinnedScriptPatchVersionResponse](#game_session-v1-SetPinnedScriptPatchVersionResponse)
     - [StartSessionRequest](#game_session-v1-StartSessionRequest)
     - [StartSessionResponse](#game_session-v1-StartSessionResponse)
     - [StopSessionRequest](#game_session-v1-StopSessionRequest)
@@ -172,6 +215,7 @@ for conventions on schema evolution and error handling. See each service's
   
     - [TickStatus](#game_session-v1-TickStatus)
   
+    - [GameSessionControlPlaneService](#game_session-v1-GameSessionControlPlaneService)
     - [GameSessionService](#game_session-v1-GameSessionService)
   
 - [logging-admin/v1/logging_admin_service.proto](#logging-admin_v1_logging_admin_service-proto)
@@ -194,6 +238,9 @@ for conventions on schema evolution and error handling. See each service's
   
 - [shared/v1/errors.proto](#shared_v1_errors-proto)
     - [ErrorDetail](#shared-v1-ErrorDetail)
+  
+- [shared/v1/instance_refs.proto](#shared_v1_instance_refs-proto)
+    - [RoomInstanceRef](#shared-v1-RoomInstanceRef)
   
 - [shared/v1/paging.proto](#shared_v1_paging-proto)
     - [PagingRequest](#shared-v1-PagingRequest)
@@ -233,17 +280,29 @@ for conventions on schema evolution and error handling. See each service's
     - [TcpProxyService](#tcp_proxy-v1-TcpProxyService)
   
 - [world-management/v1/world_management_service.proto](#world-management_v1_world_management_service-proto)
+    - [ApplyRoomAmbientStatePatchRequest](#world_management-v1-ApplyRoomAmbientStatePatchRequest)
+    - [ApplyRoomAmbientStatePatchResponse](#world_management-v1-ApplyRoomAmbientStatePatchResponse)
+    - [DoorAmbientState](#world_management-v1-DoorAmbientState)
+    - [GetDraftDesignDigestRequest](#world_management-v1-GetDraftDesignDigestRequest)
+    - [GetDraftDesignDigestResponse](#world_management-v1-GetDraftDesignDigestResponse)
     - [GetRoomRequest](#world_management-v1-GetRoomRequest)
     - [GetRoomResponse](#world_management-v1-GetRoomResponse)
     - [GetRoomSnapshotRequest](#world_management-v1-GetRoomSnapshotRequest)
     - [GetRoomSnapshotResponse](#world_management-v1-GetRoomSnapshotResponse)
+    - [HazardAmbientState](#world_management-v1-HazardAmbientState)
+    - [ListRoomOccupantsRequest](#world_management-v1-ListRoomOccupantsRequest)
+    - [ListRoomOccupantsResponse](#world_management-v1-ListRoomOccupantsResponse)
     - [PingRequest](#world_management-v1-PingRequest)
     - [PingResponse](#world_management-v1-PingResponse)
+    - [RoomAmbientState](#world_management-v1-RoomAmbientState)
+    - [RoomAmbientStatePatch](#world_management-v1-RoomAmbientStatePatch)
     - [RoomExitSnapshot](#world_management-v1-RoomExitSnapshot)
+    - [RoomOccupant](#world_management-v1-RoomOccupant)
     - [RoomSnapshot](#world_management-v1-RoomSnapshot)
-    - [RoomSnapshot.AmbientStateEntry](#world_management-v1-RoomSnapshot-AmbientStateEntry)
-    - [UpdateWorldStateRequest](#world_management-v1-UpdateWorldStateRequest)
-    - [UpdateWorldStateResponse](#world_management-v1-UpdateWorldStateResponse)
+  
+    - [DoorState](#world_management-v1-DoorState)
+    - [HazardState](#world_management-v1-HazardState)
+    - [RoomOccupantType](#world_management-v1-RoomOccupantType)
   
     - [WorldManagementService](#world_management-v1-WorldManagementService)
   
@@ -1065,6 +1124,43 @@ Basic ping response containing a greeting and optional error details.
 
 
 
+<a name="automation_scripting-v1-CancelPendingWorkItemsForPatchRequest"></a>
+
+### CancelPendingWorkItemsForPatchRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| script_patch_version | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| region_id | [string](#string) |  |  |
+| control_plane_request_id | [string](#string) |  |  |
+| actor_principal | [string](#string) |  |  |
+| reason | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="automation_scripting-v1-CancelPendingWorkItemsForPatchResponse"></a>
+
+### CancelPendingWorkItemsForPatchResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| canceled_count | [int64](#int64) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
 <a name="automation_scripting-v1-CreateFormationRequest"></a>
 
 ### CreateFormationRequest
@@ -1092,6 +1188,149 @@ Basic ping response containing a greeting and optional error details.
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | formation_id | [string](#string) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="automation_scripting-v1-DisablePluginRequest"></a>
+
+### DisablePluginRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| plugin_id | [string](#string) |  |  |
+| control_plane_request_id | [string](#string) |  |  |
+| actor_principal | [string](#string) |  |  |
+| reason | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="automation_scripting-v1-DisablePluginResponse"></a>
+
+### DisablePluginResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| success | [bool](#bool) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="automation_scripting-v1-DrainPluginRequest"></a>
+
+### DrainPluginRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| plugin_id | [string](#string) |  |  |
+| control_plane_request_id | [string](#string) |  |  |
+| actor_principal | [string](#string) |  |  |
+| reason | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="automation_scripting-v1-DrainPluginResponse"></a>
+
+### DrainPluginResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| success | [bool](#bool) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="automation_scripting-v1-GetPluginStatusRequest"></a>
+
+### GetPluginStatusRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| plugin_id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="automation_scripting-v1-GetPluginStatusResponse"></a>
+
+### GetPluginStatusResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| active_plugin_version_id | [string](#string) |  |  |
+| pending_plugin_version_id | [string](#string) |  |  |
+| plugin_state | [PluginState](#automation_scripting-v1-PluginState) |  |  |
+| status_reason | [string](#string) |  |  |
+| last_changed_at_ms | [int64](#int64) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="automation_scripting-v1-GetScriptPatchStatusRequest"></a>
+
+### GetScriptPatchStatusRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| script_patch_version | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="automation_scripting-v1-GetScriptPatchStatusResponse"></a>
+
+### GetScriptPatchStatusResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| status | [ScriptPatchStatus](#automation_scripting-v1-ScriptPatchStatus) |  |  |
+| status_reason | [string](#string) |  |  |
+| last_changed_at_ms | [int64](#int64) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
 
@@ -1164,6 +1403,40 @@ Basic ping response containing a greeting and optional error details.
 
 
 
+<a name="automation_scripting-v1-ListScriptPatchStatusesRequest"></a>
+
+### ListScriptPatchStatusesRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| status | [ScriptPatchStatus](#automation_scripting-v1-ScriptPatchStatus) |  |  |
+| changed_after_ms | [int64](#int64) |  |  |
+| changed_before_ms | [int64](#int64) |  |  |
+
+
+
+
+
+
+<a name="automation_scripting-v1-ListScriptPatchStatusesResponse"></a>
+
+### ListScriptPatchStatusesResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| patches | [ScriptPatchStatusEntry](#automation_scripting-v1-ScriptPatchStatusEntry) | repeated |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
 <a name="automation_scripting-v1-NotifyScriptVersionUpdateRequest"></a>
 
 ### NotifyScriptVersionUpdateRequest
@@ -1223,6 +1496,111 @@ Basic ping response containing a greeting and optional error details.
 
 
 
+<a name="automation_scripting-v1-ScriptPatchStatusEntry"></a>
+
+### ScriptPatchStatusEntry
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| script_patch_version | [string](#string) |  |  |
+| status | [ScriptPatchStatus](#automation_scripting-v1-ScriptPatchStatus) |  |  |
+| status_reason | [string](#string) |  |  |
+| last_changed_at_ms | [int64](#int64) |  |  |
+
+
+
+
+
+
+<a name="automation_scripting-v1-SetPluginActiveVersionRequest"></a>
+
+### SetPluginActiveVersionRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| plugin_id | [string](#string) |  |  |
+| target_plugin_version_id | [string](#string) |  |  |
+| control_plane_request_id | [string](#string) |  |  |
+| actor_principal | [string](#string) |  |  |
+| reason | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="automation_scripting-v1-SetPluginActiveVersionResponse"></a>
+
+### SetPluginActiveVersionResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| previous_plugin_version_id | [string](#string) |  |  |
+| active_plugin_version_id | [string](#string) |  |  |
+| control_plane_request_id | [string](#string) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="automation_scripting-v1-TriggerScriptEventRequest"></a>
+
+### TriggerScriptEventRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| region_id | [string](#string) |  |  |
+| region_epoch | [int64](#int64) |  | Required for gameplay/runtime triggers and scheduler triggers so triggers are fenced across scoped coordination resets. External/out-of-band triggers that omit region_epoch must define their own consistency model explicitly. |
+| entity_id | [string](#string) |  |  |
+| script_id | [string](#string) |  |  |
+| plugin_id | [string](#string) |  | Plugin identity (required for plugin triggers). For core script triggers, these fields must be absent. |
+| plugin_version_id | [string](#string) |  |  |
+| event_type | [string](#string) |  |  |
+| script_patch_version | [string](#string) |  |  |
+| script_event_id | [string](#string) |  |  |
+| is_dry_run | [bool](#bool) |  |  |
+| trigger_mode | [TriggerMode](#automation_scripting-v1-TriggerMode) |  |  |
+| due_tick_id | [int64](#int64) |  | Scheduling context (when applicable). |
+| due_at_ms | [int64](#int64) |  |  |
+| payload_json | [string](#string) |  | Event payload envelope (implementation-specific). |
+
+
+
+
+
+
+<a name="automation_scripting-v1-TriggerScriptEventResponse"></a>
+
+### TriggerScriptEventResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| admitted | [bool](#bool) |  | Indicates whether the trigger was admitted into the scripting pipeline. This does not imply that commands have been accepted into tick queues; that end-to-end handoff is observable via script_event_audit. |
+| admission_outcome | [TriggerAdmissionOutcome](#automation_scripting-v1-TriggerAdmissionOutcome) |  |  |
+| admission_reason | [string](#string) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
 <a name="automation_scripting-v1-UpdateScriptRequest"></a>
 
 ### UpdateScriptRequest
@@ -1258,9 +1636,89 @@ Basic ping response containing a greeting and optional error details.
 
  
 
+
+<a name="automation_scripting-v1-PluginState"></a>
+
+### PluginState
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| PLUGIN_STATE_UNSPECIFIED | 0 |  |
+| PLUGIN_STATE_ENABLED | 1 |  |
+| PLUGIN_STATE_DISABLED | 2 |  |
+| PLUGIN_STATE_DRAINING | 3 |  |
+| PLUGIN_STATE_RELOADING | 4 |  |
+| PLUGIN_STATE_FAILED | 5 |  |
+
+
+
+<a name="automation_scripting-v1-ScriptPatchStatus"></a>
+
+### ScriptPatchStatus
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| SCRIPT_PATCH_STATUS_UNSPECIFIED | 0 |  |
+| SCRIPT_PATCH_STATUS_READY | 1 |  |
+| SCRIPT_PATCH_STATUS_FAILED | 2 |  |
+| SCRIPT_PATCH_STATUS_ROLLED_BACK | 3 |  |
+| SCRIPT_PATCH_STATUS_PENDING_VALIDATION | 4 |  |
+| SCRIPT_PATCH_STATUS_ONLOAD_RUNNING | 5 |  |
+
+
+
+<a name="automation_scripting-v1-TriggerAdmissionOutcome"></a>
+
+### TriggerAdmissionOutcome
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| TRIGGER_ADMISSION_OUTCOME_UNSPECIFIED | 0 |  |
+| TRIGGER_ADMISSION_OUTCOME_ADMITTED | 1 |  |
+| TRIGGER_ADMISSION_OUTCOME_BACKPRESSURE_RELOADING | 2 |  |
+| TRIGGER_ADMISSION_OUTCOME_DENIED_QUOTA | 3 |  |
+| TRIGGER_ADMISSION_OUTCOME_DENIED_TENANT_BUDGET | 4 |  |
+| TRIGGER_ADMISSION_OUTCOME_DENIED_DISABLED | 5 |  |
+| TRIGGER_ADMISSION_OUTCOME_DENIED_VERSION_UNAVAILABLE | 6 |  |
+| TRIGGER_ADMISSION_OUTCOME_DENIED_POLICY | 7 |  |
+| TRIGGER_ADMISSION_OUTCOME_INFRASTRUCTURE_ERROR | 8 |  |
+
+
+
+<a name="automation_scripting-v1-TriggerMode"></a>
+
+### TriggerMode
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| TRIGGER_MODE_UNSPECIFIED | 0 |  |
+| TRIGGER_MODE_NORMAL | 1 |  |
+| TRIGGER_MODE_CATCH_UP | 2 |  |
+
+
  
 
  
+
+
+<a name="automation_scripting-v1-AutomationScriptingControlPlaneService"></a>
+
+### AutomationScriptingControlPlaneService
+Operator/control-plane surface for patch lifecycle visibility and rollback support.
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| GetScriptPatchStatus | [GetScriptPatchStatusRequest](#automation_scripting-v1-GetScriptPatchStatusRequest) | [GetScriptPatchStatusResponse](#automation_scripting-v1-GetScriptPatchStatusResponse) |  |
+| ListScriptPatchStatuses | [ListScriptPatchStatusesRequest](#automation_scripting-v1-ListScriptPatchStatusesRequest) | [ListScriptPatchStatusesResponse](#automation_scripting-v1-ListScriptPatchStatusesResponse) |  |
+| CancelPendingWorkItemsForPatch | [CancelPendingWorkItemsForPatchRequest](#automation_scripting-v1-CancelPendingWorkItemsForPatchRequest) | [CancelPendingWorkItemsForPatchResponse](#automation_scripting-v1-CancelPendingWorkItemsForPatchResponse) | Cancel pending durable work items for a patch so they are never handed off again. |
+| GetPluginStatus | [GetPluginStatusRequest](#automation_scripting-v1-GetPluginStatusRequest) | [GetPluginStatusResponse](#automation_scripting-v1-GetPluginStatusResponse) | Plugin lifecycle/control-plane APIs. |
+| SetPluginActiveVersion | [SetPluginActiveVersionRequest](#automation_scripting-v1-SetPluginActiveVersionRequest) | [SetPluginActiveVersionResponse](#automation_scripting-v1-SetPluginActiveVersionResponse) |  |
+| DisablePlugin | [DisablePluginRequest](#automation_scripting-v1-DisablePluginRequest) | [DisablePluginResponse](#automation_scripting-v1-DisablePluginResponse) |  |
+| DrainPlugin | [DrainPluginRequest](#automation_scripting-v1-DrainPluginRequest) | [DrainPluginResponse](#automation_scripting-v1-DrainPluginResponse) |  |
 
 
 <a name="automation_scripting-v1-AutomationScriptingService"></a>
@@ -1271,6 +1729,7 @@ Basic ping response containing a greeting and optional error details.
 | Method Name | Request Type | Response Type | Description |
 | ----------- | ------------ | ------------- | ------------|
 | Ping | [PingRequest](#automation_scripting-v1-PingRequest) | [PingResponse](#automation_scripting-v1-PingResponse) | Simple ping used by health checks |
+| TriggerScriptEvent | [TriggerScriptEventRequest](#automation_scripting-v1-TriggerScriptEventRequest) | [TriggerScriptEventResponse](#automation_scripting-v1-TriggerScriptEventResponse) | Deliver a script trigger for evaluation. This RPC is idempotent with respect to Trigger Identity (including script_event_id) and must not evaluate the DSL body more than once for the same identity. |
 | CreateFormation | [CreateFormationRequest](#automation_scripting-v1-CreateFormationRequest) | [CreateFormationResponse](#automation_scripting-v1-CreateFormationResponse) | Creates a new NPC formation |
 | AddFormationMember | [AddFormationMemberRequest](#automation_scripting-v1-AddFormationMemberRequest) | [AddFormationMemberResponse](#automation_scripting-v1-AddFormationMemberResponse) | Adds an NPC to an existing formation |
 | ListFormationMembers | [ListFormationMembersRequest](#automation_scripting-v1-ListFormationMembersRequest) | [ListFormationMembersResponse](#automation_scripting-v1-ListFormationMembersResponse) | Lists all NPCs belonging to a formation |
@@ -1348,6 +1807,42 @@ Basic ping response containing a greeting and optional error details.
 
 
 
+<a name="entity_management-v1-GetDraftDesignDigestRequest"></a>
+
+### GetDraftDesignDigestRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| version_id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="entity_management-v1-GetDraftDesignDigestResponse"></a>
+
+### GetDraftDesignDigestResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| version_id | [string](#string) |  |  |
+| applied_commit_id | [string](#string) |  |  |
+| content_digest | [string](#string) |  |  |
+| digest_schema_version | [int32](#int32) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
 <a name="entity_management-v1-ListCharactersByAccountRequest"></a>
 
 ### ListCharactersByAccountRequest
@@ -1388,7 +1883,7 @@ Basic ping response containing a greeting and optional error details.
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | tenant_id | [string](#string) |  |  |
-| room_id | [string](#string) |  |  |
+| room_instance | [shared.v1.RoomInstanceRef](#shared-v1-RoomInstanceRef) |  |  |
 
 
 
@@ -1405,6 +1900,10 @@ Basic ping response containing a greeting and optional error details.
 | ----- | ---- | ----- | ----------- |
 | entities | [RoomEntity](#entity_management-v1-RoomEntity) | repeated |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+| entity_snapshot_id | [string](#string) |  |  |
+| tenant_id | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| room_instance_id | [string](#string) |  |  |
 
 
 
@@ -1568,6 +2067,7 @@ Basic ping response containing a greeting and optional error details.
 | QueryInventory | [QueryInventoryRequest](#entity_management-v1-QueryInventoryRequest) | [QueryInventoryResponse](#entity_management-v1-QueryInventoryResponse) |  |
 | ListCharactersByAccount | [ListCharactersByAccountRequest](#entity_management-v1-ListCharactersByAccountRequest) | [ListCharactersByAccountResponse](#entity_management-v1-ListCharactersByAccountResponse) |  |
 | ListRoomEntities | [ListRoomEntitiesRequest](#entity_management-v1-ListRoomEntitiesRequest) | [ListRoomEntitiesResponse](#entity_management-v1-ListRoomEntitiesResponse) |  |
+| GetDraftDesignDigest | [GetDraftDesignDigestRequest](#entity_management-v1-GetDraftDesignDigestRequest) | [GetDraftDesignDigestResponse](#entity_management-v1-GetDraftDesignDigestResponse) |  |
 
  
 
@@ -1795,10 +2295,10 @@ Basic ping response containing a greeting and optional error details.
 | ----- | ---- | ----- | ----------- |
 | tenant_id | [string](#string) |  |  |
 | session_id | [string](#string) |  |  |
-| player_id | [string](#string) |  |  |
-| room_id | [string](#string) |  |  |
+| character_id | [string](#string) |  |  |
 | alias | [ChatAlias](#game_logic-v1-ChatAlias) |  |  |
 | text | [string](#string) |  |  |
+| room_instance | [shared.v1.RoomInstanceRef](#shared-v1-RoomInstanceRef) |  |  |
 
 
 
@@ -1818,6 +2318,22 @@ Basic ping response containing a greeting and optional error details.
 | delivered_to | [string](#string) | repeated |  |
 | npc_echoes | [string](#string) | repeated |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="game_logic-v1-DoorAmbientState"></a>
+
+### DoorAmbientState
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| door_id | [string](#string) |  |  |
+| state | [DoorState](#game_logic-v1-DoorState) |  |  |
 
 
 
@@ -1857,6 +2373,22 @@ Basic ping response containing a greeting and optional error details.
 
 
 
+<a name="game_logic-v1-HazardAmbientState"></a>
+
+### HazardAmbientState
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| hazard_id | [string](#string) |  |  |
+| state | [HazardState](#game_logic-v1-HazardState) |  |  |
+
+
+
+
+
+
 <a name="game_logic-v1-LookExit"></a>
 
 ### LookExit
@@ -1866,8 +2398,8 @@ Basic ping response containing a greeting and optional error details.
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | label | [string](#string) |  |  |
-| target_room_id | [string](#string) |  |  |
 | description | [string](#string) |  |  |
+| target_room_instance_id | [string](#string) |  |  |
 
 
 
@@ -1884,8 +2416,8 @@ Basic ping response containing a greeting and optional error details.
 | ----- | ---- | ----- | ----------- |
 | tenant_id | [string](#string) |  |  |
 | session_id | [string](#string) |  |  |
-| player_id | [string](#string) |  |  |
-| room_id | [string](#string) |  |  |
+| character_id | [string](#string) |  |  |
+| room_instance | [shared.v1.RoomInstanceRef](#shared-v1-RoomInstanceRef) |  |  |
 
 
 
@@ -1900,30 +2432,17 @@ Basic ping response containing a greeting and optional error details.
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| room_id | [string](#string) |  |  |
 | room_name | [string](#string) |  |  |
 | short_description | [string](#string) |  |  |
 | long_description | [string](#string) |  |  |
 | exits | [LookExit](#game_logic-v1-LookExit) | repeated |  |
 | entities | [RoomEntity](#game_logic-v1-RoomEntity) | repeated |  |
-| ambient_state | [LookResult.AmbientStateEntry](#game_logic-v1-LookResult-AmbientStateEntry) | repeated |  |
 | room_flags | [string](#string) | repeated |  |
-
-
-
-
-
-
-<a name="game_logic-v1-LookResult-AmbientStateEntry"></a>
-
-### LookResult.AmbientStateEntry
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| key | [string](#string) |  |  |
-| value | [string](#string) |  |  |
+| room_instance | [shared.v1.RoomInstanceRef](#shared-v1-RoomInstanceRef) |  |  |
+| world_snapshot_id | [string](#string) |  |  |
+| entity_snapshot_id | [string](#string) |  |  |
+| look_snapshot_id | [string](#string) |  |  |
+| ambient_state | [RoomAmbientState](#game_logic-v1-RoomAmbientState) |  |  |
 
 
 
@@ -1950,6 +2469,24 @@ Basic ping response containing a greeting and optional error details.
 | ----- | ---- | ----- | ----------- |
 | message | [string](#string) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="game_logic-v1-RoomAmbientState"></a>
+
+### RoomAmbientState
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [int32](#int32) |  |  |
+| weather | [string](#string) |  |  |
+| doors | [DoorAmbientState](#game_logic-v1-DoorAmbientState) | repeated |  |
+| hazards | [HazardAmbientState](#game_logic-v1-HazardAmbientState) | repeated |  |
 
 
 
@@ -1991,6 +2528,20 @@ Basic ping response containing a greeting and optional error details.
 
 
 
+<a name="game_logic-v1-DoorState"></a>
+
+### DoorState
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| DOOR_STATE_UNSPECIFIED | 0 |  |
+| OPEN | 1 |  |
+| CLOSED | 2 |  |
+| LOCKED | 3 |  |
+
+
+
 <a name="game_logic-v1-EntityType"></a>
 
 ### EntityType
@@ -2002,6 +2553,19 @@ Basic ping response containing a greeting and optional error details.
 | PLAYER | 1 |  |
 | NPC | 2 |  |
 | ITEM | 3 |  |
+
+
+
+<a name="game_logic-v1-HazardState"></a>
+
+### HazardState
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| HAZARD_STATE_UNSPECIFIED | 0 |  |
+| ACTIVE | 1 |  |
+| INACTIVE | 2 |  |
 
 
  
@@ -2065,6 +2629,40 @@ Basic ping response containing a greeting and optional error details.
 
 
 
+<a name="game_session-v1-GetPinnedScriptPatchVersionRequest"></a>
+
+### GetPinnedScriptPatchVersionRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-GetPinnedScriptPatchVersionResponse"></a>
+
+### GetPinnedScriptPatchVersionResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| pinned_script_patch_version | [string](#string) |  |  |
+| pinned_at_ms | [int64](#int64) |  |  |
+| pinned_by | [string](#string) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
 <a name="game_session-v1-GetTickStatusRequest"></a>
 
 ### GetTickStatusRequest
@@ -2084,6 +2682,42 @@ Basic ping response containing a greeting and optional error details.
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | status | [TickStatus](#game_session-v1-TickStatus) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-PauseTicksForScopeRequest"></a>
+
+### PauseTicksForScopeRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  | Scope rules (normative): - tenant_id is required. - Exactly one scope must be set via the `scope` oneof. - region_id is the canonical tick scope (preferred). - game_instance_id is allowed when tooling is instance-scoped. |
+| game_instance_id | [string](#string) |  |  |
+| region_id | [string](#string) |  |  |
+| control_plane_request_id | [string](#string) |  |  |
+| actor_principal | [string](#string) |  |  |
+| reason | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-PauseTicksForScopeResponse"></a>
+
+### PauseTicksForScopeResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| success | [bool](#bool) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
 
@@ -2141,6 +2775,81 @@ Administrative request to pause tick execution.
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | message | [string](#string) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-PurgeQueuedTickCommandsForPluginVersionRequest"></a>
+
+### PurgeQueuedTickCommandsForPluginVersionRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| region_id | [string](#string) |  |  |
+| plugin_id | [string](#string) |  |  |
+| plugin_version_id | [string](#string) |  |  |
+| control_plane_request_id | [string](#string) |  |  |
+| actor_principal | [string](#string) |  |  |
+| reason | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-PurgeQueuedTickCommandsForPluginVersionResponse"></a>
+
+### PurgeQueuedTickCommandsForPluginVersionResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| purged_count | [int64](#int64) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-PurgeQueuedTickCommandsForScriptPatchRequest"></a>
+
+### PurgeQueuedTickCommandsForScriptPatchRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| region_id | [string](#string) |  |  |
+| script_patch_version | [string](#string) |  |  |
+| control_plane_request_id | [string](#string) |  |  |
+| actor_principal | [string](#string) |  |  |
+| reason | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-PurgeQueuedTickCommandsForScriptPatchResponse"></a>
+
+### PurgeQueuedTickCommandsForScriptPatchResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| purged_count | [int64](#int64) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
 
@@ -2210,6 +2919,42 @@ Administrative request to pause tick execution.
 
 
 
+<a name="game_session-v1-ResumeTicksForScopeRequest"></a>
+
+### ResumeTicksForScopeRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  | Scope rules (normative): - tenant_id is required. - Exactly one scope must be set via the `scope` oneof. - region_id is the canonical tick scope (preferred). - game_instance_id is allowed when tooling is instance-scoped. |
+| game_instance_id | [string](#string) |  |  |
+| region_id | [string](#string) |  |  |
+| control_plane_request_id | [string](#string) |  |  |
+| actor_principal | [string](#string) |  |  |
+| reason | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-ResumeTicksForScopeResponse"></a>
+
+### ResumeTicksForScopeResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| success | [bool](#bool) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
 <a name="game_session-v1-ResumeTicksRequest"></a>
 
 ### ResumeTicksRequest
@@ -2241,6 +2986,82 @@ Resume ticks after a backup has started.
 
 
 
+<a name="game_session-v1-RollbackScriptPatchVersionRequest"></a>
+
+### RollbackScriptPatchVersionRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| target_script_patch_version | [string](#string) |  |  |
+| control_plane_request_id | [string](#string) |  |  |
+| actor_principal | [string](#string) |  |  |
+| reason | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-RollbackScriptPatchVersionResponse"></a>
+
+### RollbackScriptPatchVersionResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| previous_script_patch_version | [string](#string) |  |  |
+| pinned_script_patch_version | [string](#string) |  |  |
+| control_plane_request_id | [string](#string) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-SetPinnedScriptPatchVersionRequest"></a>
+
+### SetPinnedScriptPatchVersionRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| target_script_patch_version | [string](#string) |  |  |
+| control_plane_request_id | [string](#string) |  |  |
+| actor_principal | [string](#string) |  |  |
+| reason | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-SetPinnedScriptPatchVersionResponse"></a>
+
+### SetPinnedScriptPatchVersionResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| previous_script_patch_version | [string](#string) |  |  |
+| pinned_script_patch_version | [string](#string) |  |  |
+| control_plane_request_id | [string](#string) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
 <a name="game_session-v1-StartSessionRequest"></a>
 
 ### StartSessionRequest
@@ -2253,6 +3074,7 @@ Resume ticks after a backup has started.
 | runtime_version | [string](#string) |  |  |
 | script_patch_version | [string](#string) |  |  |
 | client_ip | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
 
 
 
@@ -2356,6 +3178,23 @@ Resume ticks after a backup has started.
  
 
  
+
+
+<a name="game_session-v1-GameSessionControlPlaneService"></a>
+
+### GameSessionControlPlaneService
+Operator/control-plane surface for pinning and rollback of script patch versions,
+plus scoped tick pause/resume used for rollback safety.
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| GetPinnedScriptPatchVersion | [GetPinnedScriptPatchVersionRequest](#game_session-v1-GetPinnedScriptPatchVersionRequest) | [GetPinnedScriptPatchVersionResponse](#game_session-v1-GetPinnedScriptPatchVersionResponse) |  |
+| SetPinnedScriptPatchVersion | [SetPinnedScriptPatchVersionRequest](#game_session-v1-SetPinnedScriptPatchVersionRequest) | [SetPinnedScriptPatchVersionResponse](#game_session-v1-SetPinnedScriptPatchVersionResponse) |  |
+| RollbackScriptPatchVersion | [RollbackScriptPatchVersionRequest](#game_session-v1-RollbackScriptPatchVersionRequest) | [RollbackScriptPatchVersionResponse](#game_session-v1-RollbackScriptPatchVersionResponse) |  |
+| PauseTicksForScope | [PauseTicksForScopeRequest](#game_session-v1-PauseTicksForScopeRequest) | [PauseTicksForScopeResponse](#game_session-v1-PauseTicksForScopeResponse) |  |
+| ResumeTicksForScope | [ResumeTicksForScopeRequest](#game_session-v1-ResumeTicksForScopeRequest) | [ResumeTicksForScopeResponse](#game_session-v1-ResumeTicksForScopeResponse) |  |
+| PurgeQueuedTickCommandsForScriptPatch | [PurgeQueuedTickCommandsForScriptPatchRequest](#game_session-v1-PurgeQueuedTickCommandsForScriptPatchRequest) | [PurgeQueuedTickCommandsForScriptPatchResponse](#game_session-v1-PurgeQueuedTickCommandsForScriptPatchResponse) |  |
+| PurgeQueuedTickCommandsForPluginVersion | [PurgeQueuedTickCommandsForPluginVersionRequest](#game_session-v1-PurgeQueuedTickCommandsForPluginVersionRequest) | [PurgeQueuedTickCommandsForPluginVersionResponse](#game_session-v1-PurgeQueuedTickCommandsForPluginVersionResponse) |  |
 
 
 <a name="game_session-v1-GameSessionService"></a>
@@ -2612,6 +3451,39 @@ Resume ticks after a backup has started.
 | ----- | ---- | ----- | ----------- |
 | code | [string](#string) |  |  |
 | message | [string](#string) |  |  |
+
+
+
+
+
+ 
+
+ 
+
+ 
+
+ 
+
+
+
+<a name="shared_v1_instance_refs-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## shared/v1/instance_refs.proto
+
+
+
+<a name="shared-v1-RoomInstanceRef"></a>
+
+### RoomInstanceRef
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| room_instance_id | [string](#string) |  |  |
 
 
 
@@ -2999,15 +3871,19 @@ GatewayManagementService allows remote configuration of Spring Cloud Gateway rou
 <a name="tcp_proxy-v1-NotifyDisconnectRequest"></a>
 
 ### NotifyDisconnectRequest
-
+Identifies a Telnet connection that has closed, along with enough context for the Game Session Service
+to treat the signal as an advisory hint.
 
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| session_id | [string](#string) |  |  |
+| session_id | [string](#string) |  | Optional, client-provided SESSION envelope values (when present on the Telnet connection). These are advisory only; Game Session must validate any tenant/session claims against its own state.
+
+session_id corresponds to the gameplay session identifier already used by the telnet path. Consumers should treat it as opaque. |
 | tenant_id | [string](#string) |  |  |
-| proxy_connection_id | [string](#string) |  |  |
-| disconnect_sequence | [uint64](#uint64) |  |  |
+| proxy_connection_id | [string](#string) |  | Required, server-generated identifier for the Telnet connection. This value is generated by the TCP Proxy on accept and is propagated to the Gateway/Game Session layer as a WebSocket handshake header (for example, X-Proxy-Connection-Id) so Game Session can associate it with an authenticated session. |
+| disconnect_sequence | [uint64](#uint64) |  | Required, monotonically increasing sequence number scoped to proxy_connection_id. This allows Game Session to deduplicate at-least-once delivery (including retries and out-of-order arrivals). |
+| game_instance_id | [string](#string) |  | Optional, explicit game instance identifier carried by the canonical Telnet SESSION envelope. |
 
 
 
@@ -3017,7 +3893,8 @@ GatewayManagementService allows remote configuration of Spring Cloud Gateway rou
 <a name="tcp_proxy-v1-NotifyDisconnectResponse"></a>
 
 ### NotifyDisconnectResponse
-
+Error is empty on success. When populated, it contains a logical failure
+(for example, unknown session) while the transport status remains OK.
 
 
 | Field | Type | Label | Description |
@@ -3053,16 +3930,35 @@ GatewayManagementService allows remote configuration of Spring Cloud Gateway rou
 
 
 
+ 
+
+ 
+
+ 
+
 
 <a name="tcp_proxy-v1-TcpProxyService"></a>
 
 ### TcpProxyService
+TcpProxyService defines internal-only gRPC endpoints used by the TCP Proxy and Game Session services.
 
+Directionality and ownership:
+- Ping is implemented and served by the TCP Proxy Service itself for operator tooling and tests.
+- NotifyDisconnect is implemented and served by the Game Session Service as an internal-only event sink
+  that the TCP Proxy calls when Telnet connections close.
+
+Even though both RPCs live on the same logical TcpProxyService definition for schema/versioning purposes,
+they are hosted by different microservices. Callers must treat Ping and NotifyDisconnect as separate
+deployment targets following the ownership rules described in the TCP Proxy and Game Session design docs.
+
+These RPCs are not exposed through Spring Cloud Gateway and are intended for use by backend services and tooling only.
 
 | Method Name | Request Type | Response Type | Description |
 | ----------- | ------------ | ------------- | ------------|
-| Ping | [PingRequest](#tcp_proxy-v1-PingRequest) | [PingResponse](#tcp_proxy-v1-PingResponse) |  |
-| NotifyDisconnect | [NotifyDisconnectRequest](#tcp_proxy-v1-NotifyDisconnectRequest) | [NotifyDisconnectResponse](#tcp_proxy-v1-NotifyDisconnectResponse) |  |
+| Ping | [PingRequest](#tcp_proxy-v1-PingRequest) | [PingResponse](#tcp_proxy-v1-PingResponse) | Simple connectivity check used by operators and tests. |
+| NotifyDisconnect | [NotifyDisconnectRequest](#tcp_proxy-v1-NotifyDisconnectRequest) | [NotifyDisconnectResponse](#tcp_proxy-v1-NotifyDisconnectResponse) | Emits a best-effort, at-least-once lifecycle event whenever a Telnet connection closes.
+
+Semantics and failure expectations: - Events may be delivered more than once; the Game Session Service must treat them as idempotent. - The primary idempotency key is {proxy_connection_id, disconnect_sequence}. - session_id and tenant_id may be omitted when a client does not provide a SESSION envelope. - The proxy does not buffer or replay gameplay commands; it only signals disconnects. Command queues remain owned by Game Session and Redis. - Transport-level failures surface as standard gRPC statuses; logical failures are reported via the ErrorDetail in NotifyDisconnectResponse. - Lost or delayed events must not cause stuck or &#34;ghost&#34; sessions: Game Session is responsible for independently detecting liveness via its own mechanisms (for example, WebSocket/TCP close and Redis timeouts). In the worst case, losing a NotifyDisconnect should only slow down cleanup, not leave players incorrectly logged in or unable to resume. |
 
  
 
@@ -3075,6 +3971,93 @@ GatewayManagementService allows remote configuration of Spring Cloud Gateway rou
 
 
 
+<a name="world_management-v1-ApplyRoomAmbientStatePatchRequest"></a>
+
+### ApplyRoomAmbientStatePatchRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| room_instance | [shared.v1.RoomInstanceRef](#shared-v1-RoomInstanceRef) |  |  |
+| effect_id | [string](#string) |  |  |
+| ambient_state_patch | [RoomAmbientStatePatch](#world_management-v1-RoomAmbientStatePatch) |  |  |
+
+
+
+
+
+
+<a name="world_management-v1-ApplyRoomAmbientStatePatchResponse"></a>
+
+### ApplyRoomAmbientStatePatchResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| room_instance | [shared.v1.RoomInstanceRef](#shared-v1-RoomInstanceRef) |  |  |
+| success | [bool](#bool) |  |  |
+| world_snapshot_id | [string](#string) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="world_management-v1-DoorAmbientState"></a>
+
+### DoorAmbientState
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| door_id | [string](#string) |  |  |
+| state | [DoorState](#world_management-v1-DoorState) |  |  |
+
+
+
+
+
+
+<a name="world_management-v1-GetDraftDesignDigestRequest"></a>
+
+### GetDraftDesignDigestRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| version_id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="world_management-v1-GetDraftDesignDigestResponse"></a>
+
+### GetDraftDesignDigestResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| version_id | [string](#string) |  |  |
+| applied_commit_id | [string](#string) |  |  |
+| content_digest | [string](#string) |  |  |
+| digest_schema_version | [int32](#int32) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
 <a name="world_management-v1-GetRoomRequest"></a>
 
 ### GetRoomRequest
@@ -3084,7 +4067,7 @@ GatewayManagementService allows remote configuration of Spring Cloud Gateway rou
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | tenant_id | [string](#string) |  |  |
-| room_id | [string](#string) |  |  |
+| room_instance | [shared.v1.RoomInstanceRef](#shared-v1-RoomInstanceRef) |  |  |
 
 
 
@@ -3116,7 +4099,7 @@ GatewayManagementService allows remote configuration of Spring Cloud Gateway rou
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | tenant_id | [string](#string) |  |  |
-| room_id | [string](#string) |  |  |
+| room_instance | [shared.v1.RoomInstanceRef](#shared-v1-RoomInstanceRef) |  |  |
 
 
 
@@ -3133,6 +4116,55 @@ GatewayManagementService allows remote configuration of Spring Cloud Gateway rou
 | ----- | ---- | ----- | ----------- |
 | snapshot | [RoomSnapshot](#world_management-v1-RoomSnapshot) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="world_management-v1-HazardAmbientState"></a>
+
+### HazardAmbientState
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| hazard_id | [string](#string) |  |  |
+| state | [HazardState](#world_management-v1-HazardState) |  |  |
+
+
+
+
+
+
+<a name="world_management-v1-ListRoomOccupantsRequest"></a>
+
+### ListRoomOccupantsRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| room_instance | [shared.v1.RoomInstanceRef](#shared-v1-RoomInstanceRef) |  |  |
+
+
+
+
+
+
+<a name="world_management-v1-ListRoomOccupantsResponse"></a>
+
+### ListRoomOccupantsResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| room_instance | [shared.v1.RoomInstanceRef](#shared-v1-RoomInstanceRef) |  |  |
+| occupant_snapshot_id | [string](#string) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+| occupants | [RoomOccupant](#world_management-v1-RoomOccupant) | repeated |  |
 
 
 
@@ -3165,6 +4197,42 @@ GatewayManagementService allows remote configuration of Spring Cloud Gateway rou
 
 
 
+<a name="world_management-v1-RoomAmbientState"></a>
+
+### RoomAmbientState
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [int32](#int32) |  |  |
+| weather | [string](#string) |  |  |
+| doors | [DoorAmbientState](#world_management-v1-DoorAmbientState) | repeated |  |
+| hazards | [HazardAmbientState](#world_management-v1-HazardAmbientState) | repeated |  |
+
+
+
+
+
+
+<a name="world_management-v1-RoomAmbientStatePatch"></a>
+
+### RoomAmbientStatePatch
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [int32](#int32) |  |  |
+| weather | [string](#string) | optional |  |
+| doors | [DoorAmbientState](#world_management-v1-DoorAmbientState) | repeated |  |
+| hazards | [HazardAmbientState](#world_management-v1-HazardAmbientState) | repeated |  |
+
+
+
+
+
+
 <a name="world_management-v1-RoomExitSnapshot"></a>
 
 ### RoomExitSnapshot
@@ -3174,11 +4242,27 @@ GatewayManagementService allows remote configuration of Spring Cloud Gateway rou
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | exit_id | [string](#string) |  |  |
-| target_room_id | [string](#string) |  |  |
 | target_room_name | [string](#string) |  |  |
 | label | [string](#string) |  |  |
 | description | [string](#string) |  |  |
 | cost | [int32](#int32) |  |  |
+| target_room_instance_id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="world_management-v1-RoomOccupant"></a>
+
+### RoomOccupant
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| entity_id | [string](#string) |  |  |
+| occupant_type | [RoomOccupantType](#world_management-v1-RoomOccupantType) |  |  |
 
 
 
@@ -3193,67 +4277,62 @@ GatewayManagementService allows remote configuration of Spring Cloud Gateway rou
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| room_id | [string](#string) |  |  |
 | tenant_id | [string](#string) |  |  |
 | room_name | [string](#string) |  |  |
 | short_description | [string](#string) |  |  |
 | long_description | [string](#string) |  |  |
 | exits | [RoomExitSnapshot](#world_management-v1-RoomExitSnapshot) | repeated |  |
-| ambient_state | [RoomSnapshot.AmbientStateEntry](#world_management-v1-RoomSnapshot-AmbientStateEntry) | repeated |  |
 | room_flags | [string](#string) | repeated |  |
-
-
-
-
-
-
-<a name="world_management-v1-RoomSnapshot-AmbientStateEntry"></a>
-
-### RoomSnapshot.AmbientStateEntry
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| key | [string](#string) |  |  |
-| value | [string](#string) |  |  |
-
-
-
-
-
-
-<a name="world_management-v1-UpdateWorldStateRequest"></a>
-
-### UpdateWorldStateRequest
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| tenant_id | [string](#string) |  |  |
-
-
-
-
-
-
-<a name="world_management-v1-UpdateWorldStateResponse"></a>
-
-### UpdateWorldStateResponse
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| success | [bool](#bool) |  |  |
-| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| room_instance_id | [string](#string) |  |  |
+| world_snapshot_id | [string](#string) |  |  |
+| ambient_state | [RoomAmbientState](#world_management-v1-RoomAmbientState) |  |  |
 
 
 
 
 
  
+
+
+<a name="world_management-v1-DoorState"></a>
+
+### DoorState
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| DOOR_STATE_UNSPECIFIED | 0 |  |
+| OPEN | 1 |  |
+| CLOSED | 2 |  |
+| LOCKED | 3 |  |
+
+
+
+<a name="world_management-v1-HazardState"></a>
+
+### HazardState
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| HAZARD_STATE_UNSPECIFIED | 0 |  |
+| ACTIVE | 1 |  |
+| INACTIVE | 2 |  |
+
+
+
+<a name="world_management-v1-RoomOccupantType"></a>
+
+### RoomOccupantType
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| ROOM_OCCUPANT_TYPE_UNSPECIFIED | 0 |  |
+| PLAYER | 1 |  |
+| NPC | 2 |  |
+
 
  
 
@@ -3270,7 +4349,9 @@ GatewayManagementService allows remote configuration of Spring Cloud Gateway rou
 | Ping | [PingRequest](#world_management-v1-PingRequest) | [PingResponse](#world_management-v1-PingResponse) |  |
 | GetRoom | [GetRoomRequest](#world_management-v1-GetRoomRequest) | [GetRoomResponse](#world_management-v1-GetRoomResponse) |  |
 | GetRoomSnapshot | [GetRoomSnapshotRequest](#world_management-v1-GetRoomSnapshotRequest) | [GetRoomSnapshotResponse](#world_management-v1-GetRoomSnapshotResponse) |  |
-| UpdateWorldState | [UpdateWorldStateRequest](#world_management-v1-UpdateWorldStateRequest) | [UpdateWorldStateResponse](#world_management-v1-UpdateWorldStateResponse) |  |
+| GetDraftDesignDigest | [GetDraftDesignDigestRequest](#world_management-v1-GetDraftDesignDigestRequest) | [GetDraftDesignDigestResponse](#world_management-v1-GetDraftDesignDigestResponse) |  |
+| ListRoomOccupants | [ListRoomOccupantsRequest](#world_management-v1-ListRoomOccupantsRequest) | [ListRoomOccupantsResponse](#world_management-v1-ListRoomOccupantsResponse) |  |
+| ApplyRoomAmbientStatePatch | [ApplyRoomAmbientStatePatchRequest](#world_management-v1-ApplyRoomAmbientStatePatchRequest) | [ApplyRoomAmbientStatePatchResponse](#world_management-v1-ApplyRoomAmbientStatePatchResponse) |  |
 
  
 
@@ -3295,3 +4376,4 @@ GatewayManagementService allows remote configuration of Spring Cloud Gateway rou
 | <a name="bool" /> bool |  | bool | boolean | boolean | bool | bool | boolean | TrueClass/FalseClass |
 | <a name="string" /> string | A string must always contain UTF-8 encoded or 7-bit ASCII text. | string | String | str/unicode | string | string | string | String (UTF-8) |
 | <a name="bytes" /> bytes | May contain any arbitrary sequence of bytes. | string | ByteString | str | []byte | ByteString | string | String (ASCII-8BIT) |
+

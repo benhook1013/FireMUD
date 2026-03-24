@@ -10,7 +10,6 @@ import org.springframework.stereotype.Component;
 public class GatewayHeaderTrustProperties {
   private final ForwardedClientIp forwardedClientIp = new ForwardedClientIp();
   private final TcpProxy tcpProxy = new TcpProxy();
-  private boolean emitLegacySessionId = true;
 
   public ForwardedClientIp getForwardedClientIp() {
     return forwardedClientIp;
@@ -18,14 +17,6 @@ public class GatewayHeaderTrustProperties {
 
   public TcpProxy getTcpProxy() {
     return tcpProxy;
-  }
-
-  public boolean isEmitLegacySessionId() {
-    return emitLegacySessionId;
-  }
-
-  public void setEmitLegacySessionId(boolean emitLegacySessionId) {
-    this.emitLegacySessionId = emitLegacySessionId;
   }
 
   public static final class ForwardedClientIp {

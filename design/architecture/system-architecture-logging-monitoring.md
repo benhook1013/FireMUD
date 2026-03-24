@@ -11,9 +11,9 @@ For the canonical definition of environment classes and which ones are considere
 - **Fluent Bit** sidecars collect service logs from every microservice.
 - Logs are stored in **Elasticsearch** and explored through **Kibana** dashboards.
 - The **Logging & Admin Service** exposes moderation tools and log queries and embeds Kibana dashboards via its API for richer visualization.
-- Logs are emitted in JSON with request tracing fields (e.g., `traceId`) and player context for moderation and incident drilldowns.
-- At minimum, log events for request/tick-handling paths should include: `service`, `tenantId` (when known), `regionId` (when known), `traceId`, and `correlationId`. When a player is authenticated or a session is bound, logs should also include `playerId`.
-- Kibana dashboards and saved searches filter by `tenantId`/`regionId` plus `traceId`/`playerId` so operators can scope incidents quickly without relying on ad-hoc message parsing.
+- Logs are emitted in JSON with request tracing fields (e.g., `traceId`) and gameplay identity context for moderation and incident drilldowns.
+- At minimum, log events for request/tick-handling paths should include: `service`, `tenantId` (when known), `regionId` (when known), `traceId`, and `correlationId`. When a player is authenticated or a session is bound, logs should also include `characterId`.
+- Kibana dashboards and saved searches filter by `tenantId`/`regionId` plus `traceId`/`characterId` so operators can scope incidents quickly without relying on ad-hoc message parsing.
 - gRPC services use the shared `LoggingInterceptor` to include `traceId` and `correlationId` in every log entry. See [Shared Libraries](./system-architecture-shared-libraries.md).
 - Log retention defaults to **14 days** in development and **90 days** in production, after which indices are archived. These values can be tuned via the [Deployment Environments](./infrastructure/deployment-environments.md) settings.
 - Log storage hosts can be customized via the `FLUENT_ELASTICSEARCH_HOST` and `FLUENT_ELASTICSEARCH_PORT` environment variables ([Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md#observability)).
@@ -71,7 +71,7 @@ To keep Kibana queries and alert triage consistent, log records and alert labels
 FireMUD’s metrics are designed around low- and medium-cardinality labels so dashboards and alerts remain reliable even at scale. To keep this consistent:
 
 - Allowed labels typically include `service`, `job`, `grpc_method`, `status`, `code`, `tenantId`, `regionId`, `redis_role`, `effect_type`, `outcome`, and other explicitly documented dimensions in the Redis, tick, and gRPC architecture docs.
-- Disallowed labels include per-request or per-entity identifiers such as `traceId`, `spanId`, `playerId`, `sessionId`, and arbitrary error messages or stack traces. These belong in logs and traces, not in metric label sets.
+- Disallowed labels include per-request or per-entity identifiers such as `traceId`, `spanId`, `characterId`, `sessionId`, and arbitrary error messages or stack traces. These belong in logs and traces, not in metric label sets.
 - When in doubt, prefer coarser labels (for example `error_code` from a bounded enum or small string set) and aggregate multiple rare values into an `other` bucket rather than exposing them as unbounded labels.
 - New metrics must document their label sets in the relevant architecture or service README and confirm that they conform to these guardrails before being added to dashboards or alerts.
 
@@ -436,7 +436,7 @@ Structured log emission is not sufficient by itself. Prod-like environments must
   - Synthetic smoke traffic that emits logs with `service`, `traceId`, and the applicable contextual fields must land in the canonical log index pattern (`firemud-logs-*` unless an environment documents a compatibility mapping).
   - Those logs must become queryable in the Elasticsearch/Kibana path within a bounded delay suitable for incident response.
     - Default starting point for prod-like smoke: the records should be queryable within 2 minutes of emission unless an environment documents a stricter bound.
-  - Operators must be able to retrieve the smoke records by `service` and `traceId`, and by `tenantId` / `regionId` / `playerId` when those fields are expected by the logging contract.
+  - Operators must be able to retrieve the smoke records by `service` and `traceId`, and by `tenantId` / `regionId` / `characterId` when those fields are expected by the logging contract.
 - Failure semantics:
   - A pipeline that emits structured logs locally but fails Fluent Bit forwarding, Elasticsearch indexing, or Kibana/query entrypoint retrieval is non-compliant for prod-like readiness because incident drilldowns depend on end-to-end queryability, not only emitter correctness.
 

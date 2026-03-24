@@ -155,7 +155,7 @@ class LoginCommandHandlerTest {
     assertEquals(1L, context.sessionId());
     assertEquals(22L, context.tenantId());
     assertEquals(77L, context.accountId());
-    assertEquals(77L, context.playerId());
+    assertEquals(77L, context.characterId());
     assertEquals(1L, context.gameInstanceId());
     assertEquals(AUTH_TOKEN, context.jwt());
   }
@@ -346,7 +346,7 @@ class LoginCommandHandlerTest {
     instance.setOwnerAccountId(77L);
     when(gameInstanceRepository.findById(2L)).thenReturn(Optional.of(instance));
     SessionContext existing = new SessionContext(1L, 22L, 77L, 77L, 1L, AUTH_TOKEN);
-    when(sessionContextService.findByAccountAndPlayer(22L, 77L, 77L))
+    when(sessionContextService.findByAccountAndCharacter(22L, 77L, 77L))
         .thenReturn(Optional.of(existing));
 
     handler.handle("2", command, false);
@@ -369,7 +369,7 @@ class LoginCommandHandlerTest {
     instance.setOwnerAccountId(77L);
     when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
     SessionContext existing = new SessionContext(1L, 22L, 77L, 77L, 1L, AUTH_TOKEN);
-    when(sessionContextService.findByAccountAndPlayer(22L, 77L, 77L))
+    when(sessionContextService.findByAccountAndCharacter(22L, 77L, 77L))
         .thenReturn(Optional.of(existing));
 
     handler.handle("1", command, false);

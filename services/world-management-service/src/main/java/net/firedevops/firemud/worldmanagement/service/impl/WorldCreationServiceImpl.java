@@ -15,7 +15,6 @@ import net.firedevops.firemud.worldmanagement.repository.RegionRepository;
 import net.firedevops.firemud.worldmanagement.service.WorldCreationService;
 import org.slf4j.Logger;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -45,7 +44,7 @@ public class WorldCreationServiceImpl implements WorldCreationService {
       MeterRegistry meterRegistry,
       WorldProperties worldProperties,
       net.firedevops.firemud.worldmanagement.client.GameDesignClient gameDesignClient,
-      @Nullable SagaRunner sagaRunner) {
+      SagaRunner sagaRunner) {
     this.regionRepository = regionRepository;
     this.meterRegistry = meterRegistry;
     this.worldProperties = worldProperties;
@@ -80,12 +79,7 @@ public class WorldCreationServiceImpl implements WorldCreationService {
             () -> rollbackDesignCopy(tenantId))
         .step("scheduleEvents", () -> scheduleInitialEvents(tenantId));
     try {
-      var saga = builder.build();
-      if (sagaRunner == null) {
-        saga.run();
-      } else {
-        sagaRunner.run(saga);
-      }
+      sagaRunner.run(builder.build());
     } catch (SagaException ex) {
       sagaFailedCounter.increment();
       logger.warn("World creation saga failed for tenant {}", tenantId);

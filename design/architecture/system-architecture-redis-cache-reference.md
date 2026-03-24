@@ -66,7 +66,7 @@ Cache/Rate-Limit Redis hosts prefixes that are not part of the coordination log 
 | `world-dynamic:<tenantId>:room-dynamic:<gameInstanceId>:<roomInstanceId>` | Cache | Versioned (Class A) | Reset-tolerant | World Management room-scoped dynamic-state cache. |
 | `room:<tenantId>:<gameInstanceId>:<roomInstanceId>` | Cache | Versioned (Class A) | Reset-tolerant | World Management correctness-critical room snapshot cache. |
 | `view:room-look:<tenantId>:<gameInstanceId>:<roomInstanceId>` | Cache | TTL-only (Class B) | Reset-tolerant | Game Session rendered or pre-assembled room views for LOOK and similar commands. Game Session is the sole writer and direct Redis reader for this prefix; Game Logic must not read it directly and must consume authoritative LOOK results over gRPC instead. |
-| `chat:say:<tenantId>:<playerId>`, `chat:tell:<tenantId>:<conversationId>`, `chat:guild:<tenantId>:<guildId>`, `chat:city:<tenantId>:<cityId>`, `chat:account:<tenantId>:<accountId>` | Cache | TTL-only (Class B) | Reset-tolerant | Social & Groups short-lived chat history buffers. |
+| `chat:say:<tenantId>:<characterId>`, `chat:tell:<tenantId>:<conversationId>`, `chat:guild:<tenantId>:<guildId>`, `chat:city:<tenantId>:<cityId>`, `chat:account:<tenantId>:<accountId>` | Cache | TTL-only (Class B) | Reset-tolerant | Social & Groups short-lived chat history buffers. |
 | `automation:queue:<tenantId>:*`, `automation:quota:<tenantId>:*` | Cache / Rate-Limit | TTL-only (Class B) | Reset-tolerant | Automation & Scripting queued work items and quota counters. Durable triggers/effect tables in PostgreSQL, not Redis, guarantee eventual execution and quota correctness. |
 | `ratelimit:<tenantId>:<bucket>:<timeWindow>` (and optional `:<shard>`) | Cache / Rate-Limit | TTL-only (Class B) | Reset-tolerant | Spring Cloud Gateway rate-limit buckets and optional sharded buckets. Reset-induced fairness shifts are acceptable because gateway logic, not Redis persistence, remains authoritative. |
 
@@ -85,7 +85,7 @@ CI and code review checks are expected to:
 | Dynamic world aggregates | `world-dynamic:<tenantId>:room-dynamic:<gameInstanceId>:<roomInstanceId>` | Versioned | Backed by authoritative room-instance dynamic-state rows with `roomDynamicVersion`; invalidated on dynamic-state writes and relevant instance lifecycle changes. |
 | Room topology snapshots | `room:<tenantId>:<gameInstanceId>:<roomInstanceId>` | Versioned | Cached room snapshots scoped to a running instance and validated against `roomSnapshotVersion`, which advances on topology-visible and included dynamic changes. |
 | Room LOOK views | `view:room-look:<tenantId>:<gameInstanceId>:<roomInstanceId>` | TTL-only | Recomputed on demand and cached for a short TTL. |
-| Short-lived chat buffers | `chat:say:<tenantId>:<playerId>`, `chat:guild:<tenantId>:<guildId>`, `chat:city:<tenantId>:<cityId>`, etc. | TTL-only | Rolling windows of recent messages with fixed-size buffers. |
+| Short-lived chat buffers | `chat:say:<tenantId>:<characterId>`, `chat:guild:<tenantId>:<guildId>`, `chat:city:<tenantId>:<cityId>`, etc. | TTL-only | Rolling windows of recent messages with fixed-size buffers. |
 
 ### Cache Size and Complexity Budgets
 

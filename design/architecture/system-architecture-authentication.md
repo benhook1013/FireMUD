@@ -7,7 +7,7 @@ Authentication is performed via plaintext `LOGIN` commands for gameplay protocol
 ## Implemented Status
 
 - Prompt-based `LOGIN` flows (username then password prompts) are part of the target protocol design; until they are fully implemented across transports, clients should use `LOGIN <username> <password> [otp]` / `LOGON ...`.
-- Character selection and gameplay takeover semantics are canonicalized on `{tenantId, gameInstanceId, characterId}`; `playerId` is an alias only.
+- Character selection and gameplay takeover semantics are canonicalized on `{tenantId, gameInstanceId, characterId}`.
 - `/sessions/{sessionId}/refresh-roles` exists as an operational hook; until full role-refresh token regeneration is wired end-to-end, implementations may expose a placeholder response while still performing automatic refresh on role updates.
 
 ## Contract Decisions (Normative)
@@ -17,7 +17,7 @@ The following contract decisions are mandatory and resolve cross-document ambigu
 - **Revocation writer authority** – The Account Service is the sole writer of `session:auth:revoked_after:*` watermarks. Other services must publish billing/security events and must not write these watermark keys directly.
 - **Tenant watermark scope** – `session:auth:revoked_after:tenant:<tenantId>` applies to tenant-scoped regular and gameplay-affecting operations. It does not block explicitly classified billing-safe or support-safe routes.
 - **Membership revocation scope** – `session:auth:revoked_after:membership:<accountId>:<tenantId>` applies to caller-bound tenant authorization for one account in one tenant and is used when membership or tenant roles change without triggering a tenant-wide billing cutoff.
-- **Gameplay session identity key** – Session uniqueness and takeover scope are keyed by `{tenantId, gameInstanceId, characterId}`. Legacy `playerId` fields are aliases only and must map one-to-one to `characterId`.
+- **Gameplay session identity key** – Session uniqueness and takeover scope are keyed by `{tenantId, gameInstanceId, characterId}`.
 - **JWT claim contract** – Services must validate a strict JWT claim profile (required claims and audience per token profile), not only signature plus ad-hoc fields.
 - **Internal delegation boundary** – Gameplay services must validate a Game Session-issued `SessionAttestation` on internal calls; mTLS-only trust is insufficient for end-user identity delegation.
 - **Session attestation audience binding** – `SessionAttestation` must be bound to the destination gameplay service and RPC/method; a valid attestation for one gameplay API must not be reusable against another.
@@ -425,7 +425,7 @@ Credential-bearing login commands carry account credentials (plus optional OTP).
 
 ### Tenant Selection for Gameplay (Lobby Selection)
 
-FireMUD uses a **single shared entrypoint** for many worlds (tenants). After `LOGIN`, clients complete a lobby selection step that binds the authenticated connection to a specific world (`tenantId`), gameplay-admissible instance (`gameInstanceId`), and gameplay identity (`characterId` / `playerId`) before gameplay commands are accepted.
+FireMUD uses a **single shared entrypoint** for many worlds (tenants). After `LOGIN`, clients complete a lobby selection step that binds the authenticated connection to a specific world (`tenantId`), gameplay-admissible instance (`gameInstanceId`), and gameplay identity (`characterId`) before gameplay commands are accepted.
 
 Players must never be asked to type raw internal identifiers such as `tenantId` GUIDs, `gameInstanceId` values, or `characterId` values. Lobby selection accepts human-friendly inputs (world slugs, world menu indices, character names or indices) and resolves them server-side into stable internal identifiers.
 
@@ -521,7 +521,7 @@ First-party gameplay admission and reconnect clients should treat the following 
 
 Clients re-authenticate **only after disconnecting** (TCP or WebSocket loss) or when server-side auth state has expired or been revoked. After a reconnect, clients always issue a fresh `LOGIN` and then complete lobby selection again (`PLAY <world> [realm] [character]`). If a resumable gameplay session exists for the selected `{tenantId, gameInstanceId, characterId}`, the Game Session Service resumes it; otherwise it creates a fresh gameplay session binding.
 
-In the target design, `playerId` represents a **character-level identity** within a tenant. All Redis key formats and Game Session Service APIs must treat `playerId` as an abstract character identifier so sessions bind sockets to characters rather than raw accounts. Canonical takeover and resume identity is `{tenantId, gameInstanceId, characterId}`; docs or APIs that still mention `{accountId, playerId}` are legacy wording only.
+Gameplay identity is canonicalized on `characterId` within a tenant. All Redis key formats and Game Session Service APIs must treat `characterId` as the abstract character identifier so sessions bind sockets to characters rather than raw accounts. Canonical takeover and resume identity is `{tenantId, gameInstanceId, characterId}`.
 
 Gameplay identity is single-mode and canonical: uniqueness key `{tenantId, gameInstanceId, characterId}`.
 

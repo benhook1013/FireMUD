@@ -19,7 +19,6 @@ import net.firedevops.firemud.gamedesign.service.AssetExportService;
 import net.firedevops.firemud.gamedesign.service.VersionService;
 import org.slf4j.Logger;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -34,7 +33,7 @@ public class VersionServiceImpl implements VersionService {
   private final GameRepository gameRepository;
   private final VersionMapper versionMapper;
   private final AutomationScriptingClient scriptingClient;
-  @Nullable private final SagaRunner sagaRunner;
+  private final SagaRunner sagaRunner;
   private final AssetExportService assetExportService;
 
   @Autowired
@@ -43,7 +42,7 @@ public class VersionServiceImpl implements VersionService {
       GameRepository gameRepository,
       VersionMapper versionMapper,
       AutomationScriptingClient scriptingClient,
-      @Nullable SagaRunner sagaRunner,
+      SagaRunner sagaRunner,
       AssetExportService assetExportService) {
     this.versionRepository = versionRepository;
     this.gameRepository = gameRepository;
@@ -51,14 +50,6 @@ public class VersionServiceImpl implements VersionService {
     this.scriptingClient = scriptingClient;
     this.sagaRunner = sagaRunner;
     this.assetExportService = assetExportService;
-  }
-
-  private void runSaga(net.firedevops.firemud.common.saga.Saga saga) throws SagaException {
-    if (sagaRunner == null) {
-      saga.run();
-      return;
-    }
-    sagaRunner.run(saga);
   }
 
   @Override
@@ -86,7 +77,7 @@ public class VersionServiceImpl implements VersionService {
         "exportAssets",
         () -> assetExportService.exportAssets(tenantId, version.getVersionNumber()),
         () -> assetExportService.deleteExportedAssets(tenantId, version.getVersionNumber()));
-    runSaga(builder.build());
+    sagaRunner.run(builder.build());
     return versionMapper.toDto(version);
   }
 
@@ -120,7 +111,7 @@ public class VersionServiceImpl implements VersionService {
           versionRepository.save(version);
         },
         () -> versionRepository.delete(version));
-    runSaga(builder.build());
+    sagaRunner.run(builder.build());
     scriptingClient.notifyScriptVersionUpdate(
         String.valueOf(game.getTenantId()), scriptPatchVersion, List.of());
     return versionMapper.toDto(version);

@@ -136,52 +136,53 @@ public final class LoginCommandHandler {
 
     long tenantId = result.tenantId();
     long accountId = result.accountId();
-    long playerId = result.playerId();
+    long characterId = result.characterId();
 
     sessionContextService
-        .findByAccountAndPlayer(tenantId, accountId, playerId)
+        .findByAccountAndCharacter(tenantId, accountId, characterId)
         .ifPresent(
-            existing -> handleExistingSession(sessionId, tenantId, accountId, playerId, existing));
+            existing ->
+                handleExistingSession(sessionId, tenantId, accountId, characterId, existing));
 
     SessionContext context =
         new SessionContext(
-            sessionId, tenantId, accountId, playerId, result.gameInstanceId(), result.jwt());
+            sessionId, tenantId, accountId, characterId, result.gameInstanceId(), result.jwt());
     sessionContextService.save(context);
     logger.debug(
-        "Updated session context for tenant {} session {} account {} player {}",
+        "Updated session context for tenant {} session {} account {} character {}",
         context.tenantId(),
         context.sessionId(),
         context.accountId(),
-        context.playerId());
+        context.characterId());
   }
 
   private void handleExistingSession(
       long incomingSessionId,
       long tenantId,
       long accountId,
-      long playerId,
+      long characterId,
       SessionContext existing) {
     try (MDC.MDCCloseable tenant = MDC.putCloseable("tenantId", String.valueOf(tenantId));
         MDC.MDCCloseable account = MDC.putCloseable("accountId", String.valueOf(accountId));
-        MDC.MDCCloseable player = MDC.putCloseable("playerId", String.valueOf(playerId))) {
+        MDC.MDCCloseable character = MDC.putCloseable("characterId", String.valueOf(characterId))) {
       if (existing.sessionId() == incomingSessionId) {
         resumeCounter.increment();
         recordTenantMetric("gamesession.session.resume", tenantId);
         logger.debug(
-            "Session resumed for tenant {} account {} player {} session {}",
+            "Session resumed for tenant {} account {} character {} session {}",
             tenantId,
             accountId,
-            playerId,
+            characterId,
             incomingSessionId);
       } else {
         takeoverCounter.increment();
         recordTenantMetric("gamesession.session.takeover", tenantId);
         logger.info(
-            "Taking over session {} for tenant {} account {} player {}; new session {}",
+            "Taking over session {} for tenant {} account {} character {}; new session {}",
             existing.sessionId(),
             tenantId,
             accountId,
-            playerId,
+            characterId,
             incomingSessionId);
         sessionContextService.deleteBySessionId(existing.tenantId(), existing.sessionId());
       }

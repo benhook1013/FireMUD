@@ -170,7 +170,7 @@ These checks are enforced via the Lua Script Registry descriptors, generated key
 
 Session scripts operate only on `session:game:<tenantId>:<gameInstanceId>:<sessionId>` keys and do **not** run under a region lease. They must instead validate session-specific invariants:
 
-- **Session key and binding** – verify that the target session key exists and, where applicable, that it is bound to the expected `playerId`/`tenantId` or token hash provided in `ARGV`.
+- **Session key and binding** – verify that the target session key exists and, where applicable, that it is bound to the expected `characterId`/`tenantId` or token hash provided in `ARGV`.
 - **Expiry and logical window** – enforce the logical expiry rules described in the session design (for example, do not revive sessions whose logical expiry timestamp has passed, even if the Redis TTL has not).
 - **Optional CAS fields** – when scripts implement compare-and-set semantics on session payloads (for example, update only if a `version` or `lockToken` field matches), they must:
   - Treat mismatched versions as non-mutating outcomes (for example, `"SESSION_VERSION_MISMATCH"`).

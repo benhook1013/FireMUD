@@ -69,7 +69,7 @@ public class SayAggregationService {
       return errorResponse(builder, roomEntities.getError(), "EntityManagementService");
     }
 
-    builder.addAllDeliveredTo(buildDeliveredTo(request.getPlayerId(), roomEntities));
+    builder.addAllDeliveredTo(buildDeliveredTo(request.getCharacterId(), roomEntities));
     builder.addAllNpcEchoes(buildNpcEchoes(roomEntities));
 
     SendMessageResponse socialResponse;
@@ -78,7 +78,7 @@ public class SayAggregationService {
           socialStub.sendMessage(
               SendMessageRequest.newBuilder()
                   .setTenantId(request.getTenantId())
-                  .setSenderId(request.getPlayerId())
+                  .setSenderId(request.getCharacterId())
                   .setType(mapAlias(request.getAlias()))
                   .setContent(normalizedText)
                   .build());
@@ -181,14 +181,12 @@ public class SayAggregationService {
         .build();
   }
 
-  @SuppressWarnings("deprecation")
   private RoomInstanceRef resolveRoomInstance(BroadcastSayRequest request) {
-    if (request.hasRoomInstance()) {
-      return request.getRoomInstance();
+    if (request.getRoomInstance().getRoomInstanceId().isBlank()) {
+      throw io.grpc.Status.INVALID_ARGUMENT
+          .withDescription("room_instance.room_instance_id is required")
+          .asRuntimeException();
     }
-    return RoomInstanceRef.newBuilder()
-        .setTenantId(request.getTenantId())
-        .setRoomInstanceId(request.getRoomId())
-        .build();
+    return request.getRoomInstance();
   }
 }

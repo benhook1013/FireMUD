@@ -74,7 +74,7 @@ class SayAggregationServiceTest {
             BroadcastSayRequest.newBuilder()
                 .setTenantId("tenant-1")
                 .setSessionId("sess-1")
-                .setPlayerId("player-0")
+                .setCharacterId("player-0")
                 .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("room-7").build())
                 .setText("  Hello travelers  ")
                 .build());
@@ -96,7 +96,7 @@ class SayAggregationServiceTest {
             BroadcastSayRequest.newBuilder()
                 .setTenantId("tenant-1")
                 .setSessionId("sess-1")
-                .setPlayerId("player-0")
+                .setCharacterId("player-0")
                 .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("room-7").build())
                 .setText("   ")
                 .build());
@@ -127,7 +127,7 @@ class SayAggregationServiceTest {
             BroadcastSayRequest.newBuilder()
                 .setTenantId("tenant-1")
                 .setSessionId("sess-1")
-                .setPlayerId("player-0")
+                .setCharacterId("player-0")
                 .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("room-7").build())
                 .setText("Hi")
                 .build());
