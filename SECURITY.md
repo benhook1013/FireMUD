@@ -32,7 +32,7 @@ The FireMUD architecture is designed around the following controls:
 - **Logging and auditing** – Admin actions and failed logins are logged in Elasticsearch and surfaced via the Admin Service dashboard.
 - **Rate limiting** – Spring Cloud Gateway applies IP-based rate limits on public endpoints.
 - **Container and dependency scanning** – Trivy filesystem scans run on pull requests and pushes to `main` and `develop`, with separate weekly scans of published container images. CodeQL runs on pull requests, pushes to `main` and `develop`, and a weekly schedule.
-- **Web security testing** – OWASP ZAP is run during CI to scan the web client and gateway for vulnerabilities.
+- **Dependency advisory and license review** – ORT runs license scans in CI and separate weekly advisory scans for Gradle and NPM dependencies.
 - **Dependabot** – Automatically keeps dependencies patched via security PRs.
 
 ## References
