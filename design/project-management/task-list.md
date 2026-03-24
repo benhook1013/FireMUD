@@ -14,7 +14,7 @@ Use the vertical-slice docs in [`vertical-slices/`](./vertical-slices/) as the r
 
 ## Service Status Summaries
 
-These files are no longer backlogs. They summarize what each service currently owns, what is implemented, and what remains partial or deferred.
+These files summarize each service's current ownership, implemented behavior, and any partial or deferred areas.
 
 - [Account Service](service-status-account-service.md)
 - [Automation & Scripting Service](service-status-automation-scripting-service.md)
