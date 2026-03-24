@@ -8,7 +8,7 @@ If you believe you have discovered a security issue, **do not open a public issu
 
 ### 🛡️ Preferred Method: GitHub Private Reporting
 
-This repository has [GitHub’s private vulnerability reporting](https://docs.github.com/en/code-security/security-advisories/repository-security-advisories/about-private-vulnerability-reporting) enabled.
+This repository has [GitHub's private vulnerability reporting](https://docs.github.com/en/code-security/security-advisories/guidance-on-reporting-and-writing/privately-reporting-a-security-vulnerability) enabled.
 
 Click the **"Report a vulnerability"** button on the repository’s main page to securely notify us through GitHub. This provides a secure and trackable way for us to investigate and respond.
 
@@ -26,7 +26,7 @@ Security fixes are applied to the `main` branch and the most recent stable relea
 
 The FireMUD architecture is designed around the following controls:
 
-- **Secret management** – JWT signing keys and mTLS certificates are stored as Kubernetes Secrets and rotated automatically by cert-manager. Services hot‑reload secrets without downtime. See [Security Architecture](design/architecture/system-architecture-security.md#🔑-token-issuance--secret-storage).
+- **Secret management** – JWT signing keys and mTLS certificates are stored as Kubernetes Secrets and rotated automatically by cert-manager. Services hot‑reload secrets without downtime. See [Security Architecture](design/architecture/system-architecture-security.md).
 - **Encrypted transport** – TLS is terminated at the load balancer; internal gRPC calls use mutual TLS. NetworkPolicies restrict access between services.
 - **Abuse detection** – Login attempts are tracked and rate-limited per IP. Suspicious behavior triggers blacklisting and notifications.
 - **Logging and auditing** – Admin actions and failed logins are logged in Elasticsearch and surfaced via the Admin Service dashboard.
