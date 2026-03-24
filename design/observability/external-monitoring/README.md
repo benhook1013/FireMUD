@@ -6,6 +6,8 @@ It complements the Prometheus-facing observability contracts in `design/architec
 
 ## Purpose
 
+In plain terms: FireMUD must have an external monitoring path that can still page operators when the cluster, Prometheus, Alertmanager, or the public edge are unhealthy.
+
 FireMUD uses two distinct observability layers in prod-like environments:
 
 - **Authoritative external paging path**
@@ -16,6 +18,19 @@ FireMUD uses two distinct observability layers in prod-like environments:
   - Must never be treated as the only source of truth for the external checks.
 
 If an implementation cannot satisfy the authoritative external paging path, the environment must not be described as meeting FireMUD’s prod-like monitoring contract.
+
+## Mental Model
+
+Use this split when reasoning about the system:
+
+- **External monitor**
+  - The real pager.
+  - Must open incidents even when Prometheus, Alertmanager, or Grafana are unavailable.
+  - Examples: deadman heartbeat, public WebSocket reachability, public Telnet reachability.
+- **Prometheus mirror**
+  - A convenience view of selected external-monitor state.
+  - Lets Grafana dashboards, runbooks, and smoke tests use the same bounded metric names.
+  - Must never be treated as proof that independent paging exists.
 
 ## Required External Checks
 
@@ -46,6 +61,18 @@ Prod-like environments must configure the following checks in the authoritative 
      - a canonical environment-scoped identity in the external monitoring product,
      - a non-production failure or test method that proves the check can open an incident without relying on Prometheus.
 
+Concrete example:
+
+- The external monitor checks:
+  - WebSocket reachability against the real public browser entry path.
+  - Telnet reachability against the real public Telnet entry path.
+  - Deadman heartbeat freshness from an in-cluster emitter.
+  - Public Grafana and Prometheus reachability for operator access continuity.
+- Prometheus mirrors selected results into stable metrics such as:
+  - `entrypath_blackbox_probe_success{path="websocket",target="prod-web-gateway"}`
+  - `entrypath_blackbox_probe_success{path="telnet",target="prod-telnet-edge"}`
+  - `observability_deadman_heartbeat_timestamp_seconds{source="prod"}`
+
 ## Prometheus Mirror Contract
 
 When Prometheus is healthy, the external monitoring state must also be mirrored into low-cardinality metrics so dashboards and runbooks can use a single vocabulary:
@@ -58,7 +85,7 @@ When Prometheus is healthy, the external monitoring state must also be mirrored 
   - Mirror of the latest externally observed in-cluster heartbeat timestamp.
   - `source` identifies the emitting environment or monitor instance and must remain low-cardinality.
 
-Prometheus alerts and dashboards may use these mirrored metrics, but the external monitor must page independently using its own native checks and thresholds.
+Prometheus alerts and dashboards may use these mirrored metrics, but the external monitor must still page independently using its own native checks and thresholds.
 
 Public observability entrypoint checks do not require a universal mirrored metric name today, but each prod-like environment must choose one of the following and document it in readiness evidence:
 
@@ -90,6 +117,8 @@ This vocabulary is recommended for cross-environment consistency, not mandatory.
   - evidence that the authoritative external pager can fire without Prometheus,
   - evidence that mirrored Prometheus metrics match the external monitor state when Prometheus is healthy.
 
+For early or hobby environments, this level of external monitoring may be intentionally reduced. This document is the contract for prod-like environments that claim FireMUD-grade monitoring, not a requirement that every local or throwaway stack must satisfy in full.
+
 ## Compatibility Mapping
 
 If a hosted monitoring product cannot expose the canonical mirrored metric names directly, the environment must document a compatibility mapping that preserves:
@@ -97,7 +126,7 @@ If a hosted monitoring product cannot expose the canonical mirrored metric names
 - deadman freshness semantics,
 - `path="websocket"` and `path="telnet"` semantics,
 - independent external paging behavior,
-- the existing runbook behavior and alert naming described in the architecture docs.
+  - the existing runbook behavior and alert naming described in the architecture docs.
 
 Compatibility mappings are acceptable only for the Prometheus mirror. They are not a substitute for the authoritative external checks themselves.
 
