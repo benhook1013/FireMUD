@@ -40,7 +40,7 @@ This document lists recurring problem domains and testing focus areas for FireMU
 - Integration flows: end-to-end tests for login, character selection, entering the world, and simple commands across multiple services.
 - Timeouts and retries: reasonable client timeouts and retry strategies that do not cause thundering herds or duplicate side effects.
 - Error propagation: errors from downstream services (Account, Game Session, DB, Redis) are converted to clear, safe messages for clients.
-- LOOK and SAY cross-service regressions: see `design/project-management/look-and-say-regressions.md` for the detailed test plan, transcripts, metrics, and Gradle tasks that exercise WebSocket and Telnet flows in lockstep.
+- LOOK and SAY cross-service regressions: see `design/project-management/slice-support/look-and-say-regressions.md` for the detailed test plan, transcripts, metrics, and Gradle tasks that exercise WebSocket and Telnet flows in lockstep.
 - Version skew: older services can interact safely with newer ones during incremental rollouts.
 
 ## 5. Command Parsing, Input Validation, and Game Logic
@@ -50,7 +50,7 @@ This document lists recurring problem domains and testing focus areas for FireMU
 - State transitions: player and world state changes follow valid transitions (e.g., cannot act while dead, stunned, or disconnected).
 - Business rules: core mechanics (combat, movement, inventory, economy) have deterministic, tested behavior.
 - Rate limiting: spammy commands are throttled to protect CPU, network, and downstream services.
-- `LOOK` cross-service regressions: the `crossServiceTest` target spins up Game Session, Game Logic, World Management, Entity Management, and the TCP proxy/Gateway so both WebSocket and Telnet flows re-run `LOGIN` + `LOOK`, validate the canonical transcript, and surface the `gamesession.command.look.*` metrics/logs described in `design/project-management/look-cross-service-tests.md`.
+- `LOOK` cross-service regressions: the `crossServiceTest` target spins up Game Session, Game Logic, World Management, Entity Management, and the TCP proxy/Gateway so both WebSocket and Telnet flows re-run `LOGIN` + `LOOK`, validate the canonical transcript, and surface the `gamesession.command.look.*` metrics/logs described in `design/project-management/slice-support/look-cross-service-tests.md`.
 
 ## 6. Concurrency, Race Conditions, and State Consistency
 
