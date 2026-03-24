@@ -3,7 +3,7 @@
   "private": true,
   "devDependencies": {
     "@redocly/cli": "^2.25.0",
-    "markdownlint-cli2": "^0.21.0"
+    "markdownlint-cli2": "^0.22.0"
   },
   "scripts": {
     "openapi:lint": "npx -y @redocly/cli lint \"../../services/**/src/main/resources/openapi.yaml\""
