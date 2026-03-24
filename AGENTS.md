@@ -39,6 +39,7 @@ FireMUD is in initial development. Optimize for direct convergence to a clean ca
 - If implementation is partial, keep that status in a dedicated section near the top (for example `Implementation Notes`) and keep it current.
 - Document one canonical current behavior and remove obsolete legacy or transitional guidance.
 - Do not add phased rollout or compatibility narratives unless explicitly requested.
+- Do not use emojis in Markdown headings; they make anchor links harder to reference reliably across renderers.
 
 ## Architecture and Operations Assumptions
 
