@@ -1,4 +1,4 @@
-# 🔗 Design Document for Social Groups Service
+# Design Document for Social Groups Service
 
 The design for this service is located here:
 

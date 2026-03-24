@@ -1,4 +1,4 @@
-# 🔗 Design Document for Game Session Service
+# Design Document for Game Session Service
 
 The design for this service is located here:
 

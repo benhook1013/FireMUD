@@ -1,4 +1,4 @@
-# 🔗 Design Document for Spring Cloud Gateway
+# Design Document for Spring Cloud Gateway
 
 The design for this service is located here:
 

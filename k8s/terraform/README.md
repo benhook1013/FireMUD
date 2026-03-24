@@ -1,4 +1,4 @@
-# 🔧 Local Kubernetes with Terraform
+# Local Kubernetes with Terraform
 
 This directory contains a **sample Terraform module** for spinning up a local Kubernetes cluster using the [Kind](https://kind.sigs.k8s.io/) provider. The cluster is intended for development only and mirrors the setup used by the Docker Compose environment.
 

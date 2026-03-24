@@ -1,4 +1,4 @@
-# 🔗 Design Document for Account Service
+# Design Document for Account Service
 
 The design for this service is located here:
 

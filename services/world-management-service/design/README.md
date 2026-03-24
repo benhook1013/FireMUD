@@ -1,4 +1,4 @@
-# 🔗 Design Document for World Management Service
+# Design Document for World Management Service
 
 The design for this service is located here:
 
