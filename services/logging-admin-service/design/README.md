@@ -1,4 +1,4 @@
-# 🔗 Design Document for Logging Admin Service
+# Design Document for Logging Admin Service
 
 The design for this service is located here:
 

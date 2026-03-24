@@ -27,7 +27,29 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Check repository auto-merge setting
+        id: repo-settings
+        run: |
+          auto_merge_allowed="$(
+            gh api graphql -f query='
+              query {
+                repository(owner: "benhook1013", name: "FireMUD") {
+                  autoMergeAllowed
+                }
+              }
+            ' --jq '.data.repository.autoMergeAllowed'
+          )"
+
+          echo "auto_merge_allowed=${auto_merge_allowed}" >> "$GITHUB_OUTPUT"
+
+          if [ "$auto_merge_allowed" != "true" ]; then
+            echo "::notice title=Dependabot auto-merge skipped::Repository auto-merge is disabled, so this workflow will not call gh pr merge --auto."
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Enable auto-merge for Dependabot PR
+        if: steps.repo-settings.outputs.auto_merge_allowed == 'true'
         run: gh pr merge --auto --merge "$PR_URL"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

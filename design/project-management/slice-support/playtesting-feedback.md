@@ -2,7 +2,7 @@
 
 FireMUD uses two distinct validation surfaces:
 
-- **Engineering preview environments** – Pull requests may deploy hosted per-PR environments through [`preview.yml`](../../.github/workflows/preview.yml) for reviewer and developer validation. These previews persist for the lifetime of the PR, but they remain engineering tools rather than the canonical creator-facing playtest experience.
+- **Engineering preview environments** – Pull requests may deploy hosted per-PR environments through [`preview.yml`](../../../.github/workflows/preview.yml) for reviewer and developer validation. These previews persist for the lifetime of the PR, but they remain engineering tools rather than the canonical creator-facing playtest experience.
 - **Creator playtest realms** – The canonical product playtest flow uses creator-managed forked realms derived from source realm snapshots under the v1 fork-snapshot boundary in `system-architecture-versioning-runtime.md`. These realms are temporary, isolated from production writes, use the same platform accounts with explicit access grants, and are surfaced to authorized testers through the same authenticated lobby/realm-selection contract used for normal gameplay. They are never public-discovery realms in v1.
 
 The creator-facing playtest loop is:
@@ -11,8 +11,8 @@ The creator-facing playtest loop is:
 2. **Target the build under evaluation** by launching the fork on the desired `versionId` and optional `scriptPatchVersion`.
 3. **Invite testers** from the community via Discord, email, or direct tenant access grants managed by `tenantAdmin` (or `platformAdmin` for break-glass support). Only authorized testers see the fork in realm discovery.
    The minimum grant payload is `{tenantId, realmSlug, accountId, grantedByAccountId, grantedAt, expiresAt?}`. Revoking a grant removes future realm visibility/admission for that account without deleting the fork itself.
-4. **Collect feedback** through a shared form linked in the web client and store the results in the [Logging & Admin Service](../architecture/microservices/logging-admin-service/README.md), tagged to the playtest realm.
-5. **Review logs and metrics** in Grafana and Kibana to detect crashes or errors. See [Logging & Monitoring](../architecture/system-architecture-logging-monitoring.md) and [Analytics Dashboards](../architecture/microservices/logging-admin-service/analytics-dashboards.md).
+4. **Collect feedback** through a shared form linked in the web client and store the results in the [Logging & Admin Service](../../architecture/microservices/logging-admin-service/README.md), tagged to the playtest realm.
+5. **Review logs and metrics** in Grafana and Kibana to detect crashes or errors. See [Logging & Monitoring](../../architecture/system-architecture-logging-monitoring.md) and [Analytics Dashboards](../../architecture/microservices/logging-admin-service/analytics-dashboards.md).
 6. **Reset or expire the fork** when a test cycle is complete. Fork data can be discarded or recreated from a new snapshot; runtime state does not merge back into production.
 7. **Promote by normal rollout** only after the team is satisfied. Production updates still use the normal launch/cutover path rather than "converting" the fork into production.
 

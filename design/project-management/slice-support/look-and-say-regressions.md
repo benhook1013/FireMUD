@@ -5,10 +5,10 @@ This document centralizes the cross-service regression plans for the `LOOK` and 
 ## LOOK Command Regression Flow
 
 - Start Game Session, Game Logic, World Management, Entity Management, and the TCP proxy/Gateway together.
-- Replay the canonical `LOGIN` + `LOOK` sequence over both WebSocket and Telnet, using the transcript defined in `design/project-management/look-cross-service-tests.md`.
+- Replay the canonical `LOGIN` + `LOOK` sequence over both WebSocket and Telnet, using the transcript defined in `design/project-management/slice-support/look-cross-service-tests.md`.
 - Assert that:
   - Response payloads match the canonical transcript for both transports (modulo framing).
-  - `gamesession.command.look.*` metrics/logs are emitted as described in `design/project-management/look-instrumentation.md`.
+  - `gamesession.command.look.*` metrics/logs are emitted as described in `design/project-management/slice-support/look-instrumentation.md`.
 - Run these flows via the `crossServiceTest` Gradle target when available so they execute as part of CI and local verification.
 
 ## SAY Command Regression Flow

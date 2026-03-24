@@ -64,7 +64,7 @@ To keep Kibana queries and alert triage consistent, log records and alert labels
   Operators should create Grafana panels and Alertmanager rules that highlight sustained non-zero `tcpproxy_connections_limit_exceeded_total`, sharp increases in `tcpproxy_telnet_discarded_total`, and recurring `tcpproxy_disconnect_notify_transport_failure_total` spikes, since these typically indicate abusive clients, mis-tuned caps, TCP edge misconfiguration (for example bad PROXY headers), or issues on the Game Session side.
 - Distributed traces are exported via OTLP and correlated with logs using a shared `traceId` in spans and log entries; metrics do **not** include `traceId` as a label. Correlation between metrics and traces should rely on exemplars where available and on log search and Jaeger queries rather than high-cardinality metric labels.
 - The OpenTelemetry collector endpoint is configurable via the `OTEL_ENDPOINT` environment variable ([Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md)).
-- For the new data-driven `LOOK` path, see `../project-management/look-instrumentation.md` for the specific `gamesession.command.look.*` meters, log conventions, and tracing guidance that operators should monitor while the slice stabilizes.
+- For the new data-driven `LOOK` path, see `../project-management/slice-support/look-instrumentation.md` for the specific `gamesession.command.look.*` meters, log conventions, and tracing guidance that operators should monitor while the slice stabilizes.
 
 ### Cardinality Guardrails for Metrics
 
@@ -451,7 +451,7 @@ For scripting and automation workloads, dashboards and alerts must include both 
 ## Health Checks
 
 - Spring Boot `/actuator/health/readiness` and `/actuator/health/liveness` endpoints feed Kubernetes readiness and liveness probes.
-- See [Deployment Environments](./infrastructure/deployment-environments.md#🩺-kubernetes-health-monitoring) for probe behavior.
+- See [Deployment Environments](./infrastructure/deployment-environments.md#kubernetes-health-monitoring) for probe behavior.
 
 ## Error Tracking and Hotfixes
 

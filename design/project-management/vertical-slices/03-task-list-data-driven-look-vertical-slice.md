@@ -54,7 +54,7 @@ Sample data for this slice lives in the test fixtures referenced above: the Worl
 - [x] Add Micrometer metrics and structured logs in Game Session for `LOOK` commands (for example `gamesession.command.look.invocations`, `gamesession.command.look.failures`) including tags for `tenantId` and high-level error codes.
 - [x] Add unit and/or integration tests in `services/game-session-service` that exercise the text `LOOK` path end-to-end against a stubbed Game Logic client, verifying correct handling of success, room-not-found, and downstream failure scenarios.
 - [x] Replace the temporary Redis stub used by `services/tcp-proxy-service/src/test/java/crossservice/net/firedevops/firemud/TelnetGatewayGameSessionAccountCrossServiceIntegrationTest.java` with shared Redis test utilities (or direct Testcontainers wiring) so the slice exercises the same Redis configuration used in production.
-- [x] Document the LOOK instrumentation (metrics/logs) in `design/project-management/look-instrumentation.md` so operators know what to monitor while the slice stabilizes.
+- [x] Document the LOOK instrumentation (metrics/logs) in `design/project-management/slice-support/look-instrumentation.md` so operators know what to monitor while the slice stabilizes.
 
 ## 6. Cross-Service End-to-End Tests (Telnet and WebSocket)
 
@@ -64,15 +64,15 @@ Sample data for this slice lives in the test fixtures referenced above: the Worl
 - [x] Instrument the cross-service flows so we can assert the `LOOK` command traversed the pipeline (e.g., via log capture, metrics tags, or gRPC interceptors) and ensure `gamesession.command.look.*` counters increment for both success and failure paths.
 - [x] Wire the new cross-service tests into a dedicated Gradle target (e.g., `crossServiceTest`) so they can run without slowing down the default unit suite, and reference the target in README/test docs.
 - [x] Re-enable `services/tcp-proxy-service/src/test/java/crossservice/net/firedevops/firemud/TelnetGatewayGameSessionAccountCrossServiceIntegrationTest.java` (and add an analogous WebSocket harness) once the true Game Logic → World → Entity pipeline is available so we can replay the documented transcripts end-to-end.
-- [x] Refer to `design/project-management/look-cross-service-tests.md` for detailed automation steps, metrics assertions, and Gradle wiring when implementing these tests.
+- [x] Refer to `design/project-management/slice-support/look-cross-service-tests.md` for detailed automation steps, metrics assertions, and Gradle wiring when implementing these tests.
 - [x] Add a short note in `design/project-management/testing-focus-areas.md` under the command parsing / game logic sections pointing to these data-driven `LOOK` cross-service tests as examples.
 - [x] Implement the WebSocket cross-service regression test placeholder (`LookWebSocketCrossServiceTest`) using the new LOOK fixtures/stubs and the documented metrics/log assertions before expanding to the Telnet flow.
 
-Implementation notes for wiring the stubbed World/Entity/Account services, capturing the canonical transcripts, and validating the `gamesession.command.look.*` meters/logs live in `design/project-management/look-cross-service-tests.md#implementation-notes`; follow them while building the WebSocket and Telnet flows so the automation exercises both success and error paths as documented.
+Implementation notes for wiring the stubbed World/Entity/Account services, capturing the canonical transcripts, and validating the `gamesession.command.look.*` meters/logs live in `design/project-management/slice-support/look-cross-service-tests.md#implementation-notes`; follow them while building the WebSocket and Telnet flows so the automation exercises both success and error paths as documented.
 
 ## 7. Developer Workflows, Smoke Tests, and Documentation Updates
 
-- [x] Add or update a smoke test script (or documented curl/WebSocket sequence) that demonstrates `LOGIN` + `LOOK` against the sample world over WebSocket, including the expected room description in the script output or comments (`design/project-management/look-smoke-tests.md`) and sample transcript (`look-ws-sample.log`).
+- [x] Add or update a smoke test script (or documented curl/WebSocket sequence) that demonstrates `LOGIN` + `LOOK` against the sample world over WebSocket, including the expected room description in the script output or comments (`design/project-management/slice-support/look-smoke-tests.md`) and sample transcript (`look-ws-sample.log`).
 - [x] Add a second smoke test or example transcript that demonstrates `SESSION` + `LOGIN` + `LOOK` via Telnet through TCP Proxy and Gateway, verifying that the same room description is returned (same doc) with the sample transcript (`look-telnet-sample.log`).
 - [x] Update the Game Session, Game Logic, World Management, and Entity Management design docs to include a short "Implementation status" note for the `LOOK` slice, clarifying what is live, what is stubbed, and what is deferred to future slices (for example, dynamic lighting, line-of-sight, or script-driven room text).
 - [x] Expand the World Management Service design doc to describe the `/ws/game/**` `LOOK` contract fields, how Game Session aggregates entity/world context before replying to WebSocket/Telnet clients, and what configuration toggles (such as `WORLD_SERVICE_ENDPOINT`) developers can use locally.

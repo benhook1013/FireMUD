@@ -237,7 +237,7 @@ Select the desired profile via the `SPRING_PROFILES_ACTIVE` environment variable
 
 A dedicated staging cluster mirrors production using smaller node sizes. Pull requests may also deploy a hosted [`pr-preview`](#canonical-environment-classes) environment through [preview.yml](../../../.github/workflows/preview.yml), but those previews remain isolated per PR and are not promotion candidates; staging is the intended environment for prod-like playtests and routing/TLS validation.
 Staging test data may be reset on a schedule once operators explicitly install staging-specific automation; by default staging is not scheduled (see `schedule.md`).
-For details on collecting tester feedback see [Playtesting & Feedback](../../project-management/playtesting-feedback.md).
+For details on collecting tester feedback see [Playtesting & Feedback](../../project-management/slice-support/playtesting-feedback.md).
 
 Environment-boundary contract: staging and production are separate environment boundaries with separate cluster credentials and per-environment secret sources. Shared namespace defaults (`firemud`) apply within each environment boundary and must not be interpreted as permission to share credentials, buckets, or control-plane trust roots across staging and production.
 Normal deployments, not only restores, must validate that backup storage, asset storage, outbound communications, and operator credential bindings point at the intended environment boundary before player traffic is opened.
