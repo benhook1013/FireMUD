@@ -37,7 +37,7 @@ The FireMUD architecture is designed around the following controls:
 
 ## References
 
-The full security design is documented in [design/architecture/system-architecture-security.md](design/architecture/system-architecture-security.md). Related topics:
+The full security design is documented in [Security Architecture](design/architecture/system-architecture-security.md). Related topics:
 
 - [Logging & Monitoring](design/architecture/system-architecture-logging-monitoring.md)
 - [CI/CD Pipeline](design/architecture/system-architecture-cicd.md)
