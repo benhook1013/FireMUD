@@ -2,7 +2,7 @@
 
 ## 1. Introduction
 
-This document is the canonical product requirements summary and detail set for FireMUD.
+This document is the canonical product requirements summary and detailed requirements set for the FireMUD platform.
 
 ### 1.1 Purpose
 
