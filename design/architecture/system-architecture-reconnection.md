@@ -1,6 +1,6 @@
 # FireMUD System Architecture: Reconnection Strategy
 
-FireMUD enables seamless gameplay recovery across network interruptions, client reconnects, and backend service restarts — using a **layered reconnection model** and **Redis-backed session state**.
+FireMUD targets seamless gameplay recovery across network interruptions, client reconnects, and backend service restarts using a **layered reconnection model** and **Redis-backed session state**. The platform does not require fully transport-transparent restarts: the canonical recovery contract remains explicit and protocol-visible so third-party MUD clients can recover reliably, while first-party clients may automate that same recovery path to reduce user-visible friction.
 
 ---
 
@@ -122,12 +122,13 @@ The active gameplay identity is `characterId`. When a new client successfully is
   - Queued commands and tick state
   - Timers, cooldowns, and retry info
 - Game Session Service governs all reconnection, deduplication, and rebinding
-- Clients are **fully stateless**
-- Transparent failover is supported across infrastructure layers
+- The canonical recovery path remains explicit and protocol-visible for all clients
+- Third-party MUD clients must be able to recover cleanly using the documented reconnect flow alone
+- First-party clients may automate reconnect, reauthentication, and gameplay re-entry, but they must not depend on a private recovery model unavailable to other clients
 
 ## Client Reconnection Behaviour
 
-FireMUD treats reconnection as a **client responsibility**: after any disconnect, clients open a fresh transport (TCP or WebSocket), issue a new `LOGIN`, and complete `PLAY` before gameplay commands. First-party WebSocket clients must fetch a fresh connect token before opening `/ws/game/**`. To avoid thundering herds and to keep reconnect storms predictable during incidents, automated or first‑party clients should follow a consistent reconnection policy:
+FireMUD treats reconnection as an explicit **client-visible recovery flow**: after any disconnect, clients open a fresh transport (TCP or WebSocket), issue a new `LOGIN`, and complete `PLAY` before gameplay commands. This documented flow is the canonical interoperability contract for third-party MUD clients. First-party WebSocket clients may automate the same sequence for a smoother UX, but they must still follow the same underlying connect-token, `LOGIN`, and `PLAY` rules. To avoid thundering herds and to keep reconnect storms predictable during incidents, automated or first-party clients should follow a consistent reconnection policy:
 
 - **Backoff and jitter**
   - Start with an initial delay of `1–2s` after the first failed reconnect attempt.
