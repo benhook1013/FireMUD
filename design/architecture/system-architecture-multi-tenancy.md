@@ -37,8 +37,8 @@ FireMUD distinguishes between:
 
 Realm-scoped playable state may follow either of these patterns:
 
-- **Shared-state realm** – the realm uses the tenant's normal character state, so the same character identity, progression, and durable inventory are reused when the player enters that realm.
-- **Isolated-state realm** – the realm uses instance-local gameplay state for that `gameInstanceId`. Playtest forks are the canonical example: copied characters remain associated with the same platform account and tenant, but the fork keeps its own fork-local progression, inventory, and other runtime state.
+- **Shared-state realm** – the realm uses the tenant's normal live character state, so the same character identity, progression, and durable inventory are reused when the player enters that realm.
+- **Isolated-state realm** – the realm uses instance-local gameplay state for that `gameInstanceId` rather than the tenant's normal live character state. That isolated state may start from a copied source snapshot, seeded/sample data, or fresh standalone state. Playtest forks are the canonical copied-state example: copied characters remain associated with the same platform account and tenant, but the fork keeps its own fork-local progression, inventory, and other runtime state.
 
 This distinction is normative for all realm-aware flows:
 
