@@ -53,8 +53,7 @@ This document outlines the **core functional and non-functional requirements** f
 - Role-based access control (RBAC) for **admins, moderators, and players**.
 - Users should be able to **create and manage multiple characters per game**.
 - Sessions should support **persistent logins and reconnection handling**.
-- First-party web/mobile gameplay must support pre-socket discovery of visible worlds, realms, and characters and then admit the player through the same canonical lobby contract used by text clients.
-- The first successful join to a publicly discoverable production realm must create the player's tenant membership atomically as part of admission.
+- First-party web and mobile clients must support world, realm, and character selection before gameplay begins.
 - **Expanded Account Features**:
   - Players should be able to **link external accounts** (Google, Discord, Steam) for login.
   - Profiles should include **game history, achievements, and social features**.
