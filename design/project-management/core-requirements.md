@@ -64,7 +64,6 @@ See [Account Service](../architecture/microservices/account-service/README.md) f
 
 - Support for **multi-room game worlds** with region-based navigation.
 - **Instance-based game spaces** allow separate world states (e.g., public production realms, creator-managed playtest forks, private dungeons, event-based scenarios, or personalized player housing).
-- In v1, the canonical player-discovery and admission contract covers only player-addressable realms surfaced through the authenticated lobby flow. Public production realms and explicit-grant playtest forks are in scope for that contract. Other runtime instances such as private dungeons, event scenarios, or personalized housing may exist internally but are not separate v1 lobby-discovered realms unless a later architecture decision promotes them into the same realm-routing and admission model.
 - Game creators can configure **instance rules, expiration, and persistence settings**.
 - **World Persistence & Scheduled Events**:
   - The platform must support **persistent world states**, ensuring that world changes **persist beyond player sessions**.
