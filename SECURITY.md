@@ -6,13 +6,13 @@ FireMUD takes the security of our platform and players seriously. This document 
 
 If you believe you have discovered a security issue, **do not open a public issue**.
 
-### 🛡️ Preferred Method: GitHub Private Reporting
+### Preferred Method: GitHub Private Reporting
 
 This repository has [GitHub's private vulnerability reporting](https://docs.github.com/en/code-security/security-advisories/guidance-on-reporting-and-writing/privately-reporting-a-security-vulnerability) enabled.
 
 Click the **"Report a vulnerability"** button on the repository’s main page to securely notify us through GitHub. This provides a secure and trackable way for us to investigate and respond.
 
-### 📧 Alternative Method: Email
+### Alternative Method: Email
 
 If you prefer not to use GitHub, please email [security@firedevops.net](mailto:security@firedevops.net) with details so we can coordinate a fix. We will respond promptly and may request additional information to reproduce the issue.
 

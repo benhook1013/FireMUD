@@ -8,4 +8,4 @@ Currently it focuses on the `LOOK` command vertical slice, providing canonical T
 
 - [look/](./look/) – Sample `LOOK` transcripts for WebSocket and Telnet flows, used as references when running or updating smoke scripts.
 
-For the step-by-step instructions that produce these artifacts, see [LOOK Smoke Tests](../look-smoke-tests.md) and the related vertical slice design in `../vertical-slices/03-task-list-data-driven-look-vertical-slice.md`.
+For the step-by-step instructions that produce these artifacts, see [LOOK Smoke Tests](../slice-support/look-smoke-tests.md) and the related vertical slice design in `../vertical-slices/03-task-list-data-driven-look-vertical-slice.md`.

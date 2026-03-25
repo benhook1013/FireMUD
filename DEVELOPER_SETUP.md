@@ -1,4 +1,4 @@
-# 🛠 Developer Setup
+# Developer Setup
 
 This guide explains how to configure a local development environment for the FireMUD Game Platform.
 
@@ -135,7 +135,7 @@ You can maintain a local, untracked summary of your changes and sync it to a pul
 
 The `pr-summary.md` file is listed in `.gitignore` so it is not committed. AI tooling (such as Codex) may update this file and run the `gh pr edit` command on your behalf when you explicitly ask it to refresh the PR description.
 
-## 🐳 Building Docker Images
+## Building Docker Images
 
 Use the aggregated task to build container images for all services:
 
@@ -149,7 +149,7 @@ The microservice Dockerfiles extend the shared base image
 date, build it locally with `./gradlew buildBaseImage` or pull the published
 version from GitHub Container Registry.
 
-## ✅ Markdown Linting via Gradle
+## Markdown Linting via Gradle
 
 This project uses `markdownlint-cli2` to lint Markdown files. To speed up local builds, the `fullCheck` property controls heavy analysis tasks such as SpotBugs, Checkstyle, Spotless checks, and JaCoCo coverage; these are skipped from `./gradlew check` unless `fullCheck` is supplied. Markdown lint and link checks are relatively fast and always run as part of `check`.
 
@@ -432,7 +432,7 @@ These documents explain how the compose setup differs from production and provid
 
 You are now ready to explore the codebase and contribute!
 
-## 📚 Related Documentation
+## Related Documentation
 
 - [Infrastructure Overview](design/architecture/infrastructure/README.md)
 - [Deployment Environments](design/architecture/infrastructure/deployment-environments.md)

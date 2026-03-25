@@ -115,7 +115,7 @@ These transcripts make it easy to add regression assertions for failure paths an
 
 ## 5. Developer Workflows and Instrumentation
 
-- [x] Create or update the WebSocket + Telnet example script (or documented sequence) that demonstrates `LOGIN` + `SAY` against the sample world and references the canonical transcript fixture described in `design/project-management/chat-say-developer-guide.md`.
+- [x] Create or update the WebSocket + Telnet example script (or documented sequence) that demonstrates `LOGIN` + `SAY` against the sample world and references the canonical transcript fixture described in `design/project-management/slice-support/chat-say-developer-guide.md`.
 - [x] Update logging/monitoring docs (look instrumentation, logging & admin sections) to mention the new `gamesession.command.say.*` metrics.
 - [x] Add a short "Implementation status" note to the Game Session/Game Logic/Social design docs so folks know what of this slice is live, stubbed, or deferred (e.g., channel filters, listening area heuristics).
 

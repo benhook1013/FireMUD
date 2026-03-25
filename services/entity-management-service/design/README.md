@@ -1,4 +1,4 @@
-# 🔗 Design Document for Entity Management Service
+# Design Document for Entity Management Service
 
 The design for this service is located here:
 

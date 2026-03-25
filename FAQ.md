@@ -1,4 +1,4 @@
-# ❓ FireMUD Platform FAQ
+# FireMUD Platform FAQ
 
 This document collects common questions and answers about the FireMUD Game Platform.
 

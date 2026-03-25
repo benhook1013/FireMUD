@@ -29,4 +29,4 @@ Message: Hello travelers
 ## Running the Automation
 
 - Execute `./gradlew crossServiceTest` to run both the Telnet (`TelnetGatewayGameSessionAccountCrossServiceIntegrationTest`) and WebSocket (`SayWebSocketCrossServiceTest`) flows together. This command starts the shared fixtures and verifies `gamesession.command.say.*` metrics, canonical transcripts, and social webhook calls.
-- Manual runs may reuse the stub suite described in `design/project-management/look-cross-service-tests.md` (replace `LOOK` commands with the sequence above) so the instrumentation notes stay in sync.
+- Manual runs may reuse the stub suite described in `design/project-management/slice-support/look-cross-service-tests.md` (replace `LOOK` commands with the sequence above) so the instrumentation notes stay in sync.

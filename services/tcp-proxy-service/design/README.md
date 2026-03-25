@@ -1,4 +1,4 @@
-# 🔗 Design Document for TCP Proxy Service
+# Design Document for TCP Proxy Service
 
 The design for this service is located here:
 

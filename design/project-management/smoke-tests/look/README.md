@@ -9,4 +9,4 @@ Each log file contains both the commands issued by a tester and the responses re
 - [look-ws-sample.log](./look-ws-sample.log) – Sample WebSocket transcript for the `LOGIN` + `LOOK` flow.
 - [look-telnet-sample.log](./look-telnet-sample.log) – Sample Telnet transcript exercising the same vertical slice through the TCP proxy and gateway.
 
-See the main [LOOK Smoke Tests](../../look-smoke-tests.md) document for instructions on how to reproduce these transcripts and how they relate to the cross-service regression tests.
+See the main [LOOK Smoke Tests](../../slice-support/look-smoke-tests.md) document for instructions on how to reproduce these transcripts and how they relate to the cross-service regression tests.

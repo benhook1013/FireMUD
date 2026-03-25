@@ -94,7 +94,7 @@ jobs:
           java-version: '21'
 
       - name: ⚙️ Set Up Gradle
-        uses: gradle/actions/setup-gradle@v5
+        uses: gradle/actions/setup-gradle@v6
         with:
           cache-read-only: false
 
@@ -223,7 +223,7 @@ jobs:
           java-version: ${{ matrix.java-version }}
 
       - name: ⚙️ Set Up Gradle
-        uses: gradle/actions/setup-gradle@v5
+        uses: gradle/actions/setup-gradle@v6
         with:
           cache-read-only: false
 

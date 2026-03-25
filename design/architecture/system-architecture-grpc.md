@@ -155,7 +155,7 @@ All internal gRPC calls use **mutual TLS**. Each service sets the following envi
 
 The [Environment & Secrets](./infrastructure/environment-and-secrets.md#grpc-tls-certificates) guide describes how these values are provided. The shared library includes a `GrpcServerTlsReloader` component to hot reload server certificates, and services use it to reload credentials automatically.
 
-Adopting these conventions helps keep FireMUD services consistent and makes it easier for new contributors to work with the APIs. See [Security Architecture](./system-architecture-security.md#🤝-cross-service-trust) for mTLS design.
+Adopting these conventions helps keep FireMUD services consistent and makes it easier for new contributors to work with the APIs. See [Security Architecture](./system-architecture-security.md#cross-service-trust) for mTLS design.
 
 ## Related Documentation
 

@@ -72,7 +72,7 @@ Open or amend the architecture docs before implementation when a change would al
 
 ## Additional Resources
 
-- [**../project-management/playtesting-feedback.md**](../project-management/playtesting-feedback.md) – Staging playtests and feedback collection.
+- [**../project-management/slice-support/playtesting-feedback.md**](../project-management/slice-support/playtesting-feedback.md) – Staging playtests and feedback collection.
 - [**user-journeys.md**](./user-journeys.md) – Example creator and player workflows.
 
 Refer to the README files within each subdirectory for more details.

@@ -170,7 +170,7 @@ Before launch or after major updates, creators validate changes with **forked pl
    - The minimum access-grant record is `{tenantId, realmSlug, accountId, grantedByAccountId, grantedAt, expiresAt?}`.
    - Revoking the grant removes future realm visibility and admission for that account without deleting the fork itself.
    - Revocation is forward-looking for live sessions: already connected testers may finish the current fork session, but the next `PLAY`, reconnect, or fresh discovery/auth bootstrap must fail unless a new grant exists.
-4. **Collect Feedback** – Feedback is collected per the [Playtesting & Feedback](../project-management/playtesting-feedback.md) flow and correlated with the fork realm in analytics.
+4. **Collect Feedback** – Feedback is collected per the [Playtesting & Feedback](../project-management/slice-support/playtesting-feedback.md) flow and correlated with the fork realm in analytics.
 5. **Reset or Expire the Fork** – Forks are time-bounded and may be reset repeatedly from source snapshots during an iteration cycle. Runtime writes remain isolated to the fork and never merge back into production automatically.
 6. **Promote by Normal Launch/Cutover** – Successful playtests inform a normal production rollout; there is no direct "promote this fork" merge path for runtime state.
 
@@ -206,7 +206,7 @@ MCP-Aware Client → TCP Proxy Service → Game Session Service and other backen
 - [Game Customization Options](./game-customization-options.md)
 - [Game Templates](./microservices/game-design-service/game-templates.md)
 - [Modding Framework](./microservices/game-design-service/modding-framework.md)
-- [Playtesting & Feedback](../project-management/playtesting-feedback.md)
+- [Playtesting & Feedback](../project-management/slice-support/playtesting-feedback.md)
 - [Procedural Generation](./system-architecture-procedural-generation.md)
 - [Scripting & Automation Framework](./system-architecture-scripting.md)
 - [Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md)

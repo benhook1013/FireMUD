@@ -1,4 +1,4 @@
-# 🔗 Design Document for Game Logic Service
+# Design Document for Game Logic Service
 
 The design for this service is located here:
 

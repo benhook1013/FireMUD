@@ -1,4 +1,4 @@
-# 🔗 Design Document for Automation Scripting Service
+# Design Document for Automation Scripting Service
 
 The design for this service is located here:
 

@@ -38,7 +38,7 @@ jobs:
 
       - name: ⚙️ Set Up Gradle
         if: matrix.language == 'java'
-        uses: gradle/actions/setup-gradle@v5
+        uses: gradle/actions/setup-gradle@v6
 
       - name: 🔍 Initialize CodeQL
         uses: github/codeql-action/init@v4
