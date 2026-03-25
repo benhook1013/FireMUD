@@ -26,6 +26,28 @@ FireMUD separates **global identity** from **per-game state** so that one person
 - **Auth token session** – A short-lived auth token allowlist entry (`session:auth:*`) backing internal JWTs for meta/control APIs, as described in [Authentication & Authorization](./system-architecture-authentication.md#session-and-identity-management).
 - **Control-plane browser session** – A front-end admin/creator UI session that holds short-lived JWTs in memory and relies on auth token sessions on the server; these are distinct from gameplay sessions and are described in the Frontend Architecture and Authentication designs.
 
+### Realm State Model
+
+Tenant membership, tenant roles, and character ownership answer "which game does this account belong to?" They do not imply that every realm inside a tenant shares one undifferentiated set of gameplay state.
+
+FireMUD distinguishes between:
+
+- **Tenant-scoped identity and ownership** – platform accounts, tenant membership, role grants, and the fact that a character belongs to a tenant.
+- **Realm- or instance-scoped playable state** – the gameplay state that applies when a player enters a specific realm resolved to a specific `gameInstanceId`.
+
+Realm-scoped playable state may follow either of these patterns:
+
+- **Shared-state realm** – the realm uses the tenant's normal character state, so the same character identity, progression, and durable inventory are reused when the player enters that realm.
+- **Isolated-state realm** – the realm uses instance-local gameplay state for that `gameInstanceId`. Playtest forks are the canonical example: copied characters remain associated with the same platform account and tenant, but the fork keeps its own fork-local progression, inventory, and other runtime state.
+
+This distinction is normative for all realm-aware flows:
+
+- `REALMS` describes which player-addressable realms exist for a tenant.
+- `CHARS` lists the character choices valid for the resolved `{tenantId, gameInstanceId}` target.
+- `PLAY` binds the session to that same `{tenantId, gameInstanceId, characterId}` target.
+
+Services must therefore avoid collapsing "character belongs to tenant" into "all character-associated data is keyed only by tenant." Tenant ownership remains stable, while playable state may be shared across realms or isolated per realm according to the resolved realm policy.
+
 This model underpins both authentication and authorization:
 
 - Authentication always resolves a single platform `accountId`.
@@ -45,7 +67,7 @@ This model underpins both authentication and authorization:
 - `tenantId` values are represented as strings across gRPC and REST APIs and stored as string columns in service databases (for example `VARCHAR(36)` when UUIDs are used). Persistence models must treat `tenantId` as an opaque identifier, not as a user-facing value.
 - Gameplay clients may select worlds using `tenantSlug` values returned by `WORLDS` in the lobby flow, but `tenantSlug` must never be used as a substitute for `tenantId` in APIs or persistence outside of lobby selection.
 - Gameplay clients select a world and optional realm in the lobby flow, and the server resolves that selection to canonical `{tenantId, gameInstanceId}` values through the realm-routing contract.
-- Character data and progress are scoped per `tenantId`. A player may have different characters in different games.
+- Character ownership is scoped per `tenantId`, so a player may have different characters in different games. Realm-resolved playable state may either reuse tenant-shared character state or use isolated state scoped to the selected `gameInstanceId`.
 - Friend lists and guilds are maintained by the Social & Groups Service. Per-game friendships store `tenantId` plus player IDs, while account-to-account friendships reference global account IDs.
 
 ## Data Separation per Service
