@@ -37,7 +37,6 @@ This document outlines the **core functional and non-functional requirements** f
 - Players have a **single platform-wide account** that allows them to join multiple games, with **separate characters per game**.
 - Game creators can **host multiple games** with independent settings.
 - Hosted games may expose multiple player-addressable realms, including a default production realm and explicit non-production playtest forks used to validate changes against copied gameplay state without mutating production.
-- In v1, only the default production realm may be publicly discoverable to authenticated players who do not already hold tenant membership. Additional realms such as playtest forks require explicit access grants.
 
 ### 2.2 Game Design & Customization
 
