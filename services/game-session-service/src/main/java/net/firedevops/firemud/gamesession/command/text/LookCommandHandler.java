@@ -68,11 +68,15 @@ public final class LookCommandHandler {
   }
 
   private LookResult resolveLook(SessionContext context) {
+    String roomId =
+        StringUtils.hasText(context.roomInstanceId())
+            ? context.roomInstanceId()
+            : gameLogicProperties.getDefaultRoomId();
     return gameLogicClient.resolveLook(
         Long.toString(context.tenantId()),
         Long.toString(context.sessionId()),
         Long.toString(context.characterId()),
-        gameLogicProperties.getDefaultRoomId());
+        roomId);
   }
 
   private String mapStatusToError(StatusRuntimeException ex) {

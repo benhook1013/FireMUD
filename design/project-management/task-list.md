@@ -9,8 +9,10 @@ Use the vertical-slice docs in [`vertical-slices/`](./vertical-slices/) as the r
 - [Vertical Slice Ideas Index](vertical-slices/00-slice-ideas.md)
 - [Telnet to Gameplay](vertical-slices/01-task-list-telnet-to-gameplay-vertical-slice.md)
 - [Login and Session](vertical-slices/02-task-list-login-and-session-vertical-slice.md)
+- [Login and Session Hardening](vertical-slices/02.1-task-list-login-session-hardening-vertical-slice.md)
 - [Data-Driven LOOK](vertical-slices/03-task-list-data-driven-look-vertical-slice.md)
 - [Chat & SAY](vertical-slices/04-task-list-chat-and-social-vertical-slice.md)
+- [Movement](vertical-slices/05-task-list-movement-vertical-slice.md)
 
 ## Service Status Summaries
 

@@ -90,6 +90,7 @@ class SessionResumptionFlowTest {
             accountClient,
             commandService,
             devIsolatedProperties,
+            gameLogicProperties,
             devIsolatedRegistryProvider,
             meterRegistry);
     lookHandler =

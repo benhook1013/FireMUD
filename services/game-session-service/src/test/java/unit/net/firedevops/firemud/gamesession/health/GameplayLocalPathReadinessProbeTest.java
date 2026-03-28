@@ -32,6 +32,7 @@ class GameplayLocalPathReadinessProbeTest {
             9_223_372_036_854_770_001L,
             9_223_372_036_854_770_002L,
             0L,
+            "readiness-room",
             "readiness-probe");
     when(sessionContextService.findByTenantAndSessionId(anyLong(), anyLong()))
         .thenReturn(Optional.of(storedContext));

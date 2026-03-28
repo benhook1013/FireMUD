@@ -16,6 +16,7 @@ import net.firedevops.firemud.gamesession.service.SessionContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
+import org.springframework.util.StringUtils;
 
 /** Handles authenticated SAY-family text commands by speaking through Game Logic. */
 @Component
@@ -66,7 +67,9 @@ public class SayCommandHandler {
               Long.toString(context.tenantId()),
               Long.toString(context.sessionId()),
               Long.toString(context.characterId()),
-              gameLogicProperties.getDefaultRoomId(),
+              StringUtils.hasText(context.roomInstanceId())
+                  ? context.roomInstanceId()
+                  : gameLogicProperties.getDefaultRoomId(),
               aliasToken,
               message);
       if (!response.getSuccess()) {

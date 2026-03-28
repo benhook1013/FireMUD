@@ -64,7 +64,7 @@ class TextCommandInterpreterTest {
   private LoginCommandHandler loginHandler;
   private TextCommandInterpreter interpreter;
   private final SessionContext sessionContext =
-      new SessionContext(1L, 22L, 123L, 911L, 0L, "jwt-token");
+      new SessionContext(1L, 22L, 123L, 911L, 0L, "room-42", "jwt-token");
 
   @BeforeEach
   void setUp() {
@@ -86,6 +86,7 @@ class TextCommandInterpreterTest {
             accountClient,
             commandService,
             devIsolatedProperties,
+            gameLogicProperties,
             devIsolatedRegistryProvider,
             meterRegistry);
     GameInstance demoInstance = new GameInstance();
@@ -156,7 +157,7 @@ class TextCommandInterpreterTest {
         LookResult.newBuilder()
             .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("1021").build())
             .build();
-    when(gameLogicClient.resolveLook("22", "1", "911", "1021")).thenReturn(lookResult);
+    when(gameLogicClient.resolveLook("22", "1", "911", "room-42")).thenReturn(lookResult);
     when(lookTextRenderer.render(lookResult)).thenReturn("OK LOOK constructed");
     TextCommandInterpretationResult interpretation = interpreter.interpret("123", command, false);
 
@@ -242,5 +243,29 @@ class TextCommandInterpreterTest {
 
     assertTrue(interpretation.commandResult().accepted());
     verify(commandService).enqueue("999", "LOOK", false);
+  }
+
+  @Test
+  void movementCommandRequiresAuthentication() {
+    when(sessionAuthenticationService.isAuthenticated("321")).thenReturn(false);
+
+    TextCommandInterpretationResult interpretation =
+        interpreter.interpret("321", "MOVE north", false);
+
+    CommandEnqueueResult result = interpretation.commandResult();
+    assertFalse(result.accepted());
+    assertEquals("NOT_AUTHENTICATED", result.errorCode());
+    verify(commandService, never()).enqueue(anyString(), anyString(), anyBoolean());
+  }
+
+  @Test
+  void movementCommandIsEnqueuedWhenAuthenticated() {
+    when(sessionAuthenticationService.isAuthenticated("999")).thenReturn(true);
+    when(commandService.enqueue("999", "north", false)).thenReturn(CommandEnqueueResult.success());
+
+    TextCommandInterpretationResult interpretation = interpreter.interpret("999", "north", false);
+
+    assertTrue(interpretation.commandResult().accepted());
+    verify(commandService).enqueue("999", "north", false);
   }
 }
