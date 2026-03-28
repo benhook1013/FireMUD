@@ -32,9 +32,8 @@ import org.springframework.web.socket.handler.TextWebSocketHandler;
 
 @SuppressWarnings({"removal"})
 @Disabled(
-    "TODO: re-enable once Account/Redis/GameInstance persistence is wired; "
-        + "test currently depends on dev-isolated stubs "
-        + "(design/project-management/vertical-slices/02-task-list-login-and-session-vertical-slice.md#7-dev-mode-stubs-and-real-service-rollout)")
+    "TODO: re-enable after the generated gRPC control-plane/service classes are reliably present in "
+        + "the integration-test runtime; current context startup fails before the WebSocket path is exercised")
 @SpringBootTest(
     classes = GameSessionServiceApplication.class,
     webEnvironment = WebEnvironment.RANDOM_PORT,
@@ -106,5 +105,44 @@ class GameSessionWebSocketHandlerIntegrationTest {
     assertThat(latch.await(5, TimeUnit.SECONDS)).isTrue();
     verify(commandService).enqueue("42", "LOOK", false);
     assertThat(responsePayload.get()).isEqualTo(LookCommandConstants.LOOK_RESPONSE);
+  }
+
+  @Test
+  void websocketMovementCommandIsEnqueuedAndClientGetsMoveAck() throws Exception {
+    when(commandService.enqueue("42", "north", false)).thenReturn(CommandEnqueueResult.success());
+
+    StandardWebSocketClient client = new StandardWebSocketClient();
+    WebSocketHttpHeaders headers = new WebSocketHttpHeaders();
+    headers.add("X-Game-Instance-Id", "42");
+    AtomicReference<String> responsePayload = new AtomicReference<>();
+    CountDownLatch latch = new CountDownLatch(1);
+
+    client
+        .execute(
+            new TextWebSocketHandler() {
+              @Override
+              public void afterConnectionEstablished(WebSocketSession session) throws IOException {
+                session.sendMessage(new TextMessage("north"));
+              }
+
+              @Override
+              protected void handleTextMessage(WebSocketSession session, TextMessage message) {
+                responsePayload.set(message.getPayload());
+                latch.countDown();
+              }
+
+              @Override
+              public void handleTransportError(WebSocketSession session, Throwable exception) {
+                latch.countDown();
+                throw new RuntimeException(exception);
+              }
+            },
+            headers,
+            URI.create("ws://localhost:" + port + "/ws/game"))
+        .get(5, TimeUnit.SECONDS);
+
+    assertThat(latch.await(5, TimeUnit.SECONDS)).isTrue();
+    verify(commandService).enqueue("42", "north", false);
+    assertThat(responsePayload.get()).isEqualTo("OK MOVE");
   }
 }
