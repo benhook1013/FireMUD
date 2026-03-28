@@ -24,9 +24,9 @@ import tools.jackson.databind.ObjectMapper;
 
 @SuppressWarnings({})
 @Disabled(
-    "TODO: re-enable once Account/Redis/GameInstance persistence is wired; "
-        + "tests currently depend on the dev-isolated stubbed services "
-        + "(see design/project-management/vertical-slices/02-task-list-login-and-session-vertical-slice.md#7-dev-mode-stubs-and-real-service-rollout)")
+    "Historical dev-isolated smoke test. The current 02.1 login/session hardening slice keeps "
+        + "this disabled until it is either rewritten against the real Account/Redis/GameInstance "
+        + "path or intentionally removed because it only proves the legacy dev-isolated shortcut.")
 @ExtendWith(OutputCaptureExtension.class)
 @SpringBootTest(
     webEnvironment = WebEnvironment.RANDOM_PORT,
