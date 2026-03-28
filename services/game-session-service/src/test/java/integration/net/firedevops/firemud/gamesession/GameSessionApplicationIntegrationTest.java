@@ -18,7 +18,12 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 @SuppressWarnings("resource")
 @SpringBootTest(
     webEnvironment = WebEnvironment.RANDOM_PORT,
-    classes = GameSessionServiceApplication.class)
+    classes = GameSessionServiceApplication.class,
+    properties = {
+      "game-session.dev-isolated=false",
+      "spring.application.name=game-session-service",
+      "spring.grpc.server.port=0",
+    })
 class GameSessionApplicationIntegrationTest {
 
   @Container
