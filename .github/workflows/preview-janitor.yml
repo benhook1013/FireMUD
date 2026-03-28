@@ -1,0 +1,55 @@
+name: Preview Namespace Janitor
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  prune-stale-preview-namespaces:
+    name: Prune Stale Preview Namespaces
+    runs-on: ubuntu-latest
+    environment: pr-preview
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: v1.33.4
+
+      - name: Set up Helm
+        run: |
+          if ! command -v helm >/dev/null 2>&1; then
+            HELM_VERSION="v3.20.1"
+            INSTALL_DIR="$HOME/.local/bin"
+            mkdir -p "$INSTALL_DIR"
+            curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz" -o /tmp/helm.tgz
+            tar -xzf /tmp/helm.tgz -C /tmp
+            install /tmp/linux-amd64/helm "$INSTALL_DIR/helm"
+          fi
+          export PATH="$HOME/.local/bin:$PATH"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          helm version
+
+      - name: Write preview kubeconfig
+        env:
+          PREVIEW_KUBECONFIG: ${{ secrets.PREVIEW_KUBECONFIG }}
+        run: |
+          KUBECONFIG_PATH="$(bash ./dev-tools/preview/write-kubeconfig.sh)"
+          echo "KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"
+
+      - name: Verify preview cluster access
+        run: |
+          kubectl get namespace kube-system >/dev/null
+          kubectl auth can-i list namespaces --all-namespaces
+
+      - name: Prune stale preview namespaces
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          bash ./dev-tools/preview/prune-stale-preview-namespaces.sh --apply

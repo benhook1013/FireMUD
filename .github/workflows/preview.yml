@@ -159,7 +159,7 @@ jobs:
         env:
           PREVIEW_KUBECONFIG: ${{ secrets.PREVIEW_KUBECONFIG }}
         run: |
-          KUBECONFIG_PATH="$(./dev-tools/preview/write-kubeconfig.sh)"
+          KUBECONFIG_PATH="$(bash ./dev-tools/preview/write-kubeconfig.sh)"
           echo "KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"
 
       - name: Verify preview cluster access
@@ -168,17 +168,23 @@ jobs:
           kubectl auth can-i get clusterissuers.cert-manager.io --all-namespaces
           kubectl auth can-i list namespaces --all-namespaces
 
+      - name: Prune stale preview namespaces
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          bash ./dev-tools/preview/prune-stale-preview-namespaces.sh --apply
+
       - name: Enforce preview capacity
         env:
           PREVIEW_MAX_ACTIVE: ${{ vars.PREVIEW_MAX_ACTIVE }}
         run: |
-          ./dev-tools/preview/check-preview-capacity.sh \
+          bash ./dev-tools/preview/check-preview-capacity.sh \
             "${{ needs.preview-plan.outputs.namespace }}" \
             "${PREVIEW_MAX_ACTIVE:-2}"
 
       - name: Ensure preview namespace exists
         run: |
-          ./dev-tools/preview/ensure-preview-namespace.sh \
+          bash ./dev-tools/preview/ensure-preview-namespace.sh \
             "${{ needs.preview-plan.outputs.namespace }}" \
             "${{ needs.preview-plan.outputs.pr_number }}"
 
@@ -187,11 +193,11 @@ jobs:
           PREVIEW_GHCR_USERNAME: ${{ secrets.PREVIEW_GHCR_USERNAME }}
           PREVIEW_GHCR_TOKEN: ${{ secrets.PREVIEW_GHCR_TOKEN }}
         run: |
-          ./dev-tools/preview/ensure-ghcr-pull-secret.sh "${{ needs.preview-plan.outputs.namespace }}"
+          bash ./dev-tools/preview/ensure-ghcr-pull-secret.sh "${{ needs.preview-plan.outputs.namespace }}"
 
       - name: Ensure preview gRPC TLS secret exists
         run: |
-          ./dev-tools/preview/ensure-grpc-tls-secret.sh "${{ needs.preview-plan.outputs.namespace }}"
+          bash ./dev-tools/preview/ensure-grpc-tls-secret.sh "${{ needs.preview-plan.outputs.namespace }}"
 
       - name: Show namespace state
         run: |
@@ -201,7 +207,7 @@ jobs:
 
       - name: Render preview values
         run: |
-          ./dev-tools/preview/render-preview-values.sh \
+          bash ./dev-tools/preview/render-preview-values.sh \
             k8s/helm/firemud/values-preview.example.yaml \
             /tmp/preview-values.yaml \
             "${{ needs.preview-plan.outputs.pr_number }}" \
@@ -279,15 +285,11 @@ jobs:
         env:
           PREVIEW_KUBECONFIG: ${{ secrets.PREVIEW_KUBECONFIG }}
         run: |
-          KUBECONFIG_PATH="$(./dev-tools/preview/write-kubeconfig.sh)"
+          KUBECONFIG_PATH="$(bash ./dev-tools/preview/write-kubeconfig.sh)"
           echo "KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"
 
-      - name: Uninstall preview release if present
+      - name: Delete preview namespace and release
         run: |
-          helm uninstall "${{ needs.preview-plan.outputs.release_name }}" \
-            --namespace "${{ needs.preview-plan.outputs.namespace }}" \
-            --ignore-not-found || true
-
-      - name: Delete preview namespace if present
-        run: |
-          kubectl delete namespace "${{ needs.preview-plan.outputs.namespace }}" --ignore-not-found=true
+          bash ./dev-tools/preview/delete-preview-namespace.sh \
+            "${{ needs.preview-plan.outputs.namespace }}" \
+            "${{ needs.preview-plan.outputs.release_name }}"
