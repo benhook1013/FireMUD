@@ -184,9 +184,15 @@ Canonical player-facing examples:
 - `gameplay_ban` – `ERROR GAMEPLAY_BANNED You cannot enter this realm.`
 - `chat_mute` / `chat_ban` – `ERROR CHAT_RESTRICTED You cannot send messages in this realm.`
 
+Implementation note:
+
+- The current playable chat slice is room-local speech. Future slices are expected to differentiate speech mode from audience scope so game rules can support behavior such as target-limited whispers, directed tells, and topology-aware shouts or announcements that propagate across an area, region, map, or continent rather than assuming all communication is equivalent to `SAY`.
+
 ```plaintext
 Player → Game Session Service → Social & Groups Service → Logging & Admin Service
 ```
+
+Current gameplay implementation note: the first live chat slice is still centered on room-local `SAY`-family behavior. Future design work will need to make directed/private speech (`WHISPER`, `TELL`) and broader audible scopes (`area`, `map`, `region`, `continent`, channel-level) explicit, rather than treating them as cosmetic aliases of the room-broadcast path.
 
 ---
 
