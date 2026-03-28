@@ -98,7 +98,9 @@ public class TextCommandInterpreter {
   }
 
   private static boolean requiresGameplayAuthentication(TextCommandType type) {
-    return type == TextCommandType.LOOK || type == TextCommandType.SAY;
+    return type == TextCommandType.LOOK
+        || type == TextCommandType.SAY
+        || type == TextCommandType.MOVE;
   }
 
   private boolean isLookError(String text) {
