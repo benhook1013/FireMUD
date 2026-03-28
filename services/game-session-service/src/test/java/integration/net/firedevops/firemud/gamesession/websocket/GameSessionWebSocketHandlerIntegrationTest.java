@@ -9,15 +9,14 @@ import java.net.URI;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
-import net.firedevops.firemud.command.text.LookCommandConstants;
 import net.firedevops.firemud.gamesession.GameSessionServiceApplication;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.service.CommandService;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.boot.test.web.server.LocalServerPort;
+import org.springframework.data.redis.connection.RedisConnectionFactory;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.grpc.server.lifecycle.GrpcServerLifecycle;
 import org.springframework.test.context.ActiveProfiles;
@@ -31,9 +30,6 @@ import org.springframework.web.socket.client.standard.StandardWebSocketClient;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
 
 @SuppressWarnings({"removal"})
-@Disabled(
-    "TODO: re-enable after the generated gRPC control-plane/service classes are reliably present in "
-        + "the integration-test runtime; current context startup fails before the WebSocket path is exercised")
 @SpringBootTest(
     classes = GameSessionServiceApplication.class,
     webEnvironment = WebEnvironment.RANDOM_PORT,
@@ -42,6 +38,7 @@ import org.springframework.web.socket.handler.TextWebSocketHandler;
       "game-session.dev-isolated=true",
       "game-session.require-authenticated-commands=false",
       "firemud.database.enabled=false",
+      "spring.data.redis.repositories.enabled=false",
       "spring.application.name=game-session-service",
       "spring.grpc.server.port=0",
     })
@@ -65,6 +62,8 @@ class GameSessionWebSocketHandlerIntegrationTest {
   @MockitoBean private GrpcServerLifecycle grpcServerLifecycle;
 
   @MockitoBean private CommandService commandService;
+
+  @MockitoBean private RedisConnectionFactory redisConnectionFactory;
 
   @MockitoBean private RedisTemplate<String, Object> redisTemplate;
 
@@ -104,7 +103,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
 
     assertThat(latch.await(5, TimeUnit.SECONDS)).isTrue();
     verify(commandService).enqueue("42", "LOOK", false);
-    assertThat(responsePayload.get()).isEqualTo(LookCommandConstants.LOOK_RESPONSE);
+    assertThat(responsePayload.get()).isEqualTo("OK LOOK");
   }
 
   @Test
