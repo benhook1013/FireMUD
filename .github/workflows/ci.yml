@@ -179,6 +179,16 @@ jobs:
         with:
           scandir: dev-tools
 
+  workflow-lint:
+    name: GitHub Workflow Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: ⬇️ Checkout Code
+        uses: actions/checkout@v6
+
+      - name: 🧪 Validate GitHub Actions Workflows
+        uses: rhysd/actionlint@v1
+
   docs-check:
     name: Lint Docs and Links
     needs: [changes]
@@ -303,31 +313,15 @@ jobs:
 
   build-and-test:
     name: Build and Test (${{ matrix.service }})
-    needs: [changes, buf-check, docker-lint, shellcheck]
-    if: >-
-      ${{
-        github.event_name != 'pull_request' ||
-        needs.changes.outputs.run_all == 'true' ||
-        contains(needs.changes.outputs.affected_services, format('"{0}"', matrix.service))
-      }}
+    needs: [changes, buf-check, docker-lint, shellcheck, workflow-lint]
+    if: ${{ needs.changes.outputs.affected_services != '[]' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
         java-version: [21]
-        service:
-          - account-service
-          - automation-scripting-service
-          - entity-management-service
-          - game-design-service
-          - game-logic-service
-          - game-session-service
-          - logging-admin-service
-          - social-groups-service
-          - spring-cloud-gateway
-          - tcp-proxy-service
-          - world-management-service
+        service: ${{ fromJSON(needs.changes.outputs.affected_services) }}
 
     steps:
       - name: ⬇️ Checkout Code
