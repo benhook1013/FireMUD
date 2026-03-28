@@ -7,20 +7,29 @@ Use this file as the canonical AI instruction source for this repository.
 - Use Gradle task paths without a `services:` prefix (for example `./gradlew :tcp-proxy-service:test`, not `./gradlew :services:tcp-proxy-service:test`).
 - For heavier local Gradle tasks, run from WSL in this repo path (for example `/mnt/c/.../FireMUD`) to avoid Windows file-locking issues.
 - Do not manually hard-wrap lines in docs; let lines flow naturally.
-- For larger tasks that span multiple domain areas, prefer using subagents when the work can be split cleanly. This helps avoid dragging unnecessary context through the main thread, reduces token cost, and can safely parallelize independent work.
 - For code changes, run `./gradlew spotlessApply` before commit so formatting is normalized locally rather than relying on `check` or CI to catch drift.
 - For code changes, run `./gradlew check` before hand-off.
 - After `spotlessApply`, run the relevant `spotlessCheck` or `spotlessJavaCheck` task for touched services when formatting-sensitive files changed.
 - For markdown or design-document changes (especially under `design/`), run `./gradlew linkCheck lintMarkdown` before hand-off.
 - Treat `./gradlew linkCheck lintMarkdown` as mandatory hygiene when editing files: if these checks fail, fix the reported issues before hand-off even when the failures were pre-existing and not introduced by your change.
 
+## Subagent Use
+
+- Use subagents for bounded, parallelizable work that can proceed without blocking the immediate next local step.
+- Prefer the smallest capable subagent model first; escalate model size only when the task genuinely needs it.
+- Delegate more aggressively when token cost or main-thread context churn is becoming expensive.
+- Pass enough repo and task context in the subagent prompt that the worker can act without repeating broad discovery work.
+- Keep immediate blocker discovery and tightly coupled critical-path work local when waiting on delegation would stall progress.
+
 ## Subagent Ownership
 
 - Use subagents to reduce token cost and main-thread context load, not to duplicate work.
+- One write owner per file or file set at a time.
+- Spawning a subagent and then redoing the same write task locally is a failure mode, not a speedup.
 - When a subagent is assigned a write scope, treat that scope as owned by the subagent until it returns or is explicitly cancelled.
-- Do not make overlapping local edits in files currently owned by an in-flight subagent just because the main thread could do it faster.
-- While a write task is delegated, use the main thread only for non-overlapping inspection, other files, or genuinely separate work.
+- While a write task is delegated, use the main thread only for non-overlapping inspection, review preparation, validation planning, or genuinely separate work.
 - After a delegated write task returns, integrate or refine that result instead of redoing the same work from scratch unless the user explicitly asks for a different approach.
+- If a delegated worker stalls or fails, either reuse its partial work carefully or replace it cleanly, but do not silently duplicate the same write scope in parallel.
 
 ## Working Tree Safety
 
