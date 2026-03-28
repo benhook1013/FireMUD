@@ -18,8 +18,46 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Detect Smoke-Relevant Changes
+    runs-on: ubuntu-latest
+    outputs:
+      run_smoke: ${{ steps.compute.outputs.run_smoke }}
+    steps:
+      - name: Compute smoke scope
+        id: compute
+        uses: actions/github-script@v8
+        with:
+          script: |
+            if (context.eventName !== "pull_request") {
+              core.setOutput("run_smoke", "true");
+              return;
+            }
+
+            const files = await github.paginate(
+              github.rest.pulls.listFiles,
+              {
+                ...context.repo,
+                pull_number: context.payload.pull_request.number,
+                per_page: 100,
+              },
+              (response) => response.data.map((file) => file.filename)
+            );
+
+            const docsOnlyPredicate = (file) =>
+              file === "AGENTS.md" ||
+              file === "mkdocs.yml" ||
+              file.startsWith("design/") ||
+              file.startsWith("dev-tools/docs/") ||
+              file.endsWith(".md");
+
+            const runSmoke = files.some((file) => !docsOnlyPredicate(file));
+            core.setOutput("run_smoke", runSmoke ? "true" : "false");
+
   smoke-core:
     name: Core Smoke Tests
+    needs: [changes]
+    if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.run_smoke == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
@@ -75,8 +113,12 @@ jobs:
   smoke-gate:
     name: Smoke Gate
     runs-on: ubuntu-latest
-    needs: [smoke-core]
-    if: always()
+    needs: [changes, smoke-core]
+    if: >-
+      ${{
+        always() &&
+        (github.event_name != 'pull_request' || needs.changes.outputs.run_smoke == 'true')
+      }}
     steps:
       - name: Enforce successful smoke tests
         run: |
@@ -88,8 +130,13 @@ jobs:
   smoke-summary:
     name: Smoke Summary
     runs-on: ubuntu-latest
-    needs: [smoke-core, smoke-gate]
-    if: github.event_name == 'pull_request' && always()
+    needs: [changes, smoke-core, smoke-gate]
+    if: >-
+      ${{
+        github.event_name == 'pull_request' &&
+        always() &&
+        needs.changes.outputs.run_smoke == 'true'
+      }}
     steps:
       - name: 💬 Publish Smoke Summary Comment
         uses: actions/github-script@v8

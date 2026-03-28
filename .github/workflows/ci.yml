@@ -16,6 +16,113 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Detect CI-Relevant Changes
+    runs-on: ubuntu-latest
+    outputs:
+      run_all: ${{ steps.compute.outputs.run_all }}
+      affected_services: ${{ steps.compute.outputs.affected_services }}
+      docs_changed: ${{ steps.compute.outputs.docs_changed }}
+      frontend_changed: ${{ steps.compute.outputs.frontend_changed }}
+    steps:
+      - name: Compute affected jobs
+        id: compute
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const allServices = [
+              "account-service",
+              "automation-scripting-service",
+              "entity-management-service",
+              "game-design-service",
+              "game-logic-service",
+              "game-session-service",
+              "logging-admin-service",
+              "social-groups-service",
+              "spring-cloud-gateway",
+              "tcp-proxy-service",
+              "world-management-service",
+            ];
+
+            if (context.eventName !== "pull_request") {
+              core.setOutput("run_all", "true");
+              core.setOutput("affected_services", JSON.stringify(allServices));
+              core.setOutput("docs_changed", "true");
+              core.setOutput("frontend_changed", "true");
+              return;
+            }
+
+            const files = await github.paginate(
+              github.rest.pulls.listFiles,
+              {
+                ...context.repo,
+                pull_number: context.payload.pull_request.number,
+                per_page: 100,
+              },
+              (response) => response.data.map((file) => file.filename)
+            );
+
+            const sharedPrefixes = [
+              "buildSrc/",
+              "gradle/",
+              "protos/",
+              "config/checkstyle/",
+              "config/protobuf/",
+              "config/security/",
+              "config/spotbugs/",
+              "services/common-data-runtime/",
+              "services/common-library/",
+              "services/common-platform-core/",
+              "services/common-saga/",
+              "services/common-security/",
+              "services/common-test-support/",
+              "services/common-web-support/",
+            ];
+            const sharedFiles = new Set([
+              "build.gradle.kts",
+              "settings.gradle.kts",
+              "gradle.properties",
+              ".github/workflows/ci.yml",
+            ]);
+
+            const docsPredicate = (file) =>
+              file === "AGENTS.md" ||
+              file === "mkdocs.yml" ||
+              file.startsWith("design/") ||
+              file.startsWith("dev-tools/docs/") ||
+              file.endsWith(".md");
+
+            const frontendPredicate = (file) =>
+              file.startsWith("web-client/") ||
+              file.startsWith("config/openapi/");
+
+            const runAll = files.some(
+              (file) =>
+                sharedFiles.has(file) ||
+                sharedPrefixes.some((prefix) => file.startsWith(prefix))
+            );
+
+            const affected = new Set();
+            if (runAll) {
+              allServices.forEach((service) => affected.add(service));
+            } else {
+              for (const file of files) {
+                for (const service of allServices) {
+                  if (file.startsWith(`services/${service}/`)) {
+                    affected.add(service);
+                  }
+                }
+              }
+            }
+
+            const docsChanged = runAll || files.some((file) => docsPredicate(file));
+            const frontendChanged = runAll || files.some((file) => frontendPredicate(file));
+
+            core.setOutput("run_all", runAll ? "true" : "false");
+            core.setOutput("affected_services", JSON.stringify([...affected]));
+            core.setOutput("docs_changed", docsChanged ? "true" : "false");
+            core.setOutput("frontend_changed", frontendChanged ? "true" : "false");
+
   buf-check:
     name: Buf Generation
     runs-on: ubuntu-latest
@@ -74,6 +181,8 @@ jobs:
 
   docs-check:
     name: Lint Docs and Links
+    needs: [changes]
+    if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.docs_changed == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - name: ⬇️ Checkout Code
@@ -106,6 +215,8 @@ jobs:
 
   frontend-checks:
     name: Frontend Checks
+    needs: [changes]
+    if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.frontend_changed == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - name: ⬇️ Checkout Code
@@ -192,7 +303,13 @@ jobs:
 
   build-and-test:
     name: Build and Test (${{ matrix.service }})
-    needs: [buf-check, docker-lint, shellcheck]
+    needs: [changes, buf-check, docker-lint, shellcheck]
+    if: >-
+      ${{
+        github.event_name != 'pull_request' ||
+        needs.changes.outputs.run_all == 'true' ||
+        contains(needs.changes.outputs.affected_services, format('"{0}"', matrix.service))
+      }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
