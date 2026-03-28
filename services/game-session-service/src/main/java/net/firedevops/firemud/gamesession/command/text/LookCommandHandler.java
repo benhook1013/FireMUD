@@ -67,6 +67,29 @@ public final class LookCommandHandler {
     }
   }
 
+  public String describeProtocol(String sessionId) {
+    Optional<SessionContext> maybeContext =
+        sessionAuthenticationService.resolveSessionContext(sessionId);
+    if (maybeContext.isEmpty()) {
+      meterRegistry.counter(INVOCATIONS_METRIC, "tenantId", "unknown").increment();
+      return null;
+    }
+    SessionContext context = maybeContext.get();
+    String rendered = describe(sessionId);
+    if (rendered == null || rendered.isBlank() || rendered.startsWith("ERROR ")) {
+      return rendered;
+    }
+    return buildProtocolResponse(rendered);
+  }
+
+  String renderProtocol(SessionContext context, LookResult lookResult) {
+    String rendered = lookTextRenderer.render(lookResult);
+    if (!devIsolatedProperties.isDevIsolated()) {
+      cacheLook(context, lookResult, rendered);
+    }
+    return buildProtocolResponse(rendered);
+  }
+
   private LookResult resolveLook(SessionContext context) {
     String roomId =
         StringUtils.hasText(context.roomInstanceId())
@@ -151,7 +174,7 @@ public final class LookCommandHandler {
     return lookCacheService.get(tenantId, sessionId).map(LookCacheService.CachedLook::protocolText);
   }
 
-  private String buildProtocolResponse(String rendered) {
+  String buildProtocolResponse(String rendered) {
     return "OK LOOK\n" + rendered + "\n\n";
   }
 

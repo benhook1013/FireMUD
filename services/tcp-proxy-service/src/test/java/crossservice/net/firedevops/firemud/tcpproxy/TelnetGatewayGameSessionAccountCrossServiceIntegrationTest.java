@@ -196,6 +196,43 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
                     && request.getTenantId().equals(String.valueOf(TENANT_ID)));
   }
 
+  @Test
+  void telnetMovementMatchesCanonicalDestinationLook() throws Exception {
+    ensureTestServicesStarted();
+    String telnetMoveResponse;
+    String telnetLookResponse;
+    String telnetInvalidMoveResponse;
+    try (Socket socket = new Socket("localhost", telnetServer.getPort());
+        PrintWriter writer =
+            new PrintWriter(
+                new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.ISO_8859_1),
+                true);
+        BufferedReader reader =
+            new BufferedReader(
+                new InputStreamReader(socket.getInputStream(), StandardCharsets.ISO_8859_1))) {
+      socket.setSoTimeout((int) COMMAND_WAIT.toMillis());
+      writer.println("SESSION " + GAME_SESSION.sessionId() + " " + TENANT_ID);
+      writer.println("LOGIN demo@example.com swordfish");
+      assertThat(readBlockAfterContains(reader, "Logged in as demo@example.com"))
+          .contains("Logged in as demo@example.com");
+
+      writer.println("MOVE north");
+      telnetMoveResponse = readBlockAfterContainsOrTimeout(reader, "OK LOOK");
+
+      writer.println("LOOK");
+      telnetLookResponse = readBlockAfterContainsOrTimeout(reader, "OK LOOK");
+
+      writer.println("MOVE west");
+      telnetInvalidMoveResponse = readLineAfterContains(reader, "ERROR INVALID_EXIT");
+    }
+
+    String destinationLook =
+        LookTestFixtures.canonicalLookText(LookTestFixtures.DESTINATION_ROOM_ID);
+    assertThat(telnetMoveResponse.trim()).isEqualTo(destinationLook.trim());
+    assertThat(telnetLookResponse.trim()).isEqualTo(destinationLook.trim());
+    assertThat(telnetInvalidMoveResponse).contains("ERROR INVALID_EXIT");
+  }
+
   private static synchronized void ensureTestServicesStarted() {
     if (ACCOUNT_STUB == null) {
       try {
@@ -380,6 +417,40 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
       }
     }
     return builder.toString();
+  }
+
+  private static String readLineAfterContains(BufferedReader reader, String expectedSubstring)
+      throws IOException {
+    String line;
+    while ((line = reader.readLine()) != null) {
+      if (line.contains(expectedSubstring)) {
+        return line;
+      }
+    }
+    return "";
+  }
+
+  private static String readBlockAfterContainsOrTimeout(
+      BufferedReader reader, String expectedSubstring) throws IOException {
+    StringBuilder builder = new StringBuilder();
+    boolean matched = false;
+    while (true) {
+      String line;
+      try {
+        line = reader.readLine();
+      } catch (java.net.SocketTimeoutException ex) {
+        return builder.toString();
+      }
+      if (line == null) {
+        return builder.toString();
+      }
+      builder.append(line).append("\n");
+      if (!matched && line.contains(expectedSubstring)) {
+        matched = true;
+      } else if (matched && line.isEmpty()) {
+        return builder.toString();
+      }
+    }
   }
 
   private static final class AccountServiceStub extends AccountServiceGrpc.AccountServiceImplBase {

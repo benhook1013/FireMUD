@@ -179,4 +179,71 @@ class GameSessionWebSocketHandlerIntegrationTest {
             eq("Login Hall text"),
             eq("OK LOOK\nLogin Hall text\n\n"));
   }
+
+  @Test
+  void websocketMoveReturnsDestinationLookAndUpdatesSessionContext() throws Exception {
+    LookResult destinationLook =
+        LookResult.newBuilder()
+            .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("2045").build())
+            .setRoomName("North Hall")
+            .setShortDescription("A northern hall")
+            .setLongDescription("A northern hall used for movement verification.")
+            .build();
+    when(gameLogicClient.resolveMove(eq("22"), eq("42"), eq("123"), eq("1021"), eq("north")))
+        .thenReturn(
+            net.firedevops.firemud.gamelogic.v1.MoveResult.newBuilder()
+                .setSuccess(true)
+                .setDestinationLook(destinationLook)
+                .build());
+    when(lookTextRenderer.render(eq(destinationLook))).thenReturn("North Hall text");
+
+    StandardWebSocketClient client = new StandardWebSocketClient();
+    WebSocketHttpHeaders headers = new WebSocketHttpHeaders();
+    headers.add("X-Game-Instance-Id", "42");
+    List<String> payloads = new java.util.concurrent.CopyOnWriteArrayList<>();
+    CountDownLatch latch = new CountDownLatch(2);
+
+    var future =
+        client.execute(
+            new TextWebSocketHandler() {
+              @Override
+              public void afterConnectionEstablished(WebSocketSession session) throws IOException {
+                session.sendMessage(new TextMessage("LOGIN demo@example.com swordfish"));
+                session.sendMessage(new TextMessage("north"));
+              }
+
+              @Override
+              protected void handleTextMessage(WebSocketSession session, TextMessage message) {
+                payloads.add(message.getPayload());
+                latch.countDown();
+              }
+
+              @Override
+              public void handleTransportError(WebSocketSession session, Throwable exception) {
+                latch.countDown();
+                throw new RuntimeException(exception);
+              }
+            },
+            headers,
+            URI.create("ws://localhost:" + port + "/ws/game"));
+
+    WebSocketSession session = future.get(5, TimeUnit.SECONDS);
+    assertThat(latch.await(5, TimeUnit.SECONDS)).isTrue();
+    session.close();
+
+    assertThat(payloads).hasSizeGreaterThanOrEqualTo(2);
+    assertThat(payloads.get(0)).startsWith("OK LOGIN");
+    assertThat(payloads.get(1)).isEqualTo("OK LOOK\nNorth Hall text\n\n");
+    assertThat(sessionContextService.findByTenantAndSessionId(22L, 42L))
+        .hasValueSatisfying(context -> assertThat(context.roomInstanceId()).isEqualTo("2045"));
+
+    verify(gameLogicClient).resolveMove("22", "42", "123", "1021", "north");
+    verify(lookCacheService)
+        .cache(
+            eq(22L),
+            eq(42L),
+            eq("2045"),
+            eq("North Hall text"),
+            eq("OK LOOK\nNorth Hall text\n\n"));
+  }
 }

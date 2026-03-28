@@ -12,6 +12,7 @@ public class TextCommandInterpreter {
   private final CommandService commandService;
   private final LookCommandHandler lookHandler;
   private final LoginCommandHandler loginHandler;
+  private final MoveCommandHandler moveHandler;
   private final SessionAuthenticationService sessionAuthenticationService;
   private final SayCommandHandler sayHandler;
   private final TextCommandParser parser;
@@ -21,12 +22,14 @@ public class TextCommandInterpreter {
       CommandService commandService,
       LookCommandHandler lookHandler,
       LoginCommandHandler loginHandler,
+      MoveCommandHandler moveHandler,
       SessionAuthenticationService sessionAuthenticationService,
       SayCommandHandler sayHandler) {
     this(
         commandService,
         lookHandler,
         loginHandler,
+        moveHandler,
         sessionAuthenticationService,
         sayHandler,
         new TextCommandParser());
@@ -36,12 +39,14 @@ public class TextCommandInterpreter {
       CommandService commandService,
       LookCommandHandler lookHandler,
       LoginCommandHandler loginHandler,
+      MoveCommandHandler moveHandler,
       SessionAuthenticationService sessionAuthenticationService,
       SayCommandHandler sayHandler,
       TextCommandParser parser) {
     this.commandService = Objects.requireNonNull(commandService, "commandService must not be null");
     this.lookHandler = Objects.requireNonNull(lookHandler, "lookHandler must not be null");
     this.loginHandler = Objects.requireNonNull(loginHandler, "loginHandler must not be null");
+    this.moveHandler = Objects.requireNonNull(moveHandler, "moveHandler must not be null");
     this.sessionAuthenticationService =
         Objects.requireNonNull(
             sessionAuthenticationService, "sessionAuthenticationService must not be null");
@@ -71,16 +76,22 @@ public class TextCommandInterpreter {
           loginResult.commandResult(), loginResult.responseText());
     }
 
+    if (requiresGameplayAuthentication(command.type())
+        && !sessionAuthenticationService.isAuthenticated(sessionId)) {
+      return new TextCommandInterpretationResult(
+          CommandEnqueueResult.failure("NOT_AUTHENTICATED", "Login required"), null);
+    }
+
     if (command.type() == TextCommandType.SAY) {
       SayCommandHandlingResult sayResult = sayHandler.handle(sessionId, command);
       return new TextCommandInterpretationResult(
           sayResult.commandResult(), sayResult.responseText());
     }
 
-    if (requiresGameplayAuthentication(command.type())
-        && !sessionAuthenticationService.isAuthenticated(sessionId)) {
+    if (command.type() == TextCommandType.MOVE) {
+      MoveCommandHandlingResult moveResult = moveHandler.handle(sessionId, command);
       return new TextCommandInterpretationResult(
-          CommandEnqueueResult.failure("NOT_AUTHENTICATED", "Login required"), null);
+          moveResult.commandResult(), moveResult.responseText(), true);
     }
 
     CommandEnqueueResult enqueueResult =

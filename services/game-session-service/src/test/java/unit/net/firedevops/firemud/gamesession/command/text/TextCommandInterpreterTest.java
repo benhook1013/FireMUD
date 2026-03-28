@@ -58,6 +58,7 @@ class TextCommandInterpreterTest {
           lookCacheService,
           devIsolatedProperties);
   private final AccountClient accountClient = Mockito.mock(AccountClient.class);
+  private final MoveCommandHandler moveHandler = Mockito.mock(MoveCommandHandler.class);
   private final SayCommandHandler sayHandler = Mockito.mock(SayCommandHandler.class);
   private final ObjectProvider<DevIsolatedGameInstanceRegistry> devIsolatedRegistryProvider =
       Mockito.mock(ObjectProvider.class);
@@ -99,7 +100,12 @@ class TextCommandInterpreterTest {
         .thenReturn(Optional.of(sessionContext));
     interpreter =
         new TextCommandInterpreter(
-            commandService, lookHandler, loginHandler, sessionAuthenticationService, sayHandler);
+            commandService,
+            lookHandler,
+            loginHandler,
+            moveHandler,
+            sessionAuthenticationService,
+            sayHandler);
   }
 
   @Test
@@ -121,6 +127,7 @@ class TextCommandInterpreterTest {
             commandService,
             mockLookHandler,
             loginHandler,
+            moveHandler,
             sessionAuthenticationService,
             sayHandler);
     when(commandService.enqueue("123", "LOOK", false)).thenReturn(CommandEnqueueResult.success());
@@ -247,7 +254,10 @@ class TextCommandInterpreterTest {
 
   @Test
   void movementCommandRequiresAuthentication() {
-    when(sessionAuthenticationService.isAuthenticated("321")).thenReturn(false);
+    when(moveHandler.handle(Mockito.eq("321"), Mockito.any(TextCommand.class)))
+        .thenReturn(
+            new MoveCommandHandlingResult(
+                CommandEnqueueResult.failure("NOT_AUTHENTICATED", "Login required"), null));
 
     TextCommandInterpretationResult interpretation =
         interpreter.interpret("321", "MOVE north", false);
@@ -260,12 +270,17 @@ class TextCommandInterpreterTest {
 
   @Test
   void movementCommandIsEnqueuedWhenAuthenticated() {
-    when(sessionAuthenticationService.isAuthenticated("999")).thenReturn(true);
-    when(commandService.enqueue("999", "north", false)).thenReturn(CommandEnqueueResult.success());
+    MoveCommandHandlingResult moveResult =
+        new MoveCommandHandlingResult(CommandEnqueueResult.success(), "OK LOOK\nNorth room\n\n");
+    when(moveHandler.handle(Mockito.eq("999"), Mockito.any(TextCommand.class)))
+        .thenReturn(moveResult);
 
     TextCommandInterpretationResult interpretation = interpreter.interpret("999", "north", false);
 
     assertTrue(interpretation.commandResult().accepted());
-    verify(commandService).enqueue("999", "north", false);
+    assertEquals("OK LOOK\nNorth room\n\n", interpretation.responseText());
+    assertTrue(interpretation.protocolResponse());
+    verify(moveHandler).handle(Mockito.eq("999"), Mockito.any(TextCommand.class));
+    verify(commandService, never()).enqueue("999", "north", false);
   }
 }

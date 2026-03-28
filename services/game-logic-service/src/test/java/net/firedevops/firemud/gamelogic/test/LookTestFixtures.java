@@ -31,12 +31,14 @@ public final class LookTestFixtures {
                 + "into the shadowy archway to the north.")
         .addExits(
             RoomExitSnapshot.newBuilder()
+                .setDirection("NORTH")
                 .setLabel("NORTH")
                 .setTargetRoomInstanceId("R-3042")
                 .setDescription("arched passage leading toward the cavern mouth")
                 .build())
         .addExits(
             RoomExitSnapshot.newBuilder()
+                .setDirection("EAST")
                 .setLabel("EAST")
                 .setTargetRoomInstanceId("R-2045")
                 .setDescription("narrow fissure descending toward the forges")
