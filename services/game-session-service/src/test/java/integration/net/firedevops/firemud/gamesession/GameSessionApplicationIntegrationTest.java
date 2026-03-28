@@ -3,7 +3,6 @@ package net.firedevops.firemud.gamesession;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import net.firedevops.firemud.test.HttpTestSupport;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
@@ -20,7 +19,6 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 @SpringBootTest(
     webEnvironment = WebEnvironment.RANDOM_PORT,
     classes = GameSessionServiceApplication.class)
-@Disabled("integration environment not configured")
 class GameSessionApplicationIntegrationTest {
 
   @Container
