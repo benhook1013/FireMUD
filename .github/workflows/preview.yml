@@ -85,13 +85,15 @@ jobs:
           if [ -z "$IMAGE_TAG" ]; then
             IMAGE_TAG="pr-${PR_NUMBER}-${HEAD_SHA:0:8}"
           fi
-          echo "action=${ACTION}" >> "$GITHUB_OUTPUT"
-          echo "pr_number=${PR_NUMBER}" >> "$GITHUB_OUTPUT"
-          echo "namespace=pr-${PR_NUMBER}" >> "$GITHUB_OUTPUT"
-          echo "release_name=pr-${PR_NUMBER}" >> "$GITHUB_OUTPUT"
-          echo "hostname=pr-${PR_NUMBER}.${PREVIEW_DOMAIN}" >> "$GITHUB_OUTPUT"
-          echo "image_tag=${IMAGE_TAG}" >> "$GITHUB_OUTPUT"
-          echo "head_sha=${HEAD_SHA}" >> "$GITHUB_OUTPUT"
+          {
+            echo "action=${ACTION}"
+            echo "pr_number=${PR_NUMBER}"
+            echo "namespace=pr-${PR_NUMBER}"
+            echo "release_name=pr-${PR_NUMBER}"
+            echo "hostname=pr-${PR_NUMBER}.${PREVIEW_DOMAIN}"
+            echo "image_tag=${IMAGE_TAG}"
+            echo "head_sha=${HEAD_SHA}"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Explain current state
         run: |

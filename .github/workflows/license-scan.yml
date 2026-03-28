@@ -65,8 +65,10 @@ jobs:
       - name: Summarize ORT report
         if: github.event_name == 'pull_request'
         run: |
-          SUMMARY_FILE=$(ls "${{ steps.ort.outputs.results-path }}/scan-summary-*.md" 2>/dev/null | head -n 1)
+          SUMMARY_FILE=$(find "${{ steps.ort.outputs.results-path }}" -maxdepth 1 -name 'scan-summary-*.md' -print | head -n 1)
           if [ -f "$SUMMARY_FILE" ]; then
-            echo "### 📜 License Scan Summary" >> $GITHUB_STEP_SUMMARY
-            cat "$SUMMARY_FILE" >> $GITHUB_STEP_SUMMARY
+            {
+              echo "### 📜 License Scan Summary"
+              cat "$SUMMARY_FILE"
+            } >> "$GITHUB_STEP_SUMMARY"
           fi

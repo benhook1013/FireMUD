@@ -306,7 +306,7 @@ jobs:
           rm -rf "$DRIVER_DIR"
           mkdir -p "$DRIVER_DIR"
           unzip -q /tmp/chromedriver-linux64.zip -d "$DRIVER_DIR"
-          echo "CHROMEDRIVER_PATH=$DRIVER_DIR/chromedriver-linux64/chromedriver" >> $GITHUB_ENV
+          echo "CHROMEDRIVER_PATH=$DRIVER_DIR/chromedriver-linux64/chromedriver" >> "$GITHUB_ENV"
 
       - name: ♿ Run Accessibility Audit
         run: |
@@ -370,7 +370,7 @@ jobs:
             echo "Coverage file not found" >&2
             PERCENT=0
           fi
-          echo "percent=$PERCENT" >> $GITHUB_OUTPUT
+          echo "percent=$PERCENT" >> "$GITHUB_OUTPUT"
 
       - name: 📤 Upload Coverage Report
         uses: actions/upload-artifact@v7
