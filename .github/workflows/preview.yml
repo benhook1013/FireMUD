@@ -4,7 +4,6 @@ on:
   pull_request:
     types:
       - opened
-      - synchronize
       - reopened
       - closed
   workflow_dispatch:
@@ -26,6 +25,11 @@ on:
         required: false
         default: ""
         type: string
+      head_sha:
+        description: PR head SHA to align the preview namespace with
+        required: false
+        default: ""
+        type: string
       preview_domain:
         description: Preview DNS suffix (for example preview.firedevops.net)
         required: false
@@ -39,7 +43,7 @@ permissions:
   pull-requests: write
 
 concurrency:
-  group: preview-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.ref }}
+  group: preview-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || inputs.pr_number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -54,27 +58,32 @@ jobs:
       release_name: ${{ steps.derive.outputs.release_name }}
       hostname: ${{ steps.derive.outputs.hostname }}
       image_tag: ${{ steps.derive.outputs.image_tag }}
+      head_sha: ${{ steps.derive.outputs.head_sha }}
     steps:
       - name: Derive preview identifiers
         id: derive
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             PR_NUMBER="${{ github.event.pull_request.number }}"
+            HEAD_SHA="${{ github.event.pull_request.head.sha }}"
             PREVIEW_DOMAIN="preview.firedevops.net"
             if [ "${{ github.event.action }}" = "closed" ]; then
               ACTION="destroy"
             else
               ACTION="deploy"
             fi
-            IMAGE_TAG="pr-${PR_NUMBER}-${GITHUB_SHA::8}"
           else
             PR_NUMBER="${{ inputs.pr_number }}"
+            HEAD_SHA="${{ inputs.head_sha }}"
             PREVIEW_DOMAIN="${{ inputs.preview_domain }}"
             ACTION="${{ inputs.action }}"
             IMAGE_TAG="${{ inputs.image_tag }}"
           fi
+          if [ -z "$HEAD_SHA" ]; then
+            HEAD_SHA="${GITHUB_SHA}"
+          fi
           if [ -z "$IMAGE_TAG" ]; then
-            IMAGE_TAG="pr-${PR_NUMBER}-${GITHUB_SHA::8}"
+            IMAGE_TAG="pr-${PR_NUMBER}-${HEAD_SHA:0:8}"
           fi
           echo "action=${ACTION}" >> "$GITHUB_OUTPUT"
           echo "pr_number=${PR_NUMBER}" >> "$GITHUB_OUTPUT"
@@ -82,6 +91,7 @@ jobs:
           echo "release_name=pr-${PR_NUMBER}" >> "$GITHUB_OUTPUT"
           echo "hostname=pr-${PR_NUMBER}.${PREVIEW_DOMAIN}" >> "$GITHUB_OUTPUT"
           echo "image_tag=${IMAGE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "head_sha=${HEAD_SHA}" >> "$GITHUB_OUTPUT"
 
       - name: Explain current state
         run: |
@@ -124,6 +134,7 @@ jobs:
           release_name=${{ steps.derive.outputs.release_name }}
           hostname=${{ steps.derive.outputs.hostname }}
           image_tag=${{ steps.derive.outputs.image_tag }}
+          head_sha=${{ steps.derive.outputs.head_sha }}
           preview_max_active=${PREVIEW_MAX_ACTIVE:-2}
           EOF
 
@@ -232,6 +243,14 @@ jobs:
           path: |
             /tmp/preview-values.yaml
             /tmp/preview-rendered.yaml
+
+      - name: Record reconciled preview target
+        run: |
+          bash ./dev-tools/preview/annotate-preview-namespace.sh \
+            "${{ needs.preview-plan.outputs.namespace }}" \
+            "${{ needs.preview-plan.outputs.pr_number }}" \
+            "${{ needs.preview-plan.outputs.head_sha }}" \
+            "${{ needs.preview-plan.outputs.image_tag }}"
 
       - name: Explain deployment gate
         run: |

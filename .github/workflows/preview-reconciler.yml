@@ -1,0 +1,64 @@
+name: Preview Reconciler
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+  pull-requests: read
+
+jobs:
+  reconcile-previews:
+    name: Reconcile Open PR Previews
+    runs-on: ubuntu-latest
+    environment: pr-preview
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: v1.33.4
+
+      - name: Write preview kubeconfig
+        env:
+          PREVIEW_KUBECONFIG: ${{ secrets.PREVIEW_KUBECONFIG }}
+        run: |
+          KUBECONFIG_PATH="$(bash ./dev-tools/preview/write-kubeconfig.sh)"
+          echo "KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"
+
+      - name: Verify preview cluster access
+        run: |
+          kubectl get namespace kube-system >/dev/null
+          kubectl auth can-i list namespaces --all-namespaces
+
+      - name: Dispatch preview deploys for drifted PRs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/${GITHUB_REPOSITORY}/pulls?state=open&per_page=100" \
+            --jq '.[] | [.number, .head.ref, .head.sha] | @tsv' | \
+          while IFS=$'\t' read -r pr_number head_ref head_sha; do
+            namespace="pr-${pr_number}"
+            desired_image_tag="pr-${pr_number}-${head_sha:0:8}"
+            current_head_sha="$(kubectl get namespace "${namespace}" -o jsonpath='{.metadata.annotations.firemud\.dev/last-preview-head-sha}' 2>/dev/null || true)"
+
+            if [[ "${current_head_sha}" == "${head_sha}" ]]; then
+              echo "Preview ${namespace} already aligned to ${head_sha}"
+              continue
+            fi
+
+            echo "Dispatching preview deploy for PR #${pr_number} (${head_sha}) on ref ${head_ref}"
+            gh api \
+              --method POST \
+              "repos/${GITHUB_REPOSITORY}/actions/workflows/preview.yml/dispatches" \
+              -f ref="${head_ref}" \
+              -F inputs[action]=deploy \
+              -F inputs[pr_number]="${pr_number}" \
+              -F inputs[image_tag]="${desired_image_tag}" \
+              -F inputs[head_sha]="${head_sha}" \
+              -F inputs[preview_domain]=preview.firedevops.net
+          done
