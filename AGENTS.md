@@ -14,6 +14,14 @@ Use this file as the canonical AI instruction source for this repository.
 - For markdown or design-document changes (especially under `design/`), run `./gradlew linkCheck lintMarkdown` before hand-off.
 - Treat `./gradlew linkCheck lintMarkdown` as mandatory hygiene when editing files: if these checks fail, fix the reported issues before hand-off even when the failures were pre-existing and not introduced by your change.
 
+## Subagent Ownership
+
+- Use subagents to reduce token cost and main-thread context load, not to duplicate work.
+- When a subagent is assigned a write scope, treat that scope as owned by the subagent until it returns or is explicitly cancelled.
+- Do not make overlapping local edits in files currently owned by an in-flight subagent just because the main thread could do it faster.
+- While a write task is delegated, use the main thread only for non-overlapping inspection, other files, or genuinely separate work.
+- After a delegated write task returns, integrate or refine that result instead of redoing the same work from scratch unless the user explicitly asks for a different approach.
+
 ## Working Tree Safety
 
 - Expect dirty worktrees with unrelated edits from parallel AI or human sessions.

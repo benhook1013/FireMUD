@@ -13,21 +13,12 @@ import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
 import java.io.PrintWriter;
 import java.net.Socket;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
-import java.net.http.WebSocket;
-import java.net.http.WebSocket.Listener;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CompletionStage;
 import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.TimeUnit;
 import javax.sql.DataSource;
 import net.firedevops.firemud.account.v1.AccountServiceGrpc;
 import net.firedevops.firemud.account.v1.AuthenticateRequest;
@@ -39,25 +30,25 @@ import net.firedevops.firemud.gamesession.GameSessionServiceApplication;
 import net.firedevops.firemud.gamesession.dto.GameInstanceDto;
 import net.firedevops.firemud.gamesession.dto.StartSessionRequest;
 import net.firedevops.firemud.gamesession.service.GameInstanceService;
-import net.firedevops.firemud.gamesession.test.ChatTestFixtures;
 import net.firedevops.firemud.gamesession.test.LookTestFixtures;
-import net.firedevops.firemud.gamesession.test.stubs.ChatEntityManagementStubServer;
 import net.firedevops.firemud.gamesession.test.stubs.EntityManagementStubServer;
-import net.firedevops.firemud.gamesession.test.stubs.SocialGroupsStubServer;
 import net.firedevops.firemud.gamesession.test.stubs.WorldManagementStubServer;
 import net.firedevops.firemud.springcloudgateway.service.GatewayRoute;
 import net.firedevops.firemud.springcloudgateway.service.GatewayRouteService;
 import net.firedevops.firemud.tcpproxy.stub.GatewayStubApplication;
 import net.firedevops.firemud.tcpproxy.telnet.TelnetServer;
+import net.firedevops.firemud.test.HttpTestSupport;
 import org.junit.jupiter.api.AfterAll;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.builder.SpringApplicationBuilder;
+import org.springframework.boot.health.contributor.Health;
+import org.springframework.boot.health.contributor.HealthIndicator;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.boot.web.server.context.WebServerApplicationContext;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.context.annotation.Bean;
@@ -80,7 +71,6 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
 @Testcontainers(disabledWithoutDocker = true)
-@Disabled("Cross-service telnet/gateway sample flow is stale after protocol and design changes")
 @SuppressWarnings("resource")
 @SpringBootTest(
     webEnvironment = WebEnvironment.RANDOM_PORT,
@@ -104,14 +94,14 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
 
   private static AccountServiceStub ACCOUNT_STUB;
   private static WorldManagementStubServer WORLD_STUB;
-  private static ChatEntityManagementStubServer CHAT_ENTITY_STUB;
   private static EntityManagementStubServer ENTITY_STUB;
-  private static SocialGroupsStubServer SOCIAL_STUB;
   private static GameLogicHolder GAME_LOGIC;
   private static GameSessionHolder GAME_SESSION;
   private static GatewayHolder GATEWAY;
 
+  @LocalServerPort private int port;
   @Autowired private TelnetServer telnetServer;
+  @Autowired private ConfigurableApplicationContext applicationContext;
 
   @MockitoBean private GrpcServerLifecycle grpcServerLifecycle;
 
@@ -131,49 +121,52 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     if (gateway != null) {
       gateway.close();
     }
+
     GameSessionHolder gameSession = GAME_SESSION;
     GAME_SESSION = null;
     if (gameSession != null) {
       gameSession.close();
     }
+
     AccountServiceStub accountStub = ACCOUNT_STUB;
     ACCOUNT_STUB = null;
     if (accountStub != null) {
       accountStub.close();
     }
+
     GameLogicHolder gameLogic = GAME_LOGIC;
     GAME_LOGIC = null;
     if (gameLogic != null) {
       gameLogic.close();
     }
+
     WorldManagementStubServer worldStub = WORLD_STUB;
     WORLD_STUB = null;
     if (worldStub != null) {
       worldStub.close();
     }
-    ChatEntityManagementStubServer chatEntityStub = CHAT_ENTITY_STUB;
-    CHAT_ENTITY_STUB = null;
-    if (chatEntityStub != null) {
-      chatEntityStub.close();
-    }
+
     EntityManagementStubServer entityStub = ENTITY_STUB;
     ENTITY_STUB = null;
     if (entityStub != null) {
       entityStub.close();
     }
-    SocialGroupsStubServer socialStub = SOCIAL_STUB;
-    SOCIAL_STUB = null;
-    if (socialStub != null) {
-      socialStub.close();
-    }
   }
 
   @Test
-  void telnetLoginMatchesGatewayWebSocketResponses() throws Exception {
+  void readinessEndpointReportsTrafficAdmissionReady() throws Exception {
     ensureTestServicesStarted();
-    List<String> websocketResponses =
-        runGatewayWebSocketCommands("LOGIN demo@example.com swordfish", "LOOK");
+    String body =
+        HttpTestSupport.getBody("http://localhost:" + port + "/actuator/health/readiness");
+    assertThat(body).contains("\"status\":\"UP\"");
+    Health health =
+        applicationContext.getBean("trafficAdmissionReadiness", HealthIndicator.class).health();
+    assertThat(health.getStatus()).isEqualTo(org.springframework.boot.health.contributor.Status.UP);
+  }
 
+  @Test
+  void telnetLoginAndLookMatchCanonicalGameplayFlow() throws Exception {
+    ensureTestServicesStarted();
     String telnetLoginResponse;
     String telnetLookResponse;
     try (Socket socket = new Socket("localhost", telnetServer.getPort());
@@ -187,21 +180,12 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
       socket.setSoTimeout((int) COMMAND_WAIT.toMillis());
       writer.println("SESSION " + GAME_SESSION.sessionId() + " " + TENANT_ID);
       writer.println("LOGIN demo@example.com swordfish");
-      telnetLoginResponse = reader.readLine();
-      assertThat(telnetLoginResponse).isNotNull();
+      telnetLoginResponse = readBlockAfterContains(reader, "Logged in as demo@example.com");
+      assertThat(telnetLoginResponse).contains("Logged in as demo@example.com");
       writer.println("LOOK");
-      telnetLookResponse = readMultiLineResponse(reader);
-
-      WORLD_STUB.triggerNotFound("room missing for regression");
-      writer.println("LOOK");
-      String telnetFailureResponse = readMultiLineResponse(reader);
-      assertThat(telnetFailureResponse).startsWith("ERROR ROOM_NOT_FOUND");
+      telnetLookResponse = readBlockAfterContains(reader, "OK LOOK");
     }
 
-    assertThat(websocketResponses).hasSizeGreaterThanOrEqualTo(2);
-    assertThat(websocketResponses.get(1).trim())
-        .isEqualTo(LookTestFixtures.canonicalLookText().trim());
-    assertThat(telnetLoginResponse).isEqualTo(websocketResponses.get(0));
     assertThat(telnetLookResponse.trim()).isEqualTo(LookTestFixtures.canonicalLookText().trim());
 
     assertThat(ACCOUNT_STUB.capturedRequests())
@@ -210,38 +194,6 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
                 request.getUsername().equals("demo@example.com")
                     && request.getPassword().equals("swordfish")
                     && request.getTenantId().equals(String.valueOf(TENANT_ID)));
-  }
-
-  @Test
-  void telnetSayReturnsCanonicalTranscriptAndSocialCall() throws Exception {
-    ensureTestServicesStarted();
-    String telnetSayResponse;
-    try (Socket socket = new Socket("localhost", telnetServer.getPort());
-        PrintWriter writer =
-            new PrintWriter(
-                new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.ISO_8859_1),
-                true);
-        BufferedReader reader =
-            new BufferedReader(
-                new InputStreamReader(socket.getInputStream(), StandardCharsets.ISO_8859_1))) {
-      socket.setSoTimeout((int) COMMAND_WAIT.toMillis());
-      writer.println("SESSION " + GAME_SESSION.sessionId() + " " + TENANT_ID);
-      writer.println("LOGIN demo@example.com swordfish");
-      reader.readLine(); // consume login response
-      writer.println("SAY Hello travelers");
-      telnetSayResponse = readMultiLineResponse(reader);
-    }
-
-    assertThat(telnetSayResponse.trim()).isEqualTo(ChatTestFixtures.canonicalSayText());
-    assertThat(SOCIAL_STUB.lastRequest())
-        .hasValueSatisfying(
-            request -> {
-              assertThat(request.getContent()).isEqualTo("Hello travelers");
-              assertThat(request.getType())
-                  .isEqualTo(net.firedevops.firemud.socialgroups.v1.ChatType.CHAT_TYPE_SAY);
-            });
-
-    assertMetricEventually("gamesession_command_say_invocations_total{tenantId=\"1\"}", 1.0);
   }
 
   private static synchronized void ensureTestServicesStarted() {
@@ -259,13 +211,6 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
         throw new IllegalStateException("Failed to start world stub", e);
       }
     }
-    if (CHAT_ENTITY_STUB == null) {
-      try {
-        CHAT_ENTITY_STUB = startChatEntityStub();
-      } catch (IOException e) {
-        throw new IllegalStateException("Failed to start chat entity stub", e);
-      }
-    }
     if (ENTITY_STUB == null) {
       try {
         ENTITY_STUB = startEntityStub();
@@ -273,15 +218,8 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
         throw new IllegalStateException("Failed to start entity stub", e);
       }
     }
-    if (SOCIAL_STUB == null) {
-      try {
-        SOCIAL_STUB = startSocialStub();
-      } catch (IOException e) {
-        throw new IllegalStateException("Failed to start social stub", e);
-      }
-    }
     if (GAME_LOGIC == null) {
-      GAME_LOGIC = startGameLogic(WORLD_STUB.port(), ENTITY_STUB.port(), SOCIAL_STUB.port());
+      GAME_LOGIC = startGameLogic(WORLD_STUB.port(), ENTITY_STUB.port());
     }
     if (GAME_SESSION == null) {
       GAME_SESSION = startGameSession(GAME_LOGIC.grpcPort(), ACCOUNT_STUB.port());
@@ -304,15 +242,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     return new EntityManagementStubServer(TestSocketUtils.findAvailableTcpPort());
   }
 
-  private static ChatEntityManagementStubServer startChatEntityStub() throws IOException {
-    return new ChatEntityManagementStubServer(TestSocketUtils.findAvailableTcpPort());
-  }
-
-  private static SocialGroupsStubServer startSocialStub() throws IOException {
-    return new SocialGroupsStubServer(TestSocketUtils.findAvailableTcpPort());
-  }
-
-  private static GameLogicHolder startGameLogic(int worldPort, int entityPort, int socialPort) {
+  private static GameLogicHolder startGameLogic(int worldPort, int entityPort) {
     Map<String, Object> props = new java.util.LinkedHashMap<>();
     int grpcPort = TestSocketUtils.findAvailableTcpPort();
     props.put("spring.profiles.active", "test");
@@ -327,9 +257,9 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
         "org.springframework.cloud.gateway.config.GatewayRedisAutoConfiguration");
     props.put("firemud.services.worldManagementService", "localhost:" + worldPort);
     props.put("firemud.services.entityManagementService", "localhost:" + entityPort);
-    props.put("firemud.services.socialGroupsService", "localhost:" + socialPort);
     ConfigurableApplicationContext context =
-        new SpringApplicationBuilder(GameLogicServiceApplication.class)
+        new SpringApplicationBuilder(
+                GameLogicServiceApplication.class, NestedReadinessOverrides.class)
             .run(toCommandLineArgs(props));
     return new GameLogicHolder(context, grpcPort);
   }
@@ -337,7 +267,9 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
   private static GameSessionHolder startGameSession(int gameLogicPort, int accountPort) {
     ConfigurableApplicationContext context =
         new SpringApplicationBuilder(
-                GameSessionServiceApplication.class, GameSessionTestOverrides.class)
+                GameSessionServiceApplication.class,
+                GameSessionTestOverrides.class,
+                NestedReadinessOverrides.class)
             .run(toCommandLineArgs(gameSessionProps(gameLogicPort, accountPort)));
 
     JdbcTemplate jdbc = new JdbcTemplate(context.getBean(DataSource.class));
@@ -395,6 +327,9 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     props.put("spring.main.allow-bean-definition-overriding", "true");
     props.put("firemud.auth.jwt-secret", "stub-secret");
     props.put(
+        "management.endpoint.health.group.readiness.include",
+        "readinessState,db,redis,gameplayPathReadiness");
+    props.put(
         "spring.datasource.url",
         "jdbc:postgresql://"
             + POSTGRES.getHost()
@@ -413,30 +348,6 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     return props;
   }
 
-  private static String[] toCommandLineArgs(Map<String, Object> props) {
-    return props.entrySet().stream()
-        .map(entry -> "--" + entry.getKey() + "=" + entry.getValue())
-        .toArray(String[]::new);
-  }
-
-  private static final class GameLogicHolder {
-    private final ConfigurableApplicationContext context;
-    private final int grpcPort;
-
-    GameLogicHolder(ConfigurableApplicationContext context, int grpcPort) {
-      this.context = context;
-      this.grpcPort = grpcPort;
-    }
-
-    int grpcPort() {
-      return grpcPort;
-    }
-
-    void close() {
-      context.close();
-    }
-  }
-
   private static GatewayHolder startGateway(int gameSessionPort) {
     ConfigurableApplicationContext context =
         new SpringApplicationBuilder(GatewayStubApplication.class)
@@ -449,70 +360,26 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     return new GatewayHolder(context, port);
   }
 
-  private static String readMultiLineResponse(BufferedReader reader) throws IOException {
+  private static String[] toCommandLineArgs(Map<String, Object> props) {
+    return props.entrySet().stream()
+        .map(entry -> "--" + entry.getKey() + "=" + entry.getValue())
+        .toArray(String[]::new);
+  }
+
+  private static String readBlockAfterContains(BufferedReader reader, String expectedSubstring)
+      throws IOException {
     StringBuilder builder = new StringBuilder();
+    boolean matched = false;
     String line;
     while ((line = reader.readLine()) != null) {
       builder.append(line).append("\n");
-      if (line.isEmpty()) {
+      if (!matched && line.contains(expectedSubstring)) {
+        matched = true;
+      } else if (matched && line.isEmpty()) {
         break;
       }
     }
     return builder.toString();
-  }
-
-  private void assertMetricEventually(String metric, double expectedValue) throws Exception {
-    HttpClient client = HttpClient.newHttpClient();
-    URI uri = URI.create("http://localhost:" + GAME_SESSION.port() + "/actuator/prometheus");
-    long deadline = System.currentTimeMillis() + COMMAND_WAIT.toMillis();
-    while (System.currentTimeMillis() < deadline) {
-      HttpRequest request = HttpRequest.newBuilder(uri).GET().build();
-      HttpResponse<String> response =
-          client.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
-      if (response.body().contains(metric + " " + expectedValue)) {
-        return;
-      }
-      Thread.sleep(100);
-    }
-    throw new AssertionError("Metric " + metric + " did not reach " + expectedValue);
-  }
-
-  private List<String> runGatewayWebSocketCommands(String loginCommand, String lookCommand)
-      throws Exception {
-    HttpClient client = HttpClient.newHttpClient();
-    List<String> responses = new CopyOnWriteArrayList<>();
-    CompletableFuture<Void> responsesReady = new CompletableFuture<>();
-    WebSocket webSocket =
-        client
-            .newWebSocketBuilder()
-            .buildAsync(
-                URI.create(GATEWAY.websocketUrl()),
-                new Listener() {
-                  private int received;
-
-                  @Override
-                  public void onOpen(WebSocket webSocket) {
-                    webSocket.request(1);
-                  }
-
-                  @Override
-                  public CompletionStage<?> onText(
-                      WebSocket webSocket, CharSequence data, boolean last) {
-                    responses.add(data.toString());
-                    received++;
-                    webSocket.request(1);
-                    if (received >= 2 && !responsesReady.isDone()) {
-                      responsesReady.complete(null);
-                    }
-                    return Listener.super.onText(webSocket, data, last);
-                  }
-                })
-            .join();
-    webSocket.sendText(loginCommand, true).join();
-    webSocket.sendText(lookCommand, true).join();
-    responsesReady.get(COMMAND_WAIT.toMillis(), TimeUnit.MILLISECONDS);
-    webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "done").join();
-    return responses;
   }
 
   private static final class AccountServiceStub extends AccountServiceGrpc.AccountServiceImplBase {
@@ -548,6 +415,24 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
 
     void close() {
       server.shutdownNow();
+    }
+  }
+
+  private static final class GameLogicHolder {
+    private final ConfigurableApplicationContext context;
+    private final int grpcPort;
+
+    GameLogicHolder(ConfigurableApplicationContext context, int grpcPort) {
+      this.context = context;
+      this.grpcPort = grpcPort;
+    }
+
+    int grpcPort() {
+      return grpcPort;
+    }
+
+    void close() {
+      context.close();
     }
   }
 
@@ -626,8 +511,8 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
       return key -> {};
     }
 
+    @Bean(name = "gameInstanceServiceImpl")
     @Primary
-    @org.springframework.context.annotation.Bean(name = "gameInstanceServiceImpl")
     GameInstanceService stubGameInstanceService() {
       return new GameInstanceService() {
         @Override
@@ -666,8 +551,8 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
             String protocolText) {}
 
         @Override
-        public java.util.Optional<CachedLook> get(long tenantId, long sessionId) {
-          return java.util.Optional.empty();
+        public Optional<LookCacheService.CachedLook> get(long tenantId, long sessionId) {
+          return Optional.empty();
         }
       };
     }
@@ -704,6 +589,15 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     @Primary
     GrpcServerLifecycle grpcServerLifecycle() {
       return Mockito.mock(GrpcServerLifecycle.class);
+    }
+  }
+
+  @TestConfiguration
+  static class NestedReadinessOverrides {
+
+    @Bean("trafficAdmissionReadiness")
+    HealthIndicator trafficAdmissionReadinessHealthIndicator() {
+      return () -> Health.up().withDetail("stub", "UP").build();
     }
   }
 }
