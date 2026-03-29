@@ -2,16 +2,16 @@
 
 ## Goal and Status
 
-Goal: extend the current playable text-command loop so authenticated players can move between rooms using data-driven exits, have their location updated authoritatively, and automatically receive a fresh `LOOK` result after successful movement across both WebSocket and Telnet transports. Status: mostly completed. Movement is now wired end-to-end through Game Session, Game Logic, and World Management, with WebSocket and Telnet parity coverage plus reconnect-after-move coverage. Remaining work is mainly documentation/transcript cleanup and optional manual verification rather than core implementation.
+Goal: extend the current playable text-command loop so authenticated players can move between rooms using data-driven exits, have their location updated authoritatively, and automatically receive a fresh `LOOK` result after successful movement across both WebSocket and Telnet transports. Status: completed for this PR. Movement is now wired end-to-end through Game Session, Game Logic, and World Management, with WebSocket and Telnet parity coverage plus reconnect-after-move coverage.
 
 This checklist builds on the **Login and Session**, **Data-Driven LOOK**, and **Chat & SAY** slices. It turns the existing room snapshots, exit metadata, and movement primitives into a real player-facing `MOVE` / `GO` loop that changes location and immediately reflects the new room state.
 
 ## 1. Protocol, UX, and Design Alignment for Movement
 
-- [ ] Re-read the [Game Session Service protocols](../../architecture/microservices/game-session-service/protocols.md#minimal-text-command-protocol), [Game Logic Service](../../architecture/microservices/game-logic-service/README.md), and [World Management Service](../../architecture/microservices/world-management-service/README.md) docs to confirm the intended ownership split for movement, exit validation, and room-state refresh.
-- [ ] Decide and document the canonical text protocol for movement, including whether the MVP surface is `MOVE <direction>`, directional aliases (`NORTH`, `SOUTH`, etc.), and/or a short `GO <direction>` alias.
-- [ ] Add at least one Telnet and one WebSocket transcript showing successful movement and failed movement (`ERROR INVALID_EXIT` or equivalent), with successful movement automatically followed by the new room's `OK LOOK` payload.
-- [ ] Update the Game Session and Game Logic design docs so they explicitly describe the movement request flow: authenticated command ingress -> Game Logic movement resolution -> world/location update -> refreshed `LOOK` output.
+- [x] Re-read the [Game Session Service protocols](../../architecture/microservices/game-session-service/protocols.md#minimal-text-command-protocol), [Game Logic Service](../../architecture/microservices/game-logic-service/README.md), and [World Management Service](../../architecture/microservices/world-management-service/README.md) docs to confirm the intended ownership split for movement, exit validation, and room-state refresh.
+- [x] Decide and document the canonical text protocol for movement, including whether the MVP surface is `MOVE <direction>`, directional aliases (`NORTH`, `SOUTH`, etc.), and/or a short `GO <direction>` alias.
+- [x] Add at least one Telnet and one WebSocket transcript showing successful movement and failed movement (`ERROR INVALID_EXIT` or equivalent), with successful movement automatically followed by the new room's `OK LOOK` payload.
+- [x] Update the Game Session and Game Logic design docs so they explicitly describe the movement request flow: authenticated command ingress -> Game Logic movement resolution -> world/location update -> refreshed `LOOK` output.
 
 ## 2. World Management Service: Exit and Location Mutation Contract
 
@@ -36,7 +36,7 @@ This checklist builds on the **Login and Session**, **Data-Driven LOOK**, and **
 - [x] Extend the current text command interpreter so movement commands are treated as authenticated gameplay commands and flow through the same session guard already used by `LOOK` and `SAY`.
 - [x] Add a dedicated movement handler that calls the Game Logic movement API, maps application failures into stable text errors, and on success updates the session's current room binding before emitting the destination room's `LOOK` result.
 - [x] Keep the success transcript canonical and simple: movement acknowledgement if needed, followed by the destination `OK LOOK` payload. Do not invent a second competing room-description format for movement.
-- [ ] Emit movement-related metrics and logs (for example `gamesession.command.move.invocations` and `gamesession.command.move.failures`) with high-level error tags so operators can distinguish invalid exits from backend failures.
+- [x] Emit movement-related metrics and logs (for example `gamesession.command.move.invocations` and `gamesession.command.move.failures`) with high-level error tags so operators can distinguish invalid exits from backend failures.
 - [x] Add unit/integration tests in Game Session for successful movement, invalid exit, unauthenticated movement, and auto-LOOK behavior after a successful room change.
 
 ## 5. Cross-Service End-to-End Tests (WebSocket and Telnet)
@@ -44,22 +44,24 @@ This checklist builds on the **Login and Session**, **Data-Driven LOOK**, and **
 - [x] Add a WebSocket-focused cross-service regression that performs `LOGIN` / `PLAY` / `LOOK`, issues a movement command, and asserts the returned room description now reflects the destination room rather than the origin room.
 - [x] Add a Telnet-focused variant through TCP Proxy and Gateway that exercises the same movement path and confirms protocol parity with the WebSocket flow.
 - [x] Cover at least one success case and one failure case (`ERROR INVALID_EXIT`, `ERROR ROOM_NOT_FOUND`, or equivalent) and ensure failures do not disconnect the client.
-- [ ] Assert the movement path traverses the intended pipeline (Game Session -> Game Logic -> World Management) using logs, metrics, or gRPC interceptors similar to the existing LOOK/SAY slices.
+- [x] Assert the movement path traverses the intended pipeline (Game Session -> Game Logic -> World Management) using logs, metrics, or gRPC interceptors similar to the existing LOOK/SAY slices.
 - [x] Wire these regressions into the existing `crossServiceTest` targets and mention them in the relevant docs so the slice can be rerun easily.
 
 ## 6. Developer Workflows, Smoke Tests, and Documentation Updates
 
-- [ ] Add or update a smoke test script (or documented manual sequence) that demonstrates `LOGIN` / `PLAY` / `LOOK` / movement over WebSocket, including the expected destination-room transcript.
-- [ ] Add a second Telnet-oriented example showing the same movement flow through TCP Proxy and Gateway.
-- [ ] Update the Game Session, Game Logic, and World Management design docs with a short implementation-status note for the movement slice, clarifying what is live, stubbed, and deferred.
-- [ ] Update any existing gameplay examples that imply room state is static once `LOOK` works; after this slice, examples should reflect that room state changes through movement and is refreshed immediately.
+- [x] Add or update a smoke test script (or documented manual sequence) that demonstrates `LOGIN` / `PLAY` / `LOOK` / movement over WebSocket, including the expected destination-room transcript.
+- [x] Add a second Telnet-oriented example showing the same movement flow through TCP Proxy and Gateway.
+- [x] Update the Game Session, Game Logic, and World Management design docs with a short implementation-status note for the movement slice, clarifying what is live, stubbed, and deferred.
+- [x] Update any existing gameplay examples that imply room state is static once `LOOK` works; after this slice, examples should reflect that room state changes through movement and is refreshed immediately.
 
 ## 7. Final QA Checklist
 
 - [x] Run the relevant Game Session, Game Logic, World Management, and cross-service test targets for the movement slice and confirm they pass.
-- [ ] Manually verify one happy-path move and one invalid-exit move over both WebSocket and Telnet.
-- [ ] Confirm successful movement immediately yields the destination-room `LOOK` transcript and that metrics/logs make it easy to distinguish player mistakes from backend failures.
+- [x] Manually verify one happy-path move and one invalid-exit move over both WebSocket and Telnet.
+- [x] Confirm successful movement immediately yields the destination-room `LOOK` transcript and that metrics/logs make it easy to distinguish player mistakes from backend failures.
 
 ---
 
-Note: After completing tasks in this checklist, reconcile overlapping items in the relevant per-service status docs and architecture docs so movement becomes part of the canonical current gameplay loop instead of living only in the slice plan.
+## Deferred Follow-Up
+
+- A future follow-up slice can extend movement beyond directional room travel into broader travel/pathfinding, richer failure semantics, or additional transport/UI polish if those become priorities.
