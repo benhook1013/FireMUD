@@ -299,8 +299,10 @@ jobs:
 
       - name: Install ChromeDriver for axe
         run: |
-          CHROME_VERSION=$(google-chrome --product-version)
-          DRIVER_ZIP_URL="https://storage.googleapis.com/chrome-for-testing-public/${CHROME_VERSION}/linux64/chromedriver-linux64.zip"
+          DRIVER_ZIP_URL=$(
+            curl -fsSL https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json \
+              | python3 -c "import json, sys; data = json.load(sys.stdin); print(next(item['url'] for item in data['channels']['Stable']['downloads']['chromedriver'] if item['platform'] == 'linux64'))"
+          )
           DRIVER_DIR=/tmp/chromedriver-for-testing
           curl -fsSL "$DRIVER_ZIP_URL" -o /tmp/chromedriver-linux64.zip
           rm -rf "$DRIVER_DIR"
