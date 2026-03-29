@@ -32,7 +32,7 @@ permissions:
   pull-requests: write
 
 concurrency:
-  group: smoke-${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && inputs.pr_number || github.ref }}
+  group: smoke-${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}-controller', github.event.pull_request.number) || github.event_name == 'workflow_dispatch' && format('pr-{0}-full', inputs.pr_number) || github.ref }}
   cancel-in-progress: true
 
 jobs:

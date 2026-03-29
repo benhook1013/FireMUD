@@ -9,6 +9,10 @@ permissions:
   contents: read
   pull-requests: read
 
+concurrency:
+  group: preview-janitor-${{ github.workflow }}
+  cancel-in-progress: true
+
 jobs:
   prune-stale-preview-namespaces:
     name: Prune Stale Preview Namespaces

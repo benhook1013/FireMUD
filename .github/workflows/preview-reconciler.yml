@@ -10,6 +10,10 @@ permissions:
   contents: read
   pull-requests: read
 
+concurrency:
+  group: preview-reconciler-${{ github.workflow }}
+  cancel-in-progress: true
+
 jobs:
   reconcile-previews:
     name: Reconcile Open PR Previews
