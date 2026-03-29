@@ -70,6 +70,12 @@ grpcurl -plaintext -d '{"tenant_id":"demo","session_id":"demo","command":"look"}
 - Game Session channels authenticated commands through `BroadcastSay`, supplying the same `RoomInstanceRef` context (`tenantId`, `gameInstanceId`, `roomInstanceId`) that guards `LOOK`.
 - The command parser normalizes `SAY`, `YELL`, and `WHISPER` aliases before forwarding trimmed text so downstream services can enforce one validation contract.
 - Game Logic validates message length and room-chat rules, determines the occupied room, and delegates delivery to Social & Groups rather than rendering chat locally.
+- The longer-term communication model should generalize this flow from a `BroadcastSay`-style API to a communication-intent pathway with:
+  - a game-configured communication type definition,
+  - explicit target/scope objects such as room, area, region, group, or direct target,
+  - recipient resolution owned by those targets/scopes,
+  - and per-recipient presentation metadata.
+- In-world communication should therefore target the room/area/etc. itself rather than precomputing a final flat recipient list in the sender path. That allows target-owned resolution to include ordinary listeners plus observers/interceptors such as eavesdroppers, spies, magical listeners, or other game-specific mechanics.
 - The resulting delivery metadata (recipient list, NPC echoes) is returned to Game Session, while failures populate `shared.v1.ErrorDetail` so the text protocol can emit `ERROR SAY_NOT_DELIVERED` or equivalent stable responses.
 - This pathway mirrors the `LOOK` guard: unauthenticated requests never reach `BroadcastSay`, and Social & Groups outages surface as structured `PERMISSION_DENIED` or `UNAVAILABLE` errors so Game Session can keep `ERROR NOT_AUTHENTICATED` gating predictable.
 
@@ -78,10 +84,11 @@ grpcurl -plaintext -d '{"tenant_id":"demo","session_id":"demo","command":"look"}
 - The current `BroadcastSay` contract is intentionally scoped to room-local speech and preserves only a lightweight alias distinction (`SAY`, `YELL`, `WHISPER`) so the first chat slice can prove the end-to-end gameplay path.
 - This contract should not be treated as the final abstraction for all communication types. Future speech work should separate:
   - the communication act (`say`, `whisper`, `shout`, `tell`, guild/channel/system message, emote-like narration),
-  - the audience scope (same room, directed target, nearby area, map/region, continent/world, account/group/channel),
+  - the audience scope or target object (same room, directed target, nearby area, map/region, continent/world, account/group/channel),
+  - the recipient-resolution rules owned by that scope, including observer/interceptor resolution,
   - and presentation/rendering style (for example, `Alice whispers to Bob...` versus a generic room broadcast).
 - In particular, future `WHISPER` and `TELL` behavior must preserve target-directed delivery semantics rather than collapsing into generic room chat, and future `SHOUT`-style behavior may depend on world-topology concepts such as area, map, or region propagation.
-- When those later slices land, prefer evolving this pathway toward a more generic communication envelope plus explicit audience/propagation metadata rather than adding one bespoke pipeline per verb.
+- When those later slices land, prefer evolving this pathway toward a generic communication envelope plus explicit target/scope resolution and presentation metadata rather than adding one bespoke pipeline per verb.
 
 ## Implementation Status
 

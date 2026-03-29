@@ -4,11 +4,24 @@
 
 Goal: extend the text command fabric with a `SAY`-centric chat slice that keeps WebSocket and Telnet behaviour and observability in lockstep across Game Session, Game Logic, and Social/Groups services. Status: key pieces of the SAY path and its tests are implemented; this document describes the target-state behaviour, with up-to-date implementation details captured in the associated microservice design docs and regression test plans.
 
+Follow-up design direction agreed after the main slice landed:
+
+- The long-term platform model should not remain `SAY`-centric. FireMUD should use a shared, configurable communication infrastructure with `say` as only the first built-in communication type.
+- Communication should be modeled around:
+  - a communication intent emitted by an actor,
+  - a game-configured communication type definition,
+  - one or more communication targets/scopes,
+  - recipient resolution performed by those targets/scopes,
+  - and per-recipient presentation/rendering.
+- In-world communication should usually target scope objects such as a room, area, region, map, or other spatial/social aggregate, rather than precomputing a flat recipient list in the sender path.
+- Target-owned recipient resolution must be able to include normal listeners plus observers/interceptors such as eavesdroppers, spies, magical listeners, or game-specific sneaky skills.
+- Game-configured communication definitions should control propagation rules, moderation category, and the presentation style that players see in-game.
+
 After `LOOK` flows through the new Game Logic + World + Entity path, the next smallest playable slice expands the text command fabric with the `SAY` chat path that lets players speak to others in the same room, touching Game Logic aggregation, Game Session command parsing, and the cross-service regression suites so we can assert both WebSocket and Telnet experiences stay in sync.
 
-Scope note: this slice is the foundational room-speech slice. It does not attempt to fully define later communication semantics such as directed tells, partially overheard whispers, area/map/continent propagation, or game-configured speech modes. Those belong in follow-up slices after the room-local pathway is stable.
+Scope note: this slice is the first implemented room-speech pathway, but it should now be understood as the first delivery mode on top of a broader configurable communication model rather than as the permanent abstraction for all speech.
 
-Out of scope for this slice: fully differentiated speech semantics such as directed/private `WHISPER` or `TELL`, propagation beyond the current room, and topology-aware audible ranges such as area/map/region/continent shouts. Those behaviors should be treated as later follow-up slices rather than retroactively assumed to be solved by the current `SAY`-centric pathway.
+Out of scope for this slice implementation: fully differentiated speech semantics such as directed/private `WHISPER` or `TELL`, propagation beyond the current room, and topology-aware audible ranges such as area/map/region/continent shouts. Those behaviors should be treated as later follow-up slices, but the shared communication model should be designed now so they land as configuration and target-resolution changes rather than a later rewrite.
 
 ## 1. Protocol, UX, and Design Alignment for SAY
 
@@ -20,6 +33,12 @@ Out of scope for this slice: fully differentiated speech semantics such as direc
 ### In-room `SAY` ordering and transcripts
 
 Document that every `SAY`-family response follows a fixed sequence: the transport echoes `OK SAY`, then a `Speaker` annotation identifies the originator, `Delivered-To` lists recipients in deterministic order (sender first, followed by attendees sorted by name), and `Message` repeats the chat text. Co-located listeners (players or NPC loggers) may render the WHO metadata into a narrative such as `Emberline says, "Hello travelers"` while still relying on the structured payload for ordering.
+
+For future communication modes, treat this structured payload as an implementation/testing surface rather than the only long-term player-facing UX. The long-term model should preserve a distinction between:
+
+- the communication intent and its target/scope,
+- the resolved recipient set (including observers/interceptors),
+- and the per-recipient narrative/presentation that players actually see.
 
 Supply at least two transcripts (one Telnet-style, one WebSocket-style) that highlight this ordering and show the chat hitting two active clients plus a nearby NPC echo. For example:
 
@@ -136,6 +155,7 @@ Note: After completing tasks in this checklist, reconcile any overlapping items 
 ## Future Follow-On Scope
 
 - A later communication slice should split the current `SAY` family into explicit speech-mode and audience-scope concepts so delivery is not permanently modeled as a single room-local broadcast with alias decoration.
+- The preferred target-state is a configurable communication system where in-world communication targets scope objects such as rooms or areas, and those targets resolve both normal recipients and observer/interceptor recipients such as spies or eavesdroppers.
 - Candidate future behaviors include:
   - target-limited `WHISPER` / `TELL` with sender, recipient, and optional overhear rules;
   - broader `SHOUT` semantics with configurable propagation across area, region, map, or continent boundaries;

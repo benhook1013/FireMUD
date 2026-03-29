@@ -195,7 +195,7 @@ The canonical text renderer should preserve a classic MUD feel:
 
 A standard `QUICKLOOK` command should later reuse the same underlying room-view structure but skip the room-description prose, making it suitable for rapid redraws that still show visible occupants, room-ground items, exits, and the normal prompt/status line.
 
-`SAY`, `YELL`, and `WHISPER` emit a shared success payload so Telnet and WebSocket clients can render the same transcript. After a successful chat command the server responds with:
+`SAY`, `YELL`, and `WHISPER` currently emit a shared success payload so Telnet and WebSocket clients can render the same transcript. After a successful chat command the server responds with:
 
 ```text
 OK SAY
@@ -206,6 +206,16 @@ Message: Hello travelers
 
 `Speaker` annotations let clients highlight who originated the message while `Delivered-To` lists the recipients that observed the chat frame. In production gameplay, the `Delivered-To` list is scoped to recipients visible to the speaking player and may be redacted or disabled behind feature flags; its primary purpose is deterministic tests and debugging.
 The `Message` line echoes the trimmed chat text so transport implementations can either render the structured payload directly or stitch it into transport-specific narration.
+
+This structured payload should not be treated as the final platform abstraction for all communication. The longer-term model should be:
+
+- a communication intent emitted by the actor,
+- a game-configured communication type definition,
+- one or more targets/scopes such as room, area, region, direct target, guild, or account,
+- recipient resolution owned by those targets/scopes,
+- and per-recipient presentation for emitters, ordinary listeners, and observer/interceptor roles.
+
+For in-world communication, the command should usually target the room/area/etc. rather than precomputing the final recipient list in the sender path. That keeps room-local speech extensible for eavesdropping, spy skills, magical listening, and other target-owned delivery rules.
 
 Chat parsing enforces that `SAY` and `YELL` include at least one non-whitespace character and that `WHISPER` provides both an existing player identifier and the message text. Submitting an empty payload or exceeding the configured message limit, currently 512 characters, yields `ERROR INVALID_ARGUMENT Message text must be 1-512 characters long`. A missing whisper target or text returns the same `ERROR INVALID_ARGUMENT` guidance so clients can keep their parsers simple.
 
@@ -277,7 +287,7 @@ Metrics `gamesession.command.look.invocations` and `gamesession.command.look.fai
 
 1. Game Session validates the same admitted gameplay session context leveraged by `LOOK`; callers still in the login/menu stages receive stage-aware `LOGIN_REQUIRED` or `PLAY_REQUIRED` guidance rather than a generic protocol-auth failure.
 2. Authenticated `SAY`/`YELL`/`WHISPER` commands route through `SayCommandHandler`, which packages `tenantId`, `gameInstanceId`, `sessionId`, `characterId`, `roomInstanceId`, normalized text, and alias metadata into a `BroadcastSay` gRPC request to Game Logic.
-3. Game Logic evaluates room visibility, enforces message constraints, and forwards the payload, or a stubbed notification, to Social & Groups Service for delivery and logging.
+3. Game Logic evaluates room visibility, enforces message constraints, and forwards the payload, or a stubbed notification, to Social & Groups Service for delivery and logging. In the target-state communication model this becomes a communication intent targeting the current room or another explicit scope, with recipient resolution owned by that target.
 4. Backend failures propagate protocol-mapped errors such as `ERROR SAY_NOT_DELIVERED`, while pre-flight stage failures are surfaced as `LOGIN_REQUIRED` or `PLAY_REQUIRED` before the chat request is attempted.
 
 ## Response Format
