@@ -39,6 +39,10 @@ jobs:
       - name: ⚙️ Set Up Gradle
         if: matrix.language == 'java'
         uses: gradle/actions/setup-gradle@v6
+        with:
+          build-scan-publish: true
+          build-scan-terms-of-use-url: 'https://gradle.com/help/legal-terms-of-use'
+          build-scan-terms-of-use-agree: 'yes'
 
       - name: 🔍 Initialize CodeQL
         uses: github/codeql-action/init@v4

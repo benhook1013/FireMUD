@@ -146,6 +146,9 @@ jobs:
       - name: ⚙️ Set Up Gradle
         uses: gradle/actions/setup-gradle@v6
         with:
+          build-scan-publish: true
+          build-scan-terms-of-use-url: 'https://gradle.com/help/legal-terms-of-use'
+          build-scan-terms-of-use-agree: 'yes'
           cache-read-only: false
 
       - name: 🧪 Run Lite Smoke Integration Checks
@@ -176,6 +179,9 @@ jobs:
       - name: ⚙️ Set Up Gradle
         uses: gradle/actions/setup-gradle@v6
         with:
+          build-scan-publish: true
+          build-scan-terms-of-use-url: 'https://gradle.com/help/legal-terms-of-use'
+          build-scan-terms-of-use-agree: 'yes'
           cache-read-only: false
 
       - name: 📝 Create CI .env placeholder
