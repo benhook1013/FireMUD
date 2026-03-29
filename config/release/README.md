@@ -6,4 +6,12 @@ Release-time NOTICE generation and `/licenses` assembly are handled separately b
 
 That release-time `/licenses` assembly currently covers the package-managed release ecosystems in this repository today: `Gradle` and `NPM`. If a new packaged runtime or release-tool ecosystem is introduced, update both the workflow and the release-process documentation.
 
+The generated release bundle now includes:
+
+- plain-text notice reports from ORT
+- copied CycloneDX inventory artifacts
+- an attribution index
+- per-package files grouped into runtime-like, non-runtime, and unknown-scope buckets
+- a combined `firemud-<tag>-release-compliance.zip` asset containing `NOTICE.md` plus `/licenses`
+
 For release-time licensing and notice requirements, see [design/operations/release-process.md](../../design/operations/release-process.md).

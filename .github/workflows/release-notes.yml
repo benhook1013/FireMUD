@@ -75,10 +75,11 @@ jobs:
             --ort-results "${{ steps.ort.outputs.results-path }}" \
             --output-dir build/release-assets/licenses
 
-      - name: 🧳 Archive /licenses directory
+      - name: 🧳 Archive release artifacts
         run: |
           cd build/release-assets
-          zip -r licenses.zip licenses
+          zip -r "firemud-${{ github.ref_name }}-licenses.zip" licenses
+          zip -r "firemud-${{ github.ref_name }}-release-compliance.zip" NOTICE.md licenses
 
       - name: 📝 Create GitHub Release with Notes
         env:
@@ -106,5 +107,13 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release upload "${{ github.ref_name }}" \
-            build/release-assets/licenses.zip#licenses.zip \
+            "build/release-assets/firemud-${{ github.ref_name }}-licenses.zip#firemud-${{ github.ref_name }}-licenses.zip" \
+            --clobber
+
+      - name: 📦 Upload release compliance bundle
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ github.ref_name }}" \
+            "build/release-assets/firemud-${{ github.ref_name }}-release-compliance.zip#firemud-${{ github.ref_name }}-release-compliance.zip" \
             --clobber

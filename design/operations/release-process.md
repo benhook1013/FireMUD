@@ -56,7 +56,14 @@ The tag workflow in [`.github/workflows/release-notes.yml`](../../.github/workfl
 - The release publication date comes from the existing GitHub Release `publishedAt` timestamp when present, or falls back to the current UTC date during initial release creation.
 - The change date is computed as exactly two years after the release publication date.
 - The generated file is uploaded to the GitHub Release as `NOTICE.md`.
-- The assembled `/licenses` directory is uploaded to the GitHub Release as `licenses.zip`.
+- The assembled `/licenses` directory now includes:
+  - plain-text notice reports
+  - copied CycloneDX machine-readable inventory artifacts
+  - an attribution index
+  - per-package files grouped into runtime-like, non-runtime, and unknown-scope buckets
+- The assembled `/licenses` directory is uploaded to the GitHub Release as `firemud-<tag>-licenses.zip`.
+- A combined `NOTICE.md + /licenses` asset is uploaded as `firemud-<tag>-release-compliance.zip`.
+- Release assembly fails if required notice reports are missing or if the machine-readable inventory is empty.
 
 ## Repository Maintenance
 
