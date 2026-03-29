@@ -54,6 +54,7 @@ class SessionResumptionFlowTest {
   private SessionAuthenticationService sessionAuthenticationService;
   private final ObjectProvider<DevIsolatedGameInstanceRegistry> devIsolatedRegistryProvider =
       Mockito.mock(ObjectProvider.class);
+  private final MoveCommandHandler moveHandler = Mockito.mock(MoveCommandHandler.class);
   private final SayCommandHandler sayHandler = Mockito.mock(SayCommandHandler.class);
   private TextCommandInterpreter interpreter;
 
@@ -90,6 +91,7 @@ class SessionResumptionFlowTest {
             accountClient,
             commandService,
             devIsolatedProperties,
+            gameLogicProperties,
             devIsolatedRegistryProvider,
             meterRegistry);
     lookHandler =
@@ -110,7 +112,12 @@ class SessionResumptionFlowTest {
     when(lookTextRenderer.render(lookResult)).thenReturn("OK LOOK text");
     interpreter =
         new TextCommandInterpreter(
-            commandService, lookHandler, loginHandler, sessionAuthenticationService, sayHandler);
+            commandService,
+            lookHandler,
+            loginHandler,
+            moveHandler,
+            sessionAuthenticationService,
+            sayHandler);
   }
 
   @Test

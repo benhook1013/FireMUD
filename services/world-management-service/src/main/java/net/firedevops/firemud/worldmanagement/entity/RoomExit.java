@@ -23,6 +23,9 @@ public class RoomExit {
   private Room toRoom;
 
   @Column(nullable = false)
+  private String direction;
+
+  @Column(nullable = false)
   private int cost = 1;
 
   @Version private int version;

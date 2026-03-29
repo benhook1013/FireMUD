@@ -95,6 +95,7 @@ class RoomServiceImplTest {
     exit.setTenantId(1L);
     exit.setFromRoom(room);
     exit.setToRoom(other);
+    exit.setDirection("NORTH");
     exit.setCost(1);
     when(exitRepository.findByTenantIdAndFromRoomId(1L, 1021L)).thenReturn(List.of(exit));
 
@@ -103,6 +104,7 @@ class RoomServiceImplTest {
     assertEquals(longDesc, snapshot.longDescription());
     assertEquals(1, snapshot.exits().size());
     assertEquals(2045L, snapshot.exits().get(0).targetRoomId().longValue());
+    assertEquals("NORTH", snapshot.exits().get(0).direction());
   }
 
   @Test

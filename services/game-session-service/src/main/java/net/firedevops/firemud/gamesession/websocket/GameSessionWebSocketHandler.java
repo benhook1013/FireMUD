@@ -88,11 +88,14 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       TextCommand command, TextCommandInterpretationResult interpretation) {
     CommandEnqueueResult result = interpretation.commandResult();
     if (result.accepted()) {
-      String base = "OK " + command.type().name();
       if (interpretation.hasResponse()) {
+        if (interpretation.protocolResponse()) {
+          return interpretation.responseText();
+        }
+        String base = "OK " + command.type().name();
         return base + "\n" + interpretation.responseText() + "\n\n";
       }
-      return base;
+      return "OK " + command.type().name();
     }
     String message = result.errorMessage() == null ? "" : result.errorMessage();
     return "ERROR " + result.errorCode() + " " + message;

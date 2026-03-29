@@ -1,0 +1,185 @@
+name: Smoke Tests Full
+
+on:
+  workflow_call:
+    inputs:
+      action:
+        required: true
+        type: string
+      head_sha:
+        required: true
+        type: string
+      image_tag:
+        required: true
+        type: string
+      pr_number:
+        required: false
+        default: ""
+        type: string
+  workflow_dispatch:
+    inputs:
+      action:
+        description: Smoke workflow action
+        required: true
+        default: full
+        type: choice
+        options:
+          - full
+      head_sha:
+        description: Commit SHA whose smoke-tagged images should be used
+        required: true
+        type: string
+      image_tag:
+        description: Runtime image tag to consume
+        required: true
+        type: string
+      pr_number:
+        description: Pull request number for comment publishing
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+  packages: read
+  pull-requests: write
+
+concurrency:
+  group: smoke-full-${{ inputs.pr_number != '' && format('pr-{0}-full', inputs.pr_number) || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke-full:
+    name: Smoke Tests (Full Stack)
+    if: ${{ inputs.action == 'full' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      SMOKE_TIMEOUT_SECONDS: 20
+      SMOKE_IMAGE_TAG: ${{ inputs.image_tag }}
+    steps:
+      - name: ⬇️ Checkout Code
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.head_sha }}
+
+      - name: 📝 Create CI .env placeholder
+        run: touch .env
+
+      - name: Generate Dev Certificates
+        run: ./dev-tools/generate-dev-certs.sh dev-tools/certs
+
+      - name: Login to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 🚀 Start Smoke Stack
+        run: |
+          docker compose \
+            -f docker/docker-compose.yml \
+            -f docker/docker-compose.override.yml \
+            -f docker/docker-compose.smoke-images.override.yml \
+            up \
+            -d \
+            --wait \
+            --wait-timeout 180 \
+            postgres \
+            redis-coord \
+            redis-cache \
+            account-service \
+            entity-management-service \
+            gateway \
+            game-logic-service \
+            game-session-service \
+            tcp-proxy-service \
+            world-management-service
+
+      - name: 📦 Install WebSocket smoke dependency
+        run: python3 -m pip install --disable-pip-version-check websocket-client
+
+      - name: 🧪 Direct WebSocket LOGIN + LOOK (Game Session)
+        run: |
+          cd services/game-session-service
+          bash ./websocket-login-look-smoke.sh
+
+      - name: 🧪 Telnet LOGIN + LOOK (TCP Proxy)
+        run: |
+          cd services/tcp-proxy-service
+          bash ./telnet-login-look-smoke.sh
+
+      - name: 📜 Dump Docker Compose Logs on Failure
+        if: failure()
+        run: |
+          if [ -f docker/docker-compose.yml ]; then
+            docker compose \
+              -f docker/docker-compose.yml \
+              -f docker/docker-compose.override.yml \
+              -f docker/docker-compose.smoke-images.override.yml \
+              logs || true
+          fi
+
+      - name: 🧹 Stop Smoke Stack
+        if: always()
+        run: |
+          docker compose \
+            -f docker/docker-compose.yml \
+            -f docker/docker-compose.override.yml \
+            -f docker/docker-compose.smoke-images.override.yml \
+            down
+
+  smoke-summary:
+    name: Smoke Summary
+    runs-on: ubuntu-latest
+    needs: [smoke-full]
+    if: ${{ always() && inputs.pr_number != '' }}
+    steps:
+      - name: 💬 Publish Smoke Summary Comment
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const fullResult = "${{ needs.smoke-full.result }}";
+            const statusIcon = (value) => {
+              if (value === "success") return "✅";
+              if (value === "failure") return "❌";
+              if (value === "cancelled") return "⚪";
+              return "⏭️";
+            };
+
+            let headline = "✅ Full smoke passed";
+            if (["failure", "cancelled", "timed_out"].includes(fullResult)) {
+              headline = "❌ Full smoke failed";
+            }
+
+            const body = [
+              "### Smoke Summary",
+              headline,
+              "",
+              `- ${statusIcon(fullResult)} Smoke Tests (Full Stack): \`${fullResult}\``,
+            ].join("\n");
+
+            const issueNumber = Number("${{ inputs.pr_number }}");
+            const { data: comments } = await github.rest.issues.listComments({
+              ...context.repo,
+              issue_number: issueNumber
+            });
+
+            const existing = comments.find(comment =>
+              comment.body.startsWith("### Smoke Summary")
+            );
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                ...context.repo,
+                comment_id: existing.id,
+                body
+              });
+            } else {
+              await github.rest.issues.createComment({
+                ...context.repo,
+                issue_number: issueNumber,
+                body
+              });
+            }

@@ -6,6 +6,10 @@ Goal: extend the text command fabric with a `SAY`-centric chat slice that keeps 
 
 After `LOOK` flows through the new Game Logic + World + Entity path, the next smallest playable slice expands the text command fabric with the `SAY` chat path that lets players speak to others in the same room, touching Game Logic aggregation, Game Session command parsing, and the cross-service regression suites so we can assert both WebSocket and Telnet experiences stay in sync.
 
+Scope note: this slice is the foundational room-speech slice. It does not attempt to fully define later communication semantics such as directed tells, partially overheard whispers, area/map/continent propagation, or game-configured speech modes. Those belong in follow-up slices after the room-local pathway is stable.
+
+Out of scope for this slice: fully differentiated speech semantics such as directed/private `WHISPER` or `TELL`, propagation beyond the current room, and topology-aware audible ranges such as area/map/region/continent shouts. Those behaviors should be treated as later follow-up slices rather than retroactively assumed to be solved by the current `SAY`-centric pathway.
+
 ## 1. Protocol, UX, and Design Alignment for SAY
 
 - [x] Update the [Minimal Text Command Protocol](../../architecture/microservices/game-session-service/README.md#minimal-text-command-protocol) section so `SAY` (and aliases like `YELL`/`WHISPER`) document the required arguments, the canonical response shape (`OK SAY`, speaker annotations, delivered-to list), and how edge cases (empty message, overly long text) report `ERROR INVALID_ARGUMENT`.
@@ -128,3 +132,12 @@ These transcripts make it easy to add regression assertions for failure paths an
 ---
 
 Note: After completing tasks in this checklist, reconcile any overlapping items in the existing per-service status docs and design docs so the architecture docs reflect the new chat slice instead of duplicating details.
+
+## Future Follow-On Scope
+
+- A later communication slice should split the current `SAY` family into explicit speech-mode and audience-scope concepts so delivery is not permanently modeled as a single room-local broadcast with alias decoration.
+- Candidate future behaviors include:
+  - target-limited `WHISPER` / `TELL` with sender, recipient, and optional overhear rules;
+  - broader `SHOUT` semantics with configurable propagation across area, region, map, or continent boundaries;
+  - guild, party, or other channel-backed speech that shares infrastructure with room speech without inheriting the same delivery rules;
+  - game-defined speech variants that change formatting, moderation policy, or routing without requiring one-off pipelines.

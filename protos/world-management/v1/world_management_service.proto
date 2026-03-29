@@ -53,10 +53,11 @@ message RoomSnapshot {
 message RoomExitSnapshot {
   string exit_id = 1;
   string target_room_name = 2;
-  string label = 3;
-  string description = 4;
-  int32 cost = 5;
-  string target_room_instance_id = 6;
+  string direction = 3;
+  string label = 4;
+  string description = 5;
+  int32 cost = 6;
+  string target_room_instance_id = 7;
 }
 
 message ListRoomOccupantsRequest {

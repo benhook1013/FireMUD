@@ -69,6 +69,16 @@ grpcurl -plaintext -d '{"tenant_id":"demo","session_id":"demo","command":"look"}
 - The resulting delivery metadata (recipient list, NPC echoes) is returned to Game Session, while failures populate `shared.v1.ErrorDetail` so the text protocol can emit `ERROR SAY_NOT_DELIVERED` or equivalent stable responses.
 - This pathway mirrors the `LOOK` guard: unauthenticated requests never reach `BroadcastSay`, and Social & Groups outages surface as structured `PERMISSION_DENIED` or `UNAVAILABLE` errors so Game Session can keep `ERROR NOT_AUTHENTICATED` gating predictable.
 
+### Current scope versus future speech semantics
+
+- The current `BroadcastSay` contract is intentionally scoped to room-local speech and preserves only a lightweight alias distinction (`SAY`, `YELL`, `WHISPER`) so the first chat slice can prove the end-to-end gameplay path.
+- This contract should not be treated as the final abstraction for all communication types. Future speech work should separate:
+  - the communication act (`say`, `whisper`, `shout`, `tell`, guild/channel/system message, emote-like narration),
+  - the audience scope (same room, directed target, nearby area, map/region, continent/world, account/group/channel),
+  - and presentation/rendering style (for example, `Alice whispers to Bob...` versus a generic room broadcast).
+- In particular, future `WHISPER` and `TELL` behavior must preserve target-directed delivery semantics rather than collapsing into generic room chat, and future `SHOUT`-style behavior may depend on world-topology concepts such as area, map, or region propagation.
+- When those later slices land, prefer evolving this pathway toward a more generic communication envelope plus explicit audience/propagation metadata rather than adding one bespoke pipeline per verb.
+
 ## Implementation Status
 
 ### LOOK Slice
@@ -81,4 +91,4 @@ grpcurl -plaintext -d '{"tenant_id":"demo","session_id":"demo","command":"look"}
 
 - Live: `BroadcastSay` accepts authenticated `SAY` / `YELL` / `WHISPER` payloads, validates length, aggregates recipient and NPC metadata, and forwards the normalized message to the Social & Groups stub. The API returns delivery metadata and `shared.v1.ErrorDetail` codes so Game Session can render the canonical transcript and surface `gamesession.command.say.*` instrumentation.
 - Stubbed: delivery currently uses the Social & Groups regression stub that records `SendMessage` calls and echoes success while cross-service WebSocket and Telnet tests assert the structured response before adding a richer narrative layer.
-- Deferred: richer NPC replies, localized listening areas, channel filters, and profanity-escalation behavior will land in later slices once the foundational flow proves stable.
+- Deferred: richer NPC replies, directed/private delivery semantics, localized listening areas, area/map/region propagation rules, channel filters, and profanity-escalation behavior will land in later slices once the foundational flow proves stable.

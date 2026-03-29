@@ -28,7 +28,7 @@ jobs:
           fetch-depth: 0
 
       - name: 🧰 Set up kubectl
-        uses: azure/setup-kubectl@v4
+        uses: azure/setup-kubectl@v5
 
       - name: 🐳 Set up Docker
         uses: docker/setup-buildx-action@v4
@@ -48,6 +48,10 @@ jobs:
 
       - name: ⚙️ Set Up Gradle
         uses: gradle/actions/setup-gradle@v6
+        with:
+          build-scan-publish: true
+          build-scan-terms-of-use-url: 'https://gradle.com/help/legal-terms-of-use'
+          build-scan-terms-of-use-agree: 'yes'
 
       - name: 🏗️ Build service jars for overlay validation
         run: ./gradlew -PincludeLoadTesting=false :account-service:bootJar :automation-scripting-service:bootJar :entity-management-service:bootJar :game-design-service:bootJar :game-logic-service:bootJar :game-session-service:bootJar :logging-admin-service:bootJar :social-groups-service:bootJar :spring-cloud-gateway:bootJar :tcp-proxy-service:bootJar :world-management-service:bootJar
@@ -63,8 +67,8 @@ jobs:
           for service in $services; do
             docker build \
               --build-arg BASE_IMAGE=ghcr.io/benhook1013/firemud-base:latest \
-              -t ghcr.io/benhook1013/$service:latest \
-              -f ./services/$service/Dockerfile \
+              -t "ghcr.io/benhook1013/${service}:latest" \
+              -f "./services/${service}/Dockerfile" \
               .
           done
 

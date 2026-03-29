@@ -13,6 +13,7 @@ service GameLogicService {
   rpc ExecuteCommand(ExecuteCommandRequest) returns (ExecuteCommandResponse);
   rpc ResolveLook(LookRequest) returns (LookResult);
   rpc BroadcastSay(BroadcastSayRequest) returns (BroadcastSayResponse);
+  rpc ResolveMove(MoveRequest) returns (MoveResult);
 }
 
 message PingRequest {}
@@ -69,6 +70,20 @@ message BroadcastSayResponse {
   repeated string delivered_to = 3;
   repeated string npc_echoes = 4;
   shared.v1.ErrorDetail error = 5;
+}
+
+message MoveRequest {
+  string tenant_id = 1;
+  string session_id = 2;
+  string character_id = 3;
+  shared.v1.RoomInstanceRef room_instance = 4;
+  string direction = 5;
+}
+
+message MoveResult {
+  bool success = 1;
+  LookResult destination_look = 2;
+  shared.v1.ErrorDetail error = 3;
 }
 
 enum ChatAlias {

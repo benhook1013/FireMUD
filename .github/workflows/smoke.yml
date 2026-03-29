@@ -1,29 +1,127 @@
 name: Smoke Tests
 
 on:
-  push:
-    branches: [main, develop]
   pull_request:
     branches: [main, develop]
-  workflow_dispatch:
-  schedule:
-    - cron: '0 3 * * *'  # Daily at 3am UTC
 
 permissions:
   contents: read
   pull-requests: write
 
 concurrency:
-  group: smoke-${{ github.workflow }}-${{ github.ref }}
+  group: smoke-${{ github.workflow }}-${{ format('pr-{0}-controller', github.event.pull_request.number) }}
   cancel-in-progress: true
 
 jobs:
-  smoke-core:
-    name: Core Smoke Tests
+  changes:
+    name: Detect Smoke-Relevant Changes
     runs-on: ubuntu-latest
-    timeout-minutes: 25
-    env:
-      SMOKE_TIMEOUT_SECONDS: 20
+    if: ${{ github.event_name == 'pull_request' }}
+    outputs:
+      run_smoke_lite: ${{ steps.compute.outputs.run_smoke_lite }}
+      run_smoke_full: ${{ steps.compute.outputs.run_smoke_full }}
+    steps:
+      - name: Compute smoke scope
+        id: compute
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const files = await github.paginate(
+              github.rest.pulls.listFiles,
+              {
+                ...context.repo,
+                pull_number: context.payload.pull_request.number,
+                per_page: 100,
+              },
+              (response) => response.data.map((file) => file.filename)
+            );
+
+            const docsOnlyPredicate = (file) =>
+              file === "AGENTS.md" ||
+              file === "mkdocs.yml" ||
+              file.startsWith("design/") ||
+              file.startsWith("dev-tools/docs/") ||
+              file.endsWith(".md");
+
+            const frontendOnlyPredicate = (file) =>
+              file.startsWith("web-client/") ||
+              file.startsWith("config/openapi/");
+
+            const liteRelevantPrefixes = [
+              "buildSrc/",
+              "gradle/",
+              "protos/",
+              "config/checkstyle/",
+              "config/protobuf/",
+              "config/security/",
+              "config/spotbugs/",
+              "docker/",
+              "services/",
+            ];
+            const liteRelevantFiles = new Set([
+              "build.gradle.kts",
+              "settings.gradle.kts",
+              "gradle.properties",
+              ".github/workflows/smoke.yml",
+            ]);
+
+            const fullRelevantPrefixes = [
+              "buildSrc/",
+              "gradle/",
+              "protos/",
+              "docker/",
+              "services/account-service/",
+              "services/common-data-runtime/",
+              "services/common-library/",
+              "services/common-platform-core/",
+              "services/common-saga/",
+              "services/common-security/",
+              "services/common-test-support/",
+              "services/common-web-support/",
+              "services/entity-management-service/",
+              "services/game-logic-service/",
+              "services/game-session-service/",
+              "services/social-groups-service/",
+              "services/spring-cloud-gateway/",
+              "services/tcp-proxy-service/",
+              "services/world-management-service/",
+            ];
+            const fullRelevantFiles = new Set([
+              "build.gradle.kts",
+              "settings.gradle.kts",
+              "gradle.properties",
+              ".github/workflows/smoke.yml",
+            ]);
+
+            const nonDocFiles = files.filter((file) => !docsOnlyPredicate(file));
+            const nonDocsAreFrontendOnly =
+              nonDocFiles.length > 0 && nonDocFiles.every((file) => frontendOnlyPredicate(file));
+
+            if (nonDocFiles.length === 0 || nonDocsAreFrontendOnly) {
+              core.setOutput("run_smoke_lite", "false");
+              core.setOutput("run_smoke_full", "false");
+              return;
+            }
+
+            const runSmokeLite = nonDocFiles.some(
+              (file) =>
+                liteRelevantFiles.has(file) ||
+                liteRelevantPrefixes.some((prefix) => file.startsWith(prefix))
+            );
+            const runSmokeFull = nonDocFiles.some(
+              (file) =>
+                fullRelevantFiles.has(file) ||
+                fullRelevantPrefixes.some((prefix) => file.startsWith(prefix))
+            );
+            core.setOutput("run_smoke_lite", runSmokeLite ? "true" : "false");
+            core.setOutput("run_smoke_full", runSmokeFull ? "true" : "false");
+
+  smoke-lite:
+    name: Smoke Tests (Lite)
+    needs: [changes]
+    if: ${{ github.event_name == 'pull_request' && needs.changes.outputs.run_smoke_lite == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: ⬇️ Checkout Code
         uses: actions/checkout@v6
@@ -37,81 +135,55 @@ jobs:
       - name: ⚙️ Set Up Gradle
         uses: gradle/actions/setup-gradle@v6
         with:
+          build-scan-publish: true
+          build-scan-terms-of-use-url: 'https://gradle.com/help/legal-terms-of-use'
+          build-scan-terms-of-use-agree: 'yes'
           cache-read-only: false
 
-      - name: 📝 Create CI .env placeholder
-        run: touch .env
-
-      - name: Generate Dev Certificates
-        run: ./dev-tools/generate-dev-certs.sh dev-tools/certs
-
-      - name: 🚀 Start Dev Stack (devUp)
-        run: ./gradlew devUp
-
-      - name: 📦 Install WebSocket smoke dependency
-        run: python3 -m pip install --disable-pip-version-check websocket-client
-
-      - name: 🧪 Direct WebSocket LOGIN + LOOK (Game Session)
+      - name: 🧪 Run Lite Smoke Integration Checks
         run: |
-          cd services/game-session-service
-          bash ./websocket-login-look-smoke.sh
-
-      - name: 🧪 Telnet LOGIN + LOOK (TCP Proxy)
-        run: |
-          cd services/tcp-proxy-service
-          bash ./telnet-login-look-smoke.sh
-
-      - name: 📜 Dump Docker Compose Logs on Failure
-        if: failure()
-        run: |
-          if [ -f docker/docker-compose.yml ]; then
-            docker compose -f docker/docker-compose.yml logs || true
-          fi
-
-      - name: 🧹 Stop Dev Stack (devDown)
-        if: always()
-        run: ./gradlew devDown
-
-  smoke-gate:
-    name: Smoke Gate
-    runs-on: ubuntu-latest
-    needs: [smoke-core]
-    if: always()
-    steps:
-      - name: Enforce successful smoke tests
-        run: |
-          if [ "${{ needs.smoke-core.result }}" != "success" ]; then
-            echo "Smoke tests did not complete successfully: ${{ needs.smoke-core.result }}"
-            exit 1
-          fi
+          ./gradlew \
+            :account-service:integrationTest --tests 'net.firedevops.firemud.accountservice.AccountApplicationIntegrationTest' \
+            :game-session-service:integrationTest --tests 'net.firedevops.firemud.gamesession.GameSessionApplicationIntegrationTest' --tests 'net.firedevops.firemud.gamesession.GameSessionLoginIntegrationTest' --tests 'net.firedevops.firemud.gamesession.websocket.GameSessionWebSocketHandlerIntegrationTest' \
+            :tcp-proxy-service:integrationTest --tests 'net.firedevops.firemud.tcpproxy.TcpProxyServiceApplicationIntegrationTest'
 
   smoke-summary:
     name: Smoke Summary
     runs-on: ubuntu-latest
-    needs: [smoke-core, smoke-gate]
-    if: github.event_name == 'pull_request' && always()
+    needs: [changes, smoke-lite]
+    if: ${{ always() }}
     steps:
       - name: 💬 Publish Smoke Summary Comment
         uses: actions/github-script@v8
         with:
           script: |
-            const result = "${{ needs.smoke-core.result }}";
+            const liteEnabled = "${{ needs.changes.outputs.run_smoke_lite }}" === "true";
+            const fullEnabled = "${{ needs.changes.outputs.run_smoke_full }}" === "true";
+            const liteResult = liteEnabled ? "${{ needs.smoke-lite.result }}" : "skipped";
+            const fullResult = fullEnabled ? "tracked-by-smoke-gate" : "skipped";
             const statusIcon = (value) => {
               if (value === "success") return "✅";
               if (value === "failure") return "❌";
               if (value === "cancelled") return "⚪";
+              if (value === "tracked-by-smoke-gate") return "🕒";
               return "⏭️";
             };
 
-            const headline = result === "success"
-              ? "✅ Smoke tests passed"
-              : "❌ Smoke tests failed";
+            let headline = "✅ Smoke tests passed";
+            if (["failure", "cancelled", "timed_out"].includes(liteResult)) {
+              headline = "❌ Smoke tests failed";
+            } else if (fullEnabled) {
+              headline = "🕒 Full smoke is tracked by Smoke Gate";
+            } else if (!liteEnabled) {
+              headline = "⏭️ Smoke tests skipped";
+            }
 
             const body = [
               "### Smoke Summary",
               headline,
               "",
-              `- ${statusIcon(result)} Core Smoke Tests: \`${result}\``,
+              `- ${statusIcon(liteResult)} Smoke Tests (Lite): \`${liteResult}\``,
+              `- ${statusIcon(fullResult)} Smoke Tests (Full Stack): \`${fullResult}\``,
             ].join("\n");
 
             const { data: comments } = await github.rest.issues.listComments({
@@ -136,3 +208,63 @@ jobs:
                 body
               });
             }
+
+  smoke-gate:
+    name: Smoke Gate
+    runs-on: ubuntu-latest
+    needs: [changes, smoke-lite]
+    if: ${{ always() && github.event_name == 'pull_request' }}
+    timeout-minutes: 30
+    steps:
+      - name: Verify lite smoke result
+        if: ${{ needs.changes.outputs.run_smoke_lite == 'true' && needs.changes.outputs.run_smoke_full != 'true' }}
+        run: |
+          if [ "${{ needs.smoke-lite.result }}" != "success" ]; then
+            echo "Lite smoke did not succeed: ${{ needs.smoke-lite.result }}" >&2
+            exit 1
+          fi
+
+      - name: Wait for full smoke dispatch result
+        if: ${{ needs.changes.outputs.run_smoke_full == 'true' }}
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const headSha = context.payload.pull_request.head.sha;
+            const prNumber = String(context.payload.pull_request.number);
+            const started = Date.now();
+            const timeoutMs = 25 * 60 * 1000;
+            const sleepMs = 15000;
+
+            while (Date.now() - started < timeoutMs) {
+              const runs = await github.paginate(
+                github.rest.actions.listWorkflowRuns,
+                {
+                  owner,
+                  repo,
+                  workflow_id: "runtime-images.yml",
+                  event: "pull_request",
+                  per_page: 100,
+                }
+              );
+
+              const matching = runs.find((run) => run.head_sha === headSha);
+              if (matching) {
+                core.info(`Found runtime-images run ${matching.id} with status=${matching.status} conclusion=${matching.conclusion}`);
+                if (matching.status !== "completed") {
+                  await new Promise((resolve) => setTimeout(resolve, sleepMs));
+                  continue;
+                }
+
+                if (matching.conclusion !== "success") {
+                  core.setFailed(`Runtime images/full smoke run ${matching.id} finished with ${matching.conclusion}`);
+                }
+                return;
+              }
+
+              core.info(`No runtime-images/full-smoke run found yet for PR #${prNumber} sha ${headSha}; waiting...`);
+              await new Promise((resolve) => setTimeout(resolve, sleepMs));
+            }
+
+            core.setFailed(`Timed out waiting for runtime-images/full-smoke run for PR #${prNumber} sha ${headSha}`);

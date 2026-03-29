@@ -1,6 +1,6 @@
 [versions]
-spring-boot = "4.0.4"
-flyway = "12.1.1"
+spring-boot = "4.0.5"
+flyway = "12.2.0"
 mapstruct = "1.6.3"
 lombok = "1.18.42"
 lombok-mapstruct-binding = "0.2.0"
@@ -83,5 +83,5 @@ testcontainers-postgresql = { module = "org.testcontainers:postgresql", version 
 
 [plugins]
 spring-boot = { id = "org.springframework.boot", version.ref = "spring-boot" }
-flyway = { id = "org.flywaydb.flyway", version = "12.1.1" }
+flyway = { id = "org.flywaydb.flyway", version = "12.2.0" }
 protobuf = { id = "com.google.protobuf", version = "0.9.6" }

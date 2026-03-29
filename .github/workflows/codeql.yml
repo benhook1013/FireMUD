@@ -6,24 +6,90 @@ on:
   pull_request:
     branches: [ main, develop ]
   schedule:
-    - cron: '0 0 * * 0'  # Weekly on Sundays at 00:00 UTC
-  workflow_dispatch:      # Enables manual trigger from GitHub Actions UI
+    - cron: '0 0 * * 0'
+  workflow_dispatch:
 
 permissions:
   contents: read
   security-events: write
 
 concurrency:
-  group: codeql-${{ github.workflow }}-${{ github.ref }}
+  group: codeql-${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.ref }}
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Detect CodeQL-Relevant Changes
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.compute.outputs.matrix }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Compute CodeQL matrix
+        id: compute
+        uses: actions/github-script@v8
+        with:
+          script: |
+            if (context.eventName !== "pull_request") {
+              core.setOutput(
+                "matrix",
+                JSON.stringify([
+                  { language: "java" },
+                  { language: "javascript-typescript" },
+                ])
+              );
+              return;
+            }
+
+            const files = await github.paginate(
+              github.rest.pulls.listFiles,
+              {
+                ...context.repo,
+                pull_number: context.payload.pull_request.number,
+                per_page: 100,
+              },
+              (response) => response.data.map((file) => file.filename)
+            );
+
+            const javaRelevantPrefixes = [
+              "buildSrc/",
+              "gradle/",
+              "protos/",
+              "docker/",
+              "services/",
+              "config/",
+            ];
+            const javaRelevantFiles = new Set([
+              "build.gradle.kts",
+              "settings.gradle.kts",
+              "gradle.properties",
+              ".github/workflows/codeql.yml",
+            ]);
+
+            const runJava = files.some(
+              (file) =>
+                javaRelevantFiles.has(file) ||
+                javaRelevantPrefixes.some((prefix) => file.startsWith(prefix))
+            );
+
+            const matrix = [{ language: "javascript-typescript" }];
+            if (runJava) {
+              matrix.unshift({ language: "java" });
+            }
+
+            core.setOutput("matrix", JSON.stringify(matrix));
+
   analyze:
-    name: CodeQL Analysis
+    name: CodeQL Analysis (${{ matrix.language }})
+    needs: [changes]
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        language: [ 'java', 'javascript-typescript' ]
+        include: ${{ fromJSON(needs.changes.outputs.matrix) }}
 
     steps:
       - name: ⬇️ Checkout repository
@@ -39,6 +105,10 @@ jobs:
       - name: ⚙️ Set Up Gradle
         if: matrix.language == 'java'
         uses: gradle/actions/setup-gradle@v6
+        with:
+          build-scan-publish: true
+          build-scan-terms-of-use-url: 'https://gradle.com/help/legal-terms-of-use'
+          build-scan-terms-of-use-agree: 'yes'
 
       - name: 🔍 Initialize CodeQL
         uses: github/codeql-action/init@v4
@@ -47,7 +117,7 @@ jobs:
 
       - name: ⚙️ Build project for CodeQL
         if: matrix.language == 'java'
-        run: ./gradlew codeqlClasses --no-daemon
+        run: ./gradlew codeqlClasses
 
       - name: 📊 Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v4

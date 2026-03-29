@@ -52,6 +52,7 @@ class LookAggregationServiceTest {
             .setLongDescription("long desc")
             .addExits(
                 RoomExitSnapshot.newBuilder()
+                    .setDirection("NORTH")
                     .setLabel("NORTH")
                     .setTargetRoomInstanceId("2045")
                     .setDescription("arch")

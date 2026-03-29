@@ -8,6 +8,13 @@ updates:
       day: "sunday"
       time: "04:00"
       timezone: "Pacific/Auckland"
+    groups:
+      gradle-safe:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
 
   - package-ecosystem: "npm"
     directory: "/config/openapi"
@@ -17,6 +24,13 @@ updates:
       day: "sunday"
       time: "04:00"
       timezone: "Pacific/Auckland"
+    groups:
+      openapi-safe:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
 
   - package-ecosystem: "npm"
     directory: "/web-client"
@@ -26,6 +40,13 @@ updates:
       day: "sunday"
       time: "04:00"
       timezone: "Pacific/Auckland"
+    groups:
+      web-client-safe:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
     ignore:
       - dependency-name: "eslint"
         update-types:
@@ -39,3 +60,10 @@ updates:
       day: "sunday"
       time: "04:00"
       timezone: "Pacific/Auckland"
+    groups:
+      github-actions-safe:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"

@@ -42,7 +42,8 @@ class LookCommandHandlerTest {
           meterRegistry,
           lookCacheService,
           devIsolatedProperties);
-  private final SessionContext sessionContext = new SessionContext(1L, 22L, 123L, 911L, 0L, "jwt");
+  private final SessionContext sessionContext =
+      new SessionContext(1L, 22L, 123L, 911L, 0L, "room-42", "jwt");
   private final LookResult lookResult =
       LookResult.newBuilder()
           .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("1021").build())
@@ -55,7 +56,7 @@ class LookCommandHandlerTest {
     when(sessionAuthenticationService.resolveSessionContext(
             String.valueOf(sessionContext.sessionId())))
         .thenReturn(Optional.of(sessionContext));
-    when(gameLogicClient.resolveLook("22", "1", "911", "1021")).thenReturn(lookResult);
+    when(gameLogicClient.resolveLook("22", "1", "911", "room-42")).thenReturn(lookResult);
     when(lookTextRenderer.render(lookResult)).thenReturn("OK LOOK text");
   }
 
@@ -71,7 +72,7 @@ class LookCommandHandlerTest {
   void mapsGrpcFailureToErrorResponse() {
     StatusRuntimeException worldDown =
         new StatusRuntimeException(Status.UNAVAILABLE.withDescription("WorldManagement: down"));
-    when(gameLogicClient.resolveLook("22", "1", "911", "1021")).thenThrow(worldDown);
+    when(gameLogicClient.resolveLook("22", "1", "911", "room-42")).thenThrow(worldDown);
     String response = handler.describe("123");
     assertEquals("ERROR WORLD_UNAVAILABLE WorldManagement: down", response);
     Counter failures =
@@ -111,7 +112,7 @@ class LookCommandHandlerTest {
     Mockito.clearInvocations(gameLogicClient);
     when(lookTextRenderer.render(lookResult)).thenReturn("fresh text");
     assertEquals("fresh text", handler.describe("123"));
-    verify(gameLogicClient).resolveLook("22", "1", "911", "1021");
+    verify(gameLogicClient).resolveLook("22", "1", "911", "room-42");
   }
 
   @Test
