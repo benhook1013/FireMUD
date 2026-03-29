@@ -32,7 +32,7 @@ Expected response:
 
 - `Ping(PingRequest) returns (PingResponse)` is the basic connectivity check defined in [`game_logic_service.proto`](../../../../protos/game-logic/v1/game_logic_service.proto).
 - `ExecuteCommand(ExecuteCommandRequest) returns (ExecuteCommandResponse)` evaluates a parsed gameplay command and returns the outcome.
-- `BroadcastSay` accepts `tenant_id`, `session_id`, `character_id`, and a `RoomInstanceRef` (`tenant_id`, `game_instance_id`, `room_instance_id`), plus normalized `text` and an alias indicator (`SAY` / `YELL` / `WHISPER`). The handler validates length, enforces room chat controls, and returns delivery metadata (recipient identifiers, NPC echoes, optional acknowledgements) along with structured status codes so Game Session can render the canonical response.
+- `BroadcastSay` accepts `tenant_id`, `session_id`, `character_id`, and a `RoomInstanceRef` (`tenant_id`, `game_instance_id`, `room_instance_id`), plus normalized `text`. It is the first implemented communication action and should evolve toward a broader communication-intent contract rather than staying as the permanent abstraction for all speech.
 - All application-level failures are returned via `shared.v1.ErrorDetail` while the gRPC status remains `OK`; `grpc.app_error` must be recorded with the error code.
 
 ```bash
@@ -67,15 +67,20 @@ grpcurl -plaintext -d '{"tenant_id":"demo","session_id":"demo","command":"look"}
 
 ## SAY Broadcast Flow
 
-- Game Session channels authenticated commands through `BroadcastSay`, supplying the same `RoomInstanceRef` context (`tenantId`, `gameInstanceId`, `roomInstanceId`) that guards `LOOK`.
-- The command parser normalizes `SAY`, `YELL`, and `WHISPER` aliases before forwarding trimmed text so downstream services can enforce one validation contract.
-- Game Logic validates message length and room-chat rules, determines the occupied room, and delegates delivery to Social & Groups rather than rendering chat locally.
+- Game Session channels authenticated communication commands through Game Logic, supplying the same gameplay identity and world context that guard `LOOK`.
+- `BroadcastSay` is the first implemented communication action. Over time this should become a broader communication-intent pathway rather than a permanent `say`-only API surface.
+- Game Logic validates message length and communication rules, resolves the communication target/scope, applies gameplay interception/perception rules, and dispatches to Social & Groups rather than rendering chat locally.
 - The longer-term communication model should generalize this flow from a `BroadcastSay`-style API to a communication-intent pathway with:
   - a game-configured communication type definition,
   - explicit target/scope objects such as room, area, region, group, or direct target,
   - recipient resolution owned by those targets/scopes,
   - and per-recipient presentation metadata.
 - In-world communication should therefore target the room/area/etc. itself rather than precomputing a final flat recipient list in the sender path. That allows target-owned resolution to include ordinary listeners plus observers/interceptors such as eavesdroppers, spies, magical listeners, or other game-specific mechanics.
+- The first standard built-ins should be:
+  - `say` targeting the current room,
+  - `whisper` targeting one character in the current room,
+  - `tell` targeting one character directly outside room scope by default.
+- `shout` should remain a future built-in and should not be implemented until the game-settings model can describe topology-dependent scope such as region-wide versus map-wide propagation.
 - Observer perception should be determined by layered rules rather than by one owner alone:
   - the communication type defines the baseline observability contract and what kinds of recipient views are even possible,
   - the target/scope determines which ordinary listeners and observer/interceptor candidates qualify in this location or social scope,
@@ -85,13 +90,13 @@ grpcurl -plaintext -d '{"tenant_id":"demo","session_id":"demo","command":"look"}
 
 ### Current scope versus future speech semantics
 
-- The current `BroadcastSay` contract is intentionally scoped to room-local speech and preserves only a lightweight alias distinction (`SAY`, `YELL`, `WHISPER`) so the first chat slice can prove the end-to-end gameplay path.
+- The current `BroadcastSay` contract is intentionally scoped to room-local speech so the first chat slice can prove the end-to-end gameplay path.
 - This contract should not be treated as the final abstraction for all communication types. Future speech work should separate:
   - the communication act (`say`, `whisper`, `shout`, `tell`, guild/channel/system message, emote-like narration),
   - the audience scope or target object (same room, directed target, nearby area, map/region, continent/world, account/group/channel),
   - the recipient-resolution rules owned by that scope, including observer/interceptor resolution,
   - and presentation/rendering style (for example, `Alice whispers to Bob...` versus a generic room broadcast).
-- In particular, future `WHISPER` and `TELL` behavior must preserve target-directed delivery semantics rather than collapsing into generic room chat, and future `SHOUT`-style behavior may depend on world-topology concepts such as area, map, or region propagation.
+- In particular, `whisper` and `tell` should preserve target-directed delivery semantics rather than collapsing into generic room chat, and future `shout` behavior may depend on world-topology concepts such as area, map, or region propagation.
 - When those later slices land, prefer evolving this pathway toward a generic communication envelope plus explicit target/scope resolution and presentation metadata rather than adding one bespoke pipeline per verb.
 
 ## Implementation Status

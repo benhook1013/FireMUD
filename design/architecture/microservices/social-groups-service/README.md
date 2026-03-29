@@ -26,7 +26,7 @@ Provides chat, guild, and social networking features across games. Basic REST an
 
 ## Current Scope Notes
 
-- The current gameplay-connected chat slice is intentionally narrow: it proves room-local `SAY`-family delivery from Game Session through Game Logic into Social & Groups.
+- The current gameplay-connected communication slice is intentionally narrow in implementation: it proves room-local `say` delivery from Game Session through Game Logic into Social & Groups while establishing the broader shared communication model.
 - Future communication work is expected to broaden this into a richer communication model that distinguishes:
   - the communication act/type (`say`, `whisper`, `tell`, `shout`, guild/system/game-defined variants),
   - the target or propagation scope (room, area, region, map, continent, guild/group, account-directed, and other configured channels),
@@ -35,6 +35,7 @@ Provides chat, guild, and social networking features across games. Basic REST an
 - Those broader scope and routing semantics should be modeled explicitly rather than treating all verbs as cosmetic aliases of one generic room broadcast.
 - In particular, in-world communication should usually target a room, area, or other scope object and let that scope resolve listeners, overhearers, spies, magical observers, and similar mechanics.
 - The target-state observer model should be layered: communication type sets baseline observability, the target/scope resolves qualified listeners and observers, and recipient capabilities/effects determine whether a qualified observer gets full content, partial content, or only metadata.
+- Even for communication types that obviously need Social & Groups for membership, history, moderation, or fanout, the action should still enter through Game Logic first so gameplay interception, surveillance, magical listening, or similar mechanics can participate consistently.
 
 ## Document Map
 

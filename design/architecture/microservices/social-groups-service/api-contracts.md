@@ -56,10 +56,10 @@ grpcurl -plaintext localhost:6565 social_groups.v1.SocialGroupsService/Ping
 
 ## Delivery Semantics
 
-- In-game chat commands such as say, tell, guild chat, and mail originate in the Game Logic Service and incorporate context from the World Management and Entity Management services.
-- The Game Logic Service invokes this service to deliver messages, run profanity checks, and log all communications for audit and moderation.
+- In-game communication actions such as `say`, `whisper`, `tell`, guild chat, and mail originate in the Game Logic Service and incorporate context from the World Management and Entity Management services where needed.
+- The Game Logic Service invokes this service to deliver messages, run profanity checks, persist history, and log communications for audit and moderation.
 - Voice chat is an optional feature layered on a lightweight WebRTC gateway; the service issues temporary tokens via `/voice/token` and records voice activity for moderation.
-- The current gameplay-connected `SAY` slice should be treated as room speech only. It proves the cross-service path, but it is not the final abstraction for all communication.
+- The current gameplay-connected `say` slice should be treated as the first implemented communication action only. It proves the cross-service path, but it is not the final abstraction for all communication.
 - Future gameplay communication should preserve a distinction between:
   - the speech act (`SAY`, `WHISPER`, `SHOUT`, `TELL`, system narration, or game-defined variants),
   - the delivery scope or target object (directed target, room, local area, region, map, continent, guild/group, account-directed, and other configured channels),
@@ -67,3 +67,4 @@ grpcurl -plaintext localhost:6565 social_groups.v1.SocialGroupsService/Ping
   - and per-recipient presentation/rendering metadata.
 - Later slices may allow world-topology-aware propagation rules such as area-local whispers, map-wide shouts, or continent-scoped announcements. Social & Groups should accept those semantics through explicit delivery metadata rather than inferring them from a room-chat alias alone.
 - The preferred target-state is a configurable communication envelope where a communication intent names a type definition plus one or more targets/scopes. Social & Groups should receive explicit resolved delivery metadata and presentation directives from the gameplay orchestration layer rather than re-deriving spatial context from a verb name alone.
+- Even when Social & Groups owns durable history, moderation, membership checks, or fanout for a communication type, the action should still enter through Game Logic so gameplay abilities, items, and perception/interception rules can participate consistently across all communication modes.

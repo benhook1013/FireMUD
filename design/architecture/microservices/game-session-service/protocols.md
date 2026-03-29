@@ -7,7 +7,7 @@ Telnet and WebSocket clients share a minimal line-based command protocol that po
 At the protocol level, commands are split into two groups:
 
 - **System commands** – session and connectivity operations fully owned by Game Session, such as `LOGIN`, `LOGON`, `PING`, and simple state/introspection queries that do not touch gameplay rules.
-- **Gameplay commands** – in-world actions such as `LOOK`, `SAY`, `YELL`, `WHISPER`, movement, and combat. Game Session validates session state and authorization, normalizes input, and enqueues the action for Game Logic Service; it does not re-implement gameplay mechanics here.
+- **Gameplay commands** – in-world actions such as `LOOK`, communication actions like `SAY`, `WHISPER`, and `TELL`, movement, and combat. Game Session validates session state and authorization, normalizes input, and enqueues the action for Game Logic Service; it does not re-implement gameplay mechanics here.
 
 The player-facing protocol is also stage-aware:
 
@@ -33,9 +33,9 @@ PLAY <world> [character]
 | `CHARS <world> [realm]` | Lists characters for a world and optional realm from the authoritative character store, filtered to `{accountId, tenantId, gameInstanceId}` ownership. | `CHARS demo production` |
 | `PLAY <world> [realm] [character]` | Binds the authenticated connection to a world, optional realm, and optional character after `LOGIN`, enforcing tenant authorization, public-admission rules, realm routing, and entitlements. The normal player-facing target is `PLAY <world> [character]`; if the request is ambiguous, the service should return a selection-oriented response instead of treating that ambiguity as a gameplay error. For the default public production realm, the first successful `PLAY` creates the caller's `player` membership atomically via Account Service. | `PLAY demo Sora` |
 | `LOOK` | Requests the current room snapshot aggregated from Game Logic plus World and Entity services. | `LOOK` |
-| `SAY <text>` | Broadcasts chat text to everyone in the same room. | `SAY Hello travelers` |
-| `YELL <text>` | Alias for `SAY` rendered with higher emphasis while still delivering to the current room. | `YELL Hear me, comrades` |
-| `WHISPER <character> <text>` | Directed chat that points at a single nearby character. | `WHISPER Sora The forge smells of brimstone` |
+| `SAY <text>` | Standard room-local communication action. Targets the caller's current room and uses the shared communication model to resolve listeners and any observer/interceptor views. | `SAY Hello travelers` |
+| `WHISPER <character> <text>` | Standard directed in-room communication action. Targets one nearby character in the current room; baseline default is full content for sender and target, with observer handling controlled by communication-type and target rules. | `WHISPER Sora The forge smells of brimstone` |
+| `TELL <character> <text>` | Standard direct communication action. Targets one character directly, outside room scope by default, while still flowing through the shared communication model and Game Logic. | `TELL Sora Meet me at the forge` |
 
 Selector rules for `PLAY` match the lobby helpers: `<world>` accepts a stable world slug or a menu index from `WORLDS`, `[realm]` accepts a realm slug or a menu index from `REALMS`, and `[character]` is an optional name or index when the resolved realm exposes exactly one visible character choice. If `PLAY <world>` or `PLAY <world> <character>` is ambiguous, the response should guide the player toward `REALMS`, `CHARS`, or a more specific `PLAY` form rather than failing with a low-level backend-flavored error.
 
@@ -215,9 +215,19 @@ This structured payload should not be treated as the final platform abstraction 
 - recipient resolution owned by those targets/scopes,
 - and per-recipient presentation for emitters, ordinary listeners, and observer/interceptor roles.
 
+All communication actions should enter through Game Logic. Game Logic resolves gameplay context, communication type, target/scope, and gameplay interception/perception rules, then dispatches to Social & Groups or other owning services as needed for membership checks, moderation, persistence, and delivery fanout.
+
 For in-world communication, the command should usually target the room/area/etc. rather than precomputing the final recipient list in the sender path. That keeps room-local speech extensible for eavesdropping, spy skills, magical listening, and other target-owned delivery rules.
 
-The current room-speech parser enforces that `SAY` includes at least one non-whitespace character. While `YELL` and `WHISPER` exist today as temporary command-surface aliases on the same path, they should not be treated as final speech semantics. Submitting an empty payload or exceeding the configured message limit, currently 512 characters, yields `ERROR INVALID_ARGUMENT Message text must be 1-512 characters long`.
+The first standard built-ins should be understood as:
+
+- `say` -> current room target
+- `whisper` -> direct target in the current room
+- `tell` -> direct target outside room scope by default
+
+`shout` should be treated as a future built-in, but not implemented until the game-settings model can describe whether its propagation should be region-wide, map-wide, or otherwise topology-dependent.
+
+The current room-speech parser enforces that `SAY` includes at least one non-whitespace character. `WHISPER` and `TELL` are part of the intended standard built-in set, but their fuller semantics should still be implemented through the shared communication model rather than as ad hoc aliases. Submitting an empty payload or exceeding the configured message limit, currently 512 characters, yields `ERROR INVALID_ARGUMENT Message text must be 1-512 characters long`.
 
 ### LOOK transcripts
 
