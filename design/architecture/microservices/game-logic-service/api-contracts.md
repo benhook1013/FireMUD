@@ -57,9 +57,12 @@ grpcurl -plaintext -d '{"tenant_id":"demo","session_id":"demo","command":"look"}
 ## LOOK Aggregation and Formatting
 
 - `ResolveLook` orchestrates World Management and Entity Management: World provides room topology, ambient state, and the authoritative occupant set for the target room or instance, while Entity enriches those caller-supplied occupant references with live entity and ground-item display data to build a deterministic `LookResult` that Game Session renders for clients.
-- A dedicated `LookResultRenderer` keeps the canonical textual output aligned with the documented room-name, description, exit, and entity transcripts while the DTO stays structured.
+- The target-state `LookResult` should stay explicitly sectioned rather than collapsing everything into one mixed list. At minimum it should preserve distinct sections for room/world snapshot data, exits, visible occupants, visible room-ground items from the room-attached container, and later optional overlays such as combat, hazards, or ambient scripted notices.
+- A dedicated `LookResultRenderer` remains useful for local development, diagnostics, and test fixtures, but the canonical player-facing transcript is owned by Game Session. Game Logic's durable contract is the structured `LookResult`, not a rendered text payload.
 - Downstream errors from World or Entity services are labeled (`WorldManagement`, `EntityManagement`) so they surface as precise error codes such as `ROOM_NOT_FOUND`, `WORLD_UNAVAILABLE`, and `ENTITY_UNAVAILABLE` when Game Session formats Telnet and WebSocket replies.
 - Game Logic is the orchestration boundary for these gameplay reads; downstream services on the hot path should answer from owned state, caches, or caller-supplied references rather than recursively building additional steady-state fan-out trees.
+- Game Logic must not own or read the reconnect-oriented rendered room-view cache. That cache is a Game Session presentation concern and is always derived from a successful `ResolveLook`.
+- `LOOK` should describe what is immediately visible in the current room. Visible bags, corpses, chests, or similar containers may appear as room-ground items, but nested container contents should not be expanded inline by default; later item/container commands can inspect those contents explicitly.
 
 ## SAY Broadcast Flow
 

@@ -10,7 +10,8 @@ The target-state model is container-first:
 - room-ground inventory is a room-attached container persisted by Entity Management but identified from the authoritative World room instance;
 - equipment is not just another bag position and instead uses first-class equipment bindings;
 - slot definitions and body layouts are game-configured rather than hardcoded to a fixed humanoid equipment schema;
-- future inventory queries must support structural filtering plus game-defined item types/tags for both gameplay commands and richer GUIs.
+- future inventory queries must support structural filtering plus game-defined item types/tags for both gameplay commands and richer GUIs;
+- `LOOK` and similar room-view commands should expose visible room-ground items from that room-attached container as a distinct room-view section, but should not automatically expand nested container contents inline.
 
 Inventory and equipment mutations are also intended to be auditable through a canonical transfer log so item duplication or invalid movement bugs can be investigated later.
 

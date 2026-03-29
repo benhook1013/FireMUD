@@ -338,6 +338,15 @@ Minimal canonical room-read sequence:
 4. World Management and Entity Management either satisfy that same fence or reject with `STALE_READ_FENCE` / `READ_FENCE_UNAVAILABLE`.
 5. Game Logic composes one `LookResult` only when both downstream reads align on the same fence, then Game Session renders and caches the transcript.
 
+Rendered room-view caching is intentionally a Game Session concern rather than a World or Game Logic responsibility:
+
+- Game Logic owns the authoritative structured `LookResult`.
+- Game Session owns only the derived player-facing transcript and any short-lived reconnect/UI replay cache built from that result.
+- The rendered cache is presentation-only and must never become the canonical answer for fresh gameplay reads that require authoritative recomputation.
+- This cache pattern is intentionally narrow and should grow only as a built-in gameplay view cache subsystem for canonical platform read commands such as `LOOK`, inventory views, equipment views, or similar redraw-oriented surfaces. It must not become a generic cache for arbitrary game-specific commands or transient action acknowledgements.
+- The target-state room view should remain explicitly sectioned so later slices can extend it without turning `LOOK` into an unstable mixed entity dump. The canonical sections are room/world snapshot data, exits, visible occupants, visible room-ground items sourced from Entity Management containment, and later optional overlays such as hazards or combat state.
+- Room-ground containers are part of Entity Management's containment model but are conceptually attached to the authoritative `RoomInstanceRef`. `LOOK` should surface those visible room-ground items as part of the composed room view without expanding nested container contents inline by default.
+
 Minimal interoperability requirements for the fence token:
 
 - `asOfTickId` is valid only within one `(tenantId, gameInstanceId, roomInstanceId)` room-read scope.

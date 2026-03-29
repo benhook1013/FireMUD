@@ -4,6 +4,15 @@
 
 Goal: replace the original hard-coded `LOOK` path with a data-driven flow that uses World and Entity services via Game Logic, producing canonical text output and observability for both WebSocket and Telnet clients. Status: the main LOOK flow and several regression tests are implemented; this document continues to describe the target-state behaviour, with implementation details and current coverage reflected in service design docs and test suites.
 
+Follow-up design direction agreed after the main slice landed:
+
+- Game Logic remains the owner of the authoritative structured `LookResult`.
+- Game Session owns the rendered `LOOK` transcript and the short-lived reconnect/UI redraw cache derived from that result.
+- The rendered cache is part of a narrow built-in gameplay view cache subsystem for canonical platform read commands, not a generic cache for arbitrary command responses.
+- Future built-in read/redraw commands may opt into the same subsystem explicitly, but transient action acknowledgements and game-specific scripted commands should not.
+- The target-state `LOOK` shape should stay explicitly sectioned: room/world snapshot data, exits, visible occupants, visible room-ground items, and later optional overlays such as hazards or combat state.
+- Visible room-ground items should come from the Entity Management containment model for the room-attached ground container, while nested container contents remain out of scope for base `LOOK` and should be inspected through later item/container commands.
+
 This checklist builds on the **Telnet to Gameplay** and **Login and Session** slices by replacing the hard-coded `LOOK` behavior in Game Session with a fully data-driven implementation that pulls room descriptions, exits, and visible entities from the World, Entity, and Game Logic services. Each task is intentionally scoped so it can be handed to Codex (or a developer) as a single, self-contained chunk of work.
 
 ## 1. Protocol, UX, and Design Alignment for LOOK
