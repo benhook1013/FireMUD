@@ -25,7 +25,9 @@ public class InMemorySessionContextTestConfiguration {
     @Override
     public void save(SessionContext context) {
       sessionMap.put(context.sessionId(), context);
-      identityMap.put(identityKey(context), context);
+      if (hasGameplayIdentity(context)) {
+        identityMap.put(identityKey(context), context);
+      }
     }
 
     @Override
@@ -47,7 +49,7 @@ public class InMemorySessionContextTestConfiguration {
     @Override
     public void deleteBySessionId(long tenantId, long sessionId) {
       SessionContext removed = sessionMap.remove(sessionId);
-      if (removed != null) {
+      if (removed != null && hasGameplayIdentity(removed)) {
         identityMap.remove(identityKey(removed));
       }
     }
@@ -58,6 +60,10 @@ public class InMemorySessionContextTestConfiguration {
 
     private String identityKey(long tenantId, long gameInstanceId, long characterId) {
       return tenantId + ":" + gameInstanceId + ":" + characterId;
+    }
+
+    private boolean hasGameplayIdentity(SessionContext context) {
+      return context.gameInstanceId() > 0 && context.characterId() > 0;
     }
   }
 }

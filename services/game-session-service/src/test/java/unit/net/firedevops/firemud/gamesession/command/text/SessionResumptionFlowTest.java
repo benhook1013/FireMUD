@@ -45,6 +45,7 @@ class SessionResumptionFlowTest {
       Mockito.mock(GameInstanceRepository.class);
   private final AccountClient accountClient = Mockito.mock(AccountClient.class);
   private final GameSessionProperties properties = new GameSessionProperties();
+  private final GameplayWorldCatalog worldCatalog = new GameplayWorldCatalog(properties);
   private final DevIsolatedProperties devIsolatedProperties = new DevIsolatedProperties(false);
   private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
   private final GameLogicClient gameLogicClient = Mockito.mock(GameLogicClient.class);
@@ -52,7 +53,8 @@ class SessionResumptionFlowTest {
   private final GameLogicProperties gameLogicProperties = new GameLogicProperties();
   private LookCommandHandler lookHandler;
   private final LookCacheService lookCacheService = Mockito.mock(LookCacheService.class);
-  private final SessionContextService sessionContextService = new InMemorySessionContextService();
+  private final InMemorySessionContextService sessionContextService =
+      new InMemorySessionContextService();
   private SessionAuthenticationService sessionAuthenticationService;
   private final ObjectProvider<DevIsolatedGameInstanceRegistry> devIsolatedRegistryProvider =
       Mockito.mock(ObjectProvider.class);
@@ -95,7 +97,6 @@ class SessionResumptionFlowTest {
             accountClient,
             commandService,
             devIsolatedProperties,
-            gameLogicProperties,
             devIsolatedRegistryProvider,
             meterRegistry);
     lookHandler =
@@ -118,9 +119,10 @@ class SessionResumptionFlowTest {
         new PlayCommandHandler(
             sessionAuthenticationService,
             sessionContextService,
+            worldCatalog,
             gameLogicProperties,
             meterRegistry);
-    worldsHandler = new WorldsCommandHandler();
+    worldsHandler = new WorldsCommandHandler(worldCatalog);
     interpreter =
         new TextCommandInterpreter(
             commandService,
@@ -209,6 +211,8 @@ class SessionResumptionFlowTest {
             });
 
     interpreter.interpret("1", command, false);
+    interpreter.interpret(
+        "1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"), false);
     sessionContextService.evictIdentity(22L, 1L, 77L);
 
     TextCommandInterpretationResult staleRetry = interpreter.interpret("2", command, false);
@@ -226,13 +230,17 @@ class SessionResumptionFlowTest {
     @Override
     public void save(SessionContext context) {
       SessionContext existing =
-          identityMap.get(
-              identityKey(context.tenantId(), context.accountId(), context.characterId()));
+          hasGameplayIdentity(context)
+              ? identityMap.get(
+                  identityKey(context.tenantId(), context.gameInstanceId(), context.characterId()))
+              : null;
       if (existing != null && existing.sessionId() != context.sessionId()) {
         sessionMap.remove(existing.sessionId());
       }
       sessionMap.put(context.sessionId(), context);
-      identityMap.put(identityKey(context), context);
+      if (hasGameplayIdentity(context)) {
+        identityMap.put(identityKey(context), context);
+      }
     }
 
     @Override
@@ -254,7 +262,7 @@ class SessionResumptionFlowTest {
     @Override
     public void deleteBySessionId(long tenantId, long sessionId) {
       SessionContext removed = sessionMap.remove(sessionId);
-      if (removed != null) {
+      if (removed != null && hasGameplayIdentity(removed)) {
         identityMap.remove(identityKey(removed));
       }
     }
@@ -269,6 +277,10 @@ class SessionResumptionFlowTest {
 
     private String identityKey(long tenantId, long gameInstanceId, long characterId) {
       return tenantId + ":" + gameInstanceId + ":" + characterId;
+    }
+
+    private boolean hasGameplayIdentity(SessionContext context) {
+      return context.gameInstanceId() > 0 && context.characterId() > 0;
     }
   }
 }

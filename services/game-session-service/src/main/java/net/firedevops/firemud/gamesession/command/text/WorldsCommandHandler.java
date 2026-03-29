@@ -1,14 +1,18 @@
 package net.firedevops.firemud.gamesession.command.text;
 
+import java.util.Objects;
 import org.springframework.stereotype.Component;
 
 /** Handles public world-browse commands before login and after login. */
 @Component
 public class WorldsCommandHandler {
-  private static final String WORLDS_RESPONSE =
-      "OK WORLDS\n" + "1) Demo World (demo)\n" + "2) Builder Sandbox (sandbox)\n" + "\n";
+  private final GameplayWorldCatalog worldCatalog;
+
+  public WorldsCommandHandler(GameplayWorldCatalog worldCatalog) {
+    this.worldCatalog = Objects.requireNonNull(worldCatalog, "worldCatalog must not be null");
+  }
 
   public String describe() {
-    return WORLDS_RESPONSE;
+    return worldCatalog.describeWorlds();
   }
 }

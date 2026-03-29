@@ -21,7 +21,6 @@ import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
 import net.firedevops.firemud.gamesession.client.AccountClient;
 import net.firedevops.firemud.gamesession.config.DevIsolatedProperties;
-import net.firedevops.firemud.gamesession.config.GameLogicProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
@@ -47,7 +46,6 @@ class LoginCommandHandlerTest {
   private final AccountClient accountClient = Mockito.mock(AccountClient.class);
   private final CommandService commandService = Mockito.mock(CommandService.class);
   private final DevIsolatedProperties devIsolatedProperties = new DevIsolatedProperties(false);
-  private final GameLogicProperties gameLogicProperties = new GameLogicProperties();
   private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
   private final ObjectProvider<DevIsolatedGameInstanceRegistry> devIsolatedRegistryProvider =
       Mockito.mock(ObjectProvider.class);
@@ -70,7 +68,6 @@ class LoginCommandHandlerTest {
             accountClient,
             commandService,
             devIsolatedProperties,
-            gameLogicProperties,
             devIsolatedRegistryProvider,
             meterRegistry);
   }
@@ -159,9 +156,37 @@ class LoginCommandHandlerTest {
     assertEquals(1L, context.sessionId());
     assertEquals(22L, context.tenantId());
     assertEquals(77L, context.accountId());
-    assertEquals(77L, context.characterId());
-    assertEquals(1L, context.gameInstanceId());
+    assertEquals(0L, context.characterId());
+    assertEquals(0L, context.gameInstanceId());
     assertNull(context.roomInstanceId());
+    assertEquals(AUTH_TOKEN, context.jwt());
+  }
+
+  @Test
+  void reloginPreservesExistingGameplayBindingForSameSession() {
+    TextCommand command =
+        new TextCommand(
+            TextCommandType.LOGIN,
+            List.of("demo@example.com", "swordfish"),
+            "LOGIN demo@example.com swordfish");
+
+    GameInstance instance = buildInstance(1L, 22L, 77L);
+    when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
+    when(sessionContextService.findByTenantAndSessionId(22L, 1L))
+        .thenReturn(
+            Optional.of(new SessionContext(1L, 22L, 77L, 88L, 99L, "room-2045", "old-jwt")));
+
+    handler.handle("1", command, false);
+
+    ArgumentCaptor<SessionContext> captor = ArgumentCaptor.forClass(SessionContext.class);
+    verify(sessionContextService).save(captor.capture());
+    SessionContext context = captor.getValue();
+    assertEquals(1L, context.sessionId());
+    assertEquals(22L, context.tenantId());
+    assertEquals(77L, context.accountId());
+    assertEquals(88L, context.characterId());
+    assertEquals(99L, context.gameInstanceId());
+    assertEquals("room-2045", context.roomInstanceId());
     assertEquals(AUTH_TOKEN, context.jwt());
   }
 
@@ -338,7 +363,7 @@ class LoginCommandHandlerTest {
   }
 
   @Test
-  void sessionTakeoverDeletesPreviousContextAndTracksMetric() {
+  void loginDoesNotTakeOverGameplayBindingBeforePlay() {
     TextCommand command =
         new TextCommand(
             TextCommandType.LOGIN,
@@ -350,18 +375,13 @@ class LoginCommandHandlerTest {
     instance.setTenantId(22L);
     instance.setOwnerAccountId(77L);
     when(gameInstanceRepository.findById(2L)).thenReturn(Optional.of(instance));
-    SessionContext existing = new SessionContext(1L, 22L, 77L, 77L, 1L, AUTH_TOKEN);
-    when(sessionContextService.findByGameplayIdentity(22L, 1L, 77L))
-        .thenReturn(Optional.of(existing));
-
     handler.handle("2", command, false);
 
-    verify(sessionContextService).deleteBySessionId(22L, 1L);
-    assertEquals(1.0, meterRegistry.counter("gamesession.session.takeover").count());
+    verify(sessionContextService, never()).deleteBySessionId(anyLong(), anyLong());
   }
 
   @Test
-  void sessionResumeIncrementsMetricWhenReusingSameSession() {
+  void repeatedLoginRefreshesLoginContextWithoutGameplayResume() {
     TextCommand command =
         new TextCommand(
             TextCommandType.LOGIN,
@@ -373,14 +393,10 @@ class LoginCommandHandlerTest {
     instance.setTenantId(22L);
     instance.setOwnerAccountId(77L);
     when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
-    SessionContext existing = new SessionContext(1L, 22L, 77L, 77L, 1L, AUTH_TOKEN);
-    when(sessionContextService.findByGameplayIdentity(22L, 1L, 77L))
-        .thenReturn(Optional.of(existing));
-
     handler.handle("1", command, false);
 
     verify(sessionContextService, never()).deleteBySessionId(22L, 1L);
-    assertEquals(1.0, meterRegistry.counter("gamesession.session.resume").count());
+    verify(sessionContextService).save(any(SessionContext.class));
   }
 
   private GameInstance buildInstance(long id, long tenantId, long ownerAccountId) {

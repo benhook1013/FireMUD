@@ -39,6 +39,7 @@ import net.firedevops.firemud.tcpproxy.stub.GatewayStubApplication;
 import net.firedevops.firemud.tcpproxy.telnet.TelnetServer;
 import net.firedevops.firemud.test.HttpTestSupport;
 import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -102,6 +103,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
   @LocalServerPort private int port;
   @Autowired private TelnetServer telnetServer;
   @Autowired private ConfigurableApplicationContext applicationContext;
+  @Autowired private StringRedisTemplate stringRedisTemplate;
 
   @MockitoBean private GrpcServerLifecycle grpcServerLifecycle;
 
@@ -110,6 +112,9 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     ensureTestServicesStarted();
     registry.add("GATEWAY_WS_URL", GATEWAY::websocketUrl);
     registry.add("TCP_PROXY_PORT", () -> 0);
+    registry.add(
+        "TCP_PROXY_DEFAULT_GAME_INSTANCE_ID", () -> String.valueOf(GAME_SESSION.sessionId()));
+    registry.add("TCP_PROXY_DEFAULT_TENANT_ID", () -> String.valueOf(TENANT_ID));
     registry.add("firemud.redis.host", REDIS::getHost);
     registry.add("firemud.redis.port", () -> REDIS.getMappedPort(6379));
   }
@@ -153,6 +158,11 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     }
   }
 
+  @BeforeEach
+  void clearSharedRuntimeState() {
+    stringRedisTemplate.getConnectionFactory().getConnection().serverCommands().flushAll();
+  }
+
   @Test
   void readinessEndpointReportsTrafficAdmissionReady() throws Exception {
     ensureTestServicesStarted();
@@ -181,6 +191,9 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
       writer.println("LOGIN demo@example.com swordfish");
       telnetLoginResponse = readBlockAfterContains(reader, "Logged in as demo@example.com");
       assertThat(telnetLoginResponse).contains("Logged in as demo@example.com");
+      writer.println("PLAY demo");
+      assertThat(readLineAfterContains(reader, "OK PLAY Entered world: demo"))
+          .contains("OK PLAY Entered world: demo");
       writer.println("LOOK");
       telnetLookResponse = readBlockAfterContains(reader, "OK LOOK");
     }
@@ -213,6 +226,9 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
       writer.println("LOGIN demo@example.com swordfish");
       assertThat(readBlockAfterContains(reader, "Logged in as demo@example.com"))
           .contains("Logged in as demo@example.com");
+      writer.println("PLAY demo");
+      assertThat(readLineAfterContains(reader, "OK PLAY Entered world: demo"))
+          .contains("OK PLAY Entered world: demo");
 
       writer.println("MOVE north");
       telnetMoveResponse = readBlockAfterContainsOrTimeout(reader, "OK LOOK");

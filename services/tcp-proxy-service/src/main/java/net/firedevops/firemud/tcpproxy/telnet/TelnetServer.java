@@ -33,6 +33,7 @@ import net.firedevops.firemud.tcpproxy.health.GatewayGameplayReadinessProbe;
 import net.firedevops.firemud.tcpproxy.service.TcpProxyEventService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Component;
@@ -69,6 +70,8 @@ public final class TelnetServer {
   private final int maxConnectionsPerIp;
   private final int maxLineBytes;
   private final int maxMalformedSessionEnvelopes;
+  private final String defaultGameInstanceId;
+  private final String defaultTenantId;
   private final java.util.concurrent.atomic.AtomicInteger activeConnections =
       new java.util.concurrent.atomic.AtomicInteger();
   private final java.util.concurrent.atomic.AtomicInteger bufferDepth =
@@ -96,6 +99,7 @@ public final class TelnetServer {
   @SuppressFBWarnings(
       value = "EI_EXPOSE_REP2",
       justification = "MeterRegistry is a shared Spring singleton used to register proxy metrics")
+  @Autowired
   public TelnetServer(
       @Value("${TCP_PROXY_PORT:2323}") int port,
       @Value("${GATEWAY_WS_URL:ws://spring-cloud-gateway:8080/ws/game}") String gatewayWsUrl,
@@ -108,6 +112,8 @@ public final class TelnetServer {
       @Value("${TCP_PROXY_MAX_CONNECTIONS_PER_IP:0}") int maxConnectionsPerIp,
       @Value("${TCP_PROXY_MAX_LINE_BYTES:4096}") int maxLineBytes,
       @Value("${TCP_PROXY_MAX_MALFORMED_ENVELOPES:5}") int maxMalformedSessionEnvelopes,
+      @Value("${TCP_PROXY_DEFAULT_GAME_INSTANCE_ID:}") String defaultGameInstanceId,
+      @Value("${TCP_PROXY_DEFAULT_TENANT_ID:}") String defaultTenantId,
       MeterRegistry meterRegistry,
       TcpProxyEventService eventService,
       GatewayGameplayReadinessProbe gatewayGameplayReadinessProbe,
@@ -124,6 +130,8 @@ public final class TelnetServer {
     this.maxConnectionsPerIp = maxConnectionsPerIp;
     this.maxLineBytes = maxLineBytes;
     this.maxMalformedSessionEnvelopes = maxMalformedSessionEnvelopes;
+    this.defaultGameInstanceId = defaultGameInstanceId;
+    this.defaultTenantId = defaultTenantId;
     this.meterRegistry = meterRegistry;
     this.connectionCounter = meterRegistry.counter("tcpproxy.connections.total");
     this.discardedCommandCounter = meterRegistry.counter("tcpproxy.telnet.discarded");
@@ -153,6 +161,42 @@ public final class TelnetServer {
         throw new IllegalStateException(message, e);
       }
     }
+  }
+
+  public TelnetServer(
+      int port,
+      String gatewayWsUrl,
+      boolean tlsEnabled,
+      boolean devIsolated,
+      String certPath,
+      String keyPath,
+      boolean advertiseMcp,
+      int maxConnections,
+      int maxConnectionsPerIp,
+      int maxLineBytes,
+      int maxMalformedSessionEnvelopes,
+      MeterRegistry meterRegistry,
+      TcpProxyEventService eventService,
+      GatewayGameplayReadinessProbe gatewayGameplayReadinessProbe,
+      @Nullable LookCacheService lookCacheService) {
+    this(
+        port,
+        gatewayWsUrl,
+        tlsEnabled,
+        devIsolated,
+        certPath,
+        keyPath,
+        advertiseMcp,
+        maxConnections,
+        maxConnectionsPerIp,
+        maxLineBytes,
+        maxMalformedSessionEnvelopes,
+        null,
+        null,
+        meterRegistry,
+        eventService,
+        gatewayGameplayReadinessProbe,
+        lookCacheService);
   }
 
   private SslContext buildServerSslContext() throws SSLException {
@@ -236,6 +280,8 @@ public final class TelnetServer {
                               TelnetServerHandler::createWebSocket,
                               eventService,
                               bufferDepth,
+                              defaultGameInstanceId,
+                              defaultTenantId,
                               lookCacheService,
                               maxMalformedSessionEnvelopes));
                 }

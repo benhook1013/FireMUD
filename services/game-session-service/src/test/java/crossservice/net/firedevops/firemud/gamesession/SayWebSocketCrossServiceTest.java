@@ -107,9 +107,10 @@ class SayWebSocketCrossServiceTest {
     long sessionId = prepareGameInstance();
     List<String> responses = runSaySequence(sessionId);
 
-    assertThat(responses).hasSizeGreaterThanOrEqualTo(2);
+    assertThat(responses).hasSizeGreaterThanOrEqualTo(3);
     assertThat(responses.get(0)).startsWith("OK LOGIN");
-    assertThat(responses.get(1).trim()).isEqualTo(ChatTestFixtures.canonicalSayText());
+    assertThat(responses.get(1)).startsWith("OK PLAY");
+    assertThat(responses.get(2).trim()).isEqualTo(ChatTestFixtures.canonicalSayText());
     assertThat(SOCIAL_STUB.lastRequest())
         .hasValueSatisfying(
             request -> {
@@ -221,7 +222,7 @@ class SayWebSocketCrossServiceTest {
                     responses.add(data.toString());
                     int count = received.incrementAndGet();
                     webSocket.request(1);
-                    if (count >= 2) {
+                    if (count >= 3) {
                       ready.complete(null);
                     }
                     return Listener.super.onText(webSocket, data, last);
@@ -231,6 +232,8 @@ class SayWebSocketCrossServiceTest {
 
     webSocket.sendText("LOGIN demo@example.com swordfish", true).join();
     waitForResponseCount(responses, 1);
+    webSocket.sendText("PLAY demo", true).join();
+    waitForResponseCount(responses, 2);
     webSocket.sendText("SAY Hello travelers", true).join();
     ready.get(COMMAND_WAIT.toMillis(), TimeUnit.MILLISECONDS);
     webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "done").join();

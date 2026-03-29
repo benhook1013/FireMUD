@@ -68,7 +68,7 @@ The first successful session for a new player follows a single canonical onboard
 1. **Authenticate the Platform Account**
    - **First-party web client** – Obtains a short-lived player bootstrap token through the [Account Service](./microservices/account-service/README.md), uses bootstrap-backed discovery endpoints to choose a world/realm/character target, then requests a connect token and opens the gameplay WebSocket through the [Spring Cloud Gateway](./microservices/spring-cloud-gateway/README.md).
    - **Telnet / MCP client** – Connects through the [TCP Proxy Service](./microservices/tcp-proxy-service/README.md) and authenticates in-band with `LOGIN`.
-2. **Discover Joinable Worlds** – After authentication, the player uses the canonical discovery contract to list worlds they can enter. Existing memberships always qualify. In v1, a live default production realm may also be publicly discoverable even before the player has joined that tenant, so brand-new authenticated accounts can still enter through the public-production onboarding path. Responses use world slugs and friendly names rather than raw IDs, as defined in [Authentication & Authorization](./system-architecture-authentication.md) and [Multi-Tenancy](./system-architecture-multi-tenancy.md).
+2. **Browse or Discover Joinable Worlds** – The player may use `WORLDS` before login to browse the platform publicly, then use the same command again after login to see the authenticated discovery set they can actually enter. Existing memberships always qualify. In v1, a live default production realm may also be publicly discoverable even before the player has joined that tenant, so brand-new accounts can still discover where they would enter through the public-production onboarding path. Responses use world slugs and friendly names rather than raw IDs, as defined in [Authentication & Authorization](./system-architecture-authentication.md) and [Multi-Tenancy](./system-architecture-multi-tenancy.md).
 3. **Choose a Realm** – If the selected world exposes more than one visible realm, the player uses `REALMS <world>` to choose between the default production realm and any explicitly authorized additional realms such as a playtest fork. Hidden or unauthorized realms are never disclosed. Public discovery applies only to the default production realm in v1; any additional realm requires an explicit access grant from the creator or operator. On the default public production realm, the first successful `PLAY` creates the player's `player` membership atomically as part of admission.
 4. **List Characters or Create New** – The player uses `CHARS <world> [realm]` to view the character choices valid for the selected realm target. In shared-state realms this typically means the tenant's normal live durable character roster. In isolated realms it may instead mean copied fork-local state, seeded/sample-state characters, or fresh standalone realm-local state for the same account. If no visible character exists, the client must complete the world's character-creation flow before `PLAY` succeeds unless the resolved realm's policy forbids creation. The authoritative character-creation owner for this step is the [Entity Management Service](./microservices/entity-management-service/README.md), whose `CreateCharacter` contract defines how new player characters are created from published templates. For playtest forks, a player may arrive with copied fork-local character state from the source snapshot. If no visible fork-local character exists for that account, fork policy determines whether the player may create a fresh fork-local character or whether the fork is restricted to copied characters only; whichever policy a fork uses must be surfaced consistently in the lobby/client UX. If a fork permits both copied and newly created fork-local characters, `CHARS` returns them in one fork-local list and the client does not need a separate mode switch. If no visible character exists and fork policy forbids creation, the canonical player-facing failure is a hard character-selection denial rather than a generic `CHARACTER_REQUIRED` prompt.
 5. **Bind to Gameplay** – `PLAY <world> [realm] [character]` resolves to canonical `{tenantId, gameInstanceId, characterId}` values and binds the session to the selected realm. After this step, normal gameplay commands become available.
@@ -78,23 +78,20 @@ For a first-time join through a publicly discoverable production realm, the firs
 This onboarding flow is the only supported way to discover and enter a realm. Transport-level hints such as Telnet `SESSION` and first-party WebSocket connect tokens may narrow the target realm, but they never replace the authenticated lobby contract.
 
 ```plaintext
-Player → LOGIN → WORLDS → REALMS → CHARS / Create Character → PLAY
+Player → WORLDS (optional public browse) → LOGIN → PLAY
+                      ↘ optional REALMS / CHARS / Create Character when needed
 ```
 
 Example text-client transcript:
 
 ```text
-LOGIN
-OK LOGIN Logged in
 WORLDS
+OK WORLDS
 1) emberfall  Emberfall
-REALMS emberfall
-1) production  Live Realm
-2) playtest-docks  Playtest Fork
-CHARS emberfall production
-1) Mara
-PLAY emberfall production Mara
-OK PLAY Entered Emberfall / Live Realm as Mara
+LOGIN player@example.com swordfish
+OK LOGIN Logged in as player@example.com
+PLAY emberfall
+OK PLAY Entered world: emberfall
 ```
 
 Example first-party web flow:
@@ -107,7 +104,7 @@ GET /auth/bootstrap/worlds/{world}/realms/{realm}/characters
 POST /auth/connect-token { connectScopeId=cs_demo_production_v17 }
 GET /ws/game/** with X-Firemud-Connect-Token
 LOGIN
-PLAY <world> <realm> <character>
+PLAY <world> [realm] [character]
 ```
 
 Example first-time public production join:

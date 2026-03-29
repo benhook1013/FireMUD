@@ -58,4 +58,14 @@ final class TelnetSessionContext {
   String tenantId() {
     return tenantId;
   }
+
+  void bootstrap(String gameInstanceId, String tenantId) {
+    if (!StringUtils.hasText(gameInstanceId) || !StringUtils.hasText(tenantId)) {
+      logger.warn("Ignoring bootstrap session missing gameInstanceId or tenantId");
+      return;
+    }
+    this.gameInstanceId = gameInstanceId;
+    this.tenantId = tenantId;
+    logger.info("Bootstrapped hidden Telnet session {} for tenant {}", gameInstanceId, tenantId);
+  }
 }

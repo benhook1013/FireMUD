@@ -1,6 +1,5 @@
 package net.firedevops.firemud.gamesession.command.text;
 
-import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.util.List;
 import java.util.Map;
@@ -10,7 +9,6 @@ import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
 import net.firedevops.firemud.gamesession.client.AccountClient;
 import net.firedevops.firemud.gamesession.config.DevIsolatedProperties;
-import net.firedevops.firemud.gamesession.config.GameLogicProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
@@ -21,7 +19,6 @@ import net.firedevops.firemud.gamesession.service.devisolated.DevIsolatedGameIns
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.slf4j.MDC;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -36,11 +33,7 @@ public final class LoginCommandHandler {
   private final AccountClient accountClient;
   private final CommandService commandService;
   private final DevIsolatedProperties devIsolatedProperties;
-  private final GameLogicProperties gameLogicProperties;
   private final DevIsolatedGameInstanceRegistry devIsolatedGameInstanceRegistry;
-  private final MeterRegistry meterRegistry;
-  private final Counter takeoverCounter;
-  private final Counter resumeCounter;
 
   @Autowired
   public LoginCommandHandler(
@@ -49,7 +42,6 @@ public final class LoginCommandHandler {
       AccountClient accountClient,
       CommandService commandService,
       DevIsolatedProperties devIsolatedProperties,
-      GameLogicProperties gameLogicProperties,
       ObjectProvider<DevIsolatedGameInstanceRegistry> devIsolatedGameInstanceRegistryProvider,
       MeterRegistry meterRegistry) {
     this.gameInstanceRepository =
@@ -60,12 +52,8 @@ public final class LoginCommandHandler {
     this.commandService = Objects.requireNonNull(commandService, "commandService must not be null");
     this.devIsolatedProperties =
         Objects.requireNonNull(devIsolatedProperties, "devIsolatedProperties must not be null");
-    this.gameLogicProperties =
-        Objects.requireNonNull(gameLogicProperties, "gameLogicProperties must not be null");
     this.devIsolatedGameInstanceRegistry = devIsolatedGameInstanceRegistryProvider.getIfAvailable();
-    this.meterRegistry = Objects.requireNonNull(meterRegistry, "meterRegistry must not be null");
-    this.takeoverCounter = this.meterRegistry.counter("gamesession.session.takeover");
-    this.resumeCounter = this.meterRegistry.counter("gamesession.session.resume");
+    Objects.requireNonNull(meterRegistry, "meterRegistry must not be null");
   }
 
   public LoginCommandHandlingResult handle(
@@ -121,102 +109,46 @@ public final class LoginCommandHandler {
       return accountMismatchFailure();
     }
 
-    Optional<LoginResult> loginResult =
-        buildLoginResult(instance, authenticatedAccountId, authResponse.getAuthToken());
-
     CommandEnqueueResult enqueueResult =
         commandService.enqueue(sessionId, command.rawLine(), requiresSoloTick);
     if (!enqueueResult.accepted()) {
       return new LoginCommandHandlingResult(enqueueResult, null);
     }
-    loginResult.ifPresent(result -> persistSessionContext(numericSessionId, result));
+    persistSessionContext(
+        numericSessionId,
+        instance.getTenantId(),
+        authenticatedAccountId,
+        authResponse.getAuthToken());
     String responseText = "Logged in as " + args.get(0);
     return new LoginCommandHandlingResult(enqueueResult, responseText);
   }
 
-  private void persistSessionContext(long sessionId, LoginResult result) {
-    if (sessionContextService == null || result == null) {
+  private void persistSessionContext(long sessionId, long tenantId, long accountId, String jwt) {
+    if (sessionContextService == null) {
       return;
     }
-
-    long tenantId = result.tenantId();
-    long accountId = result.accountId();
-    long characterId = result.characterId();
-
-    sessionContextService
-        .findByGameplayIdentity(tenantId, result.gameInstanceId(), characterId)
-        .ifPresent(
-            existing ->
-                handleExistingSession(sessionId, tenantId, accountId, characterId, existing));
-
+    SessionContext existing =
+        sessionContextService.findByTenantAndSessionId(tenantId, sessionId).orElse(null);
+    // LOGIN authenticates account identity. If this session already has gameplay scope, preserve it
+    // so reconnect on the same transport session can continue through PLAY without losing room
+    // state.
     SessionContext context =
-        new SessionContext(
-            sessionId,
-            tenantId,
-            accountId,
-            characterId,
-            result.gameInstanceId(),
-            null,
-            result.jwt());
+        existing == null
+            ? new SessionContext(sessionId, tenantId, accountId, 0L, 0L, null, jwt)
+            : new SessionContext(
+                sessionId,
+                tenantId,
+                accountId,
+                existing.characterId(),
+                existing.gameInstanceId(),
+                existing.roomInstanceId(),
+                jwt);
     sessionContextService.save(context);
     logger.debug(
-        "Updated session context for tenant {} session {} account {} character {}",
+        "Updated login context for tenant {} session {} account {}",
         context.tenantId(),
         context.sessionId(),
-        context.accountId(),
-        context.characterId());
-  }
-
-  private void handleExistingSession(
-      long incomingSessionId,
-      long tenantId,
-      long accountId,
-      long characterId,
-      SessionContext existing) {
-    try (MDC.MDCCloseable tenant = MDC.putCloseable("tenantId", String.valueOf(tenantId));
-        MDC.MDCCloseable account = MDC.putCloseable("accountId", String.valueOf(accountId));
-        MDC.MDCCloseable character = MDC.putCloseable("characterId", String.valueOf(characterId))) {
-      if (existing.sessionId() == incomingSessionId) {
-        resumeCounter.increment();
-        recordTenantMetric("gamesession.session.resume", tenantId);
-        logger.debug(
-            "Session resumed for tenant {} account {} character {} session {}",
-            tenantId,
-            accountId,
-            characterId,
-            incomingSessionId);
-      } else {
-        takeoverCounter.increment();
-        recordTenantMetric("gamesession.session.takeover", tenantId);
-        logger.info(
-            "Taking over session {} for tenant {} account {} character {}; new session {}",
-            existing.sessionId(),
-            tenantId,
-            accountId,
-            characterId,
-            incomingSessionId);
-        sessionContextService.deleteBySessionId(existing.tenantId(), existing.sessionId());
-      }
-    }
-  }
-
-  private void recordTenantMetric(String name, long tenantId) {
-    meterRegistry.counter(name, "tenantId", String.valueOf(tenantId)).increment();
-  }
-
-  private Optional<LoginResult> buildLoginResult(
-      GameInstance instance, long accountId, String jwt) {
-    if (instance == null) {
-      return Optional.empty();
-    }
-    return Optional.of(
-        new LoginResult(
-            accountId,
-            instance.getTenantId(),
-            accountId,
-            instance.getId(),
-            gameLogicProperties.getDefaultRoomId(),
-            jwt));
+        context.accountId());
   }
 
   private static final Map<String, String> CANONICAL_ERROR_MAP =

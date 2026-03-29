@@ -1,12 +1,13 @@
 package net.firedevops.firemud.gamesession.command.text;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
-import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.gamesession.config.GameLogicProperties;
+import net.firedevops.firemud.gamesession.config.GameSessionProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
@@ -18,7 +19,6 @@ import org.springframework.util.StringUtils;
 
 /** Handles the gameplay-binding PLAY command after login. */
 @Component
-@RequiredArgsConstructor
 @SuppressFBWarnings(
     value = "EI_EXPOSE_REP2",
     justification = "Injected services/configuration are stored internally")
@@ -26,11 +26,36 @@ public class PlayCommandHandler {
   private static final Logger LOG = LoggerFactory.getLogger(PlayCommandHandler.class);
   private static final String INVOCATIONS_METRIC = "gamesession.command.play.invocations";
   private static final String FAILURES_METRIC = "gamesession.command.play.failures";
+  private static final String TAKEOVER_METRIC = "gamesession.session.takeover";
+  private static final String RESUME_METRIC = "gamesession.session.resume";
 
   private final SessionAuthenticationService sessionAuthenticationService;
   private final SessionContextService sessionContextService;
+  private final GameplayWorldCatalog gameplayWorldCatalog;
   private final GameLogicProperties gameLogicProperties;
   private final MeterRegistry meterRegistry;
+  private final Counter takeoverCounter;
+  private final Counter resumeCounter;
+
+  public PlayCommandHandler(
+      SessionAuthenticationService sessionAuthenticationService,
+      SessionContextService sessionContextService,
+      GameplayWorldCatalog gameplayWorldCatalog,
+      GameLogicProperties gameLogicProperties,
+      MeterRegistry meterRegistry) {
+    this.sessionAuthenticationService =
+        Objects.requireNonNull(
+            sessionAuthenticationService, "sessionAuthenticationService must not be null");
+    this.sessionContextService =
+        Objects.requireNonNull(sessionContextService, "sessionContextService must not be null");
+    this.gameplayWorldCatalog =
+        Objects.requireNonNull(gameplayWorldCatalog, "gameplayWorldCatalog must not be null");
+    this.gameLogicProperties =
+        Objects.requireNonNull(gameLogicProperties, "gameLogicProperties must not be null");
+    this.meterRegistry = Objects.requireNonNull(meterRegistry, "meterRegistry must not be null");
+    this.takeoverCounter = this.meterRegistry.counter(TAKEOVER_METRIC);
+    this.resumeCounter = this.meterRegistry.counter(RESUME_METRIC);
+  }
 
   public PlayCommandHandlingResult handle(String sessionId, TextCommand command) {
     Objects.requireNonNull(sessionId, "sessionId must not be null");
@@ -43,72 +68,144 @@ public class PlayCommandHandler {
     meterRegistry.counter(INVOCATIONS_METRIC, "tenantId", tenantTag).increment();
 
     if (maybeContext.isEmpty()) {
-      logFailure(
+      return failure(
           GameplayStageCommandConstants.LOGIN_REQUIRED_CODE,
           GameplayStageCommandConstants.LOGIN_REQUIRED_MESSAGE,
           tenantTag,
-          null);
-      return new PlayCommandHandlingResult(
-          CommandEnqueueResult.failure(
-              GameplayStageCommandConstants.LOGIN_REQUIRED_CODE,
-              GameplayStageCommandConstants.LOGIN_REQUIRED_MESSAGE),
           null);
     }
 
     List<String> args = command.args();
     if (args.isEmpty()) {
-      logFailure(
+      return failure(
           GameplayStageCommandConstants.PLAY_INVALID_ARGUMENT_CODE,
           GameplayStageCommandConstants.PLAY_INVALID_ARGUMENT_MESSAGE,
           tenantTag,
           null);
-      return new PlayCommandHandlingResult(
-          CommandEnqueueResult.failure(
-              GameplayStageCommandConstants.PLAY_INVALID_ARGUMENT_CODE,
-              GameplayStageCommandConstants.PLAY_INVALID_ARGUMENT_MESSAGE),
-          null);
     }
 
     SessionContext context = maybeContext.get();
-    if (StringUtils.hasText(context.roomInstanceId())) {
-      String responseText = formatSuccessResponse(args);
-      return new PlayCommandHandlingResult(CommandEnqueueResult.success(), responseText);
+    String worldSelector = args.get(0);
+    Optional<GameSessionProperties.WorldOption> maybeWorld =
+        gameplayWorldCatalog.resolve(worldSelector);
+    if (maybeWorld.isEmpty()) {
+      return failure(
+          GameplayStageCommandConstants.PLAY_SELECTION_REQUIRED_CODE,
+          GameplayStageCommandConstants.PLAY_SELECTION_REQUIRED_MESSAGE,
+          tenantTag,
+          null);
     }
 
-    String world = args.get(0);
+    GameSessionProperties.WorldOption selectedWorld = maybeWorld.get();
     String character = args.size() > 1 ? args.get(1) : null;
+    if (selectedWorld.isRequiresCharacterSelection() && !StringUtils.hasText(character)) {
+      return failure(
+          "PLAY_SELECTION_REQUIRED",
+          "Selection required. Use PLAY "
+              + selectedWorld.getSlug()
+              + " <character> or browse CHARS first.",
+          tenantTag,
+          null);
+    }
+
+    long gameInstanceId = selectedWorld.getGameInstanceId();
+    long characterId = resolveCharacterId(context, selectedWorld, character);
+    if (StringUtils.hasText(context.roomInstanceId())
+        && context.gameInstanceId() == gameInstanceId
+        && context.characterId() == characterId) {
+      resumeCounter.increment();
+      meterRegistry.counter(RESUME_METRIC, "tenantId", tenantTag).increment();
+      LOG.debug(
+          "PLAY resumed existing gameplay binding for tenant {} gameInstance {} character {} on session {}",
+          context.tenantId(),
+          gameInstanceId,
+          characterId,
+          context.sessionId());
+      return new PlayCommandHandlingResult(
+          CommandEnqueueResult.success(),
+          formatSuccessResponse(selectedWorld.getSlug(), character));
+    }
+
+    sessionContextService
+        .findByGameplayIdentity(context.tenantId(), gameInstanceId, characterId)
+        .ifPresent(
+            existing -> handleExistingBinding(context, existing, gameInstanceId, characterId));
+
     SessionContext updated =
         new SessionContext(
             context.sessionId(),
             context.tenantId(),
             context.accountId(),
-            context.characterId(),
-            context.gameInstanceId(),
+            characterId,
+            gameInstanceId,
             gameLogicProperties.getDefaultRoomId(),
             context.jwt());
     sessionContextService.save(updated);
 
-    String responseText = formatSuccessResponse(world, character);
-    return new PlayCommandHandlingResult(CommandEnqueueResult.success(), responseText);
+    return new PlayCommandHandlingResult(
+        CommandEnqueueResult.success(), formatSuccessResponse(selectedWorld.getSlug(), character));
   }
 
-  private String formatSuccessResponse(List<String> args) {
-    String world = args.get(0);
-    String character = args.size() > 1 ? args.get(1) : null;
-    return formatSuccessResponse(world, character);
-  }
-
-  private String formatSuccessResponse(String world, String character) {
-    String suffix = StringUtils.hasText(character) ? " as " + character : "";
-    return "OK PLAY Entered world: " + world + suffix;
-  }
-
-  private void logFailure(String errorCode, String message, String tenantTag, RuntimeException ex) {
+  private PlayCommandHandlingResult failure(
+      String errorCode, String message, String tenantTag, RuntimeException ex) {
     meterRegistry.counter(FAILURES_METRIC, "tenantId", tenantTag, "error", errorCode).increment();
     if (ex == null) {
       LOG.warn("PLAY failed tenantId={} error={} reason={}", tenantTag, errorCode, message);
     } else {
       LOG.warn("PLAY failed tenantId={} error={} reason={}", tenantTag, errorCode, message, ex);
     }
+    return new PlayCommandHandlingResult(CommandEnqueueResult.failure(errorCode, message), null);
+  }
+
+  private long resolveCharacterId(
+      SessionContext context, GameSessionProperties.WorldOption selectedWorld, String character) {
+    if (context.characterId() > 0) {
+      return context.characterId();
+    }
+    if (!StringUtils.hasText(character)) {
+      return context.accountId();
+    }
+    return Math.floorMod(
+            Objects.hash(
+                context.tenantId(),
+                selectedWorld.getGameInstanceId(),
+                character.trim().toLowerCase()),
+            Integer.MAX_VALUE - 1)
+        + 1L;
+  }
+
+  private void handleExistingBinding(
+      SessionContext incoming, SessionContext existing, long gameInstanceId, long characterId) {
+    if (existing.sessionId() == incoming.sessionId()) {
+      resumeCounter.increment();
+      meterRegistry
+          .counter(RESUME_METRIC, "tenantId", Long.toString(incoming.tenantId()))
+          .increment();
+      LOG.debug(
+          "PLAY resumed gameplay binding for tenant {} gameInstance {} character {} on session {}",
+          incoming.tenantId(),
+          gameInstanceId,
+          characterId,
+          incoming.sessionId());
+      return;
+    }
+
+    takeoverCounter.increment();
+    meterRegistry
+        .counter(TAKEOVER_METRIC, "tenantId", Long.toString(incoming.tenantId()))
+        .increment();
+    LOG.info(
+        "PLAY taking over gameplay binding tenant {} gameInstance {} character {} from session {} to {}",
+        incoming.tenantId(),
+        gameInstanceId,
+        characterId,
+        existing.sessionId(),
+        incoming.sessionId());
+    sessionContextService.deleteBySessionId(existing.tenantId(), existing.sessionId());
+  }
+
+  private String formatSuccessResponse(String world, String character) {
+    String suffix = StringUtils.hasText(character) ? " as " + character : "";
+    return "OK PLAY Entered world: " + world + suffix;
   }
 }

@@ -112,14 +112,25 @@ class GameSessionWebSocketHandlerIntegrationTest {
                 .setAuthToken("stub-token")
                 .setAccountId("123")
                 .build());
+    when(commandService.enqueue(eq("41"), eq("LOGIN demo@example.com swordfish"), eq(false)))
+        .thenReturn(CommandEnqueueResult.success());
+    when(commandService.enqueue(eq("41"), eq("LOOK"), eq(false)))
+        .thenReturn(CommandEnqueueResult.success());
     when(commandService.enqueue(eq("42"), eq("LOGIN demo@example.com swordfish"), eq(false)))
         .thenReturn(CommandEnqueueResult.success());
     when(commandService.enqueue(eq("42"), eq("LOOK"), eq(false)))
         .thenReturn(CommandEnqueueResult.success());
+    when(gameLogicClient.resolveLook(eq("22"), eq("41"), eq("123"), eq("1021")))
+        .thenReturn(lookResult);
     when(gameLogicClient.resolveLook(eq("22"), eq("42"), eq("123"), eq("1021")))
         .thenReturn(lookResult);
     when(lookTextRenderer.render(eq(lookResult))).thenReturn("Login Hall text");
     GameInstance instance = new GameInstance();
+    instance.setId(41L);
+    instance.setTenantId(22L);
+    instance.setOwnerAccountId(123L);
+    when(gameInstanceRepository.findById(41L)).thenReturn(Optional.of(instance));
+    instance = new GameInstance();
     instance.setId(42L);
     instance.setTenantId(22L);
     instance.setOwnerAccountId(123L);
@@ -130,9 +141,9 @@ class GameSessionWebSocketHandlerIntegrationTest {
   void websocketLoginThenLookUsesAuthenticatedPath() throws Exception {
     StandardWebSocketClient client = new StandardWebSocketClient();
     WebSocketHttpHeaders headers = new WebSocketHttpHeaders();
-    headers.add("X-Game-Instance-Id", "42");
+    headers.add("X-Game-Instance-Id", "41");
     List<String> payloads = new java.util.concurrent.CopyOnWriteArrayList<>();
-    CountDownLatch latch = new CountDownLatch(2);
+    CountDownLatch latch = new CountDownLatch(3);
 
     var future =
         client.execute(
@@ -140,6 +151,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
               @Override
               public void afterConnectionEstablished(WebSocketSession session) throws IOException {
                 session.sendMessage(new TextMessage("LOGIN demo@example.com swordfish"));
+                session.sendMessage(new TextMessage("PLAY demo"));
                 session.sendMessage(new TextMessage("LOOK"));
               }
 
@@ -162,19 +174,25 @@ class GameSessionWebSocketHandlerIntegrationTest {
     assertThat(latch.await(5, TimeUnit.SECONDS)).isTrue();
     session.close();
 
-    assertThat(payloads).hasSizeGreaterThanOrEqualTo(2);
+    assertThat(payloads).hasSizeGreaterThanOrEqualTo(3);
     assertThat(payloads.get(0)).startsWith("OK LOGIN");
-    assertThat(payloads.get(1)).startsWith("OK LOOK");
-    assertThat(payloads.get(1)).contains("Login Hall text");
-    assertThat(sessionContextService.findByTenantAndSessionId(22L, 42L)).isPresent();
+    assertThat(payloads.get(1)).startsWith("OK PLAY");
+    assertThat(payloads.get(2)).startsWith("OK LOOK");
+    assertThat(sessionContextService.findByTenantAndSessionId(22L, 41L))
+        .hasValueSatisfying(
+            context -> {
+              assertThat(context.gameInstanceId()).isEqualTo(1L);
+              assertThat(context.characterId()).isEqualTo(123L);
+              assertThat(context.roomInstanceId()).isNotBlank();
+            });
 
-    verify(commandService).enqueue("42", "LOGIN demo@example.com swordfish", false);
-    verify(commandService).enqueue("42", "LOOK", false);
-    verify(gameLogicClient).resolveLook("22", "42", "123", "1021");
+    verify(commandService).enqueue("41", "LOGIN demo@example.com swordfish", false);
+    verify(commandService).enqueue("41", "LOOK", false);
+    verify(gameLogicClient).resolveLook("22", "41", "123", "1021");
     verify(lookCacheService)
         .cache(
             eq(22L),
-            eq(42L),
+            eq(41L),
             eq("1021"),
             eq("Login Hall text"),
             eq("OK LOOK\nLogin Hall text\n\n"));
@@ -201,7 +219,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
     WebSocketHttpHeaders headers = new WebSocketHttpHeaders();
     headers.add("X-Game-Instance-Id", "42");
     List<String> payloads = new java.util.concurrent.CopyOnWriteArrayList<>();
-    CountDownLatch latch = new CountDownLatch(2);
+    CountDownLatch latch = new CountDownLatch(3);
 
     var future =
         client.execute(
@@ -209,6 +227,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
               @Override
               public void afterConnectionEstablished(WebSocketSession session) throws IOException {
                 session.sendMessage(new TextMessage("LOGIN demo@example.com swordfish"));
+                session.sendMessage(new TextMessage("PLAY demo"));
                 session.sendMessage(new TextMessage("north"));
               }
 
@@ -231,9 +250,10 @@ class GameSessionWebSocketHandlerIntegrationTest {
     assertThat(latch.await(5, TimeUnit.SECONDS)).isTrue();
     session.close();
 
-    assertThat(payloads).hasSizeGreaterThanOrEqualTo(2);
+    assertThat(payloads).hasSizeGreaterThanOrEqualTo(3);
     assertThat(payloads.get(0)).startsWith("OK LOGIN");
-    assertThat(payloads.get(1)).isEqualTo("OK LOOK\nNorth Hall text\n\n");
+    assertThat(payloads.get(1)).startsWith("OK PLAY");
+    assertThat(payloads.get(2)).isEqualTo("OK LOOK\nNorth Hall text\n\n");
     assertThat(sessionContextService.findByTenantAndSessionId(22L, 42L))
         .hasValueSatisfying(context -> assertThat(context.roomInstanceId()).isEqualTo("2045"));
 

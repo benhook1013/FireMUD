@@ -2,10 +2,12 @@ package net.firedevops.firemud.gamesession.command.text;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import net.firedevops.firemud.gamesession.config.GameSessionProperties;
 import org.junit.jupiter.api.Test;
 
 class WorldsCommandHandlerTest {
-  private final WorldsCommandHandler handler = new WorldsCommandHandler();
+  private final WorldsCommandHandler handler =
+      new WorldsCommandHandler(new GameplayWorldCatalog(new GameSessionProperties()));
 
   @Test
   void describeReturnsBrowseMenu() {

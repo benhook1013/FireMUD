@@ -99,10 +99,12 @@ class LookWebSocketCrossServiceTest {
     long sessionId = prepareGameInstance();
     List<String> responses = runLookSequence(sessionId);
 
-    assertThat(responses).hasSizeGreaterThanOrEqualTo(3);
-    assertThat(responses.get(0)).startsWith("OK LOGIN");
-    assertThat(responses.get(1).trim()).isEqualTo(LookTestFixtures.canonicalLookText().trim());
-    assertThat(responses.get(2)).startsWith("ERROR ROOM_NOT_FOUND");
+    assertThat(responses).hasSizeGreaterThanOrEqualTo(5);
+    assertThat(responses.get(0)).startsWith("OK WORLDS");
+    assertThat(responses.get(1)).startsWith("OK LOGIN");
+    assertThat(responses.get(2)).startsWith("OK PLAY");
+    assertThat(responses.get(3).trim()).isEqualTo(LookTestFixtures.canonicalLookText().trim());
+    assertThat(responses.get(4)).startsWith("ERROR ROOM_NOT_FOUND");
 
     assertMetricEventually("gamesession.command.look.invocations", 2.0, "tenantId", "1");
     assertMetricEventually(
@@ -115,13 +117,14 @@ class LookWebSocketCrossServiceTest {
     long sessionId = prepareGameInstance();
     List<String> responses = runMovementSequence(sessionId);
 
-    assertThat(responses).hasSizeGreaterThanOrEqualTo(4);
+    assertThat(responses).hasSizeGreaterThanOrEqualTo(5);
     assertThat(responses.get(0)).startsWith("OK LOGIN");
-    assertThat(responses.get(1).trim())
-        .isEqualTo(LookTestFixtures.canonicalLookText(LookTestFixtures.DESTINATION_ROOM_ID).trim());
+    assertThat(responses.get(1)).startsWith("OK PLAY");
     assertThat(responses.get(2).trim())
         .isEqualTo(LookTestFixtures.canonicalLookText(LookTestFixtures.DESTINATION_ROOM_ID).trim());
-    assertThat(responses.get(3)).startsWith("ERROR INVALID_EXIT");
+    assertThat(responses.get(3).trim())
+        .isEqualTo(LookTestFixtures.canonicalLookText(LookTestFixtures.DESTINATION_ROOM_ID).trim());
+    assertThat(responses.get(4)).startsWith("ERROR INVALID_EXIT");
   }
 
   @Test
@@ -130,19 +133,16 @@ class LookWebSocketCrossServiceTest {
     long sessionId = prepareGameInstance();
 
     List<String> firstConnection = runMoveThenDisconnect(sessionId);
-    assertThat(firstConnection).hasSizeGreaterThanOrEqualTo(2);
-    assertThat(firstConnection.get(1).trim())
+    assertThat(firstConnection).hasSizeGreaterThanOrEqualTo(3);
+    assertThat(firstConnection.get(2).trim())
         .isEqualTo(LookTestFixtures.canonicalLookText(LookTestFixtures.DESTINATION_ROOM_ID).trim());
 
     List<String> reconnectLook = runLookAfterReconnect(sessionId);
-    assertThat(reconnectLook)
-        .singleElement()
-        .satisfies(
-            text ->
-                assertThat(text.trim())
-                    .isEqualTo(
-                        LookTestFixtures.canonicalLookText(LookTestFixtures.DESTINATION_ROOM_ID)
-                            .trim()));
+    assertThat(reconnectLook).hasSizeGreaterThanOrEqualTo(3);
+    assertThat(reconnectLook.get(0)).startsWith("OK LOGIN");
+    assertThat(reconnectLook.get(1)).startsWith("OK PLAY");
+    assertThat(reconnectLook.get(2).trim())
+        .isEqualTo(LookTestFixtures.canonicalLookText(LookTestFixtures.DESTINATION_ROOM_ID).trim());
   }
 
   private static synchronized void ensureTestServicesStarted() throws Exception {
@@ -244,7 +244,7 @@ class LookWebSocketCrossServiceTest {
                     responses.add(data.toString());
                     int count = received.incrementAndGet();
                     webSocket.request(1);
-                    if (count >= 3) {
+                    if (count >= 5) {
                       ready.complete(null);
                     }
                     return Listener.super.onText(webSocket, data, last);
@@ -252,10 +252,14 @@ class LookWebSocketCrossServiceTest {
                 })
             .join();
 
-    webSocket.sendText("LOGIN demo@example.com swordfish", true).join();
+    webSocket.sendText("WORLDS", true).join();
     waitForResponseCount(responses, 1);
-    webSocket.sendText("LOOK", true).join();
+    webSocket.sendText("LOGIN demo@example.com swordfish", true).join();
     waitForResponseCount(responses, 2);
+    webSocket.sendText("PLAY demo", true).join();
+    waitForResponseCount(responses, 3);
+    webSocket.sendText("LOOK", true).join();
+    waitForResponseCount(responses, 4);
     WORLD_STUB.triggerNotFound("room missing for regression");
     webSocket.sendText("LOOK", true).join();
     ready.get(COMMAND_WAIT.toMillis(), TimeUnit.MILLISECONDS);
@@ -288,7 +292,7 @@ class LookWebSocketCrossServiceTest {
                     responses.add(data.toString());
                     int count = received.incrementAndGet();
                     webSocket.request(1);
-                    if (count >= 4) {
+                    if (count >= 5) {
                       ready.complete(null);
                     }
                     return Listener.super.onText(webSocket, data, last);
@@ -298,10 +302,12 @@ class LookWebSocketCrossServiceTest {
 
     webSocket.sendText("LOGIN demo@example.com swordfish", true).join();
     waitForResponseCount(responses, 1);
-    webSocket.sendText("north", true).join();
+    webSocket.sendText("PLAY demo", true).join();
     waitForResponseCount(responses, 2);
-    webSocket.sendText("LOOK", true).join();
+    webSocket.sendText("north", true).join();
     waitForResponseCount(responses, 3);
+    webSocket.sendText("LOOK", true).join();
+    waitForResponseCount(responses, 4);
     webSocket.sendText("west", true).join();
     ready.get(COMMAND_WAIT.toMillis(), TimeUnit.MILLISECONDS);
     webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "done").join();
@@ -333,7 +339,7 @@ class LookWebSocketCrossServiceTest {
                     responses.add(data.toString());
                     int count = received.incrementAndGet();
                     webSocket.request(1);
-                    if (count >= 2) {
+                    if (count >= 3) {
                       ready.complete(null);
                     }
                     return Listener.super.onText(webSocket, data, last);
@@ -343,6 +349,8 @@ class LookWebSocketCrossServiceTest {
 
     webSocket.sendText("LOGIN demo@example.com swordfish", true).join();
     waitForResponseCount(responses, 1);
+    webSocket.sendText("PLAY demo", true).join();
+    waitForResponseCount(responses, 2);
     webSocket.sendText("north", true).join();
     ready.get(COMMAND_WAIT.toMillis(), TimeUnit.MILLISECONDS);
     webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "done").join();
@@ -374,7 +382,7 @@ class LookWebSocketCrossServiceTest {
                     responses.add(data.toString());
                     int count = received.incrementAndGet();
                     webSocket.request(1);
-                    if (count >= 1) {
+                    if (count >= 3) {
                       ready.complete(null);
                     }
                     return Listener.super.onText(webSocket, data, last);
@@ -382,6 +390,10 @@ class LookWebSocketCrossServiceTest {
                 })
             .join();
 
+    webSocket.sendText("LOGIN demo@example.com swordfish", true).join();
+    waitForResponseCount(responses, 1);
+    webSocket.sendText("PLAY demo", true).join();
+    waitForResponseCount(responses, 2);
     webSocket.sendText("LOOK", true).join();
     ready.get(COMMAND_WAIT.toMillis(), TimeUnit.MILLISECONDS);
     webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "done").join();

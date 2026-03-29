@@ -36,16 +36,20 @@ public final class RedisSessionContextService implements SessionContextService {
   @Override
   public void save(SessionContext context) {
     var ops = redisTemplate.opsForValue();
-    findByGameplayIdentity(context.tenantId(), context.gameInstanceId(), context.characterId())
-        .filter(existing -> existing.sessionId() != context.sessionId())
-        .ifPresent(
-            existing ->
-                redisTemplate.delete(contextKey(existing.tenantId(), existing.sessionId())));
+    if (hasGameplayIdentity(context)) {
+      findByGameplayIdentity(context.tenantId(), context.gameInstanceId(), context.characterId())
+          .filter(existing -> existing.sessionId() != context.sessionId())
+          .ifPresent(
+              existing ->
+                  redisTemplate.delete(contextKey(existing.tenantId(), existing.sessionId())));
+    }
     ops.set(contextKey(context.tenantId(), context.sessionId()), context, sessionTtl);
-    ops.set(
-        identityKey(context.tenantId(), context.gameInstanceId(), context.characterId()),
-        context,
-        sessionTtl);
+    if (hasGameplayIdentity(context)) {
+      ops.set(
+          identityKey(context.tenantId(), context.gameInstanceId(), context.characterId()),
+          context,
+          sessionTtl);
+    }
   }
 
   @Override
@@ -67,9 +71,12 @@ public final class RedisSessionContextService implements SessionContextService {
     Optional<SessionContext> existing = findByTenantAndSessionId(tenantId, sessionId);
     redisTemplate.delete(contextKey(tenantId, sessionId));
     existing.ifPresent(
-        context ->
+        context -> {
+          if (hasGameplayIdentity(context)) {
             redisTemplate.delete(
-                identityKey(context.tenantId(), context.gameInstanceId(), context.characterId())));
+                identityKey(context.tenantId(), context.gameInstanceId(), context.characterId()));
+          }
+        });
   }
 
   private String contextKey(long tenantId, long sessionId) {
@@ -78,5 +85,9 @@ public final class RedisSessionContextService implements SessionContextService {
 
   private String identityKey(long tenantId, long gameInstanceId, long characterId) {
     return String.format(IDENTITY_KEY_TEMPLATE, tenantId, gameInstanceId, characterId);
+  }
+
+  private boolean hasGameplayIdentity(SessionContext context) {
+    return context.gameInstanceId() > 0 && context.characterId() > 0;
   }
 }

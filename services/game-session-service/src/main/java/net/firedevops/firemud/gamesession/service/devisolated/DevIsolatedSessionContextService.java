@@ -21,7 +21,9 @@ public final class DevIsolatedSessionContextService implements SessionContextSer
   @Override
   public void save(SessionContext context) {
     contexts.put(contextKey(context.tenantId(), context.sessionId()), context);
-    identities.put(identityKey(context), context);
+    if (hasGameplayIdentity(context)) {
+      identities.put(identityKey(context), context);
+    }
   }
 
   @Override
@@ -38,7 +40,12 @@ public final class DevIsolatedSessionContextService implements SessionContextSer
   @Override
   public void deleteBySessionId(long tenantId, long sessionId) {
     Optional.ofNullable(contexts.remove(contextKey(tenantId, sessionId)))
-        .ifPresent(context -> identities.remove(identityKey(context)));
+        .ifPresent(
+            context -> {
+              if (hasGameplayIdentity(context)) {
+                identities.remove(identityKey(context));
+              }
+            });
   }
 
   private static String contextKey(long tenantId, long sessionId) {
@@ -51,5 +58,9 @@ public final class DevIsolatedSessionContextService implements SessionContextSer
 
   private static String identityKey(long tenantId, long gameInstanceId, long characterId) {
     return tenantId + ":" + gameInstanceId + ":" + characterId;
+  }
+
+  private static boolean hasGameplayIdentity(SessionContext context) {
+    return context.gameInstanceId() > 0 && context.characterId() > 0;
   }
 }

@@ -7,6 +7,7 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.List;
 import java.util.Optional;
 import net.firedevops.firemud.gamesession.config.GameLogicProperties;
+import net.firedevops.firemud.gamesession.config.GameSessionProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
@@ -21,6 +22,8 @@ class PlayCommandHandlerTest {
   private final SessionContextService sessionContextService =
       Mockito.mock(SessionContextService.class);
   private final GameLogicProperties gameLogicProperties = new GameLogicProperties();
+  private final GameplayWorldCatalog worldCatalog =
+      new GameplayWorldCatalog(new GameSessionProperties());
   private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
   private PlayCommandHandler handler;
 
@@ -30,14 +33,16 @@ class PlayCommandHandlerTest {
         new PlayCommandHandler(
             sessionAuthenticationService,
             sessionContextService,
+            worldCatalog,
             gameLogicProperties,
             meterRegistry);
   }
 
   @Test
   void playPromotesSessionIntoGameplay() {
-    SessionContext context = new SessionContext(1L, 22L, 123L, 911L, 7L, "jwt-token");
+    SessionContext context = new SessionContext(1L, 22L, 123L, 0L, 0L, "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    when(sessionContextService.findByGameplayIdentity(22L, 1L, 123L)).thenReturn(Optional.empty());
 
     PlayCommandHandlingResult result =
         handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
@@ -47,7 +52,7 @@ class PlayCommandHandlerTest {
     Mockito.verify(sessionContextService)
         .save(
             new SessionContext(
-                1L, 22L, 123L, 911L, 7L, gameLogicProperties.getDefaultRoomId(), "jwt-token"));
+                1L, 22L, 123L, 123L, 1L, gameLogicProperties.getDefaultRoomId(), "jwt-token"));
   }
 
   @Test
@@ -63,7 +68,7 @@ class PlayCommandHandlerTest {
 
   @Test
   void playWithoutArgumentsReturnsInvalidArgument() {
-    SessionContext context = new SessionContext(1L, 22L, 123L, 911L, 7L, "jwt-token");
+    SessionContext context = new SessionContext(1L, 22L, 123L, 0L, 0L, "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
 
     PlayCommandHandlingResult result =
@@ -71,5 +76,31 @@ class PlayCommandHandlerTest {
 
     assertThat(result.commandResult().accepted()).isFalse();
     assertThat(result.commandResult().errorCode()).isEqualTo("INVALID_ARGUMENT");
+  }
+
+  @Test
+  void unknownWorldReturnsSelectionGuidance() {
+    SessionContext context = new SessionContext(1L, 22L, 123L, 0L, 0L, "jwt-token");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+
+    PlayCommandHandlingResult result =
+        handler.handle(
+            "1", new TextCommand(TextCommandType.PLAY, List.of("unknown"), "PLAY unknown"));
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode()).isEqualTo("PLAY_SELECTION_REQUIRED");
+  }
+
+  @Test
+  void sandboxWithoutCharacterReturnsSelectionRequired() {
+    SessionContext context = new SessionContext(1L, 22L, 123L, 0L, 0L, "jwt-token");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+
+    PlayCommandHandlingResult result =
+        handler.handle(
+            "1", new TextCommand(TextCommandType.PLAY, List.of("sandbox"), "PLAY sandbox"));
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode()).isEqualTo("PLAY_SELECTION_REQUIRED");
   }
 }

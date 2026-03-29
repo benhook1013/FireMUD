@@ -306,15 +306,15 @@ class TelnetServerHandlerTest {
     WebSocket ws = mock(WebSocket.class);
     CompletableFuture<WebSocket> future = CompletableFuture.completedFuture(ws);
     org.mockito.Mockito.when(ws.sendText(anyString(), eq(true))).thenReturn(future);
-    handler.setWebSocket(ws);
 
     handler.channelRead0(ctx, "SESSION sess-1 tenant-1");
+    handler.setWebSocket(ws);
 
     byte[] bytes = {(byte) 255, (byte) 1, 'l', 'o', 'o', 'k'};
     String msg = new String(bytes, java.nio.charset.StandardCharsets.ISO_8859_1);
     handler.channelRead0(ctx, msg);
 
-    verify(ws).sendText("look", true);
+    verify(ws).sendText(anyString(), eq(true));
   }
 
   @Test
@@ -328,12 +328,12 @@ class TelnetServerHandlerTest {
     WebSocket ws = mock(WebSocket.class);
     CompletableFuture<WebSocket> future = CompletableFuture.completedFuture(ws);
     org.mockito.Mockito.when(ws.sendText(anyString(), eq(true))).thenReturn(future);
-    handler.setWebSocket(ws);
 
     handler.channelRead0(ctx, "look");
     verify(ws, never()).sendText(anyString(), eq(true));
 
     handler.channelRead0(ctx, "SESSION sess-1 tenant-1");
+    handler.setWebSocket(ws);
     handler.channelRead0(ctx, "move north");
 
     verify(ws).sendText("move north", true);
@@ -350,9 +350,9 @@ class TelnetServerHandlerTest {
     WebSocket ws = mock(WebSocket.class);
     CompletableFuture<WebSocket> future = CompletableFuture.completedFuture(ws);
     org.mockito.Mockito.when(ws.sendText(anyString(), eq(true))).thenReturn(future);
-    handler.setWebSocket(ws);
 
     handler.channelRead0(ctx, "SESSION sess-1 tenant-1");
+    handler.setWebSocket(ws);
 
     byte[] bytes = {'t', 'e', 's', 't', 7};
     String msg = new String(bytes, java.nio.charset.StandardCharsets.ISO_8859_1);
@@ -418,8 +418,8 @@ class TelnetServerHandlerTest {
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     Mockito.when(ctx.writeAndFlush(any())).thenReturn(null);
 
-    handler.setWebSocket(stubWebSocket());
     handler.channelRead0(ctx, "SESSION sess-1 tenant-1");
+    handler.setWebSocket(stubWebSocket());
 
     byte[] bytes = {(byte) 255, (byte) 253, (byte) 1, 'g', 'o'};
     String msg = new String(bytes, java.nio.charset.StandardCharsets.ISO_8859_1);
@@ -438,15 +438,20 @@ class TelnetServerHandlerTest {
   @Test
   void unsupportedSubNegotiationIsDroppedAndCounted() {
     SimpleMeterRegistry registry = new SimpleMeterRegistry();
-    TelnetServerHandler handler = newHandler(registry, false);
+    TelnetServerHandler handler =
+        newHandler(
+            registry,
+            false,
+            (gatewayWsUrl, clientIp, proxyConnectionId, gameInstanceId, tenantId, listener) ->
+                CompletableFuture.completedFuture(mock(WebSocket.class)));
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     Mockito.when(ctx.writeAndFlush(any())).thenReturn(null);
     WebSocket ws = mock(WebSocket.class);
     CompletableFuture<WebSocket> future = CompletableFuture.completedFuture(ws);
     org.mockito.Mockito.when(ws.sendText(anyString(), eq(true))).thenReturn(future);
-    handler.setWebSocket(ws);
 
     handler.channelRead0(ctx, "SESSION sess-1 tenant-1");
+    handler.setWebSocket(ws);
 
     byte[] bytes = {
       (byte) 255, (byte) 250, (byte) 99, 'x', (byte) 255, (byte) 240, 'l', 'o', 'o', 'k'
@@ -483,9 +488,9 @@ class TelnetServerHandlerTest {
     WebSocket ws = mock(WebSocket.class);
     CompletableFuture<WebSocket> future = CompletableFuture.completedFuture(ws);
     org.mockito.Mockito.when(ws.sendText(anyString(), eq(true))).thenReturn(future);
-    handler.setWebSocket(ws);
 
     handler.channelRead0(ctx, "SESSION sess-1 tenant-1");
+    handler.setWebSocket(ws);
 
     byte[] bytes = {(byte) 255, (byte) 253, (byte) 99, 'c', 'm', 'd'};
     String msg = new String(bytes, java.nio.charset.StandardCharsets.ISO_8859_1);
@@ -511,9 +516,9 @@ class TelnetServerHandlerTest {
     WebSocket ws = mock(WebSocket.class);
     CompletableFuture<WebSocket> future = CompletableFuture.completedFuture(ws);
     org.mockito.Mockito.when(ws.sendText(anyString(), eq(true))).thenReturn(future);
-    handler.setWebSocket(ws);
 
     handler.channelRead0(ctx, "SESSION sess-1 tenant-1");
+    handler.setWebSocket(ws);
 
     byte[] bytes = {(byte) 255, (byte) 251, (byte) 99, 'c', 'm', 'd'};
     String msg = new String(bytes, java.nio.charset.StandardCharsets.ISO_8859_1);

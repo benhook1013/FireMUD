@@ -1,5 +1,6 @@
 import com.github.gradle.node.npm.task.NpxTask
 import com.github.spotbugs.snom.SpotBugsTask
+import org.gradle.api.tasks.SourceSetContainer
 import org.gradle.api.plugins.quality.Checkstyle
 import org.gradle.api.plugins.jvm.JvmTestSuite
 import org.gradle.api.tasks.compile.JavaCompile
@@ -73,6 +74,11 @@ subprojects {
 
     plugins.withId("java") {
         the<JavaPluginExtension>().toolchain.languageVersion.set(JavaLanguageVersion.of(21))
+        val sourceSets = the<SourceSetContainer>()
+        sourceSets.named("test") {
+            compileClasspath += sourceSets.named("main").get().output
+            runtimeClasspath += output + sourceSets.named("main").get().output
+        }
         val integrationTestsDir = file("src/test/java/integration")
         val crossServiceTestsDir = file("src/test/java/crossservice")
         val categorizedTestRootsExist = integrationTestsDir.exists() || crossServiceTestsDir.exists()

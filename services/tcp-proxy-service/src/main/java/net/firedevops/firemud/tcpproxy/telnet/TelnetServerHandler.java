@@ -36,6 +36,7 @@ import net.firedevops.firemud.tcpproxy.service.TcpProxyEventService;
 import net.firedevops.firemud.tcpproxy.v1.NotifyDisconnectResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.util.StringUtils;
 
 /** Handler that forwards Telnet lines to the gateway via WebSocket. */
 public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
@@ -64,6 +65,8 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   private final AtomicInteger bufferDepth;
   private final WebSocketConnector webSocketConnector;
   private final TcpProxyEventService eventService;
+  private final String defaultGameInstanceId;
+  private final String defaultTenantId;
   private final TelnetSessionContext sessionContext = new TelnetSessionContext();
   private final String proxyConnectionId = UUID.randomUUID().toString();
   private final AtomicLong disconnectSequence = new AtomicLong();
@@ -115,6 +118,8 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
         eventService,
         bufferDepth,
         null,
+        null,
+        null,
         0);
   }
 
@@ -145,6 +150,8 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
         eventService,
         bufferDepth,
         null,
+        null,
+        null,
         0);
   }
 
@@ -163,6 +170,42 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
       AtomicInteger bufferDepth,
       LookCacheService lookCacheService,
       int maxMalformedSessionEnvelopes) {
+    this(
+        gatewayWsUrl,
+        devIsolated,
+        onConnect,
+        onDisconnect,
+        connectionCounter,
+        discardedCommandCounter,
+        advertiseMcp,
+        meterRegistry,
+        gameplayTrafficReady,
+        webSocketConnector,
+        eventService,
+        bufferDepth,
+        null,
+        null,
+        lookCacheService,
+        maxMalformedSessionEnvelopes);
+  }
+
+  TelnetServerHandler(
+      String gatewayWsUrl,
+      boolean devIsolated,
+      Runnable onConnect,
+      Runnable onDisconnect,
+      io.micrometer.core.instrument.Counter connectionCounter,
+      io.micrometer.core.instrument.Counter discardedCommandCounter,
+      boolean advertiseMcp,
+      MeterRegistry meterRegistry,
+      BooleanSupplier gameplayTrafficReady,
+      WebSocketConnector webSocketConnector,
+      TcpProxyEventService eventService,
+      AtomicInteger bufferDepth,
+      String defaultGameInstanceId,
+      String defaultTenantId,
+      LookCacheService lookCacheService,
+      int maxMalformedSessionEnvelopes) {
     this.gatewayWsUrl = gatewayWsUrl;
     this.devIsolated = devIsolated;
     this.onConnect = onConnect;
@@ -175,6 +218,8 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     this.webSocketConnector = webSocketConnector;
     this.eventService = eventService;
     this.bufferDepth = bufferDepth;
+    this.defaultGameInstanceId = defaultGameInstanceId;
+    this.defaultTenantId = defaultTenantId;
     this.commandTimer = meterRegistry.timer("tcpproxy.command");
     this.heartbeatTimer = meterRegistry.timer("tcpproxy.heartbeat");
     this.idleCloseTimer = meterRegistry.timer("tcpproxy.idleClose");
@@ -374,6 +419,8 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     }
     if (devIsolated) {
       logger.info("Dev-isolated mode enabled; using internal Telnet echo handler");
+    } else {
+      bootstrapDefaultSessionIfConfigured();
     }
   }
 
@@ -393,6 +440,15 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
       logTelnetInput(sanitized);
       touchActivity();
 
+      if (looksLikeSessionEnvelope(sanitized)) {
+        boolean changed = captureSessionContext(sanitized);
+        if (changed) {
+          closeGatewayWebSocket();
+          ensureGatewayConnected();
+        }
+        return;
+      }
+
       if (devIsolated) {
         // In dev-isolated mode, keep SESSION envelope semantics but echo
         // subsequent commands directly back to the Telnet client without
@@ -410,13 +466,11 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
       }
 
       if (!sessionContext.isReady()) {
-        if (!captureSessionContext(sanitized)) {
-          logger.warn("Ignoring Telnet input before session envelope: {}", sanitized);
+        bootstrapDefaultSessionIfConfigured();
+        if (!sessionContext.isReady()) {
+          logger.warn("Ignoring Telnet input before session bootstrap: {}", sanitized);
           return;
         }
-        notifyConnectIfReady();
-        ensureGatewayConnected();
-        return;
       }
 
       ensureGatewayConnected();
@@ -473,10 +527,13 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   }
 
   private boolean captureSessionContext(String sanitized) {
+    String previousGameInstanceId = sessionContext.gameInstanceId();
+    String previousTenantId = sessionContext.tenantId();
     boolean captured = sessionContext.captureFromEnvelope(sanitized);
     if (captured) {
       notifyConnectIfReady();
-      return true;
+      return !java.util.Objects.equals(previousGameInstanceId, sessionContext.gameInstanceId())
+          || !java.util.Objects.equals(previousTenantId, sessionContext.tenantId());
     }
     if (maxMalformedSessionEnvelopes > 0 && looksLikeSessionEnvelope(sanitized)) {
       malformedSessionEnvelopes++;
@@ -493,6 +550,18 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
       }
     }
     return false;
+  }
+
+  private void bootstrapDefaultSessionIfConfigured() {
+    if (sessionContext.isReady()) {
+      return;
+    }
+    if (!StringUtils.hasText(defaultGameInstanceId) || !StringUtils.hasText(defaultTenantId)) {
+      return;
+    }
+    sessionContext.bootstrap(defaultGameInstanceId, defaultTenantId);
+    notifyConnectIfReady();
+    ensureGatewayConnected();
   }
 
   private void cancelIdleCheck() {

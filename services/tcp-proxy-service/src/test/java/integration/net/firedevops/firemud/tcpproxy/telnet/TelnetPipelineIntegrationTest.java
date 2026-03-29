@@ -5,7 +5,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
-import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.embedded.EmbeddedChannel;
 import io.netty.handler.codec.LineBasedFrameDecoder;
 import io.netty.handler.codec.string.StringDecoder;
@@ -22,9 +21,17 @@ class TelnetPipelineIntegrationTest {
 
   private final LookCacheService lookCacheService = Mockito.mock(LookCacheService.class);
 
+  private TelnetServerHandler.WebSocketConnector stubConnector(WebSocket ws) {
+    return (gatewayWsUrl, clientIp, proxyConnectionId, gameInstanceId, tenantId, listener) ->
+        CompletableFuture.completedFuture(ws);
+  }
+
   @Test
   void rawBytesFlowThroughPipelineWithNegotiationResponses() {
     SimpleMeterRegistry registry = new SimpleMeterRegistry();
+    WebSocket ws = Mockito.mock(WebSocket.class);
+    CompletableFuture<WebSocket> future = CompletableFuture.completedFuture(ws);
+    Mockito.when(ws.sendText(Mockito.anyString(), Mockito.eq(true))).thenReturn(future);
     TelnetServerHandler handler =
         new TelnetServerHandler(
             "ws://localhost/ws",
@@ -36,24 +43,20 @@ class TelnetPipelineIntegrationTest {
             false,
             registry,
             () -> true,
-            TelnetServerHandler::createWebSocket,
+            stubConnector(ws),
             Mockito.mock(TcpProxyEventService.class),
             new AtomicInteger(),
+            "sess-1",
+            "tenant-1",
             lookCacheService,
             0);
-
-    WebSocket ws = Mockito.mock(WebSocket.class);
-    CompletableFuture<WebSocket> future = CompletableFuture.completedFuture(ws);
-    Mockito.when(ws.sendText(Mockito.anyString(), Mockito.eq(true))).thenReturn(future);
-    handler.setWebSocket(ws);
-
-    handler.channelRead0(Mockito.mock(ChannelHandlerContext.class), "SESSION sess-1 tenant-1");
 
     EmbeddedChannel channel =
         new EmbeddedChannel(
             new LineBasedFrameDecoder(1024, false, true),
             new StringDecoder(StandardCharsets.ISO_8859_1),
             handler);
+    handler.setWebSocket(ws);
 
     byte[] payload = {(byte) 255, (byte) 253, (byte) 1, 'l', 'i', 'n', 'e', '\r', '\n'};
     channel.writeInbound(Unpooled.wrappedBuffer(payload));
@@ -70,6 +73,9 @@ class TelnetPipelineIntegrationTest {
   @Test
   void unsupportedSubNegotiationInPipelineIncrementsMetric() {
     SimpleMeterRegistry registry = new SimpleMeterRegistry();
+    WebSocket ws = Mockito.mock(WebSocket.class);
+    CompletableFuture<WebSocket> future = CompletableFuture.completedFuture(ws);
+    Mockito.when(ws.sendText(Mockito.anyString(), Mockito.eq(true))).thenReturn(future);
     TelnetServerHandler handler =
         new TelnetServerHandler(
             "ws://localhost/ws",
@@ -81,24 +87,20 @@ class TelnetPipelineIntegrationTest {
             false,
             registry,
             () -> true,
-            TelnetServerHandler::createWebSocket,
+            stubConnector(ws),
             Mockito.mock(TcpProxyEventService.class),
             new AtomicInteger(),
+            "sess-1",
+            "tenant-1",
             lookCacheService,
             0);
-
-    WebSocket ws = Mockito.mock(WebSocket.class);
-    CompletableFuture<WebSocket> future = CompletableFuture.completedFuture(ws);
-    Mockito.when(ws.sendText(Mockito.anyString(), Mockito.eq(true))).thenReturn(future);
-    handler.setWebSocket(ws);
-
-    handler.channelRead0(Mockito.mock(ChannelHandlerContext.class), "SESSION sess-1 tenant-1");
 
     EmbeddedChannel channel =
         new EmbeddedChannel(
             new LineBasedFrameDecoder(1024, false, true),
             new StringDecoder(StandardCharsets.ISO_8859_1),
             handler);
+    handler.setWebSocket(ws);
 
     byte[] payload = {
       (byte) 255, (byte) 250, (byte) 99, 'x', (byte) 255, (byte) 240, 'c', 'm', 'd', '\r', '\n'

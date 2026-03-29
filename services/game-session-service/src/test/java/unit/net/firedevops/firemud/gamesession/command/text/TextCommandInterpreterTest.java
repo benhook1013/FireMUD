@@ -96,13 +96,14 @@ class TextCommandInterpreterTest {
             accountClient,
             commandService,
             devIsolatedProperties,
-            gameLogicProperties,
             devIsolatedRegistryProvider,
             meterRegistry);
+    GameplayWorldCatalog worldCatalog = new GameplayWorldCatalog(gameSessionProperties);
     PlayCommandHandler playHandler =
         new PlayCommandHandler(
             sessionAuthenticationService,
             sessionContextService,
+            worldCatalog,
             gameLogicProperties,
             meterRegistry);
     LookCommandHandler lookHandler =
@@ -114,7 +115,7 @@ class TextCommandInterpreterTest {
             meterRegistry,
             lookCacheService,
             devIsolatedProperties);
-    WorldsCommandHandler worldsHandler = new WorldsCommandHandler();
+    WorldsCommandHandler worldsHandler = new WorldsCommandHandler(worldCatalog);
 
     LookResult lookResult =
         LookResult.newBuilder()
@@ -231,13 +232,17 @@ class TextCommandInterpreterTest {
     @Override
     public void save(SessionContext context) {
       SessionContext existing =
-          identityMap.get(
-              identityKey(context.tenantId(), context.accountId(), context.characterId()));
+          hasGameplayIdentity(context)
+              ? identityMap.get(
+                  identityKey(context.tenantId(), context.gameInstanceId(), context.characterId()))
+              : null;
       if (existing != null && existing.sessionId() != context.sessionId()) {
         sessionMap.remove(existing.sessionId());
       }
       sessionMap.put(context.sessionId(), context);
-      identityMap.put(identityKey(context), context);
+      if (hasGameplayIdentity(context)) {
+        identityMap.put(identityKey(context), context);
+      }
     }
 
     @Override
@@ -259,7 +264,7 @@ class TextCommandInterpreterTest {
     @Override
     public void deleteBySessionId(long tenantId, long sessionId) {
       SessionContext removed = sessionMap.remove(sessionId);
-      if (removed != null) {
+      if (removed != null && hasGameplayIdentity(removed)) {
         identityMap.remove(identityKey(removed));
       }
     }
@@ -270,6 +275,10 @@ class TextCommandInterpreterTest {
 
     private String identityKey(long tenantId, long gameInstanceId, long characterId) {
       return tenantId + ":" + gameInstanceId + ":" + characterId;
+    }
+
+    private boolean hasGameplayIdentity(SessionContext context) {
+      return context.gameInstanceId() > 0 && context.characterId() > 0;
     }
   }
 }
