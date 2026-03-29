@@ -11,6 +11,7 @@ on:
 
 permissions:
   contents: read
+  packages: write
   pull-requests: write
 
 concurrency:
@@ -158,17 +159,90 @@ jobs:
             :game-session-service:integrationTest --tests 'net.firedevops.firemud.gamesession.GameSessionApplicationIntegrationTest' --tests 'net.firedevops.firemud.gamesession.GameSessionLoginIntegrationTest' --tests 'net.firedevops.firemud.gamesession.websocket.GameSessionWebSocketHandlerIntegrationTest' \
             :tcp-proxy-service:integrationTest --tests 'net.firedevops.firemud.tcpproxy.TcpProxyServiceApplicationIntegrationTest'
 
-  smoke-full:
-    name: Smoke Tests (Full Stack)
+  smoke-image-meta:
+    name: Derive Smoke Image Metadata
     needs: [changes]
     if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.run_smoke_full == 'true' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 25
-    env:
-      SMOKE_TIMEOUT_SECONDS: 20
+    outputs:
+      head_sha: ${{ steps.meta.outputs.head_sha }}
+      image_tag: ${{ steps.meta.outputs.image_tag }}
+      base_image: ${{ steps.meta.outputs.base_image }}
+    steps:
+      - name: Derive smoke image tags
+        id: meta
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+          else
+            HEAD_SHA="${GITHUB_SHA}"
+          fi
+
+          IMAGE_TAG="${HEAD_SHA}"
+          BASE_IMAGE="ghcr.io/benhook1013/firemud-base:${IMAGE_TAG}"
+
+          {
+            echo "head_sha=${HEAD_SHA}"
+            echo "image_tag=${IMAGE_TAG}"
+            echo "base_image=${BASE_IMAGE}"
+          } >> "$GITHUB_OUTPUT"
+
+  build-smoke-base-image:
+    name: Build Smoke Base Image
+    needs: [smoke-image-meta]
+    if: ${{ needs.smoke-image-meta.result == 'success' }}
+    runs-on: ubuntu-latest
     steps:
       - name: ⬇️ Checkout Code
         uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.smoke-image-meta.outputs.head_sha }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Login to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push smoke base image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./docker/base.Dockerfile
+          push: true
+          tags: ${{ needs.smoke-image-meta.outputs.base_image }}
+          cache-from: |
+            type=registry,ref=ghcr.io/benhook1013/firemud-base:buildcache
+            type=registry,ref=ghcr.io/benhook1013/firemud-base:latest
+            type=gha
+          cache-to: |
+            type=registry,ref=ghcr.io/benhook1013/firemud-base:buildcache,mode=max
+            type=gha,mode=max
+
+  build-smoke-images:
+    name: Build Smoke Images (${{ matrix.service }})
+    needs: [smoke-image-meta, build-smoke-base-image]
+    if: ${{ needs.smoke-image-meta.result == 'success' && needs.build-smoke-base-image.result == 'success' }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service:
+          - account-service
+          - entity-management-service
+          - game-logic-service
+          - game-session-service
+          - spring-cloud-gateway
+          - tcp-proxy-service
+          - world-management-service
+    steps:
+      - name: ⬇️ Checkout Code
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.smoke-image-meta.outputs.head_sha }}
 
       - name: ⚙️ Set Up Java
         uses: actions/setup-java@v5
@@ -184,14 +258,82 @@ jobs:
           build-scan-terms-of-use-agree: 'yes'
           cache-read-only: false
 
+      - name: Build service JAR
+        run: ./gradlew :${{ matrix.service }}:bootJar
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Login to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push smoke service image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./services/${{ matrix.service }}/Dockerfile
+          push: true
+          build-args: |
+            BASE_IMAGE=${{ needs.smoke-image-meta.outputs.base_image }}
+          tags: ghcr.io/benhook1013/${{ matrix.service }}:${{ needs.smoke-image-meta.outputs.image_tag }}
+          cache-from: |
+            type=registry,ref=ghcr.io/benhook1013/${{ matrix.service }}:buildcache
+            type=registry,ref=ghcr.io/benhook1013/${{ matrix.service }}:latest
+            type=gha
+          cache-to: |
+            type=registry,ref=ghcr.io/benhook1013/${{ matrix.service }}:buildcache,mode=max
+            type=gha,mode=max
+
+  smoke-full:
+    name: Smoke Tests (Full Stack)
+    needs: [changes, smoke-image-meta, build-smoke-images]
+    if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.run_smoke_full == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      SMOKE_TIMEOUT_SECONDS: 20
+      SMOKE_IMAGE_TAG: ${{ needs.smoke-image-meta.outputs.image_tag }}
+    steps:
+      - name: ⬇️ Checkout Code
+        uses: actions/checkout@v6
+
       - name: 📝 Create CI .env placeholder
         run: touch .env
 
       - name: Generate Dev Certificates
         run: ./dev-tools/generate-dev-certs.sh dev-tools/certs
 
-      - name: 🚀 Start Smoke Stack (devUpSmoke)
-        run: ./gradlew devUpSmoke
+      - name: Login to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 🚀 Start Smoke Stack
+        run: |
+          docker compose \
+            -f docker/docker-compose.yml \
+            -f docker/docker-compose.override.yml \
+            -f docker/docker-compose.smoke-images.override.yml \
+            up \
+            -d \
+            --wait \
+            --wait-timeout 180 \
+            postgres \
+            redis-coord \
+            redis-cache \
+            account-service \
+            entity-management-service \
+            gateway \
+            game-logic-service \
+            game-session-service \
+            tcp-proxy-service \
+            world-management-service
 
       - name: 📦 Install WebSocket smoke dependency
         run: python3 -m pip install --disable-pip-version-check websocket-client
@@ -210,12 +352,21 @@ jobs:
         if: failure()
         run: |
           if [ -f docker/docker-compose.yml ]; then
-            docker compose -f docker/docker-compose.yml logs || true
+            docker compose \
+              -f docker/docker-compose.yml \
+              -f docker/docker-compose.override.yml \
+              -f docker/docker-compose.smoke-images.override.yml \
+              logs || true
           fi
 
-      - name: 🧹 Stop Smoke Stack (devDownSmoke)
+      - name: 🧹 Stop Smoke Stack
         if: always()
-        run: ./gradlew devDownSmoke
+        run: |
+          docker compose \
+            -f docker/docker-compose.yml \
+            -f docker/docker-compose.override.yml \
+            -f docker/docker-compose.smoke-images.override.yml \
+            down
 
   smoke-gate:
     name: Smoke Gate
