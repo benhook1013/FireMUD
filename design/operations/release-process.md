@@ -21,6 +21,17 @@ Every official release must include:
 - A `/licenses` directory in the release artifact containing dependency notices for that release when third-party attribution is required.
 - The published source archive or source reference covered by the release.
 
+## Current Automated Notice Scope
+
+The current automated dependency-notice workflow covers the package-managed ecosystems that make up the shipped product and release artifacts today:
+
+- `Gradle`
+- `NPM`
+
+Repository scripting languages are broader than the current release notice scope. Bash and Python are supported for repository automation, but Python is not yet treated as a release dependency ecosystem because the repository does not currently ship a manifest-managed Python package surface as part of the official product artifacts.
+
+If FireMUD later ships runtime or release-tool Python dependencies through a committed package manifest, the release `/licenses` automation must be expanded to cover that ecosystem as well.
+
 ## Release Checklist
 
 Before publishing a release:
