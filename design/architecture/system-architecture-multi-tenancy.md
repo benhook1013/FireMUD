@@ -12,7 +12,7 @@ the multi-tenant requirements in the
 FireMUD separates **global identity** from **per-game state** so that one person can participate in multiple games without data leakage between tenants.
 
 - **Platform account (`accountId`)** – A global identity record managed by the Account Service. Each human player has a single platform account, which is the subject of authentication and JWT issuance.
-- **Tenant (`tenantId`)** – A hosted game world or project. Each tenant represents one game created on the platform and may have one or more running game instances. Tenants are identified by a service-generated UUID string owned by the Game Design Service.
+- **Tenant (`tenantId`)** – A hosted game world or project. Each tenant represents one game created on the platform and may have one or more running game instances. The Game Design Service owns `tenantId` issuance.
 - **Tenant slug (`tenantSlug`)** – A stable, human-friendly identifier owned by the Game Design Service. Slugs are used only as **player-facing selectors** in the post-login lobby flow (`WORLDS` / `REALMS` / `CHARS` / `PLAY`) and are resolved server-side to `tenantId`; services and persistence models continue to use `tenantId` as the authoritative tenant identifier. See `design/architecture/decisions/adr-0005-tenant-identifiers-in-gameplay-protocol.md` for the required slug stability rules.
 - **Game instance (`gameInstanceId`)** – A specific running instance of a tenant’s world, keyed as described in [Versioning & Runtime Configuration](./system-architecture-versioning-runtime.md#version-activation--rollback). Persistence models, APIs, and key formats must include `gameInstanceId` explicitly rather than overloading `tenantId`.
   - A tenant may expose one or more **player-addressable realms**. Each realm resolves to exactly one admissible `gameInstanceId` at a time through the authoritative realm-routing contract owned by Game Session.
@@ -63,8 +63,8 @@ This model underpins both authentication and authorization:
 - Players have a **single platform account** managed by the **Account Service**.
 - Authentication is global at the `accountId` level, but services always check the requested `tenantId` against the account’s allowed tenants and enforce this when retrieving or updating game data.
 - The same account can join multiple games. Each game is identified by a `tenantId`.
-- `tenantId` values are service-generated UUID strings owned by the Game Design Service.
-- `tenantId` values are represented as strings across gRPC and REST APIs and stored as string columns in service databases. Persistence models must treat `tenantId` as an opaque identifier, not as a user-facing value.
+- `tenantId` is the authoritative tenant identifier owned by the Game Design Service. Identifier naming and format conventions are defined in [Identifier Glossary](./system-architecture-identifier-glossary.md).
+- Persistence models must treat `tenantId` as an opaque identifier, not as a user-facing value.
 - Gameplay clients may select worlds using `tenantSlug` values returned by `WORLDS` in the lobby flow, but `tenantSlug` must never be used as a substitute for `tenantId` in APIs or persistence outside of lobby selection.
 - Gameplay clients select a world and optional realm in the lobby flow, and the server resolves that selection to canonical `{tenantId, gameInstanceId}` values through the realm-routing contract.
 - Character ownership is scoped per `tenantId`, so a player may have different characters in different games. Realm-resolved playable state may either reuse tenant-shared character state or use isolated state scoped to the selected `gameInstanceId`.

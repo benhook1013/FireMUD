@@ -4,10 +4,18 @@ This document defines canonical identifier names and scopes used across FireMUD 
 
 ## Core Identifiers
 
-- `tenantId` – identifies the game/tenant (a UUID string). Present on all persistent domain tables and all cross-service APIs.
-- Identifier format note: when a FireMUD identifier shape is documented explicitly, use `UUID` terminology rather than `GUID`. Services should still treat these identifiers as opaque values unless a contract specifically requires validation of UUID shape.
+- `accountId` – identifies a platform account. Present on authentication/session records and account-owned domain relationships.
+- `tenantId` – identifies the game/tenant. Present on all persistent domain tables and all cross-service APIs.
 - `versionId` – identifies a design bundle/version for a tenant. Domain service template data is scoped by `(tenantId, versionId)`.
 - `gameInstanceId` – identifies a running game instance for a tenant. Domain service runtime/instance data is scoped by `(tenantId, gameInstanceId)` and references the instance’s pinned `runtime_version`/`versionId`.
+- `characterId` – identifies a character owned within a tenant. Gameplay session binding and any instance-local playable state use it together with `{tenantId, gameInstanceId}` scope.
+
+## Identifier Format Conventions
+
+- When a FireMUD identifier format is documented explicitly, use `UUID` terminology rather than `GUID`.
+- `accountId`, `tenantId`, `versionId`, `gameInstanceId`, and `characterId` are canonical UUID string identifiers.
+- Services must still treat these identifiers as opaque values unless a contract specifically requires validation of UUID shape.
+- `tenantSlug` is not a UUID. It is a stable human-readable selector used only in player-facing lobby flows and resolved server-side to `tenantId`.
 
 ## World Identifiers
 
