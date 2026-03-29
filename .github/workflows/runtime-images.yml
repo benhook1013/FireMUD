@@ -1,0 +1,166 @@
+name: Build Runtime Images
+
+on:
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'build.gradle.kts'
+      - 'settings.gradle.kts'
+      - 'gradle.properties'
+      - 'buildSrc/**'
+      - 'gradle/**'
+      - 'protos/**'
+      - 'docker/**'
+      - '.github/workflows/runtime-images.yml'
+      - '.github/workflows/smoke.yml'
+      - 'services/common-data-runtime/**'
+      - 'services/common-library/**'
+      - 'services/common-platform-core/**'
+      - 'services/common-saga/**'
+      - 'services/common-security/**'
+      - 'services/common-test-support/**'
+      - 'services/common-web-support/**'
+      - 'services/account-service/**'
+      - 'services/entity-management-service/**'
+      - 'services/game-logic-service/**'
+      - 'services/game-session-service/**'
+      - 'services/spring-cloud-gateway/**'
+      - 'services/tcp-proxy-service/**'
+      - 'services/world-management-service/**'
+  push:
+    branches: [main, develop]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: runtime-images-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  image-meta:
+    name: Derive Runtime Image Metadata
+    runs-on: ubuntu-latest
+    outputs:
+      head_sha: ${{ steps.meta.outputs.head_sha }}
+      image_tag: ${{ steps.meta.outputs.image_tag }}
+      base_image: ${{ steps.meta.outputs.base_image }}
+    steps:
+      - name: Derive image tags
+        id: meta
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+          else
+            HEAD_SHA="${GITHUB_SHA}"
+          fi
+
+          IMAGE_TAG="${HEAD_SHA}"
+          BASE_IMAGE="ghcr.io/benhook1013/firemud-base:${IMAGE_TAG}"
+
+          {
+            echo "head_sha=${HEAD_SHA}"
+            echo "image_tag=${IMAGE_TAG}"
+            echo "base_image=${BASE_IMAGE}"
+          } >> "$GITHUB_OUTPUT"
+
+  build-base-image:
+    name: Build Runtime Base Image
+    needs: [image-meta]
+    runs-on: ubuntu-latest
+    steps:
+      - name: ⬇️ Checkout Code
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.image-meta.outputs.head_sha }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Login to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push runtime base image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./docker/base.Dockerfile
+          push: true
+          tags: ${{ needs.image-meta.outputs.base_image }}
+          cache-from: |
+            type=registry,ref=ghcr.io/benhook1013/firemud-base:buildcache
+            type=registry,ref=ghcr.io/benhook1013/firemud-base:latest
+            type=gha
+          cache-to: |
+            type=registry,ref=ghcr.io/benhook1013/firemud-base:buildcache,mode=max
+            type=gha,mode=max
+
+  build-runtime-images:
+    name: Build Runtime Images (${{ matrix.service }})
+    needs: [image-meta, build-base-image]
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service:
+          - account-service
+          - entity-management-service
+          - game-logic-service
+          - game-session-service
+          - spring-cloud-gateway
+          - tcp-proxy-service
+          - world-management-service
+    steps:
+      - name: ⬇️ Checkout Code
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.image-meta.outputs.head_sha }}
+
+      - name: ⚙️ Set Up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: ⚙️ Set Up Gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          build-scan-publish: true
+          build-scan-terms-of-use-url: 'https://gradle.com/help/legal-terms-of-use'
+          build-scan-terms-of-use-agree: 'yes'
+          cache-read-only: false
+
+      - name: Build service JAR
+        run: ./gradlew :${{ matrix.service }}:bootJar
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Login to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push runtime service image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./services/${{ matrix.service }}/Dockerfile
+          push: true
+          build-args: |
+            BASE_IMAGE=${{ needs.image-meta.outputs.base_image }}
+          tags: ghcr.io/benhook1013/${{ matrix.service }}:${{ needs.image-meta.outputs.image_tag }}
+          cache-from: |
+            type=registry,ref=ghcr.io/benhook1013/${{ matrix.service }}:buildcache
+            type=registry,ref=ghcr.io/benhook1013/${{ matrix.service }}:latest
+            type=gha
+          cache-to: |
+            type=registry,ref=ghcr.io/benhook1013/${{ matrix.service }}:buildcache,mode=max
+            type=gha,mode=max

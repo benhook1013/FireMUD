@@ -1,17 +1,15 @@
 name: Smoke Tests
 
 on:
-  push:
-    branches: [main, develop]
   pull_request:
     branches: [main, develop]
-  workflow_dispatch:
-  schedule:
-    - cron: '0 3 * * *'  # Daily at 3am UTC
+  workflow_run:
+    workflows: ["Build Runtime Images"]
+    types: [completed]
 
 permissions:
   contents: read
-  packages: write
+  packages: read
   pull-requests: write
 
 concurrency:
@@ -22,21 +20,15 @@ jobs:
   changes:
     name: Detect Smoke-Relevant Changes
     runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'pull_request' }}
     outputs:
       run_smoke_lite: ${{ steps.compute.outputs.run_smoke_lite }}
-      run_smoke_full: ${{ steps.compute.outputs.run_smoke_full }}
     steps:
       - name: Compute smoke scope
         id: compute
         uses: actions/github-script@v8
         with:
           script: |
-            if (context.eventName !== "pull_request") {
-              core.setOutput("run_smoke_lite", "false");
-              core.setOutput("run_smoke_full", "true");
-              return;
-            }
-
             const files = await github.paginate(
               github.rest.pulls.listFiles,
               {
@@ -110,7 +102,6 @@ jobs:
 
             if (nonDocFiles.length === 0 || nonDocsAreFrontendOnly) {
               core.setOutput("run_smoke_lite", "false");
-              core.setOutput("run_smoke_full", "false");
               return;
             }
 
@@ -119,19 +110,12 @@ jobs:
                 liteRelevantFiles.has(file) ||
                 liteRelevantPrefixes.some((prefix) => file.startsWith(prefix))
             );
-            const runSmokeFull = nonDocFiles.some(
-              (file) =>
-                fullRelevantFiles.has(file) ||
-                fullRelevantPrefixes.some((prefix) => file.startsWith(prefix))
-            );
-
             core.setOutput("run_smoke_lite", runSmokeLite ? "true" : "false");
-            core.setOutput("run_smoke_full", runSmokeFull ? "true" : "false");
 
   smoke-lite:
     name: Smoke Tests (Lite)
     needs: [changes]
-    if: ${{ github.event_name == 'pull_request' && needs.changes.outputs.run_smoke_lite == 'true' && needs.changes.outputs.run_smoke_full != 'true' }}
+    if: ${{ github.event_name == 'pull_request' && needs.changes.outputs.run_smoke_lite == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -159,147 +143,47 @@ jobs:
             :game-session-service:integrationTest --tests 'net.firedevops.firemud.gamesession.GameSessionApplicationIntegrationTest' --tests 'net.firedevops.firemud.gamesession.GameSessionLoginIntegrationTest' --tests 'net.firedevops.firemud.gamesession.websocket.GameSessionWebSocketHandlerIntegrationTest' \
             :tcp-proxy-service:integrationTest --tests 'net.firedevops.firemud.tcpproxy.TcpProxyServiceApplicationIntegrationTest'
 
-  smoke-image-meta:
-    name: Derive Smoke Image Metadata
-    needs: [changes]
-    if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.run_smoke_full == 'true' }}
+  smoke-full-context:
+    name: Derive Smoke Runtime Context
     runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' }}
     outputs:
       head_sha: ${{ steps.meta.outputs.head_sha }}
       image_tag: ${{ steps.meta.outputs.image_tag }}
-      base_image: ${{ steps.meta.outputs.base_image }}
+      pr_number: ${{ steps.meta.outputs.pr_number }}
+      should_comment: ${{ steps.meta.outputs.should_comment }}
     steps:
-      - name: Derive smoke image tags
+      - name: Derive smoke context
         id: meta
         run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            HEAD_SHA="${{ github.event.pull_request.head.sha }}"
-          else
-            HEAD_SHA="${GITHUB_SHA}"
-          fi
-
+          HEAD_SHA="${{ github.event.workflow_run.head_sha }}"
           IMAGE_TAG="${HEAD_SHA}"
-          BASE_IMAGE="ghcr.io/benhook1013/firemud-base:${IMAGE_TAG}"
-
+          PR_NUMBER="${{ github.event.workflow_run.pull_requests[0].number || '' }}"
+          SHOULD_COMMENT="false"
+          if [ -n "$PR_NUMBER" ]; then
+            SHOULD_COMMENT="true"
+          fi
           {
             echo "head_sha=${HEAD_SHA}"
             echo "image_tag=${IMAGE_TAG}"
-            echo "base_image=${BASE_IMAGE}"
+            echo "pr_number=${PR_NUMBER}"
+            echo "should_comment=${SHOULD_COMMENT}"
           } >> "$GITHUB_OUTPUT"
-
-  build-smoke-base-image:
-    name: Build Smoke Base Image
-    needs: [smoke-image-meta]
-    if: ${{ needs.smoke-image-meta.result == 'success' }}
-    runs-on: ubuntu-latest
-    steps:
-      - name: ⬇️ Checkout Code
-        uses: actions/checkout@v6
-        with:
-          ref: ${{ needs.smoke-image-meta.outputs.head_sha }}
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-
-      - name: Login to GHCR
-        uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and push smoke base image
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: ./docker/base.Dockerfile
-          push: true
-          tags: ${{ needs.smoke-image-meta.outputs.base_image }}
-          cache-from: |
-            type=registry,ref=ghcr.io/benhook1013/firemud-base:buildcache
-            type=registry,ref=ghcr.io/benhook1013/firemud-base:latest
-            type=gha
-          cache-to: |
-            type=registry,ref=ghcr.io/benhook1013/firemud-base:buildcache,mode=max
-            type=gha,mode=max
-
-  build-smoke-images:
-    name: Build Smoke Images (${{ matrix.service }})
-    needs: [smoke-image-meta, build-smoke-base-image]
-    if: ${{ needs.smoke-image-meta.result == 'success' && needs.build-smoke-base-image.result == 'success' }}
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        service:
-          - account-service
-          - entity-management-service
-          - game-logic-service
-          - game-session-service
-          - spring-cloud-gateway
-          - tcp-proxy-service
-          - world-management-service
-    steps:
-      - name: ⬇️ Checkout Code
-        uses: actions/checkout@v6
-        with:
-          ref: ${{ needs.smoke-image-meta.outputs.head_sha }}
-
-      - name: ⚙️ Set Up Java
-        uses: actions/setup-java@v5
-        with:
-          distribution: 'temurin'
-          java-version: '21'
-
-      - name: ⚙️ Set Up Gradle
-        uses: gradle/actions/setup-gradle@v6
-        with:
-          build-scan-publish: true
-          build-scan-terms-of-use-url: 'https://gradle.com/help/legal-terms-of-use'
-          build-scan-terms-of-use-agree: 'yes'
-          cache-read-only: false
-
-      - name: Build service JAR
-        run: ./gradlew :${{ matrix.service }}:bootJar
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-
-      - name: Login to GHCR
-        uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and push smoke service image
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: ./services/${{ matrix.service }}/Dockerfile
-          push: true
-          build-args: |
-            BASE_IMAGE=${{ needs.smoke-image-meta.outputs.base_image }}
-          tags: ghcr.io/benhook1013/${{ matrix.service }}:${{ needs.smoke-image-meta.outputs.image_tag }}
-          cache-from: |
-            type=registry,ref=ghcr.io/benhook1013/${{ matrix.service }}:buildcache
-            type=registry,ref=ghcr.io/benhook1013/${{ matrix.service }}:latest
-            type=gha
-          cache-to: |
-            type=registry,ref=ghcr.io/benhook1013/${{ matrix.service }}:buildcache,mode=max
-            type=gha,mode=max
 
   smoke-full:
     name: Smoke Tests (Full Stack)
-    needs: [changes, smoke-image-meta, build-smoke-images]
-    if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.run_smoke_full == 'true' }}
+    needs: [smoke-full-context]
+    if: ${{ needs.smoke-full-context.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
       SMOKE_TIMEOUT_SECONDS: 20
-      SMOKE_IMAGE_TAG: ${{ needs.smoke-image-meta.outputs.image_tag }}
+      SMOKE_IMAGE_TAG: ${{ needs.smoke-full-context.outputs.image_tag }}
     steps:
       - name: ⬇️ Checkout Code
         uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.smoke-full-context.outputs.head_sha }}
 
       - name: 📝 Create CI .env placeholder
         run: touch .env
@@ -368,36 +252,20 @@ jobs:
             -f docker/docker-compose.smoke-images.override.yml \
             down
 
-  smoke-gate:
-    name: Smoke Gate
-    runs-on: ubuntu-latest
-    needs: [changes, smoke-lite, smoke-full]
-    if: always()
-    steps:
-      - name: Enforce successful smoke tests
-        run: |
-          if [ "${{ needs.changes.outputs.run_smoke_lite }}" = "true" ] && [ "${{ needs.changes.outputs.run_smoke_full }}" != "true" ] && [ "${{ needs.smoke-lite.result }}" != "success" ]; then
-            echo "Lite smoke tests did not complete successfully: ${{ needs.smoke-lite.result }}"
-            exit 1
-          fi
-          if [ "${{ needs.changes.outputs.run_smoke_full }}" = "true" ] && [ "${{ needs.smoke-full.result }}" != "success" ]; then
-            echo "Full smoke tests did not complete successfully: ${{ needs.smoke-full.result }}"
-            exit 1
-          fi
-
   smoke-summary:
     name: Smoke Summary
     runs-on: ubuntu-latest
-    needs: [changes, smoke-lite, smoke-full, smoke-gate]
-    if: ${{ github.event_name == 'pull_request' && always() }}
+    needs: [changes, smoke-lite, smoke-full-context, smoke-full]
+    if: ${{ always() && ((github.event_name == 'pull_request') || (github.event_name == 'workflow_run' && needs.smoke-full-context.outputs.should_comment == 'true')) }}
     steps:
       - name: 💬 Publish Smoke Summary Comment
         uses: actions/github-script@v8
         with:
           script: |
-            const liteEnabled = "${{ needs.changes.outputs.run_smoke_lite }}" === "true";
-            const fullEnabled = "${{ needs.changes.outputs.run_smoke_full }}" === "true";
-            const liteResult = liteEnabled && !fullEnabled ? "${{ needs.smoke-lite.result }}" : "skipped";
+            const eventName = "${{ github.event_name }}";
+            const liteEnabled = eventName === "pull_request" && "${{ needs.changes.outputs.run_smoke_lite }}" === "true";
+            const fullEnabled = eventName === "workflow_run";
+            const liteResult = liteEnabled ? "${{ needs.smoke-lite.result }}" : "skipped";
             const fullResult = fullEnabled ? "${{ needs.smoke-full.result }}" : "skipped";
             const statusIcon = (value) => {
               if (value === "success") return "✅";
@@ -424,9 +292,13 @@ jobs:
               `- ${statusIcon(fullResult)} Smoke Tests (Full Stack): \`${fullResult}\``,
             ].join("\n");
 
+            const issueNumber = eventName === "pull_request"
+              ? context.issue.number
+              : Number("${{ needs.smoke-full-context.outputs.pr_number }}");
+
             const { data: comments } = await github.rest.issues.listComments({
               ...context.repo,
-              issue_number: context.issue.number
+              issue_number: issueNumber
             });
 
             const existing = comments.find(comment =>
@@ -442,7 +314,7 @@ jobs:
             } else {
               await github.rest.issues.createComment({
                 ...context.repo,
-                issue_number: context.issue.number,
+                issue_number: issueNumber,
                 body
               });
             }
