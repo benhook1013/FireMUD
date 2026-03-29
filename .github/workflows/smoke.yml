@@ -219,7 +219,7 @@ jobs:
     steps:
       - name: Enforce successful smoke tests
         run: |
-          if [ "${{ needs.changes.outputs.run_smoke_lite }}" = "true" ] && [ "${{ needs.smoke-lite.result }}" != "success" ]; then
+          if [ "${{ needs.changes.outputs.run_smoke_lite }}" = "true" ] && [ "${{ needs.changes.outputs.run_smoke_full }}" != "true" ] && [ "${{ needs.smoke-lite.result }}" != "success" ]; then
             echo "Lite smoke tests did not complete successfully: ${{ needs.smoke-lite.result }}"
             exit 1
           fi
@@ -240,7 +240,7 @@ jobs:
           script: |
             const liteEnabled = "${{ needs.changes.outputs.run_smoke_lite }}" === "true";
             const fullEnabled = "${{ needs.changes.outputs.run_smoke_full }}" === "true";
-            const liteResult = liteEnabled ? "${{ needs.smoke-lite.result }}" : "skipped";
+            const liteResult = liteEnabled && !fullEnabled ? "${{ needs.smoke-lite.result }}" : "skipped";
             const fullResult = fullEnabled ? "${{ needs.smoke-full.result }}" : "skipped";
             const statusIcon = (value) => {
               if (value === "success") return "✅";
