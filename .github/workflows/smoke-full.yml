@@ -1,6 +1,21 @@
 name: Smoke Tests Full
 
 on:
+  workflow_call:
+    inputs:
+      action:
+        required: true
+        type: string
+      head_sha:
+        required: true
+        type: string
+      image_tag:
+        required: true
+        type: string
+      pr_number:
+        required: false
+        default: ""
+        type: string
   workflow_dispatch:
     inputs:
       action:
@@ -30,7 +45,7 @@ permissions:
   pull-requests: write
 
 concurrency:
-  group: smoke-full-${{ github.workflow }}-${{ format('pr-{0}-full', inputs.pr_number) }}
+  group: smoke-full-${{ inputs.pr_number != '' && format('pr-{0}-full', inputs.pr_number) || github.ref }}
   cancel-in-progress: true
 
 jobs:

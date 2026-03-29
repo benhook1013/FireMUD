@@ -243,28 +243,28 @@ jobs:
                 {
                   owner,
                   repo,
-                  workflow_id: "smoke-full.yml",
-                  event: "workflow_dispatch",
+                  workflow_id: "runtime-images.yml",
+                  event: "pull_request",
                   per_page: 100,
                 }
               );
 
               const matching = runs.find((run) => run.head_sha === headSha);
               if (matching) {
-                core.info(`Found dispatched smoke run ${matching.id} with status=${matching.status} conclusion=${matching.conclusion}`);
+                core.info(`Found runtime-images run ${matching.id} with status=${matching.status} conclusion=${matching.conclusion}`);
                 if (matching.status !== "completed") {
                   await new Promise((resolve) => setTimeout(resolve, sleepMs));
                   continue;
                 }
 
                 if (matching.conclusion !== "success") {
-                  core.setFailed(`Dispatched full smoke run ${matching.id} finished with ${matching.conclusion}`);
+                  core.setFailed(`Runtime images/full smoke run ${matching.id} finished with ${matching.conclusion}`);
                 }
                 return;
               }
 
-              core.info(`No dispatched smoke run found yet for PR #${prNumber} sha ${headSha}; waiting...`);
+              core.info(`No runtime-images/full-smoke run found yet for PR #${prNumber} sha ${headSha}; waiting...`);
               await new Promise((resolve) => setTimeout(resolve, sleepMs));
             }
 
-            core.setFailed(`Timed out waiting for dispatched full smoke run for PR #${prNumber} sha ${headSha}`);
+            core.setFailed(`Timed out waiting for runtime-images/full-smoke run for PR #${prNumber} sha ${headSha}`);

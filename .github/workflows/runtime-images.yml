@@ -33,7 +33,6 @@ on:
   workflow_dispatch:
 
 permissions:
-  actions: write
   contents: read
   packages: write
 
@@ -167,31 +166,14 @@ jobs:
             type=registry,ref=ghcr.io/benhook1013/${{ matrix.service }}:buildcache,mode=max
             type=gha,mode=max
 
-  dispatch-smoke:
-    name: Dispatch Smoke Tests
+  smoke-full:
+    name: Smoke Tests (Full Stack)
     needs: [image-meta, build-runtime-images]
     if: ${{ always() && needs.build-runtime-images.result == 'success' }}
-    runs-on: ubuntu-latest
-    steps:
-      - name: Dispatch smoke workflow
-        uses: actions/github-script@v8
-        with:
-          script: |
-            const refName = context.eventName === "pull_request"
-              ? context.payload.pull_request.head.ref
-              : context.ref.replace("refs/heads/", "");
-            const prNumber = context.eventName === "pull_request"
-              ? String(context.payload.pull_request.number)
-              : "";
-
-            await github.rest.actions.createWorkflowDispatch({
-              ...context.repo,
-              workflow_id: "smoke-full.yml",
-              ref: refName,
-              inputs: {
-                action: "full",
-                head_sha: "${{ needs.image-meta.outputs.head_sha }}",
-                image_tag: "${{ needs.image-meta.outputs.image_tag }}",
-                pr_number: prNumber,
-              },
-            });
+    uses: ./.github/workflows/smoke-full.yml
+    with:
+      action: full
+      head_sha: ${{ needs.image-meta.outputs.head_sha }}
+      image_tag: ${{ needs.image-meta.outputs.image_tag }}
+      pr_number: ${{ github.event_name == 'pull_request' && format('{0}', github.event.pull_request.number) || '' }}
+    secrets: inherit
