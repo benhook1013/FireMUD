@@ -190,6 +190,7 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version: '1.24'
+          cache: false
 
       - name: 🧪 Validate GitHub Actions Workflows
         run: |
