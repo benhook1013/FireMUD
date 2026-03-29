@@ -9,20 +9,35 @@ At the protocol level, commands are split into two groups:
 - **System commands** – session and connectivity operations fully owned by Game Session, such as `LOGIN`, `LOGON`, `PING`, and simple state/introspection queries that do not touch gameplay rules.
 - **Gameplay commands** – in-world actions such as `LOOK`, `SAY`, `YELL`, `WHISPER`, movement, and combat. Game Session validates session state and authorization, normalizes input, and enqueues the action for Game Logic Service; it does not re-implement gameplay mechanics here.
 
+The player-facing protocol is also stage-aware:
+
+- **Connected, not logged in** – players can browse public worlds and get help, but they are not yet authenticated. The normal human flow is `WORLDS` then `LOGIN`.
+- **Logged in, not yet playing** – players can issue `PLAY` directly or use lobby helper commands such as `REALMS` and `CHARS` if they need to disambiguate selection.
+- **In game** – gameplay commands such as `LOOK`, `SAY`, and movement are available.
+
+The normal happy path for a human player should therefore be:
+
+```text
+LOGIN <username> <password> [otp]
+PLAY <world> [character]
+```
+
+`WORLDS`, `REALMS`, and `CHARS` are important helper commands, but they are not intended to be mandatory ceremony before ordinary gameplay entry.
+
 | Command | Purpose | Example |
 | ------- | ------- | ------- |
 | `LOGIN <username> <password> [otp]` | Authenticates a session and binds it to an account on credential-bearing transports; append an OTP when two-factor auth is enabled. First-party `/ws/game/**` may instead use bare `LOGIN` after bootstrap/connect-token validation. | `LOGIN demo@example.com swordfish 123456` |
 | `LOGON <username> <password> [otp]` | Exact alias for `LOGIN`; Telnet users often prefer the shorter name when typing from prompts. | `LOGON demo@example.com swordfish` |
-| `WORLDS` | Lists worlds the authenticated account can enter from Account Service membership, public-production discovery, and entitlement state. Brand-new authenticated accounts may still see the default public production realm. | `WORLDS` |
+| `WORLDS` | Lists worlds visible to the caller. Before `LOGIN`, this is a public browse/discovery command intended to let players explore the platform before signing up or logging in. After `LOGIN`, it may also include caller-specific membership or entitlement context. | `WORLDS` |
 | `REALMS <world>` | Lists visible realms for a world, where `<world>` is a world slug or a menu index from `WORLDS`. The default public production realm may be visible before membership exists; additional realms require explicit grants. | `REALMS demo` |
 | `CHARS <world> [realm]` | Lists characters for a world and optional realm from the authoritative character store, filtered to `{accountId, tenantId, gameInstanceId}` ownership. | `CHARS demo production` |
-| `PLAY <world> [realm] [character]` | Binds the authenticated connection to a world, realm, and character after `LOGIN`, enforcing tenant authorization, public-admission rules, realm routing, and entitlements. For the default public production realm, the first successful `PLAY` creates the caller's `player` membership atomically via Account Service. | `PLAY demo production 1` |
+| `PLAY <world> [realm] [character]` | Binds the authenticated connection to a world, optional realm, and optional character after `LOGIN`, enforcing tenant authorization, public-admission rules, realm routing, and entitlements. The normal player-facing target is `PLAY <world> [character]`; if the request is ambiguous, the service should return a selection-oriented response instead of treating that ambiguity as a gameplay error. For the default public production realm, the first successful `PLAY` creates the caller's `player` membership atomically via Account Service. | `PLAY demo Sora` |
 | `LOOK` | Requests the current room snapshot aggregated from Game Logic plus World and Entity services. | `LOOK` |
 | `SAY <text>` | Broadcasts chat text to everyone in the same room. | `SAY Hello travelers` |
 | `YELL <text>` | Alias for `SAY` rendered with higher emphasis while still delivering to the current room. | `YELL Hear me, comrades` |
 | `WHISPER <character> <text>` | Directed chat that points at a single nearby character. | `WHISPER Sora The forge smells of brimstone` |
 
-Selector rules for `PLAY` match the lobby helpers: `<world>` accepts a stable world slug or a menu index from `WORLDS`, `[realm]` accepts a realm slug or a menu index from `REALMS`, and `[character]` is an optional name or index when the resolved realm exposes exactly one visible character choice.
+Selector rules for `PLAY` match the lobby helpers: `<world>` accepts a stable world slug or a menu index from `WORLDS`, `[realm]` accepts a realm slug or a menu index from `REALMS`, and `[character]` is an optional name or index when the resolved realm exposes exactly one visible character choice. If `PLAY <world>` or `PLAY <world> <character>` is ambiguous, the response should guide the player toward `REALMS`, `CHARS`, or a more specific `PLAY` form rather than failing with a low-level backend-flavored error.
 
 ## Login and Play Flow
 
@@ -35,7 +50,7 @@ Telnet and WebSocket clients share the line-based syntax, but transport context 
 
 Prompt-based exchanges are planned but not implemented in this slice for Telnet and non-bootstrap clients. On those transports, bare `LOGIN` currently returns `ERROR PROMPT_LOGIN_UNSUPPORTED Prompt-based login is not implemented yet; send LOGIN <username> <password>.` First-party `/ws/game/**` sessions with a validated connect context are the exception: bare `LOGIN` consumes the bootstrap-backed context and must not ask the browser to resend credentials.
 
-After `LOGIN` succeeds, clients must complete realm-aware lobby selection with `WORLDS`, optional `REALMS`, optional `CHARS`, and then `PLAY <world> [realm] [character]` before gameplay commands such as `LOOK` or `SAY`. This play step binds the authenticated connection to a world-scoped gameplay session and enforces tenant authorization, realm routing, public-admission rules, and entitlements.
+After `LOGIN` succeeds, the normal player-facing expectation is `PLAY <world> [character]`. `REALMS` and `CHARS` remain available as lobby helper commands when the player's choice is ambiguous or when they want to browse. `PLAY` is the gameplay-admission and gameplay-binding step; it is not merely a continuation of authentication. This step binds the authenticated connection to a world-scoped gameplay session and enforces tenant authorization, realm routing, public-admission rules, and entitlements.
 
 Handshake failures such as HTTP `403` `CONNECT_TOKEN_REJECTED` or `POLICY_DENY` happen before the gameplay protocol is established and therefore are not emitted as text-protocol `ERROR <CODE>` frames. The command examples below begin only after a socket is already open and the line-based gameplay protocol is active.
 
@@ -48,17 +63,20 @@ Canonical first-party `PLAY` scope errors on `/ws/game/**`:
 
 If a gameplay session already exists for the selected `{tenantId, gameInstanceId, characterId}` and is still resumable, meaning its TTL, current membership authority, and current revocation state are all valid, `PLAY` resumes it and rebinds the new socket to the existing session. On successful resume, Game Session also rebinds the session to a fresh backend token for subsequent internal calls rather than depending on the previous token to remain valid. If no resumable session exists, `PLAY` creates a new gameplay session binding. Even after reconnect, the client must still send an explicit `PLAY` so the platform never guesses which tenant or character to resume.
 
-If a client attempts gameplay commands before selecting a world, the service returns `ERROR WORLD_NOT_SELECTED Use WORLDS/PLAY first` so clients can recover deterministically.
+If a client attempts gameplay commands before `LOGIN` succeeds, the service should return a stage-aware response such as `ERROR LOGIN_REQUIRED Use LOGIN <username> <password>`. If a client is logged in but has not yet completed `PLAY`, the service should return a stage-aware response such as `ERROR PLAY_REQUIRED Use PLAY <world> [character]`. These are menu/progression mistakes, not gameplay-mechanics failures.
 
 ### Login and world-selection examples
 
-Illustrative world-selection transcript showing slug and index equivalence:
+Illustrative world-selection transcript showing public browsing plus slug and index equivalence:
 
 ```text
 WORLDS
 OK WORLDS
 1) Demo World (demo)
 2) Builder Sandbox (sandbox)
+
+LOGIN demo@example.com swordfish
+OK LOGIN Logged in as demo@example.com
 
 REALMS 1
 OK REALMS
@@ -114,15 +132,15 @@ OK PLAY Entered world: Demo World
 
 The transcript above shows the intended prompt flow. In the current implementation the same exchange is represented by a single `LOGIN <username> <password>` call because the prompt-driven handler still returns `ERROR PROMPT_LOGIN_UNSUPPORTED ...`.
 
-Telnet success, using the current implementation form:
+Telnet success, using the normal simple player-facing path:
 
 ```text
-LOGIN demo@example.com swordfish
-OK LOGIN Logged in as demo@example.com
-
 WORLDS
 OK WORLDS
 1) Demo World (demo)
+
+LOGIN demo@example.com swordfish
+OK LOGIN Logged in as demo@example.com
 
 PLAY demo
 OK PLAY Entered world: Demo World
@@ -218,9 +236,24 @@ Entities:
 - Player "Sora" (now near the south stair, waving to a passing engineer)
 ```
 
+### Stage-aware command handling
+
+The protocol should behave like a menu-driven MUD front door rather than treating all non-system input as premature gameplay:
+
+- Before `LOGIN`, valid commands are things such as `WORLDS`, `LOGIN`, `LOGON`, `HELP`, and `QUIT`.
+- After `LOGIN` but before `PLAY`, valid commands are things such as `PLAY`, `WORLDS`, `REALMS`, `CHARS`, `HELP`, and `QUIT`.
+- After `PLAY`, gameplay commands such as `LOOK`, `SAY`, and movement are admitted.
+
+This means wrong-stage input should produce stage-helpful guidance:
+
+- pre-login gameplay-like input -> `ERROR LOGIN_REQUIRED ...`
+- post-login, pre-`PLAY` gameplay-like input -> `ERROR PLAY_REQUIRED ...`
+
+The protocol should not frame these cases primarily as backend or world-state failures.
+
 ### LOOK request flow
 
-1. Game Session validates the Redis-backed session context created by a successful `LOGIN` or `LOGON`. If the guard fails, it immediately returns `ERROR NOT_AUTHENTICATED`.
+1. Game Session validates that the caller has completed `LOGIN` and `PLAY` and has a valid Redis-backed gameplay session context. If the caller is still in the login/menu stages, it returns a stage-aware `LOGIN_REQUIRED` or `PLAY_REQUIRED` error rather than a generic gameplay-auth failure.
 2. Authenticated `LOOK` commands call Game Logic's `ResolveLook`, passing `tenantId`, `gameInstanceId`, `sessionId`, `characterId`, and `roomInstanceId`.
 3. Game Logic returns a structured `LookResult`, which Game Session renders into the `OK LOOK` text response, emits `gamesession.command.look.*` metrics/logs, and caches per session so reconnections can replay it quickly.
 4. Reconnecting Telnet or WebSocket clients receive the cached snapshot before buffered commands replay. If the snapshot is missing or stale, Game Session reruns `ResolveLook`.
@@ -239,7 +272,7 @@ Metrics `gamesession.command.look.invocations` and `gamesession.command.look.fai
 
 ### SAY request flow
 
-1. Game Session validates the same Redis-backed session context leveraged by `LOOK`; unauthenticated inputs are rejected with `ERROR NOT_AUTHENTICATED`.
+1. Game Session validates the same admitted gameplay session context leveraged by `LOOK`; callers still in the login/menu stages receive stage-aware `LOGIN_REQUIRED` or `PLAY_REQUIRED` guidance rather than a generic protocol-auth failure.
 2. Authenticated `SAY`/`YELL`/`WHISPER` commands route through `SayCommandHandler`, which packages `tenantId`, `gameInstanceId`, `sessionId`, `characterId`, `roomInstanceId`, normalized text, and alias metadata into a `BroadcastSay` gRPC request to Game Logic.
 3. Game Logic evaluates room visibility, enforces message constraints, and forwards the payload, or a stubbed notification, to Social & Groups Service for delivery and logging.
 4. Backend failures propagate protocol-mapped errors such as `ERROR SAY_NOT_DELIVERED` while `ERROR NOT_AUTHENTICATED` remains the consistent pre-flight guard.

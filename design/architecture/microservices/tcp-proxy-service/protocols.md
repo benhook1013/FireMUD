@@ -4,7 +4,7 @@
 
 The following are canonical and active across Telnet and WebSocket paths:
 
-- Telnet login-first without `SESSION` is supported (`LOGIN` then `PLAY`; `SESSION` optional).
+- Telnet login-first without `SESSION` is supported (`LOGIN` then `PLAY`; `SESSION` optional smart-client metadata only).
 - Proxy -> Gateway WebSocket hop is mTLS-authenticated in player-facing environments.
 - Proxy bridge-availability circuit breaker uses deterministic open/half-open/closed admission behavior during sustained upstream unreachability.
 
@@ -14,8 +14,9 @@ These flows describe how Telnet traffic is forwarded into the shared login/sessi
 
 - **Minimal / legacy client (no `SESSION`)**
   - Connect to the TCP Proxy Service.
+  - Optionally browse public worlds with `WORLDS`.
   - Send a `LOGIN` command with the appropriate credentials and optional OTP where required.
-  - Complete lobby selection with `PLAY <world> [character]` before gameplay commands.
+  - Enter gameplay with `PLAY <world> [character]`; use `REALMS` or `CHARS` only if the target is ambiguous and more selection help is needed.
   - Send gameplay commands (`LOOK`, `SAY`, movement, and so on) as normal.
   - The proxy forwards all lines verbatim to Spring Cloud Gateway; the Game Session Service creates or binds the gameplay session exactly as it does for native WebSocket clients.
 - **Advanced client (attach/resume with `SESSION` + `LOGIN`)**
@@ -71,7 +72,7 @@ This state machine is distinct from the proxy-wide open/half-open/closed admissi
 
 This section is the canonical reference for the TCP Proxy Service’s Telnet `SESSION` envelope semantics and related event and metric behavior. Other documents intentionally summarize the behavior at a higher level and should link back here rather than redefining the protocol.
 
-The `SESSION` envelope is an optional optimization used by first-party and other advanced Telnet clients to attach to an existing session before `LOGIN`. Normal Telnet clients never need to send `SESSION`; they simply issue `LOGIN`.
+The `SESSION` envelope is optional smart-client metadata used by first-party and other advanced Telnet clients to attach hints to an existing session before `LOGIN`. Normal Telnet clients never need to send `SESSION`; they simply use the human-facing flow of `WORLDS` (optional), `LOGIN`, and `PLAY`.
 
 Canonical form:
 
