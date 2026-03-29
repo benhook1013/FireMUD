@@ -182,3 +182,31 @@ jobs:
               cat "$SUMMARY_FILE"
             } >> "$GITHUB_STEP_SUMMARY"
           fi
+
+  license-gate:
+    name: License Gate
+    needs: [changes, ort-gradle, ort-npm]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify ORT results
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            if [ "${{ needs.changes.outputs.run_gradle_ort }}" = "true" ] && [ "${{ needs.ort-gradle.result }}" != "success" ]; then
+              echo "Gradle ORT did not succeed: ${{ needs.ort-gradle.result }}" >&2
+              exit 1
+            fi
+            if [ "${{ needs.changes.outputs.run_npm_ort }}" = "true" ] && [ "${{ needs.ort-npm.result }}" != "success" ]; then
+              echo "NPM ORT did not succeed: ${{ needs.ort-npm.result }}" >&2
+              exit 1
+            fi
+          else
+            if [ "${{ needs.ort-gradle.result }}" != "success" ]; then
+              echo "Gradle ORT did not succeed: ${{ needs.ort-gradle.result }}" >&2
+              exit 1
+            fi
+            if [ "${{ needs.ort-npm.result }}" != "success" ]; then
+              echo "NPM ORT did not succeed: ${{ needs.ort-npm.result }}" >&2
+              exit 1
+            fi
+          fi
