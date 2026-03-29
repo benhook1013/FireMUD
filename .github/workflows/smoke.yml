@@ -130,7 +130,7 @@ jobs:
   smoke-lite:
     name: Smoke Tests (Lite)
     needs: [changes]
-    if: ${{ github.event_name == 'pull_request' && needs.changes.outputs.run_smoke_lite == 'true' }}
+    if: ${{ github.event_name == 'pull_request' && needs.changes.outputs.run_smoke_lite == 'true' && needs.changes.outputs.run_smoke_full != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
