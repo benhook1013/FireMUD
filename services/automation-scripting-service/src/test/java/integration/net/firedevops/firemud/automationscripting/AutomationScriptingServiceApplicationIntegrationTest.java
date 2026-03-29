@@ -9,18 +9,20 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.context.annotation.Import;
-import org.springframework.test.context.ActiveProfiles;
 
-@ActiveProfiles("test")
 @SpringBootTest(
     webEnvironment = WebEnvironment.RANDOM_PORT,
     classes = AutomationScriptingServiceApplication.class,
     properties = {
+      "spring.profiles.active=test",
       "spring.datasource.url=jdbc:h2:mem:${spring.application.name:firemud}-test;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE",
       "spring.datasource.driver-class-name=org.h2.Driver",
       "spring.datasource.username=sa",
       "spring.datasource.password=",
+      "spring.jpa.database-platform=org.hibernate.dialect.PostgreSQLDialect",
+      "spring.jpa.hibernate.ddl-auto=update",
       "spring.flyway.enabled=false",
+      "spring.sql.init.mode=never",
       "firemud.auth.jwt-secret=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "firemud.grpc.plaintext=true",
       "spring.grpc.server.port=0"
