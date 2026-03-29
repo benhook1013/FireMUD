@@ -32,11 +32,18 @@ public final class WorldManagementStubServer implements AutoCloseable {
                       responseObserver.onError(failure);
                       return;
                     }
-                    responseObserver.onNext(
-                        GetRoomSnapshotResponse.newBuilder()
-                            .setSnapshot(LookTestFixtures.sampleRoomSnapshot())
-                            .build());
-                    responseObserver.onCompleted();
+                    try {
+                      responseObserver.onNext(
+                          GetRoomSnapshotResponse.newBuilder()
+                              .setSnapshot(
+                                  LookTestFixtures.sampleRoomSnapshot(
+                                      request.getRoomInstance().getRoomInstanceId()))
+                              .build());
+                      responseObserver.onCompleted();
+                    } catch (IllegalArgumentException ex) {
+                      responseObserver.onError(
+                          Status.NOT_FOUND.withDescription(ex.getMessage()).asRuntimeException());
+                    }
                   }
                 })
             .build()

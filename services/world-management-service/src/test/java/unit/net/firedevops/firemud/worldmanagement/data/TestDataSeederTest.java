@@ -1,5 +1,6 @@
 package net.firedevops.firemud.worldmanagement.data;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -11,6 +12,7 @@ import net.firedevops.firemud.worldmanagement.repository.RoomRepository;
 import net.firedevops.firemud.worldmanagement.repository.ZoneRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 import org.springframework.boot.DefaultApplicationArguments;
@@ -39,6 +41,9 @@ class TestDataSeederTest {
     verify(regionRepository).save(any());
     verify(zoneRepository).save(any());
     verify(roomRepository, times(2)).save(any());
-    verify(roomExitRepository).save(any());
+    ArgumentCaptor<net.firedevops.firemud.worldmanagement.entity.RoomExit> exitCaptor =
+        ArgumentCaptor.forClass(net.firedevops.firemud.worldmanagement.entity.RoomExit.class);
+    verify(roomExitRepository).save(exitCaptor.capture());
+    assertEquals("NORTH", exitCaptor.getValue().getDirection());
   }
 }

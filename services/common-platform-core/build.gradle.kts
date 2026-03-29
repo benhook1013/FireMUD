@@ -16,6 +16,7 @@ dependencies {
     implementation(libs.spring.boot.starter)
     implementation(libs.spring.boot.starter.actuator)
     implementation(libs.spring.boot.starter.validation)
+    compileOnly("com.fasterxml.jackson.core:jackson-annotations")
     compileOnly(libs.grpc.spring.boot.starter)
 
     compileOnly("com.github.spotbugs:spotbugs-annotations:4.9.8")

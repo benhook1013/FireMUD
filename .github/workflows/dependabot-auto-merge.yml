@@ -1,34 +1,27 @@
 name: Dependabot Auto Merge
 
 on:
-  pull_request:
-    types:
-      - opened
-      - reopened
-      - synchronize
-      - ready_for_review
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
 
 permissions:
   contents: write
   pull-requests: write
 
+concurrency:
+  group: dependabot-auto-merge-${{ github.workflow }}
+  cancel-in-progress: true
+
 jobs:
   dependabot-auto-merge:
     name: Dependabot Auto Merge
     runs-on: ubuntu-latest
-    if: |
-      github.event.pull_request.user.login == 'dependabot[bot]' &&
-      github.repository == 'benhook1013/FireMUD' &&
-      !github.event.pull_request.draft
     steps:
-      - name: Fetch Dependabot metadata
-        id: metadata
-        uses: dependabot/fetch-metadata@v2.5.0
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Check repository auto-merge setting
         id: repo-settings
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           auto_merge_allowed="$(
             gh api graphql -f query='
@@ -45,12 +38,20 @@ jobs:
           if [ "$auto_merge_allowed" != "true" ]; then
             echo "::notice title=Dependabot auto-merge skipped::Repository auto-merge is disabled, so this workflow will not call gh pr merge --auto."
           fi
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Enable auto-merge for Dependabot PR
+      - name: Enable auto-merge for open Dependabot PRs
         if: steps.repo-settings.outputs.auto_merge_allowed == 'true'
-        run: gh pr merge --auto --merge "$PR_URL"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          gh pr list \
+            --repo benhook1013/FireMUD \
+            --state open \
+            --search 'author:app/dependabot sort:updated-desc' \
+            --json url,isDraft \
+            --jq '.[] | select(.isDraft == false) | .url' \
+          | while IFS= read -r pr_url; do
+              if [ -n "$pr_url" ]; then
+                gh pr merge --auto --merge "$pr_url" || true
+              fi
+            done

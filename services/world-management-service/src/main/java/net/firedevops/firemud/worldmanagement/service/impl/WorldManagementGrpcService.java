@@ -194,6 +194,7 @@ public class WorldManagementGrpcService
             .setExitId(exit.exitId().toString())
             .setTargetRoomInstanceId(exit.targetRoomId().toString())
             .setTargetRoomName(exit.targetRoomName())
+            .setDirection(exit.direction())
             .setLabel(exit.label())
             .setDescription(exit.description());
     if (exit.cost() != null) {

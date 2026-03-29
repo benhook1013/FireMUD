@@ -24,15 +24,7 @@ x-service-environment: &service-env
   SPRING_JPA_HIBERNATE_DDL_AUTO: update
 
 x-service-healthcheck: &service-health
-  test:
-    [
-      "CMD",
-      "/layers/paketo-buildpacks_bellsoft-liberica/jre/bin/java",
-      "-cp",
-      "/workspace/BOOT-INF/classes:/workspace/BOOT-INF/lib/*",
-      "net.firedevops.firemud.common.health.HttpHealthcheck",
-      "http://localhost:8080/actuator/health/readiness"
-    ]
+  test: ["CMD-SHELL", "curl -fsS http://localhost:8080/actuator/health/readiness >/dev/null"]
   start_period: 90s
   interval: 10s
   timeout: 5s

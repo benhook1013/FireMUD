@@ -15,7 +15,7 @@
 ## Partial / Stubbed / Deferred Areas
 
 - Production-hardening items like full Proxy->Gateway mTLS, PROXY protocol support, richer Telnet option/MCP support, and deeper abuse detection are still open.
-- One older cross-service account/game-session Telnet flow test is explicitly stale and disabled.
+- The current Telnet parity path is covered by active cross-service tests; remaining edge-test work is about deeper hardening, not reviving stale disabled scaffolding.
 - The service is strong enough for current slices, but not yet at final edge-hardening maturity.
 
 ## Planning Notes

@@ -15,8 +15,8 @@
 
 ## Partial / Stubbed / Deferred Areas
 
-- `dev-isolated` fallbacks still cover too much local/integration behavior and should be treated as temporary scaffolding.
-- Several integration tests remain disabled pending real Account/Redis/GameInstance-backed flows.
+- `dev-isolated` fallbacks still exist for dependency-light local experimentation and should continue shrinking over time.
+- The core login/session and gameplay ingress path is now covered by real integration and cross-service tests; remaining hardening work is mostly cleanup of the last developer-only shortcuts and deeper runtime polish.
 - Longer-horizon topics like cross-region handoff, advanced tick hardening, and richer runtime feature application remain future work.
 
 ## Planning Notes

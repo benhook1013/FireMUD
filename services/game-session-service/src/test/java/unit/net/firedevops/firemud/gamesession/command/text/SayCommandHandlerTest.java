@@ -24,7 +24,7 @@ class SayCommandHandlerTest {
   private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
   private SayCommandHandler handler;
   private final SessionContext sessionContext =
-      new SessionContext(1L, 22L, 123L, 911L, 0L, "jwt-token");
+      new SessionContext(1L, 22L, 123L, 911L, 0L, "room-7", "jwt-token");
 
   @BeforeEach
   void setUp() {
@@ -65,6 +65,8 @@ class SayCommandHandlerTest {
     assertThat(lines)
         .containsExactly(
             "Speaker: Emberline", "Delivered-To: Emberline, Sora", "Message: Hello travelers");
+    Mockito.verify(gameLogicClient)
+        .broadcastSay("22", "1", "911", "room-7", "SAY", "Hello travelers");
   }
 
   @Test

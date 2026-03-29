@@ -20,6 +20,7 @@ public final class GameplayLocalPathReadinessProbe {
   private static final long PROBE_ACCOUNT_ID = 9_223_372_036_854_770_001L;
   private static final long PROBE_CHARACTER_ID = 9_223_372_036_854_770_002L;
   private static final long PROBE_GAME_INSTANCE_ID = 0L;
+  private static final String PROBE_ROOM_INSTANCE_ID = "readiness-room";
   private static final String PROBE_JWT = "readiness-probe";
   private static final String QUEUE_PREFIX = "tick:queue:";
 
@@ -41,6 +42,7 @@ public final class GameplayLocalPathReadinessProbe {
             PROBE_ACCOUNT_ID,
             PROBE_CHARACTER_ID,
             PROBE_GAME_INSTANCE_ID,
+            PROBE_ROOM_INSTANCE_ID,
             PROBE_JWT);
     try {
       sessionContextService.save(context);

@@ -23,12 +23,8 @@ Guild creation and membership changes participate in Saga workflows so other ser
 
 Prometheus scrapes metrics from `/actuator/prometheus`. OpenTelemetry spans are exported to the collector defined in the shared configuration. No additional setup is required when running `./gradlew bootRun`.
 
-## Cross-Service Integration Test
+## Integration Test Notes
 
-An integration test under `src/test/java/crossservice` starts this service with the Logging & Admin Service using Testcontainers. Execute it once dependent images are available:
-
-```bash
-./gradlew :social-groups-service:test --tests "*CrossServiceIntegrationTest"
-```
+The maintained lightweight smoke for this service now lives under `src/test/java/integration` and exercises the secured app boot path directly. Broader gameplay-facing contract coverage should continue to come from the Game Session/TCP Proxy regression suites and from future targeted Social & Groups contract tests, not from generic "starts alongside another image" scaffolding.
 
 Refer to [System Architecture Testing](../../system-architecture-testing.md) for guidance.

@@ -19,12 +19,8 @@ Purchase workflows (one-time payments or donations) reuse this same runner. The 
 
 Prometheus scrapes metrics from `/actuator/prometheus`. Service methods expose `account.*`, `payment.*`, `notification.*`, and `session.*` timers via `@Timed` annotations. OpenTelemetry spans are exported to the collector service so traces can be viewed in Jaeger. No additional configuration is required when running via `./gradlew bootRun` as the default properties target `http://otel-collector:4317`.
 
-## Cross-Service Integration Test
+## Integration Test Notes
 
-An integration test under `src/test/java/crossservice` starts this service alongside the Logging & Admin Service using Testcontainers. Execute it once dependent images are available:
+The old disabled GHCR-based cross-service placeholder for Account Service was removed because it did not prove a meaningful current contract. The maintained local application smoke now lives under `src/test/java/integration` and should be treated as the canonical lightweight readiness check for this service. Higher-value cross-service behavior should be covered by targeted current-contract tests rather than by "other container exists" scaffolding.
 
-```bash
-./gradlew :account-service:test --tests "*CrossServiceIntegrationTest"
-```
-
-See [System Architecture Testing](../../system-architecture-testing.md) for more details.
+See [System Architecture Testing](../../system-architecture-testing.md) for the shared testing approach.

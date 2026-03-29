@@ -21,3 +21,4 @@
 ## Planning Notes
 
 - Treat future Social & Groups work as follow-on slices after more of the core play loop is built out.
+- Expect a later communication-focused slice to move beyond room-local `SAY` semantics and introduce explicit speech-mode plus audience-scope handling for features such as tells, whispers, shouts, and map/region-aware propagation.
