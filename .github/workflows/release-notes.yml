@@ -13,10 +13,98 @@ jobs:
       - name: ⬇️ Checkout code
         uses: actions/checkout@v6
 
+      - name: 🐍 Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.x'
+
+      - name: ⚙️ Set Up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: ⚙️ Set Up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            config/openapi/package-lock.json
+            web-client/package-lock.json
+
+      - name: ⚙️ Set Up Gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-read-only: false
+
+      - name: 📅 Resolve release dates
+        id: release_dates
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          published_at="$(gh release view "${{ github.ref_name }}" --json publishedAt --jq .publishedAt 2>/dev/null || true)"
+          if [ -n "$published_at" ] && [ "$published_at" != "null" ]; then
+            release_date="$(printf '%s' "$published_at" | cut -dT -f1)"
+          else
+            release_date="$(date -u +%F)"
+          fi
+          printf 'release_date=%s\n' "$release_date" >> "$GITHUB_OUTPUT"
+
+      - name: 📄 Generate release NOTICE
+        run: |
+          python3 dev-tools/release/generate_notice.py \
+            --template NOTICE.template.md \
+            --release-date "${{ steps.release_dates.outputs.release_date }}" \
+            --output build/release-assets/NOTICE.md
+
+      - name: 📚 Generate release license notices
+        id: ort
+        uses: oss-review-toolkit/ort-ci-github-action@v1
+        with:
+          ort-cli-args: '-P ort.analyzer.enabledPackageManagers=Gradle,NPM'
+          run: 'cache-dependencies,labels,analyzer,evaluator,reporter,upload-results'
+          fail-on: policy-violation
+          report-formats: 'PlainTextTemplate,CycloneDx'
+          ort-cli-report-args: '-O PlainTextTemplate=template.id=NOTICE_DEFAULT,NOTICE_SUMMARY -O CycloneDX=output.file.formats=json,xml'
+
+      - name: 🗂️ Assemble /licenses directory
+        run: |
+          python3 dev-tools/release/assemble_licenses_dir.py \
+            --ort-results "${{ steps.ort.outputs.results-path }}" \
+            --output-dir build/release-assets/licenses
+
+      - name: 🧳 Archive /licenses directory
+        run: |
+          cd build/release-assets
+          zip -r licenses.zip licenses
+
       - name: 📝 Create GitHub Release with Notes
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "${{ github.ref_name }}" \
-            --title "Release ${{ github.ref_name }}" \
-            --generate-notes
+          if gh release view "${{ github.ref_name }}" >/dev/null 2>&1; then
+            gh release edit "${{ github.ref_name }}" \
+              --title "Release ${{ github.ref_name }}"
+          else
+            gh release create "${{ github.ref_name }}" \
+              --title "Release ${{ github.ref_name }}" \
+              --generate-notes
+          fi
+
+      - name: 📦 Upload release NOTICE asset
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ github.ref_name }}" \
+            build/release-assets/NOTICE.md#NOTICE.md \
+            --clobber
+
+      - name: 📦 Upload release /licenses asset
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ github.ref_name }}" \
+            build/release-assets/licenses.zip#licenses.zip \
+            --clobber

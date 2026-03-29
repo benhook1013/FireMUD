@@ -36,10 +36,21 @@ Before publishing a release:
 6. Verify that `NOTICE` in the release artifact matches the release metadata actually being published.
 7. Verify that trademark wording remains current.
 
+## Release Automation
+
+The tag workflow in [`.github/workflows/release-notes.yml`](../../.github/workflows/release-notes.yml) generates the release-specific `NOTICE` asset automatically and assembles the release `/licenses` bundle from ORT output.
+
+- The workflow uses [`dev-tools/release/generate_notice.py`](../../dev-tools/release/generate_notice.py) and [`NOTICE.template.md`](../../NOTICE.template.md).
+- The workflow runs ORT with plain-text notice reporters and assembles the resulting dependency notices with [`dev-tools/release/assemble_licenses_dir.py`](../../dev-tools/release/assemble_licenses_dir.py).
+- The release publication date comes from the existing GitHub Release `publishedAt` timestamp when present, or falls back to the current UTC date during initial release creation.
+- The change date is computed as exactly two years after the release publication date.
+- The generated file is uploaded to the GitHub Release as `NOTICE.md`.
+- The assembled `/licenses` directory is uploaded to the GitHub Release as `licenses.zip`.
+
 ## Repository Maintenance
 
 The repository should avoid baked-in dates that become stale between releases.
 
 - Keep [`NOTICE.md`](../../NOTICE.md) generic and repository-scoped.
 - Keep release-specific dates in generated release artifacts, not in long-lived source files.
-- If release automation begins generating `NOTICE` or `/licenses`, update this document and the release workflow configuration in `config/release/`.
+- Keep the ORT-backed `/licenses` assembly aligned with the release workflow and adjust it if the dependency notice shape changes.
