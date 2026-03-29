@@ -12,7 +12,7 @@ buildscript {
     }
     dependencies {
         classpath("com.fasterxml.jackson.core:jackson-databind:2.21.2")
-        classpath("org.flywaydb:flyway-database-postgresql:12.1.1")
+        classpath("org.flywaydb:flyway-database-postgresql:12.2.0")
         classpath("org.postgresql:postgresql:42.7.10")
     }
 }
