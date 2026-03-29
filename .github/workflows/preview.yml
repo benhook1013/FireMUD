@@ -50,8 +50,9 @@ jobs:
   preview-plan:
     name: Preview Plan
     runs-on: ubuntu-latest
-    if: ${{ github.actor != 'dependabot[bot]' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     outputs:
+      eligible: ${{ steps.eligibility.outputs.eligible }}
       action: ${{ steps.derive.outputs.action }}
       pr_number: ${{ steps.derive.outputs.pr_number }}
       namespace: ${{ steps.derive.outputs.namespace }}
@@ -60,6 +61,31 @@ jobs:
       image_tag: ${{ steps.derive.outputs.image_tag }}
       head_sha: ${{ steps.derive.outputs.head_sha }}
     steps:
+      - name: Resolve preview eligibility
+        id: eligibility
+        uses: actions/github-script@v8
+        with:
+          script: |
+            let prAuthor;
+            if (context.eventName === "pull_request") {
+              prAuthor = context.payload.pull_request.user.login;
+            } else {
+              const prNumber = Number("${{ inputs.pr_number }}");
+              const { data: pull } = await github.rest.pulls.get({
+                ...context.repo,
+                pull_number: prNumber,
+              });
+              prAuthor = pull.user.login;
+            }
+
+            const eligible = prAuthor !== "dependabot[bot]";
+            core.setOutput("eligible", eligible ? "true" : "false");
+            core.info(
+              eligible
+                ? `Preview target is eligible (author=${prAuthor}).`
+                : `Skipping preview orchestration for Dependabot PR (author=${prAuthor}).`
+            );
+
       - name: Derive preview identifiers
         id: derive
         run: |
@@ -124,6 +150,16 @@ jobs:
           - Capacity policy is enforced in CI via PREVIEW_MAX_ACTIVE (default 2).
           EOF
 
+      - name: Explain preview skip
+        if: ${{ steps.eligibility.outputs.eligible != 'true' }}
+        run: |
+          cat <<'EOF'
+          Preview orchestration is skipped for Dependabot PRs.
+
+          Dependabot updates do not get preview namespace preparation, hosted
+          preview reconciliation, or hosted preview validation work.
+          EOF
+
       - name: Show derived target
         env:
           PREVIEW_MAX_ACTIVE: ${{ vars.PREVIEW_MAX_ACTIVE }}
@@ -144,7 +180,7 @@ jobs:
     name: Deploy Preview Release
     runs-on: ubuntu-latest
     needs: preview-plan
-    if: ${{ needs.preview-plan.outputs.action == 'deploy' }}
+    if: ${{ needs.preview-plan.outputs.eligible == 'true' && needs.preview-plan.outputs.action == 'deploy' }}
     environment: pr-preview
     steps:
       - uses: actions/checkout@v6
@@ -288,7 +324,7 @@ jobs:
     name: Destroy Preview Release
     runs-on: ubuntu-latest
     needs: preview-plan
-    if: ${{ needs.preview-plan.outputs.action == 'destroy' }}
+    if: ${{ needs.preview-plan.outputs.eligible == 'true' && needs.preview-plan.outputs.action == 'destroy' }}
     environment: pr-preview
     steps:
       - uses: actions/checkout@v6
