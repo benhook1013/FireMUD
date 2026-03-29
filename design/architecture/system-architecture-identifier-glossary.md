@@ -4,7 +4,8 @@ This document defines canonical identifier names and scopes used across FireMUD 
 
 ## Core Identifiers
 
-- `tenantId` – identifies the game/tenant (a GUID string). Present on all persistent domain tables and all cross-service APIs.
+- `tenantId` – identifies the game/tenant (a UUID string). Present on all persistent domain tables and all cross-service APIs.
+- Identifier format note: when a FireMUD identifier shape is documented explicitly, use `UUID` terminology rather than `GUID`. Services should still treat these identifiers as opaque values unless a contract specifically requires validation of UUID shape.
 - `versionId` – identifies a design bundle/version for a tenant. Domain service template data is scoped by `(tenantId, versionId)`.
 - `gameInstanceId` – identifies a running game instance for a tenant. Domain service runtime/instance data is scoped by `(tenantId, gameInstanceId)` and references the instance’s pinned `runtime_version`/`versionId`.
 

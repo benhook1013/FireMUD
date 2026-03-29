@@ -6,7 +6,7 @@ Accepted
 
 ## Context
 
-Some documents described gameplay commands using `tenantIdOrSlug` (for example `ENTER_GAME <tenantIdOrSlug>`), but the Multi-Tenancy model defines tenants as GUID-like `tenantId` strings and does not define:
+Some documents described gameplay commands using `tenantIdOrSlug` (for example `ENTER_GAME <tenantIdOrSlug>`), but the Multi-Tenancy model defines tenants as UUID-like `tenantId` strings and does not define:
 
 - What a “tenant slug” is,
 - Who owns slug generation and uniqueness,
@@ -18,11 +18,11 @@ Leaving the gameplay protocol ambiguous creates interoperability problems for cl
 
 ## Decision
 
-FireMUD uses a single shared gameplay entrypoint for many worlds. The gameplay text protocol must therefore support a player-friendly world selection flow without requiring humans to type opaque GUIDs.
+FireMUD uses a single shared gameplay entrypoint for many worlds. The gameplay text protocol must therefore support a player-friendly world selection flow without requiring humans to type opaque UUIDs.
 
 The gameplay protocol uses two distinct identifier layers:
 
-- **Internal identifiers (authoritative):** `tenantId` (opaque GUID) and `characterId` (opaque).
+- **Internal identifiers (authoritative):** `tenantId` (opaque UUID string) and `characterId` (opaque).
 - **Player-facing selectors (lobby only):** `tenantSlug` (stable, human-friendly) plus numbered menu indices returned by `WORLDS`/`CHARS`.
 
 The canonical lobby flow after `LOGIN` is:
@@ -41,7 +41,7 @@ Outside of lobby selection, services and persistence models use `tenantId` exclu
 
 ## Consequences
 
-- Docs and examples must not describe humans typing `tenantId` GUIDs into the gameplay protocol.
+- Docs and examples must not describe humans typing `tenantId` UUIDs into the gameplay protocol.
 - Lobby commands (`WORLDS`/`CHARS`/`PLAY`) are the only place where `tenantSlug` is accepted.
 - All non-lobby gameplay commands continue to rely on server-side session bindings and do not accept tenant identifiers in their arguments.
 
