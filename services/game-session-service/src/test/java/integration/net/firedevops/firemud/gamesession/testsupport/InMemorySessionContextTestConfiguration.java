@@ -38,9 +38,10 @@ public class InMemorySessionContextTestConfiguration {
     }
 
     @Override
-    public Optional<SessionContext> findByAccountAndCharacter(
-        long tenantId, long accountId, long characterId) {
-      return Optional.ofNullable(identityMap.get(identityKey(tenantId, accountId, characterId)));
+    public Optional<SessionContext> findByGameplayIdentity(
+        long tenantId, long gameInstanceId, long characterId) {
+      return Optional.ofNullable(
+          identityMap.get(identityKey(tenantId, gameInstanceId, characterId)));
     }
 
     @Override
@@ -52,11 +53,11 @@ public class InMemorySessionContextTestConfiguration {
     }
 
     private String identityKey(SessionContext context) {
-      return identityKey(context.tenantId(), context.accountId(), context.characterId());
+      return identityKey(context.tenantId(), context.gameInstanceId(), context.characterId());
     }
 
-    private String identityKey(long tenantId, long accountId, long characterId) {
-      return tenantId + ":" + accountId + ":" + characterId;
+    private String identityKey(long tenantId, long gameInstanceId, long characterId) {
+      return tenantId + ":" + gameInstanceId + ":" + characterId;
     }
   }
 }

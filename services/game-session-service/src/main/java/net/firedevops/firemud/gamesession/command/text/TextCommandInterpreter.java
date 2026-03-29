@@ -1,20 +1,24 @@
 package net.firedevops.firemud.gamesession.command.text;
 
 import java.util.Objects;
+import java.util.Optional;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.service.CommandService;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
+import org.springframework.util.StringUtils;
 
 @Component
 public class TextCommandInterpreter {
   private final CommandService commandService;
   private final LookCommandHandler lookHandler;
   private final LoginCommandHandler loginHandler;
+  private final PlayCommandHandler playHandler;
   private final MoveCommandHandler moveHandler;
   private final SessionAuthenticationService sessionAuthenticationService;
   private final SayCommandHandler sayHandler;
+  private final WorldsCommandHandler worldsHandler;
   private final TextCommandParser parser;
 
   @Autowired
@@ -22,16 +26,20 @@ public class TextCommandInterpreter {
       CommandService commandService,
       LookCommandHandler lookHandler,
       LoginCommandHandler loginHandler,
+      PlayCommandHandler playHandler,
       MoveCommandHandler moveHandler,
       SessionAuthenticationService sessionAuthenticationService,
-      SayCommandHandler sayHandler) {
+      SayCommandHandler sayHandler,
+      WorldsCommandHandler worldsHandler) {
     this(
         commandService,
         lookHandler,
         loginHandler,
+        playHandler,
         moveHandler,
         sessionAuthenticationService,
         sayHandler,
+        worldsHandler,
         new TextCommandParser());
   }
 
@@ -39,18 +47,22 @@ public class TextCommandInterpreter {
       CommandService commandService,
       LookCommandHandler lookHandler,
       LoginCommandHandler loginHandler,
+      PlayCommandHandler playHandler,
       MoveCommandHandler moveHandler,
       SessionAuthenticationService sessionAuthenticationService,
       SayCommandHandler sayHandler,
+      WorldsCommandHandler worldsHandler,
       TextCommandParser parser) {
     this.commandService = Objects.requireNonNull(commandService, "commandService must not be null");
     this.lookHandler = Objects.requireNonNull(lookHandler, "lookHandler must not be null");
     this.loginHandler = Objects.requireNonNull(loginHandler, "loginHandler must not be null");
+    this.playHandler = Objects.requireNonNull(playHandler, "playHandler must not be null");
     this.moveHandler = Objects.requireNonNull(moveHandler, "moveHandler must not be null");
     this.sessionAuthenticationService =
         Objects.requireNonNull(
             sessionAuthenticationService, "sessionAuthenticationService must not be null");
     this.sayHandler = Objects.requireNonNull(sayHandler, "sayHandler must not be null");
+    this.worldsHandler = Objects.requireNonNull(worldsHandler, "worldsHandler must not be null");
     this.parser = Objects.requireNonNull(parser, "parser must not be null");
   }
 
@@ -69,6 +81,10 @@ public class TextCommandInterpreter {
       return new TextCommandInterpretationResult(
           CommandEnqueueResult.failure("UNKNOWN_COMMAND", message), null);
     }
+    if (command.type() == TextCommandType.WORLDS) {
+      return new TextCommandInterpretationResult(
+          CommandEnqueueResult.success(), worldsHandler.describe(), true);
+    }
     if (command.type() == TextCommandType.LOGIN) {
       LoginCommandHandlingResult loginResult =
           loginHandler.handle(sessionId, command, requiresSoloTick);
@@ -76,10 +92,32 @@ public class TextCommandInterpreter {
           loginResult.commandResult(), loginResult.responseText());
     }
 
-    if (requiresGameplayAuthentication(command.type())
-        && !sessionAuthenticationService.isAuthenticated(sessionId)) {
+    Optional<net.firedevops.firemud.gamesession.service.SessionContext> maybeContext =
+        sessionAuthenticationService.resolveSessionContext(sessionId);
+    boolean hasLogin = maybeContext.isPresent();
+    boolean hasPlay =
+        maybeContext.isPresent() && StringUtils.hasText(maybeContext.get().roomInstanceId());
+
+    if (command.type() == TextCommandType.PLAY) {
+      if (!hasLogin) {
+        return stageFailure(
+            GameplayStageCommandConstants.LOGIN_REQUIRED_CODE,
+            GameplayStageCommandConstants.LOGIN_REQUIRED_MESSAGE);
+      }
+      PlayCommandHandlingResult playResult = playHandler.handle(sessionId, command);
       return new TextCommandInterpretationResult(
-          CommandEnqueueResult.failure("NOT_AUTHENTICATED", "Login required"), null);
+          playResult.commandResult(), playResult.responseText(), true);
+    }
+
+    if (requiresGameplayAuthentication(command.type()) && !hasLogin) {
+      return stageFailure(
+          GameplayStageCommandConstants.LOGIN_REQUIRED_CODE,
+          GameplayStageCommandConstants.LOGIN_REQUIRED_MESSAGE);
+    }
+    if (requiresGameplayAuthentication(command.type()) && !hasPlay) {
+      return stageFailure(
+          GameplayStageCommandConstants.PLAY_REQUIRED_CODE,
+          GameplayStageCommandConstants.PLAY_REQUIRED_MESSAGE);
     }
 
     if (command.type() == TextCommandType.SAY) {
@@ -112,6 +150,10 @@ public class TextCommandInterpreter {
     return type == TextCommandType.LOOK
         || type == TextCommandType.SAY
         || type == TextCommandType.MOVE;
+  }
+
+  private TextCommandInterpretationResult stageFailure(String code, String message) {
+    return new TextCommandInterpretationResult(CommandEnqueueResult.failure(code, message), null);
   }
 
   private boolean isLookError(String text) {

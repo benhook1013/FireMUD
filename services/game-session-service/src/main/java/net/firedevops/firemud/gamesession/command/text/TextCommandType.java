@@ -4,7 +4,9 @@ import java.util.Locale;
 
 /** Supported text commands exposed to Telnet and WebSocket clients. */
 public enum TextCommandType {
+  WORLDS,
   LOGIN,
+  PLAY,
   LOOK,
   SAY,
   MOVE,
@@ -18,7 +20,9 @@ public enum TextCommandType {
 
     String normalized = token.trim().toUpperCase(Locale.ROOT);
     return switch (normalized) {
+      case "WORLDS" -> WORLDS;
       case "LOGIN", "LOGON" -> LOGIN;
+      case "PLAY" -> PLAY;
       case "LOOK" -> LOOK;
       case "SAY", "YELL", "WHISPER" -> SAY;
       case "MOVE", "GO", "NORTH", "SOUTH", "EAST", "WEST" -> MOVE;

@@ -30,9 +30,9 @@ public final class DevIsolatedSessionContextService implements SessionContextSer
   }
 
   @Override
-  public Optional<SessionContext> findByAccountAndCharacter(
-      long tenantId, long accountId, long characterId) {
-    return Optional.ofNullable(identities.get(identityKey(tenantId, accountId, characterId)));
+  public Optional<SessionContext> findByGameplayIdentity(
+      long tenantId, long gameInstanceId, long characterId) {
+    return Optional.ofNullable(identities.get(identityKey(tenantId, gameInstanceId, characterId)));
   }
 
   @Override
@@ -46,10 +46,10 @@ public final class DevIsolatedSessionContextService implements SessionContextSer
   }
 
   private static String identityKey(SessionContext context) {
-    return identityKey(context.tenantId(), context.accountId(), context.characterId());
+    return identityKey(context.tenantId(), context.gameInstanceId(), context.characterId());
   }
 
-  private static String identityKey(long tenantId, long accountId, long characterId) {
-    return tenantId + ":" + accountId + ":" + characterId;
+  private static String identityKey(long tenantId, long gameInstanceId, long characterId) {
+    return tenantId + ":" + gameInstanceId + ":" + characterId;
   }
 }

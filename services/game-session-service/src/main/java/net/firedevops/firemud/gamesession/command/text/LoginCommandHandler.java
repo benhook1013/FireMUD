@@ -144,7 +144,7 @@ public final class LoginCommandHandler {
     long characterId = result.characterId();
 
     sessionContextService
-        .findByAccountAndCharacter(tenantId, accountId, characterId)
+        .findByGameplayIdentity(tenantId, result.gameInstanceId(), characterId)
         .ifPresent(
             existing ->
                 handleExistingSession(sessionId, tenantId, accountId, characterId, existing));
@@ -156,7 +156,7 @@ public final class LoginCommandHandler {
             accountId,
             characterId,
             result.gameInstanceId(),
-            result.roomInstanceId(),
+            null,
             result.jwt());
     sessionContextService.save(context);
     logger.debug(

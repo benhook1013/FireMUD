@@ -16,8 +16,9 @@ public class TextCommandParser {
     TextCommandType type = TextCommandType.fromToken(tokens[0]);
     List<String> args =
         switch (type) {
+          case WORLDS, LOOK, NOOP -> List.of();
           case LOGIN -> parseRemainingTokens(tokens);
-          case LOOK, NOOP -> List.of();
+          case PLAY -> parseRemainingTokens(tokens);
           case SAY -> extractSayMessage(trimmed);
           case MOVE -> extractMoveArguments(tokens);
           case UNKNOWN -> parseRemainingTokens(tokens);

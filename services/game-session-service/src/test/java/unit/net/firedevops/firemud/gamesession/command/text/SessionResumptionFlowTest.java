@@ -8,6 +8,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
@@ -36,6 +37,7 @@ import org.springframework.beans.factory.ObjectProvider;
 @SuppressWarnings("unchecked")
 class SessionResumptionFlowTest {
   private static final String LOGIN_PAYLOAD = "LOGIN demo@example.com swordfish";
+  private static final String PLAY_PAYLOAD = "PLAY demo";
   private static final String LOOK_PAYLOAD = "LOOK";
 
   private final CommandService commandService = Mockito.mock(CommandService.class);
@@ -54,8 +56,10 @@ class SessionResumptionFlowTest {
   private SessionAuthenticationService sessionAuthenticationService;
   private final ObjectProvider<DevIsolatedGameInstanceRegistry> devIsolatedRegistryProvider =
       Mockito.mock(ObjectProvider.class);
+  private PlayCommandHandler playHandler;
   private final MoveCommandHandler moveHandler = Mockito.mock(MoveCommandHandler.class);
   private final SayCommandHandler sayHandler = Mockito.mock(SayCommandHandler.class);
+  private WorldsCommandHandler worldsHandler;
   private TextCommandInterpreter interpreter;
 
   @BeforeEach
@@ -110,14 +114,23 @@ class SessionResumptionFlowTest {
     when(gameLogicClient.resolveLook(anyString(), anyString(), anyString(), anyString()))
         .thenReturn(lookResult);
     when(lookTextRenderer.render(lookResult)).thenReturn("OK LOOK text");
+    playHandler =
+        new PlayCommandHandler(
+            sessionAuthenticationService,
+            sessionContextService,
+            gameLogicProperties,
+            meterRegistry);
+    worldsHandler = new WorldsCommandHandler();
     interpreter =
         new TextCommandInterpreter(
             commandService,
             lookHandler,
             loginHandler,
+            playHandler,
             moveHandler,
             sessionAuthenticationService,
-            sayHandler);
+            sayHandler,
+            worldsHandler);
   }
 
   @Test
@@ -125,12 +138,18 @@ class SessionResumptionFlowTest {
     TextCommandInterpretationResult firstLogin = interpreter.interpret("1", LOGIN_PAYLOAD, false);
     assertTrue(firstLogin.commandResult().accepted());
 
+    TextCommandInterpretationResult firstPlay = interpreter.interpret("1", PLAY_PAYLOAD, false);
+    assertTrue(firstPlay.commandResult().accepted());
+
     TextCommandInterpretationResult firstLook = interpreter.interpret("1", LOOK_PAYLOAD, false);
     assertTrue(firstLook.commandResult().accepted());
     assertEquals("OK LOOK text", firstLook.responseText());
 
     TextCommandInterpretationResult secondLogin = interpreter.interpret("1", LOGIN_PAYLOAD, false);
     assertTrue(secondLogin.commandResult().accepted());
+
+    TextCommandInterpretationResult secondPlay = interpreter.interpret("1", PLAY_PAYLOAD, false);
+    assertTrue(secondPlay.commandResult().accepted());
 
     TextCommandInterpretationResult secondLook = interpreter.interpret("1", LOOK_PAYLOAD, false);
     assertTrue(secondLook.commandResult().accepted());
@@ -144,11 +163,15 @@ class SessionResumptionFlowTest {
   void secondConnectionTakesOverAndFirstConnectionIsUnauthenticated() {
     TextCommandInterpretationResult firstLogin = interpreter.interpret("1", LOGIN_PAYLOAD, false);
     assertTrue(firstLogin.commandResult().accepted());
+    TextCommandInterpretationResult firstPlay = interpreter.interpret("1", PLAY_PAYLOAD, false);
+    assertTrue(firstPlay.commandResult().accepted());
     TextCommandInterpretationResult firstLook = interpreter.interpret("1", LOOK_PAYLOAD, false);
     assertTrue(firstLook.commandResult().accepted());
 
     TextCommandInterpretationResult secondLogin = interpreter.interpret("2", LOGIN_PAYLOAD, false);
     assertTrue(secondLogin.commandResult().accepted());
+    TextCommandInterpretationResult secondPlay = interpreter.interpret("2", PLAY_PAYLOAD, false);
+    assertTrue(secondPlay.commandResult().accepted());
     TextCommandInterpretationResult secondLook = interpreter.interpret("2", LOOK_PAYLOAD, false);
     assertTrue(secondLook.commandResult().accepted());
     assertEquals("OK LOOK text", secondLook.responseText());
@@ -156,10 +179,44 @@ class SessionResumptionFlowTest {
     TextCommandInterpretationResult firstLookAfterTakeover =
         interpreter.interpret("1", LOOK_PAYLOAD, false);
     assertFalse(firstLookAfterTakeover.commandResult().accepted());
-    assertEquals("NOT_AUTHENTICATED", firstLookAfterTakeover.commandResult().errorCode());
+    assertEquals("LOGIN_REQUIRED", firstLookAfterTakeover.commandResult().errorCode());
 
     assertEquals(1.0, meterRegistry.counter("gamesession.session.takeover").count());
     assertEquals(0.0, meterRegistry.counter("gamesession.session.resume").count());
+  }
+
+  @Test
+  void staleIdentityMappingFallsBackToFreshSession() {
+    TextCommand command =
+        new TextCommand(
+            TextCommandType.LOGIN,
+            List.of("demo@example.com", "swordfish"),
+            "LOGIN demo@example.com swordfish");
+
+    GameInstance instance = new GameInstance();
+    instance.setId(1L);
+    instance.setTenantId(22L);
+    instance.setOwnerAccountId(77L);
+    when(instanceRepository.findById(Mockito.anyLong()))
+        .thenAnswer(
+            invocation -> {
+              long sessionId = invocation.getArgument(0);
+              GameInstance perCall = new GameInstance();
+              perCall.setId(sessionId);
+              perCall.setTenantId(22L);
+              perCall.setOwnerAccountId(77L);
+              return Optional.of(perCall);
+            });
+
+    interpreter.interpret("1", command, false);
+    sessionContextService.evictIdentity(22L, 1L, 77L);
+
+    TextCommandInterpretationResult staleRetry = interpreter.interpret("2", command, false);
+
+    assertTrue(staleRetry.commandResult().accepted());
+    assertEquals(0.0, meterRegistry.counter("gamesession.session.resume").count());
+    assertEquals(0.0, meterRegistry.counter("gamesession.session.takeover").count());
+    assertTrue(sessionContextService.findByTenantAndSessionId(22L, 2L).isPresent());
   }
 
   private static final class InMemorySessionContextService implements SessionContextService {
@@ -168,6 +225,12 @@ class SessionResumptionFlowTest {
 
     @Override
     public void save(SessionContext context) {
+      SessionContext existing =
+          identityMap.get(
+              identityKey(context.tenantId(), context.accountId(), context.characterId()));
+      if (existing != null && existing.sessionId() != context.sessionId()) {
+        sessionMap.remove(existing.sessionId());
+      }
       sessionMap.put(context.sessionId(), context);
       identityMap.put(identityKey(context), context);
     }
@@ -182,9 +245,10 @@ class SessionResumptionFlowTest {
     }
 
     @Override
-    public Optional<SessionContext> findByAccountAndCharacter(
-        long tenantId, long accountId, long characterId) {
-      return Optional.ofNullable(identityMap.get(identityKey(tenantId, accountId, characterId)));
+    public Optional<SessionContext> findByGameplayIdentity(
+        long tenantId, long gameInstanceId, long characterId) {
+      return Optional.ofNullable(
+          identityMap.get(identityKey(tenantId, gameInstanceId, characterId)));
     }
 
     @Override
@@ -195,12 +259,16 @@ class SessionResumptionFlowTest {
       }
     }
 
-    private String identityKey(SessionContext context) {
-      return identityKey(context.tenantId(), context.accountId(), context.characterId());
+    public void evictIdentity(long tenantId, long gameInstanceId, long characterId) {
+      identityMap.remove(identityKey(tenantId, gameInstanceId, characterId));
     }
 
-    private String identityKey(long tenantId, long accountId, long characterId) {
-      return tenantId + ":" + accountId + ":" + characterId;
+    private String identityKey(SessionContext context) {
+      return identityKey(context.tenantId(), context.gameInstanceId(), context.characterId());
+    }
+
+    private String identityKey(long tenantId, long gameInstanceId, long characterId) {
+      return tenantId + ":" + gameInstanceId + ":" + characterId;
     }
   }
 }

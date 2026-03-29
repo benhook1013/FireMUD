@@ -36,9 +36,14 @@ public final class RedisSessionContextService implements SessionContextService {
   @Override
   public void save(SessionContext context) {
     var ops = redisTemplate.opsForValue();
+    findByGameplayIdentity(context.tenantId(), context.gameInstanceId(), context.characterId())
+        .filter(existing -> existing.sessionId() != context.sessionId())
+        .ifPresent(
+            existing ->
+                redisTemplate.delete(contextKey(existing.tenantId(), existing.sessionId())));
     ops.set(contextKey(context.tenantId(), context.sessionId()), context, sessionTtl);
     ops.set(
-        identityKey(context.tenantId(), context.accountId(), context.characterId()),
+        identityKey(context.tenantId(), context.gameInstanceId(), context.characterId()),
         context,
         sessionTtl);
   }
@@ -50,11 +55,11 @@ public final class RedisSessionContextService implements SessionContextService {
   }
 
   @Override
-  public Optional<SessionContext> findByAccountAndCharacter(
-      long tenantId, long accountId, long characterId) {
+  public Optional<SessionContext> findByGameplayIdentity(
+      long tenantId, long gameInstanceId, long characterId) {
     return Optional.ofNullable(
         (SessionContext)
-            redisTemplate.opsForValue().get(identityKey(tenantId, accountId, characterId)));
+            redisTemplate.opsForValue().get(identityKey(tenantId, gameInstanceId, characterId)));
   }
 
   @Override
@@ -64,14 +69,14 @@ public final class RedisSessionContextService implements SessionContextService {
     existing.ifPresent(
         context ->
             redisTemplate.delete(
-                identityKey(context.tenantId(), context.accountId(), context.characterId())));
+                identityKey(context.tenantId(), context.gameInstanceId(), context.characterId())));
   }
 
   private String contextKey(long tenantId, long sessionId) {
     return String.format(CONTEXT_KEY_TEMPLATE, tenantId, sessionId);
   }
 
-  private String identityKey(long tenantId, long accountId, long characterId) {
-    return String.format(IDENTITY_KEY_TEMPLATE, tenantId, accountId, characterId);
+  private String identityKey(long tenantId, long gameInstanceId, long characterId) {
+    return String.format(IDENTITY_KEY_TEMPLATE, tenantId, gameInstanceId, characterId);
   }
 }

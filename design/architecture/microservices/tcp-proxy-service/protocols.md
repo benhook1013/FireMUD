@@ -19,7 +19,7 @@ These flows describe how Telnet traffic is forwarded into the shared login/sessi
   - Enter gameplay with `PLAY <world> [character]`; use `REALMS` or `CHARS` only if the target is ambiguous and more selection help is needed.
   - Send gameplay commands (`LOOK`, `SAY`, movement, and so on) as normal.
   - The proxy forwards all lines verbatim to Spring Cloud Gateway; the Game Session Service creates or binds the gameplay session exactly as it does for native WebSocket clients.
-- **Advanced client (attach/resume with `SESSION` + `LOGIN`)**
+- **Advanced client (attach/resume with optional `SESSION` metadata)**
   - Obtain a `gameInstanceId` and `tenantId` from a first-party admission or session-management API owned by Game Session and/or the control plane. The specific endpoint shape is not part of the Telnet protocol contract.
   - Connect to the TCP Proxy Service.
   - Immediately send a `SESSION <gameInstanceId> <tenantId>` envelope as the first line on the connection.
@@ -27,6 +27,7 @@ These flows describe how Telnet traffic is forwarded into the shared login/sessi
   - Complete lobby selection with `PLAY <world> [character]`.
   - Continue with gameplay commands as normal.
   - Game Session evaluates the combination of `SESSION`, `LOGIN`, and `PLAY` against Redis-backed session state and the authentication rules described in the [Authentication & Authorization](../../system-architecture-authentication.md) and [Reconnection Strategy](../../system-architecture-reconnection.md) documents to decide whether to resume a prior session or start a fresh one.
+  - This attach-hint path is advanced client metadata only; it does not replace the normal human-facing `WORLDS` -> `LOGIN` -> `PLAY` flow.
 
 ## Advanced Multi-Connection Scenarios
 

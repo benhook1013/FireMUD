@@ -5,7 +5,7 @@
 - The canonical gameplay WebSocket route is `/ws/game/**`.
 - This route forwards to the Game Session Service session front-end layer; the gateway does not participate in gameplay shard routing or lease-owner selection.
 - Gateway restarts disconnect gameplay WebSocket clients. Non-proxy WebSocket clients reconnect by obtaining a fresh connect token, opening a new `/ws/game/**` socket, issuing `LOGIN`, and then re-binding gameplay scope with `PLAY` as described in [Reconnection Strategy](../../system-architecture-reconnection.md).
-- Telnet clients use the same canonical gameplay admission flow after the TCP Proxy bridges them onto `/ws/game/**`. They still issue `LOGIN` followed by `PLAY` before gameplay commands, while the Telnet path may additionally contribute trusted `SESSION`-derived context headers from the TCP Proxy side.
+- Telnet clients use the same canonical gameplay admission flow after the TCP Proxy bridges them onto `/ws/game/**`. They may optionally browse `WORLDS` before login, then issue `LOGIN` followed by `PLAY` before gameplay commands, while the Telnet path may additionally contribute trusted smart-client attach hints from the TCP Proxy side when `SESSION` is intentionally used.
 - Planned Gateway drain must be surfaced by the TCP Proxy as `logout` with `gateway_restart` context when the deterministic bridge-drain signal is received. Unattributed bridge loss is surfaced immediately as `backend_unavailable`.
 
 ## Trusted TCP Proxy Bridge Admission

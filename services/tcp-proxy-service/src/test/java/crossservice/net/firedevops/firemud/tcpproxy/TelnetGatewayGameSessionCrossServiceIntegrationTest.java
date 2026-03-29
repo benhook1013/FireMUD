@@ -96,7 +96,7 @@ class TelnetGatewayGameSessionCrossServiceIntegrationTest {
   }
 
   @Test
-  void telnetCommandFlowsThroughGatewayToGameSession() throws Exception {
+  void telnetWorldsCanBeBrowsedBeforeLoginAndPlay() throws Exception {
     ensureTestServicesStarted();
     String body = HttpTestSupport.getBody("http://localhost:" + port + "/ping");
     assertThat(body).contains("pong");
@@ -110,23 +110,38 @@ class TelnetGatewayGameSessionCrossServiceIntegrationTest {
             new BufferedReader(
                 new InputStreamReader(socket.getInputStream(), StandardCharsets.ISO_8859_1))) {
       socket.setSoTimeout((int) COMMAND_WAIT.toMillis());
-      writer.println("SESSION 1 1");
+      writer.println("WORLDS");
+      String worldsResponse = reader.readLine();
+      assertThat(worldsResponse).isEqualTo("processed:WORLDS");
+
+      writer.println("LOGIN demo@example.com swordfish");
+      String loginResponse = reader.readLine();
+      assertThat(loginResponse).isEqualTo("processed:LOGIN demo@example.com swordfish");
+
+      writer.println("PLAY demo");
+      String playResponse = reader.readLine();
+      assertThat(playResponse).isEqualTo("processed:PLAY demo");
+
       writer.println("look");
       String response = readMultiLineResponse(reader);
       assertThat(response.trim()).isEqualTo(LookTestFixtures.canonicalLookText().trim());
     }
 
     awaitCommand("look");
-    assertThat(GAME_SESSION_STUB.stub().receivedCommands()).contains("look");
+    assertThat(GAME_SESSION_STUB.stub().receivedCommands())
+        .contains("WORLDS", "LOGIN demo@example.com swordfish", "PLAY demo", "look");
   }
 
   @Test
   void telnetLoginMatchesGatewayWebSocketResponses() throws Exception {
     ensureTestServicesStarted();
     List<String> websocketResponses =
-        runGatewayWebSocketCommands("LOGIN demo@example.com swordfish", "LOOK");
+        runGatewayWebSocketCommands(
+            "WORLDS", "LOGIN demo@example.com swordfish", "PLAY demo", "LOOK");
 
+    String telnetWorldsResponse;
     String telnetLoginResponse;
+    String telnetPlayResponse;
     String telnetLookResponse;
     try (Socket socket = new Socket("localhost", telnetServer.getPort());
         PrintWriter writer =
@@ -137,17 +152,25 @@ class TelnetGatewayGameSessionCrossServiceIntegrationTest {
             new BufferedReader(
                 new InputStreamReader(socket.getInputStream(), StandardCharsets.ISO_8859_1))) {
       socket.setSoTimeout((int) COMMAND_WAIT.toMillis());
-      writer.println("SESSION 2 2");
+      writer.println("WORLDS");
+      telnetWorldsResponse = reader.readLine();
+      assertThat(telnetWorldsResponse).isNotNull();
       writer.println("LOGIN demo@example.com swordfish");
       telnetLoginResponse = reader.readLine();
       assertThat(telnetLoginResponse).isNotNull();
+      writer.println("PLAY demo");
+      telnetPlayResponse = reader.readLine();
+      assertThat(telnetPlayResponse).isNotNull();
       writer.println("LOOK");
       telnetLookResponse = readMultiLineResponse(reader);
     }
 
-    assertThat(websocketResponses).hasSizeGreaterThanOrEqualTo(2);
-    assertThat(telnetLoginResponse).isEqualTo(websocketResponses.get(0));
-    assertThat(telnetLookResponse.trim()).isEqualTo(websocketResponses.get(1).trim());
+    assertThat(websocketResponses).hasSizeGreaterThanOrEqualTo(4);
+    assertThat(websocketResponses.get(0)).isEqualTo("processed:WORLDS");
+    assertThat(telnetWorldsResponse).isEqualTo(websocketResponses.get(0));
+    assertThat(telnetLoginResponse).isEqualTo(websocketResponses.get(1));
+    assertThat(telnetPlayResponse).isEqualTo(websocketResponses.get(2));
+    assertThat(telnetLookResponse.trim()).isEqualTo(websocketResponses.get(3).trim());
   }
 
   private static void awaitCommand(String expected) {
@@ -331,8 +354,7 @@ class TelnetGatewayGameSessionCrossServiceIntegrationTest {
     return builder.toString();
   }
 
-  private List<String> runGatewayWebSocketCommands(String loginCommand, String lookCommand)
-      throws Exception {
+  private List<String> runGatewayWebSocketCommands(String... commands) throws Exception {
     HttpClient client = HttpClient.newHttpClient();
     List<String> responses = new CopyOnWriteArrayList<>();
     CompletableFuture<Void> responsesReady = new CompletableFuture<>();
@@ -355,15 +377,16 @@ class TelnetGatewayGameSessionCrossServiceIntegrationTest {
                     responses.add(data.toString());
                     received++;
                     webSocket.request(1);
-                    if (received >= 2 && !responsesReady.isDone()) {
+                    if (received >= commands.length && !responsesReady.isDone()) {
                       responsesReady.complete(null);
                     }
                     return Listener.super.onText(webSocket, data, last);
                   }
                 })
             .join();
-    webSocket.sendText(loginCommand, true).join();
-    webSocket.sendText(lookCommand, true).join();
+    for (String command : commands) {
+      webSocket.sendText(command, true).join();
+    }
     responsesReady.get(COMMAND_WAIT.toMillis(), TimeUnit.MILLISECONDS);
     webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "done").join();
     return responses;

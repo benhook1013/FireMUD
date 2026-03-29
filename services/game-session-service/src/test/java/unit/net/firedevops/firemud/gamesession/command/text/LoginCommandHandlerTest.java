@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamesession.command.text;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
@@ -160,7 +161,7 @@ class LoginCommandHandlerTest {
     assertEquals(77L, context.accountId());
     assertEquals(77L, context.characterId());
     assertEquals(1L, context.gameInstanceId());
-    assertEquals(gameLogicProperties.getDefaultRoomId(), context.roomInstanceId());
+    assertNull(context.roomInstanceId());
     assertEquals(AUTH_TOKEN, context.jwt());
   }
 
@@ -350,7 +351,7 @@ class LoginCommandHandlerTest {
     instance.setOwnerAccountId(77L);
     when(gameInstanceRepository.findById(2L)).thenReturn(Optional.of(instance));
     SessionContext existing = new SessionContext(1L, 22L, 77L, 77L, 1L, AUTH_TOKEN);
-    when(sessionContextService.findByAccountAndCharacter(22L, 77L, 77L))
+    when(sessionContextService.findByGameplayIdentity(22L, 1L, 77L))
         .thenReturn(Optional.of(existing));
 
     handler.handle("2", command, false);
@@ -373,7 +374,7 @@ class LoginCommandHandlerTest {
     instance.setOwnerAccountId(77L);
     when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
     SessionContext existing = new SessionContext(1L, 22L, 77L, 77L, 1L, AUTH_TOKEN);
-    when(sessionContextService.findByAccountAndCharacter(22L, 77L, 77L))
+    when(sessionContextService.findByGameplayIdentity(22L, 1L, 77L))
         .thenReturn(Optional.of(existing));
 
     handler.handle("1", command, false);

@@ -165,7 +165,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
   }
 
   @Test
-  void telnetLoginAndLookMatchCanonicalGameplayFlow() throws Exception {
+  void telnetLoginAndLookMatchTransportFlowWithoutSession() throws Exception {
     ensureTestServicesStarted();
     String telnetLoginResponse;
     String telnetLookResponse;
@@ -178,7 +178,6 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
             new BufferedReader(
                 new InputStreamReader(socket.getInputStream(), StandardCharsets.ISO_8859_1))) {
       socket.setSoTimeout((int) COMMAND_WAIT.toMillis());
-      writer.println("SESSION " + GAME_SESSION.sessionId() + " " + TENANT_ID);
       writer.println("LOGIN demo@example.com swordfish");
       telnetLoginResponse = readBlockAfterContains(reader, "Logged in as demo@example.com");
       assertThat(telnetLoginResponse).contains("Logged in as demo@example.com");
@@ -197,7 +196,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
   }
 
   @Test
-  void telnetMovementMatchesCanonicalDestinationLook() throws Exception {
+  void telnetMovementMatchesCanonicalDestinationLookWithoutSession() throws Exception {
     ensureTestServicesStarted();
     String telnetMoveResponse;
     String telnetLookResponse;
@@ -211,7 +210,6 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
             new BufferedReader(
                 new InputStreamReader(socket.getInputStream(), StandardCharsets.ISO_8859_1))) {
       socket.setSoTimeout((int) COMMAND_WAIT.toMillis());
-      writer.println("SESSION " + GAME_SESSION.sessionId() + " " + TENANT_ID);
       writer.println("LOGIN demo@example.com swordfish");
       assertThat(readBlockAfterContains(reader, "Logged in as demo@example.com"))
           .contains("Logged in as demo@example.com");

@@ -35,7 +35,20 @@ class RedisSessionContextServiceTest {
     service.save(context);
 
     verify(valueOperations).set("sessionctx:10:1:context", context, TTL);
-    verify(valueOperations).set("sessionctx:10:identity:20:30:context", context, TTL);
+    verify(valueOperations).set("sessionctx:10:identity:40:30:context", context, TTL);
+  }
+
+  @Test
+  void saveRemovesStaleSessionKeyBeforeWritingNewIdentityBinding() {
+    SessionContext existing = new SessionContext(1L, 10L, 20L, 30L, 40L, "old-jwt");
+    SessionContext replacement = new SessionContext(2L, 10L, 20L, 30L, 40L, "new-jwt");
+    when(valueOperations.get("sessionctx:10:identity:40:30:context")).thenReturn(existing);
+
+    service.save(replacement);
+
+    verify(redisTemplate).delete("sessionctx:10:1:context");
+    verify(valueOperations).set("sessionctx:10:2:context", replacement, TTL);
+    verify(valueOperations).set("sessionctx:10:identity:40:30:context", replacement, TTL);
   }
 
   @Test
@@ -49,11 +62,11 @@ class RedisSessionContextServiceTest {
   }
 
   @Test
-  void findByAccountAndCharacterReturnsPersistedContext() {
+  void findByGameplayIdentityReturnsPersistedContext() {
     SessionContext context = new SessionContext(1L, 10L, 20L, 30L, 40L, "jwt");
-    when(valueOperations.get("sessionctx:10:identity:20:30:context")).thenReturn(context);
+    when(valueOperations.get("sessionctx:10:identity:40:30:context")).thenReturn(context);
 
-    Optional<SessionContext> result = service.findByAccountAndCharacter(10L, 20L, 30L);
+    Optional<SessionContext> result = service.findByGameplayIdentity(10L, 40L, 30L);
 
     assertEquals(Optional.of(context), result);
   }
@@ -66,6 +79,6 @@ class RedisSessionContextServiceTest {
     service.deleteBySessionId(10L, 1L);
 
     verify(redisTemplate).delete("sessionctx:10:1:context");
-    verify(redisTemplate).delete("sessionctx:10:identity:20:30:context");
+    verify(redisTemplate).delete("sessionctx:10:identity:40:30:context");
   }
 }

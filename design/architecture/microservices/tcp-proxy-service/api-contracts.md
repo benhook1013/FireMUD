@@ -43,6 +43,8 @@ The canonical `SESSION` envelope contract lives in [`protocols.md`](./protocols.
 - malformed `SESSION` lines are advisory and budgeted, not immediate transport failures; and
 - `SESSION` values are client-provided claims, not trusted facts.
 
+The human-facing Telnet browse/login path is still `WORLDS` (optional public browse), `LOGIN`, and then `PLAY`. `SESSION` is only for advanced attach/resume tooling and must not be presented as part of the normal player flow.
+
 When a valid `SESSION <gameInstanceId> <tenantId>` envelope is captured, the proxy also forwards `X-Proxy-Game-Instance-Id` and `X-Proxy-Tenant-Id`. Spring Cloud Gateway strips these from public ingress, emits `X-Firemud-Connection-Mode: trusted_tcp_proxy` on authenticated TCP Proxy bridge hops, and may forward canonical `X-Game-Instance-Id` / `X-Tenant-Id` headers only after authenticating the TCP Proxy identity.
 
 Client-IP ownership follows the same pattern: the proxy recovers the real client IP via PROXY protocol on the internal-only listener, sets `X-Proxy-Client-IP` on the authenticated internal bridge, and Gateway canonicalizes that into `X-Client-IP` only after authenticating the proxy identity. Public ingress must never be allowed to set these proxy-owned headers directly.

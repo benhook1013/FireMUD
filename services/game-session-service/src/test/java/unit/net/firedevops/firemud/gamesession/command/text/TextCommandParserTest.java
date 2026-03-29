@@ -19,6 +19,24 @@ class TextCommandParserTest {
   }
 
   @Test
+  void parsesWorldsAsPublicBrowseCommand() {
+    TextCommand command = parser.parse("WORLDS");
+
+    assertEquals(TextCommandType.WORLDS, command.type());
+    assertTrue(command.args().isEmpty());
+    assertEquals("WORLDS", command.rawLine());
+  }
+
+  @Test
+  void parsesPlayWithWorldAndOptionalCharacter() {
+    TextCommand command = parser.parse("PLAY demo Emberline");
+
+    assertEquals(TextCommandType.PLAY, command.type());
+    assertEquals(List.of("demo", "Emberline"), command.args());
+    assertEquals("PLAY demo Emberline", command.rawLine());
+  }
+
+  @Test
   void parsesLookWithWhitespace() {
     TextCommand command = parser.parse("   LOOK   ");
 

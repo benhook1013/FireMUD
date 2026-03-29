@@ -108,7 +108,7 @@ Additional Game Session-specific login failures cover parsing and session-state 
 - `ACCOUNT_MISMATCH` – bootstrap-backed `LOGIN` resolved to an account different from the validated connect-context subject, or the authenticated account is otherwise not permitted to attach to the requested game instance or tenant context.
 - `SESSION_NOT_FOUND` – the supplied game instance identifier has no corresponding `GameInstance`.
 - `INVALID_ARGUMENT` – session ID parsing or other validation failed before the handler reached gameplay state.
-- `WORLD_NOT_SELECTED` – a gameplay command that requires admitted world scope was sent before `PLAY` completed successfully.
+- `PLAY_REQUIRED` – a gameplay command that requires admitted gameplay scope was sent before `PLAY` completed successfully.
 - `CONNECT_CONTEXT_INVALID` – required gateway-signed connect context is missing or failed validation.
 - `CONNECT_SCOPE_MISMATCH` – validated connect context does not match the requested world scope.
 
@@ -275,7 +275,7 @@ Metrics `gamesession.command.look.invocations` and `gamesession.command.look.fai
 1. Game Session validates the same admitted gameplay session context leveraged by `LOOK`; callers still in the login/menu stages receive stage-aware `LOGIN_REQUIRED` or `PLAY_REQUIRED` guidance rather than a generic protocol-auth failure.
 2. Authenticated `SAY`/`YELL`/`WHISPER` commands route through `SayCommandHandler`, which packages `tenantId`, `gameInstanceId`, `sessionId`, `characterId`, `roomInstanceId`, normalized text, and alias metadata into a `BroadcastSay` gRPC request to Game Logic.
 3. Game Logic evaluates room visibility, enforces message constraints, and forwards the payload, or a stubbed notification, to Social & Groups Service for delivery and logging.
-4. Backend failures propagate protocol-mapped errors such as `ERROR SAY_NOT_DELIVERED` while `ERROR NOT_AUTHENTICATED` remains the consistent pre-flight guard.
+4. Backend failures propagate protocol-mapped errors such as `ERROR SAY_NOT_DELIVERED`, while pre-flight stage failures are surfaced as `LOGIN_REQUIRED` or `PLAY_REQUIRED` before the chat request is attempted.
 
 ## Response Format
 
