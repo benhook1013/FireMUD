@@ -42,6 +42,7 @@ jobs:
     if: ${{ github.event_name == 'pull_request' }}
     outputs:
       run_smoke_lite: ${{ steps.compute.outputs.run_smoke_lite }}
+      run_smoke_full: ${{ steps.compute.outputs.run_smoke_full }}
     steps:
       - name: Compute smoke scope
         id: compute
@@ -121,6 +122,7 @@ jobs:
 
             if (nonDocFiles.length === 0 || nonDocsAreFrontendOnly) {
               core.setOutput("run_smoke_lite", "false");
+              core.setOutput("run_smoke_full", "false");
               return;
             }
 
@@ -129,7 +131,13 @@ jobs:
                 liteRelevantFiles.has(file) ||
                 liteRelevantPrefixes.some((prefix) => file.startsWith(prefix))
             );
+            const runSmokeFull = nonDocFiles.some(
+              (file) =>
+                fullRelevantFiles.has(file) ||
+                fullRelevantPrefixes.some((prefix) => file.startsWith(prefix))
+            );
             core.setOutput("run_smoke_lite", runSmokeLite ? "true" : "false");
+            core.setOutput("run_smoke_full", runSmokeFull ? "true" : "false");
 
   smoke-lite:
     name: Smoke Tests (Lite)
@@ -309,3 +317,63 @@ jobs:
                 body
               });
             }
+
+  smoke-gate:
+    name: Smoke Gate
+    runs-on: ubuntu-latest
+    needs: [changes, smoke-lite]
+    if: ${{ always() && github.event_name == 'pull_request' }}
+    timeout-minutes: 30
+    steps:
+      - name: Verify lite smoke result
+        if: ${{ needs.changes.outputs.run_smoke_lite == 'true' && needs.changes.outputs.run_smoke_full != 'true' }}
+        run: |
+          if [ "${{ needs.smoke-lite.result }}" != "success" ]; then
+            echo "Lite smoke did not succeed: ${{ needs.smoke-lite.result }}" >&2
+            exit 1
+          fi
+
+      - name: Wait for full smoke dispatch result
+        if: ${{ needs.changes.outputs.run_smoke_full == 'true' }}
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const headSha = context.payload.pull_request.head.sha;
+            const prNumber = String(context.payload.pull_request.number);
+            const started = Date.now();
+            const timeoutMs = 25 * 60 * 1000;
+            const sleepMs = 15000;
+
+            while (Date.now() - started < timeoutMs) {
+              const runs = await github.paginate(
+                github.rest.actions.listWorkflowRuns,
+                {
+                  owner,
+                  repo,
+                  workflow_id: "smoke.yml",
+                  event: "workflow_dispatch",
+                  per_page: 100,
+                }
+              );
+
+              const matching = runs.find((run) => run.head_sha === headSha);
+              if (matching) {
+                core.info(`Found dispatched smoke run ${matching.id} with status=${matching.status} conclusion=${matching.conclusion}`);
+                if (matching.status !== "completed") {
+                  await new Promise((resolve) => setTimeout(resolve, sleepMs));
+                  continue;
+                }
+
+                if (matching.conclusion !== "success") {
+                  core.setFailed(`Dispatched full smoke run ${matching.id} finished with ${matching.conclusion}`);
+                }
+                return;
+              }
+
+              core.info(`No dispatched smoke run found yet for PR #${prNumber} sha ${headSha}; waiting...`);
+              await new Promise((resolve) => setTimeout(resolve, sleepMs));
+            }
+
+            core.setFailed(`Timed out waiting for dispatched full smoke run for PR #${prNumber} sha ${headSha}`);
