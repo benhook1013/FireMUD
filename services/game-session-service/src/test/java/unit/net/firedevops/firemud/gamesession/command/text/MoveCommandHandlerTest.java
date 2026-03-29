@@ -7,13 +7,11 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
-import java.util.Optional;
 import net.firedevops.firemud.gamelogic.v1.LookResult;
 import net.firedevops.firemud.gamelogic.v1.MoveResult;
 import net.firedevops.firemud.gamesession.client.GameLogicClient;
 import net.firedevops.firemud.gamesession.config.GameLogicProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
-import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
@@ -25,8 +23,6 @@ import org.mockito.Mockito;
 
 class MoveCommandHandlerTest {
   private final GameLogicClient gameLogicClient = Mockito.mock(GameLogicClient.class);
-  private final SessionAuthenticationService sessionAuthenticationService =
-      Mockito.mock(SessionAuthenticationService.class);
   private final SessionContextService sessionContextService =
       Mockito.mock(SessionContextService.class);
   private final LookCommandHandler lookCommandHandler = Mockito.mock(LookCommandHandler.class);
@@ -41,13 +37,11 @@ class MoveCommandHandlerTest {
     handler =
         new MoveCommandHandler(
             gameLogicClient,
-            sessionAuthenticationService,
             sessionContextService,
             lookCommandHandler,
             gameLogicProperties,
             meterRegistry);
     context = new SessionContext(42L, 22L, 123L, 911L, 7L, "R-1021", "jwt-token");
-    when(sessionAuthenticationService.resolveSessionContext("42")).thenReturn(Optional.of(context));
   }
 
   @Test
@@ -70,7 +64,7 @@ class MoveCommandHandlerTest {
 
     MoveCommandHandlingResult result =
         handler.handle(
-            "42", new TextCommand(TextCommandType.MOVE, java.util.List.of("north"), "north"));
+            context, new TextCommand(TextCommandType.MOVE, java.util.List.of("north"), "north"));
 
     assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
     assertThat(result.responseText()).isEqualTo("OK LOOK\nCrafting Hall of Ember\n\n");
@@ -96,7 +90,7 @@ class MoveCommandHandlerTest {
 
     MoveCommandHandlingResult result =
         handler.handle(
-            "42", new TextCommand(TextCommandType.MOVE, java.util.List.of("west"), "MOVE west"));
+            context, new TextCommand(TextCommandType.MOVE, java.util.List.of("west"), "MOVE west"));
 
     assertThat(result.commandResult().accepted()).isFalse();
     assertThat(result.commandResult().errorCode()).isEqualTo("INVALID_EXIT");

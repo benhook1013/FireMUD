@@ -5,11 +5,9 @@ import static org.mockito.Mockito.when;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.List;
-import java.util.Optional;
 import net.firedevops.firemud.gamelogic.v1.BroadcastSayResponse;
 import net.firedevops.firemud.gamesession.client.GameLogicClient;
 import net.firedevops.firemud.gamesession.config.GameLogicProperties;
-import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.junit.jupiter.api.BeforeEach;
@@ -18,8 +16,6 @@ import org.mockito.Mockito;
 
 class SayCommandHandlerTest {
   private final GameLogicClient gameLogicClient = Mockito.mock(GameLogicClient.class);
-  private final SessionAuthenticationService sessionAuthenticationService =
-      Mockito.mock(SessionAuthenticationService.class);
   private final GameLogicProperties gameLogicProperties = new GameLogicProperties();
   private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
   private SayCommandHandler handler;
@@ -28,11 +24,7 @@ class SayCommandHandlerTest {
 
   @BeforeEach
   void setUp() {
-    handler =
-        new SayCommandHandler(
-            gameLogicClient, sessionAuthenticationService, gameLogicProperties, meterRegistry);
-    when(sessionAuthenticationService.resolveSessionContext("session-1"))
-        .thenReturn(Optional.of(sessionContext));
+    handler = new SayCommandHandler(gameLogicClient, gameLogicProperties, meterRegistry);
   }
 
   @Test
@@ -55,7 +47,7 @@ class SayCommandHandlerTest {
 
     SayCommandHandlingResult result =
         handler.handle(
-            "session-1",
+            sessionContext,
             new TextCommand(
                 TextCommandType.SAY, List.of("Hello travelers"), "SAY Hello travelers"));
 
@@ -72,7 +64,7 @@ class SayCommandHandlerTest {
   @Test
   void missingMessageReturnsInvalidArgument() {
     SayCommandHandlingResult result =
-        handler.handle("session-1", new TextCommand(TextCommandType.SAY, List.of(), "SAY"));
+        handler.handle(sessionContext, new TextCommand(TextCommandType.SAY, List.of(), "SAY"));
 
     assertThat(result.commandResult().accepted()).isFalse();
     assertThat(result.commandResult().errorCode()).isEqualTo("INVALID_ARGUMENT");
@@ -98,28 +90,10 @@ class SayCommandHandlerTest {
 
     SayCommandHandlingResult result =
         handler.handle(
-            "session-1", new TextCommand(TextCommandType.SAY, List.of("Hello"), "SAY Hello"));
+            sessionContext, new TextCommand(TextCommandType.SAY, List.of("Hello"), "SAY Hello"));
 
     assertThat(result.commandResult().accepted()).isFalse();
     assertThat(result.commandResult().errorCode()).isEqualTo("SAY_NOT_DELIVERED");
     assertThat(result.commandResult().errorMessage()).isEqualTo("silenced");
-  }
-
-  @Test
-  void unauthenticatedReturnsNotAuthenticated() {
-    when(sessionAuthenticationService.resolveSessionContext("anonymous"))
-        .thenReturn(Optional.empty());
-
-    SayCommandHandlingResult result =
-        handler.handle(
-            "anonymous", new TextCommand(TextCommandType.SAY, List.of("Hello"), "SAY Hello"));
-
-    assertThat(result.commandResult().accepted()).isFalse();
-    assertThat(result.commandResult().errorCode()).isEqualTo("NOT_AUTHENTICATED");
-    assertThat(
-            meterRegistry
-                .counter("gamesession.command.say.invocations", "tenantId", "unknown")
-                .count())
-        .isEqualTo(1.0);
   }
 }

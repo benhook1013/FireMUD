@@ -187,7 +187,10 @@ class TextCommandInterpreterTest {
 
     assertFalse(interpretation.commandResult().accepted());
     assertEquals("PLAY_REQUIRED", interpretation.commandResult().errorCode());
-    verify(moveHandler, never()).handle(Mockito.eq("1"), Mockito.any(TextCommand.class));
+    verify(moveHandler, never())
+        .handle(
+            Mockito.any(net.firedevops.firemud.gamesession.service.SessionContext.class),
+            Mockito.any(TextCommand.class));
   }
 
   @Test
@@ -214,7 +217,8 @@ class TextCommandInterpreterTest {
     assertTrue(login.commandResult().accepted());
     assertTrue(play.commandResult().accepted());
 
-    when(sayHandler.handle(Mockito.eq("1"), Mockito.any(TextCommand.class)))
+    SessionContext played = sessionAuthenticationService.resolveSessionContext("1").orElseThrow();
+    when(sayHandler.handle(Mockito.eq(played), Mockito.any(TextCommand.class)))
         .thenReturn(new SayCommandHandlingResult(CommandEnqueueResult.success(), "OK SAY text"));
 
     TextCommandInterpretationResult interpretation =
@@ -222,7 +226,7 @@ class TextCommandInterpreterTest {
 
     assertTrue(interpretation.commandResult().accepted());
     assertEquals("OK SAY text", interpretation.responseText());
-    verify(sayHandler).handle(Mockito.eq("1"), Mockito.any(TextCommand.class));
+    verify(sayHandler).handle(Mockito.eq(played), Mockito.any(TextCommand.class));
   }
 
   private static final class InMemorySessionContextService implements SessionContextService {

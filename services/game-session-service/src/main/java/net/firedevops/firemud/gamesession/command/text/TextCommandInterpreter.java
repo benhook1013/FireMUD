@@ -121,13 +121,14 @@ public class TextCommandInterpreter {
     }
 
     if (command.type() == TextCommandType.SAY) {
-      SayCommandHandlingResult sayResult = sayHandler.handle(sessionId, command);
+      SayCommandHandlingResult sayResult = sayHandler.handle(maybeContext.orElseThrow(), command);
       return new TextCommandInterpretationResult(
           sayResult.commandResult(), sayResult.responseText());
     }
 
     if (command.type() == TextCommandType.MOVE) {
-      MoveCommandHandlingResult moveResult = moveHandler.handle(sessionId, command);
+      MoveCommandHandlingResult moveResult =
+          moveHandler.handle(maybeContext.orElseThrow(), command);
       return new TextCommandInterpretationResult(
           moveResult.commandResult(), moveResult.responseText(), true);
     }

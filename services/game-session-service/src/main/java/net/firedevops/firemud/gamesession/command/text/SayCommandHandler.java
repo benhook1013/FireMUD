@@ -5,13 +5,11 @@ import io.micrometer.core.instrument.MeterRegistry;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
-import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.gamelogic.v1.BroadcastSayResponse;
 import net.firedevops.firemud.gamesession.client.GameLogicClient;
 import net.firedevops.firemud.gamesession.config.GameLogicProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
-import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -30,26 +28,15 @@ public class SayCommandHandler {
   private static final String FAILURES_METRIC = "gamesession.command.say.failures";
 
   private final GameLogicClient gameLogicClient;
-  private final SessionAuthenticationService sessionAuthenticationService;
   private final GameLogicProperties gameLogicProperties;
   private final MeterRegistry meterRegistry;
 
-  public SayCommandHandlingResult handle(String sessionId, TextCommand command) {
-    Objects.requireNonNull(sessionId, "sessionId must not be null");
+  public SayCommandHandlingResult handle(SessionContext context, TextCommand command) {
+    Objects.requireNonNull(context, "context must not be null");
     Objects.requireNonNull(command, "command must not be null");
 
-    Optional<SessionContext> maybeContext =
-        sessionAuthenticationService.resolveSessionContext(sessionId);
-    String tenantTag = determineTenantTag(maybeContext);
+    String tenantTag = Long.toString(context.tenantId());
     meterRegistry.counter(INVOCATIONS_METRIC, "tenantId", tenantTag).increment();
-
-    if (maybeContext.isEmpty()) {
-      logFailure("NOT_AUTHENTICATED", "Login required", tenantTag, null);
-      return new SayCommandHandlingResult(
-          CommandEnqueueResult.failure("NOT_AUTHENTICATED", "Login required"), null);
-    }
-
-    SessionContext context = maybeContext.get();
     List<String> args = command.args();
     if (args.isEmpty()) {
       String reason = "SAY command requires a message";
@@ -93,10 +80,6 @@ public class SayCommandHandler {
       return new SayCommandHandlingResult(
           CommandEnqueueResult.failure("SAY_NOT_DELIVERED", "Game Logic unavailable"), null);
     }
-  }
-
-  private String determineTenantTag(Optional<SessionContext> maybeContext) {
-    return maybeContext.map(context -> Long.toString(context.tenantId())).orElse("unknown");
   }
 
   private String extractAliasToken(String rawLine) {

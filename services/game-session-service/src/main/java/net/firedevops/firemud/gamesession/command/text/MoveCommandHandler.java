@@ -4,13 +4,11 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.util.List;
 import java.util.Objects;
-import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.gamelogic.v1.MoveResult;
 import net.firedevops.firemud.gamesession.client.GameLogicClient;
 import net.firedevops.firemud.gamesession.config.GameLogicProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
-import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import org.slf4j.Logger;
@@ -30,27 +28,17 @@ public class MoveCommandHandler {
   private static final String FAILURES_METRIC = "gamesession.command.move.failures";
 
   private final GameLogicClient gameLogicClient;
-  private final SessionAuthenticationService sessionAuthenticationService;
   private final SessionContextService sessionContextService;
   private final LookCommandHandler lookCommandHandler;
   private final GameLogicProperties gameLogicProperties;
   private final MeterRegistry meterRegistry;
 
-  public MoveCommandHandlingResult handle(String sessionId, TextCommand command) {
-    Objects.requireNonNull(sessionId, "sessionId must not be null");
+  public MoveCommandHandlingResult handle(SessionContext context, TextCommand command) {
+    Objects.requireNonNull(context, "context must not be null");
     Objects.requireNonNull(command, "command must not be null");
 
-    Optional<SessionContext> maybeContext =
-        sessionAuthenticationService.resolveSessionContext(sessionId);
-    String tenantTag =
-        maybeContext.map(context -> Long.toString(context.tenantId())).orElse("unknown");
+    String tenantTag = Long.toString(context.tenantId());
     meterRegistry.counter(INVOCATIONS_METRIC, "tenantId", tenantTag).increment();
-
-    if (maybeContext.isEmpty()) {
-      return failure("NOT_AUTHENTICATED", "Login required", tenantTag, null);
-    }
-
-    SessionContext context = maybeContext.get();
     String direction = extractDirection(command.args());
     if (!StringUtils.hasText(direction)) {
       return failure("INVALID_ARGUMENT", "MOVE command requires a direction", tenantTag, null);
