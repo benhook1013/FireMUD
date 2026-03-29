@@ -34,6 +34,7 @@ Provides chat, guild, and social networking features across games. Basic REST an
   - and per-recipient presentation for ordinary listeners versus observer/interceptor roles.
 - Those broader scope and routing semantics should be modeled explicitly rather than treating all verbs as cosmetic aliases of one generic room broadcast.
 - In particular, in-world communication should usually target a room, area, or other scope object and let that scope resolve listeners, overhearers, spies, magical observers, and similar mechanics.
+- The target-state observer model should be layered: communication type sets baseline observability, the target/scope resolves qualified listeners and observers, and recipient capabilities/effects determine whether a qualified observer gets full content, partial content, or only metadata.
 
 ## Document Map
 

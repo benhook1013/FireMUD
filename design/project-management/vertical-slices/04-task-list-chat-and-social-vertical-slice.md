@@ -16,6 +16,10 @@ Follow-up design direction agreed after the main slice landed:
 - In-world communication should usually target scope objects such as a room, area, region, map, or other spatial/social aggregate, rather than precomputing a flat recipient list in the sender path.
 - Target-owned recipient resolution must be able to include normal listeners plus observers/interceptors such as eavesdroppers, spies, magical listeners, or game-specific sneaky skills.
 - Game-configured communication definitions should control propagation rules, moderation category, and the presentation style that players see in-game.
+- Observer perception should be split cleanly:
+  - communication type defines the baseline observability contract,
+  - target/scope resolves who qualifies as a normal listener or observer,
+  - and recipient capabilities/effects decide whether the final view is full-content, partial-content, or metadata-only.
 
 After `LOOK` flows through the new Game Logic + World + Entity path, the next smallest playable slice expands the text command fabric with the `SAY` chat path that lets players speak to others in the same room, touching Game Logic aggregation, Game Session command parsing, and the cross-service regression suites so we can assert both WebSocket and Telnet experiences stay in sync.
 
@@ -39,6 +43,7 @@ For future communication modes, treat this structured payload as an implementati
 - the communication intent and its target/scope,
 - the resolved recipient set (including observers/interceptors),
 - and the per-recipient narrative/presentation that players actually see.
+- For observers and interceptors specifically, the communication type should define the baseline observability semantics while the target/scope and recipient capabilities decide who qualifies and what that qualified observer perceives.
 
 Supply at least two transcripts (one Telnet-style, one WebSocket-style) that highlight this ordering and show the chat hitting two active clients plus a nearby NPC echo. For example:
 
