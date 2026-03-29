@@ -40,8 +40,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh api "repos/${GITHUB_REPOSITORY}/pulls?state=open&per_page=100" \
-            --jq '.[] | [.number, .head.ref, .head.sha] | @tsv' |
-          while IFS=$'\t' read -r pr_number head_ref head_sha; do
+            --jq '.[] | [.number, .head.ref, .head.sha, .user.login] | @tsv' |
+          while IFS=$'\t' read -r pr_number head_ref head_sha pr_author; do
+            if [[ "${pr_author}" == "dependabot[bot]" ]]; then
+              echo "Skipping preview reconcile for Dependabot PR #${pr_number}"
+              continue
+            fi
+
             namespace="pr-${pr_number}"
             desired_image_tag="pr-${pr_number}-$(printf '%s' "$head_sha" | cut -c1-8)"
             current_head_sha="$(kubectl get namespace "${namespace}" -o jsonpath='{.metadata.annotations.firemud\.dev/last-preview-head-sha}' 2>/dev/null || true)"
