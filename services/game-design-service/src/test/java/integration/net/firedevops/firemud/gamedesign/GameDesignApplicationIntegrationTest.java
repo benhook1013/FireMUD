@@ -3,24 +3,24 @@ package net.firedevops.firemud.gamedesign;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import net.firedevops.firemud.test.HttpTestSupport;
-import org.junit.jupiter.api.Disabled;
+import net.firedevops.firemud.test.NoGrpcServerTestConfiguration;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.boot.test.web.server.LocalServerPort;
-import org.testcontainers.containers.PostgreSQLContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
+import org.springframework.context.annotation.Import;
 
-@Testcontainers
 @SpringBootTest(
     webEnvironment = WebEnvironment.RANDOM_PORT,
-    classes = GameDesignServiceApplication.class)
-@Disabled("integration environment not configured")
+    classes = GameDesignServiceApplication.class,
+    properties = {
+      "spring.profiles.active=test",
+      "firemud.auth.jwt-secret=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "firemud.grpc.plaintext=true",
+      "spring.grpc.server.port=0"
+    })
+@Import(NoGrpcServerTestConfiguration.class)
 class GameDesignApplicationIntegrationTest {
-
-  @Container
-  static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
 
   @LocalServerPort private int port;
 
