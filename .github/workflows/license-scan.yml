@@ -100,7 +100,7 @@ jobs:
         uses: oss-review-toolkit/ort-ci-github-action@v1
         with:
           ort-cli-args: '-P ort.analyzer.enabledPackageManagers=Gradle'
-          run: 'cache-dependencies,labels,analyzer,evaluator,reporter,upload-results'
+          run: 'cache-dependencies,labels,analyzer,evaluator,reporter'
           fail-on: policy-violation
           report-formats: 'CycloneDx,WebApp'
           ort-cli-report-args: '-O CycloneDX=output.file.formats=json,xml'
@@ -162,7 +162,7 @@ jobs:
         uses: oss-review-toolkit/ort-ci-github-action@v1
         with:
           ort-cli-args: '-P ort.analyzer.enabledPackageManagers=NPM'
-          run: 'cache-dependencies,labels,analyzer,evaluator,reporter,upload-results'
+          run: 'cache-dependencies,labels,analyzer,evaluator,reporter'
           fail-on: policy-violation
           report-formats: 'CycloneDx,WebApp'
           ort-cli-report-args: '-O CycloneDX=output.file.formats=json,xml'
