@@ -186,6 +186,15 @@ A typical banner is:
 
 `LOOK` is treated as a fully data-driven gameplay command. Game Session enforces authentication, forwards it to Game Logic, which fetches room metadata from World Management and visible entities from Entity Management before the response is rendered over Telnet or WebSocket.
 
+The canonical text renderer should preserve a classic MUD feel:
+
+- room title first;
+- then one composed descriptive block that includes room prose plus visible occupants and room-ground items as separate sentences in the same paragraph/block;
+- then exits;
+- then the normal prompt, which remains the place for player health/status rather than embedding that data into the `LOOK` body.
+
+A standard `QUICKLOOK` command should later reuse the same underlying room-view structure but skip the room-description prose, making it suitable for rapid redraws that still show visible occupants, room-ground items, exits, and the normal prompt/status line.
+
 `SAY`, `YELL`, and `WHISPER` emit a shared success payload so Telnet and WebSocket clients can render the same transcript. After a successful chat command the server responds with:
 
 ```text
@@ -210,13 +219,10 @@ OK PLAY Entered world: Demo World
 
 LOOK
 OK LOOK
-Room: Candle-lit Antechamber (Room Instance ID: R-1021)
-Short: You stand in a basalt chamber warmed by the brazier near the western wall.
-Long: Stalactites drip along the northern wall while a faint draft carries the smell of damp earth from the lower tunnels. Torches flicker in alcoves, casting motion into the shadowy archway to the north.
-Exits: NORTH (arched passage leading toward the cavern mouth), EAST (narrow fissure descending toward the forges).
-Entities:
-- NPC "Kobold Scout" (alert, checking the eastern balustrade)
-- Player "Sora" (leaning against the southern pillar)
+Candle-lit Antechamber
+You stand in a basalt chamber warmed by the brazier near the western wall. Stalactites drip along the northern wall while a faint draft carries the smell of damp earth from the lower tunnels. Torches flicker in alcoves, casting motion into the shadowy archway to the north. A kobold scout stands alert near the eastern balustrade. Sora leans against the southern pillar. A dented brass lantern lies on the flagstones near the brazier.
+
+Exits: north, east
 ```
 
 WebSocket `LOOK` example:
@@ -227,13 +233,10 @@ OK PLAY Entered world: Demo World
 
 LOOK
 OK LOOK
-Room: Crafting Hall of Ember (Room Instance ID: R-2045)
-Short: A vaulted hall lined with anvils and hanging banners.
-Long: Sparks drift upward from the forges while metalworkers shout over the rhythm of hammers; the far wall is dominated by the etched sigil of the Ember Guild.
-Exits: SOUTH (wide stair toward the guild atrium), WEST (narrow corridor past the glazing ovens).
-Entities:
-- NPC "Master Smith Torga" (wiping soot from his shoulders)
-- Player "Sora" (now near the south stair, waving to a passing engineer)
+Crafting Hall of Ember
+A vaulted hall lined with anvils and hanging banners rings with the rhythm of hammer blows. Sparks drift upward from the forges while metalworkers shout over the din, and the far wall is dominated by the etched sigil of the Ember Guild. Master Smith Torga wipes soot from his shoulders beside the nearest forge. Sora waits near the south stair, waving to a passing engineer. A crate of fresh horseshoes sits open near the western ovens.
+
+Exits: south, west
 ```
 
 ### Stage-aware command handling
