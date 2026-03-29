@@ -5,6 +5,8 @@ This zero-indexed overview sits at the top of the design/project-management/vert
 0. **Login and Session Hardening** - Follow-up slice to reduce `dev-isolated` dependence, re-enable representative integration coverage, and make the existing login/session path more trustworthy without reopening the original login feature scope (planned in `02.1-task-list-login-session-hardening-vertical-slice.md`).
 1. **Directional Movement (MOVE/GO)** - Use the current World snapshots and movement primitives to validate exits, update player location, and stream a fresh `LOOK` result so movement becomes part of the real gameplay loop (planned in `05-task-list-movement-vertical-slice.md`).
 2. **Inventory, Containers, and Equipment** - Extend the playable loop with hidden inventory containers, room-attached ground containers, first-class equipment bindings, game-configurable slot/body-layout rules, richer inventory queries, and an auditable transfer trail (planned in `06-task-list-inventory-containers-equipment-vertical-slice.md`).
+3. **Gameplay Admission UX Alignment** - Align the login/lobby/player-facing command flow with a simpler MUD-like experience: public `WORLDS` browsing, `LOGIN`, and `PLAY <world> [character]` as the normal happy path, with `SESSION` demoted to advanced-client metadata (planned in `02.2-task-list-gameplay-admission-ux-vertical-slice.md`).
+4. **Reconnect and Session Recovery Semantics** - Bring the implemented reconnect/takeover behavior into line with the richer explicit recovery model in the design docs, including edge restarts, fresh connect tokens, and clearer resume outcomes (planned in `02.3-task-list-reconnect-and-session-recovery-vertical-slice.md`).
 
 ---
 
