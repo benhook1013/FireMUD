@@ -109,6 +109,42 @@ class LookWebSocketCrossServiceTest {
         "gamesession.command.look.failures", 1.0, "tenantId", "1", "error", "ROOM_NOT_FOUND");
   }
 
+  @Test
+  void websocketMovementReturnsDestinationLookAndPersistsRoomContext() throws Exception {
+    ensureTestServicesStarted();
+    long sessionId = prepareGameInstance();
+    List<String> responses = runMovementSequence(sessionId);
+
+    assertThat(responses).hasSizeGreaterThanOrEqualTo(4);
+    assertThat(responses.get(0)).startsWith("OK LOGIN");
+    assertThat(responses.get(1).trim())
+        .isEqualTo(LookTestFixtures.canonicalLookText(LookTestFixtures.DESTINATION_ROOM_ID).trim());
+    assertThat(responses.get(2).trim())
+        .isEqualTo(LookTestFixtures.canonicalLookText(LookTestFixtures.DESTINATION_ROOM_ID).trim());
+    assertThat(responses.get(3)).startsWith("ERROR INVALID_EXIT");
+  }
+
+  @Test
+  void websocketReconnectAfterMoveKeepsDestinationRoomContext() throws Exception {
+    ensureTestServicesStarted();
+    long sessionId = prepareGameInstance();
+
+    List<String> firstConnection = runMoveThenDisconnect(sessionId);
+    assertThat(firstConnection).hasSizeGreaterThanOrEqualTo(2);
+    assertThat(firstConnection.get(1).trim())
+        .isEqualTo(LookTestFixtures.canonicalLookText(LookTestFixtures.DESTINATION_ROOM_ID).trim());
+
+    List<String> reconnectLook = runLookAfterReconnect(sessionId);
+    assertThat(reconnectLook)
+        .singleElement()
+        .satisfies(
+            text ->
+                assertThat(text.trim())
+                    .isEqualTo(
+                        LookTestFixtures.canonicalLookText(LookTestFixtures.DESTINATION_ROOM_ID)
+                            .trim()));
+  }
+
   private static synchronized void ensureTestServicesStarted() throws Exception {
     if (ACCOUNT_STUB == null) {
       ACCOUNT_STUB = new AccountServiceStub(TestSocketUtils.findAvailableTcpPort());
@@ -193,6 +229,7 @@ class LookWebSocketCrossServiceTest {
         client
             .newWebSocketBuilder()
             .header("X-Game-Instance-Id", String.valueOf(sessionId))
+            .header("X-Tenant-Id", String.valueOf(TENANT_ID))
             .buildAsync(
                 uri,
                 new Listener() {
@@ -220,6 +257,131 @@ class LookWebSocketCrossServiceTest {
     webSocket.sendText("LOOK", true).join();
     waitForResponseCount(responses, 2);
     WORLD_STUB.triggerNotFound("room missing for regression");
+    webSocket.sendText("LOOK", true).join();
+    ready.get(COMMAND_WAIT.toMillis(), TimeUnit.MILLISECONDS);
+    webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "done").join();
+    return responses;
+  }
+
+  private List<String> runMovementSequence(long sessionId) throws Exception {
+    HttpClient client = HttpClient.newHttpClient();
+    URI uri = URI.create("ws://localhost:" + GAME_SESSION.port() + "/ws/game");
+    CopyOnWriteArrayList<String> responses = new CopyOnWriteArrayList<>();
+    AtomicInteger received = new AtomicInteger();
+    CompletableFuture<Void> ready = new CompletableFuture<>();
+
+    WebSocket webSocket =
+        client
+            .newWebSocketBuilder()
+            .header("X-Game-Instance-Id", String.valueOf(sessionId))
+            .buildAsync(
+                uri,
+                new Listener() {
+                  @Override
+                  public void onOpen(WebSocket webSocket) {
+                    webSocket.request(1);
+                  }
+
+                  @Override
+                  public CompletionStage<?> onText(
+                      WebSocket webSocket, CharSequence data, boolean last) {
+                    responses.add(data.toString());
+                    int count = received.incrementAndGet();
+                    webSocket.request(1);
+                    if (count >= 4) {
+                      ready.complete(null);
+                    }
+                    return Listener.super.onText(webSocket, data, last);
+                  }
+                })
+            .join();
+
+    webSocket.sendText("LOGIN demo@example.com swordfish", true).join();
+    waitForResponseCount(responses, 1);
+    webSocket.sendText("north", true).join();
+    waitForResponseCount(responses, 2);
+    webSocket.sendText("LOOK", true).join();
+    waitForResponseCount(responses, 3);
+    webSocket.sendText("west", true).join();
+    ready.get(COMMAND_WAIT.toMillis(), TimeUnit.MILLISECONDS);
+    webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "done").join();
+    return responses;
+  }
+
+  private List<String> runMoveThenDisconnect(long sessionId) throws Exception {
+    HttpClient client = HttpClient.newHttpClient();
+    URI uri = URI.create("ws://localhost:" + GAME_SESSION.port() + "/ws/game");
+    CopyOnWriteArrayList<String> responses = new CopyOnWriteArrayList<>();
+    AtomicInteger received = new AtomicInteger();
+    CompletableFuture<Void> ready = new CompletableFuture<>();
+
+    WebSocket webSocket =
+        client
+            .newWebSocketBuilder()
+            .header("X-Game-Instance-Id", String.valueOf(sessionId))
+            .buildAsync(
+                uri,
+                new Listener() {
+                  @Override
+                  public void onOpen(WebSocket webSocket) {
+                    webSocket.request(1);
+                  }
+
+                  @Override
+                  public CompletionStage<?> onText(
+                      WebSocket webSocket, CharSequence data, boolean last) {
+                    responses.add(data.toString());
+                    int count = received.incrementAndGet();
+                    webSocket.request(1);
+                    if (count >= 2) {
+                      ready.complete(null);
+                    }
+                    return Listener.super.onText(webSocket, data, last);
+                  }
+                })
+            .join();
+
+    webSocket.sendText("LOGIN demo@example.com swordfish", true).join();
+    waitForResponseCount(responses, 1);
+    webSocket.sendText("north", true).join();
+    ready.get(COMMAND_WAIT.toMillis(), TimeUnit.MILLISECONDS);
+    webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "done").join();
+    return responses;
+  }
+
+  private List<String> runLookAfterReconnect(long sessionId) throws Exception {
+    HttpClient client = HttpClient.newHttpClient();
+    URI uri = URI.create("ws://localhost:" + GAME_SESSION.port() + "/ws/game");
+    CopyOnWriteArrayList<String> responses = new CopyOnWriteArrayList<>();
+    AtomicInteger received = new AtomicInteger();
+    CompletableFuture<Void> ready = new CompletableFuture<>();
+
+    WebSocket webSocket =
+        client
+            .newWebSocketBuilder()
+            .header("X-Game-Instance-Id", String.valueOf(sessionId))
+            .buildAsync(
+                uri,
+                new Listener() {
+                  @Override
+                  public void onOpen(WebSocket webSocket) {
+                    webSocket.request(1);
+                  }
+
+                  @Override
+                  public CompletionStage<?> onText(
+                      WebSocket webSocket, CharSequence data, boolean last) {
+                    responses.add(data.toString());
+                    int count = received.incrementAndGet();
+                    webSocket.request(1);
+                    if (count >= 1) {
+                      ready.complete(null);
+                    }
+                    return Listener.super.onText(webSocket, data, last);
+                  }
+                })
+            .join();
+
     webSocket.sendText("LOOK", true).join();
     ready.get(COMMAND_WAIT.toMillis(), TimeUnit.MILLISECONDS);
     webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "done").join();

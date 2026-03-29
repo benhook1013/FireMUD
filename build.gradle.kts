@@ -333,9 +333,7 @@ tasks.register("codeqlClasses") {
     group = "build"
     description = "Compiles the source sets needed for CodeQL analysis without running tests."
     dependsOn(
-        subprojects.flatMap { project ->
-            listOf("${project.path}:classes", "${project.path}:testClasses")
-        }
+        subprojects.map { project -> "${project.path}:classes" }
     )
 }
 
@@ -375,6 +373,19 @@ tasks.register("buildDockerImages") {
         ":game-session-service:bootBuildImage",
         ":logging-admin-service:bootBuildImage",
         ":social-groups-service:bootBuildImage",
+        ":spring-cloud-gateway:bootBuildImage",
+        ":tcp-proxy-service:bootBuildImage",
+        ":world-management-service:bootBuildImage"
+    )
+}
+
+tasks.register("buildDockerImagesSmoke") {
+    dependsOn(
+        "buildBaseImage",
+        ":account-service:bootBuildImage",
+        ":entity-management-service:bootBuildImage",
+        ":game-logic-service:bootBuildImage",
+        ":game-session-service:bootBuildImage",
         ":spring-cloud-gateway:bootBuildImage",
         ":tcp-proxy-service:bootBuildImage",
         ":world-management-service:bootBuildImage"
@@ -423,7 +434,51 @@ tasks.register<Exec>("devUp") {
     )
 }
 
+tasks.register<Exec>("devUpSmoke") {
+    dependsOn("generateDevCerts", "buildDockerImagesSmoke")
+    commandLine(
+        "docker",
+        "compose",
+        "-f",
+        "docker/docker-compose.yml",
+        "-f",
+        "docker/docker-compose.override.yml",
+        "-f",
+        "docker/docker-compose.local-images.override.yml",
+        "up",
+        "-d",
+        "--wait",
+        "--wait-timeout",
+        "180",
+        "--no-build",
+        "postgres",
+        "redis-coord",
+        "redis-cache",
+        "account-service",
+        "entity-management-service",
+        "gateway",
+        "game-logic-service",
+        "game-session-service",
+        "tcp-proxy-service",
+        "world-management-service"
+    )
+}
+
 tasks.register<Exec>("devDown") {
+    commandLine(
+        "docker",
+        "compose",
+        "-f",
+        "docker/docker-compose.yml",
+        "-f",
+        "docker/docker-compose.override.yml",
+        "-f",
+        "docker/docker-compose.local-images.override.yml",
+        "down"
+    )
+}
+
+tasks.register<Exec>("devDownSmoke") {
     commandLine(
         "docker",
         "compose",

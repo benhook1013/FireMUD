@@ -46,6 +46,33 @@ class TextCommandParserTest {
   }
 
   @Test
+  void parsesDirectionalAliasAsMove() {
+    TextCommand command = parser.parse("north");
+
+    assertEquals(TextCommandType.MOVE, command.type());
+    assertEquals(List.of("north"), command.args());
+    assertEquals("north", command.rawLine());
+  }
+
+  @Test
+  void parsesMoveVerbWithDirection() {
+    TextCommand command = parser.parse("MOVE east");
+
+    assertEquals(TextCommandType.MOVE, command.type());
+    assertEquals(List.of("east"), command.args());
+    assertEquals("MOVE east", command.rawLine());
+  }
+
+  @Test
+  void parsesGoAliasWithDirection() {
+    TextCommand command = parser.parse("go west");
+
+    assertEquals(TextCommandType.MOVE, command.type());
+    assertEquals(List.of("west"), command.args());
+    assertEquals("go west", command.rawLine());
+  }
+
+  @Test
   void blankInputIsIgnored() {
     TextCommand command = parser.parse("    ");
 

@@ -4,7 +4,6 @@ on:
   pull_request:
     types:
       - opened
-      - synchronize
       - reopened
       - closed
   workflow_dispatch:
@@ -26,6 +25,11 @@ on:
         required: false
         default: ""
         type: string
+      head_sha:
+        description: PR head SHA to align the preview namespace with
+        required: false
+        default: ""
+        type: string
       preview_domain:
         description: Preview DNS suffix (for example preview.firedevops.net)
         required: false
@@ -39,7 +43,7 @@ permissions:
   pull-requests: write
 
 concurrency:
-  group: preview-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.ref }}
+  group: preview-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || inputs.pr_number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -54,34 +58,42 @@ jobs:
       release_name: ${{ steps.derive.outputs.release_name }}
       hostname: ${{ steps.derive.outputs.hostname }}
       image_tag: ${{ steps.derive.outputs.image_tag }}
+      head_sha: ${{ steps.derive.outputs.head_sha }}
     steps:
       - name: Derive preview identifiers
         id: derive
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             PR_NUMBER="${{ github.event.pull_request.number }}"
+            HEAD_SHA="${{ github.event.pull_request.head.sha }}"
             PREVIEW_DOMAIN="preview.firedevops.net"
             if [ "${{ github.event.action }}" = "closed" ]; then
               ACTION="destroy"
             else
               ACTION="deploy"
             fi
-            IMAGE_TAG="pr-${PR_NUMBER}-${GITHUB_SHA::8}"
           else
             PR_NUMBER="${{ inputs.pr_number }}"
+            HEAD_SHA="${{ inputs.head_sha }}"
             PREVIEW_DOMAIN="${{ inputs.preview_domain }}"
             ACTION="${{ inputs.action }}"
             IMAGE_TAG="${{ inputs.image_tag }}"
           fi
-          if [ -z "$IMAGE_TAG" ]; then
-            IMAGE_TAG="pr-${PR_NUMBER}-${GITHUB_SHA::8}"
+          if [ -z "$HEAD_SHA" ]; then
+            HEAD_SHA="${GITHUB_SHA}"
           fi
-          echo "action=${ACTION}" >> "$GITHUB_OUTPUT"
-          echo "pr_number=${PR_NUMBER}" >> "$GITHUB_OUTPUT"
-          echo "namespace=pr-${PR_NUMBER}" >> "$GITHUB_OUTPUT"
-          echo "release_name=pr-${PR_NUMBER}" >> "$GITHUB_OUTPUT"
-          echo "hostname=pr-${PR_NUMBER}.${PREVIEW_DOMAIN}" >> "$GITHUB_OUTPUT"
-          echo "image_tag=${IMAGE_TAG}" >> "$GITHUB_OUTPUT"
+          if [ -z "$IMAGE_TAG" ]; then
+            IMAGE_TAG="pr-${PR_NUMBER}-${HEAD_SHA:0:8}"
+          fi
+          {
+            echo "action=${ACTION}"
+            echo "pr_number=${PR_NUMBER}"
+            echo "namespace=pr-${PR_NUMBER}"
+            echo "release_name=pr-${PR_NUMBER}"
+            echo "hostname=pr-${PR_NUMBER}.${PREVIEW_DOMAIN}"
+            echo "image_tag=${IMAGE_TAG}"
+            echo "head_sha=${HEAD_SHA}"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Explain current state
         run: |
@@ -124,6 +136,7 @@ jobs:
           release_name=${{ steps.derive.outputs.release_name }}
           hostname=${{ steps.derive.outputs.hostname }}
           image_tag=${{ steps.derive.outputs.image_tag }}
+          head_sha=${{ steps.derive.outputs.head_sha }}
           preview_max_active=${PREVIEW_MAX_ACTIVE:-2}
           EOF
 
@@ -159,7 +172,7 @@ jobs:
         env:
           PREVIEW_KUBECONFIG: ${{ secrets.PREVIEW_KUBECONFIG }}
         run: |
-          KUBECONFIG_PATH="$(./dev-tools/preview/write-kubeconfig.sh)"
+          KUBECONFIG_PATH="$(bash ./dev-tools/preview/write-kubeconfig.sh)"
           echo "KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"
 
       - name: Verify preview cluster access
@@ -168,17 +181,33 @@ jobs:
           kubectl auth can-i get clusterissuers.cert-manager.io --all-namespaces
           kubectl auth can-i list namespaces --all-namespaces
 
-      - name: Enforce preview capacity
+      - name: Prune stale preview namespaces
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          bash ./dev-tools/preview/prune-stale-preview-namespaces.sh --apply
+
+      - name: Explain preview capacity gate
         env:
           PREVIEW_MAX_ACTIVE: ${{ vars.PREVIEW_MAX_ACTIVE }}
         run: |
-          ./dev-tools/preview/check-preview-capacity.sh \
-            "${{ needs.preview-plan.outputs.namespace }}" \
-            "${PREVIEW_MAX_ACTIVE:-2}"
+          cat <<EOF
+          Preview capacity enforcement is currently skipped in hosted CI because
+          this workflow still stops before the final Helm apply step.
+
+          The current preview job only prepares namespaces/secrets and validates
+          manifests against the live cluster API; it does not yet create a full
+          deployed preview release that should consume the PREVIEW_MAX_ACTIVE
+          budget (${PREVIEW_MAX_ACTIVE:-2}).
+
+          Namespace pruning still runs above so stale PR namespaces are cleaned
+          up, but hard preview-capacity admission should return once the final
+          apply gate is removed and previews become real running environments.
+          EOF
 
       - name: Ensure preview namespace exists
         run: |
-          ./dev-tools/preview/ensure-preview-namespace.sh \
+          bash ./dev-tools/preview/ensure-preview-namespace.sh \
             "${{ needs.preview-plan.outputs.namespace }}" \
             "${{ needs.preview-plan.outputs.pr_number }}"
 
@@ -187,11 +216,11 @@ jobs:
           PREVIEW_GHCR_USERNAME: ${{ secrets.PREVIEW_GHCR_USERNAME }}
           PREVIEW_GHCR_TOKEN: ${{ secrets.PREVIEW_GHCR_TOKEN }}
         run: |
-          ./dev-tools/preview/ensure-ghcr-pull-secret.sh "${{ needs.preview-plan.outputs.namespace }}"
+          bash ./dev-tools/preview/ensure-ghcr-pull-secret.sh "${{ needs.preview-plan.outputs.namespace }}"
 
       - name: Ensure preview gRPC TLS secret exists
         run: |
-          ./dev-tools/preview/ensure-grpc-tls-secret.sh "${{ needs.preview-plan.outputs.namespace }}"
+          bash ./dev-tools/preview/ensure-grpc-tls-secret.sh "${{ needs.preview-plan.outputs.namespace }}"
 
       - name: Show namespace state
         run: |
@@ -201,7 +230,7 @@ jobs:
 
       - name: Render preview values
         run: |
-          ./dev-tools/preview/render-preview-values.sh \
+          bash ./dev-tools/preview/render-preview-values.sh \
             k8s/helm/firemud/values-preview.example.yaml \
             /tmp/preview-values.yaml \
             "${{ needs.preview-plan.outputs.pr_number }}" \
@@ -226,6 +255,14 @@ jobs:
           path: |
             /tmp/preview-values.yaml
             /tmp/preview-rendered.yaml
+
+      - name: Record reconciled preview target
+        run: |
+          bash ./dev-tools/preview/annotate-preview-namespace.sh \
+            "${{ needs.preview-plan.outputs.namespace }}" \
+            "${{ needs.preview-plan.outputs.pr_number }}" \
+            "${{ needs.preview-plan.outputs.head_sha }}" \
+            "${{ needs.preview-plan.outputs.image_tag }}"
 
       - name: Explain deployment gate
         run: |
@@ -279,15 +316,11 @@ jobs:
         env:
           PREVIEW_KUBECONFIG: ${{ secrets.PREVIEW_KUBECONFIG }}
         run: |
-          KUBECONFIG_PATH="$(./dev-tools/preview/write-kubeconfig.sh)"
+          KUBECONFIG_PATH="$(bash ./dev-tools/preview/write-kubeconfig.sh)"
           echo "KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"
 
-      - name: Uninstall preview release if present
+      - name: Delete preview namespace and release
         run: |
-          helm uninstall "${{ needs.preview-plan.outputs.release_name }}" \
-            --namespace "${{ needs.preview-plan.outputs.namespace }}" \
-            --ignore-not-found || true
-
-      - name: Delete preview namespace if present
-        run: |
-          kubectl delete namespace "${{ needs.preview-plan.outputs.namespace }}" --ignore-not-found=true
+          bash ./dev-tools/preview/delete-preview-namespace.sh \
+            "${{ needs.preview-plan.outputs.namespace }}" \
+            "${{ needs.preview-plan.outputs.release_name }}"

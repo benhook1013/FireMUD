@@ -31,15 +31,11 @@
 
 - Use `./gradlew :game-session-service:bootRunDevIsolated` or set `GAME_SESSION_DEV_ISOLATED=true` when you need to exercise Game Session without PostgreSQL, Redis, or downstream gRPC dependencies. The dev-isolated beans acknowledge commands and lifecycle requests while only recording informational logs instead of accessing external systems.
 - `dev-isolated` is an explicit opt-in for dependency-free local development only. The standard `dev` profile used by Docker Compose and readiness-based smoke tests keeps the canonical readiness group rather than downgrading readiness to local `readinessState` only.
-- The dev-isolated smoke path is covered by dedicated integration tests under `services/game-session-service/src/test/java/integration`, and the broader rollout status remains tracked in [`02-task-list-login-and-session-vertical-slice.md`](../../../project-management/vertical-slices/02-task-list-login-and-session-vertical-slice.md#7-dev-mode-stubs-and-real-service-rollout).
+- The dependency-light dev-isolated path is still available for local experimentation, but the maintained integration and ingress coverage now targets the real login/session flow described in [`02.1-task-list-login-session-hardening-vertical-slice.md`](../../../project-management/vertical-slices/02.1-task-list-login-session-hardening-vertical-slice.md).
 
-## Cross-Service Integration Test
+## Cross-Service Integration Tests
 
-An integration test under `src/test/java/crossservice` starts this service alongside Game Logic using Testcontainers. Run it manually once the dependent Docker images are built:
-
-```bash
-./gradlew :game-session-service:test --tests "*CrossServiceIntegrationTest"
-```
+The maintained cross-service coverage for Game Session is now the current WebSocket/Telnet gameplay path, not the older GHCR-image placeholder style. Use the focused WebSocket regressions under `services/game-session-service/src/test/java/crossservice` plus the Telnet ingress parity coverage under `services/tcp-proxy-service/src/test/java/crossservice` when validating current gameplay behavior.
 
 See [System Architecture Testing](../../system-architecture-testing.md) for the shared testing approach.
 

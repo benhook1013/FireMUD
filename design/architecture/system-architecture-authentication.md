@@ -427,7 +427,7 @@ Credential-bearing login commands carry account credentials (plus optional OTP).
 
 FireMUD uses a **single shared entrypoint** for many worlds (tenants). After `LOGIN`, clients complete a lobby selection step that binds the authenticated connection to a specific world (`tenantId`), gameplay-admissible instance (`gameInstanceId`), and gameplay identity (`characterId`) before gameplay commands are accepted.
 
-Players must never be asked to type raw internal identifiers such as `tenantId` GUIDs, `gameInstanceId` values, or `characterId` values. Lobby selection accepts human-friendly inputs (world slugs, world menu indices, character names or indices) and resolves them server-side into stable internal identifiers.
+Players must never be asked to type raw internal identifiers such as `tenantId` UUIDs, `gameInstanceId` values, or `characterId` values. Lobby selection accepts human-friendly inputs (world slugs, world menu indices, character names or indices) and resolves them server-side into stable internal identifiers.
 
 After `LOGIN` succeeds, the Game Session Service requires an explicit lobby selection flow using these canonical commands:
 
@@ -453,7 +453,7 @@ Lobby discovery source-of-truth contract:
 - `WORLDS` discovery does not need to reuse the full 15-second admission SLA verbatim, but it must still be based on entitlement state fresh enough to avoid exposing worlds that are no longer gameplay-available. If that freshness bar cannot be met safely, discovery fails closed with `ENTITLEMENT_UNAVAILABLE`.
 - `REALMS <world>` must distinguish between public-production visibility and explicit realm grants. Only the default production realm may be visible through public discovery in v1.
 - Bootstrap discovery, `REALMS`, `POST /auth/connect-token`, and `PLAY` must all consume the same Account Service-owned realm-access-grant authority for non-public realms so visibility and admission cannot drift by surface.
-- `CHARS <world> [realm]` must be sourced from the authoritative character store for the resolved tenant/realm and filtered to `{accountId, tenantId}` ownership before any character names are returned.
+- `CHARS <world> [realm]` must be sourced from the authoritative character store for the resolved `{tenantId, gameInstanceId}` target and filtered to the caller's valid character choices for that realm. Shared-state realms may surface the tenant's normal live characters, while isolated realms may surface copied, seeded, or otherwise instance-local character state for the same account.
 - `WORLDS` and `CHARS` responses must not leak inaccessible tenants or characters; unresolved selectors return canonical errors (`WORLD_NOT_FOUND`, `WORLD_ACCESS_DENIED`, `CHARACTER_NOT_FOUND`, `CHARACTER_ACCESS_DENIED`) without exposing whether a hidden tenant exists.
 
 Lobby command classification contract:
@@ -466,7 +466,7 @@ Lobby command classification contract:
 
 The `PLAY` flow:
 
-- Resolves `<world>` to a canonical `tenantId` (opaque GUID) and validates it exists.
+- Resolves `<world>` to a canonical `tenantId` and validates it exists.
 - Resolves optional `[realm]` to a canonical realm for that tenant. If no realm is supplied, the tenant's default production realm is selected.
 - Verifies that the account is authorized to play in that `tenantId` using caller-bound gameplay membership authority or the canonical public-production admission policy for the default production realm. Global roles alone must not satisfy gameplay admission.
 - If admission is proceeding through public-production discovery rather than an existing membership row, the first successful `PLAY` must atomically create the caller's `player` membership before gameplay binding is committed. Failed admissions must not leave behind a partial membership grant.

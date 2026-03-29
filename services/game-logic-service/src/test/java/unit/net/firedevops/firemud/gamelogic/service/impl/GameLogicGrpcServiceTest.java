@@ -1,7 +1,9 @@
 package net.firedevops.firemud.gamelogic.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
+import static org.mockito.ArgumentMatchers.any;
 
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -12,10 +14,13 @@ import net.firedevops.firemud.gamelogic.logic.event.EventDispatcher;
 import net.firedevops.firemud.gamelogic.logic.script.NoOpScriptingHook;
 import net.firedevops.firemud.gamelogic.logic.service.CommandServiceImpl;
 import net.firedevops.firemud.gamelogic.service.LookAggregationService;
+import net.firedevops.firemud.gamelogic.service.MoveAggregationService;
 import net.firedevops.firemud.gamelogic.service.PingService;
 import net.firedevops.firemud.gamelogic.service.SayAggregationService;
 import net.firedevops.firemud.gamelogic.v1.ExecuteCommandRequest;
 import net.firedevops.firemud.gamelogic.v1.ExecuteCommandResponse;
+import net.firedevops.firemud.gamelogic.v1.MoveRequest;
+import net.firedevops.firemud.gamelogic.v1.MoveResult;
 import net.firedevops.firemud.gamelogic.v1.PingRequest;
 import net.firedevops.firemud.gamelogic.v1.PingResponse;
 import org.junit.jupiter.api.Test;
@@ -30,12 +35,16 @@ class GameLogicGrpcServiceTest {
     var commandService = new CommandServiceImpl(new DefaultCommandParser(), processor);
     LookAggregationService lookAggregationService = Mockito.mock(LookAggregationService.class);
     SayAggregationService sayAggregationService = Mockito.mock(SayAggregationService.class);
+    MoveAggregationService moveAggregationService = Mockito.mock(MoveAggregationService.class);
+    MoveResult moveResult = MoveResult.newBuilder().setSuccess(true).build();
+    Mockito.when(moveAggregationService.resolve(any())).thenReturn(moveResult);
     GameLogicGrpcService service =
         new GameLogicGrpcService(
             pingService,
             commandService,
             lookAggregationService,
             sayAggregationService,
+            moveAggregationService,
             new SimpleMeterRegistry());
 
     AtomicReference<PingResponse> holder = new AtomicReference<>();
@@ -67,12 +76,16 @@ class GameLogicGrpcServiceTest {
     var commandService = new CommandServiceImpl(new DefaultCommandParser(), processor);
     LookAggregationService lookAggregationService = Mockito.mock(LookAggregationService.class);
     SayAggregationService sayAggregationService = Mockito.mock(SayAggregationService.class);
+    MoveAggregationService moveAggregationService = Mockito.mock(MoveAggregationService.class);
+    MoveResult moveResult = MoveResult.newBuilder().setSuccess(true).build();
+    Mockito.when(moveAggregationService.resolve(any())).thenReturn(moveResult);
     GameLogicGrpcService service =
         new GameLogicGrpcService(
             pingService,
             commandService,
             lookAggregationService,
             sayAggregationService,
+            moveAggregationService,
             new SimpleMeterRegistry());
 
     AtomicReference<ExecuteCommandResponse> holder = new AtomicReference<>();
@@ -96,5 +109,47 @@ class GameLogicGrpcServiceTest {
     assertEquals("Unknown action", holder.get().getResult());
     assertEquals("UNKNOWN_COMMAND", holder.get().getError().getCode());
     assertEquals("Command not recognized", holder.get().getError().getMessage());
+  }
+
+  @Test
+  void resolveMoveReturnsDestinationLook() {
+    PingService pingService = new PingServiceImpl();
+    var dispatcher = new EventDispatcher();
+    var processor = new SimpleCommandProcessor(dispatcher, new NoOpScriptingHook());
+    var commandService = new CommandServiceImpl(new DefaultCommandParser(), processor);
+    LookAggregationService lookAggregationService = Mockito.mock(LookAggregationService.class);
+    SayAggregationService sayAggregationService = Mockito.mock(SayAggregationService.class);
+    MoveAggregationService moveAggregationService = Mockito.mock(MoveAggregationService.class);
+    MoveResult moveResult = MoveResult.newBuilder().setSuccess(true).build();
+    Mockito.when(moveAggregationService.resolve(any())).thenReturn(moveResult);
+    GameLogicGrpcService service =
+        new GameLogicGrpcService(
+            pingService,
+            commandService,
+            lookAggregationService,
+            sayAggregationService,
+            moveAggregationService,
+            new SimpleMeterRegistry());
+
+    AtomicReference<MoveResult> holder = new AtomicReference<>();
+    service.resolveMove(
+        MoveRequest.newBuilder().setDirection("NORTH").build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(MoveResult value) {
+            holder.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {
+            fail(t);
+          }
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    Mockito.verify(moveAggregationService).resolve(any());
+    assertTrue(holder.get().getSuccess());
   }
 }

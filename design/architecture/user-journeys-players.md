@@ -39,7 +39,7 @@ Accounts span multiple hosted games. The [Multi-Tenancy](./system-architecture-m
 
 - [Sign Up](#1-sign-up) – Create a platform account and enable auth options.
 - [Join a Game for the First Time](#2-join-a-game-for-the-first-time) – Discover a world, choose a realm, and reach the lobby.
-- [Character Creation & Selection](#3-character-creation--selection) – Create and choose characters per game and realm.
+- [Character Creation & Selection](#3-character-creation--selection) – Create and choose characters for the selected game and realm target.
 - [Player Login and Gameplay](#4-player-login-and-gameplay) – Connect to running realms and play.
 - [Social Interaction & Safety](#5-social-interaction--safety) – Chat, groups, reports, and moderation outcomes.
 - [Purchases and Subscriptions](#6-purchases-and-subscriptions) – Manage subscriptions and in-game purchases.
@@ -70,7 +70,7 @@ The first successful session for a new player follows a single canonical onboard
    - **Telnet / MCP client** – Connects through the [TCP Proxy Service](./microservices/tcp-proxy-service/README.md) and authenticates in-band with `LOGIN`.
 2. **Discover Joinable Worlds** – After authentication, the player uses the canonical discovery contract to list worlds they can enter. Existing memberships always qualify. In v1, a live default production realm may also be publicly discoverable even before the player has joined that tenant, so brand-new authenticated accounts can still enter through the public-production onboarding path. Responses use world slugs and friendly names rather than raw IDs, as defined in [Authentication & Authorization](./system-architecture-authentication.md) and [Multi-Tenancy](./system-architecture-multi-tenancy.md).
 3. **Choose a Realm** – If the selected world exposes more than one visible realm, the player uses `REALMS <world>` to choose between the default production realm and any explicitly authorized additional realms such as a playtest fork. Hidden or unauthorized realms are never disclosed. Public discovery applies only to the default production realm in v1; any additional realm requires an explicit access grant from the creator or operator. On the default public production realm, the first successful `PLAY` creates the player's `player` membership atomically as part of admission.
-4. **List Characters or Create New** – The player uses `CHARS <world> [realm]` to view existing characters. If none exist, the client must complete the world's character-creation flow before `PLAY` succeeds. The authoritative character-creation owner for this step is the [Entity Management Service](./microservices/entity-management-service/README.md), whose `CreateCharacter` contract defines how new player characters are created from published templates. For playtest forks, a player may arrive with copied fork-local character state from the source snapshot. If no visible fork-local character exists for that account, fork policy determines whether the player may create a fresh fork-local character or whether the fork is restricted to copied characters only; whichever policy a fork uses must be surfaced consistently in the lobby/client UX. If a fork permits both copied and newly created fork-local characters, `CHARS` returns them in one fork-local list and the client does not need a separate mode switch. If no visible character exists and fork policy forbids creation, the canonical player-facing failure is a hard character-selection denial rather than a generic `CHARACTER_REQUIRED` prompt.
+4. **List Characters or Create New** – The player uses `CHARS <world> [realm]` to view the character choices valid for the selected realm target. In shared-state realms this typically means the tenant's normal live durable character roster. In isolated realms it may instead mean copied fork-local state, seeded/sample-state characters, or fresh standalone realm-local state for the same account. If no visible character exists, the client must complete the world's character-creation flow before `PLAY` succeeds unless the resolved realm's policy forbids creation. The authoritative character-creation owner for this step is the [Entity Management Service](./microservices/entity-management-service/README.md), whose `CreateCharacter` contract defines how new player characters are created from published templates. For playtest forks, a player may arrive with copied fork-local character state from the source snapshot. If no visible fork-local character exists for that account, fork policy determines whether the player may create a fresh fork-local character or whether the fork is restricted to copied characters only; whichever policy a fork uses must be surfaced consistently in the lobby/client UX. If a fork permits both copied and newly created fork-local characters, `CHARS` returns them in one fork-local list and the client does not need a separate mode switch. If no visible character exists and fork policy forbids creation, the canonical player-facing failure is a hard character-selection denial rather than a generic `CHARACTER_REQUIRED` prompt.
 5. **Bind to Gameplay** – `PLAY <world> [realm] [character]` resolves to canonical `{tenantId, gameInstanceId, characterId}` values and binds the session to the selected realm. After this step, normal gameplay commands become available.
 
 For a first-time join through a publicly discoverable production realm, the first successful `PLAY` creates the player's `player` membership atomically as part of admission. Failed joins do not leave behind partial membership rows.
@@ -133,7 +133,7 @@ Any non-production realm shown in fork/playtest examples is assumed to already b
 
 ## 3. Character Creation & Selection
 
-Character definitions and selection are scoped per game (tenant) using the [Entity Management Service](./microservices/entity-management-service/README.md) and [Game Session Service](./microservices/game-session-service/README.md). Creation flows are coordinated with the [Game Design Service](./microservices/game-design-service/README.md) to ensure race, class, and ability choices match the published game configuration. Explicit character creation and selection are part of the v1 admission contract; the platform does not fall back to an implicit account-derived default character. See [World and Entity Design](./user-journeys-creators.md#world-and-entity-design) for creator-side details on how these options are defined.
+Character ownership is scoped per game (tenant), while character selection is always resolved against the specific realm the player is trying to enter. Depending on realm policy, the selected realm may expose the tenant's normal live durable character state or isolated realm-local state created from a copy, seeded/sample data, or fresh standalone records for the same account. These flows use the [Entity Management Service](./microservices/entity-management-service/README.md) and [Game Session Service](./microservices/game-session-service/README.md). Creation flows are coordinated with the [Game Design Service](./microservices/game-design-service/README.md) to ensure race, class, and ability choices match the published game configuration. Explicit character creation and selection are part of the v1 admission contract; the platform does not fall back to an implicit account-derived default character. See [World and Entity Design](./user-journeys-creators.md#2-world-and-entity-design) for creator-side details on how these options are defined.
 
 Behind the scenes:
 
@@ -152,7 +152,7 @@ Players connect using either a web client or a traditional Telnet client:
 
 Gameplay sessions are managed by the [Game Session Service](./microservices/game-session-service/README.md), which coordinates ticks, sessions, and reconnect behavior. Redis stores gameplay session bindings and related runtime coordination state as described in [Redis Architecture](./system-architecture-redis.md), allowing the Game Session Service to rebind sessions when players reconnect. Account-auth JWT allowlist and revocation state lives under the Account Service-owned `session:auth:*` contract rather than as generic Game Session auth state. Authentication is delegated to the [Account Service](./microservices/account-service/README.md) as described in [Authentication & Authorization](./system-architecture-authentication.md).
 
-Game actions are resolved on a fixed tick loop as outlined in the [Tick System](./system-architecture-ticks.md). Players can reconnect seamlessly thanks to the layered approach described in [Reconnection Strategy](./system-architecture-reconnection.md).
+Game actions are resolved on a fixed tick loop as outlined in the [Tick System](./system-architecture-ticks.md). Players recover from disconnects through the layered reconnect flow described in [Reconnection Strategy](./system-architecture-reconnection.md).
 
 If a tenant is temporarily unavailable because billing or entitlements block gameplay, the player sees a clear tenant-scoped error before `PLAY` succeeds. If a creator or operator cuts a realm over to a replacement instance, reconnect follows the same lobby and admission flow and lands on the currently routable realm target.
 
@@ -184,9 +184,15 @@ Canonical player-facing examples:
 - `gameplay_ban` – `ERROR GAMEPLAY_BANNED You cannot enter this realm.`
 - `chat_mute` / `chat_ban` – `ERROR CHAT_RESTRICTED You cannot send messages in this realm.`
 
+Implementation note:
+
+- The current playable chat slice is room-local speech. Future slices are expected to differentiate speech mode from audience scope so game rules can support behavior such as target-limited whispers, directed tells, and topology-aware shouts or announcements that propagate across an area, region, map, or continent rather than assuming all communication is equivalent to `SAY`.
+
 ```plaintext
 Player → Game Session Service → Social & Groups Service → Logging & Admin Service
 ```
+
+Current gameplay implementation note: the first live chat slice is still centered on room-local `SAY`-family behavior. Future design work will need to make directed/private speech (`WHISPER`, `TELL`) and broader audible scopes (`area`, `map`, `region`, `continent`, channel-level) explicit, rather than treating them as cosmetic aliases of the room-broadcast path.
 
 ---
 
@@ -218,7 +224,7 @@ Operational recovery flows (for example, restoring services after outages) are d
 
 ## 8. Switch Games or Manage Multiple Games
 
-Players can participate in multiple games using the same platform account. The [Multi-Tenancy](./system-architecture-multi-tenancy.md) model stores character progress per `tenantId`. Account selection and tenant setup are managed through the [Account Service](./microservices/account-service/README.md) and [Game Design Service](./microservices/game-design-service/README.md).
+Players can participate in multiple games using the same platform account. The [Multi-Tenancy](./system-architecture-multi-tenancy.md) model keeps character ownership per `tenantId` while resolving actual playable character choices against the selected realm's `gameInstanceId`. Account selection and tenant setup are managed through the [Account Service](./microservices/account-service/README.md) and [Game Design Service](./microservices/game-design-service/README.md).
 
 Switching now follows the same lobby contract used during onboarding:
 

@@ -10,6 +10,7 @@ import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
 import net.firedevops.firemud.gamesession.client.AccountClient;
 import net.firedevops.firemud.gamesession.config.DevIsolatedProperties;
+import net.firedevops.firemud.gamesession.config.GameLogicProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
@@ -35,6 +36,7 @@ public final class LoginCommandHandler {
   private final AccountClient accountClient;
   private final CommandService commandService;
   private final DevIsolatedProperties devIsolatedProperties;
+  private final GameLogicProperties gameLogicProperties;
   private final DevIsolatedGameInstanceRegistry devIsolatedGameInstanceRegistry;
   private final MeterRegistry meterRegistry;
   private final Counter takeoverCounter;
@@ -47,6 +49,7 @@ public final class LoginCommandHandler {
       AccountClient accountClient,
       CommandService commandService,
       DevIsolatedProperties devIsolatedProperties,
+      GameLogicProperties gameLogicProperties,
       ObjectProvider<DevIsolatedGameInstanceRegistry> devIsolatedGameInstanceRegistryProvider,
       MeterRegistry meterRegistry) {
     this.gameInstanceRepository =
@@ -57,6 +60,8 @@ public final class LoginCommandHandler {
     this.commandService = Objects.requireNonNull(commandService, "commandService must not be null");
     this.devIsolatedProperties =
         Objects.requireNonNull(devIsolatedProperties, "devIsolatedProperties must not be null");
+    this.gameLogicProperties =
+        Objects.requireNonNull(gameLogicProperties, "gameLogicProperties must not be null");
     this.devIsolatedGameInstanceRegistry = devIsolatedGameInstanceRegistryProvider.getIfAvailable();
     this.meterRegistry = Objects.requireNonNull(meterRegistry, "meterRegistry must not be null");
     this.takeoverCounter = this.meterRegistry.counter("gamesession.session.takeover");
@@ -146,7 +151,13 @@ public final class LoginCommandHandler {
 
     SessionContext context =
         new SessionContext(
-            sessionId, tenantId, accountId, characterId, result.gameInstanceId(), result.jwt());
+            sessionId,
+            tenantId,
+            accountId,
+            characterId,
+            result.gameInstanceId(),
+            result.roomInstanceId(),
+            result.jwt());
     sessionContextService.save(context);
     logger.debug(
         "Updated session context for tenant {} session {} account {} character {}",
@@ -199,7 +210,13 @@ public final class LoginCommandHandler {
       return Optional.empty();
     }
     return Optional.of(
-        new LoginResult(accountId, instance.getTenantId(), accountId, instance.getId(), jwt));
+        new LoginResult(
+            accountId,
+            instance.getTenantId(),
+            accountId,
+            instance.getId(),
+            gameLogicProperties.getDefaultRoomId(),
+            jwt));
   }
 
   private static final Map<String, String> CANONICAL_ERROR_MAP =

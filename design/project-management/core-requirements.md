@@ -2,7 +2,7 @@
 
 ## 1. Introduction
 
-This document is the canonical product requirements summary and detail set for FireMUD.
+This document is the canonical product requirements summary and detailed requirements set for the FireMUD platform.
 
 ### 1.1 Purpose
 
@@ -37,7 +37,6 @@ This document outlines the **core functional and non-functional requirements** f
 - Players have a **single platform-wide account** that allows them to join multiple games, with **separate characters per game**.
 - Game creators can **host multiple games** with independent settings.
 - Hosted games may expose multiple player-addressable realms, including a default production realm and explicit non-production playtest forks used to validate changes against copied gameplay state without mutating production.
-- In v1, only the default production realm may be publicly discoverable to authenticated players who do not already hold tenant membership. Additional realms such as playtest forks require explicit access grants.
 
 ### 2.2 Game Design & Customization
 
@@ -54,8 +53,7 @@ This document outlines the **core functional and non-functional requirements** f
 - Role-based access control (RBAC) for **admins, moderators, and players**.
 - Users should be able to **create and manage multiple characters per game**.
 - Sessions should support **persistent logins and reconnection handling**.
-- First-party web/mobile gameplay must support pre-socket discovery of visible worlds, realms, and characters and then admit the player through the same canonical lobby contract used by text clients.
-- The first successful join to a publicly discoverable production realm must create the player's tenant membership atomically as part of admission.
+- First-party web and mobile clients must support world, realm, and character selection before gameplay begins.
 - **Expanded Account Features**:
   - Players should be able to **link external accounts** (Google, Discord, Steam) for login.
   - Profiles should include **game history, achievements, and social features**.
@@ -66,7 +64,6 @@ See [Account Service](../architecture/microservices/account-service/README.md) f
 
 - Support for **multi-room game worlds** with region-based navigation.
 - **Instance-based game spaces** allow separate world states (e.g., public production realms, creator-managed playtest forks, private dungeons, event-based scenarios, or personalized player housing).
-- In v1, the canonical player-discovery and admission contract covers only player-addressable realms surfaced through the authenticated lobby flow. Public production realms and explicit-grant playtest forks are in scope for that contract. Other runtime instances such as private dungeons, event scenarios, or personalized housing may exist internally but are not separate v1 lobby-discovered realms unless a later architecture decision promotes them into the same realm-routing and admission model.
 - Game creators can configure **instance rules, expiration, and persistence settings**.
 - **World Persistence & Scheduled Events**:
   - The platform must support **persistent world states**, ensuring that world changes **persist beyond player sessions**.
@@ -171,11 +168,11 @@ See the [CI/CD Pipeline](../architecture/system-architecture-cicd.md) for workfl
 ### 3.4 Gameplay Session Architecture
 
 - **Game Session Service** orchestrates tick execution and runtime configuration.
-- **Redis** stores volatile session state so players can **reconnect seamlessly** after disruptions.
+- **Redis** stores volatile session state so gameplay sessions can be recovered cleanly after disruptions.
 - Tick regions operate independently for scalability but rely on Redis for atomic coordination.
 - Redis runs with **AOF persistence**; replication remains asynchronous, and tick state is treated as volatile coordination data that can be reconstructed via idempotent replay after failover.
 - Lua scripts in Redis ensure atomic, shard-local tick updates on the primary; correctness and recovery rely on AOF plus idempotent replays against PostgreSQL rather than synchronous replica acknowledgments.
-- A layered reconnection model—**TCP Proxy Service → Spring Cloud Gateway → Game Session Service**—allows bounded disruption recovery: clients reconnect through the same path and complete fresh `LOGIN` plus canonical lobby/`PLAY` flow rather than depending on fully transparent service restarts.
+- A layered reconnection model—**TCP Proxy Service → Spring Cloud Gateway → Game Session Service**—must provide a clear, reliable recovery path for all clients. Third-party clients recover through the documented reconnect flow, while first-party clients may automate that same flow to reduce user-visible friction.
 See [Tick System](../architecture/system-architecture-ticks.md) and [Reconnection Strategy](../architecture/system-architecture-reconnection.md) for implementation details.
 
 ---

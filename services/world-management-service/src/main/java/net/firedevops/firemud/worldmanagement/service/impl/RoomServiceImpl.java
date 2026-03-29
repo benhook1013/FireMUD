@@ -115,6 +115,7 @@ public class RoomServiceImpl implements RoomService {
         exit.getId(),
         exit.getToRoom().getId(),
         targetName,
+        exit.getDirection(),
         targetName,
         description,
         exit.getCost());

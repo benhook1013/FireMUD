@@ -192,7 +192,7 @@ For current rollout and configuration details, refer to:
 
 ## Reconnection Strategy
 
-FireMUD supports seamless gameplay recovery through a layered reconnection model:
+FireMUD supports a layered reconnect and session-recovery model:
 
 | Layer | Responsibility |
 | --- | --- |

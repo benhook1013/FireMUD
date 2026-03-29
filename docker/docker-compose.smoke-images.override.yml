@@ -1,0 +1,35 @@
+services:
+  account-service:
+    build: null
+    image: ghcr.io/benhook1013/account-service:${SMOKE_IMAGE_TAG}
+    pull_policy: always
+
+  entity-management-service:
+    build: null
+    image: ghcr.io/benhook1013/entity-management-service:${SMOKE_IMAGE_TAG}
+    pull_policy: always
+
+  game-logic-service:
+    build: null
+    image: ghcr.io/benhook1013/game-logic-service:${SMOKE_IMAGE_TAG}
+    pull_policy: always
+
+  game-session-service:
+    build: null
+    image: ghcr.io/benhook1013/game-session-service:${SMOKE_IMAGE_TAG}
+    pull_policy: always
+
+  gateway:
+    build: null
+    image: ghcr.io/benhook1013/spring-cloud-gateway:${SMOKE_IMAGE_TAG}
+    pull_policy: always
+
+  tcp-proxy-service:
+    build: null
+    image: ghcr.io/benhook1013/tcp-proxy-service:${SMOKE_IMAGE_TAG}
+    pull_policy: always
+
+  world-management-service:
+    build: null
+    image: ghcr.io/benhook1013/world-management-service:${SMOKE_IMAGE_TAG}
+    pull_policy: always

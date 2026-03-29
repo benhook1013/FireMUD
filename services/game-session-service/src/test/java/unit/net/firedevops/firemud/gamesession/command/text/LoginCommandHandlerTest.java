@@ -20,6 +20,7 @@ import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
 import net.firedevops.firemud.gamesession.client.AccountClient;
 import net.firedevops.firemud.gamesession.config.DevIsolatedProperties;
+import net.firedevops.firemud.gamesession.config.GameLogicProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
@@ -45,6 +46,7 @@ class LoginCommandHandlerTest {
   private final AccountClient accountClient = Mockito.mock(AccountClient.class);
   private final CommandService commandService = Mockito.mock(CommandService.class);
   private final DevIsolatedProperties devIsolatedProperties = new DevIsolatedProperties(false);
+  private final GameLogicProperties gameLogicProperties = new GameLogicProperties();
   private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
   private final ObjectProvider<DevIsolatedGameInstanceRegistry> devIsolatedRegistryProvider =
       Mockito.mock(ObjectProvider.class);
@@ -67,6 +69,7 @@ class LoginCommandHandlerTest {
             accountClient,
             commandService,
             devIsolatedProperties,
+            gameLogicProperties,
             devIsolatedRegistryProvider,
             meterRegistry);
   }
@@ -157,6 +160,7 @@ class LoginCommandHandlerTest {
     assertEquals(77L, context.accountId());
     assertEquals(77L, context.characterId());
     assertEquals(1L, context.gameInstanceId());
+    assertEquals(gameLogicProperties.getDefaultRoomId(), context.roomInstanceId());
     assertEquals(AUTH_TOKEN, context.jwt());
   }
 

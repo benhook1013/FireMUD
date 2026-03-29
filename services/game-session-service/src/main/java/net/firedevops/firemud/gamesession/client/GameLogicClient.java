@@ -13,6 +13,8 @@ import net.firedevops.firemud.gamelogic.v1.ChatAlias;
 import net.firedevops.firemud.gamelogic.v1.GameLogicServiceGrpc;
 import net.firedevops.firemud.gamelogic.v1.LookRequest;
 import net.firedevops.firemud.gamelogic.v1.LookResult;
+import net.firedevops.firemud.gamelogic.v1.MoveRequest;
+import net.firedevops.firemud.gamelogic.v1.MoveResult;
 import net.firedevops.firemud.gamelogic.v1.PingRequest;
 import net.firedevops.firemud.gamelogic.v1.PingResponse;
 import net.firedevops.firemud.shared.v1.RoomInstanceRef;
@@ -106,6 +108,23 @@ public class GameLogicClient
             .setText(text)
             .build();
     return stub().broadcastSay(request);
+  }
+
+  public MoveResult resolveMove(
+      String tenantId, String sessionId, String characterId, String roomId, String direction) {
+    MoveRequest request =
+        MoveRequest.newBuilder()
+            .setTenantId(tenantId)
+            .setSessionId(sessionId)
+            .setCharacterId(characterId)
+            .setRoomInstance(
+                RoomInstanceRef.newBuilder()
+                    .setTenantId(tenantId)
+                    .setRoomInstanceId(roomId)
+                    .build())
+            .setDirection(direction)
+            .build();
+    return stub().resolveMove(request);
   }
 
   public PingResponse ping() {
