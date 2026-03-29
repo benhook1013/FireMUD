@@ -13,6 +13,7 @@ on:
       - 'docker/**'
       - '.github/workflows/runtime-images.yml'
       - '.github/workflows/smoke.yml'
+      - '.github/workflows/smoke-full.yml'
       - 'services/common-data-runtime/**'
       - 'services/common-library/**'
       - 'services/common-platform-core/**'
@@ -185,7 +186,7 @@ jobs:
 
             await github.rest.actions.createWorkflowDispatch({
               ...context.repo,
-              workflow_id: "smoke.yml",
+              workflow_id: "smoke-full.yml",
               ref: refName,
               inputs: {
                 action: "full",
