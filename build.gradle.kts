@@ -381,6 +381,19 @@ tasks.register("buildDockerImages") {
     )
 }
 
+tasks.register("buildDockerImagesSmoke") {
+    dependsOn(
+        "buildBaseImage",
+        ":account-service:bootBuildImage",
+        ":entity-management-service:bootBuildImage",
+        ":game-logic-service:bootBuildImage",
+        ":game-session-service:bootBuildImage",
+        ":spring-cloud-gateway:bootBuildImage",
+        ":tcp-proxy-service:bootBuildImage",
+        ":world-management-service:bootBuildImage"
+    )
+}
+
 tasks.register<Exec>("generateDevCerts") {
     workingDir("dev-tools")
     commandLine("bash", "generate-dev-certs.sh", "certs")
@@ -423,7 +436,51 @@ tasks.register<Exec>("devUp") {
     )
 }
 
+tasks.register<Exec>("devUpSmoke") {
+    dependsOn("generateDevCerts", "buildDockerImagesSmoke")
+    commandLine(
+        "docker",
+        "compose",
+        "-f",
+        "docker/docker-compose.yml",
+        "-f",
+        "docker/docker-compose.override.yml",
+        "-f",
+        "docker/docker-compose.local-images.override.yml",
+        "up",
+        "-d",
+        "--wait",
+        "--wait-timeout",
+        "180",
+        "--no-build",
+        "postgres",
+        "redis-coord",
+        "redis-cache",
+        "account-service",
+        "entity-management-service",
+        "gateway",
+        "game-logic-service",
+        "game-session-service",
+        "tcp-proxy-service",
+        "world-management-service"
+    )
+}
+
 tasks.register<Exec>("devDown") {
+    commandLine(
+        "docker",
+        "compose",
+        "-f",
+        "docker/docker-compose.yml",
+        "-f",
+        "docker/docker-compose.override.yml",
+        "-f",
+        "docker/docker-compose.local-images.override.yml",
+        "down"
+    )
+}
+
+tasks.register<Exec>("devDownSmoke") {
     commandLine(
         "docker",
         "compose",

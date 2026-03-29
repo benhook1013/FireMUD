@@ -190,8 +190,8 @@ jobs:
       - name: Generate Dev Certificates
         run: ./dev-tools/generate-dev-certs.sh dev-tools/certs
 
-      - name: 🚀 Start Dev Stack (devUp)
-        run: ./gradlew devUp
+      - name: 🚀 Start Smoke Stack (devUpSmoke)
+        run: ./gradlew devUpSmoke
 
       - name: 📦 Install WebSocket smoke dependency
         run: python3 -m pip install --disable-pip-version-check websocket-client
@@ -213,9 +213,9 @@ jobs:
             docker compose -f docker/docker-compose.yml logs || true
           fi
 
-      - name: 🧹 Stop Dev Stack (devDown)
+      - name: 🧹 Stop Smoke Stack (devDownSmoke)
         if: always()
-        run: ./gradlew devDown
+        run: ./gradlew devDownSmoke
 
   smoke-gate:
     name: Smoke Gate
