@@ -333,9 +333,7 @@ tasks.register("codeqlClasses") {
     group = "build"
     description = "Compiles the source sets needed for CodeQL analysis without running tests."
     dependsOn(
-        subprojects.flatMap { project ->
-            listOf("${project.path}:classes", "${project.path}:testClasses")
-        }
+        subprojects.map { project -> "${project.path}:classes" }
     )
 }
 
