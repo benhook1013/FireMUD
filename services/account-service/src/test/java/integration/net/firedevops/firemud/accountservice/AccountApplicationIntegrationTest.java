@@ -2,14 +2,15 @@ package net.firedevops.firemud.accountservice;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import net.firedevops.firemud.accountservice.client.LoggingAdminClient;
 import net.firedevops.firemud.test.HttpTestSupport;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -20,7 +21,6 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 @SpringBootTest(
     webEnvironment = WebEnvironment.RANDOM_PORT,
     classes = AccountServiceApplication.class)
-@Disabled("integration environment not configured")
 class AccountApplicationIntegrationTest {
 
   @Container
@@ -42,6 +42,8 @@ class AccountApplicationIntegrationTest {
   }
 
   @LocalServerPort private int port;
+
+  @MockitoBean private LoggingAdminClient loggingAdminClient;
 
   @Test
   void pingEndpointReturnsPong() {

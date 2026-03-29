@@ -25,7 +25,7 @@ import org.springframework.context.annotation.Import;
     properties = {
       "firemud.database.enabled=false",
       "spring.main.allow-bean-definition-overriding=true",
-      "game-session.dev-isolated=true",
+      "game-session.dev-isolated=false",
       "firemud.grpc.plaintext=true",
       "spring.application.name=game-session-service",
       "spring.grpc.server.port=0"

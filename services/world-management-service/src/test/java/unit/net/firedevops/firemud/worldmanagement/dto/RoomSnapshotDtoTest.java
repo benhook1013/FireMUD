@@ -15,7 +15,7 @@ class RoomSnapshotDtoTest {
   void constructorCopiesMutableCollections() {
     List<RoomSnapshotDto.RoomExitSnapshotDto> exits = new ArrayList<>();
     RoomSnapshotDto.RoomExitSnapshotDto exit =
-        new RoomSnapshotDto.RoomExitSnapshotDto(1L, 2L, "Hall", "north", "Leads north", 1);
+        new RoomSnapshotDto.RoomExitSnapshotDto(1L, 2L, "Hall", "NORTH", "north", "Leads north", 1);
     exits.add(exit);
     Map<String, String> ambientState = new HashMap<>();
     ambientState.put("lighting", "dim");

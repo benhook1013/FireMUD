@@ -21,6 +21,17 @@ Every official release must include:
 - A `/licenses` directory in the release artifact containing dependency notices for that release when third-party attribution is required.
 - The published source archive or source reference covered by the release.
 
+## Current Automated Notice Scope
+
+The current automated dependency-notice workflow covers the package-managed ecosystems that make up the shipped product and release artifacts today:
+
+- `Gradle`
+- `NPM`
+
+Repository scripting languages are broader than the current release notice scope. Bash and Python are supported for repository automation, but Python is not yet treated as a release dependency ecosystem because the repository does not currently ship a manifest-managed Python package surface as part of the official product artifacts.
+
+If FireMUD later ships runtime or release-tool Python dependencies through a committed package manifest, the release `/licenses` automation must be expanded to cover that ecosystem as well.
+
 ## Release Checklist
 
 Before publishing a release:
@@ -36,10 +47,28 @@ Before publishing a release:
 6. Verify that `NOTICE` in the release artifact matches the release metadata actually being published.
 7. Verify that trademark wording remains current.
 
+## Release Automation
+
+The tag workflow in [`.github/workflows/release-notes.yml`](../../.github/workflows/release-notes.yml) generates the release-specific `NOTICE` asset automatically and assembles the release `/licenses` bundle from ORT output.
+
+- The workflow uses [`dev-tools/release/generate_notice.py`](../../dev-tools/release/generate_notice.py) and [`NOTICE.template.md`](../../NOTICE.template.md).
+- The workflow runs ORT with plain-text notice reporters and assembles the resulting dependency notices with [`dev-tools/release/assemble_licenses_dir.py`](../../dev-tools/release/assemble_licenses_dir.py).
+- The release publication date comes from the existing GitHub Release `publishedAt` timestamp when present, or falls back to the current UTC date during initial release creation.
+- The change date is computed as exactly two years after the release publication date.
+- The generated file is uploaded to the GitHub Release as `NOTICE.md`.
+- The assembled `/licenses` directory now includes:
+  - plain-text notice reports
+  - copied CycloneDX machine-readable inventory artifacts
+  - an attribution index
+  - per-package files grouped into runtime-like, non-runtime, and unknown-scope buckets
+- The assembled `/licenses` directory is uploaded to the GitHub Release as `firemud-<tag>-licenses.zip`.
+- A combined `NOTICE.md + /licenses` asset is uploaded as `firemud-<tag>-release-compliance.zip`.
+- Release assembly fails if required notice reports are missing or if the machine-readable inventory is empty.
+
 ## Repository Maintenance
 
 The repository should avoid baked-in dates that become stale between releases.
 
 - Keep [`NOTICE.md`](../../NOTICE.md) generic and repository-scoped.
 - Keep release-specific dates in generated release artifacts, not in long-lived source files.
-- If release automation begins generating `NOTICE` or `/licenses`, update this document and the release workflow configuration in `config/release/`.
+- Keep the ORT-backed `/licenses` assembly aligned with the release workflow and adjust it if the dependency notice shape changes.

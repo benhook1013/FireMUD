@@ -23,6 +23,7 @@ public record RoomSnapshotDto(
       Long exitId,
       Long targetRoomId,
       String targetRoomName,
+      String direction,
       String label,
       String description,
       Integer cost) {}

@@ -24,6 +24,15 @@ Provides chat, guild, and social networking features across games. Basic REST an
 - Presence indicators notify when friends come online
 - Game creators can broadcast announcements and send out-of-game emails
 
+## Current Scope Notes
+
+- The current gameplay-connected chat slice is intentionally narrow: it proves room-local `SAY`-family delivery from Game Session through Game Logic into Social & Groups.
+- Future communication work is expected to broaden this into a richer communication model that distinguishes:
+  - room-local speech,
+  - directed/private speech such as `WHISPER` or `TELL`,
+  - and wider propagation scopes such as area, map, region, continent, or tenant-level channels.
+- Those broader scope and routing semantics should be modeled explicitly rather than treating all verbs as cosmetic aliases of one generic room broadcast.
+
 ## Document Map
 
 - [API Contracts](./api-contracts.md)

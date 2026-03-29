@@ -19,6 +19,7 @@ public class TextCommandParser {
           case LOGIN -> parseRemainingTokens(tokens);
           case LOOK, NOOP -> List.of();
           case SAY -> extractSayMessage(trimmed);
+          case MOVE -> extractMoveArguments(tokens);
           case UNKNOWN -> parseRemainingTokens(tokens);
         };
     return new TextCommand(type, args, source);
@@ -41,5 +42,19 @@ public class TextCommandParser {
       return List.of();
     }
     return List.of(message);
+  }
+
+  private List<String> extractMoveArguments(String[] tokens) {
+    if (tokens.length == 0) {
+      return List.of();
+    }
+    String verb = tokens[0];
+    if (tokens.length == 1) {
+      return switch (verb.trim().toUpperCase()) {
+        case "NORTH", "SOUTH", "EAST", "WEST" -> List.of(verb.trim().toLowerCase());
+        default -> List.of();
+      };
+    }
+    return List.of(Arrays.copyOfRange(tokens, 1, tokens.length));
   }
 }

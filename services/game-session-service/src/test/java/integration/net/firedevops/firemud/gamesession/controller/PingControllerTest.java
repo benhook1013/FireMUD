@@ -7,6 +7,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import net.firedevops.firemud.gamesession.command.text.LoginCommandHandler;
 import net.firedevops.firemud.gamesession.command.text.LookCommandHandler;
+import net.firedevops.firemud.gamesession.command.text.MoveCommandHandler;
 import net.firedevops.firemud.gamesession.command.text.SayCommandHandler;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.PingService;
@@ -27,6 +28,7 @@ class PingControllerTest {
   @MockitoBean private GrpcServerLifecycle grpcServerLifecycle;
   @MockitoBean private LoginCommandHandler loginCommandHandler;
   @MockitoBean private LookCommandHandler lookCommandHandler;
+  @MockitoBean private MoveCommandHandler moveCommandHandler;
   @MockitoBean private SayCommandHandler sayCommandHandler;
   @MockitoBean private SessionAuthenticationService sessionAuthenticationService;
   @MockitoBean private GameInstanceRepository gameInstanceRepository;

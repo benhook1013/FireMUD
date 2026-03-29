@@ -97,7 +97,7 @@ class WorldManagementGrpcServiceTest {
                 "Seed room A",
                 List.of(
                     new RoomSnapshotDto.RoomExitSnapshotDto(
-                        1L, 2L, "Room B", "Room B", "Leads toward Room B", 1)),
+                        1L, 2L, "Room B", "NORTH", "Room B", "Leads toward Room B", 1)),
                 Map.of("weather", "dim"),
                 List.of()));
     MeterRegistry meterRegistry = Mockito.mock(MeterRegistry.class);
@@ -133,6 +133,7 @@ class WorldManagementGrpcServiceTest {
     assertEquals("Room A", ref.get().getSnapshot().getRoomName());
     assertEquals("1", ref.get().getSnapshot().getRoomInstanceId());
     assertEquals("2", ref.get().getSnapshot().getExits(0).getTargetRoomInstanceId());
+    assertEquals("NORTH", ref.get().getSnapshot().getExits(0).getDirection());
     assertEquals("dim", ref.get().getSnapshot().getAmbientState().getWeather());
   }
 }

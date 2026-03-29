@@ -12,10 +12,117 @@ permissions:
   pull-requests: write
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.ref }}
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Detect CI-Relevant Changes
+    runs-on: ubuntu-latest
+    outputs:
+      run_all: ${{ steps.compute.outputs.run_all }}
+      affected_services: ${{ steps.compute.outputs.affected_services }}
+      docs_changed: ${{ steps.compute.outputs.docs_changed }}
+      frontend_changed: ${{ steps.compute.outputs.frontend_changed }}
+    steps:
+      - name: Compute affected jobs
+        id: compute
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const allServices = [
+              "account-service",
+              "automation-scripting-service",
+              "entity-management-service",
+              "game-design-service",
+              "game-logic-service",
+              "game-session-service",
+              "logging-admin-service",
+              "social-groups-service",
+              "spring-cloud-gateway",
+              "tcp-proxy-service",
+              "world-management-service",
+            ];
+
+            if (context.eventName !== "pull_request") {
+              core.setOutput("run_all", "true");
+              core.setOutput("affected_services", JSON.stringify(allServices));
+              core.setOutput("docs_changed", "true");
+              core.setOutput("frontend_changed", "true");
+              return;
+            }
+
+            const files = await github.paginate(
+              github.rest.pulls.listFiles,
+              {
+                ...context.repo,
+                pull_number: context.payload.pull_request.number,
+                per_page: 100,
+              },
+              (response) => response.data.map((file) => file.filename)
+            );
+
+            const sharedPrefixes = [
+              "buildSrc/",
+              "gradle/",
+              "protos/",
+              "config/checkstyle/",
+              "config/protobuf/",
+              "config/security/",
+              "config/spotbugs/",
+              "services/common-data-runtime/",
+              "services/common-library/",
+              "services/common-platform-core/",
+              "services/common-saga/",
+              "services/common-security/",
+              "services/common-test-support/",
+              "services/common-web-support/",
+            ];
+            const sharedFiles = new Set([
+              "build.gradle.kts",
+              "settings.gradle.kts",
+              "gradle.properties",
+              ".github/workflows/ci.yml",
+            ]);
+
+            const docsPredicate = (file) =>
+              file === "AGENTS.md" ||
+              file === "mkdocs.yml" ||
+              file.startsWith("design/") ||
+              file.startsWith("dev-tools/docs/") ||
+              file.endsWith(".md");
+
+            const frontendPredicate = (file) =>
+              file.startsWith("web-client/") ||
+              file.startsWith("config/openapi/");
+
+            const runAll = files.some(
+              (file) =>
+                sharedFiles.has(file) ||
+                sharedPrefixes.some((prefix) => file.startsWith(prefix))
+            );
+
+            const affected = new Set();
+            if (runAll) {
+              allServices.forEach((service) => affected.add(service));
+            } else {
+              for (const file of files) {
+                for (const service of allServices) {
+                  if (file.startsWith(`services/${service}/`)) {
+                    affected.add(service);
+                  }
+                }
+              }
+            }
+
+            const docsChanged = runAll || files.some((file) => docsPredicate(file));
+            const frontendChanged = runAll || files.some((file) => frontendPredicate(file));
+
+            core.setOutput("run_all", runAll ? "true" : "false");
+            core.setOutput("affected_services", JSON.stringify([...affected]));
+            core.setOutput("docs_changed", docsChanged ? "true" : "false");
+            core.setOutput("frontend_changed", frontendChanged ? "true" : "false");
+
   buf-check:
     name: Buf Generation
     runs-on: ubuntu-latest
@@ -68,12 +175,64 @@ jobs:
     steps:
       - name: ⬇️ Checkout Code
         uses: actions/checkout@v6
-      - uses: ludeeus/action-shellcheck@master
+
+      - name: 📦 Install ShellCheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+
+      - name: 🐚 Lint tracked shell scripts
+        run: |
+          mapfile -t shell_files < <(git ls-files '*.sh')
+          if [ "${#shell_files[@]}" -eq 0 ]; then
+            echo "No tracked shell scripts found."
+            exit 0
+          fi
+          shellcheck "${shell_files[@]}"
+
+  python-script-validation:
+    name: Python Script Validation
+    runs-on: ubuntu-latest
+    steps:
+      - name: ⬇️ Checkout Code
+        uses: actions/checkout@v6
+
+      - name: 🐍 Set Up Python
+        uses: actions/setup-python@v6
         with:
-          scandir: dev-tools
+          python-version: '3.11'
+
+      - name: 🧪 Validate tracked Python scripts
+        run: |
+          mapfile -t python_files < <(git ls-files '*.py')
+          if [ "${#python_files[@]}" -eq 0 ]; then
+            echo "No tracked Python scripts found."
+            exit 0
+          fi
+          python3 -m py_compile "${python_files[@]}"
+
+  workflow-lint:
+    name: GitHub Workflow Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: ⬇️ Checkout Code
+        uses: actions/checkout@v6
+
+      - name: ⚙️ Set Up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.24'
+          cache: false
+
+      - name: 🧪 Validate GitHub Actions Workflows
+        run: |
+          go install github.com/rhysd/actionlint/cmd/actionlint@latest
+          "$(go env GOPATH)/bin/actionlint"
 
   docs-check:
     name: Lint Docs and Links
+    needs: [changes]
+    if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.docs_changed == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - name: ⬇️ Checkout Code
@@ -96,6 +255,9 @@ jobs:
       - name: ⚙️ Set Up Gradle
         uses: gradle/actions/setup-gradle@v6
         with:
+          build-scan-publish: true
+          build-scan-terms-of-use-url: 'https://gradle.com/help/legal-terms-of-use'
+          build-scan-terms-of-use-agree: 'yes'
           cache-read-only: false
 
       - name: 🧹 Lint Docs and Links
@@ -106,6 +268,8 @@ jobs:
 
   frontend-checks:
     name: Frontend Checks
+    needs: [changes]
+    if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.frontend_changed == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - name: ⬇️ Checkout Code
@@ -171,14 +335,18 @@ jobs:
 
       - name: Install ChromeDriver for axe
         run: |
-          CHROME_VERSION=$(google-chrome --product-version)
-          DRIVER_ZIP_URL="https://storage.googleapis.com/chrome-for-testing-public/${CHROME_VERSION}/linux64/chromedriver-linux64.zip"
+          CHROME_VERSION="$(google-chrome --product-version)"
+          CHROME_BUILD="${CHROME_VERSION%.*}"
+          DRIVER_ZIP_URL=$(
+            curl -fsSL https://googlechromelabs.github.io/chrome-for-testing/latest-patch-versions-per-build-with-downloads.json \
+              | CHROME_BUILD="$CHROME_BUILD" python3 -c "import json, os, sys; data = json.load(sys.stdin); build = os.environ['CHROME_BUILD']; print(next(item['url'] for item in data['builds'][build]['downloads']['chromedriver'] if item['platform'] == 'linux64'))"
+          )
           DRIVER_DIR=/tmp/chromedriver-for-testing
           curl -fsSL "$DRIVER_ZIP_URL" -o /tmp/chromedriver-linux64.zip
           rm -rf "$DRIVER_DIR"
           mkdir -p "$DRIVER_DIR"
           unzip -q /tmp/chromedriver-linux64.zip -d "$DRIVER_DIR"
-          echo "CHROMEDRIVER_PATH=$DRIVER_DIR/chromedriver-linux64/chromedriver" >> $GITHUB_ENV
+          echo "CHROMEDRIVER_PATH=$DRIVER_DIR/chromedriver-linux64/chromedriver" >> "$GITHUB_ENV"
 
       - name: ♿ Run Accessibility Audit
         run: |
@@ -192,25 +360,15 @@ jobs:
 
   build-and-test:
     name: Build and Test (${{ matrix.service }})
-    needs: [buf-check, docker-lint, shellcheck]
+    needs: [changes, buf-check, docker-lint, shellcheck, python-script-validation, workflow-lint]
+    if: ${{ needs.changes.outputs.affected_services != '[]' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
         java-version: [21]
-        service:
-          - account-service
-          - automation-scripting-service
-          - entity-management-service
-          - game-design-service
-          - game-logic-service
-          - game-session-service
-          - logging-admin-service
-          - social-groups-service
-          - spring-cloud-gateway
-          - tcp-proxy-service
-          - world-management-service
+        service: ${{ fromJSON(needs.changes.outputs.affected_services) }}
 
     steps:
       - name: ⬇️ Checkout Code
@@ -225,6 +383,9 @@ jobs:
       - name: ⚙️ Set Up Gradle
         uses: gradle/actions/setup-gradle@v6
         with:
+          build-scan-publish: true
+          build-scan-terms-of-use-url: 'https://gradle.com/help/legal-terms-of-use'
+          build-scan-terms-of-use-agree: 'yes'
           cache-read-only: false
 
       - name: 🧪 Run Gradle Checks
@@ -252,7 +413,7 @@ jobs:
             echo "Coverage file not found" >&2
             PERCENT=0
           fi
-          echo "percent=$PERCENT" >> $GITHUB_OUTPUT
+          echo "percent=$PERCENT" >> "$GITHUB_OUTPUT"
 
       - name: 📤 Upload Coverage Report
         uses: actions/upload-artifact@v7
@@ -270,7 +431,7 @@ jobs:
   validation-summary:
     name: Validation Summary
     runs-on: ubuntu-latest
-    needs: [buf-check, docker-lint, shellcheck, docs-check, frontend-checks, build-and-test, validation-gate]
+    needs: [buf-check, docker-lint, shellcheck, python-script-validation, docs-check, frontend-checks, build-and-test, validation-gate]
     if: github.event_name == 'pull_request' && always()
     steps:
       - name: 💬 Publish Validation Summary Comment
@@ -289,6 +450,7 @@ jobs:
               ["Buf generation", "${{ needs.buf-check.result }}"],
               ["Dockerfile lint", "${{ needs.docker-lint.result }}"],
               ["ShellCheck", "${{ needs.shellcheck.result }}"],
+              ["Python script validation", "${{ needs.python-script-validation.result }}"],
               ["Docs and links", "${{ needs.docs-check.result }}"],
               ["Frontend checks", "${{ needs.frontend-checks.result }}"],
               ["Service build/test matrix", "${{ needs.build-and-test.result }}"],
@@ -347,26 +509,36 @@ jobs:
   validation-gate:
     name: Validation Gate
     runs-on: ubuntu-latest
-    needs: [buf-check, docker-lint, shellcheck, docs-check, frontend-checks, build-and-test]
+    needs: [changes, buf-check, docker-lint, shellcheck, python-script-validation, workflow-lint, docs-check, frontend-checks, build-and-test]
     if: always()
     steps:
       - name: Enforce validation success
         env:
+          DOCS_CHANGED: ${{ needs.changes.outputs.docs_changed }}
+          FRONTEND_CHANGED: ${{ needs.changes.outputs.frontend_changed }}
+          AFFECTED_SERVICES: ${{ needs.changes.outputs.affected_services }}
           BUF_CHECK: ${{ needs.buf-check.result }}
           DOCKER_LINT: ${{ needs.docker-lint.result }}
           SHELLCHECK: ${{ needs.shellcheck.result }}
+          PYTHON_SCRIPT_VALIDATION: ${{ needs.python-script-validation.result }}
+          WORKFLOW_LINT: ${{ needs.workflow-lint.result }}
           DOCS_CHECK: ${{ needs.docs-check.result }}
           FRONTEND_CHECKS: ${{ needs.frontend-checks.result }}
           BUILD_AND_TEST: ${{ needs.build-and-test.result }}
         run: |
+          is_acceptable_optional_result() {
+            local result="$1"
+            [ "$result" = "success" ] || [ "$result" = "skipped" ]
+          }
+
           failed=0
+
           for check in \
             "Buf Generation:$BUF_CHECK" \
             "Dockerfile Lint:$DOCKER_LINT" \
             "ShellCheck:$SHELLCHECK" \
-            "Lint Docs and Links:$DOCS_CHECK" \
-            "Frontend Checks:$FRONTEND_CHECKS" \
-            "Build and Test Matrix:$BUILD_AND_TEST"
+            "Python Script Validation:$PYTHON_SCRIPT_VALIDATION" \
+            "GitHub Workflow Lint:$WORKFLOW_LINT"
           do
             name="${check%%:*}"
             result="${check#*:}"
@@ -375,6 +547,39 @@ jobs:
               failed=1
             fi
           done
+
+          echo "Lint Docs and Links => $DOCS_CHECK"
+          if [ "$DOCS_CHANGED" = "true" ]; then
+            if [ "$DOCS_CHECK" != "success" ]; then
+              failed=1
+            fi
+          else
+            if ! is_acceptable_optional_result "$DOCS_CHECK"; then
+              failed=1
+            fi
+          fi
+
+          echo "Frontend Checks => $FRONTEND_CHECKS"
+          if [ "$FRONTEND_CHANGED" = "true" ]; then
+            if [ "$FRONTEND_CHECKS" != "success" ]; then
+              failed=1
+            fi
+          else
+            if ! is_acceptable_optional_result "$FRONTEND_CHECKS"; then
+              failed=1
+            fi
+          fi
+
+          echo "Build and Test Matrix => $BUILD_AND_TEST"
+          if [ "$AFFECTED_SERVICES" != "[]" ]; then
+            if [ "$BUILD_AND_TEST" != "success" ]; then
+              failed=1
+            fi
+          else
+            if ! is_acceptable_optional_result "$BUILD_AND_TEST"; then
+              failed=1
+            fi
+          fi
 
           if [ "$failed" -ne 0 ]; then
             echo "Validation Gate failed because one or more required validation jobs did not succeed." >&2

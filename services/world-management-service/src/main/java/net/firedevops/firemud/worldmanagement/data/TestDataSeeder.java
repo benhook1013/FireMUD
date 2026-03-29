@@ -63,6 +63,7 @@ public class TestDataSeeder implements ApplicationRunner {
       exit.setTenantId(1L);
       exit.setFromRoom(room1);
       exit.setToRoom(room2);
+      exit.setDirection("NORTH");
       roomExitRepository.save(exit);
     }
   }

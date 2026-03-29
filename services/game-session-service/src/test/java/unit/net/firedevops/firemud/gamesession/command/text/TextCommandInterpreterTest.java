@@ -58,13 +58,14 @@ class TextCommandInterpreterTest {
           lookCacheService,
           devIsolatedProperties);
   private final AccountClient accountClient = Mockito.mock(AccountClient.class);
+  private final MoveCommandHandler moveHandler = Mockito.mock(MoveCommandHandler.class);
   private final SayCommandHandler sayHandler = Mockito.mock(SayCommandHandler.class);
   private final ObjectProvider<DevIsolatedGameInstanceRegistry> devIsolatedRegistryProvider =
       Mockito.mock(ObjectProvider.class);
   private LoginCommandHandler loginHandler;
   private TextCommandInterpreter interpreter;
   private final SessionContext sessionContext =
-      new SessionContext(1L, 22L, 123L, 911L, 0L, "jwt-token");
+      new SessionContext(1L, 22L, 123L, 911L, 0L, "room-42", "jwt-token");
 
   @BeforeEach
   void setUp() {
@@ -86,6 +87,7 @@ class TextCommandInterpreterTest {
             accountClient,
             commandService,
             devIsolatedProperties,
+            gameLogicProperties,
             devIsolatedRegistryProvider,
             meterRegistry);
     GameInstance demoInstance = new GameInstance();
@@ -98,7 +100,12 @@ class TextCommandInterpreterTest {
         .thenReturn(Optional.of(sessionContext));
     interpreter =
         new TextCommandInterpreter(
-            commandService, lookHandler, loginHandler, sessionAuthenticationService, sayHandler);
+            commandService,
+            lookHandler,
+            loginHandler,
+            moveHandler,
+            sessionAuthenticationService,
+            sayHandler);
   }
 
   @Test
@@ -120,6 +127,7 @@ class TextCommandInterpreterTest {
             commandService,
             mockLookHandler,
             loginHandler,
+            moveHandler,
             sessionAuthenticationService,
             sayHandler);
     when(commandService.enqueue("123", "LOOK", false)).thenReturn(CommandEnqueueResult.success());
@@ -156,7 +164,7 @@ class TextCommandInterpreterTest {
         LookResult.newBuilder()
             .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("1021").build())
             .build();
-    when(gameLogicClient.resolveLook("22", "1", "911", "1021")).thenReturn(lookResult);
+    when(gameLogicClient.resolveLook("22", "1", "911", "room-42")).thenReturn(lookResult);
     when(lookTextRenderer.render(lookResult)).thenReturn("OK LOOK constructed");
     TextCommandInterpretationResult interpretation = interpreter.interpret("123", command, false);
 
@@ -242,5 +250,37 @@ class TextCommandInterpreterTest {
 
     assertTrue(interpretation.commandResult().accepted());
     verify(commandService).enqueue("999", "LOOK", false);
+  }
+
+  @Test
+  void movementCommandRequiresAuthentication() {
+    when(moveHandler.handle(Mockito.eq("321"), Mockito.any(TextCommand.class)))
+        .thenReturn(
+            new MoveCommandHandlingResult(
+                CommandEnqueueResult.failure("NOT_AUTHENTICATED", "Login required"), null));
+
+    TextCommandInterpretationResult interpretation =
+        interpreter.interpret("321", "MOVE north", false);
+
+    CommandEnqueueResult result = interpretation.commandResult();
+    assertFalse(result.accepted());
+    assertEquals("NOT_AUTHENTICATED", result.errorCode());
+    verify(commandService, never()).enqueue(anyString(), anyString(), anyBoolean());
+  }
+
+  @Test
+  void movementCommandIsEnqueuedWhenAuthenticated() {
+    MoveCommandHandlingResult moveResult =
+        new MoveCommandHandlingResult(CommandEnqueueResult.success(), "OK LOOK\nNorth room\n\n");
+    when(moveHandler.handle(Mockito.eq("999"), Mockito.any(TextCommand.class)))
+        .thenReturn(moveResult);
+
+    TextCommandInterpretationResult interpretation = interpreter.interpret("999", "north", false);
+
+    assertTrue(interpretation.commandResult().accepted());
+    assertEquals("OK LOOK\nNorth room\n\n", interpretation.responseText());
+    assertTrue(interpretation.protocolResponse());
+    verify(moveHandler).handle(Mockito.eq("999"), Mockito.any(TextCommand.class));
+    verify(commandService, never()).enqueue("999", "north", false);
   }
 }

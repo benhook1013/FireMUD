@@ -67,7 +67,7 @@ root
 - `charts/` – Umbrella Helm chart for deploying all services together.
 - `config/` – Checkstyle, ESLint, git hooks, Hadolint, lychee link checker, Markdownlint, OpenAPI generator, protobuf (Buf), Redis, release automation, security scans, SpotBugs, and TypeScript configs.
 - `design/` – Architecture, operations, and user guide documentation; under `design/architecture/`, overview tables, responsibility matrices, glossary terms, and explicitly labeled canonical sections define target-state contracts for implementation unless a document says otherwise.
-- `dev-tools/` – Shell utilities for database backups and restores, ERD generation, development certificates, a CLI, API client configs (Insomnia and Kreya), data seeding, and a Gatling load-testing module.
+- `dev-tools/` – Bash and Python utilities for database backups and restores, release asset generation, ERD generation, development certificates, a CLI, API client configs (Insomnia and Kreya), data seeding, and a Gatling load-testing module.
 - `docker/` – Base Dockerfiles and Docker Compose stack for local development.
 - `gradle/` – Gradle version catalog, build conventions, and wrapper binaries.
 - `k8s/` – Kubernetes manifests, per-service Helm charts, monitoring configs, network policies, and sample Terraform modules for local and production clusters.

@@ -4,6 +4,8 @@
 
 Handles player characters, NPCs, items, and all inventory/containment. Provides CRUD operations for entities and exposes them to other services. This includes player inventories and equipment, container contents (chests, corpses, banks, bags), and items on the ground in rooms (room/ground inventory) modeled as items inside dedicated room-ground container entities keyed by `(tenantId, gameInstanceId, roomInstanceId)` (a `RoomInstanceRef`) rather than being stored in the World Management Service.
 
+Character ownership is tenant-scoped, but Entity Management must support both tenant-shared and instance-local playable state depending on the resolved realm policy. In practice this means a character may remain owned by the same `{accountId, tenantId}` while some associated gameplay state, such as copied fork-local progression, seeded/sample-state inventory, or fresh standalone realm-local records, is isolated to a specific `gameInstanceId`.
+
 ### Responsibilities
 
 - Persist characters, NPCs, and items with optimistic locking
@@ -22,6 +24,7 @@ For canonical naming and scoping rules, see [Identifier Glossary](../../system-a
 - Experience and level tracking
 - NPC respawn scheduling with configurable delays
 - Character creation templates pulled from the Game Design Service
+- Support for both tenant-shared character state and isolated realm-local character state, depending on the resolved realm/runtime contract
 - Supports instance-based spaces in conjunction with the World Management Service so characters can enter private dungeons or personalized housing without affecting the shared world state
 - Crafting recipe management with validation
 - Cross-game character listing via account linkage

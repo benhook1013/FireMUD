@@ -208,7 +208,7 @@ Fail-closed reader rule:
 The `game_assets` table stores metadata for design-time uploads. Columns include:
 
 - `id` – primary key
-- `tenant_id` – identifies the owning game as a GUID string stored in `VARCHAR(36)`
+- `tenant_id` – identifies the owning game as a UUID string stored in `VARCHAR(36)`
 - `file_name` – original file name
 - `content_type` – MIME type
 - `storage_key` – object-store key for the canonical draft asset bytes

@@ -10,6 +10,7 @@ import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.gamelogic.logic.dto.CommandResult;
 import net.firedevops.firemud.gamelogic.logic.service.CommandService;
 import net.firedevops.firemud.gamelogic.service.LookAggregationService;
+import net.firedevops.firemud.gamelogic.service.MoveAggregationService;
 import net.firedevops.firemud.gamelogic.service.PingService;
 import net.firedevops.firemud.gamelogic.service.SayAggregationService;
 import net.firedevops.firemud.gamelogic.v1.BroadcastSayRequest;
@@ -19,6 +20,8 @@ import net.firedevops.firemud.gamelogic.v1.ExecuteCommandResponse;
 import net.firedevops.firemud.gamelogic.v1.GameLogicServiceGrpc;
 import net.firedevops.firemud.gamelogic.v1.LookRequest;
 import net.firedevops.firemud.gamelogic.v1.LookResult;
+import net.firedevops.firemud.gamelogic.v1.MoveRequest;
+import net.firedevops.firemud.gamelogic.v1.MoveResult;
 import net.firedevops.firemud.gamelogic.v1.PingRequest;
 import net.firedevops.firemud.gamelogic.v1.PingResponse;
 import org.springframework.grpc.server.service.GrpcService;
@@ -30,6 +33,7 @@ public class GameLogicGrpcService extends GameLogicServiceGrpc.GameLogicServiceI
   private final CommandService commandService;
   private final LookAggregationService lookAggregationService;
   private final SayAggregationService sayAggregationService;
+  private final MoveAggregationService moveAggregationService;
 
   @SuppressFBWarnings(
       value = "EI_EXPOSE_REP2",
@@ -41,11 +45,13 @@ public class GameLogicGrpcService extends GameLogicServiceGrpc.GameLogicServiceI
       CommandService commandService,
       LookAggregationService lookAggregationService,
       SayAggregationService sayAggregationService,
+      MoveAggregationService moveAggregationService,
       MeterRegistry meterRegistry) {
     this.pingService = pingService;
     this.commandService = commandService;
     this.lookAggregationService = lookAggregationService;
     this.sayAggregationService = sayAggregationService;
+    this.moveAggregationService = moveAggregationService;
     this.meterRegistry = meterRegistry;
   }
 
@@ -92,6 +98,14 @@ public class GameLogicGrpcService extends GameLogicServiceGrpc.GameLogicServiceI
   public void broadcastSay(
       BroadcastSayRequest request, StreamObserver<BroadcastSayResponse> responseObserver) {
     BroadcastSayResponse response = sayAggregationService.broadcast(request);
+    responseObserver.onNext(response);
+    responseObserver.onCompleted();
+  }
+
+  @Override
+  @Timed(value = "gamelogicGrpc.resolveMove")
+  public void resolveMove(MoveRequest request, StreamObserver<MoveResult> responseObserver) {
+    MoveResult response = moveAggregationService.resolve(request);
     responseObserver.onNext(response);
     responseObserver.onCompleted();
   }
