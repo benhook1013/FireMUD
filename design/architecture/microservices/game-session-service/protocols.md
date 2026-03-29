@@ -195,7 +195,7 @@ The canonical text renderer should preserve a classic MUD feel:
 
 A standard `QUICKLOOK` command should later reuse the same underlying room-view structure but skip the room-description prose, making it suitable for rapid redraws that still show visible occupants, room-ground items, exits, and the normal prompt/status line.
 
-`SAY`, `YELL`, and `WHISPER` currently emit a shared success payload so Telnet and WebSocket clients can render the same transcript. After a successful chat command the server responds with:
+The first live room-speech mode currently emits a shared success payload so Telnet and WebSocket clients can render the same transcript. After a successful chat command the server responds with:
 
 ```text
 OK SAY
@@ -217,7 +217,7 @@ This structured payload should not be treated as the final platform abstraction 
 
 For in-world communication, the command should usually target the room/area/etc. rather than precomputing the final recipient list in the sender path. That keeps room-local speech extensible for eavesdropping, spy skills, magical listening, and other target-owned delivery rules.
 
-Chat parsing enforces that `SAY` and `YELL` include at least one non-whitespace character and that `WHISPER` provides both an existing player identifier and the message text. Submitting an empty payload or exceeding the configured message limit, currently 512 characters, yields `ERROR INVALID_ARGUMENT Message text must be 1-512 characters long`. A missing whisper target or text returns the same `ERROR INVALID_ARGUMENT` guidance so clients can keep their parsers simple.
+The current room-speech parser enforces that `SAY` includes at least one non-whitespace character. While `YELL` and `WHISPER` exist today as temporary command-surface aliases on the same path, they should not be treated as final speech semantics. Submitting an empty payload or exceeding the configured message limit, currently 512 characters, yields `ERROR INVALID_ARGUMENT Message text must be 1-512 characters long`.
 
 ### LOOK transcripts
 

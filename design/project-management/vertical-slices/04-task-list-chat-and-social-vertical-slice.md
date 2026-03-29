@@ -23,11 +23,11 @@ Scope note: this slice is the first implemented room-speech pathway, but it shou
 
 Out of scope for this slice implementation: fully differentiated speech semantics such as directed/private `WHISPER` or `TELL`, propagation beyond the current room, and topology-aware audible ranges such as area/map/region/continent shouts. Those behaviors should be treated as later follow-up slices, but the shared communication model should be designed now so they land as configuration and target-resolution changes rather than a later rewrite.
 
-## 1. Protocol, UX, and Design Alignment for SAY
+## 1. Protocol, UX, and Design Alignment for the Initial Room-Speech Mode
 
-- [x] Update the [Minimal Text Command Protocol](../../architecture/microservices/game-session-service/README.md#minimal-text-command-protocol) section so `SAY` (and aliases like `YELL`/`WHISPER`) document the required arguments, the canonical response shape (`OK SAY`, speaker annotations, delivered-to list), and how edge cases (empty message, overly long text) report `ERROR INVALID_ARGUMENT`.
+- [x] Update the [Minimal Text Command Protocol](../../architecture/microservices/game-session-service/README.md#minimal-text-command-protocol) section so the first live room-speech mode documents the required arguments, the canonical response shape (`OK SAY`, speaker annotations, delivered-to list), and how edge cases (empty message, overly long text) report `ERROR INVALID_ARGUMENT`.
 - [x] Decide and document the order of appearance for in-room chat lines, speaker attribution, and how co-located listeners see the `SAY` payload (e.g., prefixed with nick vs. `PlayerName says ...`). Capture at least one Telnet and one WebSocket transcript showing `SAY` reaching two clients plus a nearby NPC echo.
-- [x] Add a short subsection to the [Game Session Service](../../architecture/microservices/game-session-service/README.md) and [Game Logic Service](../../architecture/microservices/game-logic-service/README.md) design docs (noting the [Social/Groups Service](../../architecture/microservices/social-groups-service/README.md) stub) describing how `SAY` requests flow through Game Session -> Game Logic -> Social/Group services and how we guard the pathway with authentication/session context.
+- [x] Add a short subsection to the [Game Session Service](../../architecture/microservices/game-session-service/README.md) and [Game Logic Service](../../architecture/microservices/game-logic-service/README.md) design docs (noting the [Social/Groups Service](../../architecture/microservices/social-groups-service/README.md) stub) describing how the initial room-speech requests flow through Game Session -> Game Logic -> Social/Groups services and how the shared communication model should expand later without replacing this path.
 - [x] Confirm the design docs reiterate `SAY` requires the same authenticated session guard already pulled into `LOOK` and that unauthenticated clients receive `ERROR NOT_AUTHENTICATED`.
 
 ### In-room `SAY` ordering and transcripts
@@ -81,18 +81,18 @@ Kobold Scout says, "Stay awhile."
 
 These transcripts demonstrate how both transports serialize the canonical `OK SAY` structure before layering flavor text for players or NPCs, ensuring regression suites can assert parity between Telnet and WebSocket experiences.
 
-## 2. Game Logic Service: Chat Aggregation
+## 2. Game Logic Service: Communication Aggregation
 
-- [x] Introduce a Game Logic gRPC entry for chat, e.g., `BroadcastSay`, that accepts tenant/session/player context plus the message text and returns `Ok`/`Error` with optional delivery metadata (list of recipient IDs or locations).
-- [x] Implement the handler to validate message length, call the Social/Group facades (or stubbed in-memory broadcaster), and emit failure statuses when the service refuses (e.g., `PERMISSION_DENIED` for silenced players).
+- [x] Introduce a Game Logic gRPC entry for the first communication mode, e.g. `BroadcastSay`, and shape its documentation so later communication intents can carry communication type, target/scope, and delivery metadata instead of hard-coding room speech as the permanent abstraction.
+- [x] Implement the initial room-speech handler to validate message length, call the Social/Group facades (or stubbed in-memory broadcaster), and emit failure statuses when the service refuses (e.g., `PERMISSION_DENIED` for silenced players).
 - [x] Add unit tests covering successful `SAY` (single recipient + multiple recipients), message validation failures, and propagation of backend errors (Social service unavailable).
-- [x] Document the new chat API in the Game Logic design doc with its responsibilities, especially how it differs from future channel/combat output formats, and spell out that logical failures such as `PERMISSION_DENIED` or backend `UNAVAILABLE` return structured `ErrorDetail` objects so Game Session can map them to `ERROR SAY_NOT_DELIVERED ...` while keeping `gamesession.command.say.*` metrics aligned.
+- [x] Document the communication API in the Game Logic design doc with its responsibilities, especially the distinction between communication act, target/scope, recipient resolution, and recipient-facing presentation, and spell out that logical failures such as `PERMISSION_DENIED` or backend `UNAVAILABLE` return structured `ErrorDetail` objects so Game Session can map them to `ERROR SAY_NOT_DELIVERED ...` while keeping `gamesession.command.say.*` metrics aligned.
 
-## 3. Game Session Service: Wiring Text SAY to Game Logic
+## 3. Game Session Service: Wiring the Initial Text Communication Mode
 
-- [x] Extend the `TextCommandInterpreter` / `LookCommandHandler` neighborhood so `SAY` (and `YELL`/`WHISPER`) text commands route to a new `SayCommandHandler` that translates tokens+session context into `BroadcastSay` gRPC calls while the interpreter reuses the same authenticated session guard (via the `LookCommandHandler` validation) before issuing chat requests.
+- [x] Extend the `TextCommandInterpreter` / `LookCommandHandler` neighborhood so the initial `SAY` text command routes to a `SayCommandHandler` that translates tokens+session context into `BroadcastSay` gRPC calls while the interpreter reuses the same authenticated session guard (via the `LookCommandHandler` validation) before issuing communication requests.
 - [x] Map Game Logic chat errors (`ERR_ROOM_SILENCED`, `ERR_SOCIAL_UNAVAILABLE`, etc.) into the text protocol (`ERROR SAY_NOT_DELIVERED ...`), preserve `OK SAY` when delivery succeeds, and emit `gamesession.command.say.invocations`/`gamesession.command.say.failures` metrics/logs tagged by tenant and error codes.
-- [x] Add unit/integration tests for `SayCommandHandler` using stubbed Game Logic clients to cover success and error branches, and verify the interpreter still handles aliases (`YELL`/`WHISPER`).
+- [x] Add unit/integration tests for `SayCommandHandler` using stubbed Game Logic clients to cover success and error branches, while keeping the handler shape open for later explicit communication modes such as target-directed `WHISPER`, `TELL`, or wider propagation acts.
 
 ## 4. Cross-Service Chat Regression Tests
 
