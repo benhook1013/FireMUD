@@ -16,8 +16,53 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  ort-scan:
-    name: License Gate
+  changes:
+    name: Detect License-Relevant Changes
+    runs-on: ubuntu-latest
+    outputs:
+      run_gradle_ort: ${{ steps.filter.outputs.gradle }}
+      run_npm_ort: ${{ steps.filter.outputs.npm }}
+      run_any_ort: ${{ steps.filter.outputs.gradle == 'true' || steps.filter.outputs.npm == 'true' }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Detect dependency-relevant changes
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            gradle:
+              - 'build.gradle.kts'
+              - 'settings.gradle.kts'
+              - 'gradle.properties'
+              - 'buildSrc/**'
+              - 'gradle/**'
+              - '**/build.gradle.kts'
+              - '**/settings.gradle.kts'
+              - '**/gradle.properties'
+              - '**/gradle-wrapper.properties'
+              - '**/gradle-wrapper.jar'
+              - '.github/workflows/license-scan.yml'
+              - '.github/workflows/release-notes.yml'
+              - '.github/workflows/ort-advisory.yml'
+            npm:
+              - 'package.json'
+              - 'package-lock.json'
+              - 'config/openapi/package.json'
+              - 'config/openapi/package-lock.json'
+              - 'web-client/package.json'
+              - 'web-client/package-lock.json'
+              - '.github/workflows/license-scan.yml'
+              - '.github/workflows/release-notes.yml'
+              - '.github/workflows/ort-advisory.yml'
+
+  ort-gradle:
+    name: License Gate (Gradle)
+    needs: [changes]
+    if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.run_gradle_ort == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - name: Use HTTPS for Git
@@ -54,7 +99,7 @@ jobs:
         id: ort
         uses: oss-review-toolkit/ort-ci-github-action@v1
         with:
-          ort-cli-args: '-P ort.analyzer.enabledPackageManagers=Gradle,NPM'
+          ort-cli-args: '-P ort.analyzer.enabledPackageManagers=Gradle'
           run: 'cache-dependencies,labels,analyzer,evaluator,reporter,upload-results'
           fail-on: policy-violation
           report-formats: 'CycloneDx,WebApp'
@@ -63,7 +108,7 @@ jobs:
       - name: Upload ORT results
         uses: actions/upload-artifact@v7
         with:
-          name: ort-result-${{ github.sha }}
+          name: ort-result-gradle-${{ github.sha }}
           path: ${{ steps.ort.outputs.results-path }}
       - name: Summarize ORT report
         if: github.event_name == 'pull_request'
@@ -71,7 +116,69 @@ jobs:
           SUMMARY_FILE=$(find "${{ steps.ort.outputs.results-path }}" -maxdepth 1 -name 'scan-summary-*.md' -print | head -n 1)
           if [ -f "$SUMMARY_FILE" ]; then
             {
-              echo "### 📜 License Scan Summary"
+              echo "### 📜 License Scan Summary (Gradle)"
+              cat "$SUMMARY_FILE"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  ort-npm:
+    name: License Gate (NPM)
+    needs: [changes]
+    if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.run_npm_ort == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Use HTTPS for Git
+        run: git config --global url.https://github.com/.insteadOf ssh://git@github.com/
+
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: ⚙️ Set Up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: ⚙️ Set Up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            config/openapi/package-lock.json
+            web-client/package-lock.json
+
+      - name: ⚙️ Set Up Gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          build-scan-publish: true
+          build-scan-terms-of-use-url: 'https://gradle.com/help/legal-terms-of-use'
+          build-scan-terms-of-use-agree: 'yes'
+          cache-read-only: false
+
+      - name: Run ORT License Scan
+        id: ort
+        uses: oss-review-toolkit/ort-ci-github-action@v1
+        with:
+          ort-cli-args: '-P ort.analyzer.enabledPackageManagers=NPM'
+          run: 'cache-dependencies,labels,analyzer,evaluator,reporter,upload-results'
+          fail-on: policy-violation
+          report-formats: 'CycloneDx,WebApp'
+          ort-cli-report-args: '-O CycloneDX=output.file.formats=json,xml'
+
+      - name: Upload ORT results
+        uses: actions/upload-artifact@v7
+        with:
+          name: ort-result-npm-${{ github.sha }}
+          path: ${{ steps.ort.outputs.results-path }}
+      - name: Summarize ORT report
+        if: github.event_name == 'pull_request'
+        run: |
+          SUMMARY_FILE=$(find "${{ steps.ort.outputs.results-path }}" -maxdepth 1 -name 'scan-summary-*.md' -print | head -n 1)
+          if [ -f "$SUMMARY_FILE" ]; then
+            {
+              echo "### 📜 License Scan Summary (NPM)"
               cat "$SUMMARY_FILE"
             } >> "$GITHUB_STEP_SUMMARY"
           fi
