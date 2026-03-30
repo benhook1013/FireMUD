@@ -26,7 +26,7 @@ Despite their differences, both protocols are normalized into the same internal 
 - Routed through the [Spring Cloud Gateway](./microservices/spring-cloud-gateway/README.md), which supports WebSocket proxying.
 - Canonical player-facing endpoint is `/ws/game/**` (token-enforced for non-proxy clients; trusted TCP Proxy bridge is authenticated by mTLS identity).
 - Forwarded to the [Game Session Service](./microservices/game-session-service/README.md), which maintains the gameplay session.
-- When Spring Cloud Gateway or Game Session pods restart, **clients reconnect their WebSocket connections**, acquire a fresh connect token for `/ws/game/**`, then re-run `LOGIN`/`PLAY`. Game Session uses Redis-backed session state to resume gameplay where possible as described in [Reconnection Strategy](./system-architecture-reconnection.md). The gateway does not maintain hidden, long‑lived WebSocket tunnels across its own restarts; it simply resumes routing once clients re‑establish connections.
+- Game Session restart should ideally be absorbed behind the established edge connection using shared state and backend rebind, as described in [Reconnection Strategy](./system-architecture-reconnection.md). Spring Cloud Gateway remains the edge socket owner, so a client whose live WebSocket was terminated on the specific Gateway process that restarted or crashed still reconnects, acquires a fresh connect token for `/ws/game/**`, and re-runs `LOGIN`/`PLAY`. Unaffected sockets on other healthy Gateway instances should remain up, and the gateway fleet should continue accepting new handshakes through those healthy instances.
 
 ### WebSocket Flow Benefits
 
@@ -66,11 +66,11 @@ Clean upstream logout example:
 - Game Session or Gateway closes the authenticated internal bridge with `1000/logout` and a supported bounded subreason such as `takeover`, `user_logout`, `admin_termination`, or `none`.
 - TCP Proxy preserves that clean upstream session-end signal as the Telnet-side `logout` category with the same bounded subreason instead of translating it into `backend_unavailable`.
 
-Unattributed bridge-loss example:
+Unattributed bridge-loss example affecting one established Telnet bridge:
 
 - The authenticated internal bridge drops without a machine-parseable planned-drain close (for example abrupt transport reset or crash).
 - TCP Proxy classifies the loss as `bridge_shutdown_class=unattributed_failure`.
-- For an already-established Telnet session, the proxy closes the client connection immediately with `backend_unavailable`; it does not hold the TCP socket open for hidden bridge recovery.
+- For that already-established Telnet session, the proxy closes the client connection immediately with `backend_unavailable`; it does not hold the TCP socket open for hidden bridge recovery. Other Telnet sessions whose bridges terminate on healthy Gateway instances should remain unaffected.
 
 MCP negotiation and cord state are also scoped to a single TCP connection. When a Telnet client reconnects after any disconnect (including Gateway outages, TCP Proxy restarts, or client-side network loss), it must re-run MCP negotiation and re-open any required cords. Redis-backed gameplay session state (account/player identity, tick queues, cooldowns) is distinct from MCP metadata and governs whether gameplay resumes or starts fresh. See [Mud Client Protocol (MCP) Support](./system-architecture-mud-client-protocol.md#reconnection--session-recovery) for details.
 
