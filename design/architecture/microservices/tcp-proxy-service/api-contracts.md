@@ -8,6 +8,8 @@ The proxy does not expose a public client API. Instead it emits a gRPC event for
 
 These events let the Game Session Service resume suspended sessions and resume processing of any Redis-backed gameplay command queues it owns. They do not authorize replay of prior outbound transport bytes onto a new client socket. The TCP Proxy never replays Telnet input after a disconnect; connection-local buffers are cleared as soon as the TCP session closes. `NotifyDisconnect` is therefore a best-effort, at-least-once lifecycle signal keyed by `{proxyConnectionId, disconnectSequence}` rather than a request to re-run gameplay commands.
 
+The proxy is an edge component, not the owner of resumable gameplay state. Non-edge restart invisibility depends on Game Session and downstream gameplay services being able to rebind from shared state without needing the proxy to preserve authoritative in-memory transport context. If a non-edge restart still forces Telnet reconnect while the TCP socket remained healthy, that is a downstream takeover gap rather than an intended TCP Proxy contract.
+
 When a `NotifyDisconnect` call fails with a transport-level error, the proxy retries it with a short, bounded exponential backoff window:
 
 - `TCP_PROXY_NOTIFY_DISCONNECT_MAX_RETRY_MS` bounds the total retry window after Telnet socket close.

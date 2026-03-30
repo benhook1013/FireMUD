@@ -4,6 +4,8 @@
 
 Orchestrates live game sessions, including tick execution, player input validation, and runtime feature toggles. It is the gameplay session front door for both Telnet and `/ws/game/**` clients and the lease-owning tick executor for each active `<tenantId, regionId>` pair.
 
+Meaningful gameplay-session and tick-coordination state is externalized into Redis and PostgreSQL rather than kept as authoritative process-local memory. Game Session instances are therefore designed as replaceable workers: a new instance of the same service type should be able to resume session-front-end or lease-owner responsibility from shared state, and any user-visible reconnect caused solely by a non-edge Game Session restart remains implementation debt rather than target behavior.
+
 This doc set is the authoritative source for:
 
 - gameplay session ownership and front-door responsibilities;
@@ -45,6 +47,10 @@ Game Session is both a session front-end and a tick executor:
 - Front-ends may forward execution requests to lease owners over internal gRPC, but forwarded work is still fenced by the current region lease/epoch and must reject stale or missing fences.
 
 This split keeps `/ws/game/**` and Telnet gameplay sessions stable at the edge while allowing in-cluster lease rebalancing without forcing reconnects solely because a region moved.
+
+The same replaceability rule applies to ordinary non-edge failure handling: if a session front-end pod or lease owner fails, another Game Session instance should be able to recover ownership from shared state without making that backend restart itself the player-visible event. Only edge transport loss or explicit edge-drain policy should normally force a visible reconnect.
+
+The same rule applies to non-edge service restarts more broadly: Game Session front-end instances and region lease owners must externalize meaningful live state into Redis/PostgreSQL-backed coordination so another same-type instance can take over after restart. If a Game Session restart is still visibly forcing client re-`LOGIN` or re-`PLAY` while the edge socket remained healthy, that is implementation debt rather than accepted target behavior.
 
 ## Documentation Map
 

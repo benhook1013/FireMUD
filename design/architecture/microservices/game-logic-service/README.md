@@ -4,6 +4,8 @@
 
 Executes the core gameplay rules and command parsing. It processes player actions and determines outcomes, while Game Session owns queueing, tick context, and final client delivery.
 
+Game Logic is intentionally a replaceable same-type worker rather than a keeper of authoritative process-local gameplay state. If one Game Logic instance disappears, another instance should be able to continue serving requests from shared authoritative inputs and durable effect/idempotency records without making that restart itself a player-visible event.
+
 ### Responsibilities
 
 - Parse player commands and resolve actions

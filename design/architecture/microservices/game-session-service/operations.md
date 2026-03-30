@@ -26,6 +26,7 @@
 - To scale out, operators add more Game Session pods and allow the scheduler to assign regions to new instances; each instance acquires leases for its assigned regions.
 - To rebalance load, an instance can stop renewing the lease for selected regions and drain in-flight work to a safe point; other instances then acquire those leases and continue tick processing from the existing Redis state.
 - Combined with region sizing, splitting hot regions and merging cold ones, this lease-based ownership model allows FireMUD to scale horizontally without global downtime.
+- The same externalized-state model is the target for ordinary non-edge restart recovery. If a Game Session pod restart still causes client-visible reconnect while Gateway/TCP Proxy stayed healthy, treat that as a gap in takeover implementation or coordination design, not as the intended operating model.
 
 ## Dev-Isolated Mode
 

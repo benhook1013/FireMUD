@@ -8,6 +8,7 @@ This document defines Entity Management’s runtime model, persistence ownership
 - Exposes gRPC endpoints for other microservices.
 - Caches frequently accessed character data in Redis for quick lookups.
 - Applies optimistic locking to avoid conflicting updates on the same entity.
+- Entity Management instances are intended to be replaceable workers over authoritative persistent state and documented caches. Item, inventory, containment, and character data that must survive instance loss belongs in the service-owned database rows and cache invalidation model, not as the sole authoritative copy in one process.
 - Database writes are deferred and batched for ordinary entity updates, not triggered on every gameplay action. The Game Session Service coordinates real-time updates using Redis; the database is normally updated when ticks complete.
 - Spatial containment mutations that participate in cross-service effects are the exception: before Entity Management acknowledges a spatial `EffectId` back to Game Session, it must durably flush the effect’s idempotency guard plus the affected containment/container rows for that effect within the same local transaction. A participant acknowledgement must never be emitted for Redis-only staged state.
 - This design reduces write frequency and contention, making optimistic locking a natural fit because most entities are updated by only one process at a time and conflicts are rare.
@@ -21,6 +22,8 @@ This document defines Entity Management’s runtime model, persistence ownership
   - Design APIs must reject any attempt to write templates for Published/Active/Failed versions.
 - Utilizes the [Shared Libraries](../../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
 - Service methods are annotated with `@Timed` so inventory and character operations emit Prometheus metrics.
+
+This means another Entity Management instance of the same type should be able to serve the same runtime data after restart without requiring gameplay clients to reconnect just because one non-edge worker disappeared. Any such visible restart remains implementation debt, not target behavior.
 
 ## Data Model and Versioning
 
