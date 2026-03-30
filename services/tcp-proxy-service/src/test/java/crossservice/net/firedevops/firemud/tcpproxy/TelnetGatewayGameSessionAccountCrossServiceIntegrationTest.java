@@ -19,6 +19,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicBoolean;
 import javax.sql.DataSource;
 import net.firedevops.firemud.account.v1.AccountServiceGrpc;
 import net.firedevops.firemud.account.v1.AuthenticateRequest;
@@ -178,6 +179,8 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
   @BeforeEach
   void clearSharedRuntimeState() {
     stringRedisTemplate.getConnectionFactory().getConnection().serverCommands().flushAll();
+    ACCOUNT_STUB.setGameplayAdmissionAllowed(true);
+    ACCOUNT_STUB.setGameplayAvailable(true);
   }
 
   @Test
@@ -226,6 +229,49 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
   }
 
   @Test
+  void telnetReconnectAfterRevocationFailsPlayAdmission() throws Exception {
+    ensureTestServicesStarted();
+    try (Socket firstSocket = new Socket("localhost", telnetServer.getPort());
+        PrintWriter firstWriter =
+            new PrintWriter(
+                new OutputStreamWriter(firstSocket.getOutputStream(), StandardCharsets.ISO_8859_1),
+                true);
+        BufferedReader firstReader =
+            new BufferedReader(
+                new InputStreamReader(firstSocket.getInputStream(), StandardCharsets.ISO_8859_1))) {
+      firstSocket.setSoTimeout((int) COMMAND_WAIT.toMillis());
+      firstWriter.println("LOGIN demo@example.com swordfish");
+      assertThat(readBlockAfterContains(firstReader, "Logged in as demo@example.com"))
+          .contains("Logged in as demo@example.com");
+      firstWriter.println("PLAY demo");
+      assertThat(readLineAfterContains(firstReader, "OK PLAY Entered world: demo"))
+          .contains("OK PLAY Entered world: demo");
+    }
+
+    ACCOUNT_STUB.setGameplayAdmissionAllowed(false);
+
+    try (Socket secondSocket = new Socket("localhost", telnetServer.getPort());
+        PrintWriter secondWriter =
+            new PrintWriter(
+                new OutputStreamWriter(
+                    secondSocket.getOutputStream(), StandardCharsets.ISO_8859_1),
+                true);
+        BufferedReader secondReader =
+            new BufferedReader(
+                new InputStreamReader(secondSocket.getInputStream(), StandardCharsets.ISO_8859_1))) {
+      secondSocket.setSoTimeout((int) COMMAND_WAIT.toMillis());
+      secondWriter.println("LOGIN demo@example.com swordfish");
+      assertThat(readBlockAfterContains(secondReader, "Logged in as demo@example.com"))
+          .contains("Logged in as demo@example.com");
+
+      secondWriter.println("PLAY demo");
+      assertThat(readLineAfterContains(secondReader, "ERROR WORLD_ACCESS_DENIED"))
+          .contains("ERROR WORLD_ACCESS_DENIED")
+          .contains("You are not allowed to enter that world.");
+    }
+  }
+
+  @Test
   void telnetMovementMatchesCanonicalDestinationLookWithoutSession() throws Exception {
     ensureTestServicesStarted();
     String telnetMoveResponse;
@@ -262,6 +308,49 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     assertThat(telnetMoveResponse.trim()).isEqualTo(destinationLook.trim());
     assertThat(telnetLookResponse.trim()).isEqualTo(destinationLook.trim());
     assertThat(telnetInvalidMoveResponse).contains("ERROR INVALID_EXIT");
+  }
+
+  @Test
+  void telnetReconnectAfterRevocationFailsClosed() throws Exception {
+    ensureTestServicesStarted();
+    try (Socket firstSocket = new Socket("localhost", telnetServer.getPort());
+        PrintWriter firstWriter =
+            new PrintWriter(
+                new OutputStreamWriter(firstSocket.getOutputStream(), StandardCharsets.ISO_8859_1),
+                true);
+        BufferedReader firstReader =
+            new BufferedReader(
+                new InputStreamReader(firstSocket.getInputStream(), StandardCharsets.ISO_8859_1))) {
+      firstSocket.setSoTimeout((int) COMMAND_WAIT.toMillis());
+      firstWriter.println("LOGIN demo@example.com swordfish");
+      assertThat(readBlockAfterContains(firstReader, "Logged in as demo@example.com"))
+          .contains("Logged in as demo@example.com");
+      firstWriter.println("PLAY demo");
+      assertThat(readLineAfterContains(firstReader, "OK PLAY Entered world: demo"))
+          .contains("OK PLAY Entered world: demo");
+      firstWriter.println("MOVE north");
+      assertThat(readBlockAfterContainsOrTimeout(firstReader, "OK LOOK"))
+          .contains(LookTestFixtures.DESTINATION_ROOM_ID);
+    }
+
+    ACCOUNT_STUB.setGameplayAdmissionAllowed(false);
+
+    try (Socket secondSocket = new Socket("localhost", telnetServer.getPort());
+        PrintWriter secondWriter =
+            new PrintWriter(
+                new OutputStreamWriter(secondSocket.getOutputStream(), StandardCharsets.ISO_8859_1),
+                true);
+        BufferedReader secondReader =
+            new BufferedReader(
+                new InputStreamReader(secondSocket.getInputStream(), StandardCharsets.ISO_8859_1))) {
+      secondSocket.setSoTimeout((int) COMMAND_WAIT.toMillis());
+      secondWriter.println("LOGIN demo@example.com swordfish");
+      assertThat(readBlockAfterContains(secondReader, "Logged in as demo@example.com"))
+          .contains("Logged in as demo@example.com");
+      secondWriter.println("PLAY demo");
+      assertThat(readLineAfterContains(secondReader, "ERROR WORLD_ACCESS_DENIED"))
+          .contains("ERROR WORLD_ACCESS_DENIED");
+    }
   }
 
   @Test
@@ -608,6 +697,8 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
   private static final class AccountServiceStub extends AccountServiceGrpc.AccountServiceImplBase {
     private final Server server;
     private final List<AuthenticateRequest> requests = new CopyOnWriteArrayList<>();
+    private final AtomicBoolean gameplayAdmissionAllowed = new AtomicBoolean(true);
+    private final AtomicBoolean gameplayAvailable = new AtomicBoolean(true);
     private final int port;
 
     AccountServiceStub(int port) throws IOException {
@@ -621,6 +712,14 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
 
     int port() {
       return port;
+    }
+
+    void setGameplayAdmissionAllowed(boolean allowed) {
+      gameplayAdmissionAllowed.set(allowed);
+    }
+
+    void setGameplayAvailable(boolean available) {
+      gameplayAvailable.set(available);
     }
 
     @Override
@@ -644,7 +743,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
           GetTenantMembershipForRuntimeResponse.newBuilder()
               .setAccountId(request.getAccountId())
               .setTenantId(request.getTenantId())
-              .setGameplayAdmissionAllowed(true)
+              .setGameplayAdmissionAllowed(gameplayAdmissionAllowed.get())
               .setMembershipVersion(1L)
               .setEvaluatedAt("2026-03-30T00:00:00Z")
               .build());
@@ -658,7 +757,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
       responseObserver.onNext(
           GetTenantEntitlementsForRuntimeResponse.newBuilder()
               .setTenantId(request.getTenantId())
-              .setGameplayAvailable(true)
+              .setGameplayAvailable(gameplayAvailable.get())
               .setEntitlementVersion(1L)
               .setTenantBillingSequence(1L)
               .setEvaluatedAt("2026-03-30T00:00:00Z")
