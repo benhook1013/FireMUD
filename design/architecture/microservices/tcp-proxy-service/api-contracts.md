@@ -36,16 +36,9 @@ Additional codes may be introduced later, but they must remain few in number and
 
 The proxy generates `proxyConnectionId` when the Telnet socket is accepted and uses one stable identifier for the lifetime of that TCP connection. Every WebSocket bridge handshake attempt initiated while that same Telnet socket is still alive re-sends the same `proxyConnectionId` as `X-Proxy-Connection-Id`.
 
-The canonical `SESSION` envelope contract lives in [`protocols.md`](./protocols.md#telnet-session-envelope-and-event-metrics). In particular:
+The human-facing Telnet browse/login path is `WORLDS` (optional public browse), `LOGIN`, and then `PLAY`. Typed `SESSION` lines are no longer part of the Telnet contract.
 
-- the proxy captures at most one `SESSION` envelope before the first forwarded non-`SESSION` line;
-- Telnet negotiation and MCP control traffic participate in that attach-hint window as documented there;
-- malformed `SESSION` lines are advisory and budgeted, not immediate transport failures; and
-- `SESSION` values are client-provided claims, not trusted facts.
-
-The human-facing Telnet browse/login path is still `WORLDS` (optional public browse), `LOGIN`, and then `PLAY`. `SESSION` is only for advanced attach/resume tooling and must not be presented as part of the normal player flow.
-
-When a valid `SESSION <gameInstanceId> <tenantId>` envelope is captured, the proxy also forwards `X-Proxy-Game-Instance-Id` and `X-Proxy-Tenant-Id`. Spring Cloud Gateway strips these from public ingress, emits `X-Firemud-Connection-Mode: trusted_tcp_proxy` on authenticated TCP Proxy bridge hops, and may forward canonical `X-Game-Instance-Id` / `X-Tenant-Id` headers only after authenticating the TCP Proxy identity.
+The proxy may still forward `X-Proxy-Game-Instance-Id` and `X-Proxy-Tenant-Id` when those values come from server-owned defaults or future hidden MCP-carried smart-client metadata. Spring Cloud Gateway strips these from public ingress, emits `X-Firemud-Connection-Mode: trusted_tcp_proxy` on authenticated TCP Proxy bridge hops, and may forward canonical `X-Game-Instance-Id` / `X-Tenant-Id` headers only after authenticating the TCP Proxy identity. These headers remain advisory only and must never bypass `LOGIN` + `PLAY`.
 
 Client-IP ownership follows the same pattern: the proxy recovers the real client IP via PROXY protocol on the internal-only listener, sets `X-Proxy-Client-IP` on the authenticated internal bridge, and Gateway canonicalizes that into `X-Client-IP` only after authenticating the proxy identity. Public ingress must never be allowed to set these proxy-owned headers directly.
 

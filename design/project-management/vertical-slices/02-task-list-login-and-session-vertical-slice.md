@@ -39,17 +39,17 @@ This checklist builds on the **Telnet to Gameplay** slice by wiring the `LOGIN` 
 
 ## 5. Telnet and WebSocket LOGIN Parity
 
-The canonical `SESSION` + `LOGIN` semantics for Telnet clients live in the [Telnet Session Envelope & Event Metrics](../../architecture/microservices/tcp-proxy-service/README.md#telnet-session-envelope--event-metrics) section of the TCP Proxy Service design. This slice focuses on verifying that Telnet and WebSocket clients share the same login pipeline and observed behaviour rather than redefining the protocol.
+The canonical Telnet admission semantics now live in the TCP Proxy and authentication docs as `WORLDS` (optional), `LOGIN`, and `PLAY`, with hidden proxy or MCP metadata reserved for future smart-client hints only. This slice focuses on verifying that Telnet and WebSocket clients share the same login pipeline and observed behaviour rather than redefining the protocol.
 
-- [x] Confirm that Telnet connections using the `SESSION <sessionId> <tenantId>` envelope and then sending `LOGIN` lines are forwarded by the TCP Proxy Service into the same WebSocket `/ws/game/**` route and Game Session login pipeline used by direct WebSocket clients, with no Telnet-specific parsing beyond the session envelope and sensitive logging behaviour in `TelnetServerHandler`.
-- [x] Add a cross-service integration test (reusing the lightweight gateway and game-session stubs where appropriate) that starts TCP Proxy Service, Spring Cloud Gateway, Game Session Service, and an Account Service stub together, performs `LOGIN` + `LOOK` over a Telnet socket for the baseline flow (no `SESSION`), and asserts that the observed login and LOOK responses match those from a direct WebSocket client hitting Gateway. Add a second variant that exercises the optional `SESSION` + `LOGIN` + `LOOK` attach-to-session path using a session created via REST `POST /sessions`.
+- [x] Confirm that Telnet connections sending normal login flow lines are forwarded by the TCP Proxy Service into the same WebSocket `/ws/game/**` route and Game Session login pipeline used by direct WebSocket clients, with no Telnet-specific gameplay parsing.
+- [x] Add a cross-service integration test (reusing the lightweight gateway and game-session stubs where appropriate) that starts TCP Proxy Service, Spring Cloud Gateway, Game Session Service, and an Account Service stub together, performs the normal browse/login/play/look flow over a Telnet socket, and asserts that the observed responses match those from a direct WebSocket client hitting Gateway.
 - [x] Verify that `TelnetServerHandler` continues to redact `LOGIN` arguments in logs while still forwarding the full command to Game Session, and add tests that assert logging behaviour for sensitive vs non-sensitive commands.
 - [x] Document the Telnet `LOGIN` flow in both the TCP Proxy Service design doc and the Spring Cloud Gateway design doc, making it clear that Telnet and WebSocket clients share the same authentication path and that the gateway route (`/ws/game/**`) is the single entry point for gameplay login.
 
 ## 6. Developer Workflows and Smoke Tests
 
 - [x] Add or update a smoke test script (alongside existing ones) that demonstrates a full `LOGIN` + `LOOK` flow over a direct WebSocket connection to Game Session Service, using sample credentials and clearly marking any required Account Service/dev environment setup.
-- [x] Add a second smoke test or documented telnet/curl sequence that exercises `LOGIN` + `LOOK` through TCP Proxy Service and Spring Cloud Gateway as the baseline flow, plus an optional variant that includes `SESSION` + `LOGIN` + `LOOK` for advanced clients attaching to an existing session. Use the same credentials and assert that the responses match the direct WebSocket flow.
+- [x] Add a second smoke test or documented telnet or curl sequence that exercises the normal `WORLDS` + `LOGIN` + `PLAY` + `LOOK` flow through TCP Proxy Service and Spring Cloud Gateway. Use the same credentials and assert that the responses match the direct WebSocket flow.
 - [x] Update the relevant per-service status docs so Game Session, Account, TCP Proxy, and Spring Cloud Gateway summarize the current login/session slice without duplicating the detailed task list.
 
 ---

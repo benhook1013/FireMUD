@@ -8,7 +8,6 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.startsWith;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -72,8 +71,9 @@ class TelnetServerHandlerTest {
         connector,
         Mockito.mock(TcpProxyEventService.class),
         new AtomicInteger(),
-        lookCacheService,
-        0);
+        "1",
+        "1",
+        lookCacheService);
   }
 
   private WebSocket stubWebSocket() {
@@ -111,8 +111,7 @@ class TelnetServerHandlerTest {
             connector,
             Mockito.mock(TcpProxyEventService.class),
             new AtomicInteger(),
-            lookCacheService,
-            0);
+            lookCacheService);
 
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     Channel channel = mock(Channel.class);
@@ -122,7 +121,6 @@ class TelnetServerHandlerTest {
     when(channel.remoteAddress()).thenReturn(new InetSocketAddress("127.0.0.1", 0));
 
     handler.channelActive(ctx);
-    handler.channelRead0(ctx, "SESSION sess-1 tenant-1");
     handler.channelRead0(ctx, "look");
 
     executor.shutdownGracefully();
@@ -141,7 +139,6 @@ class TelnetServerHandlerTest {
     when(ctx.channel()).thenReturn(channel);
     when(channel.remoteAddress()).thenReturn(new InetSocketAddress("127.0.0.1", 0));
 
-    handler.channelRead0(ctx, "SESSION sess-1 tenant-1");
     handler.channelRead0(ctx, "look");
     handler.channelRead0(ctx, "move north");
     assertEquals(2, handler.getBufferedSize());
@@ -198,7 +195,6 @@ class TelnetServerHandlerTest {
     when(ctx.channel()).thenReturn(channel);
     when(channel.remoteAddress()).thenReturn(new InetSocketAddress("127.0.0.1", 0));
 
-    handler.channelRead0(ctx, "SESSION sess-1 tenant-1");
     handler.channelRead0(ctx, "say hello");
     assertEquals(1, handler.getBufferedSize());
 
@@ -222,8 +218,6 @@ class TelnetServerHandlerTest {
     when(channel.remoteAddress()).thenReturn(new InetSocketAddress("127.0.0.1", 0));
 
     handler.channelActive(ctx);
-
-    handler.channelRead0(ctx, "SESSION sess-1 tenant-1");
 
     for (int i = 0; i < 600; i++) {
       handler.channelRead0(ctx, "cmd" + i);
@@ -251,7 +245,6 @@ class TelnetServerHandlerTest {
     when(channel.remoteAddress()).thenReturn(new InetSocketAddress("127.0.0.1", 0));
 
     handler.channelActive(ctx);
-    handler.channelRead0(ctx, "SESSION sess-1 tenant-1");
 
     int maxDepth = maxBufferDepth();
     for (int i = 0; i < maxDepth; i++) {
@@ -281,7 +274,6 @@ class TelnetServerHandlerTest {
     when(channel.remoteAddress()).thenReturn(new InetSocketAddress("127.0.0.1", 0));
 
     handler.channelActive(ctx);
-    handler.channelRead0(ctx, "SESSION sess-1 tenant-1");
 
     int maxDepth = maxBufferDepth();
     for (int i = 0; i < maxDepth; i++) {
@@ -307,7 +299,6 @@ class TelnetServerHandlerTest {
     CompletableFuture<WebSocket> future = CompletableFuture.completedFuture(ws);
     org.mockito.Mockito.when(ws.sendText(anyString(), eq(true))).thenReturn(future);
 
-    handler.channelRead0(ctx, "SESSION sess-1 tenant-1");
     handler.setWebSocket(ws);
 
     byte[] bytes = {(byte) 255, (byte) 1, 'l', 'o', 'o', 'k'};
@@ -318,7 +309,7 @@ class TelnetServerHandlerTest {
   }
 
   @Test
-  void applicationInputIsIgnoredUntilSessionEnvelopeReceived() {
+  void applicationInputUsesHiddenBootstrapDefaults() {
     SimpleMeterRegistry registry = new SimpleMeterRegistry();
     TelnetServerHandler handler = newHandler(registry, false);
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
@@ -329,10 +320,6 @@ class TelnetServerHandlerTest {
     CompletableFuture<WebSocket> future = CompletableFuture.completedFuture(ws);
     org.mockito.Mockito.when(ws.sendText(anyString(), eq(true))).thenReturn(future);
 
-    handler.channelRead0(ctx, "look");
-    verify(ws, never()).sendText(anyString(), eq(true));
-
-    handler.channelRead0(ctx, "SESSION sess-1 tenant-1");
     handler.setWebSocket(ws);
     handler.channelRead0(ctx, "move north");
 
@@ -351,7 +338,6 @@ class TelnetServerHandlerTest {
     CompletableFuture<WebSocket> future = CompletableFuture.completedFuture(ws);
     org.mockito.Mockito.when(ws.sendText(anyString(), eq(true))).thenReturn(future);
 
-    handler.channelRead0(ctx, "SESSION sess-1 tenant-1");
     handler.setWebSocket(ws);
 
     byte[] bytes = {'t', 'e', 's', 't', 7};
@@ -362,7 +348,7 @@ class TelnetServerHandlerTest {
   }
 
   @Test
-  void sessionEnvelopePropagatesIntoWebSocketHeaders() {
+  void hiddenBootstrapMetadataPropagatesIntoWebSocketHeaders() {
     SimpleMeterRegistry registry = new SimpleMeterRegistry();
     List<String> captured = new ArrayList<>();
     TelnetServerHandler handler =
@@ -383,9 +369,8 @@ class TelnetServerHandlerTest {
     when(channel.remoteAddress()).thenReturn(new InetSocketAddress("127.0.0.1", 0));
 
     handler.channelActive(ctx);
-    handler.channelRead0(ctx, "SESSION sess-1 tenant-9");
 
-    assertEquals(List.of("sess-1", "tenant-9"), captured);
+    assertEquals(List.of("1", "1"), captured);
     executor.shutdownGracefully();
   }
 
@@ -402,8 +387,6 @@ class TelnetServerHandlerTest {
     org.mockito.Mockito.when(ws.sendText(anyString(), eq(true))).thenReturn(future);
     handler.setWebSocket(ws);
 
-    handler.channelRead0(ctx, "SESSION sess-1 tenant-1");
-
     byte[] bytes = {(byte) 255, (byte) 1};
     String msg = new String(bytes, java.nio.charset.StandardCharsets.ISO_8859_1);
     handler.channelRead0(ctx, msg);
@@ -418,7 +401,6 @@ class TelnetServerHandlerTest {
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     Mockito.when(ctx.writeAndFlush(any())).thenReturn(null);
 
-    handler.channelRead0(ctx, "SESSION sess-1 tenant-1");
     handler.setWebSocket(stubWebSocket());
 
     byte[] bytes = {(byte) 255, (byte) 253, (byte) 1, 'g', 'o'};
@@ -450,7 +432,6 @@ class TelnetServerHandlerTest {
     CompletableFuture<WebSocket> future = CompletableFuture.completedFuture(ws);
     org.mockito.Mockito.when(ws.sendText(anyString(), eq(true))).thenReturn(future);
 
-    handler.channelRead0(ctx, "SESSION sess-1 tenant-1");
     handler.setWebSocket(ws);
 
     byte[] bytes = {
@@ -471,7 +452,6 @@ class TelnetServerHandlerTest {
     Mockito.when(ctx.writeAndFlush(any())).thenReturn(null);
 
     handler.setWebSocket(stubWebSocket());
-    handler.channelRead0(ctx, "SESSION sess-1 tenant-1");
 
     handler.channelRead0(ctx, "#$#mcp-negotiate\r\n");
 
@@ -489,7 +469,6 @@ class TelnetServerHandlerTest {
     CompletableFuture<WebSocket> future = CompletableFuture.completedFuture(ws);
     org.mockito.Mockito.when(ws.sendText(anyString(), eq(true))).thenReturn(future);
 
-    handler.channelRead0(ctx, "SESSION sess-1 tenant-1");
     handler.setWebSocket(ws);
 
     byte[] bytes = {(byte) 255, (byte) 253, (byte) 99, 'c', 'm', 'd'};
@@ -517,7 +496,6 @@ class TelnetServerHandlerTest {
     CompletableFuture<WebSocket> future = CompletableFuture.completedFuture(ws);
     org.mockito.Mockito.when(ws.sendText(anyString(), eq(true))).thenReturn(future);
 
-    handler.channelRead0(ctx, "SESSION sess-1 tenant-1");
     handler.setWebSocket(ws);
 
     byte[] bytes = {(byte) 255, (byte) 251, (byte) 99, 'c', 'm', 'd'};
@@ -536,7 +514,7 @@ class TelnetServerHandlerTest {
   }
 
   @Test
-  void sessionMetadataCapturedAndSentToConnector() {
+  void defaultBootstrapMetadataCapturedAndSentToConnector() {
     SimpleMeterRegistry registry = new SimpleMeterRegistry();
     RecordingConnector connector = new RecordingConnector();
     TelnetServerHandler handler =
@@ -553,8 +531,9 @@ class TelnetServerHandlerTest {
             connector,
             Mockito.mock(TcpProxyEventService.class),
             new AtomicInteger(),
-            lookCacheService,
-            0);
+            "1",
+            "1",
+            lookCacheService);
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     Channel channel = mock(Channel.class);
     DefaultEventExecutor executor = new DefaultEventExecutor();
@@ -563,115 +542,9 @@ class TelnetServerHandlerTest {
     when(channel.remoteAddress()).thenReturn(new InetSocketAddress("127.0.0.1", 0));
 
     handler.channelActive(ctx);
-    handler.channelRead0(ctx, "SESSION sess-1 tenant-1");
 
-    assertEquals("sess-1", connector.getSessionId());
-    assertEquals("tenant-1", connector.getTenantId());
-    executor.shutdownGracefully();
-  }
-
-  @Test
-  void sessionEnvelopeRejectsColonSeparatedPayload() {
-    SimpleMeterRegistry registry = new SimpleMeterRegistry();
-    RecordingConnector connector = new RecordingConnector();
-    TelnetServerHandler handler =
-        new TelnetServerHandler(
-            "ws://localhost/ws",
-            false,
-            () -> {},
-            () -> {},
-            registry.counter("test"),
-            registry.counter("discarded"),
-            false,
-            registry,
-            () -> true,
-            connector,
-            Mockito.mock(TcpProxyEventService.class),
-            new AtomicInteger(),
-            lookCacheService,
-            0);
-    ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
-    Channel channel = mock(Channel.class);
-    DefaultEventExecutor executor = new DefaultEventExecutor();
-    when(ctx.channel()).thenReturn(channel);
-    when(ctx.executor()).thenReturn(executor);
-    when(channel.remoteAddress()).thenReturn(new InetSocketAddress("127.0.0.1", 0));
-
-    handler.channelActive(ctx);
-    handler.channelRead0(ctx, "SESSION sess-1:tenant-7");
-
-    assertEquals(null, connector.getSessionId());
-    assertEquals(null, connector.getTenantId());
-    executor.shutdownGracefully();
-  }
-
-  @Test
-  void malformedSessionEnvelopeIsIgnored() {
-    SimpleMeterRegistry registry = new SimpleMeterRegistry();
-    RecordingConnector connector = new RecordingConnector();
-    TelnetServerHandler handler =
-        new TelnetServerHandler(
-            "ws://localhost/ws",
-            false,
-            () -> {},
-            () -> {},
-            registry.counter("test"),
-            registry.counter("discarded"),
-            false,
-            registry,
-            () -> true,
-            connector,
-            Mockito.mock(TcpProxyEventService.class),
-            new AtomicInteger(),
-            lookCacheService,
-            0);
-    ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
-    Channel channel = mock(Channel.class);
-    DefaultEventExecutor executor = new DefaultEventExecutor();
-    when(ctx.channel()).thenReturn(channel);
-    when(ctx.executor()).thenReturn(executor);
-    when(channel.remoteAddress()).thenReturn(new InetSocketAddress("127.0.0.1", 0));
-
-    handler.channelActive(ctx);
-    handler.channelRead0(ctx, "SESSION missingTenant");
-
-    assertEquals(null, connector.getSessionId());
-    assertEquals(null, connector.getTenantId());
-    executor.shutdownGracefully();
-  }
-
-  @Test
-  void tooManyMalformedSessionEnvelopesCloseConnection() {
-    SimpleMeterRegistry registry = new SimpleMeterRegistry();
-    RecordingConnector connector = new RecordingConnector();
-    TelnetServerHandler handler =
-        new TelnetServerHandler(
-            "ws://localhost/ws",
-            false,
-            () -> {},
-            () -> {},
-            registry.counter("test"),
-            registry.counter("discarded"),
-            false,
-            registry,
-            () -> true,
-            connector,
-            Mockito.mock(TcpProxyEventService.class),
-            new AtomicInteger(),
-            lookCacheService,
-            2);
-    ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
-    Channel channel = mock(Channel.class);
-    DefaultEventExecutor executor = new DefaultEventExecutor();
-    when(ctx.channel()).thenReturn(channel);
-    when(ctx.executor()).thenReturn(executor);
-    when(channel.remoteAddress()).thenReturn(new InetSocketAddress("127.0.0.1", 0));
-
-    handler.channelActive(ctx);
-    handler.channelRead0(ctx, "SESSION missingTenant");
-    handler.channelRead0(ctx, "SESSION stillMissingTenant");
-
-    verify(ctx, Mockito.atLeastOnce()).close();
+    assertEquals("1", connector.getSessionId());
+    assertEquals("1", connector.getTenantId());
     executor.shutdownGracefully();
   }
 
@@ -695,7 +568,10 @@ class TelnetServerHandlerTest {
               return CompletableFuture.completedFuture(new RecordingWebSocket());
             },
             eventService,
-            new AtomicInteger());
+            new AtomicInteger(),
+            "1",
+            "1",
+            lookCacheService);
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     Channel channel = mock(Channel.class);
     DefaultEventExecutor executor = new DefaultEventExecutor();
@@ -704,11 +580,11 @@ class TelnetServerHandlerTest {
     when(channel.remoteAddress()).thenReturn(new InetSocketAddress("127.0.0.1", 0));
 
     handler.channelActive(ctx);
-    handler.channelRead0(ctx, "SESSION sess-1 tenant-1");
+    handler.channelRead0(ctx, "look");
     handler.channelInactive(ctx);
 
     Mockito.verify(eventService, Mockito.timeout(500))
-        .notifyDisconnect(eq("sess-1"), eq("tenant-1"), anyString(), anyLong());
+        .notifyDisconnect(eq("1"), eq("1"), anyString(), anyLong());
     executor.shutdownGracefully();
   }
 
@@ -759,8 +635,9 @@ class TelnetServerHandlerTest {
             },
             Mockito.mock(TcpProxyEventService.class),
             new AtomicInteger(),
-            lookCacheService,
-            0);
+            "1",
+            "1",
+            lookCacheService);
 
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     ChannelFuture future = mock(ChannelFuture.class);
@@ -772,7 +649,7 @@ class TelnetServerHandlerTest {
     when(ctx.writeAndFlush(any())).thenReturn(future);
 
     handler.channelActive(ctx);
-    handler.channelRead0(ctx, "SESSION sess-1 tenant-1");
+    handler.channelRead0(ctx, "look");
 
     WebSocket.Listener listener = listenerRef.get();
     listener.onClose(initialSocket.get(), 1001, "closing");
@@ -799,8 +676,9 @@ class TelnetServerHandlerTest {
             TelnetServerHandler::createWebSocket,
             eventService,
             new AtomicInteger(),
-            lookCacheService,
-            0);
+            "1",
+            "1",
+            lookCacheService);
     ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
     Channel channel = mock(Channel.class);
     DefaultEventExecutor executor = new DefaultEventExecutor();
@@ -809,14 +687,12 @@ class TelnetServerHandlerTest {
     when(channel.remoteAddress()).thenReturn(new InetSocketAddress("10.0.0.5", 9000));
 
     handler.channelActive(ctx);
-    handler.channelRead0(ctx, "SESSION sess-99 tenant-42");
     handler.channelInactive(ctx);
 
     ArgumentCaptor<Duration> durationCaptor = ArgumentCaptor.forClass(Duration.class);
-    verify(eventService).recordConnectEvent("sess-99", "tenant-42", "10.0.0.5");
+    verify(eventService).recordConnectEvent("1", "1", "10.0.0.5");
     verify(eventService)
-        .recordDisconnectEvent(
-            eq("sess-99"), eq("tenant-42"), eq("10.0.0.5"), durationCaptor.capture());
+        .recordDisconnectEvent(eq("1"), eq("1"), eq("10.0.0.5"), durationCaptor.capture());
     assertTrue(durationCaptor.getValue().toMillis() >= 0);
     executor.shutdownGracefully();
   }

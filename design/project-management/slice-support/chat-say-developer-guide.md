@@ -5,7 +5,7 @@ This quick guide shows example commands for both WebSocket and Telnet clients so
 ## WebSocket Example
 
 1. Start the services needed for the cross-service regression (Account, World, Entity, Social, Game Logic, Redis, Postgres, Game Session).
-1. Connect to the Game Session WebSocket at `/ws/game`. Advanced clients or test harnesses that resume an existing session created via REST (`POST /sessions`) may first send `SESSION <sessionId>` as an in-band line; typical browser clients never need to send `SESSION` and can rely on the server to create or bind a session on `LOGIN`, matching the Telnet flow. In production deployments, Spring Cloud Gateway strips spoofable session/tenant headers from public clients; header-based session hints are reserved for the authenticated TCP Proxy → Gateway path.
+1. Connect to the Game Session WebSocket at `/ws/game`. The normal flow is `WORLDS` (optional), `LOGIN`, `PLAY`, then communication commands. Typed attach metadata is not part of the public protocol. In production deployments, Spring Cloud Gateway strips spoofable session and tenant headers from public clients; any future smart-client attach hints must remain hidden proxy or MCP metadata only.
 1. Send `LOGIN demo@example.com swordfish`.
 1. Once you receive `OK LOGIN ...`, send `SAY Hello travelers`.
 1. Expect the canonical sender response:
@@ -19,7 +19,7 @@ You say, "Hello travelers"
 ## Telnet Example
 
 1. Connect via Telnet to the TCP proxy port.
-1. Issue `LOGIN demo@example.com swordfish`. For advanced Telnet clients or tests that need to attach to an existing session created via REST (`POST /sessions`), optionally send `SESSION <sessionId> <tenantId>` first, then `LOGIN demo@example.com swordfish`.
+1. Issue `LOGIN demo@example.com swordfish`, then `PLAY demo`. Typed attach metadata is not part of the Telnet flow.
 1. After the `OK LOGIN` acknowledgment, send `SAY Hello travelers`.
 1. Compare the Telnet transcript to the canonical response above and confirm the Social stub recorded `SendMessage` with the expected content and `chatType`.
 

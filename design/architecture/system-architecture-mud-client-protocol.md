@@ -6,7 +6,7 @@ This document outlines how FireMUD incorporates the Mud Client Protocol (MCP) to
 
 - Allow MCP-aware Telnet and MUD clients to exchange structured out-of-band messages with the server.
 - Support richer client UI elements (status panes, maps, chat windows) without changing the primary text protocol.
-- Maintain backward compatibility with traditional Telnet clients that do not understand MCP.
+- Allow traditional Telnet clients that do not understand MCP to continue using the plain text protocol.
 
 ## MCP Basics
 
@@ -22,34 +22,13 @@ MCP package semantics are terminated by the backend session layer (Spring Cloud 
 
 MCP negotiation in FireMUD is role-specific:
 
-- **Target state (canonical):** Game Session is the MCP server endpoint and sends the initial server greeting (`#$#mcp version: ...`); the client responds with its `#$#mcp authentication-key: ...` line.
-- **Transitional compatibility mode (temporary):** a proxy-side greeting shim may emit the initial server greeting in environments where backend-owned greeting rollout is incomplete. This mode is compatibility-only and does not transfer package ownership to the proxy.
+- **Canonical mode:** Game Session is the MCP server endpoint and sends the initial server greeting (`#$#mcp version: ...`); the client responds with its `#$#mcp authentication-key: ...` line.
 
 In both modes, FireMUD and MCP-capable clients agree on the highest overlapping version and use the client-supplied `authentication-key` for all subsequent MCP messages. If no overlap exists, MCP cannot be used and the connection must fall back to plain text or close.
 
-Greeting ownership must be singular per connection. A connection may be in exactly one of these MCP greeting modes:
+Greeting ownership must be singular per connection. Game Session emits the initial MCP greeting and the proxy forwards it transparently. Clients should treat any duplicate server greeting as a server bug and fall back to plain text or disconnect cleanly; the platform owns preventing duplicate greetings.
 
-- `backend_greets` – Game Session emits the initial MCP greeting and the proxy forwards it transparently.
-- `proxy_shim_greets` – the proxy shim emits the initial MCP greeting only because backend greeting is disabled for that environment/connection.
-
-These modes are mutually exclusive. Implementations must not allow both the proxy shim and backend to emit server greetings on the same connection, and rollout flags must make the chosen mode explicit so clients never receive duplicate `#$#mcp version: ...` greetings.
-
-If configuration drift would cause both greeting paths to fire, producers must fail closed on the duplicate-greeting path rather than sending two server greetings on one connection. This is a rollout/configuration bug, not a valid protocol variant:
-
-- the duplicate greeting must be suppressed before it reaches the client whenever detection is possible,
-- the owning component must emit a bounded misconfiguration signal such as `mcp_greeting_mode_conflict` and, if metrics are exposed for this condition, use the stable low-cardinality name `mcp.greeting.mode_conflict`; in `backend_greets` mode that signal is owned by Game Session, while in `proxy_shim_greets` mode it is owned by the proxy-side greeting shim,
-- and operators should treat any client-visible duplicate greeting as an incident requiring rollback or feature-flag correction.
-
-Clients should not be expected to recover from duplicate server greetings beyond falling back to plain-text behavior or disconnecting cleanly; the server side owns preventing this condition.
-
-On the Telnet path, `SESSION` remains an attach hint only until the proxy forwards the first non-`SESSION` line upstream. The proxy may therefore delay opening the Proxy → Gateway gameplay WebSocket until it has consumed the optional initial `SESSION` envelope, but it must open the bridge before forwarding the first non-`SESSION` line. Because MCP control lines are forwarded upstream, they also end the period during which `SESSION` can affect the Proxy → Gateway WebSocket handshake. Clients that want to use both `SESSION` and MCP must therefore send `SESSION` first, then start MCP negotiation (and then proceed to `LOGIN`) so the proxy can include any captured session hints in the initial handshake. After the first forwarded MCP or gameplay line, later `SESSION` lines are no longer attach hints and are treated according to the TCP Proxy Service contract.
-
-Examples:
-
-- `SESSION` first, then `LOGIN`: `SESSION <gameInstanceId> <tenantId>` followed by `LOGIN ...` causes the proxy to open the bridge with the captured `SESSION` hints before forwarding the `LOGIN` line.
-- `SESSION` first, then MCP: `SESSION <gameInstanceId> <tenantId>` followed by `#$#mcp ...` causes the proxy to include the `SESSION` hints in the initial Proxy → Gateway handshake.
-- MCP first, then `SESSION`: `#$#mcp ...` followed later by `SESSION <gameInstanceId> <tenantId>` does **not** update the already-established bridge handshake; the later `SESSION` line is no longer an attach hint.
-- Negative example: `#$#mcp version: 2.1 to: 2.1`, then `SESSION <gameInstanceId> <tenantId>`, then `LOGIN ...` means the bridge was already opened by the initial MCP line; the later `SESSION` text is forwarded as ordinary input and must not affect admission headers.
+On the Telnet path, MCP is the planned channel for any future hidden smart-client metadata. Those hints remain advisory transport metadata only: they must never become visible player commands and must never bypass `LOGIN` + `PLAY`.
 
 Each endpoint then advertises its capabilities using `mcp-negotiate-can package: <name> min-version: <x> max-version: <y>` messages and finishes with `mcp-negotiate-end`. FireMUD uses version 2.0 of the `mcp-negotiate` package, so the package must be advertised explicitly and `mcp-negotiate-end` terminates negotiation. A package is considered active only after both sides have sent `mcp-negotiate-can` for it and both have sent `mcp-negotiate-end`. Implementations may defer using a package until receipt of the other side’s `mcp-negotiate-end`. Unknown packages are ignored so legacy clients remain unaffected.
 
@@ -101,9 +80,7 @@ To keep MCP traffic from overwhelming the Telnet edge while still being friendly
 
 - Each connection has a bounded number of **active cords** and **concurrent `_data-tag` continuations**; once these limits are exceeded, new MCP control lines are discarded and counted in `tcpproxy.telnet.discarded` with a low-cardinality `reason` label (for example `reason="mcp_budget"`), but the connection may remain open as long as other safety limits are respected.
 - MCP message volume is subject to a per-connection **MCP control-line rate** budget. When a client sends MCP control lines significantly faster than expected (for example due to a misbehaving script), excess lines are dropped rather than forwarded, again contributing to `tcpproxy.telnet.discarded` rather than being treated as immediate hard-close abuse.
-- MCP line size still participates in the generic `TCP_PROXY_MAX_LINE_BYTES` and `TCP_PROXY_MAX_OVERSIZE_LINES` limits, but **MCP parsing failures do not count towards the `TCP_PROXY_MAX_MALFORMED_ENVELOPES` budget**, which is reserved for Telnet `SESSION` envelope errors as described in the TCP Proxy Service design’s **Telnet Session Envelope & Event Metrics** section.
-
-For envelope handling, MCP control lines are out-of-band with respect to gameplay semantics, but they are still forwarded upstream and therefore end the attach-hint phase for the TCP Proxy’s `SESSION` envelope. The proxy may continue to tolerate later literal `SESSION` text as ordinary forwarded input, but those later lines must not retroactively change the WebSocket handshake headers or rebind the connection. Clients that need `SESSION` hints applied must send `SESSION` before any MCP control line or other forwarded text.
+- MCP line size still participates in the generic `TCP_PROXY_MAX_LINE_BYTES` and `TCP_PROXY_MAX_OVERSIZE_LINES` limits.
 
 The exact counter and timer names for these budgets live in the TCP Proxy Service design’s **Metrics Summary** and **Connection Limits and Abuse Protection** sections; this document describes only their high-level intent. Thresholds for MCP budgets are configured through explicit TCP Proxy knobs (`TCP_PROXY_MCP_MAX_ACTIVE_CORDS`, `TCP_PROXY_MCP_MAX_ACTIVE_DATA_TAGS`, `TCP_PROXY_MCP_MAX_CONTROL_LINES_PER_SEC`, and the negotiation-failure knobs above). Operators should treat them as guardrails that rarely need adjustment in day-to-day operations. As with other safety controls, operators should treat sustained increases in MCP-related discard reasons as a signal to either adjust client behaviour (for example cord usage or update frequency) or tighten limits for obviously abusive sources after consulting the TCP Proxy design. Gameplay text lines that Game Session treats as commands are not dropped silently while a connection remains open; hitting non-MCP safety limits results in the TCP Proxy or gateway closing the connection with a clear reason as described in [Protocol Bridging](./system-architecture-protocol-bridging.md#ordering--delivery-invariants).
 
@@ -112,8 +89,6 @@ The exact counter and timer names for these budgets live in the TCP Proxy Servic
 MCP support is being rolled out incrementally:
 
 - The underlying line-based Telnet transport and control-line parsing (`#$#...`) are implemented in the TCP Proxy Service.
-- Some environments temporarily enable a proxy-side MCP “server greeting” (`#$#mcp version: ...`) as a compatibility shim during rollout. The target-state design is that the backend session layer is the MCP endpoint and emits the canonical server greeting and package advertisements; the proxy remains a transport bridge and does not define package semantics.
-- Transitional proxy-side greeting shims must be explicitly feature-flagged and tracked with rollout metrics. The shim is removed once all player-facing environments run backend-owned MCP greeting and negotiation.
 - The `mcp-negotiate` handshake and the `mcp-cord` package are supported for basic cord creation and message routing.
 - Higher-level FireMUD-specific MCP packages (for example status panels, map feeds, or structured notifications) are introduced gradually and may evolve as the platform matures.
 
@@ -132,10 +107,10 @@ MCP state is **strictly per TCP connection** and does not survive reconnects on 
   - Re-run the `mcp` version negotiation and agree on a fresh `authentication-key`.
   - Re-advertise and activate packages with `mcp-negotiate-can` / `mcp-negotiate-end`.
   - Re-open any required cords (for example status panels) using `mcp-cord-open`.
-- Telnet `SESSION` envelopes are likewise per TCP connection. Advanced clients that rely on `SESSION` for session/tenant hints must resend the envelope on reconnect if they want those hints to apply again, even when the underlying gameplay session resumes from Redis.
-- The TCP Proxy Service never attempts to “reattach” a new TCP socket to a previous `SESSION` or MCP negotiation; each TCP connection is treated as a fresh transport, even when it leads to a resumed gameplay session in Game Session.
+- Hidden MCP metadata is likewise per TCP connection. Advanced clients that rely on future MCP-carried attach hints must resend that metadata on reconnect if they want those hints to apply again, even when the underlying gameplay session resumes from Redis.
+- The TCP Proxy Service never attempts to “reattach” a new TCP socket to prior MCP negotiation state; each TCP connection is treated as a fresh transport, even when it leads to a resumed gameplay session in Game Session.
 
-From the gameplay perspective, reconnection and resume behavior follow the rules in [Reconnection Strategy](./system-architecture-reconnection.md): clients always send a fresh `LOGIN` after any disconnect and then re-establish gameplay scope via the lobby commands (`WORLDS` / `CHARS` / `PLAY`). Game Session uses Redis-backed state to decide whether the selected world/character can resume an existing gameplay session or must start a new one. MCP and `SESSION` provide additional structure and hints on top of that flow but never replace the core text protocol, Redis session state, or the canonical authorization/entitlement checks as the source of truth.
+From the gameplay perspective, reconnection and resume behavior follow the rules in [Reconnection Strategy](./system-architecture-reconnection.md): clients always send a fresh `LOGIN` after any disconnect and then re-establish gameplay scope via the lobby commands (`WORLDS` / `CHARS` / `PLAY`). Game Session uses Redis-backed state to decide whether the selected world/character can resume an existing gameplay session or must start a new one. MCP may provide additional structure and hidden smart-client metadata on top of that flow but never replaces the core text protocol, Redis session state, or the canonical authorization and entitlement checks as the source of truth.
 
 MCP-aware clients should also follow the general reconnection backoff guidance from [Reconnection Strategy](./system-architecture-reconnection.md#client-reconnection-behaviour): use exponential backoff with jitter when reconnecting after failures (including MCP negotiation failures), respect non‑retriable conditions such as clear policy violations, and avoid tight reconnect loops that could overload the TCP Proxy or Gateway during incidents.
 

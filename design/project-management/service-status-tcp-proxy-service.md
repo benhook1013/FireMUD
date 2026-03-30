@@ -2,14 +2,14 @@
 
 ## Current Coverage
 
-- Telnet ingress, session envelope handling, WebSocket bridging, buffering, and local dev echo flows are implemented.
-- The proxy participates in the current Telnet-backed `LOGIN`, `LOOK`, and `SAY` gameplay slices.
+- Telnet ingress, hidden bootstrap metadata, WebSocket bridging, buffering, and local dev echo flows are implemented.
+- The proxy participates in the current Telnet-backed `WORLDS`, `LOGIN`, `PLAY`, `LOOK`, and shared communication gameplay slices.
 - Cross-service harnesses and lighter gateway-stub-based testing patterns exist for the proxy path.
 
 ## Current Role In The Platform
 
 - Acts as the Telnet/MUD-client edge bridge into the shared gameplay ingress path.
-- Preserves transport-specific concerns like Telnet framing and session-envelope handling while deferring gameplay semantics to downstream services.
+- Preserves transport-specific concerns like Telnet framing, hidden bootstrap metadata, and future MCP-based attach hints while deferring gameplay semantics to downstream services.
 - Supports the parity goal between Telnet and first-party WebSocket gameplay clients.
 
 ## Partial / Stubbed / Deferred Areas

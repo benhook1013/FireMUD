@@ -3,13 +3,20 @@
 ## Current Coverage
 
 - Game Session is the implemented gameplay ingress for WebSocket and Telnet-backed text-command flows.
-- `LOGIN`, authenticated session binding, `LOOK`, and `SAY` are implemented through the current gameplay slices.
+- The simplified admission flow is live:
+  - optional public `WORLDS`
+  - `LOGIN`
+  - `PLAY`
+  - gameplay commands after admitted gameplay scope
+- Stage-aware `LOGIN_REQUIRED` / `PLAY_REQUIRED` guidance is implemented for wrong-stage input instead of older backend-flavored errors.
+- `LOOK`, `SAY`, `WHISPER`, and `TELL` are implemented through the current gameplay slices.
 - Redis-backed session context, command queuing, tick-oriented coordination, feature flags, gRPC surfaces, and WebSocket handling exist in the service.
 - Reconnection/session-takeover concepts are partially implemented at the current slice level.
 
 ## Current Role In The Platform
 
 - Owns gameplay session ingress, session binding, and command dispatch into Game Logic.
+- Owns gameplay admission semantics and the distinction between account authentication (`LOGIN`) and gameplay binding (`PLAY`).
 - Maintains gameplay session state and coordination responsibilities in Redis.
 - Fronts Account authentication for gameplay login and bridges player input into the runtime.
 

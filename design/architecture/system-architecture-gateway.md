@@ -64,7 +64,7 @@ These headers are treated as **untrusted inputs** unless the gateway has authent
 
 - `X-Proxy-Client-IP` – the Telnet client IP address as observed by the TCP Proxy Service (ideally recovered via PROXY protocol from the Telnet edge proxy in Kubernetes SNAT scenarios).
 - `X-Proxy-Connection-Id` – server-generated identifier for the Telnet socket, used to correlate `NotifyDisconnect` events with authenticated sessions.
-- `X-Proxy-Game-Instance-Id` / `X-Proxy-Tenant-Id` – advisory context captured from the optional Telnet `SESSION <gameInstanceId> <tenantId>` envelope.
+- `X-Proxy-Game-Instance-Id` / `X-Proxy-Tenant-Id` – advisory context captured from server-owned proxy defaults or future hidden MCP-carried smart-client metadata.
 
 ### Public Ingress Strip/Drop Rules
 

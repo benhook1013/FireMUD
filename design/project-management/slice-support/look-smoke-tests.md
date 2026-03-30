@@ -12,7 +12,7 @@ Dependencies: `wscat` (npm install -g wscat) or any WebSocket client.
    wscat -c ws://localhost:8080/ws/game
    ```
 
-2. (Optional) Send `SESSION <sessionId> <tenantId>` if you are explicitly testing the attach-to-existing-session path using a session created via the REST `POST /sessions` endpoint. For normal WebSocket smoke runs, skip this step and rely on `LOGIN` to create or bind the session.
+2. Continue with the normal flow; typed attach metadata is not part of the player-facing protocol.
 3. Send `LOGIN demo@example.com swordfish` and expect `OK LOGIN Logged in as demo@example.com`.
 4. Send `LOOK`. The response should match the canonical transcript in `design/project-management/vertical-slices/03-task-list-data-driven-look-vertical-slice.md#1-protocol-ux-and-design-alignment-for-look` (`OK LOOK`, room/exit/entity lines). Save the transcript (command + response) as `look-ws-<timestamp>.log`.
 5. (Optional) After the test, poll `/actuator/prometheus` or the Micrometer endpoint and confirm `gamesession.command.look.invocations{tenantId="1"}` incremented once and any failure scenario incremented `gamesession.command.look.failures{error="..."}`.
@@ -31,7 +31,7 @@ Prerequisites: the TCP Proxy + Gateway stack running locally (see `services/tcp-
    ```
 
 2. Send `LOGIN demo@example.com swordfish` and expect the same `OK LOGIN` line as the WebSocket script; this is the baseline flow and does not require a `SESSION` envelope.
-3. (Optional) To test the attach-to-existing-session behavior, first create a session via the REST `POST /sessions` endpoint, then send `SESSION <sessionId> <tenantId>` followed by `LOGIN demo@example.com swordfish` to bind the Telnet connection to that session.
+3. Continue with `PLAY demo` after `LOGIN`; typed attach metadata is not part of the Telnet contract.
 4. Send `LOOK` and copy the multiline response, verifying the text (room name/desc/exits/entities) matches the WebSocket transcript.
 5. To test failure handling, request `LOOK` with a missing room id (by instructing Game Logic to look at a non seeded room). The proxy should relay `ERROR ROOM_NOT_FOUND` or the appropriate downstream error without dropping the connection. Include the final transcript as `look-telnet-<timestamp>.log`.
 

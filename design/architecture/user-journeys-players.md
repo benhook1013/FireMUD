@@ -75,7 +75,7 @@ The first successful session for a new player follows a single canonical onboard
 
 For a first-time join through a publicly discoverable production realm, the first successful `PLAY` creates the player's `player` membership atomically as part of admission. Failed joins do not leave behind partial membership rows.
 
-This onboarding flow is the only supported way to discover and enter a realm. Transport-level hints such as Telnet `SESSION` and first-party WebSocket connect tokens may narrow the target realm, but they never replace the authenticated lobby contract.
+This onboarding flow is the only supported way to discover and enter a realm. First-party WebSocket connect tokens and any future hidden Telnet smart-client metadata may narrow the target realm, but they never replace the authenticated lobby contract.
 
 ```plaintext
 Player → WORLDS (optional public browse) → LOGIN → PLAY
@@ -145,7 +145,7 @@ Behind the scenes:
 Players connect using either a web client or a traditional Telnet client:
 
 - **Web Client** – Connects via WebSocket and HTTP through the [Spring Cloud Gateway](./microservices/spring-cloud-gateway/README.md).
-- **MUD/Telnet Client** – Connects over TCP to the [TCP Proxy Service](./microservices/tcp-proxy-service/README.md), which upgrades traffic to WebSocket for the Gateway. Both paths converge into a stateless WebSocket flow; see [Protocol Bridging](./system-architecture-protocol-bridging.md) for details. Normal Telnet clients never need to send a `SESSION` envelope and instead issue `LOGIN` just like WebSocket clients do; `SESSION` is reserved for advanced attach-to-session tools.
+- **MUD/Telnet Client** – Connects over TCP to the [TCP Proxy Service](./microservices/tcp-proxy-service/README.md), which upgrades traffic to WebSocket for the Gateway. Both paths converge into a stateless WebSocket flow; see [Protocol Bridging](./system-architecture-protocol-bridging.md) for details. Normal Telnet clients simply issue `LOGIN` and `PLAY` just like WebSocket clients do. Any future smart-client attach hints should be hidden MCP metadata rather than typed player commands.
 
 Gameplay sessions are managed by the [Game Session Service](./microservices/game-session-service/README.md), which coordinates ticks, sessions, and reconnect behavior. Redis stores gameplay session bindings and related runtime coordination state as described in [Redis Architecture](./system-architecture-redis.md), allowing the Game Session Service to rebind sessions when players reconnect. Account-auth JWT allowlist and revocation state lives under the Account Service-owned `session:auth:*` contract rather than as generic Game Session auth state. Authentication is delegated to the [Account Service](./microservices/account-service/README.md) as described in [Authentication & Authorization](./system-architecture-authentication.md).
 

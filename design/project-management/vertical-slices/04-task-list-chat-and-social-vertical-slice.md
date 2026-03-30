@@ -148,7 +148,7 @@ These transcripts make it easy to add regression assertions for failure paths an
 
 ## 6. Final QA Checklist
 
-- Run the canonical Telnet and WebSocket flows manually (`SESSION`, `LOGIN`, `LOOK`, `SAY`) and verify the transcripts match the documented samples plus the `gamesession.command.say.*` counters increment.
+- Run the canonical Telnet and WebSocket flows manually (`WORLDS`, `LOGIN`, `PLAY`, `LOOK`, `SAY`) and verify the transcripts match the documented samples plus the `gamesession.command.say.*` counters increment.
 - Inspect `/actuator/prometheus` during regression runs to confirm both `gamesession.command.look.*` and `gamesession.command.say.*` metrics move as expected.
 - Mention the new SAY regression suites in the PR/README so reviewers know to run `./gradlew crossServiceTest` before merging.
 

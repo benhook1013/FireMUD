@@ -43,7 +43,7 @@ class TelnetServerHandlerSpringBootTest {
   @MockitoBean private TcpProxyEventService eventService;
 
   @Test
-  void recordsConnectEventWhenSessionEnvelopeArrives() {
+  void recordsConnectEventWhenHiddenBootstrapDefaultsApply() {
     AtomicInteger bufferDepth = new AtomicInteger();
     String sessionId = "session-33";
     String tenantId = "tenant-13";
@@ -62,8 +62,9 @@ class TelnetServerHandlerSpringBootTest {
             TelnetServerHandler::createWebSocket,
             eventService,
             bufferDepth,
-            Mockito.mock(LookCacheService.class),
-            0);
+            sessionId,
+            tenantId,
+            Mockito.mock(LookCacheService.class));
 
     EmbeddedChannel channel =
         new EmbeddedChannel(
@@ -79,9 +80,6 @@ class TelnetServerHandlerSpringBootTest {
     channel.pipeline().fireChannelActive();
 
     try {
-      channel.writeInbound(
-          Unpooled.copiedBuffer(
-              "SESSION " + sessionId + " " + tenantId + "\r\n", StandardCharsets.ISO_8859_1));
       channel.writeInbound(Unpooled.copiedBuffer("look\r\n", StandardCharsets.ISO_8859_1));
 
       verify(eventService, timeout(1000))

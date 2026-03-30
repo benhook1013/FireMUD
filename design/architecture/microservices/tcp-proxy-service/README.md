@@ -10,7 +10,7 @@ For TCP Proxy’s position in the overall system (DMZ, Telnet edge, and WebSocke
 
 > **Canonical ownership:** This TCP Proxy doc set is the authoritative source for:
 >
-> - Telnet `SESSION` envelope semantics and header propagation.
+> - Telnet bridge metadata and header propagation.
 > - `NotifyDisconnect` event semantics and layering guarantees.
 > - Proxy metrics naming, bounded label taxonomies, and cardinality rules.
 >
@@ -24,10 +24,10 @@ When code, tests, and docs diverge, align implementation to this doc set and the
 
 | Area | Target behaviour | Current status | Tracked in |
 | --- | --- | --- | --- |
-| Telnet login-first flow (without `SESSION`) | All Telnet clients may optionally browse `WORLDS` before login, then issue `LOGIN`, then `PLAY`; advanced clients may also send a `SESSION` envelope for attach/resume hints. `SESSION` is always optional and Telnet shares the same login pipeline as WebSocket clients. `LOGIN` / `LOGON` semantics remain canonical in the Authentication & Authorization doc; this row only describes how Telnet traffic is forwarded into that flow. | Implemented. | `design/project-management/vertical-slices/02-task-list-login-and-session-vertical-slice.md` |
+| Telnet login-first flow | All Telnet clients may optionally browse `WORLDS` before login, then issue `LOGIN`, then `PLAY`. Telnet shares the same admission pipeline as WebSocket clients. Hidden smart-client attach hints may return later through MCP metadata only; they are not player-facing commands. `LOGIN` / `LOGON` semantics remain canonical in the Authentication & Authorization doc; this row only describes how Telnet traffic is forwarded into that flow. | Implemented. | `design/project-management/vertical-slices/02.2-task-list-gameplay-admission-ux-vertical-slice.md` |
 | Proxy -> Gateway WebSocket mTLS | Telnet -> Gateway WebSocket client connects over `wss://` using mutual TLS and the dedicated `FIREMUD_GATEWAY_WS_*` client certificate paths (separate from the proxy’s gRPC server mTLS identity). | Implemented. Player-facing environments fail closed if client-certificate identity verification is unavailable. | `design/project-management/service-status-tcp-proxy-service.md` |
 | MCP control-line handling and Telnet heuristics | MCP 2.1 control lines, Telnet heuristics, and connection throttling are enforced at the proxy edge while keeping MCP payloads intact. | Implemented. | `design/project-management/service-status-tcp-proxy-service.md` |
-| Connection limits and abuse protection | Connection caps, idle timeouts, input size limits, and malformed-envelope budgets protect the DMZ boundary. | Core limit handling is implemented; tuning and additional metrics may evolve as production behaviour is observed. | `design/project-management/service-status-tcp-proxy-service.md` |
+| Connection limits and abuse protection | Connection caps, idle timeouts, input size limits, and MCP/Telnet safety budgets protect the DMZ boundary. | Core limit handling is implemented; tuning and additional metrics may evolve as production behaviour is observed. | `design/project-management/service-status-tcp-proxy-service.md` |
 | Telnet client IP preservation via PROXY protocol | Telnet client IPs are preserved by terminating public TCP on a Telnet edge proxy and forwarding to the TCP Proxy Service using PROXY protocol on an internal-only listener/port. | Implemented. In player-facing environments, PROXY protocol on the internal listener is required and the raw Telnet listener is never exposed directly to the Internet. | `design/project-management/service-status-tcp-proxy-service.md` |
 
 ## Responsibilities
@@ -55,7 +55,7 @@ Plaintext/raw Telnet support in production is an intentional, non-removable requ
 Canonical TCP Proxy documentation is now split by concern:
 
 - [`protocols.md`](./protocols.md)
-  - Telnet login/session flow, `SESSION` envelope semantics, bridge data flow, Telnet command handling, and MCP budgets.
+  - Telnet login flow, hidden bridge metadata, bridge data flow, Telnet command handling, and MCP budgets.
 - [`api-contracts.md`](./api-contracts.md)
   - `NotifyDisconnect` semantics, failure handling, correlation rules, REST/gRPC endpoints, and proto ownership.
 - [`runtime-and-data.md`](./runtime-and-data.md)
@@ -69,7 +69,7 @@ Canonical TCP Proxy documentation is now split by concern:
 
 These are the primary canonical references for proxy behaviour:
 
-- [`protocols.md#telnet-session-envelope--event-metrics`](./protocols.md#telnet-session-envelope--event-metrics)
+- [`protocols.md#hidden-attach-metadata`](./protocols.md#hidden-attach-metadata)
 - [`api-contracts.md#service-interactions`](./api-contracts.md#service-interactions)
 - [`runtime-and-data.md#reconnection-behaviour-at-the-proxy-layer`](./runtime-and-data.md#reconnection-behaviour-at-the-proxy-layer)
 - [`operations.md#metrics-summary`](./operations.md#metrics-summary)

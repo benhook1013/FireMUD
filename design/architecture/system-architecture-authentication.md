@@ -167,7 +167,7 @@ Normative semantic split:
 - `LOGIN` proves or restores account identity.
 - `PLAY` binds the gameplay session to `{tenantId, gameInstanceId, characterId}`.
 
-Transport state, connect-token state, and optional Telnet `SESSION` metadata are inputs to this flow; they are not peers to the authoritative gameplay binding.
+Transport state, connect-token state, and any future hidden Telnet smart-client metadata are inputs to this flow; they are not peers to the authoritative gameplay binding.
 
 All clients — whether connecting via Telnet or WebSocket — authenticate using the `LOGIN` command.
 
@@ -182,9 +182,9 @@ Current implementation note:
 - Prompt-based `LOGIN` remains the target behavior for Telnet and generic WebSocket clients, but until the prompt flow is fully implemented those transports currently require `LOGIN <username> <password> [otp]` and return `PROMPT_LOGIN_UNSUPPORTED` on bare `LOGIN`.
 - First-party `/ws/game/**` remains the exception: once Gateway has validated a connect token and attached a signed connect context, bare `LOGIN` is the canonical bootstrap-backed path and must not prompt for or replay credentials.
 
-Telnet-specific behaviors (such as the optional `SESSION <gameInstanceId> <tenantId>` envelope used by advanced clients) reuse this same canonical login flow. The envelope is advisory smart-client metadata captured by the TCP Proxy Service and forwarded as gateway-owned headers; it is not part of the normal human-facing command flow, is not authentication material, and never bypasses the canonical `LOGIN` + `PLAY` authorization and entitlement checks. The TCP Proxy Service and Spring Cloud Gateway docs describe only their **transport responsibilities** and defer to this section for `LOGIN`/`LOGON` semantics and example transcripts.
+Telnet-specific smart-client attach hints, if they return later, should travel through hidden MCP metadata rather than a typed `SESSION` gameplay line. Those hints remain advisory transport metadata only, are not authentication material, and never bypass the canonical `LOGIN` + `PLAY` authorization and entitlement checks. The TCP Proxy Service and Spring Cloud Gateway docs describe only their **transport responsibilities** and defer to this section for `LOGIN`/`LOGON` semantics and example transcripts.
 
-Telnet `SESSION` hints may include a target `{gameInstanceId, tenantId}` for advanced clients, but the canonical source of gameplay target selection remains the authenticated lobby/admission flow. Clients must not rely on unauthenticated transport hints to bypass membership, entitlement, or world-visibility checks.
+Any future hidden attach hints may include a target `{gameInstanceId, tenantId}` for advanced clients, but the canonical source of gameplay target selection remains the authenticated lobby/admission flow. Clients must not rely on unauthenticated transport hints to bypass membership, entitlement, or world-visibility checks.
 
 ### WebSocket Connect Token Contract (`/ws/game/**`)
 

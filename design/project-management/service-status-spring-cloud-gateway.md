@@ -9,7 +9,7 @@
 ## Current Role In The Platform
 
 - Acts as the browser/websocket front door for first-party HTTP and gameplay traffic.
-- Proxies gameplay traffic into Game Session rather than owning gameplay semantics itself.
+- Proxies gameplay traffic into Game Session rather than owning gameplay semantics itself; `LOGIN` / `PLAY` semantics remain downstream in Game Session.
 - Provides test harness value through the lightweight gateway stub path.
 
 ## Partial / Stubbed / Deferred Areas

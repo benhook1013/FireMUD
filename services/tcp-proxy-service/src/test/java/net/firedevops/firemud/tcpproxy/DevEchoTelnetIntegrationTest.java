@@ -37,6 +37,8 @@ class DevEchoTelnetIntegrationTest {
     registry.add("GATEWAY_WS_URL", () -> "ws://localhost:" + WEB_SERVER_PORT + "/dev/echo");
     registry.add("TCP_PROXY_PORT", () -> TELNET_SERVER_PORT);
     registry.add("TCP_PROXY_DEV_ISOLATED", () -> true);
+    registry.add("TCP_PROXY_DEFAULT_GAME_INSTANCE_ID", () -> "1");
+    registry.add("TCP_PROXY_DEFAULT_TENANT_ID", () -> "1");
     registry.add("spring.grpc.server.port", () -> 0);
   }
 
@@ -51,7 +53,6 @@ class DevEchoTelnetIntegrationTest {
             new BufferedReader(
                 new InputStreamReader(socket.getInputStream(), StandardCharsets.ISO_8859_1))) {
       socket.setSoTimeout(10_000);
-      writer.println("SESSION dev-test dev-tenant");
       String payload = "hello dev echo";
       writer.println(payload);
       String echoed = reader.readLine();

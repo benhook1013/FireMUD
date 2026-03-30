@@ -14,9 +14,9 @@ This checklist focuses on turning the Telnet TCP Proxy + Gateway + Game Session 
 
 ## 2. Telnet Session Envelope and Event Metrics
 
-- [x] Document the Telnet session envelope format in the TCP Proxy design so MUD tools and scripts know how to bind a Telnet connection to a session, using the canonical [Telnet Session Envelope & Event Metrics](../../architecture/microservices/tcp-proxy-service/README.md#telnet-session-envelope--event-metrics) section as the single source of truth. The space-separated form (`SESSION <sessionId> <tenantId>`) is canonical for all new clients and examples.
+- [x] Document the Telnet bridge bootstrap metadata model in the TCP Proxy design so the transport can pass trusted proxy-owned context without exposing typed attach commands to players.
 - [x] Add focused unit tests for `TelnetSessionContext` covering valid envelopes (space-separated) and invalid/malformed cases, asserting sessionId/tenantId handling and log behaviour.
-- [x] Add a Spring Boot test for `TelnetServerHandler` that opens a Netty channel, sends a valid `SESSION` envelope followed by a command, and asserts that `TcpProxyEventService.recordConnectEvent` is invoked with the expected sessionId, tenantId, and client IP.
+- [x] Add a Spring Boot test for `TelnetServerHandler` that opens a Netty channel, triggers the hidden bootstrap path with a normal command, and asserts that `TcpProxyEventService.recordConnectEvent` is invoked with the expected sessionId, tenantId, and client IP.
 
 ## 3. Reconnection and Buffered Input Behaviour
 
@@ -33,7 +33,7 @@ This checklist focuses on turning the Telnet TCP Proxy + Gateway + Game Session 
 ## 5. Telnet → Gateway → Game Session Cross-Service Flow
 
 - [x] Add a cross-service integration test (in `services/tcp-proxy-service` or a shared test module) that starts tcp-proxy-service, Spring Cloud Gateway, and game-session-service together using Testcontainers or Spring Boot test harnesses.
-- [x] In that test, open a Telnet socket, send a valid `SESSION` envelope and a simple command, and assert that the command arrives at the Game Session command queue (or an observable stub) and that an expected response can be read back over the Telnet connection.
+- [x] In that test, open a Telnet socket, send a simple command, and assert that the command arrives at the Game Session command queue (or an observable stub) and that an expected response can be read back over the Telnet connection.
 - [x] Ensure this cross-service test is wired into Gradle (e.g., via a dedicated `crossServiceTest` or naming convention) and is documented so it can be run locally and in CI (run via `./gradlew :tcp-proxy-service:test --tests net.firedevops.firemud.TelnetGatewayGameSessionCrossServiceIntegrationTest`).
 
 ## 6. Minimal Text Command Protocol and Gameplay Slice
@@ -66,7 +66,7 @@ Link to the [Minimal Text Command Protocol](../../architecture/microservices/gam
 
 ### 6.5 Telnet and WebSocket parity for LOOK
 
-- [x] Ensure the Telnet path (TCP Proxy ? Gateway ? Game Session) forwards raw text command lines into the same `TextCommandParser` / interpreter pipeline used by direct WebSocket clients, with no Telnet-specific command parsing beyond the `SESSION` envelope already defined earlier in this checklist (the cross-service stub demonstrates the shared response).
+- [x] Ensure the Telnet path (TCP Proxy ? Gateway ? Game Session) forwards raw text command lines into the same `TextCommandParser` / interpreter pipeline used by direct WebSocket clients, with no Telnet-specific gameplay command parsing.
 - [x] Add an integration test that exercises `LOOK` over a direct WebSocket connection using a lightweight Gateway stub and asserts the response text equals the Telnet response by reusing the same deterministic constant.
 - [x] Add an integration test that exercises `LOOK` over a direct WebSocket connection through Spring Cloud Gateway (no Telnet) and asserts the response text matches the Telnet path exercised by the cross-service test in section 5 (for example by sharing a helper that asserts the `LOOK` response string is identical); implemented by `services/spring-cloud-gateway/src/test/java/integration/net/firedevops/firemud/GatewayLookCommandIntegrationTest.java`, which spins up a lightweight stubbed route and compares the payload to `LookCommandConstants.LOOK_RESPONSE`.
 

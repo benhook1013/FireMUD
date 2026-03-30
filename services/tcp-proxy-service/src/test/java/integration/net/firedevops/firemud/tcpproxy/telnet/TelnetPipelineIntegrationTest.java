@@ -48,8 +48,7 @@ class TelnetPipelineIntegrationTest {
             new AtomicInteger(),
             "sess-1",
             "tenant-1",
-            lookCacheService,
-            0);
+            lookCacheService);
 
     EmbeddedChannel channel =
         new EmbeddedChannel(
@@ -92,8 +91,7 @@ class TelnetPipelineIntegrationTest {
             new AtomicInteger(),
             "sess-1",
             "tenant-1",
-            lookCacheService,
-            0);
+            lookCacheService);
 
     EmbeddedChannel channel =
         new EmbeddedChannel(

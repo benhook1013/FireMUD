@@ -111,5 +111,7 @@ class PlayCommandHandlerTest {
 
     assertThat(result.commandResult().accepted()).isFalse();
     assertThat(result.commandResult().errorCode()).isEqualTo("PLAY_SELECTION_REQUIRED");
+    assertThat(result.commandResult().errorMessage())
+        .isEqualTo("Selection required. Use PLAY sandbox <character> or browse CHARS first.");
   }
 }

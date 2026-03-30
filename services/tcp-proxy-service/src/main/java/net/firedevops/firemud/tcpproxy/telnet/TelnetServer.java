@@ -69,7 +69,6 @@ public final class TelnetServer {
   private final int maxConnections;
   private final int maxConnectionsPerIp;
   private final int maxLineBytes;
-  private final int maxMalformedSessionEnvelopes;
   private final String defaultGameInstanceId;
   private final String defaultTenantId;
   private final java.util.concurrent.atomic.AtomicInteger activeConnections =
@@ -111,7 +110,6 @@ public final class TelnetServer {
       @Value("${TCP_PROXY_MAX_CONNECTIONS:0}") int maxConnections,
       @Value("${TCP_PROXY_MAX_CONNECTIONS_PER_IP:0}") int maxConnectionsPerIp,
       @Value("${TCP_PROXY_MAX_LINE_BYTES:4096}") int maxLineBytes,
-      @Value("${TCP_PROXY_MAX_MALFORMED_ENVELOPES:5}") int maxMalformedSessionEnvelopes,
       @Value("${TCP_PROXY_DEFAULT_GAME_INSTANCE_ID:}") String defaultGameInstanceId,
       @Value("${TCP_PROXY_DEFAULT_TENANT_ID:}") String defaultTenantId,
       MeterRegistry meterRegistry,
@@ -129,7 +127,6 @@ public final class TelnetServer {
     this.maxConnections = maxConnections;
     this.maxConnectionsPerIp = maxConnectionsPerIp;
     this.maxLineBytes = maxLineBytes;
-    this.maxMalformedSessionEnvelopes = maxMalformedSessionEnvelopes;
     this.defaultGameInstanceId = defaultGameInstanceId;
     this.defaultTenantId = defaultTenantId;
     this.meterRegistry = meterRegistry;
@@ -174,7 +171,6 @@ public final class TelnetServer {
       int maxConnections,
       int maxConnectionsPerIp,
       int maxLineBytes,
-      int maxMalformedSessionEnvelopes,
       MeterRegistry meterRegistry,
       TcpProxyEventService eventService,
       GatewayGameplayReadinessProbe gatewayGameplayReadinessProbe,
@@ -190,7 +186,6 @@ public final class TelnetServer {
         maxConnections,
         maxConnectionsPerIp,
         maxLineBytes,
-        maxMalformedSessionEnvelopes,
         null,
         null,
         meterRegistry,
@@ -282,8 +277,7 @@ public final class TelnetServer {
                               bufferDepth,
                               defaultGameInstanceId,
                               defaultTenantId,
-                              lookCacheService,
-                              maxMalformedSessionEnvelopes));
+                              lookCacheService));
                 }
               });
       serverChannel = b.bind(port).sync().channel();

@@ -1,6 +1,6 @@
-# Smoke Tests for Login + LOOK
+# Smoke Tests for Login + PLAY + LOOK
 
-These steps exercise the same `LOGIN` + `LOOK` flow that users take over both WebSocket (direct Game Session) and Telnet (via TCP Proxy + Gateway) transports. They deliberately use the `demo@example.com` / `swordfish` credentials that exist in the lightweight Account Service stub.
+These steps exercise the same `WORLDS` (optional) + `LOGIN` + `PLAY` + `LOOK` flow that users take over both WebSocket (direct Game Session) and Telnet (via TCP Proxy + Gateway) transports. They deliberately use the `demo@example.com` / `swordfish` credentials that exist in the lightweight Account Service stub.
 
 ## Requirements
 
@@ -17,16 +17,24 @@ Use `websocat` (or your favorite WebSocket client) to connect directly to Game S
 
 ```bash
 websocat -H "X-Game-Instance-Id: 00000000-0000-0000-0000-000000000001" -H "X-Tenant-Id: 00000000-0000-0000-0000-000000000001" ws://localhost:8080/ws/game
+WORLDS
 LOGIN demo@example.com swordfish
+PLAY demo
 LOOK
 ```
 
 Replace the `X-Game-Instance-Id` and `X-Tenant-Id` header values with the game instance and tenant identifiers for your environment.
 
-Expected output (two newline-separated responses):
+Expected output (four newline-separated responses):
 
 ```text
+OK WORLDS
+1) Demo World (demo)
+2) Builder Sandbox (sandbox)
+
 OK LOGIN Logged in as demo@example.com
+
+OK PLAY Entered world: demo
 
 OK LOOK
 You are in a candle-lit antechamber carved into basalt.
@@ -44,77 +52,49 @@ bash ./websocket-login-look-smoke.sh
 
 This direct WebSocket smoke uses the Game Session HTTP/WebSocket listener directly (`ws://localhost:8086/ws/game` by default), not the Gateway route. It also requires Python plus the `websocket-client` package because the canonical script is implemented as a small Python client rather than `websocat`.
 
-## 2. Telnet Smoke Flow via TCP Proxy + Gateway (LOGIN-only baseline)
+## 2. Telnet Smoke Flow via TCP Proxy + Gateway
 
-This flow exercises the **baseline Telnet behaviour** where clients do **not**
-send a `SESSION` envelope. It matches what a normal Telnet client would do in
-the wild: connect, `LOGIN`, then issue gameplay commands.
+This flow exercises the baseline Telnet behaviour for real players: connect, optionally browse `WORLDS`, then `LOGIN`, `PLAY`, and issue gameplay commands. Hidden bootstrap metadata is proxy-internal; players do not type a `SESSION` envelope.
 
 Open a Telnet session directly against the TCP Proxy (default port `2323`):
 
 ```bash
 telnet localhost 2323
+WORLDS
 LOGIN demo@example.com swordfish
+PLAY demo
 LOOK
 ```
 
-Telnet should display the redacted login acknowledgement followed by the same `LOOK` payload:
+Telnet should display the world list, login acknowledgement, gameplay-entry acknowledgement, and then the same `LOOK` payload:
 
 ```text
+OK WORLDS
+1) Demo World (demo)
+2) Builder Sandbox (sandbox)
+
 OK LOGIN Logged in as demo@example.com
+
+OK PLAY Entered world: demo
 
 OK LOOK
 You are in a candle-lit antechamber carved into basalt.
 
 ```
 
-## 3. Telnet Smoke Flow via TCP Proxy + Gateway (advanced SESSION attach)
+## 3. Verifying the Same Experience
 
-This flow demonstrates the **optional** `SESSION` envelope used by advanced
-tools and scripts that already know the `sessionId`/`tenantId` pair (for
-example after calling the Game Session REST API). It is an optimization for
-attach-to-session scenarios; Telnet clients never need to send `SESSION` for
-normal gameplay.
-
-Open a Telnet session directly against the TCP Proxy (default port `2323`):
-
-```bash
-telnet localhost 2323
-SESSION 00000000-0000-0000-0000-000000000001 00000000-0000-0000-0000-000000000001
-LOGIN demo@example.com swordfish
-LOOK
-```
-
-Replace the `SESSION` envelope identifiers with a real `{sessionId, tenantId}` pair for your environment.
-
-Telnet should display the redacted login acknowledgement followed by the same `LOOK` payload:
-
-```text
-OK LOGIN Logged in as demo@example.com
-
-OK LOOK
-You are in a candle-lit antechamber carved into basalt.
-
-```
-
-## 4. Verifying the Same Experience
-
-Compare the WebSocket `LOOK` response and each Telnet `LOOK` response; they
-should match exactly because both commands traverse `/ws/game/**` and are
-handled by the same Game Session login/tick pipeline. Recording the three
-output blocks above and diffing them is enough to prove parity. Document any
-differences (for example, missing blank lines) as regressions in
-`design/project-management/vertical-slices/02-task-list-login-and-session-vertical-slice.md`.
+Compare the WebSocket `PLAY` + `LOOK` response and the Telnet `PLAY` + `LOOK` response; they should match semantically because both commands traverse `/ws/game/**` and are handled by the same Game Session admission and gameplay pipeline. Recording the output blocks above and diffing them is enough to prove parity. Document any differences (for example, missing blank lines) as regressions in [02.2-task-list-gameplay-admission-ux-vertical-slice.md](../project-management/vertical-slices/02.2-task-list-gameplay-admission-ux-vertical-slice.md).
 
 If any readiness endpoint for the target path is still not `UP`, do not treat retries or waiting inside the client flow as a valid substitute. The stack is not yet ready for player traffic.
 
 For the Telnet path specifically, the smoke should verify both sides of the contract:
 
 - before readiness: player traffic is refused or explicitly rejected with `startup_unavailable`
-- after readiness: first-attempt `LOGIN` and first `LOOK` succeed without retries
+- after readiness: first-attempt `LOGIN`, `PLAY`, and `LOOK` succeed without retries
 
 For the direct WebSocket path in this slice, the smoke verifies post-readiness parity only:
 
-- after readiness: first-attempt `LOGIN` and first `LOOK` succeed without retries
-- the returned `LOOK` transcript stays aligned with the Telnet path for the same game instance
+- after readiness: first-attempt `LOGIN`, `PLAY`, and `LOOK` succeed without retries
+- the returned `PLAY` + `LOOK` transcript stays aligned with the Telnet path for the same game instance
 - the blackbox target is the direct Game Session WebSocket surface rather than Spring Cloud Gateway, so this smoke verifies backend gameplay-path parity rather than edge admission behavior

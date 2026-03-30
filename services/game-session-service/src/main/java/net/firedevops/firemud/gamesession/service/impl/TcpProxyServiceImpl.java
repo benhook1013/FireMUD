@@ -90,7 +90,7 @@ public final class TcpProxyServiceImpl extends TcpProxyServiceGrpc.TcpProxyServi
             ? request.getGameInstanceId()
             : request.getSessionId();
     if (!StringUtils.hasText(gameInstanceIdText) || !StringUtils.hasText(request.getTenantId())) {
-      return GrpcAppErrors.ok("Disconnect recorded (no SESSION envelope)");
+      return GrpcAppErrors.ok("Disconnect recorded (no proxy bootstrap metadata)");
     }
     SessionValidationResult validation = validateSession(gameInstanceIdText, request.getTenantId());
     if (validation.hasError()) {
