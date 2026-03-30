@@ -20,6 +20,7 @@ public class TextCommandParser {
           case LOGIN -> parseRemainingTokens(tokens);
           case PLAY -> parseRemainingTokens(tokens);
           case SAY -> extractSayMessage(trimmed);
+          case WHISPER, TELL -> extractTargetedCommunicationArguments(trimmed);
           case MOVE -> extractMoveArguments(tokens);
           case UNKNOWN -> parseRemainingTokens(tokens);
         };
@@ -43,6 +44,30 @@ public class TextCommandParser {
       return List.of();
     }
     return List.of(message);
+  }
+
+  private List<String> extractTargetedCommunicationArguments(String trimmed) {
+    int firstSpace = trimmed.indexOf(' ');
+    if (firstSpace < 0 || firstSpace == trimmed.length() - 1) {
+      return List.of();
+    }
+    String remainder = trimmed.substring(firstSpace + 1).trim();
+    if (remainder.isEmpty()) {
+      return List.of();
+    }
+    int secondSpace = remainder.indexOf(' ');
+    if (secondSpace < 0 || secondSpace == remainder.length() - 1) {
+      return List.of(remainder);
+    }
+    String target = remainder.substring(0, secondSpace).trim();
+    String message = remainder.substring(secondSpace + 1).trim();
+    if (target.isEmpty()) {
+      return List.of();
+    }
+    if (message.isEmpty()) {
+      return List.of(target);
+    }
+    return List.of(target, message);
   }
 
   private List<String> extractMoveArguments(String[] tokens) {

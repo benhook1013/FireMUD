@@ -55,12 +55,21 @@ class TextCommandParserTest {
   }
 
   @Test
-  void parsesAliasesAsSay() {
-    TextCommand command = parser.parse("YELL Hello");
+  void parsesWhisperTargetAndMessage() {
+    TextCommand command = parser.parse("WHISPER Sora Hello");
 
-    assertEquals(TextCommandType.SAY, command.type());
-    assertEquals(List.of("Hello"), command.args());
-    assertEquals("YELL Hello", command.rawLine());
+    assertEquals(TextCommandType.WHISPER, command.type());
+    assertEquals(List.of("Sora", "Hello"), command.args());
+    assertEquals("WHISPER Sora Hello", command.rawLine());
+  }
+
+  @Test
+  void parsesTellTargetAndMessage() {
+    TextCommand command = parser.parse("TELL Sora Meet me later");
+
+    assertEquals(TextCommandType.TELL, command.type());
+    assertEquals(List.of("Sora", "Meet me later"), command.args());
+    assertEquals("TELL Sora Meet me later", command.rawLine());
   }
 
   @Test

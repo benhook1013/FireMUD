@@ -93,7 +93,9 @@ public class MoveCommandHandler {
         current.sessionId(),
         current.tenantId(),
         current.accountId(),
+        current.loginName(),
         current.characterId(),
+        current.characterName(),
         current.gameInstanceId(),
         destinationRoomId,
         current.jwt());

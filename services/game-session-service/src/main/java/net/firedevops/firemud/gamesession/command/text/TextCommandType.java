@@ -9,6 +9,8 @@ public enum TextCommandType {
   PLAY,
   LOOK,
   SAY,
+  WHISPER,
+  TELL,
   MOVE,
   NOOP,
   UNKNOWN;
@@ -24,7 +26,9 @@ public enum TextCommandType {
       case "LOGIN", "LOGON" -> LOGIN;
       case "PLAY" -> PLAY;
       case "LOOK" -> LOOK;
-      case "SAY", "YELL", "WHISPER" -> SAY;
+      case "SAY" -> SAY;
+      case "WHISPER" -> WHISPER;
+      case "TELL" -> TELL;
       case "MOVE", "GO", "NORTH", "SOUTH", "EAST", "WEST" -> MOVE;
       default -> UNKNOWN;
     };

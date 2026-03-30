@@ -60,6 +60,7 @@ public class ChatServiceImpl implements ChatService {
   private static ChatProperties copyProps(ChatProperties src) {
     var copy = new ChatProperties();
     copy.setSays(src.getSays());
+    copy.setWhispers(src.getWhispers());
     copy.setTells(src.getTells());
     copy.setGuild(src.getGuild());
     copy.setCity(src.getCity());
@@ -101,6 +102,9 @@ public class ChatServiceImpl implements ChatService {
       if (request.type() == ChatType.SAY) {
         key = String.format("say:%d:%d", request.tenantId(), request.recipientAccountId());
         settings = chatProperties.getSays();
+      } else if (request.type() == ChatType.WHISPER) {
+        key = String.format("whisper:%d:%d", request.tenantId(), request.recipientAccountId());
+        settings = chatProperties.getWhispers();
       } else if (request.type() == ChatType.TELL) {
         key = String.format("tell:%d:%d", request.tenantId(), request.recipientAccountId());
         settings = chatProperties.getTells();

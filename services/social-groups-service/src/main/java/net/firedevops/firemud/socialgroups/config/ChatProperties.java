@@ -5,6 +5,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 @ConfigurationProperties(prefix = "firemud.chat")
 public class ChatProperties {
   private ChatCacheSettings says = new ChatCacheSettings(7200L, 50);
+  private ChatCacheSettings whispers = new ChatCacheSettings(7200L, 50);
   private ChatCacheSettings tells = new ChatCacheSettings(172800L, 50);
   private ChatCacheSettings guild = new ChatCacheSettings(172800L, 50);
   private ChatCacheSettings city = new ChatCacheSettings(172800L, 50);
@@ -24,6 +25,14 @@ public class ChatProperties {
 
   public void setTells(ChatCacheSettings tells) {
     this.tells = tells;
+  }
+
+  public ChatCacheSettings getWhispers() {
+    return whispers;
+  }
+
+  public void setWhispers(ChatCacheSettings whispers) {
+    this.whispers = whispers;
   }
 
   public ChatCacheSettings getGuild() {

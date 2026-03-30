@@ -11,5 +11,8 @@ public interface SessionContextService {
   Optional<SessionContext> findByGameplayIdentity(
       long tenantId, long gameInstanceId, long characterId);
 
+  Optional<SessionContext> findByGameplayName(
+      long tenantId, long gameInstanceId, String characterName);
+
   void deleteBySessionId(long tenantId, long sessionId);
 }

@@ -41,7 +41,9 @@ class MoveCommandHandlerTest {
             lookCommandHandler,
             gameLogicProperties,
             meterRegistry);
-    context = new SessionContext(42L, 22L, 123L, 911L, 7L, "R-1021", "jwt-token");
+    context =
+        new SessionContext(
+            42L, 22L, 123L, "emberline@example.com", 911L, "Emberline", 7L, "R-1021", "jwt-token");
   }
 
   @Test
@@ -72,6 +74,8 @@ class MoveCommandHandlerTest {
     ArgumentCaptor<SessionContext> contextCaptor = ArgumentCaptor.forClass(SessionContext.class);
     verify(sessionContextService).save(contextCaptor.capture());
     assertThat(contextCaptor.getValue().roomInstanceId()).isEqualTo("R-2045");
+    assertThat(contextCaptor.getValue().loginName()).isEqualTo("emberline@example.com");
+    assertThat(contextCaptor.getValue().characterName()).isEqualTo("Emberline");
     verify(lookCommandHandler).renderProtocol(contextCaptor.getValue(), destinationLook);
   }
 

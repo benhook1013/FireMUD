@@ -40,7 +40,8 @@ class PlayCommandHandlerTest {
 
   @Test
   void playPromotesSessionIntoGameplay() {
-    SessionContext context = new SessionContext(1L, 22L, 123L, 0L, 0L, "jwt-token");
+    SessionContext context =
+        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
     when(sessionContextService.findByGameplayIdentity(22L, 1L, 123L)).thenReturn(Optional.empty());
 
@@ -52,7 +53,15 @@ class PlayCommandHandlerTest {
     Mockito.verify(sessionContextService)
         .save(
             new SessionContext(
-                1L, 22L, 123L, 123L, 1L, gameLogicProperties.getDefaultRoomId(), "jwt-token"));
+                1L,
+                22L,
+                123L,
+                "demo@example.com",
+                123L,
+                "demo",
+                1L,
+                gameLogicProperties.getDefaultRoomId(),
+                "jwt-token"));
   }
 
   @Test

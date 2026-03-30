@@ -13,10 +13,10 @@ import net.firedevops.firemud.gamelogic.logic.command.SimpleCommandProcessor;
 import net.firedevops.firemud.gamelogic.logic.event.EventDispatcher;
 import net.firedevops.firemud.gamelogic.logic.script.NoOpScriptingHook;
 import net.firedevops.firemud.gamelogic.logic.service.CommandServiceImpl;
+import net.firedevops.firemud.gamelogic.service.CommunicationAggregationService;
 import net.firedevops.firemud.gamelogic.service.LookAggregationService;
 import net.firedevops.firemud.gamelogic.service.MoveAggregationService;
 import net.firedevops.firemud.gamelogic.service.PingService;
-import net.firedevops.firemud.gamelogic.service.SayAggregationService;
 import net.firedevops.firemud.gamelogic.v1.ExecuteCommandRequest;
 import net.firedevops.firemud.gamelogic.v1.ExecuteCommandResponse;
 import net.firedevops.firemud.gamelogic.v1.MoveRequest;
@@ -34,7 +34,8 @@ class GameLogicGrpcServiceTest {
     var processor = new SimpleCommandProcessor(dispatcher, new NoOpScriptingHook());
     var commandService = new CommandServiceImpl(new DefaultCommandParser(), processor);
     LookAggregationService lookAggregationService = Mockito.mock(LookAggregationService.class);
-    SayAggregationService sayAggregationService = Mockito.mock(SayAggregationService.class);
+    CommunicationAggregationService communicationAggregationService =
+        Mockito.mock(CommunicationAggregationService.class);
     MoveAggregationService moveAggregationService = Mockito.mock(MoveAggregationService.class);
     MoveResult moveResult = MoveResult.newBuilder().setSuccess(true).build();
     Mockito.when(moveAggregationService.resolve(any())).thenReturn(moveResult);
@@ -43,7 +44,7 @@ class GameLogicGrpcServiceTest {
             pingService,
             commandService,
             lookAggregationService,
-            sayAggregationService,
+            communicationAggregationService,
             moveAggregationService,
             new SimpleMeterRegistry());
 
@@ -75,7 +76,8 @@ class GameLogicGrpcServiceTest {
     var processor = new SimpleCommandProcessor(dispatcher, new NoOpScriptingHook());
     var commandService = new CommandServiceImpl(new DefaultCommandParser(), processor);
     LookAggregationService lookAggregationService = Mockito.mock(LookAggregationService.class);
-    SayAggregationService sayAggregationService = Mockito.mock(SayAggregationService.class);
+    CommunicationAggregationService communicationAggregationService =
+        Mockito.mock(CommunicationAggregationService.class);
     MoveAggregationService moveAggregationService = Mockito.mock(MoveAggregationService.class);
     MoveResult moveResult = MoveResult.newBuilder().setSuccess(true).build();
     Mockito.when(moveAggregationService.resolve(any())).thenReturn(moveResult);
@@ -84,7 +86,7 @@ class GameLogicGrpcServiceTest {
             pingService,
             commandService,
             lookAggregationService,
-            sayAggregationService,
+            communicationAggregationService,
             moveAggregationService,
             new SimpleMeterRegistry());
 
@@ -118,7 +120,8 @@ class GameLogicGrpcServiceTest {
     var processor = new SimpleCommandProcessor(dispatcher, new NoOpScriptingHook());
     var commandService = new CommandServiceImpl(new DefaultCommandParser(), processor);
     LookAggregationService lookAggregationService = Mockito.mock(LookAggregationService.class);
-    SayAggregationService sayAggregationService = Mockito.mock(SayAggregationService.class);
+    CommunicationAggregationService communicationAggregationService =
+        Mockito.mock(CommunicationAggregationService.class);
     MoveAggregationService moveAggregationService = Mockito.mock(MoveAggregationService.class);
     MoveResult moveResult = MoveResult.newBuilder().setSuccess(true).build();
     Mockito.when(moveAggregationService.resolve(any())).thenReturn(moveResult);
@@ -127,7 +130,7 @@ class GameLogicGrpcServiceTest {
             pingService,
             commandService,
             lookAggregationService,
-            sayAggregationService,
+            communicationAggregationService,
             moveAggregationService,
             new SimpleMeterRegistry());
 

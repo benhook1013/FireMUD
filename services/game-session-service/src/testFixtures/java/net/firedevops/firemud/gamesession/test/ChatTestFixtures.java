@@ -42,11 +42,6 @@ public final class ChatTestFixtures {
   }
 
   public static String canonicalSayText() {
-    return String.join(
-        "\n",
-        "OK SAY",
-        "Speaker: Emberline",
-        "Delivered-To: Emberline, Kobold Scout, Sora",
-        "Message: Hello travelers");
+    return "You say, \"Hello travelers\"";
   }
 }

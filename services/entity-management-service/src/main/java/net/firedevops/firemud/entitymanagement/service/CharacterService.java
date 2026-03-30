@@ -18,4 +18,6 @@ public interface CharacterService {
 
   /** Lists all characters for the given account across all tenants. */
   Page<CharacterDto> listForAccount(Long accountId, Pageable pageable);
+
+  java.util.Optional<CharacterDto> findByTenantAndName(Long tenantId, String name);
 }

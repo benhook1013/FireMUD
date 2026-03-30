@@ -60,7 +60,8 @@ class SessionResumptionFlowTest {
       Mockito.mock(ObjectProvider.class);
   private PlayCommandHandler playHandler;
   private final MoveCommandHandler moveHandler = Mockito.mock(MoveCommandHandler.class);
-  private final SayCommandHandler sayHandler = Mockito.mock(SayCommandHandler.class);
+  private final CommunicationCommandHandler communicationHandler =
+      Mockito.mock(CommunicationCommandHandler.class);
   private WorldsCommandHandler worldsHandler;
   private TextCommandInterpreter interpreter;
 
@@ -131,7 +132,7 @@ class SessionResumptionFlowTest {
             playHandler,
             moveHandler,
             sessionAuthenticationService,
-            sayHandler,
+            communicationHandler,
             worldsHandler);
   }
 
@@ -226,6 +227,7 @@ class SessionResumptionFlowTest {
   private static final class InMemorySessionContextService implements SessionContextService {
     private final Map<Long, SessionContext> sessionMap = new ConcurrentHashMap<>();
     private final Map<String, SessionContext> identityMap = new ConcurrentHashMap<>();
+    private final Map<String, SessionContext> nameMap = new ConcurrentHashMap<>();
 
     @Override
     public void save(SessionContext context) {
@@ -240,6 +242,11 @@ class SessionResumptionFlowTest {
       sessionMap.put(context.sessionId(), context);
       if (hasGameplayIdentity(context)) {
         identityMap.put(identityKey(context), context);
+        if (context.characterName() != null && !context.characterName().isBlank()) {
+          nameMap.put(
+              nameKey(context.tenantId(), context.gameInstanceId(), context.characterName()),
+              context);
+        }
       }
     }
 
@@ -260,10 +267,20 @@ class SessionResumptionFlowTest {
     }
 
     @Override
+    public Optional<SessionContext> findByGameplayName(
+        long tenantId, long gameInstanceId, String characterName) {
+      return Optional.ofNullable(nameMap.get(nameKey(tenantId, gameInstanceId, characterName)));
+    }
+
+    @Override
     public void deleteBySessionId(long tenantId, long sessionId) {
       SessionContext removed = sessionMap.remove(sessionId);
       if (removed != null && hasGameplayIdentity(removed)) {
         identityMap.remove(identityKey(removed));
+        if (removed.characterName() != null && !removed.characterName().isBlank()) {
+          nameMap.remove(
+              nameKey(removed.tenantId(), removed.gameInstanceId(), removed.characterName()));
+        }
       }
     }
 
@@ -277,6 +294,10 @@ class SessionResumptionFlowTest {
 
     private String identityKey(long tenantId, long gameInstanceId, long characterId) {
       return tenantId + ":" + gameInstanceId + ":" + characterId;
+    }
+
+    private String nameKey(long tenantId, long gameInstanceId, String characterName) {
+      return tenantId + ":" + gameInstanceId + ":" + characterName.trim().toLowerCase();
     }
 
     private boolean hasGameplayIdentity(SessionContext context) {

@@ -110,9 +110,11 @@ public class PlayCommandHandler {
 
     long gameInstanceId = selectedWorld.getGameInstanceId();
     long characterId = resolveCharacterId(context, selectedWorld, character);
+    String characterName = resolveCharacterName(context, characterId, character);
     if (StringUtils.hasText(context.roomInstanceId())
         && context.gameInstanceId() == gameInstanceId
-        && context.characterId() == characterId) {
+        && context.characterId() == characterId
+        && Objects.equals(normalizeName(context.characterName()), normalizeName(characterName))) {
       resumeCounter.increment();
       meterRegistry.counter(RESUME_METRIC, "tenantId", tenantTag).increment();
       LOG.debug(
@@ -136,7 +138,9 @@ public class PlayCommandHandler {
             context.sessionId(),
             context.tenantId(),
             context.accountId(),
+            context.loginName(),
             characterId,
+            characterName,
             gameInstanceId,
             gameLogicProperties.getDefaultRoomId(),
             context.jwt());
@@ -174,6 +178,21 @@ public class PlayCommandHandler {
         + 1L;
   }
 
+  private String resolveCharacterName(SessionContext context, long characterId, String character) {
+    if (StringUtils.hasText(character)) {
+      return character.trim();
+    }
+    if (StringUtils.hasText(context.characterName())) {
+      return context.characterName().trim();
+    }
+    if (StringUtils.hasText(context.loginName())) {
+      String login = context.loginName().trim();
+      int at = login.indexOf('@');
+      return at > 0 ? login.substring(0, at) : login;
+    }
+    return "character-" + characterId;
+  }
+
   private void handleExistingBinding(
       SessionContext incoming, SessionContext existing, long gameInstanceId, long characterId) {
     if (existing.sessionId() == incoming.sessionId()) {
@@ -207,5 +226,9 @@ public class PlayCommandHandler {
   private String formatSuccessResponse(String world, String character) {
     String suffix = StringUtils.hasText(character) ? " as " + character : "";
     return "OK PLAY Entered world: " + world + suffix;
+  }
+
+  private String normalizeName(String value) {
+    return value == null ? null : value.trim().toLowerCase(java.util.Locale.ROOT);
   }
 }

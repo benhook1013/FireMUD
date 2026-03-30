@@ -35,6 +35,9 @@ firemud:
     says:
       history-ttl-seconds: ${FIREMUD_CHAT_SAYS_TTL_SECONDS:7200}
       max-messages: ${FIREMUD_CHAT_SAYS_MAX_MESSAGES:50}
+    whispers:
+      history-ttl-seconds: ${FIREMUD_CHAT_WHISPERS_TTL_SECONDS:7200}
+      max-messages: ${FIREMUD_CHAT_WHISPERS_MAX_MESSAGES:50}
     tells:
       history-ttl-seconds: ${FIREMUD_CHAT_TELLS_TTL_SECONDS:172800}
       max-messages: ${FIREMUD_CHAT_TELLS_MAX_MESSAGES:50}

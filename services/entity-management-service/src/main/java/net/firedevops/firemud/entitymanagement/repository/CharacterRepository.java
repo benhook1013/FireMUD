@@ -16,4 +16,6 @@ public interface CharacterRepository extends JpaRepository<Character, Long> {
 
   /** Returns all characters owned by the given account across all tenants. */
   Page<Character> findByAccountId(Long accountId, Pageable pageable);
+
+  Optional<Character> findByTenantIdAndNameIgnoreCase(Long tenantId, String name);
 }

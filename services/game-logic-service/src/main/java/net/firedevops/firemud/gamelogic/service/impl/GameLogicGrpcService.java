@@ -9,12 +9,10 @@ import io.micrometer.core.instrument.MeterRegistry;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.gamelogic.logic.dto.CommandResult;
 import net.firedevops.firemud.gamelogic.logic.service.CommandService;
+import net.firedevops.firemud.gamelogic.service.CommunicationAggregationService;
 import net.firedevops.firemud.gamelogic.service.LookAggregationService;
 import net.firedevops.firemud.gamelogic.service.MoveAggregationService;
 import net.firedevops.firemud.gamelogic.service.PingService;
-import net.firedevops.firemud.gamelogic.service.SayAggregationService;
-import net.firedevops.firemud.gamelogic.v1.BroadcastSayRequest;
-import net.firedevops.firemud.gamelogic.v1.BroadcastSayResponse;
 import net.firedevops.firemud.gamelogic.v1.ExecuteCommandRequest;
 import net.firedevops.firemud.gamelogic.v1.ExecuteCommandResponse;
 import net.firedevops.firemud.gamelogic.v1.GameLogicServiceGrpc;
@@ -24,6 +22,8 @@ import net.firedevops.firemud.gamelogic.v1.MoveRequest;
 import net.firedevops.firemud.gamelogic.v1.MoveResult;
 import net.firedevops.firemud.gamelogic.v1.PingRequest;
 import net.firedevops.firemud.gamelogic.v1.PingResponse;
+import net.firedevops.firemud.gamelogic.v1.SendCommunicationRequest;
+import net.firedevops.firemud.gamelogic.v1.SendCommunicationResponse;
 import org.springframework.grpc.server.service.GrpcService;
 
 /** gRPC endpoints for the Game Logic Service. */
@@ -32,7 +32,7 @@ public class GameLogicGrpcService extends GameLogicServiceGrpc.GameLogicServiceI
   private final PingService pingService;
   private final CommandService commandService;
   private final LookAggregationService lookAggregationService;
-  private final SayAggregationService sayAggregationService;
+  private final CommunicationAggregationService communicationAggregationService;
   private final MoveAggregationService moveAggregationService;
 
   @SuppressFBWarnings(
@@ -44,13 +44,13 @@ public class GameLogicGrpcService extends GameLogicServiceGrpc.GameLogicServiceI
       PingService pingService,
       CommandService commandService,
       LookAggregationService lookAggregationService,
-      SayAggregationService sayAggregationService,
+      CommunicationAggregationService communicationAggregationService,
       MoveAggregationService moveAggregationService,
       MeterRegistry meterRegistry) {
     this.pingService = pingService;
     this.commandService = commandService;
     this.lookAggregationService = lookAggregationService;
-    this.sayAggregationService = sayAggregationService;
+    this.communicationAggregationService = communicationAggregationService;
     this.moveAggregationService = moveAggregationService;
     this.meterRegistry = meterRegistry;
   }
@@ -94,10 +94,11 @@ public class GameLogicGrpcService extends GameLogicServiceGrpc.GameLogicServiceI
   }
 
   @Override
-  @Timed(value = "gamelogicGrpc.broadcastSay")
-  public void broadcastSay(
-      BroadcastSayRequest request, StreamObserver<BroadcastSayResponse> responseObserver) {
-    BroadcastSayResponse response = sayAggregationService.broadcast(request);
+  @Timed(value = "gamelogicGrpc.sendCommunication")
+  public void sendCommunication(
+      SendCommunicationRequest request,
+      StreamObserver<SendCommunicationResponse> responseObserver) {
+    SendCommunicationResponse response = communicationAggregationService.send(request);
     responseObserver.onNext(response);
     responseObserver.onCompleted();
   }

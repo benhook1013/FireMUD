@@ -118,12 +118,14 @@ public final class LoginCommandHandler {
         numericSessionId,
         instance.getTenantId(),
         authenticatedAccountId,
+        args.get(0),
         authResponse.getAuthToken());
     String responseText = "Logged in as " + args.get(0);
     return new LoginCommandHandlingResult(enqueueResult, responseText);
   }
 
-  private void persistSessionContext(long sessionId, long tenantId, long accountId, String jwt) {
+  private void persistSessionContext(
+      long sessionId, long tenantId, long accountId, String loginName, String jwt) {
     if (sessionContextService == null) {
       return;
     }
@@ -134,12 +136,14 @@ public final class LoginCommandHandler {
     // state.
     SessionContext context =
         existing == null
-            ? new SessionContext(sessionId, tenantId, accountId, 0L, 0L, null, jwt)
+            ? new SessionContext(sessionId, tenantId, accountId, loginName, 0L, null, 0L, null, jwt)
             : new SessionContext(
                 sessionId,
                 tenantId,
                 accountId,
+                loginName,
                 existing.characterId(),
+                existing.characterName(),
                 existing.gameInstanceId(),
                 existing.roomInstanceId(),
                 jwt);

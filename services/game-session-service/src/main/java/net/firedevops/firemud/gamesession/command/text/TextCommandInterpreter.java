@@ -17,7 +17,7 @@ public class TextCommandInterpreter {
   private final PlayCommandHandler playHandler;
   private final MoveCommandHandler moveHandler;
   private final SessionAuthenticationService sessionAuthenticationService;
-  private final SayCommandHandler sayHandler;
+  private final CommunicationCommandHandler communicationHandler;
   private final WorldsCommandHandler worldsHandler;
   private final TextCommandParser parser;
 
@@ -29,7 +29,7 @@ public class TextCommandInterpreter {
       PlayCommandHandler playHandler,
       MoveCommandHandler moveHandler,
       SessionAuthenticationService sessionAuthenticationService,
-      SayCommandHandler sayHandler,
+      CommunicationCommandHandler communicationHandler,
       WorldsCommandHandler worldsHandler) {
     this(
         commandService,
@@ -38,7 +38,7 @@ public class TextCommandInterpreter {
         playHandler,
         moveHandler,
         sessionAuthenticationService,
-        sayHandler,
+        communicationHandler,
         worldsHandler,
         new TextCommandParser());
   }
@@ -50,7 +50,7 @@ public class TextCommandInterpreter {
       PlayCommandHandler playHandler,
       MoveCommandHandler moveHandler,
       SessionAuthenticationService sessionAuthenticationService,
-      SayCommandHandler sayHandler,
+      CommunicationCommandHandler communicationHandler,
       WorldsCommandHandler worldsHandler,
       TextCommandParser parser) {
     this.commandService = Objects.requireNonNull(commandService, "commandService must not be null");
@@ -61,7 +61,8 @@ public class TextCommandInterpreter {
     this.sessionAuthenticationService =
         Objects.requireNonNull(
             sessionAuthenticationService, "sessionAuthenticationService must not be null");
-    this.sayHandler = Objects.requireNonNull(sayHandler, "sayHandler must not be null");
+    this.communicationHandler =
+        Objects.requireNonNull(communicationHandler, "communicationHandler must not be null");
     this.worldsHandler = Objects.requireNonNull(worldsHandler, "worldsHandler must not be null");
     this.parser = Objects.requireNonNull(parser, "parser must not be null");
   }
@@ -120,10 +121,11 @@ public class TextCommandInterpreter {
           GameplayStageCommandConstants.PLAY_REQUIRED_MESSAGE);
     }
 
-    if (command.type() == TextCommandType.SAY) {
-      SayCommandHandlingResult sayResult = sayHandler.handle(maybeContext.orElseThrow(), command);
+    if (isCommunicationCommand(command.type())) {
+      CommunicationCommandHandlingResult communicationResult =
+          communicationHandler.handle(maybeContext.orElseThrow(), command);
       return new TextCommandInterpretationResult(
-          sayResult.commandResult(), sayResult.responseText());
+          communicationResult.commandResult(), communicationResult.responseText(), true);
     }
 
     if (command.type() == TextCommandType.MOVE) {
@@ -149,8 +151,14 @@ public class TextCommandInterpreter {
 
   private static boolean requiresGameplayAuthentication(TextCommandType type) {
     return type == TextCommandType.LOOK
-        || type == TextCommandType.SAY
+        || isCommunicationCommand(type)
         || type == TextCommandType.MOVE;
+  }
+
+  private static boolean isCommunicationCommand(TextCommandType type) {
+    return type == TextCommandType.SAY
+        || type == TextCommandType.WHISPER
+        || type == TextCommandType.TELL;
   }
 
   private TextCommandInterpretationResult stageFailure(String code, String message) {

@@ -52,7 +52,8 @@ class TextCommandInterpreterTest {
   private final LookCacheService lookCacheService = Mockito.mock(LookCacheService.class);
   private final AccountClient accountClient = Mockito.mock(AccountClient.class);
   private final MoveCommandHandler moveHandler = Mockito.mock(MoveCommandHandler.class);
-  private final SayCommandHandler sayHandler = Mockito.mock(SayCommandHandler.class);
+  private final CommunicationCommandHandler communicationHandler =
+      Mockito.mock(CommunicationCommandHandler.class);
   private final ObjectProvider<DevIsolatedGameInstanceRegistry> devIsolatedRegistryProvider =
       Mockito.mock(ObjectProvider.class);
   private TextCommandInterpreter interpreter;
@@ -132,7 +133,7 @@ class TextCommandInterpreterTest {
             playHandler,
             moveHandler,
             sessionAuthenticationService,
-            sayHandler,
+            communicationHandler,
             worldsHandler);
   }
 
@@ -218,20 +219,23 @@ class TextCommandInterpreterTest {
     assertTrue(play.commandResult().accepted());
 
     SessionContext played = sessionAuthenticationService.resolveSessionContext("1").orElseThrow();
-    when(sayHandler.handle(Mockito.eq(played), Mockito.any(TextCommand.class)))
-        .thenReturn(new SayCommandHandlingResult(CommandEnqueueResult.success(), "OK SAY text"));
+    when(communicationHandler.handle(Mockito.eq(played), Mockito.any(TextCommand.class)))
+        .thenReturn(
+            new CommunicationCommandHandlingResult(CommandEnqueueResult.success(), "OK SAY text"));
 
     TextCommandInterpretationResult interpretation =
         interpreter.interpret("1", "SAY Hello there", false);
 
     assertTrue(interpretation.commandResult().accepted());
+    assertTrue(interpretation.protocolResponse());
     assertEquals("OK SAY text", interpretation.responseText());
-    verify(sayHandler).handle(Mockito.eq(played), Mockito.any(TextCommand.class));
+    verify(communicationHandler).handle(Mockito.eq(played), Mockito.any(TextCommand.class));
   }
 
   private static final class InMemorySessionContextService implements SessionContextService {
     private final Map<Long, SessionContext> sessionMap = new ConcurrentHashMap<>();
     private final Map<String, SessionContext> identityMap = new ConcurrentHashMap<>();
+    private final Map<String, SessionContext> nameMap = new ConcurrentHashMap<>();
 
     @Override
     public void save(SessionContext context) {
@@ -246,6 +250,11 @@ class TextCommandInterpreterTest {
       sessionMap.put(context.sessionId(), context);
       if (hasGameplayIdentity(context)) {
         identityMap.put(identityKey(context), context);
+        if (context.characterName() != null && !context.characterName().isBlank()) {
+          nameMap.put(
+              nameKey(context.tenantId(), context.gameInstanceId(), context.characterName()),
+              context);
+        }
       }
     }
 
@@ -266,10 +275,20 @@ class TextCommandInterpreterTest {
     }
 
     @Override
+    public Optional<SessionContext> findByGameplayName(
+        long tenantId, long gameInstanceId, String characterName) {
+      return Optional.ofNullable(nameMap.get(nameKey(tenantId, gameInstanceId, characterName)));
+    }
+
+    @Override
     public void deleteBySessionId(long tenantId, long sessionId) {
       SessionContext removed = sessionMap.remove(sessionId);
       if (removed != null && hasGameplayIdentity(removed)) {
         identityMap.remove(identityKey(removed));
+        if (removed.characterName() != null && !removed.characterName().isBlank()) {
+          nameMap.remove(
+              nameKey(removed.tenantId(), removed.gameInstanceId(), removed.characterName()));
+        }
       }
     }
 
@@ -279,6 +298,10 @@ class TextCommandInterpreterTest {
 
     private String identityKey(long tenantId, long gameInstanceId, long characterId) {
       return tenantId + ":" + gameInstanceId + ":" + characterId;
+    }
+
+    private String nameKey(long tenantId, long gameInstanceId, String characterName) {
+      return tenantId + ":" + gameInstanceId + ":" + characterName.trim().toLowerCase();
     }
 
     private boolean hasGameplayIdentity(SessionContext context) {

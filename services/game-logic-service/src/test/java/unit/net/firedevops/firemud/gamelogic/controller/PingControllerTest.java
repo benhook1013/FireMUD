@@ -6,9 +6,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import net.firedevops.firemud.gamelogic.config.GameLogicGrpcClientConfig;
+import net.firedevops.firemud.gamelogic.service.CommunicationAggregationService;
 import net.firedevops.firemud.gamelogic.service.LookAggregationService;
 import net.firedevops.firemud.gamelogic.service.PingService;
-import net.firedevops.firemud.gamelogic.service.SayAggregationService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
@@ -25,7 +25,7 @@ class PingControllerTest {
   @MockitoBean private GrpcServerLifecycle grpcServerLifecycle;
   @MockitoBean private LookAggregationService lookAggregationService;
   @MockitoBean private PingService pingService;
-  @MockitoBean private SayAggregationService sayAggregationService;
+  @MockitoBean private CommunicationAggregationService communicationAggregationService;
 
   @Test
   void pingEndpointReturnsPong() throws Exception {

@@ -88,6 +88,18 @@ class ChatServiceImplTest {
     assertEquals(1.0, meterRegistry.get("chat_redis_errors_total").counter().count(), 0.001);
   }
 
+  @Test
+  void whisperCachesSeparatelyFromTell() {
+    SendMessageRequestDto req =
+        new SendMessageRequestDto(1L, 2L, ChatType.WHISPER, null, 7L, null, null, "quiet");
+
+    service.sendMessage(req);
+
+    verify(listOps).leftPush("whisper:1:7", "quiet");
+    verify(redisTemplate)
+        .expire("whisper:1:7", Duration.ofSeconds(props.getWhispers().historyTtlSeconds()));
+  }
+
   @SuppressWarnings("unchecked")
   private static RedisTemplate<String, Object> mockRedisTemplate() {
     return mock(RedisTemplate.class);
