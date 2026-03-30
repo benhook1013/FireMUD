@@ -154,6 +154,34 @@ class LookWebSocketCrossServiceTest {
   }
 
   @Test
+  void websocketSecondConnectionTakesOverGameplayBinding() throws Exception {
+    ensureTestServicesStarted();
+    ACCOUNT_STUB.allowGameplayAdmission();
+    long firstSessionId = prepareGameInstance();
+    long secondSessionId = prepareAdditionalGameInstance();
+    URI uri = URI.create("ws://localhost:" + GAME_SESSION.port() + "/ws/game");
+
+    try (TrackingSocket first = connectTrackingSocket(uri, firstSessionId);
+        TrackingSocket second = connectTrackingSocket(uri, secondSessionId)) {
+      first.sendAndAwait("LOGIN demo@example.com swordfish", 1);
+      first.sendAndAwait("PLAY demo", 2);
+      first.sendAndAwait("LOOK", 3);
+      assertThat(first.responses().get(2).trim())
+          .isEqualTo(LookTestFixtures.canonicalLookText().trim());
+
+      second.sendAndAwait("LOGIN demo@example.com swordfish", 1);
+      second.sendAndAwait("PLAY demo", 2);
+      second.sendAndAwait("LOOK", 3);
+      assertThat(second.responses().get(2).trim())
+          .isEqualTo(LookTestFixtures.canonicalLookText().trim());
+
+      first.sendAndAwait("LOOK", 4);
+      assertThat(first.responses().get(3)).startsWith("ERROR LOGIN_REQUIRED");
+      assertMetricEventually("gamesession.session.takeover", 1.0, "tenantId", "1");
+    }
+  }
+
+  @Test
   void websocketReconnectAfterRevocationFailsClosed() throws Exception {
     ensureTestServicesStarted();
     ACCOUNT_STUB.allowGameplayAdmission();
@@ -237,6 +265,14 @@ class LookWebSocketCrossServiceTest {
   }
 
   private long prepareGameInstance() {
+    return insertGameInstance(true);
+  }
+
+  private long prepareAdditionalGameInstance() {
+    return insertGameInstance(false);
+  }
+
+  private long insertGameInstance(boolean clearExisting) {
     DataSource dataSource = GAME_SESSION.bean(DataSource.class);
     JdbcTemplate jdbc = new JdbcTemplate(dataSource);
     jdbc.execute(
@@ -253,7 +289,9 @@ class LookWebSocketCrossServiceTest {
           status VARCHAR(20) NOT NULL
         )
         """);
-    jdbc.update("DELETE FROM game_instances");
+    if (clearExisting) {
+      jdbc.update("DELETE FROM game_instances");
+    }
     return Optional.ofNullable(
             jdbc.queryForObject(
                 "INSERT INTO game_instances (tenant_id, runtime_version, script_patch_version, owner_account_id, status) VALUES (?, ?, ?, ?, ?) RETURNING id",
@@ -517,6 +555,59 @@ class LookWebSocketCrossServiceTest {
     double actual = counter == null ? 0.0 : counter.count();
     throw new AssertionError(
         "Metric " + meterName + " did not reach " + expectedValue + "; actual=" + actual);
+  }
+
+  private TrackingSocket connectTrackingSocket(URI uri, long sessionId) {
+    HttpClient client = HttpClient.newHttpClient();
+    CopyOnWriteArrayList<String> responses = new CopyOnWriteArrayList<>();
+
+    WebSocket webSocket =
+        client
+            .newWebSocketBuilder()
+            .header("X-Game-Instance-Id", String.valueOf(sessionId))
+            .header("X-Tenant-Id", String.valueOf(TENANT_ID))
+            .buildAsync(
+                uri,
+                new Listener() {
+                  @Override
+                  public void onOpen(WebSocket webSocket) {
+                    webSocket.request(1);
+                  }
+
+                  @Override
+                  public CompletionStage<?> onText(
+                      WebSocket webSocket, CharSequence data, boolean last) {
+                    responses.add(data.toString());
+                    webSocket.request(1);
+                    return Listener.super.onText(webSocket, data, last);
+                  }
+                })
+            .join();
+    return new TrackingSocket(webSocket, responses);
+  }
+
+  private final class TrackingSocket implements AutoCloseable {
+    private final WebSocket webSocket;
+    private final CopyOnWriteArrayList<String> responses;
+
+    private TrackingSocket(WebSocket webSocket, CopyOnWriteArrayList<String> responses) {
+      this.webSocket = webSocket;
+      this.responses = responses;
+    }
+
+    private void sendAndAwait(String command, int expectedResponses) throws InterruptedException {
+      webSocket.sendText(command, true).join();
+      waitForResponseCount(responses, expectedResponses);
+    }
+
+    private List<String> responses() {
+      return responses;
+    }
+
+    @Override
+    public void close() {
+      webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "done").join();
+    }
   }
 
   private static final class AccountServiceStub implements AutoCloseable {
