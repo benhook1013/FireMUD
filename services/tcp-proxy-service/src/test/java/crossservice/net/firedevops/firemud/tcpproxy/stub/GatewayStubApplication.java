@@ -12,6 +12,7 @@ import org.springframework.boot.health.contributor.HealthIndicator;
 import org.springframework.context.annotation.Bean;
 import org.springframework.http.HttpHeaders;
 import org.springframework.web.reactive.handler.SimpleUrlHandlerMapping;
+import org.springframework.web.reactive.socket.CloseStatus;
 import org.springframework.web.reactive.socket.WebSocketHandler;
 import org.springframework.web.reactive.socket.WebSocketMessage;
 import org.springframework.web.reactive.socket.WebSocketSession;
@@ -106,7 +107,7 @@ public class GatewayStubApplication {
                             .receive()
                             .map(WebSocketMessage::getPayloadAsText)
                             .map(outbound::textMessage))
-                    .doFinally(signalType -> outbound.close());
+                    .then(propagateClose(inbound, outbound));
 
             Mono<Void> targetToInbound =
                 inbound
@@ -115,10 +116,14 @@ public class GatewayStubApplication {
                             .receive()
                             .map(WebSocketMessage::getPayloadAsText)
                             .map(inbound::textMessage))
-                    .doFinally(signalType -> inbound.close());
+                    .then(propagateClose(outbound, inbound));
 
             return Mono.when(inboundToTarget, targetToInbound);
           });
+    }
+
+    private Mono<Void> propagateClose(WebSocketSession from, WebSocketSession to) {
+      return from.closeStatus().defaultIfEmpty(CloseStatus.NORMAL).flatMap(to::close);
     }
   }
 }

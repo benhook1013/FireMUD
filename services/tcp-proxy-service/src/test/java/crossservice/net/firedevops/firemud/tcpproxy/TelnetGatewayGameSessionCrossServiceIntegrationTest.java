@@ -50,6 +50,7 @@ import org.springframework.test.util.TestSocketUtils;
 import org.springframework.util.StringUtils;
 import org.springframework.web.reactive.HandlerMapping;
 import org.springframework.web.reactive.handler.SimpleUrlHandlerMapping;
+import org.springframework.web.reactive.socket.CloseStatus;
 import org.springframework.web.reactive.socket.WebSocketHandler;
 import org.springframework.web.reactive.socket.WebSocketMessage;
 import org.springframework.web.reactive.socket.WebSocketSession;
@@ -173,6 +174,32 @@ class TelnetGatewayGameSessionCrossServiceIntegrationTest {
     assertThat(telnetLoginResponse).isEqualTo(websocketResponses.get(1));
     assertThat(telnetPlayResponse).isEqualTo(websocketResponses.get(2));
     assertThat(telnetLookResponse.trim()).isEqualTo(websocketResponses.get(3).trim());
+  }
+
+  @Test
+  void telnetPreservesGatewayRestartLogoutOnCleanBridgeClose() throws Exception {
+    ensureTestServicesStarted();
+
+    try (Socket socket = new Socket("localhost", telnetServer.getPort());
+        PrintWriter writer =
+            new PrintWriter(
+                new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.ISO_8859_1),
+                true);
+        BufferedReader reader =
+            new BufferedReader(
+                new InputStreamReader(socket.getInputStream(), StandardCharsets.ISO_8859_1))) {
+      socket.setSoTimeout((int) COMMAND_WAIT.toMillis());
+      writer.println("LOGIN demo@example.com swordfish");
+      assertThat(reader.readLine()).isEqualTo("processed:LOGIN demo@example.com swordfish");
+
+      writer.println("PLAY demo");
+      assertThat(reader.readLine()).isEqualTo("processed:PLAY demo");
+
+      writer.println("FORCE_CLOSE_GATEWAY_RESTART");
+      assertThat(reader.readLine())
+          .isEqualTo(
+              "DISCONNECT logout;subreason=gateway_restart Gameplay session ended; please reconnect");
+    }
   }
 
   private static void awaitCommand(String expected) {
@@ -401,6 +428,13 @@ class TelnetGatewayGameSessionCrossServiceIntegrationTest {
       this.stub = stub;
     }
 
+    private String responsePayload(String command) {
+      if ("LOOK".equalsIgnoreCase(command)) {
+        return LookTestFixtures.canonicalLookText();
+      }
+      return "processed:" + command;
+    }
+
     @Override
     public Mono<Void> handle(WebSocketSession session) {
       Flux<String> commands =
@@ -411,17 +445,14 @@ class TelnetGatewayGameSessionCrossServiceIntegrationTest {
               .filter(StringUtils::hasText)
               .doOnNext(stub::recordCommand);
 
-      Flux<WebSocketMessage> replies =
-          commands.map(command -> session.textMessage(responsePayload(command)));
-
-      return session.send(replies);
+      return commands.concatMap(command -> handleCommand(session, command)).then();
     }
 
-    private String responsePayload(String command) {
-      if ("LOOK".equalsIgnoreCase(command)) {
-        return LookTestFixtures.canonicalLookText();
+    private Mono<Void> handleCommand(WebSocketSession session, String command) {
+      if ("FORCE_CLOSE_GATEWAY_RESTART".equalsIgnoreCase(command)) {
+        return session.close(new CloseStatus(1000, "logout;subreason=gateway_restart"));
       }
-      return "processed:" + command;
+      return session.send(Mono.just(session.textMessage(responsePayload(command))));
     }
   }
 }
