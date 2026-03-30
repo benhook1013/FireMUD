@@ -28,7 +28,8 @@ import org.springframework.util.StringUtils;
 public final class TcpProxyServiceImpl extends TcpProxyServiceGrpc.TcpProxyServiceImplBase {
   private static final Logger logger = LoggingUtil.getLogger(TcpProxyServiceImpl.class);
   private static final String SUSPENDED_STATUS = "SUSPENDED";
-  private static final String DUPLICATE_DISCONNECT_METRIC = "gamesession.notifydisconnect.duplicate";
+  private static final String DUPLICATE_DISCONNECT_METRIC =
+      "gamesession.notifydisconnect.duplicate";
   private static final String MISSING_CONTEXT_METRIC =
       "gamesession.notifydisconnect.missing_context";
 

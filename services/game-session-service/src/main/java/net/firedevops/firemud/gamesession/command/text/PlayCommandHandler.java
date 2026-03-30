@@ -6,12 +6,17 @@ import io.micrometer.core.instrument.MeterRegistry;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.UUID;
+import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse;
+import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
+import net.firedevops.firemud.gamesession.client.AccountClient;
 import net.firedevops.firemud.gamesession.config.GameLogicProperties;
 import net.firedevops.firemud.gamesession.config.GameSessionProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
+import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -33,6 +38,7 @@ public class PlayCommandHandler {
   private final SessionContextService sessionContextService;
   private final GameplayWorldCatalog gameplayWorldCatalog;
   private final GameLogicProperties gameLogicProperties;
+  private final AccountClient accountClient;
   private final MeterRegistry meterRegistry;
   private final Counter takeoverCounter;
   private final Counter resumeCounter;
@@ -42,6 +48,7 @@ public class PlayCommandHandler {
       SessionContextService sessionContextService,
       GameplayWorldCatalog gameplayWorldCatalog,
       GameLogicProperties gameLogicProperties,
+      AccountClient accountClient,
       MeterRegistry meterRegistry) {
     this.sessionAuthenticationService =
         Objects.requireNonNull(
@@ -52,6 +59,7 @@ public class PlayCommandHandler {
         Objects.requireNonNull(gameplayWorldCatalog, "gameplayWorldCatalog must not be null");
     this.gameLogicProperties =
         Objects.requireNonNull(gameLogicProperties, "gameLogicProperties must not be null");
+    this.accountClient = Objects.requireNonNull(accountClient, "accountClient must not be null");
     this.meterRegistry = Objects.requireNonNull(meterRegistry, "meterRegistry must not be null");
     this.takeoverCounter = this.meterRegistry.counter(TAKEOVER_METRIC);
     this.resumeCounter = this.meterRegistry.counter(RESUME_METRIC);
@@ -97,6 +105,12 @@ public class PlayCommandHandler {
     }
 
     GameSessionProperties.WorldOption selectedWorld = maybeWorld.get();
+    Optional<PlayCommandHandlingResult> authorityFailure =
+        validateRuntimeAdmission(context, tenantTag);
+    if (authorityFailure.isPresent()) {
+      return authorityFailure.get();
+    }
+
     String character = args.size() > 1 ? args.get(1) : null;
     if (selectedWorld.isRequiresCharacterSelection() && !StringUtils.hasText(character)) {
       return failure(
@@ -230,5 +244,86 @@ public class PlayCommandHandler {
 
   private String normalizeName(String value) {
     return value == null ? null : value.trim().toLowerCase(java.util.Locale.ROOT);
+  }
+
+  private Optional<PlayCommandHandlingResult> validateRuntimeAdmission(
+      SessionContext context, String tenantTag) {
+    String requestId = context.sessionId() + ":" + UUID.randomUUID();
+    GetTenantMembershipForRuntimeResponse membershipResponse =
+        accountClient.getTenantMembershipForRuntime(
+            Long.toString(context.accountId()), Long.toString(context.tenantId()), requestId);
+    Optional<PlayCommandHandlingResult> membershipFailure =
+        validateMembershipResponse(membershipResponse, tenantTag);
+    if (membershipFailure.isPresent()) {
+      return membershipFailure;
+    }
+
+    GetTenantEntitlementsForRuntimeResponse entitlementResponse =
+        accountClient.getTenantEntitlementsForRuntime(Long.toString(context.tenantId()), requestId);
+    return validateEntitlementsResponse(entitlementResponse, tenantTag);
+  }
+
+  private Optional<PlayCommandHandlingResult> validateMembershipResponse(
+      GetTenantMembershipForRuntimeResponse response, String tenantTag) {
+    Optional<ErrorDetail> maybeError = extractError(response.getError());
+    if (maybeError.isPresent()) {
+      ErrorDetail error = maybeError.get();
+      if ("NOT_FOUND".equalsIgnoreCase(error.getCode())) {
+        return Optional.of(
+            failure(
+                GameplayStageCommandConstants.WORLD_ACCESS_DENIED_CODE,
+                GameplayStageCommandConstants.WORLD_ACCESS_DENIED_MESSAGE,
+                tenantTag,
+                null));
+      }
+      return Optional.of(
+          failure(
+              GameplayStageCommandConstants.MEMBERSHIP_AUTH_UNAVAILABLE_CODE,
+              GameplayStageCommandConstants.MEMBERSHIP_AUTH_UNAVAILABLE_MESSAGE,
+              tenantTag,
+              null));
+    }
+    if (!response.getGameplayAdmissionAllowed()) {
+      return Optional.of(
+          failure(
+              GameplayStageCommandConstants.WORLD_ACCESS_DENIED_CODE,
+              GameplayStageCommandConstants.WORLD_ACCESS_DENIED_MESSAGE,
+              tenantTag,
+              null));
+    }
+    return Optional.empty();
+  }
+
+  private Optional<PlayCommandHandlingResult> validateEntitlementsResponse(
+      GetTenantEntitlementsForRuntimeResponse response, String tenantTag) {
+    Optional<ErrorDetail> maybeError = extractError(response.getError());
+    if (maybeError.isPresent()) {
+      return Optional.of(
+          failure(
+              GameplayStageCommandConstants.ENTITLEMENT_UNAVAILABLE_CODE,
+              GameplayStageCommandConstants.ENTITLEMENT_UNAVAILABLE_MESSAGE,
+              tenantTag,
+              null));
+    }
+    if (!response.getGameplayAvailable()) {
+      return Optional.of(
+          failure(
+              GameplayStageCommandConstants.TENANT_BILLING_BLOCKED_CODE,
+              GameplayStageCommandConstants.TENANT_BILLING_BLOCKED_MESSAGE,
+              tenantTag,
+              null));
+    }
+    return Optional.empty();
+  }
+
+  private Optional<ErrorDetail> extractError(ErrorDetail error) {
+    if (error == null) {
+      return Optional.empty();
+    }
+    if (Optional.ofNullable(error.getCode()).orElse("").isBlank()
+        && Optional.ofNullable(error.getMessage()).orElse("").isBlank()) {
+      return Optional.empty();
+    }
+    return Optional.of(error);
   }
 }

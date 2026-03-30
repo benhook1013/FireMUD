@@ -13,6 +13,8 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
+import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse;
+import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
 import net.firedevops.firemud.cache.LookCacheService;
 import net.firedevops.firemud.gamelogic.v1.LookResult;
 import net.firedevops.firemud.gamesession.client.AccountClient;
@@ -83,6 +85,25 @@ class SessionResumptionFlowTest {
             Mockito.anyString(), Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
             AuthenticateResponse.newBuilder().setAuthToken("jwt").setAccountId("77").build());
+    when(accountClient.getTenantMembershipForRuntime(
+            Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(
+            GetTenantMembershipForRuntimeResponse.newBuilder()
+                .setAccountId("77")
+                .setTenantId("22")
+                .setGameplayAdmissionAllowed(true)
+                .setMembershipVersion(1L)
+                .setEvaluatedAt("2026-03-30T00:00:00Z")
+                .build());
+    when(accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(
+            GetTenantEntitlementsForRuntimeResponse.newBuilder()
+                .setTenantId("22")
+                .setGameplayAvailable(true)
+                .setEntitlementVersion(1L)
+                .setTenantBillingSequence(1L)
+                .setEvaluatedAt("2026-03-30T00:00:00Z")
+                .build());
     sessionAuthenticationService =
         new SessionAuthenticationService(
             sessionContextService,
@@ -122,6 +143,7 @@ class SessionResumptionFlowTest {
             sessionContextService,
             worldCatalog,
             gameLogicProperties,
+            accountClient,
             meterRegistry);
     worldsHandler = new WorldsCommandHandler(worldCatalog);
     interpreter =

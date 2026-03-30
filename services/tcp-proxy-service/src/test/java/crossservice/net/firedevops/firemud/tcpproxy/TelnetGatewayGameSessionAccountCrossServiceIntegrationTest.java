@@ -23,6 +23,10 @@ import javax.sql.DataSource;
 import net.firedevops.firemud.account.v1.AccountServiceGrpc;
 import net.firedevops.firemud.account.v1.AuthenticateRequest;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
+import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeRequest;
+import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse;
+import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeRequest;
+import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
 import net.firedevops.firemud.cache.LookCacheService;
 import net.firedevops.firemud.common.conflict.ConflictTracker;
 import net.firedevops.firemud.gamelogic.GameLogicServiceApplication;
@@ -629,6 +633,36 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
               .setAuthToken("stub-token")
               .build();
       responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    }
+
+    @Override
+    public void getTenantMembershipForRuntime(
+        GetTenantMembershipForRuntimeRequest request,
+        StreamObserver<GetTenantMembershipForRuntimeResponse> responseObserver) {
+      responseObserver.onNext(
+          GetTenantMembershipForRuntimeResponse.newBuilder()
+              .setAccountId(request.getAccountId())
+              .setTenantId(request.getTenantId())
+              .setGameplayAdmissionAllowed(true)
+              .setMembershipVersion(1L)
+              .setEvaluatedAt("2026-03-30T00:00:00Z")
+              .build());
+      responseObserver.onCompleted();
+    }
+
+    @Override
+    public void getTenantEntitlementsForRuntime(
+        GetTenantEntitlementsForRuntimeRequest request,
+        StreamObserver<GetTenantEntitlementsForRuntimeResponse> responseObserver) {
+      responseObserver.onNext(
+          GetTenantEntitlementsForRuntimeResponse.newBuilder()
+              .setTenantId(request.getTenantId())
+              .setGameplayAvailable(true)
+              .setEntitlementVersion(1L)
+              .setTenantBillingSequence(1L)
+              .setEvaluatedAt("2026-03-30T00:00:00Z")
+              .build());
       responseObserver.onCompleted();
     }
 

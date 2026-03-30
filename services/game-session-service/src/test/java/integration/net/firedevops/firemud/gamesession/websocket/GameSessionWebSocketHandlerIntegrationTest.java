@@ -12,6 +12,8 @@ import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
+import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse;
+import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
 import net.firedevops.firemud.cache.LookCacheService;
 import net.firedevops.firemud.gamelogic.v1.LookResult;
 import net.firedevops.firemud.gamesession.GameSessionServiceApplication;
@@ -111,6 +113,26 @@ class GameSessionWebSocketHandlerIntegrationTest {
             AuthenticateResponse.newBuilder()
                 .setAuthToken("stub-token")
                 .setAccountId("123")
+                .build());
+    when(accountClient.getTenantMembershipForRuntime(
+            eq("123"), eq("22"), org.mockito.ArgumentMatchers.anyString()))
+        .thenReturn(
+            GetTenantMembershipForRuntimeResponse.newBuilder()
+                .setAccountId("123")
+                .setTenantId("22")
+                .setGameplayAdmissionAllowed(true)
+                .setMembershipVersion(1L)
+                .setEvaluatedAt("2026-03-30T00:00:00Z")
+                .build());
+    when(accountClient.getTenantEntitlementsForRuntime(
+            eq("22"), org.mockito.ArgumentMatchers.anyString()))
+        .thenReturn(
+            GetTenantEntitlementsForRuntimeResponse.newBuilder()
+                .setTenantId("22")
+                .setGameplayAvailable(true)
+                .setEntitlementVersion(1L)
+                .setTenantBillingSequence(1L)
+                .setEvaluatedAt("2026-03-30T00:00:00Z")
                 .build());
     when(commandService.enqueue(eq("41"), eq("LOGIN demo@example.com swordfish"), eq(false)))
         .thenReturn(CommandEnqueueResult.success());

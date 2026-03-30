@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import io.grpc.Server;
 import io.grpc.ServerBuilder;
+import io.grpc.stub.StreamObserver;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.io.IOException;
@@ -23,6 +24,10 @@ import javax.sql.DataSource;
 import net.firedevops.firemud.account.v1.AccountServiceGrpc;
 import net.firedevops.firemud.account.v1.AuthenticateRequest;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
+import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeRequest;
+import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse;
+import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeRequest;
+import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
 import net.firedevops.firemud.gamesession.test.LookTestFixtures;
 import net.firedevops.firemud.gamesession.test.stubs.EntityManagementStubServer;
 import net.firedevops.firemud.gamesession.test.stubs.WorldManagementStubServer;
@@ -450,6 +455,36 @@ class LookWebSocketCrossServiceTest {
                               .setAuthToken("stub-token")
                               .build();
                       responseObserver.onNext(response);
+                      responseObserver.onCompleted();
+                    }
+
+                    @Override
+                    public void getTenantMembershipForRuntime(
+                        GetTenantMembershipForRuntimeRequest request,
+                        StreamObserver<GetTenantMembershipForRuntimeResponse> responseObserver) {
+                      responseObserver.onNext(
+                          GetTenantMembershipForRuntimeResponse.newBuilder()
+                              .setAccountId(request.getAccountId())
+                              .setTenantId(request.getTenantId())
+                              .setGameplayAdmissionAllowed(true)
+                              .setMembershipVersion(1L)
+                              .setEvaluatedAt("2026-03-30T00:00:00Z")
+                              .build());
+                      responseObserver.onCompleted();
+                    }
+
+                    @Override
+                    public void getTenantEntitlementsForRuntime(
+                        GetTenantEntitlementsForRuntimeRequest request,
+                        StreamObserver<GetTenantEntitlementsForRuntimeResponse> responseObserver) {
+                      responseObserver.onNext(
+                          GetTenantEntitlementsForRuntimeResponse.newBuilder()
+                              .setTenantId(request.getTenantId())
+                              .setGameplayAvailable(true)
+                              .setEntitlementVersion(1L)
+                              .setTenantBillingSequence(1L)
+                              .setEvaluatedAt("2026-03-30T00:00:00Z")
+                              .build());
                       responseObserver.onCompleted();
                     }
                   })
