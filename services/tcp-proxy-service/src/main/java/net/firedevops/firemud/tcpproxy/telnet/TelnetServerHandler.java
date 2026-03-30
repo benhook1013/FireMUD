@@ -612,7 +612,9 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     String trimmedReason = reason == null ? "" : reason.trim();
     if (statusCode == 1000 && trimmedReason.startsWith("logout")) {
       return new GatewayCloseClassification(
-          trimmedReason, "Gameplay session ended; please reconnect", shutdownClassForLogout(trimmedReason));
+          trimmedReason,
+          "Gameplay session ended; please reconnect",
+          shutdownClassForLogout(trimmedReason));
     }
     if (statusCode == 1001 && "idle_timeout".equals(trimmedReason)) {
       return new GatewayCloseClassification(

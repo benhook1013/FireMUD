@@ -171,6 +171,28 @@ class LookWebSocketCrossServiceTest {
     assertThat(reconnectResponses.get(1)).startsWith("ERROR WORLD_ACCESS_DENIED");
   }
 
+  @Test
+  void websocketReconnectAfterStaleSessionFreshEntersGameplay() throws Exception {
+    ensureTestServicesStarted();
+    ACCOUNT_STUB.allowGameplayAdmission();
+    long sessionId = prepareGameInstance();
+
+    List<String> firstConnection = runMoveThenDisconnect(sessionId);
+    assertThat(firstConnection).hasSizeGreaterThanOrEqualTo(3);
+    assertThat(firstConnection.get(2).trim())
+        .isEqualTo(LookTestFixtures.canonicalLookText(LookTestFixtures.DESTINATION_ROOM_ID).trim());
+
+    GAME_SESSION
+        .bean(net.firedevops.firemud.gamesession.service.SessionContextService.class)
+        .deleteBySessionId(TENANT_ID, sessionId);
+
+    List<String> reconnectLook = runLookAfterReconnect(sessionId);
+    assertThat(reconnectLook).hasSizeGreaterThanOrEqualTo(3);
+    assertThat(reconnectLook.get(0)).startsWith("OK LOGIN");
+    assertThat(reconnectLook.get(1)).startsWith("OK PLAY");
+    assertThat(reconnectLook.get(2).trim()).isEqualTo(LookTestFixtures.canonicalLookText().trim());
+  }
+
   private static synchronized void ensureTestServicesStarted() throws Exception {
     if (ACCOUNT_STUB == null) {
       ACCOUNT_STUB = new AccountServiceStub(TestSocketUtils.findAvailableTcpPort());

@@ -703,7 +703,8 @@ class TelnetServerHandlerTest {
         .writeAndFlush(
             "DISCONNECT logout;subreason=gateway_restart Gameplay session ended; please reconnect\n");
     verify(future).addListener(any(ChannelFutureListener.class));
-    assertEquals(1.0, registry.counter("tcpproxy.bridge.shutdown", "class", "planned_drain").count());
+    assertEquals(
+        1.0, registry.counter("tcpproxy.bridge.shutdown", "class", "planned_drain").count());
     executor.shutdownGracefully();
   }
 
@@ -801,8 +802,7 @@ class TelnetServerHandlerTest {
     verify(ctx).writeAndFlush(startsWith("DISCONNECT backend_unavailable "));
     verify(future).addListener(any(ChannelFutureListener.class));
     assertEquals(
-        1.0,
-        registry.counter("tcpproxy.bridge.shutdown", "class", "unattributed_failure").count());
+        1.0, registry.counter("tcpproxy.bridge.shutdown", "class", "unattributed_failure").count());
     executor.shutdownGracefully();
   }
 
@@ -851,8 +851,7 @@ class TelnetServerHandlerTest {
         .writeAndFlush("DISCONNECT internal_error Gameplay connection failed; please reconnect\n");
     verify(future).addListener(any(ChannelFutureListener.class));
     assertEquals(
-        1.0,
-        registry.counter("tcpproxy.bridge.shutdown", "class", "unattributed_failure").count());
+        1.0, registry.counter("tcpproxy.bridge.shutdown", "class", "unattributed_failure").count());
     executor.shutdownGracefully();
   }
 
@@ -901,8 +900,7 @@ class TelnetServerHandlerTest {
         .writeAndFlush("DISCONNECT backend_unavailable Gateway link dropped; please reconnect\n");
     verify(future).addListener(any(ChannelFutureListener.class));
     assertEquals(
-        1.0,
-        registry.counter("tcpproxy.bridge.shutdown", "class", "unattributed_failure").count());
+        1.0, registry.counter("tcpproxy.bridge.shutdown", "class", "unattributed_failure").count());
     executor.shutdownGracefully();
   }
 
