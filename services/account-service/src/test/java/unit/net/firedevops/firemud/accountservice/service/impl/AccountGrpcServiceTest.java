@@ -17,6 +17,10 @@ import net.firedevops.firemud.account.v1.ExportAccountRequest;
 import net.firedevops.firemud.account.v1.ExportAccountResponse;
 import net.firedevops.firemud.account.v1.GetProfileRequest;
 import net.firedevops.firemud.account.v1.GetProfileResponse;
+import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeRequest;
+import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse;
+import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeRequest;
+import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
 import net.firedevops.firemud.account.v1.PingRequest;
 import net.firedevops.firemud.account.v1.PingResponse;
 import net.firedevops.firemud.account.v1.UpdateProfileRequest;
@@ -155,6 +159,77 @@ class AccountGrpcServiceTest {
             .readTree(ref.get().getProfileJson())
             .get("displayName")
             .asText());
+  }
+
+  @Test
+  void getTenantMembershipForRuntimeReturnsResponse() {
+    PingService pingService = Mockito.mock(PingService.class);
+    AccountService accountService = Mockito.mock(AccountService.class);
+    Mockito.when(accountService.getTenantMembershipForRuntime(2L, 1L, "req-1"))
+        .thenReturn(
+            new net.firedevops.firemud.accountservice.dto.RuntimeMembershipDto(
+                2L, 1L, true, 44L, "2026-03-30T00:00:00Z"));
+    AccountGrpcService service = new AccountGrpcService(pingService, accountService);
+
+    AtomicReference<GetTenantMembershipForRuntimeResponse> ref = new AtomicReference<>();
+    service.getTenantMembershipForRuntime(
+        GetTenantMembershipForRuntimeRequest.newBuilder()
+            .setAccountId("2")
+            .setTenantId("1")
+            .setRequestId("req-1")
+            .build(),
+        new StreamObserver<GetTenantMembershipForRuntimeResponse>() {
+          @Override
+          public void onNext(GetTenantMembershipForRuntimeResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(ref.get());
+    assertEquals("2", ref.get().getAccountId());
+    assertTrue(ref.get().getGameplayAdmissionAllowed());
+    assertEquals(44L, ref.get().getMembershipVersion());
+  }
+
+  @Test
+  void getTenantEntitlementsForRuntimeReturnsResponse() {
+    PingService pingService = Mockito.mock(PingService.class);
+    AccountService accountService = Mockito.mock(AccountService.class);
+    Mockito.when(accountService.getTenantEntitlementsForRuntime(1L, "req-2"))
+        .thenReturn(
+            new net.firedevops.firemud.accountservice.dto.RuntimeEntitlementsDto(
+                1L, true, 19L, 311L, "2026-03-30T00:00:00Z"));
+    AccountGrpcService service = new AccountGrpcService(pingService, accountService);
+
+    AtomicReference<GetTenantEntitlementsForRuntimeResponse> ref = new AtomicReference<>();
+    service.getTenantEntitlementsForRuntime(
+        GetTenantEntitlementsForRuntimeRequest.newBuilder()
+            .setTenantId("1")
+            .setRequestId("req-2")
+            .build(),
+        new StreamObserver<GetTenantEntitlementsForRuntimeResponse>() {
+          @Override
+          public void onNext(GetTenantEntitlementsForRuntimeResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(ref.get());
+    assertEquals("1", ref.get().getTenantId());
+    assertTrue(ref.get().getGameplayAvailable());
+    assertEquals(19L, ref.get().getEntitlementVersion());
   }
 
   @Test

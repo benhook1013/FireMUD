@@ -5,6 +5,8 @@ import de.mkammerer.argon2.Argon2;
 import de.mkammerer.argon2.Argon2Factory;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.annotation.Timed;
+import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import net.firedevops.firemud.account.AuthenticationErrorCodes;
@@ -16,6 +18,8 @@ import net.firedevops.firemud.accountservice.dto.CompletePasswordResetRequest;
 import net.firedevops.firemud.accountservice.dto.CreateAccountRequest;
 import net.firedevops.firemud.accountservice.dto.PasswordResetRequest;
 import net.firedevops.firemud.accountservice.dto.ProfileDto;
+import net.firedevops.firemud.accountservice.dto.RuntimeEntitlementsDto;
+import net.firedevops.firemud.accountservice.dto.RuntimeMembershipDto;
 import net.firedevops.firemud.accountservice.dto.UpdateProfileRequest;
 import net.firedevops.firemud.accountservice.dto.UsernameRecoveryRequest;
 import net.firedevops.firemud.accountservice.dto.VerifyEmailRequest;
@@ -177,6 +181,38 @@ public class AccountServiceImpl implements AccountService {
         account.getId(), token);
   }
 
+  @Override
+  @Transactional(readOnly = true)
+  @Timed(value = "account.runtime_membership")
+  public RuntimeMembershipDto getTenantMembershipForRuntime(
+      Long accountId, Long tenantId, String requestId) {
+    Account account =
+        accountRepository
+            .findById(accountId)
+            .filter(a -> a.getTenantId().equals(tenantId))
+            .orElseThrow(() -> new IllegalArgumentException("Account not found"));
+    return new RuntimeMembershipDto(
+        account.getId(), tenantId, true, Math.max(1L, account.getId()), Instant.now().toString());
+  }
+
+  @Override
+  @Transactional(readOnly = true)
+  @Timed(value = "account.runtime_entitlements")
+  public RuntimeEntitlementsDto getTenantEntitlementsForRuntime(Long tenantId, String requestId) {
+    List<net.firedevops.firemud.accountservice.entity.Subscription> subscriptions =
+        subscriptionRepository.findByTenantId(tenantId);
+    boolean gameplayAvailable =
+        subscriptions.isEmpty()
+            || subscriptions.stream().anyMatch(s -> isGameplayAvailableStatus(s.getStatus()));
+    long version =
+        subscriptions.stream()
+            .mapToLong(subscription -> subscription.getId() == null ? 0L : subscription.getId())
+            .max()
+            .orElse(0L);
+    return new RuntimeEntitlementsDto(
+        tenantId, gameplayAvailable, version, version, Instant.now().toString());
+  }
+
   private Optional<Account> findAccountForAuthentication(Long tenantId, String usernameOrEmail) {
     Optional<Account> tenantUsernameMatch =
         accountRepository.findByTenantIdAndUsername(tenantId, usernameOrEmail);
@@ -197,6 +233,16 @@ public class AccountServiceImpl implements AccountService {
     }
 
     return accountRepository.findByTenantIdAndEmail(0L, usernameOrEmail);
+  }
+
+  private boolean isGameplayAvailableStatus(String status) {
+    if (status == null) {
+      return false;
+    }
+    return switch (status.trim().toLowerCase(java.util.Locale.ROOT)) {
+      case "active", "trialing", "grace" -> true;
+      default -> false;
+    };
   }
 
   private void safeLogAccountCreation(Long accountId) {

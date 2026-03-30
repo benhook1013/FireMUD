@@ -21,6 +21,7 @@ import net.firedevops.firemud.accountservice.dto.PasswordResetRequest;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.entity.EmailVerificationToken;
 import net.firedevops.firemud.accountservice.entity.Profile;
+import net.firedevops.firemud.accountservice.entity.Subscription;
 import net.firedevops.firemud.accountservice.mapper.AccountMapper;
 import net.firedevops.firemud.accountservice.mapper.ProfileMapper;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
@@ -197,6 +198,42 @@ class AccountServiceImplTest {
         assertThrows(
             AuthenticationException.class, () -> service.authenticate(1L, "demo", "bad", null));
     assertEquals(AuthenticationErrorCodes.INVALID_CREDENTIALS, exception.getCode());
+  }
+
+  @Test
+  void getTenantMembershipForRuntimeReturnsAdmissionAllowedForExistingAccount() {
+    Account account = new Account();
+    account.setId(11L);
+    account.setTenantId(7L);
+    account.setUsername("demo");
+    account.setEmail("demo@example.com");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+
+    var dto = service.getTenantMembershipForRuntime(11L, 7L, "req-1");
+
+    assertEquals(11L, dto.accountId());
+    assertEquals(7L, dto.tenantId());
+    assertTrue(dto.gameplayAdmissionAllowed());
+    assertEquals(11L, dto.membershipVersion());
+    assertNotNull(dto.evaluatedAt());
+  }
+
+  @Test
+  void getTenantEntitlementsForRuntimeUsesCurrentSubscriptions() {
+    Subscription active = new Subscription();
+    active.setId(31L);
+    active.setTenantId(7L);
+    active.setStatus("active");
+    when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of(active));
+
+    var dto = service.getTenantEntitlementsForRuntime(7L, "req-2");
+
+    assertEquals(7L, dto.tenantId());
+    assertTrue(dto.gameplayAvailable());
+    assertEquals(31L, dto.entitlementVersion());
+    assertEquals(31L, dto.tenantBillingSequence());
+    assertNotNull(dto.evaluatedAt());
   }
 
   @Test

@@ -1,5 +1,6 @@
 package net.firedevops.firemud.accountservice.repository;
 
+import java.util.List;
 import net.firedevops.firemud.accountservice.entity.Subscription;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
@@ -10,6 +11,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 @Repository
 public interface SubscriptionRepository extends JpaRepository<Subscription, Long> {
+  List<Subscription> findByTenantId(Long tenantId);
 
   @Modifying
   @Transactional
