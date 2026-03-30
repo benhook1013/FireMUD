@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamesession.test;
 
+import net.firedevops.firemud.entitymanagement.v1.Character;
 import net.firedevops.firemud.entitymanagement.v1.EntityType;
 import net.firedevops.firemud.entitymanagement.v1.ListRoomEntitiesResponse;
 import net.firedevops.firemud.entitymanagement.v1.RoomEntity;
@@ -41,7 +42,35 @@ public final class ChatTestFixtures {
         .build();
   }
 
+  public static Character characterByName(String name) {
+    if ("Emberline".equalsIgnoreCase(name)) {
+      return Character.newBuilder()
+          .setId(PLAYER_EMBERLINE)
+          .setTenantId("1")
+          .setAccountId("7")
+          .setName("Emberline")
+          .build();
+    }
+    if ("Sora".equalsIgnoreCase(name)) {
+      return Character.newBuilder()
+          .setId(PLAYER_SORA)
+          .setTenantId("1")
+          .setAccountId("8")
+          .setName("Sora")
+          .build();
+    }
+    return Character.getDefaultInstance();
+  }
+
   public static String canonicalSayText() {
     return "You say, \"Hello travelers\"";
+  }
+
+  public static String canonicalWhisperText() {
+    return "You whisper to Sora, \"Keep quiet\"";
+  }
+
+  public static String canonicalTellText() {
+    return "You tell Sora, \"Meet me at the forge\"";
   }
 }

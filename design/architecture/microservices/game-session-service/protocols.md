@@ -195,17 +195,15 @@ The canonical text renderer should preserve a classic MUD feel:
 
 A standard `QUICKLOOK` command should later reuse the same underlying room-view structure but skip the room-description prose, making it suitable for rapid redraws that still show visible occupants, room-ground items, exits, and the normal prompt/status line.
 
-The first live room-speech mode currently emits a shared success payload so Telnet and WebSocket clients can render the same transcript. After a successful chat command the server responds with:
+The first live communication modes now emit canonical actor prose directly for the initiating player. After a successful command the server responds with text such as:
 
 ```text
-OK SAY
-Speaker: Emberline
-Delivered-To: Emberline, Sora, Kobold Scout
-Message: Hello travelers
+You say, "Hello travelers"
+You whisper to Sora, "Keep quiet"
+You tell Sora, "Meet me at the forge"
 ```
 
-`Speaker` annotations let clients highlight who originated the message while `Delivered-To` lists the recipients that observed the chat frame. In production gameplay, the `Delivered-To` list is scoped to recipients visible to the speaking player and may be redacted or disabled behind feature flags; its primary purpose is deterministic tests and debugging.
-The `Message` line echoes the trimmed chat text so transport implementations can either render the structured payload directly or stitch it into transport-specific narration.
+Explicit type, recipient, and delivery metadata still exists on the shared downstream communication path for deterministic tests, logging, and later fanout behavior, but that metadata is no longer exposed as the canonical user-facing success transcript.
 
 This structured payload should not be treated as the final platform abstraction for all communication. The longer-term model should be:
 
@@ -227,7 +225,7 @@ The first standard built-ins should be understood as:
 
 `shout` should be treated as a future built-in, but not implemented until the game-settings model can describe whether its propagation should be region-wide, map-wide, or otherwise topology-dependent.
 
-The current room-speech parser enforces that `SAY` includes at least one non-whitespace character. `WHISPER` and `TELL` are part of the intended standard built-in set, but their fuller semantics should still be implemented through the shared communication model rather than as ad hoc aliases. Submitting an empty payload or exceeding the configured message limit, currently 512 characters, yields `ERROR INVALID_ARGUMENT Message text must be 1-512 characters long`.
+The built-in communication parser enforces that `SAY`, `WHISPER`, and `TELL` include the required message and target fields for their mode. `WHISPER` and `TELL` now flow through the same shared communication path as `SAY` instead of acting as room-speech aliases. Submitting an empty payload or exceeding the configured message limit, currently 512 characters, yields `ERROR INVALID_ARGUMENT Message text must be 1-512 characters long`.
 
 ### LOOK transcripts
 
@@ -293,12 +291,16 @@ The protocol should not frame these cases primarily as backend or world-state fa
 
 Metrics `gamesession.command.look.invocations` and `gamesession.command.look.failures` are tagged with `tenantId` and, when applicable, `error` so operators can correlate client-visible failures with the underlying cause quickly.
 
-### SAY request flow
+### Communication request flow
 
 1. Game Session validates the same admitted gameplay session context leveraged by `LOOK`; callers still in the login/menu stages receive stage-aware `LOGIN_REQUIRED` or `PLAY_REQUIRED` guidance rather than a generic protocol-auth failure.
-2. Authenticated `SAY`/`YELL`/`WHISPER` commands route through `SayCommandHandler`, which packages `tenantId`, `gameInstanceId`, `sessionId`, `characterId`, `roomInstanceId`, normalized text, and alias metadata into a `BroadcastSay` gRPC request to Game Logic.
-3. Game Logic evaluates room visibility, enforces message constraints, and forwards the payload, or a stubbed notification, to Social & Groups Service for delivery and logging. In the target-state communication model this becomes a communication intent targeting the current room or another explicit scope, with recipient resolution owned by that target.
-4. Backend failures propagate protocol-mapped errors such as `ERROR SAY_NOT_DELIVERED`, while pre-flight stage failures are surfaced as `LOGIN_REQUIRED` or `PLAY_REQUIRED` before the chat request is attempted.
+2. Authenticated `SAY`, `WHISPER`, and `TELL` commands route through `CommunicationCommandHandler`, which packages `tenantId`, `gameInstanceId`, `sessionId`, `characterId`, `speakerName`, `roomInstanceId`, normalized text, and target metadata into a `SendCommunication` gRPC request to Game Logic.
+3. Game Logic resolves the communication type and target/scope, validates message constraints, and produces the baseline delivery metadata:
+   - `say` targets the current room;
+   - `whisper` targets one character in the current room;
+   - `tell` targets one online character directly outside room scope by default.
+4. Game Logic forwards the normalized communication to Social & Groups Service with explicit type and recipient metadata for delivery logging, history, moderation, and downstream fanout where applicable.
+5. Backend failures propagate protocol-mapped errors such as `ERROR COMMUNICATION_NOT_DELIVERED`, while pre-flight stage failures are surfaced as `LOGIN_REQUIRED` or `PLAY_REQUIRED` before the communication request is attempted.
 
 ## Response Format
 
@@ -331,11 +333,13 @@ Entities:
 - Player "Sora" (half-hidden in the shadowed niche)
 
 SAY Hello travelers
-OK SAY
-Speaker: Emberline
-Delivered-To: Emberline, Sora, Kobold Scout
-Message: Hello travelers
-A kobold says: Stay sharp.
+You say, "Hello travelers"
+
+WHISPER Sora Keep quiet
+You whisper to Sora, "Keep quiet"
+
+TELL Sora Meet me at the forge
+You tell Sora, "Meet me at the forge"
 
 DANCE
 ERROR UNKNOWN_COMMAND DANCE

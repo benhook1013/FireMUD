@@ -30,9 +30,14 @@ import net.firedevops.firemud.gamesession.GameSessionServiceApplication;
 import net.firedevops.firemud.gamesession.dto.GameInstanceDto;
 import net.firedevops.firemud.gamesession.dto.StartSessionRequest;
 import net.firedevops.firemud.gamesession.service.GameInstanceService;
+import net.firedevops.firemud.gamesession.service.SessionContext;
+import net.firedevops.firemud.gamesession.service.SessionContextService;
+import net.firedevops.firemud.gamesession.test.ChatTestFixtures;
 import net.firedevops.firemud.gamesession.test.LookTestFixtures;
 import net.firedevops.firemud.gamesession.test.stubs.EntityManagementStubServer;
+import net.firedevops.firemud.gamesession.test.stubs.SocialGroupsStubServer;
 import net.firedevops.firemud.gamesession.test.stubs.WorldManagementStubServer;
+import net.firedevops.firemud.socialgroups.v1.ChatType;
 import net.firedevops.firemud.springcloudgateway.service.GatewayRoute;
 import net.firedevops.firemud.springcloudgateway.service.GatewayRouteService;
 import net.firedevops.firemud.tcpproxy.stub.GatewayStubApplication;
@@ -81,6 +86,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
   private static final Duration COMMAND_WAIT = Duration.ofSeconds(5);
   private static final long TENANT_ID = 1L;
   private static final long ACCOUNT_ID = 7L;
+  private static final long DEMO_WORLD_INSTANCE_ID = 1L;
 
   @Container
   static final PostgreSQLContainer<?> POSTGRES =
@@ -96,6 +102,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
   private static AccountServiceStub ACCOUNT_STUB;
   private static WorldManagementStubServer WORLD_STUB;
   private static EntityManagementStubServer ENTITY_STUB;
+  private static SocialGroupsStubServer SOCIAL_STUB;
   private static GameLogicHolder GAME_LOGIC;
   private static GameSessionHolder GAME_SESSION;
   private static GatewayHolder GATEWAY;
@@ -155,6 +162,12 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     ENTITY_STUB = null;
     if (entityStub != null) {
       entityStub.close();
+    }
+
+    SocialGroupsStubServer socialStub = SOCIAL_STUB;
+    SOCIAL_STUB = null;
+    if (socialStub != null) {
+      socialStub.close();
     }
   }
 
@@ -247,6 +260,52 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     assertThat(telnetInvalidMoveResponse).contains("ERROR INVALID_EXIT");
   }
 
+  @Test
+  void telnetCommunicationMatchesCanonicalTranscriptsWithoutSession() throws Exception {
+    ensureTestServicesStarted();
+    seedLiveTargetSession();
+
+    String telnetWhisperResponse;
+    String telnetTellResponse;
+    try (Socket socket = new Socket("localhost", telnetServer.getPort());
+        PrintWriter writer =
+            new PrintWriter(
+                new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.ISO_8859_1),
+                true);
+        BufferedReader reader =
+            new BufferedReader(
+                new InputStreamReader(socket.getInputStream(), StandardCharsets.ISO_8859_1))) {
+      socket.setSoTimeout((int) COMMAND_WAIT.toMillis());
+      writer.println("LOGIN demo@example.com swordfish");
+      assertThat(readBlockAfterContains(reader, "Logged in as demo@example.com"))
+          .contains("Logged in as demo@example.com");
+      writer.println("PLAY demo");
+      assertThat(readLineAfterContains(reader, "OK PLAY Entered world: demo"))
+          .contains("OK PLAY Entered world: demo");
+
+      writer.println("WHISPER Sora Keep quiet");
+      telnetWhisperResponse = readLineAfterContains(reader, "You whisper to Sora, \"Keep quiet\"");
+      assertThat(SOCIAL_STUB.lastRequest())
+          .hasValueSatisfying(
+              request -> {
+                assertThat(request.getType()).isEqualTo(ChatType.CHAT_TYPE_WHISPER);
+                assertThat(request.getRecipientId()).isEqualTo("PLAYER-199");
+              });
+
+      writer.println("TELL Sora Meet me at the forge");
+      telnetTellResponse = readLineAfterContains(reader, "You tell Sora, \"Meet me at the forge\"");
+    }
+
+    assertThat(telnetWhisperResponse).contains(ChatTestFixtures.canonicalWhisperText());
+    assertThat(telnetTellResponse).contains(ChatTestFixtures.canonicalTellText());
+    assertThat(SOCIAL_STUB.lastRequest())
+        .hasValueSatisfying(
+            request -> {
+              assertThat(request.getType()).isEqualTo(ChatType.CHAT_TYPE_TELL);
+              assertThat(request.getRecipientId()).isEqualTo(ChatTestFixtures.PLAYER_SORA);
+            });
+  }
+
   private static synchronized void ensureTestServicesStarted() {
     if (ACCOUNT_STUB == null) {
       try {
@@ -269,8 +328,15 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
         throw new IllegalStateException("Failed to start entity stub", e);
       }
     }
+    if (SOCIAL_STUB == null) {
+      try {
+        SOCIAL_STUB = new SocialGroupsStubServer(TestSocketUtils.findAvailableTcpPort());
+      } catch (IOException e) {
+        throw new IllegalStateException("Failed to start social stub", e);
+      }
+    }
     if (GAME_LOGIC == null) {
-      GAME_LOGIC = startGameLogic(WORLD_STUB.port(), ENTITY_STUB.port());
+      GAME_LOGIC = startGameLogic(WORLD_STUB.port(), ENTITY_STUB.port(), SOCIAL_STUB.port());
     }
     if (GAME_SESSION == null) {
       GAME_SESSION = startGameSession(GAME_LOGIC.grpcPort(), ACCOUNT_STUB.port());
@@ -293,7 +359,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     return new EntityManagementStubServer(TestSocketUtils.findAvailableTcpPort());
   }
 
-  private static GameLogicHolder startGameLogic(int worldPort, int entityPort) {
+  private static GameLogicHolder startGameLogic(int worldPort, int entityPort, int socialPort) {
     Map<String, Object> props = new java.util.LinkedHashMap<>();
     int grpcPort = TestSocketUtils.findAvailableTcpPort();
     props.put("spring.profiles.active", "test");
@@ -308,6 +374,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
         "org.springframework.cloud.gateway.config.GatewayRedisAutoConfiguration");
     props.put("firemud.services.worldManagementService", "localhost:" + worldPort);
     props.put("firemud.services.entityManagementService", "localhost:" + entityPort);
+    props.put("firemud.services.socialGroupsService", "localhost:" + socialPort);
     ConfigurableApplicationContext context =
         new SpringApplicationBuilder(
                 GameLogicServiceApplication.class, NestedReadinessOverrides.class)
@@ -377,6 +444,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     props.put("firemud.database.enabled", "true");
     props.put("spring.main.allow-bean-definition-overriding", "true");
     props.put("firemud.auth.jwt-secret", "stub-secret");
+    props.put("firemud.services.entityManagementService", "localhost:" + ENTITY_STUB.port());
     props.put(
         "management.endpoint.health.group.readiness.include",
         "readinessState,db,redis,gameplayPathReadiness");
@@ -397,6 +465,22 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
             + "org.springframework.boot.grpc.server.autoconfigure.GrpcServerFactoryAutoConfiguration,"
             + "org.springframework.boot.grpc.server.autoconfigure.health.GrpcServerHealthAutoConfiguration");
     return props;
+  }
+
+  private void seedLiveTargetSession() {
+    GAME_SESSION
+        .bean(SessionContextService.class)
+        .save(
+            new SessionContext(
+                90210L,
+                TENANT_ID,
+                Long.parseLong(ChatTestFixtures.PLAYER_SORA),
+                "sora@example.com",
+                Long.parseLong(ChatTestFixtures.PLAYER_SORA),
+                "Sora",
+                DEMO_WORLD_INSTANCE_ID,
+                LookTestFixtures.ROOM_ID,
+                "target-jwt"));
   }
 
   private static GatewayHolder startGateway(int gameSessionPort) {
@@ -538,6 +622,10 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
 
     long sessionId() {
       return sessionId;
+    }
+
+    <T> T bean(Class<T> type) {
+      return context.getBean(type);
     }
 
     void close() {

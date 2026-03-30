@@ -37,7 +37,7 @@ Out of scope for the first implementation inside this slice: fully differentiate
 
 ### In-room `SAY` ordering and transcripts
 
-Document that every `SAY`-family response follows a fixed sequence: the transport echoes `OK SAY`, then a `Speaker` annotation identifies the originator, `Delivered-To` lists recipients in deterministic order (sender first, followed by attendees sorted by name), and `Message` repeats the chat text. Co-located listeners (players or NPC loggers) may render the WHO metadata into a narrative such as `Emberline says, "Hello travelers"` while still relying on the structured payload for ordering.
+Document that the initial communication slices render canonical actor prose directly for the initiating player while still preserving deterministic downstream type and recipient metadata for logging and regression assertions.
 
 For future communication modes, treat this structured payload as an implementation/testing surface rather than the only long-term player-facing UX. The long-term model should preserve a distinction between:
 
@@ -52,62 +52,60 @@ Telnet - Emberline's client (emitter):
 
 ```text
 SAY Hello travelers
-OK SAY
-Speaker: Emberline
-Delivered-To: Emberline, Sora, Kobold Scout
-Message: Hello travelers
+You say, "Hello travelers"
 ```
 
-Telnet - Sora's client (listener) displays only the shared payload rendered in narrative form:
+Telnet - Emberline whispering to Sora:
 
 ```text
-Emberline says, "Hello travelers"
-Kobold Scout echoes: "Kobold Scout nods and replies, `Stay awhile.`"
+WHISPER Sora Keep quiet
+You whisper to Sora, "Keep quiet"
 ```
 
-The Telnet `OK SAY` block above is the canonical structured payload (even though it is rendered as plain text), and the narrative lines that follow (`Emberline says…`, the NPC echo, etc.) are derived from that payload for readability, mirroring the same distinction the LOOK slice makes between the canonical output and flavored rendering.
+Telnet - Emberline telling Sora directly:
 
-WebSocket - Emberline's connection (emitter) observes the same structured response, while Sora's connection consumes a mirrored packet. The NPC echo can be represented as an automated webhook from the Social service:
+```text
+TELL Sora Meet me at the forge
+You tell Sora, "Meet me at the forge"
+```
+
+The initiating-player transcript is now direct prose, while Game Logic and Social & Groups still exchange deterministic type and recipient metadata for ordering, audit, and later fanout behavior.
+
+WebSocket - Emberline's connection (emitter) observes the same initiating-player transcript, while Social & Groups receives the normalized metadata:
 
 ```json
 {
   "event": "chat",
-  "command": "OK SAY",
-  "speaker": "Emberline",
+  "command": "SAY",
+  "actorView": "You say, \"Hello travelers\"",
   "deliveredTo": ["Emberline", "Sora", "Kobold Scout"],
   "message": "Hello travelers"
 }
 ```
 
-Nearby NPC echo:
-
-```text
-Kobold Scout says, "Stay awhile."
-```
-
-These transcripts demonstrate how both transports serialize the canonical `OK SAY` structure before layering flavor text for players or NPCs, ensuring regression suites can assert parity between Telnet and WebSocket experiences.
+These transcripts demonstrate how both transports preserve the same initiating-player prose and deterministic downstream metadata, ensuring regression suites can assert parity between Telnet and WebSocket experiences.
 
 ## 2. Game Logic Service: Communication Aggregation
 
-- [x] Introduce a Game Logic gRPC entry for the first communication mode, e.g. `BroadcastSay`, and shape its documentation so later communication intents can carry communication type, target/scope, and delivery metadata instead of hard-coding room speech as the permanent abstraction. All communication actions should conceptually enter through Game Logic, even when downstream services such as Social & Groups own parts of audience validation, history, moderation, or delivery fanout.
+- [x] Introduce a Game Logic gRPC entry for the first communication mode and shape its documentation so later communication intents can carry communication type, target/scope, and delivery metadata instead of hard-coding room speech as the permanent abstraction. All communication actions should conceptually enter through Game Logic, even when downstream services such as Social & Groups own parts of audience validation, history, moderation, or delivery fanout.
 - [x] Implement the initial room-speech handler to validate message length, call the Social/Group facades (or stubbed in-memory broadcaster), and emit failure statuses when the service refuses (e.g., `PERMISSION_DENIED` for silenced players).
 - [x] Add unit tests covering successful `SAY` (single recipient + multiple recipients), message validation failures, and propagation of backend errors (Social service unavailable).
-- [x] Document the communication API in the Game Logic design doc with its responsibilities, especially the distinction between communication act, target/scope, recipient resolution, and recipient-facing presentation, and spell out that logical failures such as `PERMISSION_DENIED` or backend `UNAVAILABLE` return structured `ErrorDetail` objects so Game Session can map them to `ERROR SAY_NOT_DELIVERED ...` while keeping `gamesession.command.say.*` metrics aligned.
+- [x] Document the communication API in the Game Logic design doc with its responsibilities, especially the distinction between communication act, target/scope, recipient resolution, and recipient-facing presentation, and spell out that logical failures such as `PERMISSION_DENIED` or backend `UNAVAILABLE` return structured `ErrorDetail` objects so Game Session can map them to `ERROR COMMUNICATION_NOT_DELIVERED ...` while keeping the communication metrics aligned.
 
 ## 3. Game Session Service: Wiring the Initial Text Communication Mode
 
-- [x] Extend the `TextCommandInterpreter` / `LookCommandHandler` neighborhood so the initial `SAY` text command routes to a `SayCommandHandler` that translates tokens+session context into `BroadcastSay` gRPC calls while the interpreter reuses the same authenticated session guard (via the `LookCommandHandler` validation) before issuing communication requests.
-- [x] Map Game Logic chat errors (`ERR_ROOM_SILENCED`, `ERR_SOCIAL_UNAVAILABLE`, etc.) into the text protocol (`ERROR SAY_NOT_DELIVERED ...`), preserve `OK SAY` when delivery succeeds, and emit `gamesession.command.say.invocations`/`gamesession.command.say.failures` metrics/logs tagged by tenant and error codes.
-- [x] Add unit/integration tests for `SayCommandHandler` using stubbed Game Logic clients to cover success and error branches, while keeping the handler shape open for later explicit communication modes such as target-directed `whisper`, `tell`, and later settings-driven `shout`.
+- [x] Extend the `TextCommandInterpreter` neighborhood so the text communication commands route to `CommunicationCommandHandler`, which translates tokens+session context into `SendCommunication` gRPC calls while the interpreter reuses the same authenticated session guard before issuing communication requests.
+- [x] Map Game Logic communication errors into the text protocol (`ERROR COMMUNICATION_NOT_DELIVERED ...`), preserve canonical actor prose when delivery succeeds, and emit `gamesession.command.say.*`, `gamesession.command.whisper.*`, and `gamesession.command.tell.*` metrics/logs tagged by tenant and error codes.
+- [x] Add unit/integration tests for `CommunicationCommandHandler` using stubbed Game Logic clients to cover success and error branches, while keeping the handler shape open for later explicit communication modes such as observer-aware `whisper`, richer `tell`, and later settings-driven `shout`.
 
 ## 4. Cross-Service Chat Regression Tests
 
 - [x] Extend the WebSocket cross-service suite so a second WebSocket client (or Telnet proxy replay) joins the room, a `SAY` command is issued, and all participants observe the canonical transcript plus `gamesession.command.say.*` metrics (reuse a shared fixture for the transcript).
-- [x] Add a Telnet variant that runs `SESSION` + `LOGIN` + `SAY`, verifying the Telnet transcript matches the WebSocket output up to framing differences and that `ERROR SAY_NOT_DELIVERED` appears exactly once when the Game Logic backend rejects the message.
+- [x] Add a Telnet variant that verifies the Telnet transcript matches the WebSocket output up to framing differences and that `ERROR COMMUNICATION_NOT_DELIVERED` appears exactly once when the Game Logic backend rejects the message.
 - [x] Capture the canonical SAY transcript fixture (similar to LOOK) so both WebSocket and Telnet suites assert the same reference output.
 - [x] Instrument these flows (via log capture/metrics) to assert the chat command traversed Game Session → Game Logic and triggered Social/Group service calls, ensuring `gamesession.command.say.invocations`/`failures` counters move for both success and failure paths.
 - [x] Wire the chat regression suites into the existing `crossServiceTest` targets and mention the new tests in the README/test docs so they can be run locally and in CI.
-- [x] Capture a failure-mode transcript (Social/Groups unavailable or other backend error) so the regression docs show what `ERROR SAY_NOT_DELIVERED` looks like over both transports.
+- [x] Capture a failure-mode transcript (Social/Groups unavailable or other backend error) so the regression docs show what `ERROR COMMUNICATION_NOT_DELIVERED` looks like over both transports.
 
 ### Failure-mode transcript
 
@@ -117,13 +115,13 @@ Document a short Telnet + WebSocket transcript triggered by a backend failure (e
 
 ```text
 SAY Hello travelers
-ERROR SAY_NOT_DELIVERED Backend unavailable
+ERROR COMMUNICATION_NOT_DELIVERED Backend unavailable
 ```
 
 - **Telnet listener (Sora)**:
 
 ```text
-ERROR SAY_NOT_DELIVERED Unable to reach chat service
+ERROR COMMUNICATION_NOT_DELIVERED Unable to reach chat service
 ```
 
 - **WebSocket emitter/listener**:
@@ -131,7 +129,7 @@ ERROR SAY_NOT_DELIVERED Unable to reach chat service
 ```json
 {
   "event": "chat",
-  "command": "ERROR SAY_NOT_DELIVERED",
+  "command": "ERROR COMMUNICATION_NOT_DELIVERED",
   "speaker": "Emberline",
   "error": {
     "code": "UNAVAILABLE",
@@ -140,7 +138,7 @@ ERROR SAY_NOT_DELIVERED Unable to reach chat service
 }
 ```
 
-These transcripts make it easy to add regression assertions for failure paths and ensure both transports handle backend outages in the same way, explicitly ensuring the flow is documented as: Social service returns `UNAVAILABLE` → Game Logic responds with an application error carrying `ErrorDetail`(code=`UNAVAILABLE`) → Game Session translates that into `ERROR SAY_NOT_DELIVERED ...` for Telnet and `"command": "ERROR SAY_NOT_DELIVERED", "error": {"code":"UNAVAILABLE", ...}` for WebSocket.
+These transcripts make it easy to add regression assertions for failure paths and ensure both transports handle backend outages in the same way, explicitly ensuring the flow is documented as: Social service returns `UNAVAILABLE` → Game Logic responds with an application error carrying `ErrorDetail`(code=`UNAVAILABLE`) → Game Session translates that into `ERROR COMMUNICATION_NOT_DELIVERED ...` for Telnet and `"command": "ERROR COMMUNICATION_NOT_DELIVERED", "error": {"code":"UNAVAILABLE", ...}` for WebSocket.
 
 ## 5. Developer Workflows and Instrumentation
 

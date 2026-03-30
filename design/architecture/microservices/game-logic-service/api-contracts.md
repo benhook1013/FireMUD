@@ -32,7 +32,7 @@ Expected response:
 
 - `Ping(PingRequest) returns (PingResponse)` is the basic connectivity check defined in [`game_logic_service.proto`](../../../../protos/game-logic/v1/game_logic_service.proto).
 - `ExecuteCommand(ExecuteCommandRequest) returns (ExecuteCommandResponse)` evaluates a parsed gameplay command and returns the outcome.
-- `BroadcastSay` accepts `tenant_id`, `session_id`, `character_id`, and a `RoomInstanceRef` (`tenant_id`, `game_instance_id`, `room_instance_id`), plus normalized `text`. It is the first implemented communication action and should evolve toward a broader communication-intent contract rather than staying as the permanent abstraction for all speech.
+- `SendCommunication` accepts `tenant_id`, `session_id`, `character_id`, speaker metadata, normalized `text`, and explicit target/scope metadata. It is the shared gameplay communication contract for the current built-in modes and should evolve toward richer communication-intent handling rather than splintering into one bespoke API per verb.
 - All application-level failures are returned via `shared.v1.ErrorDetail` while the gRPC status remains `OK`; `grpc.app_error` must be recorded with the error code.
 
 ```bash
@@ -65,10 +65,10 @@ grpcurl -plaintext -d '{"tenant_id":"demo","session_id":"demo","command":"look"}
 - `LOOK` should describe what is immediately visible in the current room. Visible bags, corpses, chests, or similar containers may appear as room-ground items, but nested container contents should not be expanded inline by default; later item/container commands can inspect those contents explicitly.
 - A future standard `QUICKLOOK` command should be treated as another built-in room-view rendering mode over the same structured result: it keeps occupants, room-ground items, exits, and later overlays, but omits the room-description prose for faster redraws.
 
-## SAY Broadcast Flow
+## Communication Flow
 
 - Game Session channels authenticated communication commands through Game Logic, supplying the same gameplay identity and world context that guard `LOOK`.
-- `BroadcastSay` is the first implemented communication action. Over time this should become a broader communication-intent pathway rather than a permanent `say`-only API surface.
+- `SendCommunication` is the current shared communication action rather than a permanent `say`-only API surface.
 - Game Logic validates message length and communication rules, resolves the communication target/scope, applies gameplay interception/perception rules, and dispatches to Social & Groups rather than rendering chat locally.
 - The longer-term communication model should generalize this flow from a `BroadcastSay`-style API to a communication-intent pathway with:
   - a game-configured communication type definition,
@@ -85,19 +85,19 @@ grpcurl -plaintext -d '{"tenant_id":"demo","session_id":"demo","command":"look"}
   - the communication type defines the baseline observability contract and what kinds of recipient views are even possible,
   - the target/scope determines which ordinary listeners and observer/interceptor candidates qualify in this location or social scope,
   - and recipient capabilities or effects determine whether that qualifying recipient receives full content, partial content, or only metadata such as “someone whispered here.”
-- The resulting delivery metadata (recipient list, NPC echoes) is returned to Game Session, while failures populate `shared.v1.ErrorDetail` so the text protocol can emit `ERROR SAY_NOT_DELIVERED` or equivalent stable responses.
-- This pathway mirrors the `LOOK` guard: unauthenticated requests never reach `BroadcastSay`, and Social & Groups outages surface as structured `PERMISSION_DENIED` or `UNAVAILABLE` errors so Game Session can keep `ERROR NOT_AUTHENTICATED` gating predictable.
+- The resulting delivery metadata (recipient list, NPC echoes, actor-view text) is returned to Game Session, while failures populate `shared.v1.ErrorDetail` so the text protocol can emit `ERROR COMMUNICATION_NOT_DELIVERED` or equivalent stable responses.
+- This pathway mirrors the `LOOK` guard: unauthenticated requests never reach `SendCommunication`, and Social & Groups outages surface as structured `PERMISSION_DENIED` or `UNAVAILABLE` errors so Game Session can keep stage-aware gating predictable.
 
-### Current scope versus future speech semantics
+### Current scope versus future communication semantics
 
-- The current `BroadcastSay` contract is intentionally scoped to room-local speech so the first chat slice can prove the end-to-end gameplay path.
-- This contract should not be treated as the final abstraction for all communication types. Future speech work should separate:
+- The live communication contract is now `SendCommunication`, which carries a communication type plus target metadata through one shared gameplay path.
+- This contract should not be treated as the final completed abstraction for all communication types. Future work should continue to separate:
   - the communication act (`say`, `whisper`, `shout`, `tell`, guild/channel/system message, emote-like narration),
   - the audience scope or target object (same room, directed target, nearby area, map/region, continent/world, account/group/channel),
   - the recipient-resolution rules owned by that scope, including observer/interceptor resolution,
   - and presentation/rendering style (for example, `Alice whispers to Bob...` versus a generic room broadcast).
-- In particular, `whisper` and `tell` should preserve target-directed delivery semantics rather than collapsing into generic room chat, and future `shout` behavior may depend on world-topology concepts such as area, map, or region propagation.
-- When those later slices land, prefer evolving this pathway toward a generic communication envelope plus explicit target/scope resolution and presentation metadata rather than adding one bespoke pipeline per verb.
+- In particular, `whisper` and `tell` preserve target-directed delivery semantics rather than collapsing into generic room chat, and future `shout` behavior may depend on world-topology concepts such as area, map, or region propagation.
+- When later slices land, prefer evolving this pathway with richer target/scope resolution and presentation metadata rather than adding one bespoke pipeline per verb.
 
 ## Implementation Status
 
@@ -109,6 +109,6 @@ grpcurl -plaintext -d '{"tenant_id":"demo","session_id":"demo","command":"look"}
 
 ### Chat Slice
 
-- Live: `BroadcastSay` accepts authenticated `SAY` / `YELL` / `WHISPER` payloads, validates length, aggregates recipient and NPC metadata, and forwards the normalized message to the Social & Groups stub. The API returns delivery metadata and `shared.v1.ErrorDetail` codes so Game Session can render the canonical transcript and surface `gamesession.command.say.*` instrumentation.
-- Stubbed: delivery currently uses the Social & Groups regression stub that records `SendMessage` calls and echoes success while cross-service WebSocket and Telnet tests assert the structured response before adding a richer narrative layer.
-- Deferred: richer NPC replies, directed/private delivery semantics, localized listening areas, area/map/region propagation rules, channel filters, and profanity-escalation behavior will land in later slices once the foundational flow proves stable.
+- Live: `SendCommunication` accepts authenticated `SAY`, `WHISPER`, and `TELL` payloads, validates length, resolves room-scoped or direct-target delivery metadata, and forwards the normalized message to the Social & Groups stub with explicit type and recipient information. The API returns actor-view delivery metadata and `shared.v1.ErrorDetail` codes so Game Session can render the canonical transcript and surface `gamesession.command.say.*`, `gamesession.command.whisper.*`, and `gamesession.command.tell.*` instrumentation.
+- Stubbed: downstream delivery still uses the Social & Groups regression stub that records `SendMessage` calls and echoes success while cross-service WebSocket and Telnet tests assert the canonical actor transcript and explicit recipient metadata.
+- Deferred: recipient-side push delivery, metadata-only observer outcomes, richer NPC replies, area/map/region propagation rules, channel filters, and profanity-escalation behavior will land in later slices once the foundational communication flow proves stable.

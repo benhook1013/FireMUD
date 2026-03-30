@@ -23,12 +23,16 @@ import java.util.concurrent.atomic.AtomicInteger;
 import net.firedevops.firemud.account.v1.AccountServiceGrpc;
 import net.firedevops.firemud.account.v1.AuthenticateRequest;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
+import net.firedevops.firemud.gamesession.service.SessionContext;
+import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.gamesession.test.ChatTestFixtures;
 import net.firedevops.firemud.gamesession.test.stubs.ChatEntityManagementStubServer;
 import net.firedevops.firemud.gamesession.test.stubs.SocialGroupsStubServer;
 import net.firedevops.firemud.gamesession.test.stubs.WorldManagementStubServer;
+import net.firedevops.firemud.socialgroups.v1.ChatType;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.util.TestSocketUtils;
 import org.testcontainers.containers.GenericContainer;
@@ -39,10 +43,11 @@ import org.testcontainers.utility.DockerImageName;
 
 @Testcontainers(disabledWithoutDocker = true)
 @SuppressWarnings("resource")
-class SayWebSocketCrossServiceTest {
+class CommunicationWebSocketCrossServiceTest {
   private static final Duration COMMAND_WAIT = Duration.ofSeconds(5);
   private static final long TENANT_ID = 1L;
   private static final long ACCOUNT_ID = Long.parseLong(ChatTestFixtures.PLAYER_EMBERLINE);
+  private static final long DEMO_WORLD_INSTANCE_ID = 1L;
 
   @Container
   static final PostgreSQLContainer<?> POSTGRES =
@@ -105,7 +110,7 @@ class SayWebSocketCrossServiceTest {
   void websocketSayFlowReportsCanonicalTranscriptAndMetrics() throws Exception {
     ensureTestServicesStarted();
     long sessionId = prepareGameInstance();
-    List<String> responses = runSaySequence(sessionId);
+    List<String> responses = runCommunicationSequence(sessionId, "SAY Hello travelers");
 
     assertThat(responses).hasSizeGreaterThanOrEqualTo(3);
     assertThat(responses.get(0)).startsWith("OK LOGIN");
@@ -120,6 +125,45 @@ class SayWebSocketCrossServiceTest {
             });
 
     assertMetricEventually("gamesession.command.say.invocations", 1.0, "tenantId", "1");
+  }
+
+  @Test
+  void websocketWhisperFlowReportsCanonicalTranscriptAndMetadata() throws Exception {
+    ensureTestServicesStarted();
+    long sessionId = prepareGameInstance();
+    List<String> responses = runCommunicationSequence(sessionId, "WHISPER Sora Keep quiet");
+
+    assertThat(responses).hasSizeGreaterThanOrEqualTo(3);
+    assertThat(responses.get(2).trim()).isEqualTo(ChatTestFixtures.canonicalWhisperText());
+    assertThat(SOCIAL_STUB.lastRequest())
+        .hasValueSatisfying(
+            request -> {
+              assertThat(request.getContent()).isEqualTo("Keep quiet");
+              assertThat(request.getType()).isEqualTo(ChatType.CHAT_TYPE_WHISPER);
+              assertThat(request.getRecipientId()).isEqualTo(ChatTestFixtures.PLAYER_SORA);
+            });
+
+    assertMetricEventually("gamesession.command.whisper.invocations", 1.0, "tenantId", "1");
+  }
+
+  @Test
+  void websocketTellFlowReportsCanonicalTranscriptAndMetadata() throws Exception {
+    ensureTestServicesStarted();
+    long sessionId = prepareGameInstance();
+    seedLiveTargetSession();
+    List<String> responses = runCommunicationSequence(sessionId, "TELL Sora Meet me at the forge");
+
+    assertThat(responses).hasSizeGreaterThanOrEqualTo(3);
+    assertThat(responses.get(2).trim()).isEqualTo(ChatTestFixtures.canonicalTellText());
+    assertThat(SOCIAL_STUB.lastRequest())
+        .hasValueSatisfying(
+            request -> {
+              assertThat(request.getContent()).isEqualTo("Meet me at the forge");
+              assertThat(request.getType()).isEqualTo(ChatType.CHAT_TYPE_TELL);
+              assertThat(request.getRecipientId()).isEqualTo(ChatTestFixtures.PLAYER_SORA);
+            });
+
+    assertMetricEventually("gamesession.command.tell.invocations", 1.0, "tenantId", "1");
   }
 
   private static synchronized void ensureTestServicesStarted() throws Exception {
@@ -165,10 +209,17 @@ class SayWebSocketCrossServiceTest {
           props.put("firemud.postgres.password", POSTGRES.getPassword());
           props.put("firemud.database.enabled", "true");
           props.put("spring.jpa.hibernate.ddl-auto", "none");
+          props.put("firemud.services.entityManagementService", ENTITY_STUB.endpoint());
         });
   }
 
   private long prepareGameInstance() {
+    GAME_SESSION
+        .bean(StringRedisTemplate.class)
+        .getConnectionFactory()
+        .getConnection()
+        .serverCommands()
+        .flushAll();
     JdbcTemplate jdbc = new JdbcTemplate(GAME_SESSION.bean(javax.sql.DataSource.class));
     jdbc.execute(
         """
@@ -197,7 +248,23 @@ class SayWebSocketCrossServiceTest {
         .orElseThrow(() -> new IllegalStateException("Game instance insert did not return an id"));
   }
 
-  private List<String> runSaySequence(long sessionId) throws Exception {
+  private void seedLiveTargetSession() {
+    SessionContextService sessionContextService = GAME_SESSION.bean(SessionContextService.class);
+    sessionContextService.save(
+        new SessionContext(
+            90210L,
+            TENANT_ID,
+            Long.parseLong(ChatTestFixtures.PLAYER_SORA),
+            "sora@example.com",
+            Long.parseLong(ChatTestFixtures.PLAYER_SORA),
+            "Sora",
+            DEMO_WORLD_INSTANCE_ID,
+            ChatTestFixtures.ROOM_ID,
+            "target-jwt"));
+  }
+
+  private List<String> runCommunicationSequence(long sessionId, String commandText)
+      throws Exception {
     HttpClient client = HttpClient.newHttpClient();
     URI uri = URI.create("ws://localhost:" + GAME_SESSION.port() + "/ws/game");
     CopyOnWriteArrayList<String> responses = new CopyOnWriteArrayList<>();
@@ -234,7 +301,7 @@ class SayWebSocketCrossServiceTest {
     waitForResponseCount(responses, 1);
     webSocket.sendText("PLAY demo", true).join();
     waitForResponseCount(responses, 2);
-    webSocket.sendText("SAY Hello travelers", true).join();
+    webSocket.sendText(commandText, true).join();
     ready.get(COMMAND_WAIT.toMillis(), TimeUnit.MILLISECONDS);
     webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "done").join();
     return responses;

@@ -43,9 +43,9 @@ See [System Architecture Testing](../../system-architecture-testing.md) for the 
 
 ### Chat slice status
 
-- **Live:** `SAY`/`YELL`/`WHISPER` commands route through `SayCommandHandler`, which enforces the shared session guard, forwards normalized payloads to Game Logic's `BroadcastSay`, and renders the canonical `OK SAY` transcript while emitting the `gamesession.command.say.*` meters documented in [`look-instrumentation.md`](../../../project-management/slice-support/look-instrumentation.md).
-- **Stubbed:** Delivery relies on the Social & Groups Service stub used by the regression suites, which currently records webhook contexts and returns success so both Telnet and WebSocket regression runs observe deterministic `Delivered-To` lists.
-- **Deferred:** Future slices will enrich the Social backend with NPC roleplay responses, listening-area heuristics, and localized channel filters once the core `BroadcastSay` path proves stable and well instrumented.
+- **Live:** `SAY`, `WHISPER`, and `TELL` route through `CommunicationCommandHandler`, which enforces the shared session guard, forwards normalized payloads and target metadata to Game Logic's `SendCommunication`, and renders the canonical actor transcript while emitting `gamesession.command.say.*`, `gamesession.command.whisper.*`, and `gamesession.command.tell.*` meters documented in [`look-instrumentation.md`](../../../project-management/slice-support/look-instrumentation.md).
+- **Stubbed:** Delivery still relies on the Social & Groups Service regression stub used by the suites, which records `SendMessage` calls and returns success so WebSocket and Telnet regression runs observe deterministic sender-side transcripts and explicit recipient metadata.
+- **Deferred:** Future slices will add recipient-side push delivery, observer/interceptor outcomes, NPC roleplay responses, listening-area heuristics, and localized channel filters once the shared communication path proves stable and well instrumented.
 
 ### LOOK slice status
 

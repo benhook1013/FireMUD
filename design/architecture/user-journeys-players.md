@@ -189,7 +189,7 @@ Implementation note:
 Player → Game Session Service → Social & Groups Service → Logging & Admin Service
 ```
 
-Current gameplay implementation note: the first live chat slice is still centered on room-local `SAY`-family behavior. Future design work will need to make directed/private speech (`WHISPER`, `TELL`) and broader audible scopes (`area`, `map`, `region`, `continent`, channel-level) explicit, rather than treating them as cosmetic aliases of the room-broadcast path.
+Current gameplay implementation note: the foundational shared communication path is now live for `SAY`, `WHISPER`, and `TELL`. Broader audible scopes (`area`, `map`, `region`, `continent`, channel-level), observer/interceptor outcomes, and recipient-side live push delivery remain later communication slices.
 
 ---
 
