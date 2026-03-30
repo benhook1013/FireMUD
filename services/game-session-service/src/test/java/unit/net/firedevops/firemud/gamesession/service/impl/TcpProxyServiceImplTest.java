@@ -139,6 +139,51 @@ class TcpProxyServiceImplTest {
   }
 
   @Test
+  void lateDisconnectHintsAreIgnoredAndMetered() {
+    GameInstanceRepository repository = Mockito.mock(GameInstanceRepository.class);
+    SessionStateService sessionStateService = Mockito.mock(SessionStateService.class);
+    MeterRegistry meterRegistry = new SimpleMeterRegistry();
+    PingService pingService = Mockito.mock(PingService.class);
+    GameInstance entity = buildEntity(12L, 7L);
+    Mockito.when(repository.findById(12L)).thenReturn(Optional.of(entity));
+
+    TcpProxyServiceImpl service =
+        new TcpProxyServiceImpl(
+            repository,
+            sessionStateService,
+            meterRegistry,
+            pingService,
+            new DevIsolatedProperties(false));
+
+    NotifyDisconnectRequest firstRequest =
+        NotifyDisconnectRequest.newBuilder()
+            .setGameInstanceId("12")
+            .setTenantId("7")
+            .setProxyConnectionId("proxy-1")
+            .setDisconnectSequence(2L)
+            .build();
+    NotifyDisconnectRequest lateRequest =
+        NotifyDisconnectRequest.newBuilder()
+            .setGameInstanceId("12")
+            .setTenantId("7")
+            .setProxyConnectionId("proxy-1")
+            .setDisconnectSequence(1L)
+            .build();
+
+    AtomicReference<NotifyDisconnectResponse> first = new AtomicReference<>();
+    AtomicReference<NotifyDisconnectResponse> second = new AtomicReference<>();
+
+    service.notifyDisconnect(firstRequest, observerFor(first));
+    service.notifyDisconnect(lateRequest, observerFor(second));
+
+    assertEquals("OK", first.get().getError().getCode());
+    assertEquals("OK", second.get().getError().getCode());
+    assertEquals(
+        1.0, meterRegistry.get("gamesession.notifydisconnect.duplicate").counter().count());
+    Mockito.verify(sessionStateService, Mockito.times(1)).saveState(Mockito.any());
+  }
+
+  @Test
   void disconnectWithoutBootstrapMetadataIsMetered() {
     GameInstanceRepository repository = Mockito.mock(GameInstanceRepository.class);
     SessionStateService sessionStateService = Mockito.mock(SessionStateService.class);
