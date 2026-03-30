@@ -578,7 +578,22 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     failCloseBackendUnavailable("Gateway link dropped; please reconnect");
   }
 
+  private void handleGatewayClose(int statusCode, String reason) {
+    if (closing) {
+      return;
+    }
+    cancelOutstandingSends();
+    closeGatewayWebSocket();
+    stopHeartbeat();
+    GatewayCloseClassification classification = classifyGatewayClose(statusCode, reason);
+    failClose(classification.reasonToken(), classification.message());
+  }
+
   private void failCloseBackendUnavailable(String message) {
+    failClose("backend_unavailable", message);
+  }
+
+  private void failClose(String reasonToken, String message) {
     if (closing) {
       return;
     }
@@ -586,9 +601,31 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     reconnecting = false;
     if (context != null) {
       context
-          .writeAndFlush("DISCONNECT backend_unavailable " + message + "\n")
+          .writeAndFlush("DISCONNECT " + reasonToken + " " + message + "\n")
           .addListener(ChannelFutureListener.CLOSE);
     }
+  }
+
+  private GatewayCloseClassification classifyGatewayClose(int statusCode, String reason) {
+    String trimmedReason = reason == null ? "" : reason.trim();
+    if (statusCode == 1000 && trimmedReason.startsWith("logout")) {
+      return new GatewayCloseClassification(
+          trimmedReason, "Gameplay session ended; please reconnect");
+    }
+    if (statusCode == 1001 && "idle_timeout".equals(trimmedReason)) {
+      return new GatewayCloseClassification(
+          "idle_timeout", "Gameplay session timed out; please reconnect");
+    }
+    if (statusCode == 1008 && trimmedReason.startsWith("policy_violation")) {
+      return new GatewayCloseClassification(
+          trimmedReason, "Gameplay connection closed due to policy violation");
+    }
+    if (statusCode == 1011 && "internal_error".equals(trimmedReason)) {
+      return new GatewayCloseClassification(
+          "internal_error", "Gameplay connection failed; please reconnect");
+    }
+    return new GatewayCloseClassification(
+        "backend_unavailable", "Gateway link dropped; please reconnect");
   }
 
   private void cancelOutstandingSends() {
@@ -794,7 +831,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
             gatewayWsUrl,
             statusCode,
             reason);
-        handleGatewayDisconnect();
+        handleGatewayClose(statusCode, reason);
         return Listener.super.onClose(webSocket, statusCode, reason);
       }
 
@@ -827,6 +864,8 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
 
   private static final Set<Byte> SUPPORTED_OPTIONS = Set.of((byte) 1, (byte) 3);
   private static final HttpClient SHARED_HTTP_CLIENT = HttpClient.newBuilder().build();
+
+  private record GatewayCloseClassification(String reasonToken, String message) {}
 
   boolean isMcpNegotiated() {
     return mcpNegotiated;

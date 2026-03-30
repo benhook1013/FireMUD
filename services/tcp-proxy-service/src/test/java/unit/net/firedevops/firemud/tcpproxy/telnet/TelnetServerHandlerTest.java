@@ -659,6 +659,242 @@ class TelnetServerHandlerTest {
   }
 
   @Test
+  void gatewayCleanLogoutWithGatewayRestartPreservesLogoutSubreason() {
+    SimpleMeterRegistry registry = new SimpleMeterRegistry();
+    AtomicReference<WebSocket.Listener> listenerRef = new AtomicReference<>();
+
+    TelnetServerHandler handler =
+        new TelnetServerHandler(
+            "ws://localhost/ws",
+            false,
+            () -> {},
+            () -> {},
+            registry.counter("test"),
+            registry.counter("discarded"),
+            false,
+            registry,
+            () -> true,
+            (url, ip, proxyConnectionId, session, tenant, listener) -> {
+              listenerRef.set(listener);
+              RecordingWebSocket ws = new RecordingWebSocket();
+              listener.onOpen(ws);
+              return CompletableFuture.completedFuture(ws);
+            },
+            Mockito.mock(TcpProxyEventService.class),
+            new AtomicInteger(),
+            "1",
+            "1",
+            lookCacheService);
+
+    ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
+    ChannelFuture future = mock(ChannelFuture.class);
+    Channel channel = mock(Channel.class);
+    DefaultEventExecutor executor = new DefaultEventExecutor();
+    when(ctx.channel()).thenReturn(channel);
+    when(ctx.executor()).thenReturn(executor);
+    when(channel.remoteAddress()).thenReturn(new InetSocketAddress("127.0.0.1", 0));
+    when(ctx.writeAndFlush(any())).thenReturn(future);
+    when(future.addListener(any(ChannelFutureListener.class))).thenReturn(future);
+
+    handler.channelActive(ctx);
+    listenerRef.get().onClose(mock(WebSocket.class), 1000, "logout;subreason=gateway_restart");
+
+    verify(ctx)
+        .writeAndFlush(
+            "DISCONNECT logout;subreason=gateway_restart Gameplay session ended; please reconnect\n");
+    verify(future).addListener(any(ChannelFutureListener.class));
+    executor.shutdownGracefully();
+  }
+
+  @Test
+  void gatewayCleanLogoutWithTakeoverPreservesLogoutSubreason() {
+    SimpleMeterRegistry registry = new SimpleMeterRegistry();
+    AtomicReference<WebSocket.Listener> listenerRef = new AtomicReference<>();
+
+    TelnetServerHandler handler =
+        new TelnetServerHandler(
+            "ws://localhost/ws",
+            false,
+            () -> {},
+            () -> {},
+            registry.counter("test"),
+            registry.counter("discarded"),
+            false,
+            registry,
+            () -> true,
+            (url, ip, proxyConnectionId, session, tenant, listener) -> {
+              listenerRef.set(listener);
+              RecordingWebSocket ws = new RecordingWebSocket();
+              listener.onOpen(ws);
+              return CompletableFuture.completedFuture(ws);
+            },
+            Mockito.mock(TcpProxyEventService.class),
+            new AtomicInteger(),
+            "1",
+            "1",
+            lookCacheService);
+
+    ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
+    ChannelFuture future = mock(ChannelFuture.class);
+    Channel channel = mock(Channel.class);
+    DefaultEventExecutor executor = new DefaultEventExecutor();
+    when(ctx.channel()).thenReturn(channel);
+    when(ctx.executor()).thenReturn(executor);
+    when(channel.remoteAddress()).thenReturn(new InetSocketAddress("127.0.0.1", 0));
+    when(ctx.writeAndFlush(any())).thenReturn(future);
+    when(future.addListener(any(ChannelFutureListener.class))).thenReturn(future);
+
+    handler.channelActive(ctx);
+    listenerRef.get().onClose(mock(WebSocket.class), 1000, "logout;subreason=takeover");
+
+    verify(ctx)
+        .writeAndFlush(
+            "DISCONNECT logout;subreason=takeover Gameplay session ended; please reconnect\n");
+    verify(future).addListener(any(ChannelFutureListener.class));
+    executor.shutdownGracefully();
+  }
+
+  @Test
+  void gatewayErrorClosesTelnetAsBackendUnavailable() {
+    SimpleMeterRegistry registry = new SimpleMeterRegistry();
+    AtomicReference<WebSocket.Listener> listenerRef = new AtomicReference<>();
+
+    TelnetServerHandler handler =
+        new TelnetServerHandler(
+            "ws://localhost/ws",
+            false,
+            () -> {},
+            () -> {},
+            registry.counter("test"),
+            registry.counter("discarded"),
+            false,
+            registry,
+            () -> true,
+            (url, ip, proxyConnectionId, session, tenant, listener) -> {
+              listenerRef.set(listener);
+              RecordingWebSocket ws = new RecordingWebSocket();
+              listener.onOpen(ws);
+              return CompletableFuture.completedFuture(ws);
+            },
+            Mockito.mock(TcpProxyEventService.class),
+            new AtomicInteger(),
+            "1",
+            "1",
+            lookCacheService);
+
+    ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
+    ChannelFuture future = mock(ChannelFuture.class);
+    Channel channel = mock(Channel.class);
+    DefaultEventExecutor executor = new DefaultEventExecutor();
+    when(ctx.channel()).thenReturn(channel);
+    when(ctx.executor()).thenReturn(executor);
+    when(channel.remoteAddress()).thenReturn(new InetSocketAddress("127.0.0.1", 0));
+    when(ctx.writeAndFlush(any())).thenReturn(future);
+    when(future.addListener(any(ChannelFutureListener.class))).thenReturn(future);
+
+    handler.channelActive(ctx);
+    listenerRef.get().onError(mock(WebSocket.class), new RuntimeException("boom"));
+
+    verify(ctx).writeAndFlush(startsWith("DISCONNECT backend_unavailable "));
+    verify(future).addListener(any(ChannelFutureListener.class));
+    executor.shutdownGracefully();
+  }
+
+  @Test
+  void gatewayExplicitInternalErrorPreservesInternalErrorDisconnect() {
+    SimpleMeterRegistry registry = new SimpleMeterRegistry();
+    AtomicReference<WebSocket.Listener> listenerRef = new AtomicReference<>();
+
+    TelnetServerHandler handler =
+        new TelnetServerHandler(
+            "ws://localhost/ws",
+            false,
+            () -> {},
+            () -> {},
+            registry.counter("test"),
+            registry.counter("discarded"),
+            false,
+            registry,
+            () -> true,
+            (url, ip, proxyConnectionId, session, tenant, listener) -> {
+              listenerRef.set(listener);
+              RecordingWebSocket ws = new RecordingWebSocket();
+              listener.onOpen(ws);
+              return CompletableFuture.completedFuture(ws);
+            },
+            Mockito.mock(TcpProxyEventService.class),
+            new AtomicInteger(),
+            "1",
+            "1",
+            lookCacheService);
+
+    ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
+    ChannelFuture future = mock(ChannelFuture.class);
+    when(future.addListener(any(ChannelFutureListener.class))).thenReturn(future);
+    Channel channel = mock(Channel.class);
+    DefaultEventExecutor executor = new DefaultEventExecutor();
+    when(ctx.channel()).thenReturn(channel);
+    when(ctx.executor()).thenReturn(executor);
+    when(channel.remoteAddress()).thenReturn(new InetSocketAddress("127.0.0.1", 0));
+    when(ctx.writeAndFlush(any())).thenReturn(future);
+
+    handler.channelActive(ctx);
+    listenerRef.get().onClose(stubWebSocket(), 1011, "internal_error");
+
+    verify(ctx)
+        .writeAndFlush("DISCONNECT internal_error Gameplay connection failed; please reconnect\n");
+    verify(future).addListener(any(ChannelFutureListener.class));
+    executor.shutdownGracefully();
+  }
+
+  @Test
+  void gatewayMissingCloseMetadataFallsBackToBackendUnavailable() {
+    SimpleMeterRegistry registry = new SimpleMeterRegistry();
+    AtomicReference<WebSocket.Listener> listenerRef = new AtomicReference<>();
+
+    TelnetServerHandler handler =
+        new TelnetServerHandler(
+            "ws://localhost/ws",
+            false,
+            () -> {},
+            () -> {},
+            registry.counter("test"),
+            registry.counter("discarded"),
+            false,
+            registry,
+            () -> true,
+            (url, ip, proxyConnectionId, session, tenant, listener) -> {
+              listenerRef.set(listener);
+              RecordingWebSocket ws = new RecordingWebSocket();
+              listener.onOpen(ws);
+              return CompletableFuture.completedFuture(ws);
+            },
+            Mockito.mock(TcpProxyEventService.class),
+            new AtomicInteger(),
+            "1",
+            "1",
+            lookCacheService);
+
+    ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
+    ChannelFuture future = mock(ChannelFuture.class);
+    when(future.addListener(any(ChannelFutureListener.class))).thenReturn(future);
+    Channel channel = mock(Channel.class);
+    DefaultEventExecutor executor = new DefaultEventExecutor();
+    when(ctx.channel()).thenReturn(channel);
+    when(ctx.executor()).thenReturn(executor);
+    when(channel.remoteAddress()).thenReturn(new InetSocketAddress("127.0.0.1", 0));
+    when(ctx.writeAndFlush(any())).thenReturn(future);
+
+    handler.channelActive(ctx);
+    listenerRef.get().onClose(stubWebSocket(), 1006, "");
+
+    verify(ctx)
+        .writeAndFlush("DISCONNECT backend_unavailable Gateway link dropped; please reconnect\n");
+    verify(future).addListener(any(ChannelFutureListener.class));
+    executor.shutdownGracefully();
+  }
+
+  @Test
   void structuredEventsIncludeConnectionDuration() {
     SimpleMeterRegistry registry = new SimpleMeterRegistry();
     TcpProxyEventService eventService = Mockito.mock(TcpProxyEventService.class);
