@@ -181,4 +181,51 @@ class PlayCommandHandlerTest {
     assertThat(result.commandResult().accepted()).isFalse();
     assertThat(result.commandResult().errorCode()).isEqualTo("TENANT_BILLING_BLOCKED");
   }
+
+  @Test
+  void playWhenMembershipAuthorityUnavailableFailsClosed() {
+    SessionContext context = new SessionContext(1L, 22L, 123L, 0L, 0L, "jwt-token");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    when(accountClient.getTenantMembershipForRuntime(
+            Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(
+            GetTenantMembershipForRuntimeResponse.newBuilder()
+                .setError(
+                    net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
+                        .setCode("MEMBERSHIP_AUTH_UNAVAILABLE")
+                        .setMessage("Membership authority unavailable"))
+                .build());
+
+    PlayCommandHandlingResult result =
+        handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode()).isEqualTo("MEMBERSHIP_AUTH_UNAVAILABLE");
+  }
+
+  @Test
+  void staleRoomContextFallsBackToFreshEntry() {
+    SessionContext context =
+        new SessionContext(1L, 22L, 123L, "demo@example.com", 123L, "demo", 1L, null, "jwt-token");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    when(sessionContextService.findByGameplayIdentity(22L, 1L, 123L)).thenReturn(Optional.empty());
+
+    PlayCommandHandlingResult result =
+        handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
+
+    assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
+    assertThat(result.responseText()).isEqualTo("OK PLAY Entered world: demo");
+    Mockito.verify(sessionContextService)
+        .save(
+            new SessionContext(
+                1L,
+                22L,
+                123L,
+                "demo@example.com",
+                123L,
+                "demo",
+                1L,
+                gameLogicProperties.getDefaultRoomId(),
+                "jwt-token"));
+  }
 }

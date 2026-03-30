@@ -77,6 +77,8 @@ Session entries in Redis expire after a derived `session_expiration_ms` window (
 
 Resume is authorized from current identity and current membership/entitlement authority, not from the previous backend token alone. After a fresh successful `LOGIN`, Game Session must rebind any resumed gameplay session to a fresh backend token and reject resume if current membership authority for the tenant has been removed.
 
+If the prior resumable gameplay state is stale or partially missing, Game Session should prefer invisible fresh entry whenever current `PLAY` admission is still valid. Missing room or game-instance resume context is not a player-facing failure by itself; the normal outcome is a successful fresh `PLAY` that rebinds the session to canonical entry state.
+
 > 🧭 For full details on `LOGIN` behavior, argument formats, and session flow, see [Authentication & Authorization](./system-architecture-authentication.md#login-and-session-flow)
 
 Gameplay command idempotency for reconnects is intentionally simple from the client’s perspective: Telnet and WebSocket clients treat commands as fire-and-forget. They do not attach idempotency keys or effect identifiers to individual commands in the text protocol; idempotency is handled internally by Game Session and domain services as described in [Protocol Bridging](./system-architecture-protocol-bridging.md#gameplay-command-idempotency-client-view) and [Transactions & Idempotency](./system-architecture-transactions.md).
@@ -102,6 +104,18 @@ OK PLAY Entered world: demo
 ```
 
 Only failures that genuinely require player or client action should surface as errors, for example access revocation, missing entitlements, or backend unavailability.
+
+Reconstructed session state after resume or fresh-entry fallback is intentionally bounded:
+
+- current authenticated gameplay binding;
+- current room/view state via fresh `LOOK`-style redraw or rerun;
+- current tick/region participation and timers that still exist in shared authoritative state.
+
+What is intentionally not replayed:
+
+- pre-disconnect transport bytes or frames;
+- partially delivered prompt/output text;
+- volatile in-memory command buffering that did not survive the disconnect or restart.
 
 ---
 
