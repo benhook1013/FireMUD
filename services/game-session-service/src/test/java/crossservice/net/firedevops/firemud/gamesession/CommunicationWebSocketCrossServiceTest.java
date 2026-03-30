@@ -401,6 +401,7 @@ class CommunicationWebSocketCrossServiceTest {
     int port() {
       return port;
     }
+
     @Override
     public void close() {
       if (server != null) {
