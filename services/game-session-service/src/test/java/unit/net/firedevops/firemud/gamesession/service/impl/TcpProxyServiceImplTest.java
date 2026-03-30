@@ -100,6 +100,86 @@ class TcpProxyServiceImplTest {
     Mockito.verifyNoInteractions(sessionStateService);
   }
 
+  @Test
+  void duplicateDisconnectHintsAreIgnoredAndMetered() {
+    GameInstanceRepository repository = Mockito.mock(GameInstanceRepository.class);
+    SessionStateService sessionStateService = Mockito.mock(SessionStateService.class);
+    MeterRegistry meterRegistry = new SimpleMeterRegistry();
+    PingService pingService = Mockito.mock(PingService.class);
+    GameInstance entity = buildEntity(12L, 7L);
+    Mockito.when(repository.findById(12L)).thenReturn(Optional.of(entity));
+
+    TcpProxyServiceImpl service =
+        new TcpProxyServiceImpl(
+            repository,
+            sessionStateService,
+            meterRegistry,
+            pingService,
+            new DevIsolatedProperties(false));
+
+    NotifyDisconnectRequest request =
+        NotifyDisconnectRequest.newBuilder()
+            .setGameInstanceId("12")
+            .setTenantId("7")
+            .setProxyConnectionId("proxy-1")
+            .setDisconnectSequence(1L)
+            .build();
+
+    AtomicReference<NotifyDisconnectResponse> first = new AtomicReference<>();
+    AtomicReference<NotifyDisconnectResponse> second = new AtomicReference<>();
+
+    service.notifyDisconnect(request, observerFor(first));
+    service.notifyDisconnect(request, observerFor(second));
+
+    assertEquals("OK", first.get().getError().getCode());
+    assertEquals("OK", second.get().getError().getCode());
+    assertEquals(
+        1.0, meterRegistry.get("gamesession.notifydisconnect.duplicate").counter().count());
+    Mockito.verify(sessionStateService, Mockito.times(1)).saveState(Mockito.any());
+  }
+
+  @Test
+  void disconnectWithoutBootstrapMetadataIsMetered() {
+    GameInstanceRepository repository = Mockito.mock(GameInstanceRepository.class);
+    SessionStateService sessionStateService = Mockito.mock(SessionStateService.class);
+    MeterRegistry meterRegistry = new SimpleMeterRegistry();
+    PingService pingService = Mockito.mock(PingService.class);
+
+    TcpProxyServiceImpl service =
+        new TcpProxyServiceImpl(
+            repository,
+            sessionStateService,
+            meterRegistry,
+            pingService,
+            new DevIsolatedProperties(false));
+
+    AtomicReference<NotifyDisconnectResponse> ref = new AtomicReference<>();
+    service.notifyDisconnect(NotifyDisconnectRequest.newBuilder().build(), observerFor(ref));
+
+    assertEquals("OK", ref.get().getError().getCode());
+    assertEquals(
+        1.0, meterRegistry.get("gamesession.notifydisconnect.missing_context").counter().count());
+    Mockito.verifyNoInteractions(sessionStateService);
+  }
+
+  private static StreamObserver<NotifyDisconnectResponse> observerFor(
+      AtomicReference<NotifyDisconnectResponse> ref) {
+    return new StreamObserver<>() {
+      @Override
+      public void onNext(NotifyDisconnectResponse value) {
+        ref.set(value);
+      }
+
+      @Override
+      public void onError(Throwable t) {
+        fail(t);
+      }
+
+      @Override
+      public void onCompleted() {}
+    };
+  }
+
   private static GameInstance buildEntity(long sessionId, long tenantId) {
     GameInstance entity = new GameInstance();
     entity.setId(sessionId);

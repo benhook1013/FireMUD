@@ -80,6 +80,28 @@ Resume is authorized from current identity and current membership/entitlement au
 
 Gameplay command idempotency for reconnects is intentionally simple from the client’s perspective: Telnet and WebSocket clients treat commands as fire-and-forget. They do not attach idempotency keys or effect identifiers to individual commands in the text protocol; idempotency is handled internally by Game Session and domain services as described in [Protocol Bridging](./system-architecture-protocol-bridging.md#gameplay-command-idempotency-client-view) and [Transactions & Idempotency](./system-architecture-transactions.md).
 
+### Example Recovery Outcomes
+
+Player-visible recovery output should stay helpful and protocol-shaped rather than surfacing backend jargon.
+
+Successful reconnect after a normal disconnect:
+
+```text
+OK LOGIN Logged in as demo@example.com
+OK PLAY Entered world: demo
+<fresh LOOK or prompt output follows>
+```
+
+Stale or expired resumable state where a fresh `PLAY` can still be admitted should not force the player to type the same command twice. The normal outcome is still a successful fresh entry:
+
+```text
+OK LOGIN Logged in as demo@example.com
+OK PLAY Entered world: demo
+<fresh LOOK or prompt output follows>
+```
+
+Only failures that genuinely require player or client action should surface as errors, for example access revocation, missing entitlements, or backend unavailability.
+
 ---
 
 ## Multi-Client and Session Takeover

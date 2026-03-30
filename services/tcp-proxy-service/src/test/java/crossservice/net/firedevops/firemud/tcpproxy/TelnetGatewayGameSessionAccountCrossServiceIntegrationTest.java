@@ -261,6 +261,56 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
   }
 
   @Test
+  void telnetReconnectAfterMoveKeepsDestinationRoomContext() throws Exception {
+    ensureTestServicesStarted();
+    String telnetMoveResponse;
+    String telnetReconnectLookResponse;
+
+    try (Socket socket = new Socket("localhost", telnetServer.getPort());
+        PrintWriter writer =
+            new PrintWriter(
+                new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.ISO_8859_1),
+                true);
+        BufferedReader reader =
+            new BufferedReader(
+                new InputStreamReader(socket.getInputStream(), StandardCharsets.ISO_8859_1))) {
+      socket.setSoTimeout((int) COMMAND_WAIT.toMillis());
+      writer.println("LOGIN demo@example.com swordfish");
+      assertThat(readBlockAfterContains(reader, "Logged in as demo@example.com"))
+          .contains("Logged in as demo@example.com");
+      writer.println("PLAY demo");
+      assertThat(readLineAfterContains(reader, "OK PLAY Entered world: demo"))
+          .contains("OK PLAY Entered world: demo");
+      writer.println("MOVE north");
+      telnetMoveResponse = readBlockAfterContainsOrTimeout(reader, "OK LOOK");
+    }
+
+    try (Socket socket = new Socket("localhost", telnetServer.getPort());
+        PrintWriter writer =
+            new PrintWriter(
+                new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.ISO_8859_1),
+                true);
+        BufferedReader reader =
+            new BufferedReader(
+                new InputStreamReader(socket.getInputStream(), StandardCharsets.ISO_8859_1))) {
+      socket.setSoTimeout((int) COMMAND_WAIT.toMillis());
+      writer.println("LOGIN demo@example.com swordfish");
+      assertThat(readBlockAfterContains(reader, "Logged in as demo@example.com"))
+          .contains("Logged in as demo@example.com");
+      writer.println("PLAY demo");
+      assertThat(readLineAfterContains(reader, "OK PLAY Entered world: demo"))
+          .contains("OK PLAY Entered world: demo");
+      writer.println("LOOK");
+      telnetReconnectLookResponse = readBlockAfterContainsOrTimeout(reader, "OK LOOK");
+    }
+
+    String destinationLook =
+        LookTestFixtures.canonicalLookText(LookTestFixtures.DESTINATION_ROOM_ID);
+    assertThat(telnetMoveResponse.trim()).isEqualTo(destinationLook.trim());
+    assertThat(telnetReconnectLookResponse.trim()).isEqualTo(destinationLook.trim());
+  }
+
+  @Test
   void telnetCommunicationMatchesCanonicalTranscriptsWithoutSession() throws Exception {
     ensureTestServicesStarted();
     seedLiveTargetSession();

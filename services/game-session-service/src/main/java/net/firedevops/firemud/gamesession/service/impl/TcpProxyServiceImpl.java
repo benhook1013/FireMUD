@@ -28,6 +28,9 @@ import org.springframework.util.StringUtils;
 public final class TcpProxyServiceImpl extends TcpProxyServiceGrpc.TcpProxyServiceImplBase {
   private static final Logger logger = LoggingUtil.getLogger(TcpProxyServiceImpl.class);
   private static final String SUSPENDED_STATUS = "SUSPENDED";
+  private static final String DUPLICATE_DISCONNECT_METRIC = "gamesession.notifydisconnect.duplicate";
+  private static final String MISSING_CONTEXT_METRIC =
+      "gamesession.notifydisconnect.missing_context";
 
   private final GameInstanceRepository repository;
   private final SessionStateService sessionStateService;
@@ -81,6 +84,7 @@ public final class TcpProxyServiceImpl extends TcpProxyServiceGrpc.TcpProxyServi
         && request.getDisconnectSequence() > 0) {
       if (!disconnectDeduplicator.shouldProcess(
           request.getProxyConnectionId(), request.getDisconnectSequence())) {
+        meterRegistry.counter(DUPLICATE_DISCONNECT_METRIC).increment();
         return GrpcAppErrors.ok("Duplicate disconnect ignored");
       }
     }
@@ -90,6 +94,7 @@ public final class TcpProxyServiceImpl extends TcpProxyServiceGrpc.TcpProxyServi
             ? request.getGameInstanceId()
             : request.getSessionId();
     if (!StringUtils.hasText(gameInstanceIdText) || !StringUtils.hasText(request.getTenantId())) {
+      meterRegistry.counter(MISSING_CONTEXT_METRIC).increment();
       return GrpcAppErrors.ok("Disconnect recorded (no proxy bootstrap metadata)");
     }
     SessionValidationResult validation = validateSession(gameInstanceIdText, request.getTenantId());
