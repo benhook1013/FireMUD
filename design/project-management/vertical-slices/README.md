@@ -14,6 +14,10 @@ Each document describes a narrowly scoped slice of functionality, covering user 
 - [02.3-task-list-reconnect-and-session-recovery-vertical-slice.md](./02.3-task-list-reconnect-and-session-recovery-vertical-slice.md) – Follow-up slice to align reconnect/takeover implementation with the explicit multi-transport recovery design.
 - [03-task-list-data-driven-look-vertical-slice.md](./03-task-list-data-driven-look-vertical-slice.md) – Data-driven `LOOK` command slice, including canonical transcripts and instrumentation.
 - [04-task-list-chat-and-social-vertical-slice.md](./04-task-list-chat-and-social-vertical-slice.md) – Chat and social features (`SAY`, guilds, and related flows) as a coordinated slice.
+- [04.1-task-list-shared-communication-infrastructure-vertical-slice.md](./04.1-task-list-shared-communication-infrastructure-vertical-slice.md) – Shared communication infrastructure follow-up that turns the initial room-speech path into the canonical model for later communication actions.
+- [04.2-task-list-whisper-vertical-slice.md](./04.2-task-list-whisper-vertical-slice.md) – Baseline `whisper` follow-up slice on top of the shared communication model.
+- [04.3-task-list-tell-vertical-slice.md](./04.3-task-list-tell-vertical-slice.md) – Baseline `tell` follow-up slice on top of the shared communication model.
+- [04.4-task-list-communication-observers-and-interceptors-vertical-slice.md](./04.4-task-list-communication-observers-and-interceptors-vertical-slice.md) – Observer/interceptor follow-up slice for eavesdropping, spying, and similar communication mechanics.
 - [05-task-list-movement-vertical-slice.md](./05-task-list-movement-vertical-slice.md) – Movement-focused slice covering exit validation, authoritative location changes, and automatic post-move `LOOK` refresh.
 
 When adding new vertical slices, follow the same naming convention (`NN-description-vertical-slice.md`) and include sections for scope, architecture notes, test coverage, and rollout plan.
