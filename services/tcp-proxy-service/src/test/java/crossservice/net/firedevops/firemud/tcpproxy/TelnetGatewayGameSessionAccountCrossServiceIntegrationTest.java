@@ -253,12 +253,12 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     try (Socket secondSocket = new Socket("localhost", telnetServer.getPort());
         PrintWriter secondWriter =
             new PrintWriter(
-                new OutputStreamWriter(
-                    secondSocket.getOutputStream(), StandardCharsets.ISO_8859_1),
+                new OutputStreamWriter(secondSocket.getOutputStream(), StandardCharsets.ISO_8859_1),
                 true);
         BufferedReader secondReader =
             new BufferedReader(
-                new InputStreamReader(secondSocket.getInputStream(), StandardCharsets.ISO_8859_1))) {
+                new InputStreamReader(
+                    secondSocket.getInputStream(), StandardCharsets.ISO_8859_1))) {
       secondSocket.setSoTimeout((int) COMMAND_WAIT.toMillis());
       secondWriter.println("LOGIN demo@example.com swordfish");
       assertThat(readBlockAfterContains(secondReader, "Logged in as demo@example.com"))
@@ -342,7 +342,8 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
                 true);
         BufferedReader secondReader =
             new BufferedReader(
-                new InputStreamReader(secondSocket.getInputStream(), StandardCharsets.ISO_8859_1))) {
+                new InputStreamReader(
+                    secondSocket.getInputStream(), StandardCharsets.ISO_8859_1))) {
       secondSocket.setSoTimeout((int) COMMAND_WAIT.toMillis());
       secondWriter.println("LOGIN demo@example.com swordfish");
       assertThat(readBlockAfterContains(secondReader, "Logged in as demo@example.com"))

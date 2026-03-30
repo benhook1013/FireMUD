@@ -101,6 +101,7 @@ class LookWebSocketCrossServiceTest {
   @Test
   void websocketLookFlowReportsCanonicalTranscriptAndMetrics() throws Exception {
     ensureTestServicesStarted();
+    ACCOUNT_STUB.allowGameplayAdmission();
     long sessionId = prepareGameInstance();
     List<String> responses = runLookSequence(sessionId);
 
@@ -119,6 +120,7 @@ class LookWebSocketCrossServiceTest {
   @Test
   void websocketMovementReturnsDestinationLookAndPersistsRoomContext() throws Exception {
     ensureTestServicesStarted();
+    ACCOUNT_STUB.allowGameplayAdmission();
     long sessionId = prepareGameInstance();
     List<String> responses = runMovementSequence(sessionId);
 
@@ -135,6 +137,7 @@ class LookWebSocketCrossServiceTest {
   @Test
   void websocketReconnectAfterMoveKeepsDestinationRoomContext() throws Exception {
     ensureTestServicesStarted();
+    ACCOUNT_STUB.allowGameplayAdmission();
     long sessionId = prepareGameInstance();
 
     List<String> firstConnection = runMoveThenDisconnect(sessionId);
@@ -148,6 +151,24 @@ class LookWebSocketCrossServiceTest {
     assertThat(reconnectLook.get(1)).startsWith("OK PLAY");
     assertThat(reconnectLook.get(2).trim())
         .isEqualTo(LookTestFixtures.canonicalLookText(LookTestFixtures.DESTINATION_ROOM_ID).trim());
+  }
+
+  @Test
+  void websocketReconnectAfterRevocationFailsClosed() throws Exception {
+    ensureTestServicesStarted();
+    ACCOUNT_STUB.allowGameplayAdmission();
+    long sessionId = prepareGameInstance();
+
+    List<String> firstConnection = runMoveThenDisconnect(sessionId);
+    assertThat(firstConnection).hasSizeGreaterThanOrEqualTo(3);
+    assertThat(firstConnection.get(2).trim())
+        .isEqualTo(LookTestFixtures.canonicalLookText(LookTestFixtures.DESTINATION_ROOM_ID).trim());
+
+    ACCOUNT_STUB.denyGameplayAdmission();
+    List<String> reconnectResponses = runPlayAfterReconnect(sessionId);
+    assertThat(reconnectResponses).hasSizeGreaterThanOrEqualTo(2);
+    assertThat(reconnectResponses.get(0)).startsWith("OK LOGIN");
+    assertThat(reconnectResponses.get(1)).startsWith("ERROR WORLD_ACCESS_DENIED");
   }
 
   private static synchronized void ensureTestServicesStarted() throws Exception {
@@ -405,6 +426,47 @@ class LookWebSocketCrossServiceTest {
     return responses;
   }
 
+  private List<String> runPlayAfterReconnect(long sessionId) throws Exception {
+    HttpClient client = HttpClient.newHttpClient();
+    URI uri = URI.create("ws://localhost:" + GAME_SESSION.port() + "/ws/game");
+    CopyOnWriteArrayList<String> responses = new CopyOnWriteArrayList<>();
+    AtomicInteger received = new AtomicInteger();
+    CompletableFuture<Void> ready = new CompletableFuture<>();
+
+    WebSocket webSocket =
+        client
+            .newWebSocketBuilder()
+            .header("X-Game-Instance-Id", String.valueOf(sessionId))
+            .buildAsync(
+                uri,
+                new Listener() {
+                  @Override
+                  public void onOpen(WebSocket webSocket) {
+                    webSocket.request(1);
+                  }
+
+                  @Override
+                  public CompletionStage<?> onText(
+                      WebSocket webSocket, CharSequence data, boolean last) {
+                    responses.add(data.toString());
+                    int count = received.incrementAndGet();
+                    webSocket.request(1);
+                    if (count >= 2) {
+                      ready.complete(null);
+                    }
+                    return Listener.super.onText(webSocket, data, last);
+                  }
+                })
+            .join();
+
+    webSocket.sendText("LOGIN demo@example.com swordfish", true).join();
+    waitForResponseCount(responses, 1);
+    webSocket.sendText("PLAY demo", true).join();
+    ready.get(COMMAND_WAIT.toMillis(), TimeUnit.MILLISECONDS);
+    webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "done").join();
+    return responses;
+  }
+
   private void waitForResponseCount(List<String> responses, int expected)
       throws InterruptedException {
     long deadline = System.currentTimeMillis() + COMMAND_WAIT.toMillis();
@@ -438,6 +500,7 @@ class LookWebSocketCrossServiceTest {
   private static final class AccountServiceStub implements AutoCloseable {
     private final Server server;
     private final int port;
+    private volatile boolean gameplayAdmissionAllowed = true;
 
     AccountServiceStub(int port) throws IOException {
       this.port = port;
@@ -466,7 +529,7 @@ class LookWebSocketCrossServiceTest {
                           GetTenantMembershipForRuntimeResponse.newBuilder()
                               .setAccountId(request.getAccountId())
                               .setTenantId(request.getTenantId())
-                              .setGameplayAdmissionAllowed(true)
+                              .setGameplayAdmissionAllowed(gameplayAdmissionAllowed)
                               .setMembershipVersion(1L)
                               .setEvaluatedAt("2026-03-30T00:00:00Z")
                               .build());
@@ -494,6 +557,14 @@ class LookWebSocketCrossServiceTest {
 
     int port() {
       return port;
+    }
+
+    void allowGameplayAdmission() {
+      gameplayAdmissionAllowed = true;
+    }
+
+    void denyGameplayAdmission() {
+      gameplayAdmissionAllowed = false;
     }
 
     @Override
