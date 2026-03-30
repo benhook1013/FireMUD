@@ -83,6 +83,80 @@ class GatewayLookCommandIntegrationTest {
     assertThat(response.get()).isEqualTo(LookCommandConstants.LOOK_RESPONSE);
   }
 
+  @Test
+  @SuppressWarnings("removal")
+  void gatewayPropagatesCleanLogoutCloseReason() throws Exception {
+    ensureGatewayStarted();
+
+    StandardWebSocketClient client = new StandardWebSocketClient();
+    AtomicReference<org.springframework.web.socket.CloseStatus> closeStatus =
+        new AtomicReference<>();
+    CountDownLatch latch = new CountDownLatch(1);
+    WebSocketHttpHeaders headers = new WebSocketHttpHeaders();
+    headers.add("X-Game-Instance-Id", "42");
+
+    client
+        .execute(
+            new TextWebSocketHandler() {
+              @Override
+              public void afterConnectionEstablished(WebSocketSession session) throws IOException {
+                session.sendMessage(new TextMessage("FORCE_CLOSE_GATEWAY_RESTART"));
+              }
+
+              @Override
+              public void afterConnectionClosed(
+                  WebSocketSession session, org.springframework.web.socket.CloseStatus status) {
+                closeStatus.set(status);
+                latch.countDown();
+              }
+            },
+            headers,
+            URI.create(GATEWAY.websocketUrl()))
+        .get(5, TimeUnit.SECONDS);
+
+    assertThat(latch.await(5, TimeUnit.SECONDS)).isTrue();
+    assertThat(closeStatus.get()).isNotNull();
+    assertThat(closeStatus.get().getCode()).isEqualTo(1000);
+    assertThat(closeStatus.get().getReason()).isEqualTo("logout;subreason=gateway_restart");
+  }
+
+  @Test
+  @SuppressWarnings("removal")
+  void gatewayPropagatesExplicitInternalErrorCloseReason() throws Exception {
+    ensureGatewayStarted();
+
+    StandardWebSocketClient client = new StandardWebSocketClient();
+    AtomicReference<org.springframework.web.socket.CloseStatus> closeStatus =
+        new AtomicReference<>();
+    CountDownLatch latch = new CountDownLatch(1);
+    WebSocketHttpHeaders headers = new WebSocketHttpHeaders();
+    headers.add("X-Game-Instance-Id", "42");
+
+    client
+        .execute(
+            new TextWebSocketHandler() {
+              @Override
+              public void afterConnectionEstablished(WebSocketSession session) throws IOException {
+                session.sendMessage(new TextMessage("FORCE_CLOSE_INTERNAL_ERROR"));
+              }
+
+              @Override
+              public void afterConnectionClosed(
+                  WebSocketSession session, org.springframework.web.socket.CloseStatus status) {
+                closeStatus.set(status);
+                latch.countDown();
+              }
+            },
+            headers,
+            URI.create(GATEWAY.websocketUrl()))
+        .get(5, TimeUnit.SECONDS);
+
+    assertThat(latch.await(5, TimeUnit.SECONDS)).isTrue();
+    assertThat(closeStatus.get()).isNotNull();
+    assertThat(closeStatus.get().getCode()).isEqualTo(1011);
+    assertThat(closeStatus.get().getReason()).isEqualTo("internal_error");
+  }
+
   private static synchronized void ensureGatewayStarted() {
     if (GATEWAY == null) {
       GATEWAY = startGateway();
@@ -195,8 +269,7 @@ class GatewayLookCommandIntegrationTest {
               .filter(StringUtils::hasText)
               .doOnNext(stub::recordCommand);
 
-      Flux<WebSocketMessage> replies = commands.map(cmd -> session.textMessage(responseFor(cmd)));
-      return session.send(replies);
+      return commands.concatMap(cmd -> handleCommand(session, cmd)).then();
     }
 
     private String responseFor(String command) {
@@ -204,6 +277,17 @@ class GatewayLookCommandIntegrationTest {
         return LookCommandConstants.LOOK_RESPONSE;
       }
       return "OK " + command;
+    }
+
+    private Mono<Void> handleCommand(
+        org.springframework.web.reactive.socket.WebSocketSession session, String command) {
+      if ("FORCE_CLOSE_GATEWAY_RESTART".equalsIgnoreCase(command)) {
+        return session.close(new CloseStatus(1000, "logout;subreason=gateway_restart"));
+      }
+      if ("FORCE_CLOSE_INTERNAL_ERROR".equalsIgnoreCase(command)) {
+        return session.close(new CloseStatus(1011, "internal_error"));
+      }
+      return session.send(Mono.just(session.textMessage(responseFor(command))));
     }
   }
 
