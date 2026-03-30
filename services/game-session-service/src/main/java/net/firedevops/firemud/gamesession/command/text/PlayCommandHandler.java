@@ -33,6 +33,9 @@ public class PlayCommandHandler {
   private static final String FAILURES_METRIC = "gamesession.command.play.failures";
   private static final String TAKEOVER_METRIC = "gamesession.session.takeover";
   private static final String RESUME_METRIC = "gamesession.session.resume";
+  private static final String RESUME_DENIED_METRIC = "gamesession.session.resume_denied";
+  private static final String FRESH_ENTRY_FALLBACK_METRIC =
+      "gamesession.session.fresh_entry_fallback";
 
   private final SessionAuthenticationService sessionAuthenticationService;
   private final SessionContextService sessionContextService;
@@ -106,7 +109,8 @@ public class PlayCommandHandler {
 
     GameSessionProperties.WorldOption selectedWorld = maybeWorld.get();
     Optional<PlayCommandHandlingResult> authorityFailure =
-        validateRuntimeAdmission(context, tenantTag);
+        validateRuntimeAdmission(
+            context, selectedWorld, tenantTag, args.size() > 1 ? args.get(1) : null);
     if (authorityFailure.isPresent()) {
       return authorityFailure.get();
     }
@@ -141,6 +145,9 @@ public class PlayCommandHandler {
           CommandEnqueueResult.success(),
           formatSuccessResponse(selectedWorld.getSlug(), character));
     }
+
+    maybeRecordFreshEntryFallback(
+        context, selectedWorld, character, gameInstanceId, characterId, tenantTag);
 
     sessionContextService
         .findByGameplayIdentity(context.tenantId(), gameInstanceId, characterId)
@@ -247,28 +254,44 @@ public class PlayCommandHandler {
   }
 
   private Optional<PlayCommandHandlingResult> validateRuntimeAdmission(
-      SessionContext context, String tenantTag) {
+      SessionContext context,
+      GameSessionProperties.WorldOption selectedWorld,
+      String tenantTag,
+      String requestedCharacter) {
     String requestId = context.sessionId() + ":" + UUID.randomUUID();
+    long requestedCharacterId = resolveCharacterId(context, selectedWorld, requestedCharacter);
     GetTenantMembershipForRuntimeResponse membershipResponse =
         accountClient.getTenantMembershipForRuntime(
             Long.toString(context.accountId()), Long.toString(context.tenantId()), requestId);
     Optional<PlayCommandHandlingResult> membershipFailure =
-        validateMembershipResponse(membershipResponse, tenantTag);
+        validateMembershipResponse(
+            membershipResponse, context, tenantTag, selectedWorld, requestedCharacterId);
     if (membershipFailure.isPresent()) {
       return membershipFailure;
     }
 
     GetTenantEntitlementsForRuntimeResponse entitlementResponse =
         accountClient.getTenantEntitlementsForRuntime(Long.toString(context.tenantId()), requestId);
-    return validateEntitlementsResponse(entitlementResponse, tenantTag);
+    return validateEntitlementsResponse(
+        entitlementResponse, context, tenantTag, selectedWorld, requestedCharacterId);
   }
 
   private Optional<PlayCommandHandlingResult> validateMembershipResponse(
-      GetTenantMembershipForRuntimeResponse response, String tenantTag) {
+      GetTenantMembershipForRuntimeResponse response,
+      SessionContext context,
+      String tenantTag,
+      GameSessionProperties.WorldOption selectedWorld,
+      long requestedCharacterId) {
     Optional<ErrorDetail> maybeError = extractError(response.getError());
     if (maybeError.isPresent()) {
       ErrorDetail error = maybeError.get();
       if ("NOT_FOUND".equalsIgnoreCase(error.getCode())) {
+        recordResumeDeniedIfApplicable(
+            context,
+            selectedWorld.getGameInstanceId(),
+            requestedCharacterId,
+            tenantTag,
+            "access_denied");
         return Optional.of(
             failure(
                 GameplayStageCommandConstants.WORLD_ACCESS_DENIED_CODE,
@@ -276,6 +299,12 @@ public class PlayCommandHandler {
                 tenantTag,
                 null));
       }
+      recordResumeDeniedIfApplicable(
+          context,
+          selectedWorld.getGameInstanceId(),
+          requestedCharacterId,
+          tenantTag,
+          "authority_unavailable");
       return Optional.of(
           failure(
               GameplayStageCommandConstants.MEMBERSHIP_AUTH_UNAVAILABLE_CODE,
@@ -284,6 +313,12 @@ public class PlayCommandHandler {
               null));
     }
     if (!response.getGameplayAdmissionAllowed()) {
+      recordResumeDeniedIfApplicable(
+          context,
+          selectedWorld.getGameInstanceId(),
+          requestedCharacterId,
+          tenantTag,
+          "access_denied");
       return Optional.of(
           failure(
               GameplayStageCommandConstants.WORLD_ACCESS_DENIED_CODE,
@@ -295,9 +330,19 @@ public class PlayCommandHandler {
   }
 
   private Optional<PlayCommandHandlingResult> validateEntitlementsResponse(
-      GetTenantEntitlementsForRuntimeResponse response, String tenantTag) {
+      GetTenantEntitlementsForRuntimeResponse response,
+      SessionContext context,
+      String tenantTag,
+      GameSessionProperties.WorldOption selectedWorld,
+      long requestedCharacterId) {
     Optional<ErrorDetail> maybeError = extractError(response.getError());
     if (maybeError.isPresent()) {
+      recordResumeDeniedIfApplicable(
+          context,
+          selectedWorld.getGameInstanceId(),
+          requestedCharacterId,
+          tenantTag,
+          "authority_unavailable");
       return Optional.of(
           failure(
               GameplayStageCommandConstants.ENTITLEMENT_UNAVAILABLE_CODE,
@@ -306,6 +351,12 @@ public class PlayCommandHandler {
               null));
     }
     if (!response.getGameplayAvailable()) {
+      recordResumeDeniedIfApplicable(
+          context,
+          selectedWorld.getGameInstanceId(),
+          requestedCharacterId,
+          tenantTag,
+          "tenant_unavailable");
       return Optional.of(
           failure(
               GameplayStageCommandConstants.TENANT_BILLING_BLOCKED_CODE,
@@ -325,5 +376,54 @@ public class PlayCommandHandler {
       return Optional.empty();
     }
     return Optional.of(error);
+  }
+
+  private void maybeRecordFreshEntryFallback(
+      SessionContext context,
+      GameSessionProperties.WorldOption selectedWorld,
+      String requestedCharacter,
+      long requestedGameInstanceId,
+      long requestedCharacterId,
+      String tenantTag) {
+    if (context.gameInstanceId() != requestedGameInstanceId
+        || context.characterId() != requestedCharacterId) {
+      return;
+    }
+    if (StringUtils.hasText(context.roomInstanceId())
+        && Objects.equals(
+            normalizeName(context.characterName()),
+            normalizeName(
+                resolveCharacterName(context, requestedCharacterId, requestedCharacter)))) {
+      return;
+    }
+    meterRegistry
+        .counter(
+            FRESH_ENTRY_FALLBACK_METRIC,
+            "tenantId",
+            tenantTag,
+            "reason",
+            "stale_or_missing_context")
+        .increment();
+    LOG.info(
+        "PLAY falling back to fresh entry for tenant {} gameInstance {} character {} on session {} because resumable context was stale or incomplete",
+        context.tenantId(),
+        selectedWorld.getGameInstanceId(),
+        requestedCharacterId,
+        context.sessionId());
+  }
+
+  private void recordResumeDeniedIfApplicable(
+      SessionContext context,
+      long requestedGameInstanceId,
+      long requestedCharacterId,
+      String tenantTag,
+      String reason) {
+    if (context.gameInstanceId() != requestedGameInstanceId
+        || context.characterId() != requestedCharacterId) {
+      return;
+    }
+    meterRegistry
+        .counter(RESUME_DENIED_METRIC, "tenantId", tenantTag, "reason", reason)
+        .increment();
   }
 }

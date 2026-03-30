@@ -141,7 +141,9 @@ class PlayCommandHandlerTest {
 
   @Test
   void playDeniedByMembershipReturnsWorldAccessDenied() {
-    SessionContext context = new SessionContext(1L, 22L, 123L, 0L, 0L, "jwt-token");
+    SessionContext context =
+        new SessionContext(
+            1L, 22L, 123L, "demo@example.com", 123L, "demo", 1L, "room-1", "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
     when(accountClient.getTenantMembershipForRuntime(
             Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
@@ -159,11 +161,23 @@ class PlayCommandHandlerTest {
 
     assertThat(result.commandResult().accepted()).isFalse();
     assertThat(result.commandResult().errorCode()).isEqualTo("WORLD_ACCESS_DENIED");
+    assertThat(
+            meterRegistry
+                .counter(
+                    "gamesession.session.resume_denied",
+                    "tenantId",
+                    "22",
+                    "reason",
+                    "access_denied")
+                .count())
+        .isEqualTo(1.0);
   }
 
   @Test
   void playBlockedByEntitlementsReturnsBillingBlocked() {
-    SessionContext context = new SessionContext(1L, 22L, 123L, 0L, 0L, "jwt-token");
+    SessionContext context =
+        new SessionContext(
+            1L, 22L, 123L, "demo@example.com", 123L, "demo", 1L, "room-1", "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
     when(accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
@@ -180,11 +194,23 @@ class PlayCommandHandlerTest {
 
     assertThat(result.commandResult().accepted()).isFalse();
     assertThat(result.commandResult().errorCode()).isEqualTo("TENANT_BILLING_BLOCKED");
+    assertThat(
+            meterRegistry
+                .counter(
+                    "gamesession.session.resume_denied",
+                    "tenantId",
+                    "22",
+                    "reason",
+                    "tenant_unavailable")
+                .count())
+        .isEqualTo(1.0);
   }
 
   @Test
   void playWhenMembershipAuthorityUnavailableFailsClosed() {
-    SessionContext context = new SessionContext(1L, 22L, 123L, 0L, 0L, "jwt-token");
+    SessionContext context =
+        new SessionContext(
+            1L, 22L, 123L, "demo@example.com", 123L, "demo", 1L, "room-1", "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
     when(accountClient.getTenantMembershipForRuntime(
             Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
@@ -201,6 +227,16 @@ class PlayCommandHandlerTest {
 
     assertThat(result.commandResult().accepted()).isFalse();
     assertThat(result.commandResult().errorCode()).isEqualTo("MEMBERSHIP_AUTH_UNAVAILABLE");
+    assertThat(
+            meterRegistry
+                .counter(
+                    "gamesession.session.resume_denied",
+                    "tenantId",
+                    "22",
+                    "reason",
+                    "authority_unavailable")
+                .count())
+        .isEqualTo(1.0);
   }
 
   @Test
@@ -227,5 +263,15 @@ class PlayCommandHandlerTest {
                 1L,
                 gameLogicProperties.getDefaultRoomId(),
                 "jwt-token"));
+    assertThat(
+            meterRegistry
+                .counter(
+                    "gamesession.session.fresh_entry_fallback",
+                    "tenantId",
+                    "22",
+                    "reason",
+                    "stale_or_missing_context")
+                .count())
+        .isEqualTo(1.0);
   }
 }
