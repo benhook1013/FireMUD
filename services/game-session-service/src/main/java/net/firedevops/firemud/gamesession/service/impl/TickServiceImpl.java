@@ -10,6 +10,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -20,6 +21,8 @@ import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.conflict.ConflictTracker;
 import net.firedevops.firemud.gamesession.config.DevIsolatedProperties;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
+import net.firedevops.firemud.gamesession.service.SessionContext;
+import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.gamesession.service.TickService;
 import org.slf4j.Logger;
 import org.springframework.beans.factory.annotation.Value;
@@ -52,6 +55,7 @@ public class TickServiceImpl implements TickService {
   private final ConflictTracker conflictTracker;
   private final GameInstanceRepository gameInstanceRepository;
   private final DevIsolatedProperties devIsolatedProperties;
+  private final SessionContextService sessionContextService;
 
   @Value("${game.tick-duration-ms:1000}")
   private long tickDurationMs;
@@ -316,6 +320,10 @@ public class TickServiceImpl implements TickService {
   }
 
   private Long findTenantId(Long sessionId) {
+    Optional<SessionContext> context = sessionContextService.findBySessionId(sessionId);
+    if (context.isPresent()) {
+      return context.get().tenantId();
+    }
     return gameInstanceRepository.findById(sessionId).map(i -> i.getTenantId()).orElse(0L);
   }
 

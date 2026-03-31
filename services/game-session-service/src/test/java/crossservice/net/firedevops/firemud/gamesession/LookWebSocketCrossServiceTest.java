@@ -28,11 +28,13 @@ import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeRequest;
 import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeRequest;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
+import net.firedevops.firemud.cache.ScreenBufferService;
 import net.firedevops.firemud.gamesession.test.LookTestFixtures;
 import net.firedevops.firemud.gamesession.test.stubs.EntityManagementStubServer;
 import net.firedevops.firemud.gamesession.test.stubs.WorldManagementStubServer;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.util.TestSocketUtils;
 import org.testcontainers.containers.GenericContainer;
@@ -146,11 +148,17 @@ class LookWebSocketCrossServiceTest {
         .isEqualTo(LookTestFixtures.canonicalLookText(LookTestFixtures.DESTINATION_ROOM_ID).trim());
 
     List<String> reconnectLook = runLookAfterReconnect(sessionId);
-    assertThat(reconnectLook).hasSizeGreaterThanOrEqualTo(3);
-    assertThat(reconnectLook.get(0)).startsWith("OK LOGIN");
-    assertThat(reconnectLook.get(1)).startsWith("OK PLAY");
-    assertThat(reconnectLook.get(2).trim())
-        .isEqualTo(LookTestFixtures.canonicalLookText(LookTestFixtures.DESTINATION_ROOM_ID).trim());
+    assertThat(reconnectLook).hasSizeGreaterThanOrEqualTo(4);
+    assertThat(reconnectLook).anyMatch(response -> response.startsWith("OK LOGIN"));
+    assertThat(reconnectLook).anyMatch(response -> response.startsWith("OK PLAY"));
+    assertThat(reconnectLook)
+        .anyMatch(
+            response ->
+                response
+                    .trim()
+                    .equals(
+                        LookTestFixtures.canonicalLookText(LookTestFixtures.DESTINATION_ROOM_ID)
+                            .trim()));
   }
 
   @Test
@@ -195,8 +203,9 @@ class LookWebSocketCrossServiceTest {
     ACCOUNT_STUB.denyGameplayAdmission();
     List<String> reconnectResponses = runPlayAfterReconnect(sessionId);
     assertThat(reconnectResponses).hasSizeGreaterThanOrEqualTo(2);
-    assertThat(reconnectResponses.get(0)).startsWith("OK LOGIN");
-    assertThat(reconnectResponses.get(1)).startsWith("ERROR WORLD_ACCESS_DENIED");
+    assertThat(reconnectResponses).anyMatch(response -> response.startsWith("OK LOGIN"));
+    assertThat(reconnectResponses)
+        .anyMatch(response -> response.startsWith("ERROR WORLD_ACCESS_DENIED"));
   }
 
   @Test
@@ -215,10 +224,19 @@ class LookWebSocketCrossServiceTest {
         .deleteBySessionId(TENANT_ID, sessionId);
 
     List<String> reconnectLook = runLookAfterReconnect(sessionId);
-    assertThat(reconnectLook).hasSizeGreaterThanOrEqualTo(3);
-    assertThat(reconnectLook.get(0)).startsWith("OK LOGIN");
-    assertThat(reconnectLook.get(1)).startsWith("OK PLAY");
-    assertThat(reconnectLook.get(2).trim()).isEqualTo(LookTestFixtures.canonicalLookText().trim());
+    assertThat(reconnectLook).hasSizeGreaterThanOrEqualTo(4);
+    assertThat(reconnectLook).anyMatch(response -> response.startsWith("OK LOGIN"));
+    assertThat(reconnectLook).anyMatch(response -> response.startsWith("OK PLAY"));
+    assertThat(reconnectLook)
+        .anyMatch(
+            response ->
+                response
+                    .trim()
+                    .equals(
+                        LookTestFixtures.canonicalLookText(LookTestFixtures.DESTINATION_ROOM_ID)
+                            .trim()));
+    assertThat(reconnectLook)
+        .anyMatch(response -> response.trim().equals(LookTestFixtures.canonicalLookText().trim()));
   }
 
   private static synchronized void ensureTestServicesStarted() throws Exception {
@@ -290,7 +308,14 @@ class LookWebSocketCrossServiceTest {
         )
         """);
     if (clearExisting) {
+      GAME_SESSION
+          .bean(StringRedisTemplate.class)
+          .getConnectionFactory()
+          .getConnection()
+          .serverCommands()
+          .flushAll();
       jdbc.update("DELETE FROM game_instances");
+      GAME_SESSION.bean(ScreenBufferService.class).clear(TENANT_ID, 1L, ACCOUNT_ID);
     }
     return Optional.ofNullable(
             jdbc.queryForObject(
@@ -308,8 +333,6 @@ class LookWebSocketCrossServiceTest {
     HttpClient client = HttpClient.newHttpClient();
     URI uri = URI.create("ws://localhost:" + GAME_SESSION.port() + "/ws/game");
     CopyOnWriteArrayList<String> responses = new CopyOnWriteArrayList<>();
-    AtomicInteger received = new AtomicInteger();
-    CompletableFuture<Void> ready = new CompletableFuture<>();
 
     WebSocket webSocket =
         client
@@ -328,11 +351,7 @@ class LookWebSocketCrossServiceTest {
                   public CompletionStage<?> onText(
                       WebSocket webSocket, CharSequence data, boolean last) {
                     responses.add(data.toString());
-                    int count = received.incrementAndGet();
                     webSocket.request(1);
-                    if (count >= 5) {
-                      ready.complete(null);
-                    }
                     return Listener.super.onText(webSocket, data, last);
                   }
                 })
@@ -348,7 +367,7 @@ class LookWebSocketCrossServiceTest {
     waitForResponseCount(responses, 4);
     WORLD_STUB.triggerNotFound("room missing for regression");
     webSocket.sendText("LOOK", true).join();
-    ready.get(COMMAND_WAIT.toMillis(), TimeUnit.MILLISECONDS);
+    waitForResponseCount(responses, 5);
     webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "done").join();
     return responses;
   }
@@ -357,8 +376,6 @@ class LookWebSocketCrossServiceTest {
     HttpClient client = HttpClient.newHttpClient();
     URI uri = URI.create("ws://localhost:" + GAME_SESSION.port() + "/ws/game");
     CopyOnWriteArrayList<String> responses = new CopyOnWriteArrayList<>();
-    AtomicInteger received = new AtomicInteger();
-    CompletableFuture<Void> ready = new CompletableFuture<>();
 
     WebSocket webSocket =
         client
@@ -376,11 +393,7 @@ class LookWebSocketCrossServiceTest {
                   public CompletionStage<?> onText(
                       WebSocket webSocket, CharSequence data, boolean last) {
                     responses.add(data.toString());
-                    int count = received.incrementAndGet();
                     webSocket.request(1);
-                    if (count >= 5) {
-                      ready.complete(null);
-                    }
                     return Listener.super.onText(webSocket, data, last);
                   }
                 })
@@ -395,7 +408,7 @@ class LookWebSocketCrossServiceTest {
     webSocket.sendText("LOOK", true).join();
     waitForResponseCount(responses, 4);
     webSocket.sendText("west", true).join();
-    ready.get(COMMAND_WAIT.toMillis(), TimeUnit.MILLISECONDS);
+    waitForResponseCount(responses, 5);
     webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "done").join();
     return responses;
   }
@@ -404,8 +417,6 @@ class LookWebSocketCrossServiceTest {
     HttpClient client = HttpClient.newHttpClient();
     URI uri = URI.create("ws://localhost:" + GAME_SESSION.port() + "/ws/game");
     CopyOnWriteArrayList<String> responses = new CopyOnWriteArrayList<>();
-    AtomicInteger received = new AtomicInteger();
-    CompletableFuture<Void> ready = new CompletableFuture<>();
 
     WebSocket webSocket =
         client
@@ -423,11 +434,7 @@ class LookWebSocketCrossServiceTest {
                   public CompletionStage<?> onText(
                       WebSocket webSocket, CharSequence data, boolean last) {
                     responses.add(data.toString());
-                    int count = received.incrementAndGet();
                     webSocket.request(1);
-                    if (count >= 3) {
-                      ready.complete(null);
-                    }
                     return Listener.super.onText(webSocket, data, last);
                   }
                 })
@@ -438,7 +445,7 @@ class LookWebSocketCrossServiceTest {
     webSocket.sendText("PLAY demo", true).join();
     waitForResponseCount(responses, 2);
     webSocket.sendText("north", true).join();
-    ready.get(COMMAND_WAIT.toMillis(), TimeUnit.MILLISECONDS);
+    waitForResponseCount(responses, 3);
     webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "done").join();
     return responses;
   }
@@ -468,7 +475,7 @@ class LookWebSocketCrossServiceTest {
                     responses.add(data.toString());
                     int count = received.incrementAndGet();
                     webSocket.request(1);
-                    if (count >= 3) {
+                    if (count >= 4) {
                       ready.complete(null);
                     }
                     return Listener.super.onText(webSocket, data, last);
@@ -479,8 +486,6 @@ class LookWebSocketCrossServiceTest {
     webSocket.sendText("LOGIN demo@example.com swordfish", true).join();
     waitForResponseCount(responses, 1);
     webSocket.sendText("PLAY demo", true).join();
-    waitForResponseCount(responses, 2);
-    webSocket.sendText("LOOK", true).join();
     ready.get(COMMAND_WAIT.toMillis(), TimeUnit.MILLISECONDS);
     webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "done").join();
     return responses;
@@ -490,8 +495,6 @@ class LookWebSocketCrossServiceTest {
     HttpClient client = HttpClient.newHttpClient();
     URI uri = URI.create("ws://localhost:" + GAME_SESSION.port() + "/ws/game");
     CopyOnWriteArrayList<String> responses = new CopyOnWriteArrayList<>();
-    AtomicInteger received = new AtomicInteger();
-    CompletableFuture<Void> ready = new CompletableFuture<>();
 
     WebSocket webSocket =
         client
@@ -509,11 +512,7 @@ class LookWebSocketCrossServiceTest {
                   public CompletionStage<?> onText(
                       WebSocket webSocket, CharSequence data, boolean last) {
                     responses.add(data.toString());
-                    int count = received.incrementAndGet();
                     webSocket.request(1);
-                    if (count >= 2) {
-                      ready.complete(null);
-                    }
                     return Listener.super.onText(webSocket, data, last);
                   }
                 })
@@ -522,7 +521,7 @@ class LookWebSocketCrossServiceTest {
     webSocket.sendText("LOGIN demo@example.com swordfish", true).join();
     waitForResponseCount(responses, 1);
     webSocket.sendText("PLAY demo", true).join();
-    ready.get(COMMAND_WAIT.toMillis(), TimeUnit.MILLISECONDS);
+    waitForResponseCount(responses, 2);
     webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "done").join();
     return responses;
   }

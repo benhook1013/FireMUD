@@ -163,6 +163,28 @@ class LoginCommandHandlerTest {
   }
 
   @Test
+  void loginUsesBootstrappedGameInstanceInsteadOfTransportSessionId() {
+    TextCommand command =
+        new TextCommand(
+            TextCommandType.LOGIN,
+            List.of("demo@example.com", "swordfish"),
+            "LOGIN demo@example.com swordfish");
+
+    GameInstance instance = buildInstance(99L, 22L, 77L);
+    when(sessionContextService.findBySessionId(12345L))
+        .thenReturn(
+            Optional.of(new SessionContext(12345L, 22L, 0L, null, 0L, null, 99L, null, null)));
+    when(gameInstanceRepository.findById(99L)).thenReturn(Optional.of(instance));
+
+    LoginCommandHandlingResult result = handler.handle("12345", command, false);
+
+    assertTrue(result.commandResult().accepted());
+    verify(gameInstanceRepository).findById(99L);
+    verify(gameInstanceRepository, never()).findById(12345L);
+    verify(commandService).enqueue("12345", command.rawLine(), false);
+  }
+
+  @Test
   void reloginPreservesExistingGameplayBindingForSameSession() {
     TextCommand command =
         new TextCommand(

@@ -98,7 +98,8 @@ public class MoveCommandHandler {
         current.characterName(),
         current.gameInstanceId(),
         destinationRoomId,
-        current.jwt());
+        current.jwt(),
+        current.bootstrapGameInstanceId());
   }
 
   private MoveCommandHandlingResult failure(

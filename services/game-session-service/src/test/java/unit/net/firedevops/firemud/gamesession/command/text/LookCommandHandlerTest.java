@@ -92,6 +92,20 @@ class LookCommandHandlerTest {
   }
 
   @Test
+  void cachesRenderedLookByGameplayInstanceWhenAvailable() {
+    SessionContext playedContext =
+        new SessionContext(17L, 22L, 123L, "demo", 911L, "demo", 77L, "room-42", "jwt");
+    when(sessionAuthenticationService.resolveSessionContext("played"))
+        .thenReturn(Optional.of(playedContext));
+    when(gameLogicClient.resolveLook("22", "17", "911", "room-42")).thenReturn(lookResult);
+
+    handler.describe("played");
+
+    verify(lookCacheService)
+        .cache(eq(22L), eq(77L), eq("1021"), eq("OK LOOK text"), eq("OK LOOK\nOK LOOK text\n\n"));
+  }
+
+  @Test
   void cachedLookProxy() {
     when(lookCacheService.get(22L, 1L))
         .thenReturn(

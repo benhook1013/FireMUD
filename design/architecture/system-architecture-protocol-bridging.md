@@ -231,9 +231,10 @@ When PROXY protocol is enabled, the TCP Proxy Service derives the real client IP
 Resume affects gameplay identity and session binding, not transport continuity:
 
 - Neither the TCP Proxy nor Gateway replays prior outbound text or MCP traffic onto a newly reconnected client transport.
-- After a successful reconnect and `PLAY`, Game Session may emit fresh state reconstruction output derived from current authoritative state (for example room description, prompt, status snapshot, or newly generated MCP state) for the new transport.
+- After a successful reconnect and `PLAY`, Game Session may emit a bounded per-player transcript window followed by fresh state reconstruction output derived from current authoritative state (for example room description, prompt, status snapshot, or newly generated MCP state) for the new transport.
 - Allowed reconstruction output must be re-derived from current state at resume time; it must not be a byte-for-byte replay of previously queued outbound payloads from the old transport.
 - If previously delivered content and newly derived reconstruction happen to look similar to a human reader, that is acceptable only because the content was regenerated from current state, not because the transport backlog was replayed.
+- Prompt/status output remains a special output class rather than ordinary transcript text. Prompt lines should be coalesced after bursts of gameplay output and regenerated fresh for the new transport rather than copied into the reconnect transcript buffer.
 - MCP cords and negotiation remain per TCP connection as defined in [Mud Client Protocol (MCP) Support](./system-architecture-mud-client-protocol.md#reconnection--session-recovery); resumed gameplay state must not assume that prior MCP channels still exist.
 
 ### WebSocket Bridge Configuration

@@ -180,6 +180,18 @@ class TextCommandInterpreterTest {
   }
 
   @Test
+  void bootstrapContextWithoutAuthenticatedAccountStillRequiresLogin() {
+    ((InMemorySessionContextService) sessionContextService)
+        .save(new SessionContext(55L, 22L, 0L, null, 0L, null, 77L, null, null));
+
+    TextCommandInterpretationResult interpretation = interpreter.interpret("55", "LOOK", false);
+
+    assertFalse(interpretation.commandResult().accepted());
+    assertEquals("LOGIN_REQUIRED", interpretation.commandResult().errorCode());
+    verify(commandService, never()).enqueue("55", "LOOK", false);
+  }
+
+  @Test
   void gameplayAfterLoginBeforePlayReturnsPlayRequired() {
     TextCommandInterpretationResult login =
         interpreter.interpret("1", "LOGIN demo@example.com swordfish", false);
@@ -278,6 +290,11 @@ class TextCommandInterpreterTest {
               context);
         }
       }
+    }
+
+    @Override
+    public Optional<SessionContext> findBySessionId(long sessionId) {
+      return Optional.ofNullable(sessionMap.get(sessionId));
     }
 
     @Override

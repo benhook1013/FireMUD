@@ -6,6 +6,8 @@ import java.util.Optional;
 public interface SessionContextService {
   void save(SessionContext context);
 
+  Optional<SessionContext> findBySessionId(long sessionId);
+
   Optional<SessionContext> findByTenantAndSessionId(long tenantId, long sessionId);
 
   Optional<SessionContext> findByGameplayIdentity(

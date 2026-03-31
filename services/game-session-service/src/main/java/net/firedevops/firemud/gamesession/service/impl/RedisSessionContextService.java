@@ -23,6 +23,7 @@ public final class RedisSessionContextService implements SessionContextService {
   private final Duration sessionTtl;
 
   private static final String CONTEXT_KEY_TEMPLATE = "sessionctx:%d:%d:context";
+  private static final String SESSION_KEY_TEMPLATE = "sessionctx:session:%d:context";
   private static final String IDENTITY_KEY_TEMPLATE = "sessionctx:%d:identity:%d:%d:context";
   private static final String NAME_KEY_TEMPLATE = "sessionctx:%d:identity:%d:name:%s:context";
 
@@ -51,6 +52,7 @@ public final class RedisSessionContextService implements SessionContextService {
           .ifPresent(existing -> deleteBySessionId(existing.tenantId(), existing.sessionId()));
     }
     ops.set(contextKey(context.tenantId(), context.sessionId()), context, sessionTtl);
+    ops.set(sessionKey(context.sessionId()), context, sessionTtl);
     if (hasGameplayIdentity(context)) {
       ops.set(
           identityKey(context.tenantId(), context.gameInstanceId(), context.characterId()),
@@ -63,6 +65,12 @@ public final class RedisSessionContextService implements SessionContextService {
             sessionTtl);
       }
     }
+  }
+
+  @Override
+  public Optional<SessionContext> findBySessionId(long sessionId) {
+    return Optional.ofNullable(
+        (SessionContext) redisTemplate.opsForValue().get(sessionKey(sessionId)));
   }
 
   @Override
@@ -94,6 +102,7 @@ public final class RedisSessionContextService implements SessionContextService {
   public void deleteBySessionId(long tenantId, long sessionId) {
     Optional<SessionContext> existing = findByTenantAndSessionId(tenantId, sessionId);
     redisTemplate.delete(contextKey(tenantId, sessionId));
+    redisTemplate.delete(sessionKey(sessionId));
     existing.ifPresent(
         context -> {
           if (hasGameplayIdentity(context)) {
@@ -106,6 +115,10 @@ public final class RedisSessionContextService implements SessionContextService {
 
   private String contextKey(long tenantId, long sessionId) {
     return String.format(CONTEXT_KEY_TEMPLATE, tenantId, sessionId);
+  }
+
+  private String sessionKey(long sessionId) {
+    return String.format(SESSION_KEY_TEMPLATE, sessionId);
   }
 
   private String identityKey(long tenantId, long gameInstanceId, long characterId) {

@@ -149,10 +149,16 @@ public class PlayCommandHandler {
     maybeRecordFreshEntryFallback(
         context, selectedWorld, character, gameInstanceId, characterId, tenantTag);
 
-    sessionContextService
-        .findByGameplayIdentity(context.tenantId(), gameInstanceId, characterId)
-        .ifPresent(
-            existing -> handleExistingBinding(context, existing, gameInstanceId, characterId));
+    Optional<SessionContext> existingBinding =
+        sessionContextService.findByGameplayIdentity(context.tenantId(), gameInstanceId, characterId);
+    existingBinding.ifPresent(
+        existing -> handleExistingBinding(context, existing, gameInstanceId, characterId));
+
+    String roomInstanceId =
+        existingBinding
+            .map(SessionContext::roomInstanceId)
+            .filter(StringUtils::hasText)
+            .orElse(gameLogicProperties.getDefaultRoomId());
 
     SessionContext updated =
         new SessionContext(
@@ -163,8 +169,9 @@ public class PlayCommandHandler {
             characterId,
             characterName,
             gameInstanceId,
-            gameLogicProperties.getDefaultRoomId(),
-            context.jwt());
+            roomInstanceId,
+            context.jwt(),
+            context.bootstrapGameInstanceId());
     sessionContextService.save(updated);
 
     return new PlayCommandHandlingResult(

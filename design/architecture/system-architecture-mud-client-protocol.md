@@ -114,6 +114,12 @@ From the gameplay perspective, reconnection and resume behavior follow the rules
 
 MCP-aware clients should also follow the general reconnection backoff guidance from [Reconnection Strategy](./system-architecture-reconnection.md#client-reconnection-behaviour): use exponential backoff with jitter when reconnecting after failures (including MCP negotiation failures), respect non‑retriable conditions such as clear policy violations, and avoid tight reconnect loops that could overload the TCP Proxy or Gateway during incidents.
 
+Prompt/status handling should evolve toward MCP or other structured client data rather than treating prompts as ordinary transcript lines:
+
+- classic Telnet clients may still render prompts as text;
+- first-party web clients will often suppress textual prompts in the main scrollback and instead bind the same state to dedicated UI widgets;
+- reconnect transcript restoration should therefore exclude prompt lines and rely on one fresh regenerated prompt or structured MCP status update after the transcript window and fresh `LOOK`.
+
 ## Example Workflow
 
 1. Client connects and negotiates MCP support with FireMUD over the gameplay text stream (via the TCP Proxy Service on the Telnet path).

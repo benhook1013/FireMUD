@@ -15,6 +15,7 @@ import net.firedevops.firemud.account.v1.AuthenticateResponse;
 import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
 import net.firedevops.firemud.cache.LookCacheService;
+import net.firedevops.firemud.cache.ScreenBufferService;
 import net.firedevops.firemud.gamelogic.v1.LookResult;
 import net.firedevops.firemud.gamesession.GameSessionServiceApplication;
 import net.firedevops.firemud.gamesession.client.AccountClient;
@@ -93,6 +94,8 @@ class GameSessionWebSocketHandlerIntegrationTest {
 
   @MockitoBean private LookCacheService lookCacheService;
 
+  @MockitoBean private ScreenBufferService screenBufferService;
+
   @MockitoBean private RedisConnectionFactory redisConnectionFactory;
 
   @MockitoBean private RedisTemplate<String, Object> redisTemplate;
@@ -101,6 +104,9 @@ class GameSessionWebSocketHandlerIntegrationTest {
 
   @BeforeEach
   void setUp() {
+    sessionContextService.deleteBySessionId(22L, 41L);
+    sessionContextService.deleteBySessionId(22L, 42L);
+
     LookResult lookResult =
         LookResult.newBuilder()
             .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("1021").build())
@@ -147,6 +153,11 @@ class GameSessionWebSocketHandlerIntegrationTest {
     when(gameLogicClient.resolveLook(eq("22"), eq("42"), eq("123"), eq("1021")))
         .thenReturn(lookResult);
     when(lookTextRenderer.render(eq(lookResult))).thenReturn("Login Hall text");
+    when(screenBufferService.get(
+            org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.anyLong()))
+        .thenReturn(Optional.empty());
     GameInstance instance = new GameInstance();
     instance.setId(41L);
     instance.setTenantId(22L);
@@ -214,7 +225,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
     verify(lookCacheService)
         .cache(
             eq(22L),
-            eq(41L),
+            eq(1L),
             eq("1021"),
             eq("Login Hall text"),
             eq("OK LOOK\nLogin Hall text\n\n"));
@@ -283,7 +294,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
     verify(lookCacheService)
         .cache(
             eq(22L),
-            eq(42L),
+            eq(1L),
             eq("2045"),
             eq("North Hall text"),
             eq("OK LOOK\nNorth Hall text\n\n"));

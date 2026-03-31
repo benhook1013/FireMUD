@@ -408,6 +408,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
   void telnetReconnectAfterStaleSessionFreshEntersGameplay() throws Exception {
     ensureTestServicesStarted();
     String telnetMoveResponse;
+    String telnetReplayResponse;
     String telnetReconnectLookResponse;
 
     try (Socket socket = new Socket("localhost", telnetServer.getPort());
@@ -429,9 +430,13 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
       telnetMoveResponse = readBlockAfterContainsOrTimeout(reader, "OK LOOK");
     }
 
-    GAME_SESSION
-        .bean(SessionContextService.class)
-        .deleteBySessionId(TENANT_ID, GAME_SESSION.sessionId());
+    SessionContextService sessionContextService = GAME_SESSION.bean(SessionContextService.class);
+    long activeGameplaySessionId =
+        sessionContextService
+            .findByGameplayIdentity(TENANT_ID, DEMO_WORLD_INSTANCE_ID, ACCOUNT_ID)
+            .orElseThrow(() -> new IllegalStateException("Expected active gameplay binding"))
+            .sessionId();
+    sessionContextService.deleteBySessionId(TENANT_ID, activeGameplaySessionId);
 
     try (Socket socket = new Socket("localhost", telnetServer.getPort());
         PrintWriter writer =
@@ -448,6 +453,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
       writer.println("PLAY demo");
       assertThat(readLineAfterContains(reader, "OK PLAY Entered world: demo"))
           .contains("OK PLAY Entered world: demo");
+      telnetReplayResponse = readBlockAfterContainsOrTimeout(reader, "OK LOOK");
       writer.println("LOOK");
       telnetReconnectLookResponse = readBlockAfterContainsOrTimeout(reader, "OK LOOK");
     }
@@ -455,8 +461,59 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     String destinationLook =
         LookTestFixtures.canonicalLookText(LookTestFixtures.DESTINATION_ROOM_ID);
     assertThat(telnetMoveResponse.trim()).isEqualTo(destinationLook.trim());
+    assertThat(telnetReplayResponse.trim()).isEqualTo(destinationLook.trim());
     assertThat(telnetReconnectLookResponse.trim())
         .isEqualTo(LookTestFixtures.canonicalLookText().trim());
+  }
+
+  @Test
+  void telnetSecondConnectionTakesOverGameplayBinding() throws Exception {
+    ensureTestServicesStarted();
+
+    try (Socket firstSocket = new Socket("localhost", telnetServer.getPort());
+        PrintWriter firstWriter =
+            new PrintWriter(
+                new OutputStreamWriter(firstSocket.getOutputStream(), StandardCharsets.ISO_8859_1),
+                true);
+        BufferedReader firstReader =
+            new BufferedReader(
+                new InputStreamReader(firstSocket.getInputStream(), StandardCharsets.ISO_8859_1));
+        Socket secondSocket = new Socket("localhost", telnetServer.getPort());
+        PrintWriter secondWriter =
+            new PrintWriter(
+                new OutputStreamWriter(secondSocket.getOutputStream(), StandardCharsets.ISO_8859_1),
+                true);
+        BufferedReader secondReader =
+            new BufferedReader(
+                new InputStreamReader(
+                    secondSocket.getInputStream(), StandardCharsets.ISO_8859_1))) {
+      firstSocket.setSoTimeout((int) COMMAND_WAIT.toMillis());
+      secondSocket.setSoTimeout((int) COMMAND_WAIT.toMillis());
+
+      firstWriter.println("LOGIN demo@example.com swordfish");
+      assertThat(readBlockAfterContains(firstReader, "Logged in as demo@example.com"))
+          .contains("Logged in as demo@example.com");
+      firstWriter.println("PLAY demo");
+      assertThat(readLineAfterContains(firstReader, "OK PLAY Entered world: demo"))
+          .contains("OK PLAY Entered world: demo");
+      firstWriter.println("LOOK");
+      assertThat(readBlockAfterContainsOrTimeout(firstReader, "OK LOOK").trim())
+          .isEqualTo(LookTestFixtures.canonicalLookText().trim());
+
+      secondWriter.println("LOGIN demo@example.com swordfish");
+      assertThat(readBlockAfterContains(secondReader, "Logged in as demo@example.com"))
+          .contains("Logged in as demo@example.com");
+      secondWriter.println("PLAY demo");
+      assertThat(readLineAfterContains(secondReader, "OK PLAY Entered world: demo"))
+          .contains("OK PLAY Entered world: demo");
+      secondWriter.println("LOOK");
+      assertThat(readBlockAfterContainsOrTimeout(secondReader, "OK LOOK").trim())
+          .isEqualTo(LookTestFixtures.canonicalLookText().trim());
+
+      firstWriter.println("LOOK");
+      assertThat(readLineAfterContains(firstReader, "ERROR LOGIN_REQUIRED"))
+          .contains("ERROR LOGIN_REQUIRED");
+    }
   }
 
   @Test

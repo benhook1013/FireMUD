@@ -8,6 +8,8 @@ import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.CommandService;
+import net.firedevops.firemud.gamesession.service.SessionContext;
+import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.gamesession.service.SessionRateLimiter;
 import net.firedevops.firemud.gamesession.service.TickService;
 import org.slf4j.Logger;
@@ -32,16 +34,19 @@ public class CommandServiceImpl implements CommandService {
   private final SessionRateLimiter sessionRateLimiter;
   private final DevIsolatedProperties devIsolatedProperties;
   private final GameInstanceRepository gameInstanceRepository;
+  private final SessionContextService sessionContextService;
 
   public CommandServiceImpl(
       TickService tickService,
       SessionRateLimiter sessionRateLimiter,
       DevIsolatedProperties devIsolatedProperties,
-      GameInstanceRepository gameInstanceRepository) {
+      GameInstanceRepository gameInstanceRepository,
+      SessionContextService sessionContextService) {
     this.tickService = tickService;
     this.sessionRateLimiter = sessionRateLimiter;
     this.devIsolatedProperties = devIsolatedProperties;
     this.gameInstanceRepository = gameInstanceRepository;
+    this.sessionContextService = sessionContextService;
   }
 
   @Override
@@ -82,7 +87,7 @@ public class CommandServiceImpl implements CommandService {
       }
 
       try {
-        tickService.enqueueCommand(sessionId, command, requiresSoloTick);
+        tickService.enqueueCommand(resolveQueueTarget(sessionId), command, requiresSoloTick);
         return CommandEnqueueResult.success();
       } catch (IllegalArgumentException ex) {
         return CommandEnqueueResult.failure("INVALID_ARGUMENT", ex.getMessage());
@@ -93,6 +98,10 @@ public class CommandServiceImpl implements CommandService {
   private String resolveTenantContext(String sessionIdText) {
     try {
       long sessionId = Long.parseLong(sessionIdText);
+      var context = sessionContextService.findBySessionId(sessionId);
+      if (context.isPresent()) {
+        return String.valueOf(context.get().tenantId());
+      }
       return gameInstanceRepository
           .findById(sessionId)
           .map(GameInstance::getTenantId)
@@ -101,5 +110,13 @@ public class CommandServiceImpl implements CommandService {
     } catch (NumberFormatException ex) {
       return "unknown";
     }
+  }
+
+  private long resolveQueueTarget(long sessionId) {
+    return sessionContextService
+        .findBySessionId(sessionId)
+        .map(SessionContext::gameInstanceId)
+        .filter(gameInstanceId -> gameInstanceId > 0)
+        .orElse(sessionId);
   }
 }

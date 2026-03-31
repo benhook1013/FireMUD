@@ -87,8 +87,6 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   private String clientIp;
   private boolean connectEventRecorded;
   private final LookCacheService lookCacheService;
-  private volatile boolean loginAcknowledged;
-  private volatile boolean cachedLookDelivered;
 
   public TelnetServerHandler(
       String gatewayWsUrl,
@@ -268,8 +266,6 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     reconnecting = false;
     startHeartbeat();
     touchActivity();
-    loginAcknowledged = false;
-    cachedLookDelivered = false;
     if (reconnected) {
       // On gateway reconnect, simply drain the existing buffer over the WebSocket
       // bridge; no side-channel gRPC replay is used.
@@ -669,34 +665,6 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     connectEventRecorded = true;
   }
 
-  private void sendCachedLookIfPresent() {
-    if (lookCacheService == null
-        || context == null
-        || !sessionContext.isReady()
-        || !loginAcknowledged
-        || cachedLookDelivered) {
-      return;
-    }
-    String sessionId = sessionContext.gameInstanceId();
-    String tenantId = sessionContext.tenantId();
-    try {
-      long tenant = Long.parseLong(tenantId);
-      long session = Long.parseLong(sessionId);
-      lookCacheService
-          .get(tenant, session)
-          .map(LookCacheService.CachedLook::protocolText)
-          .ifPresent(
-              text -> {
-                context.writeAndFlush(text);
-                cachedLookDelivered = true;
-              });
-    } catch (NumberFormatException ex) {
-      logger.debug("Invalid cached LOOK identifiers tenant={} session={}", tenantId, sessionId, ex);
-    } catch (RuntimeException ex) {
-      logger.debug("Unable to read cached LOOK for session {}", sessionId, ex);
-    }
-  }
-
   private void notifyDisconnectAsync() {
     if (devIsolated || !sessionContext.isReady()) {
       return;
@@ -816,11 +784,6 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
         }
         if (context != null) {
           context.writeAndFlush(data.toString() + "\n");
-        }
-        String payload = data.toString().trim();
-        if (payload.startsWith("OK LOGIN")) {
-          loginAcknowledged = true;
-          sendCachedLookIfPresent();
         }
         webSocket.request(1);
         return null;

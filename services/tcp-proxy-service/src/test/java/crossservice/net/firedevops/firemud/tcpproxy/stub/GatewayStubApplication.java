@@ -73,7 +73,14 @@ public class GatewayStubApplication {
   }
 
   private static final List<String> FORWARDED_HEADER_NAMES =
-      List.of("X-Game-Instance-Id", "X-Tenant-Id", "X-Client-IP");
+      List.of(
+          "X-Game-Instance-Id",
+          "X-Tenant-Id",
+          "X-Client-IP",
+          "X-Proxy-Connection-Id",
+          "X-Proxy-Game-Instance-Id",
+          "X-Proxy-Tenant-Id",
+          "X-Proxy-Client-IP");
 
   private static final class ProxyingWebSocketHandler implements WebSocketHandler {
     private final WebSocketClient client;

@@ -2,9 +2,12 @@ package net.firedevops.firemud.gamesession;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 import java.util.stream.Stream;
 import net.firedevops.firemud.cache.LookCacheService;
+import net.firedevops.firemud.cache.ScreenBufferService;
 import net.firedevops.firemud.common.conflict.ConflictTracker;
 import net.firedevops.firemud.gamesession.dto.GameInstanceDto;
 import net.firedevops.firemud.gamesession.dto.StartSessionRequest;
@@ -109,6 +112,48 @@ public final class CrossServiceAppHarness {
         @Override
         public java.util.Optional<CachedLook> get(long tenantId, long sessionId) {
           return java.util.Optional.empty();
+        }
+      };
+    }
+
+    @Bean
+    @Primary
+    ScreenBufferService screenBufferService() {
+      return new ScreenBufferService() {
+        private final Map<String, BufferedScreen> buffers = new ConcurrentHashMap<>();
+
+        @Override
+        public void append(
+            long tenantId, long gameInstanceId, long characterId, String protocolText) {
+          if (protocolText == null || protocolText.isBlank()) {
+            return;
+          }
+          String key = tenantId + ":" + gameInstanceId + ":" + characterId;
+          BufferedScreen previous = buffers.get(key);
+          String combined =
+              previous == null ? protocolText : previous.protocolText() + protocolText;
+          int messages = previous == null ? 1 : previous.messageCount() + 1;
+          int lines =
+              previous == null
+                  ? countLines(protocolText)
+                  : previous.lineCount() + countLines(protocolText);
+          buffers.put(
+              key, new BufferedScreen(combined, messages, lines, System.currentTimeMillis()));
+        }
+
+        @Override
+        public Optional<BufferedScreen> get(long tenantId, long gameInstanceId, long characterId) {
+          return Optional.ofNullable(
+              buffers.get(tenantId + ":" + gameInstanceId + ":" + characterId));
+        }
+
+        @Override
+        public void clear(long tenantId, long gameInstanceId, long characterId) {
+          buffers.remove(tenantId + ":" + gameInstanceId + ":" + characterId);
+        }
+
+        private int countLines(String protocolText) {
+          return (int) protocolText.lines().filter(line -> !line.isBlank()).count();
         }
       };
     }

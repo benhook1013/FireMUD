@@ -9,7 +9,7 @@ FireMUD targets seamless gameplay recovery across network interruptions, client 
 - **Session takeover and resume** – Game Session emits `gamesession.session.takeover` and `gamesession.session.resume` counters and rebinds Redis tick/command queues on reconnect/takeover. The active uniqueness key is `{tenantId, gameInstanceId, characterId}`.
 - **Telnet and WebSocket parity** – Both transports share the same gameplay authentication and lobby-binding contract (`LOGIN` then `PLAY`) after reconnect. First-party WebSocket clients must obtain a fresh connect token before opening `/ws/game/**`.
 - **Runtime authority checks** – `PLAY` now performs a first-pass runtime membership and tenant-entitlement check before fresh entry or resume/takeover. This closes the earlier gap where reconnect semantics relied only on Redis gameplay identity plus a fresh `LOGIN`.
-- **Remaining work** – Admin-driven forced session transfers remain planned future steps. FireMUD does not attempt to replay or reconstruct lost gameplay commands after long outages or coordination resets; command queues are volatile coordination buffers and commands may be lost outside the bounded tail-loss envelope. The design still needs stronger durable coordination so non-edge restarts become operationally invisible in the common case instead of visibly dropping clients. The broader admission target still needs follow-up work for admission pointers, public-production first-join membership creation, and deeper first-party reconnect parity.
+- **Remaining work** – Admin-driven forced session transfers remain planned future steps. FireMUD does not attempt to replay or reconstruct lost gameplay commands after long outages or coordination resets; command queues are volatile coordination buffers and commands may be lost outside the bounded tail-loss envelope. The design still needs stronger durable coordination so non-edge restarts become operationally invisible in the common case instead of visibly dropping clients. The broader admission target still needs follow-up work for admission pointers, public-production first-join membership creation, deeper first-party reconnect parity, and explicit prompt/output scheduling rules.
 
 ## Reconnection Layers
 
@@ -184,7 +184,19 @@ FireMUD treats reconnection as an explicit **client-visible recovery flow**: aft
 
 For clarity, Telnet clients never receive a hidden transport-preserving recovery on an already-established session. Even if the proxy-wide admission circuit later returns to closed after an outage, any Telnet session whose established gameplay bridge was lost must reconnect on a fresh TCP socket and repeat `LOGIN`/`PLAY`.
 
-Clients must also treat pre-disconnect output as non-resumable transport state. After reconnect, any room description, prompt, status panel feed, or similar output should be treated as newly generated post-resume state, not as replay of bytes or frames that were in flight before the disconnect.
+Clients must also treat pre-disconnect output as non-resumable transport state. FireMUD does not replay raw transport bytes, prior WebSocket frames, or unsent Telnet output onto a newly opened connection. Instead, reconnect restores player-visible context in two distinct ways:
+
+- a bounded per-player screen buffer keyed to gameplay identity may replay the most recent narrative/system transcript lines for that player after successful `LOGIN` + `PLAY`;
+- then FireMUD emits fresh state-derived reconstruction output such as `LOOK` and prompt/status information.
+
+This screen buffer is context restoration, not a transport delivery guarantee. It exists to help players understand what just happened around a disconnect; it does not promise exact delivery of every missed output line.
+
+Prompt/status output is a separate output class from transcript lines:
+
+- prompts are coalesced UI/state summaries, not ordinary scrollback messages;
+- prompts are not part of the reconnect screen buffer by default;
+- reconnect should restore transcript context first, then emit a fresh `LOOK`, then emit one fresh current prompt;
+- first-party web and MCP-aware clients may consume prompt/status as structured data instead of rendering it into the main text transcript.
 
 ### Abnormal WebSocket Transport Loss
 

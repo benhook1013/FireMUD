@@ -37,6 +37,11 @@ public class InMemorySessionContextTestConfiguration {
     }
 
     @Override
+    public Optional<SessionContext> findBySessionId(long sessionId) {
+      return Optional.ofNullable(sessionMap.get(sessionId));
+    }
+
+    @Override
     public Optional<SessionContext> findByTenantAndSessionId(long tenantId, long sessionId) {
       SessionContext context = sessionMap.get(sessionId);
       if (context == null || context.tenantId() != tenantId) {

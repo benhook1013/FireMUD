@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import net.firedevops.firemud.gamesession.config.DevIsolatedProperties;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.CommandService;
+import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.gamesession.service.SessionRateLimiter;
 import net.firedevops.firemud.gamesession.service.TickService;
 import net.firedevops.firemud.gamesession.service.devisolated.DevIsolatedCommandService;
@@ -49,6 +50,11 @@ class CommandServiceConditionDebugTest {
     @Bean
     GameInstanceRepository gameInstanceRepository() {
       return Mockito.mock(GameInstanceRepository.class);
+    }
+
+    @Bean
+    SessionContextService sessionContextService() {
+      return Mockito.mock(SessionContextService.class);
     }
 
     @Bean

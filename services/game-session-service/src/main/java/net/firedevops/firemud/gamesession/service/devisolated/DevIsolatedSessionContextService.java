@@ -18,12 +18,14 @@ import org.springframework.util.StringUtils;
 @ConditionalOnProperty(name = "game-session.dev-isolated", havingValue = "true")
 public final class DevIsolatedSessionContextService implements SessionContextService {
   private final Map<String, SessionContext> contexts = new ConcurrentHashMap<>();
+  private final Map<Long, SessionContext> sessions = new ConcurrentHashMap<>();
   private final Map<String, SessionContext> identities = new ConcurrentHashMap<>();
   private final Map<String, SessionContext> names = new ConcurrentHashMap<>();
 
   @Override
   public void save(SessionContext context) {
     contexts.put(contextKey(context.tenantId(), context.sessionId()), context);
+    sessions.put(context.sessionId(), context);
     if (hasGameplayIdentity(context)) {
       identities.put(identityKey(context), context);
       if (StringUtils.hasText(context.characterName())) {
@@ -32,6 +34,11 @@ public final class DevIsolatedSessionContextService implements SessionContextSer
             context);
       }
     }
+  }
+
+  @Override
+  public Optional<SessionContext> findBySessionId(long sessionId) {
+    return Optional.ofNullable(sessions.get(sessionId));
   }
 
   @Override
@@ -59,6 +66,7 @@ public final class DevIsolatedSessionContextService implements SessionContextSer
     Optional.ofNullable(contexts.remove(contextKey(tenantId, sessionId)))
         .ifPresent(
             context -> {
+              sessions.remove(sessionId);
               if (hasGameplayIdentity(context)) {
                 identities.remove(identityKey(context));
                 if (StringUtils.hasText(context.characterName())) {

@@ -85,7 +85,8 @@ class PlayCommandHandlerTest {
                 "demo",
                 1L,
                 gameLogicProperties.getDefaultRoomId(),
-                "jwt-token"));
+                "jwt-token",
+                0L));
   }
 
   @Test

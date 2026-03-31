@@ -134,15 +134,16 @@ public final class LookCommandHandler {
   }
 
   private void cacheLook(SessionContext context, LookResult lookResult, String rendered) {
+    long cacheKey = effectiveLookCacheKey(context);
     try {
       lookCacheService.cache(
           context.tenantId(),
-          context.sessionId(),
+          cacheKey,
           lookRoomId(lookResult),
           rendered,
           buildProtocolResponse(rendered));
     } catch (RuntimeException ex) {
-      LOG.warn("Failed to cache LOOK for session {}", context.sessionId(), ex);
+      LOG.warn("Failed to cache LOOK for game instance {}", cacheKey, ex);
     }
   }
 
@@ -166,11 +167,6 @@ public final class LookCommandHandler {
           ex);
       return Optional.empty();
     }
-    Optional<SessionContext> maybeContext =
-        sessionAuthenticationService.resolveSessionContext(sessionIdHeader);
-    if (maybeContext.isEmpty() || maybeContext.get().tenantId() != tenantId) {
-      return Optional.empty();
-    }
     return lookCacheService.get(tenantId, sessionId).map(LookCacheService.CachedLook::protocolText);
   }
 
@@ -180,5 +176,9 @@ public final class LookCommandHandler {
 
   private String lookRoomId(LookResult lookResult) {
     return lookResult.getRoomInstance().getRoomInstanceId();
+  }
+
+  private long effectiveLookCacheKey(SessionContext context) {
+    return context.gameInstanceId() > 0 ? context.gameInstanceId() : context.sessionId();
   }
 }

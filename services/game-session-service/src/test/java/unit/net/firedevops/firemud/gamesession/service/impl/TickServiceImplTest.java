@@ -10,6 +10,7 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.lang.reflect.Field;
 import java.time.Duration;
 import net.firedevops.firemud.gamesession.config.DevIsolatedProperties;
+import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.gamesession.service.TickService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -24,6 +25,7 @@ class TickServiceImplTest {
   private SimpleMeterRegistry meterRegistry;
   private net.firedevops.firemud.common.conflict.ConflictTracker conflictTracker;
   private net.firedevops.firemud.gamesession.repository.GameInstanceRepository repository;
+  private SessionContextService sessionContextService;
   private TickService service;
 
   @BeforeEach
@@ -37,13 +39,15 @@ class TickServiceImplTest {
     meterRegistry = new SimpleMeterRegistry();
     conflictTracker = mock(net.firedevops.firemud.common.conflict.ConflictTracker.class);
     repository = mock(net.firedevops.firemud.gamesession.repository.GameInstanceRepository.class);
+    sessionContextService = mock(SessionContextService.class);
     service =
         new TickServiceImpl(
             redisTemplate,
             meterRegistry,
             conflictTracker,
             repository,
-            new DevIsolatedProperties(false));
+            new DevIsolatedProperties(false),
+            sessionContextService);
     ((TickServiceImpl) service).init();
     var instance = new net.firedevops.firemud.gamesession.entity.GameInstance();
     instance.setTenantId(1L);

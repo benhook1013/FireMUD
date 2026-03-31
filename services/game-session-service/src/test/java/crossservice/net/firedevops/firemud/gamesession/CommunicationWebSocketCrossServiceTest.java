@@ -27,6 +27,7 @@ import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeRequest;
 import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeRequest;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
+import net.firedevops.firemud.cache.ScreenBufferService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.gamesession.test.ChatTestFixtures;
@@ -224,6 +225,9 @@ class CommunicationWebSocketCrossServiceTest {
         .getConnection()
         .serverCommands()
         .flushAll();
+    GAME_SESSION
+        .bean(ScreenBufferService.class)
+        .clear(TENANT_ID, DEMO_WORLD_INSTANCE_ID, ACCOUNT_ID);
     JdbcTemplate jdbc = new JdbcTemplate(GAME_SESSION.bean(javax.sql.DataSource.class));
     jdbc.execute(
         """

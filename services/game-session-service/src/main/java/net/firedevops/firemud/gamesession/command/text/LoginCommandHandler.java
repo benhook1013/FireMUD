@@ -72,11 +72,12 @@ public final class LoginCommandHandler {
       return invalidSessionFailure();
     }
 
-    Optional<GameInstance> maybeInstance = gameInstanceRepository.findById(numericSessionId);
+    long bootstrapGameInstanceId = resolveBootstrapGameInstanceId(numericSessionId);
+    Optional<GameInstance> maybeInstance = gameInstanceRepository.findById(bootstrapGameInstanceId);
     if (maybeInstance.isEmpty()
         && devIsolatedProperties.isDevIsolated()
         && devIsolatedGameInstanceRegistry != null) {
-      maybeInstance = devIsolatedGameInstanceRegistry.findById(numericSessionId);
+      maybeInstance = devIsolatedGameInstanceRegistry.findById(bootstrapGameInstanceId);
     }
     if (maybeInstance.isEmpty()) {
       CommandEnqueueResult failure =
@@ -119,13 +120,19 @@ public final class LoginCommandHandler {
         instance.getTenantId(),
         authenticatedAccountId,
         args.get(0),
-        authResponse.getAuthToken());
+        authResponse.getAuthToken(),
+        bootstrapGameInstanceId);
     String responseText = "Logged in as " + args.get(0);
     return new LoginCommandHandlingResult(enqueueResult, responseText);
   }
 
   private void persistSessionContext(
-      long sessionId, long tenantId, long accountId, String loginName, String jwt) {
+      long sessionId,
+      long tenantId,
+      long accountId,
+      String loginName,
+      String jwt,
+      long bootstrapGameInstanceId) {
     if (sessionContextService == null) {
       return;
     }
@@ -136,7 +143,17 @@ public final class LoginCommandHandler {
     // state.
     SessionContext context =
         existing == null
-            ? new SessionContext(sessionId, tenantId, accountId, loginName, 0L, null, 0L, null, jwt)
+            ? new SessionContext(
+                sessionId,
+                tenantId,
+                accountId,
+                loginName,
+                0L,
+                null,
+                0L,
+                null,
+                jwt,
+                bootstrapGameInstanceId)
             : new SessionContext(
                 sessionId,
                 tenantId,
@@ -146,13 +163,28 @@ public final class LoginCommandHandler {
                 existing.characterName(),
                 existing.gameInstanceId(),
                 existing.roomInstanceId(),
-                jwt);
+                jwt,
+                existing.bootstrapGameInstanceId() > 0
+                    ? existing.bootstrapGameInstanceId()
+                    : bootstrapGameInstanceId);
     sessionContextService.save(context);
     logger.debug(
         "Updated login context for tenant {} session {} account {}",
         context.tenantId(),
         context.sessionId(),
         context.accountId());
+  }
+
+  private long resolveBootstrapGameInstanceId(long sessionId) {
+    return sessionContextService
+        .findBySessionId(sessionId)
+        .map(
+            context ->
+                context.bootstrapGameInstanceId() > 0
+                    ? context.bootstrapGameInstanceId()
+                    : context.gameInstanceId())
+        .filter(candidate -> candidate > 0)
+        .orElse(sessionId);
   }
 
   private static final Map<String, String> CANONICAL_ERROR_MAP =

@@ -12,7 +12,8 @@ public record SessionContext(
     String characterName,
     long gameInstanceId,
     String roomInstanceId,
-    String jwt)
+    String jwt,
+    long bootstrapGameInstanceId)
     implements Serializable {
   private static final long serialVersionUID = 1L;
 
@@ -38,7 +39,8 @@ public record SessionContext(
         null,
         gameInstanceId,
         roomInstanceId,
-        jwt);
+        jwt,
+        gameInstanceId);
   }
 
   public SessionContext(
@@ -48,7 +50,17 @@ public record SessionContext(
       long characterId,
       long gameInstanceId,
       String jwt) {
-    this(sessionId, tenantId, accountId, null, characterId, null, gameInstanceId, null, jwt);
+    this(
+        sessionId,
+        tenantId,
+        accountId,
+        null,
+        characterId,
+        null,
+        gameInstanceId,
+        null,
+        jwt,
+        gameInstanceId);
   }
 
   public SessionContext(
@@ -69,6 +81,30 @@ public record SessionContext(
         characterName,
         gameInstanceId,
         null,
-        jwt);
+        jwt,
+        gameInstanceId);
+  }
+
+  public SessionContext(
+      long sessionId,
+      long tenantId,
+      long accountId,
+      String loginName,
+      long characterId,
+      String characterName,
+      long gameInstanceId,
+      String roomInstanceId,
+      String jwt) {
+    this(
+        sessionId,
+        tenantId,
+        accountId,
+        loginName,
+        characterId,
+        characterName,
+        gameInstanceId,
+        roomInstanceId,
+        jwt,
+        gameInstanceId);
   }
 }
