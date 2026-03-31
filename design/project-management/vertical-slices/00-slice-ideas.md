@@ -12,7 +12,8 @@ This zero-indexed overview sits at the top of the design/project-management/vert
 7. **Shared Communication Infrastructure** - Refactor the initial room-speech path into a reusable communication system that all later communication actions can use, while keeping `say` as the first fully live mode (planned in `04.1-task-list-shared-communication-infrastructure-vertical-slice.md`).
 8. **Whisper Communication** - The first true target-directed in-room communication mode is now baseline live, with canonical sender/target prose and default metadata-only observer wording recorded in `04.2-task-list-whisper-vertical-slice.md`.
 9. **Tell Communication** - The first direct non-room-scoped live gameplay tell is now baseline live, with canonical sender/target prose recorded in `04.3-task-list-tell-vertical-slice.md`.
-10. **Communication Observers & Interceptors** - Add the first real eavesdropping/spy-style communication mechanic on top of the shared communication model (planned in `04.4-task-list-communication-observers-and-interceptors-vertical-slice.md`).
+10. **Communication Observers & Interceptors** - The baseline observer/interceptor slice is now live for structured metadata-only `whisper` observer resolution in `04.4-task-list-communication-observers-and-interceptors-vertical-slice.md`.
+11. **Communication Recipient Delivery** - Deliver target-side and observer-side rendered communication views to live clients once the shared recipient-view model exists (planned in `04.5-task-list-communication-recipient-delivery-vertical-slice.md`).
 
 ---
 

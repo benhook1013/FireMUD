@@ -14,6 +14,9 @@ import net.firedevops.firemud.entitymanagement.v1.EntityType;
 import net.firedevops.firemud.entitymanagement.v1.ListRoomEntitiesRequest;
 import net.firedevops.firemud.entitymanagement.v1.ListRoomEntitiesResponse;
 import net.firedevops.firemud.entitymanagement.v1.RoomEntity;
+import net.firedevops.firemud.gamelogic.v1.CommunicationPerception;
+import net.firedevops.firemud.gamelogic.v1.CommunicationRecipientRole;
+import net.firedevops.firemud.gamelogic.v1.CommunicationRecipientView;
 import net.firedevops.firemud.gamelogic.v1.CommunicationType;
 import net.firedevops.firemud.gamelogic.v1.SendCommunicationRequest;
 import net.firedevops.firemud.gamelogic.v1.SendCommunicationResponse;
@@ -33,6 +36,7 @@ import org.springframework.util.StringUtils;
 public class CommunicationAggregationService {
   private static final Logger LOG = LoggerFactory.getLogger(CommunicationAggregationService.class);
   private static final int MAX_MESSAGE_LENGTH = 512;
+  private static final String OBSERVER_METADATA_ONLY_FLAG = "observer_metadata_only";
 
   private final SocialGroupsServiceGrpc.SocialGroupsServiceBlockingStub socialStub;
   private final EntityManagementServiceGrpc.EntityManagementServiceBlockingStub entityStub;
@@ -70,6 +74,7 @@ public class CommunicationAggregationService {
     if (StringUtils.hasText(audience.actorView())) {
       builder.setActorView(audience.actorView());
     }
+    builder.addAllRecipientViews(audience.recipientViews());
 
     SendMessageResponse socialResponse;
     try {
@@ -131,6 +136,7 @@ public class CommunicationAggregationService {
   private CommunicationAudience buildSayAudience(
       String speakerId, ListRoomEntitiesResponse roomEntities, String rawText) {
     String speakerName = findSpeakerName(speakerId, roomEntities);
+    String actorView = "You say, \"" + normalizeText(rawText) + "\"";
     TreeSet<String> attendees =
         roomEntities.getEntitiesList().stream()
             .map(RoomEntity::getDisplayName)
@@ -145,7 +151,14 @@ public class CommunicationAggregationService {
         delivered,
         buildNpcEchoes(roomEntities),
         Optional.empty(),
-        "You say, \"" + normalizeText(rawText) + "\"",
+        actorView,
+        List.of(
+            recipientView(
+                speakerId,
+                speakerName,
+                CommunicationRecipientRole.COMMUNICATION_RECIPIENT_ROLE_ACTOR,
+                CommunicationPerception.COMMUNICATION_PERCEPTION_FULL_CONTENT,
+                actorView)),
         null);
   }
 
@@ -166,12 +179,38 @@ public class CommunicationAggregationService {
       return CommunicationAudience.invalid("Target not present in room: " + targetName);
     }
 
+    RoomEntity targetEntity = maybeTarget.orElseThrow();
     String resolvedTargetName = maybeTarget.get().getDisplayName().trim();
+    String speakerName = findSpeakerName(request.getCharacterId(), roomEntities);
+    String actorView =
+        "You whisper to " + resolvedTargetName + ", \"" + normalizeText(request.getText()) + "\"";
+    String targetView =
+        speakerName + " whispers to you, \"" + normalizeText(request.getText()) + "\"";
+    String observerView = speakerName + " whispers something to " + resolvedTargetName + ".";
+    List<CommunicationRecipientView> recipientViews = new ArrayList<>();
+    recipientViews.add(
+        recipientView(
+            request.getCharacterId(),
+            speakerName,
+            CommunicationRecipientRole.COMMUNICATION_RECIPIENT_ROLE_ACTOR,
+            CommunicationPerception.COMMUNICATION_PERCEPTION_FULL_CONTENT,
+            actorView));
+    recipientViews.add(
+        recipientView(
+            targetEntity.getEntityId(),
+            resolvedTargetName,
+            CommunicationRecipientRole.COMMUNICATION_RECIPIENT_ROLE_TARGET,
+            CommunicationPerception.COMMUNICATION_PERCEPTION_FULL_CONTENT,
+            targetView));
+    recipientViews.addAll(
+        resolveMetadataOnlyWhisperObservers(
+            request.getCharacterId(), targetEntity.getEntityId(), roomEntities, observerView));
     return new CommunicationAudience(
-        List.of(findSpeakerName(request.getCharacterId(), roomEntities), resolvedTargetName),
+        List.of(speakerName, resolvedTargetName),
         List.of(),
-        Optional.of(maybeTarget.get().getEntityId()),
-        "You whisper to " + resolvedTargetName + ", \"" + normalizeText(request.getText()) + "\"",
+        Optional.of(targetEntity.getEntityId()),
+        actorView,
+        recipientViews,
         null);
   }
 
@@ -186,12 +225,64 @@ public class CommunicationAggregationService {
             ? request.getSpeakerName().trim()
             : request.getCharacterId();
     String targetName = request.getTargetCharacterName().trim();
+    String actorView = "You tell " + targetName + ", \"" + normalizeText(request.getText()) + "\"";
+    String targetView = speakerName + " tells you, \"" + normalizeText(request.getText()) + "\"";
     return new CommunicationAudience(
         List.of(speakerName, targetName),
         List.of(),
         Optional.of(request.getTargetCharacterId()),
-        "You tell " + targetName + ", \"" + normalizeText(request.getText()) + "\"",
+        actorView,
+        List.of(
+            recipientView(
+                request.getCharacterId(),
+                speakerName,
+                CommunicationRecipientRole.COMMUNICATION_RECIPIENT_ROLE_ACTOR,
+                CommunicationPerception.COMMUNICATION_PERCEPTION_FULL_CONTENT,
+                actorView),
+            recipientView(
+                request.getTargetCharacterId(),
+                targetName,
+                CommunicationRecipientRole.COMMUNICATION_RECIPIENT_ROLE_TARGET,
+                CommunicationPerception.COMMUNICATION_PERCEPTION_FULL_CONTENT,
+                targetView)),
         null);
+  }
+
+  private List<CommunicationRecipientView> resolveMetadataOnlyWhisperObservers(
+      String speakerId,
+      String targetId,
+      ListRoomEntitiesResponse roomEntities,
+      String renderedText) {
+    return roomEntities.getEntitiesList().stream()
+        .filter(entity -> !entity.getEntityId().equals(speakerId))
+        .filter(entity -> !entity.getEntityId().equals(targetId))
+        .filter(
+            entity ->
+                entity.getStateFlagsList().stream().anyMatch(OBSERVER_METADATA_ONLY_FLAG::equals))
+        .map(
+            entity ->
+                recipientView(
+                    entity.getEntityId(),
+                    entity.getDisplayName(),
+                    CommunicationRecipientRole.COMMUNICATION_RECIPIENT_ROLE_OBSERVER,
+                    CommunicationPerception.COMMUNICATION_PERCEPTION_METADATA_ONLY,
+                    renderedText))
+        .toList();
+  }
+
+  private CommunicationRecipientView recipientView(
+      String recipientId,
+      String recipientName,
+      CommunicationRecipientRole role,
+      CommunicationPerception perception,
+      String renderedText) {
+    return CommunicationRecipientView.newBuilder()
+        .setRecipientId(recipientId)
+        .setRecipientName(recipientName)
+        .setRole(role)
+        .setPerception(perception)
+        .setRenderedText(renderedText)
+        .build();
   }
 
   private List<String> buildNpcEchoes(ListRoomEntitiesResponse roomEntities) {
@@ -285,10 +376,12 @@ public class CommunicationAggregationService {
       List<String> npcEchoes,
       Optional<String> recipientId,
       String actorView,
+      List<CommunicationRecipientView> recipientViews,
       String errorMessage) {
 
     static CommunicationAudience invalid(String errorMessage) {
-      return new CommunicationAudience(List.of(), List.of(), Optional.empty(), null, errorMessage);
+      return new CommunicationAudience(
+          List.of(), List.of(), Optional.empty(), null, List.of(), errorMessage);
     }
 
     boolean valid() {

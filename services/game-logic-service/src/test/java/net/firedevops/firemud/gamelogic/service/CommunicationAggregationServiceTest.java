@@ -10,6 +10,8 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import net.firedevops.firemud.entitymanagement.v1.EntityType;
 import net.firedevops.firemud.entitymanagement.v1.ListRoomEntitiesResponse;
 import net.firedevops.firemud.entitymanagement.v1.RoomEntity;
+import net.firedevops.firemud.gamelogic.v1.CommunicationPerception;
+import net.firedevops.firemud.gamelogic.v1.CommunicationRecipientRole;
 import net.firedevops.firemud.gamelogic.v1.CommunicationType;
 import net.firedevops.firemud.gamelogic.v1.SendCommunicationRequest;
 import net.firedevops.firemud.gamelogic.v1.SendCommunicationResponse;
@@ -86,6 +88,9 @@ class CommunicationAggregationServiceTest {
     assertThat(resp.getMessage()).isEqualTo("Hello travelers");
     assertThat(resp.getDeliveredToList()).containsExactly("Emberline", "Kobold Scout", "Sora");
     assertThat(resp.getNpcEchoesList()).containsExactly("Kobold Scout");
+    assertThat(resp.getRecipientViewsList()).hasSize(1);
+    assertThat(resp.getRecipientViews(0).getRole())
+        .isEqualTo(CommunicationRecipientRole.COMMUNICATION_RECIPIENT_ROLE_ACTOR);
 
     ArgumentCaptor<SendMessageRequest> captor = ArgumentCaptor.forClass(SendMessageRequest.class);
     verify(socialStub).sendMessage(captor.capture());
@@ -128,11 +133,78 @@ class CommunicationAggregationServiceTest {
 
     assertThat(resp.getSuccess()).isTrue();
     assertThat(resp.getDeliveredToList()).containsExactly("Emberline", "Sora");
+    assertThat(resp.getRecipientViewsList())
+        .extracting(view -> view.getRenderedText())
+        .containsExactly(
+            "You whisper to Sora, \"Keep quiet\"", "Emberline whispers to you, \"Keep quiet\"");
 
     ArgumentCaptor<SendMessageRequest> captor = ArgumentCaptor.forClass(SendMessageRequest.class);
     verify(socialStub).sendMessage(captor.capture());
     assertThat(captor.getValue().getType()).isEqualTo(ChatType.CHAT_TYPE_WHISPER);
     assertThat(captor.getValue().getRecipientId()).isEqualTo("player-1");
+  }
+
+  @Test
+  void whisperAddsMetadataOnlyObserverViewWhenFlagged() {
+    ListRoomEntitiesResponse roomEntities =
+        ListRoomEntitiesResponse.newBuilder()
+            .addEntities(
+                RoomEntity.newBuilder()
+                    .setEntityId("player-0")
+                    .setDisplayName("Emberline")
+                    .setEntityType(EntityType.PLAYER)
+                    .build())
+            .addEntities(
+                RoomEntity.newBuilder()
+                    .setEntityId("player-1")
+                    .setDisplayName("Sora")
+                    .setEntityType(EntityType.PLAYER)
+                    .build())
+            .addEntities(
+                RoomEntity.newBuilder()
+                    .setEntityId("player-2")
+                    .setDisplayName("Nyx")
+                    .setEntityType(EntityType.PLAYER)
+                    .addStateFlags("observer_metadata_only")
+                    .build())
+            .addEntities(
+                RoomEntity.newBuilder()
+                    .setEntityId("player-3")
+                    .setDisplayName("Bystander")
+                    .setEntityType(EntityType.PLAYER)
+                    .build())
+            .build();
+    when(entityStub.listRoomEntities(any())).thenReturn(roomEntities);
+    when(socialStub.sendMessage(any()))
+        .thenReturn(SendMessageResponse.newBuilder().setSuccess(true).build());
+
+    SendCommunicationResponse resp =
+        service.send(
+            SendCommunicationRequest.newBuilder()
+                .setTenantId("tenant-1")
+                .setSessionId("sess-1")
+                .setCharacterId("player-0")
+                .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("room-7").build())
+                .setType(CommunicationType.WHISPER)
+                .setTargetCharacterName("Sora")
+                .setText("Keep quiet")
+                .build());
+
+    assertThat(resp.getSuccess()).isTrue();
+    assertThat(resp.getRecipientViewsList()).hasSize(3);
+    assertThat(resp.getRecipientViewsList())
+        .filteredOn(
+            view ->
+                view.getRole() == CommunicationRecipientRole.COMMUNICATION_RECIPIENT_ROLE_OBSERVER)
+        .singleElement()
+        .satisfies(
+            view -> {
+              assertThat(view.getRecipientId()).isEqualTo("player-2");
+              assertThat(view.getRecipientName()).isEqualTo("Nyx");
+              assertThat(view.getPerception())
+                  .isEqualTo(CommunicationPerception.COMMUNICATION_PERCEPTION_METADATA_ONLY);
+              assertThat(view.getRenderedText()).isEqualTo("Emberline whispers something to Sora.");
+            });
   }
 
   @Test
@@ -146,6 +218,7 @@ class CommunicationAggregationServiceTest {
                 .setTenantId("tenant-1")
                 .setSessionId("sess-1")
                 .setCharacterId("player-0")
+                .setSpeakerName("Emberline")
                 .setType(CommunicationType.TELL)
                 .setTargetCharacterId("player-9")
                 .setTargetCharacterName("Sora")
@@ -153,6 +226,10 @@ class CommunicationAggregationServiceTest {
                 .build());
 
     assertThat(resp.getSuccess()).isTrue();
+    assertThat(resp.getRecipientViewsList())
+        .extracting(view -> view.getRenderedText())
+        .containsExactly(
+            "You tell Sora, \"Meet me outside\"", "Emberline tells you, \"Meet me outside\"");
 
     ArgumentCaptor<SendMessageRequest> captor = ArgumentCaptor.forClass(SendMessageRequest.class);
     verify(socialStub).sendMessage(captor.capture());
