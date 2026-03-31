@@ -87,6 +87,12 @@ class GameplayHandshakeFilterTest {
         .isEqualTo("42");
     assertThat(mutatedExchange.getRequest().getHeaders().getFirst("X-Firemud-Connect-Context"))
         .isNotBlank();
+    assertThat(
+            mutatedExchange
+                .getRequest()
+                .getHeaders()
+                .getFirst(GameplayHandshakeFilter.TRANSPORT_SESSION_HEADER))
+        .matches("\\d+");
   }
 
   @Test

@@ -4,6 +4,10 @@ import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.ExpiredJwtException;
 import io.jsonwebtoken.Jws;
 import io.jsonwebtoken.JwtException;
+import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Map;
@@ -30,6 +34,7 @@ public class GameplayHandshakeFilter implements WebFilter, Ordered {
   static final String CONNECTION_MODE_HEADER = "X-Firemud-Connection-Mode";
   static final String CONNECT_TOKEN_HEADER = "X-Firemud-Connect-Token";
   static final String CONNECT_CONTEXT_HEADER = "X-Firemud-Connect-Context";
+  static final String TRANSPORT_SESSION_HEADER = "X-Firemud-Transport-Session-Id";
   static final String CONNECTION_MODE_FIRST_PARTY_WEB = "first_party_web";
   static final String CONNECTION_MODE_TRUSTED_TCP_PROXY = "trusted_tcp_proxy";
   static final String CONNECT_TOKEN_REJECTED = "CONNECT_TOKEN_REJECTED";
@@ -103,6 +108,9 @@ public class GameplayHandshakeFilter implements WebFilter, Ordered {
                 headers.remove(CONNECT_TOKEN_HEADER);
                 headers.set(CONNECT_CONTEXT_HEADER, connectContext);
                 headers.set(CONNECTION_MODE_HEADER, CONNECTION_MODE_FIRST_PARTY_WEB);
+                headers.set(
+                    TRANSPORT_SESSION_HEADER,
+                    Long.toUnsignedString(stablePositiveLong(exchange.getRequest().getId())));
                 headers.set("X-Tenant-Id", tenantId);
                 headers.set("X-Game-Instance-Id", gameInstanceId);
               }));
@@ -163,6 +171,17 @@ public class GameplayHandshakeFilter implements WebFilter, Ordered {
     Long existing = replayCache.putIfAbsent(jti, replayExpiry);
     if (existing != null && existing > now) {
       throw new ReplayRejectedException("connect token replayed");
+    }
+  }
+
+  private long stablePositiveLong(String value) {
+    try {
+      byte[] digest =
+          MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8));
+      long candidate = ByteBuffer.wrap(digest, 0, Long.BYTES).getLong();
+      return candidate == Long.MIN_VALUE ? 0L : Math.abs(candidate);
+    } catch (NoSuchAlgorithmException ex) {
+      throw new IllegalStateException("SHA-256 unavailable", ex);
     }
   }
 
