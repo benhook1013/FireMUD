@@ -7,4 +7,5 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 @ConfigurationProperties(prefix = "firemud.gateway.connect-context")
 public class FirstPartyConnectContextProperties {
   private String jwtSecret;
+  private long ttlMs = 30_000L;
 }

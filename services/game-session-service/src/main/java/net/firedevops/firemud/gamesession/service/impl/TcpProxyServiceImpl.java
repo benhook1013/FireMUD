@@ -11,6 +11,7 @@ import net.firedevops.firemud.gamesession.config.DevIsolatedProperties;
 import net.firedevops.firemud.gamesession.dto.GameInstanceDto;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
+import net.firedevops.firemud.gamesession.service.DisconnectDeduplicationService;
 import net.firedevops.firemud.gamesession.service.PingService;
 import net.firedevops.firemud.gamesession.service.SessionStateService;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
@@ -38,7 +39,7 @@ public final class TcpProxyServiceImpl extends TcpProxyServiceGrpc.TcpProxyServi
   private final MeterRegistry meterRegistry;
   private final PingService pingService;
   private final DevIsolatedProperties devIsolatedProperties;
-  private final DisconnectDeduplicator disconnectDeduplicator = new DisconnectDeduplicator(50_000);
+  private final DisconnectDeduplicationService disconnectDeduplicationService;
 
   @SuppressFBWarnings(
       value = "EI_EXPOSE_REP2",
@@ -48,12 +49,14 @@ public final class TcpProxyServiceImpl extends TcpProxyServiceGrpc.TcpProxyServi
       SessionStateService sessionStateService,
       MeterRegistry meterRegistry,
       PingService pingService,
-      DevIsolatedProperties devIsolatedProperties) {
+      DevIsolatedProperties devIsolatedProperties,
+      DisconnectDeduplicationService disconnectDeduplicationService) {
     this.repository = repository;
     this.sessionStateService = sessionStateService;
     this.meterRegistry = meterRegistry;
     this.pingService = pingService;
     this.devIsolatedProperties = devIsolatedProperties;
+    this.disconnectDeduplicationService = disconnectDeduplicationService;
   }
 
   @Override
@@ -83,7 +86,7 @@ public final class TcpProxyServiceImpl extends TcpProxyServiceGrpc.TcpProxyServi
   private ErrorDetail handleNotifyDisconnect(NotifyDisconnectRequest request) {
     if (StringUtils.hasText(request.getProxyConnectionId())
         && request.getDisconnectSequence() > 0) {
-      if (!disconnectDeduplicator.shouldProcess(
+      if (!disconnectDeduplicationService.shouldProcess(
           request.getProxyConnectionId(), request.getDisconnectSequence())) {
         meterRegistry.counter(DUPLICATE_DISCONNECT_METRIC).increment();
         return GrpcAppErrors.ok("Duplicate disconnect ignored");
@@ -170,35 +173,6 @@ public final class TcpProxyServiceImpl extends TcpProxyServiceGrpc.TcpProxyServi
     instance.setOwnerAccountId(0L);
     instance.setStatus("RUNNING");
     return instance;
-  }
-
-  private static final class DisconnectDeduplicator {
-    private final int maxEntries;
-    private final java.util.LinkedHashMap<String, Long> lastSequenceByConnection =
-        new java.util.LinkedHashMap<>(128, 0.75f, true);
-
-    private DisconnectDeduplicator(int maxEntries) {
-      this.maxEntries = maxEntries;
-    }
-
-    boolean shouldProcess(String proxyConnectionId, long disconnectSequence) {
-      synchronized (lastSequenceByConnection) {
-        Long lastProcessed = lastSequenceByConnection.get(proxyConnectionId);
-        if (lastProcessed != null && disconnectSequence <= lastProcessed) {
-          return false;
-        }
-        lastSequenceByConnection.put(proxyConnectionId, disconnectSequence);
-        if (lastSequenceByConnection.size() > maxEntries) {
-          java.util.Iterator<java.util.Map.Entry<String, Long>> iterator =
-              lastSequenceByConnection.entrySet().iterator();
-          if (iterator.hasNext()) {
-            iterator.next();
-            iterator.remove();
-          }
-        }
-        return true;
-      }
-    }
   }
 
   private record SessionValidationResult(

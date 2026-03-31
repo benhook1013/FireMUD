@@ -12,6 +12,7 @@ import net.firedevops.firemud.gamesession.config.DevIsolatedProperties;
 import net.firedevops.firemud.gamesession.dto.GameInstanceDto;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
+import net.firedevops.firemud.gamesession.service.DisconnectDeduplicationService;
 import net.firedevops.firemud.gamesession.service.PingService;
 import net.firedevops.firemud.gamesession.service.SessionStateService;
 import net.firedevops.firemud.tcpproxy.v1.NotifyDisconnectRequest;
@@ -27,6 +28,11 @@ class TcpProxyServiceImplTest {
     SessionStateService sessionStateService = Mockito.mock(SessionStateService.class);
     MeterRegistry meterRegistry = new SimpleMeterRegistry();
     PingService pingService = Mockito.mock(PingService.class);
+    DisconnectDeduplicationService disconnectDeduplicationService =
+        Mockito.mock(DisconnectDeduplicationService.class);
+    Mockito.when(
+            disconnectDeduplicationService.shouldProcess(Mockito.anyString(), Mockito.anyLong()))
+        .thenReturn(true);
     GameInstance entity = buildEntity(12L, 7L);
     Mockito.when(repository.findById(12L)).thenReturn(Optional.of(entity));
 
@@ -36,7 +42,8 @@ class TcpProxyServiceImplTest {
             sessionStateService,
             meterRegistry,
             pingService,
-            new DevIsolatedProperties(false));
+            new DevIsolatedProperties(false),
+            disconnectDeduplicationService);
 
     AtomicReference<NotifyDisconnectResponse> ref = new AtomicReference<>();
     service.notifyDisconnect(
@@ -68,13 +75,19 @@ class TcpProxyServiceImplTest {
     SessionStateService sessionStateService = Mockito.mock(SessionStateService.class);
     MeterRegistry meterRegistry = new SimpleMeterRegistry();
     PingService pingService = Mockito.mock(PingService.class);
+    DisconnectDeduplicationService disconnectDeduplicationService =
+        Mockito.mock(DisconnectDeduplicationService.class);
+    Mockito.when(
+            disconnectDeduplicationService.shouldProcess(Mockito.anyString(), Mockito.anyLong()))
+        .thenReturn(true);
     TcpProxyServiceImpl service =
         new TcpProxyServiceImpl(
             repository,
             sessionStateService,
             meterRegistry,
             pingService,
-            new DevIsolatedProperties(false));
+            new DevIsolatedProperties(false),
+            disconnectDeduplicationService);
 
     AtomicReference<NotifyDisconnectResponse> ref = new AtomicReference<>();
     service.notifyDisconnect(
@@ -106,6 +119,11 @@ class TcpProxyServiceImplTest {
     SessionStateService sessionStateService = Mockito.mock(SessionStateService.class);
     MeterRegistry meterRegistry = new SimpleMeterRegistry();
     PingService pingService = Mockito.mock(PingService.class);
+    DisconnectDeduplicationService disconnectDeduplicationService =
+        Mockito.mock(DisconnectDeduplicationService.class);
+    Mockito.when(
+            disconnectDeduplicationService.shouldProcess(Mockito.anyString(), Mockito.anyLong()))
+        .thenReturn(true, false);
     GameInstance entity = buildEntity(12L, 7L);
     Mockito.when(repository.findById(12L)).thenReturn(Optional.of(entity));
 
@@ -115,7 +133,8 @@ class TcpProxyServiceImplTest {
             sessionStateService,
             meterRegistry,
             pingService,
-            new DevIsolatedProperties(false));
+            new DevIsolatedProperties(false),
+            disconnectDeduplicationService);
 
     NotifyDisconnectRequest request =
         NotifyDisconnectRequest.newBuilder()
@@ -144,6 +163,11 @@ class TcpProxyServiceImplTest {
     SessionStateService sessionStateService = Mockito.mock(SessionStateService.class);
     MeterRegistry meterRegistry = new SimpleMeterRegistry();
     PingService pingService = Mockito.mock(PingService.class);
+    DisconnectDeduplicationService disconnectDeduplicationService =
+        Mockito.mock(DisconnectDeduplicationService.class);
+    Mockito.when(
+            disconnectDeduplicationService.shouldProcess(Mockito.anyString(), Mockito.anyLong()))
+        .thenReturn(true, false);
     GameInstance entity = buildEntity(12L, 7L);
     Mockito.when(repository.findById(12L)).thenReturn(Optional.of(entity));
 
@@ -153,7 +177,8 @@ class TcpProxyServiceImplTest {
             sessionStateService,
             meterRegistry,
             pingService,
-            new DevIsolatedProperties(false));
+            new DevIsolatedProperties(false),
+            disconnectDeduplicationService);
 
     NotifyDisconnectRequest firstRequest =
         NotifyDisconnectRequest.newBuilder()
@@ -189,6 +214,11 @@ class TcpProxyServiceImplTest {
     SessionStateService sessionStateService = Mockito.mock(SessionStateService.class);
     MeterRegistry meterRegistry = new SimpleMeterRegistry();
     PingService pingService = Mockito.mock(PingService.class);
+    DisconnectDeduplicationService disconnectDeduplicationService =
+        Mockito.mock(DisconnectDeduplicationService.class);
+    Mockito.when(
+            disconnectDeduplicationService.shouldProcess(Mockito.anyString(), Mockito.anyLong()))
+        .thenReturn(true);
 
     TcpProxyServiceImpl service =
         new TcpProxyServiceImpl(
@@ -196,7 +226,8 @@ class TcpProxyServiceImplTest {
             sessionStateService,
             meterRegistry,
             pingService,
-            new DevIsolatedProperties(false));
+            new DevIsolatedProperties(false),
+            disconnectDeduplicationService);
 
     AtomicReference<NotifyDisconnectResponse> ref = new AtomicReference<>();
     service.notifyDisconnect(NotifyDisconnectRequest.newBuilder().build(), observerFor(ref));

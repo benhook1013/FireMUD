@@ -9,6 +9,8 @@ import java.io.IOException;
 import java.net.URI;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
@@ -39,6 +41,7 @@ import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.context.annotation.Import;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.grpc.server.lifecycle.GrpcServerLifecycle;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
@@ -102,12 +105,37 @@ class GameSessionWebSocketHandlerIntegrationTest {
 
   @MockitoBean private RedisTemplate<String, Object> redisTemplate;
 
+  @MockitoBean private ValueOperations<String, Object> redisValueOperations;
+
   @Autowired private SessionContextService sessionContextService;
+
+  private final ConcurrentMap<String, Object> firstPartyConnectStore = new ConcurrentHashMap<>();
 
   @BeforeEach
   void setUp() {
+    firstPartyConnectStore.clear();
     sessionContextService.deleteBySessionId(22L, 41L);
     sessionContextService.deleteBySessionId(22L, 42L);
+    when(redisTemplate.opsForValue()).thenReturn(redisValueOperations);
+    when(redisValueOperations.get(org.mockito.ArgumentMatchers.anyString()))
+        .thenAnswer(invocation -> firstPartyConnectStore.get(invocation.getArgument(0)));
+    org.mockito.Mockito.doAnswer(
+            invocation -> {
+              firstPartyConnectStore.put(invocation.getArgument(0), invocation.getArgument(1));
+              return null;
+            })
+        .when(redisValueOperations)
+        .set(
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.any(java.time.Duration.class));
+    org.mockito.Mockito.doAnswer(
+            invocation -> {
+              firstPartyConnectStore.remove(invocation.getArgument(0));
+              return null;
+            })
+        .when(redisTemplate)
+        .delete(org.mockito.ArgumentMatchers.anyString());
 
     LookResult lookResult =
         LookResult.newBuilder()
@@ -349,7 +377,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
         .thenReturn(
             Optional.of(
                 new ScreenBufferService.BufferedScreen(
-                    "Recent combat line\nSecond recent line\n", 2, 32)));
+                    "Recent combat line\nSecond recent line\n", 2, 2, 32L)));
 
     StandardWebSocketClient client = new StandardWebSocketClient();
     WebSocketHttpHeaders headers = new WebSocketHttpHeaders();
