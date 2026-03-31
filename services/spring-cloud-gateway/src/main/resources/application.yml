@@ -30,6 +30,11 @@ firemud:
     cert-chain: ${FIREMUD_GRPC_CERT_CHAIN_PATH:certs/client.crt}
     private-key: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:certs/client.key}
     ca-cert: ${FIREMUD_GRPC_CA_CERT_PATH:certs/ca.crt}
+  gateway:
+    gameplay:
+      bridge:
+        reconnect-attempts: 3
+        reconnect-delay-ms: 250
 
 management:
   endpoints:
@@ -81,6 +86,10 @@ spring:
               acquireTimeout: 5000
 
 firemud:
+  gateway:
+    gameplay:
+      bridge:
+        upstream-url: ws://game-session-service.default.svc.cluster.local:8080/ws/game
   grpc:
     cert-chain: ${FIREMUD_GRPC_CERT_CHAIN_PATH:certs/client.crt}
     private-key: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:certs/client.key}

@@ -7,7 +7,7 @@ spring:
             - id: session
               uri: ws://game-session-service.default.svc.cluster.local:8080
               predicates:
-                - Path=/api/session/**,/ws/game/**
+                - Path=/api/session/**
             - id: admin
               uri: http://logging-admin-service.default.svc.cluster.local:8080
               predicates:

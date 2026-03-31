@@ -7,4 +7,4 @@ spring:
             - id: session
               uri: ws://game-session-service:8080
               predicates:
-                - Path=/api/session/**,/ws/game/**
+                - Path=/api/session/**
