@@ -10,6 +10,7 @@ import net.firedevops.firemud.gamesession.command.text.TextCommandInterpreter;
 import net.firedevops.firemud.gamesession.command.text.TextCommandParser;
 import net.firedevops.firemud.gamesession.command.text.TextCommandType;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
+import net.firedevops.firemud.gamesession.service.ActiveTransportSessionRegistry;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import org.slf4j.Logger;
@@ -29,6 +30,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
   private final TextCommandInterpreter interpreter;
   private final LookCommandHandler lookHandler;
   private final SessionContextService sessionContextService;
+  private final ActiveTransportSessionRegistry activeTransportSessionRegistry;
   private final ScreenBufferService screenBufferService;
   private final TextCommandParser parser = new TextCommandParser();
 
@@ -36,10 +38,12 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       TextCommandInterpreter interpreter,
       LookCommandHandler lookHandler,
       SessionContextService sessionContextService,
+      ActiveTransportSessionRegistry activeTransportSessionRegistry,
       ScreenBufferService screenBufferService) {
     this.interpreter = interpreter;
     this.lookHandler = lookHandler;
     this.sessionContextService = sessionContextService;
+    this.activeTransportSessionRegistry = activeTransportSessionRegistry;
     this.screenBufferService = screenBufferService;
   }
 
@@ -51,6 +55,14 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
         resolveTransportSessionId(session),
         resolveTenantId(session));
     bootstrapSessionContext(session);
+    parseNumericSessionId(resolveTransportSessionId(session))
+        .ifPresent(sessionId -> activeTransportSessionRegistry.register(sessionId, session));
+  }
+
+  @Override
+  public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
+    parseNumericSessionId(resolveTransportSessionId(session))
+        .ifPresent(sessionId -> activeTransportSessionRegistry.unregister(sessionId, session));
   }
 
   @Override
@@ -218,6 +230,17 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
           tenantId,
           bootstrapGameInstanceId,
           ex);
+    }
+  }
+
+  private Optional<Long> parseNumericSessionId(String text) {
+    if (!StringUtils.hasText(text)) {
+      return Optional.empty();
+    }
+    try {
+      return Optional.of(Long.parseLong(text));
+    } catch (NumberFormatException ex) {
+      return Optional.empty();
     }
   }
 }

@@ -20,7 +20,7 @@ Each document describes a narrowly scoped slice of functionality, covering user 
 - [04.2-task-list-whisper-vertical-slice.md](./04.2-task-list-whisper-vertical-slice.md) – Baseline `whisper` slice, including canonical prose and target/observer transcript fixtures, on top of the shared communication model.
 - [04.3-task-list-tell-vertical-slice.md](./04.3-task-list-tell-vertical-slice.md) – Baseline `tell` slice, including canonical sender/target transcript fixtures, on top of the shared communication model.
 - [04.4-task-list-communication-observers-and-interceptors-vertical-slice.md](./04.4-task-list-communication-observers-and-interceptors-vertical-slice.md) – Baseline observer/interceptor resolution slice, currently live for metadata-only `whisper` observers in Game Logic.
-- [04.5-task-list-communication-recipient-delivery-vertical-slice.md](./04.5-task-list-communication-recipient-delivery-vertical-slice.md) – Follow-up slice for target-side and observer-side live communication delivery over Telnet, WebSocket, and later richer clients.
+- [04.5-task-list-communication-recipient-delivery-vertical-slice.md](./04.5-task-list-communication-recipient-delivery-vertical-slice.md) – Baseline target-side and metadata-only observer-side communication delivery over generic WebSocket and Telnet, with richer first-party/MCP-aware presentation still deferred.
 - [05-task-list-movement-vertical-slice.md](./05-task-list-movement-vertical-slice.md) – Movement-focused slice covering exit validation, authoritative location changes, and automatic post-move `LOOK` refresh.
 
 When adding new vertical slices, follow the same naming convention (`NN-description-vertical-slice.md`) and include sections for scope, architecture notes, test coverage, and rollout plan.

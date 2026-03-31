@@ -13,6 +13,7 @@ import net.firedevops.firemud.gamesession.client.EntityManagementClient;
 import net.firedevops.firemud.gamesession.client.GameLogicClient;
 import net.firedevops.firemud.gamesession.config.GameLogicProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
+import net.firedevops.firemud.gamesession.service.CommunicationRecipientDeliveryService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import org.slf4j.Logger;
@@ -37,6 +38,7 @@ public class CommunicationCommandHandler {
   private final GameLogicClient gameLogicClient;
   private final GameLogicProperties gameLogicProperties;
   private final SessionContextService sessionContextService;
+  private final CommunicationRecipientDeliveryService recipientDeliveryService;
   private final MeterRegistry meterRegistry;
 
   public CommunicationCommandHandlingResult handle(SessionContext context, TextCommand command) {
@@ -90,6 +92,8 @@ public class CommunicationCommandHandler {
         return new CommunicationCommandHandlingResult(
             CommandEnqueueResult.failure("COMMUNICATION_NOT_DELIVERED", errorMessage), null);
       }
+
+      recipientDeliveryService.deliver(context, response);
 
       return new CommunicationCommandHandlingResult(
           CommandEnqueueResult.success(), formatSuccessResponse(command, response));

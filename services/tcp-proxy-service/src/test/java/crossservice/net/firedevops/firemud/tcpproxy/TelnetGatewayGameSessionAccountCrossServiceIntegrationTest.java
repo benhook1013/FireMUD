@@ -29,11 +29,13 @@ import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeRequest;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
 import net.firedevops.firemud.cache.LookCacheService;
+import net.firedevops.firemud.cache.ScreenBufferService;
 import net.firedevops.firemud.common.conflict.ConflictTracker;
 import net.firedevops.firemud.gamelogic.GameLogicServiceApplication;
 import net.firedevops.firemud.gamesession.GameSessionServiceApplication;
 import net.firedevops.firemud.gamesession.dto.GameInstanceDto;
 import net.firedevops.firemud.gamesession.dto.StartSessionRequest;
+import net.firedevops.firemud.gamesession.service.ActiveTransportSessionRegistry;
 import net.firedevops.firemud.gamesession.service.GameInstanceService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
@@ -91,6 +93,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
   private static final Duration COMMAND_WAIT = Duration.ofSeconds(5);
   private static final long TENANT_ID = 1L;
   private static final long ACCOUNT_ID = 7L;
+  private static final long SORA_ACCOUNT_ID = Long.parseLong(ChatTestFixtures.PLAYER_SORA);
   private static final long DEMO_WORLD_INSTANCE_ID = 1L;
 
   @Container
@@ -181,6 +184,9 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     stringRedisTemplate.getConnectionFactory().getConnection().serverCommands().flushAll();
     ACCOUNT_STUB.setGameplayAdmissionAllowed(true);
     ACCOUNT_STUB.setGameplayAvailable(true);
+    if (ENTITY_STUB != null) {
+      ENTITY_STUB.resetRoomEntities();
+    }
   }
 
   @Test
@@ -519,6 +525,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
   @Test
   void telnetCommunicationMatchesCanonicalTranscriptsWithoutSession() throws Exception {
     ensureTestServicesStarted();
+    ENTITY_STUB.setRoomEntities(ChatTestFixtures.sampleEntities());
     seedLiveTargetSession();
 
     String telnetWhisperResponse;
@@ -545,7 +552,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
           .hasValueSatisfying(
               request -> {
                 assertThat(request.getType()).isEqualTo(ChatType.CHAT_TYPE_WHISPER);
-                assertThat(request.getRecipientId()).isEqualTo("PLAYER-199");
+                assertThat(request.getRecipientId()).isEqualTo(ChatTestFixtures.PLAYER_SORA);
               });
 
       writer.println("TELL Sora Meet me at the forge");
@@ -560,6 +567,153 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
               assertThat(request.getType()).isEqualTo(ChatType.CHAT_TYPE_TELL);
               assertThat(request.getRecipientId()).isEqualTo(ChatTestFixtures.PLAYER_SORA);
             });
+  }
+
+  @Test
+  void telnetWhisperDeliversTargetAndObserverViews() throws Exception {
+    ensureTestServicesStarted();
+    ENTITY_STUB.setRoomEntities(ChatTestFixtures.sampleEntities());
+
+    try (Socket actorSocket = new Socket("localhost", telnetServer.getPort());
+        PrintWriter actorWriter =
+            new PrintWriter(
+                new OutputStreamWriter(actorSocket.getOutputStream(), StandardCharsets.ISO_8859_1),
+                true);
+        BufferedReader actorReader =
+            new BufferedReader(
+                new InputStreamReader(actorSocket.getInputStream(), StandardCharsets.ISO_8859_1));
+        Socket targetSocket = new Socket("localhost", telnetServer.getPort());
+        PrintWriter targetWriter =
+            new PrintWriter(
+                new OutputStreamWriter(targetSocket.getOutputStream(), StandardCharsets.ISO_8859_1),
+                true);
+        BufferedReader targetReader =
+            new BufferedReader(
+                new InputStreamReader(targetSocket.getInputStream(), StandardCharsets.ISO_8859_1));
+        Socket observerSocket = new Socket("localhost", telnetServer.getPort());
+        PrintWriter observerWriter =
+            new PrintWriter(
+                new OutputStreamWriter(
+                    observerSocket.getOutputStream(), StandardCharsets.ISO_8859_1),
+                true);
+        BufferedReader observerReader =
+            new BufferedReader(
+                new InputStreamReader(
+                    observerSocket.getInputStream(), StandardCharsets.ISO_8859_1))) {
+      actorSocket.setSoTimeout((int) COMMAND_WAIT.toMillis());
+      targetSocket.setSoTimeout((int) COMMAND_WAIT.toMillis());
+      observerSocket.setSoTimeout((int) COMMAND_WAIT.toMillis());
+
+      actorWriter.println("LOGIN demo@example.com swordfish");
+      assertThat(readBlockAfterContains(actorReader, "Logged in as demo@example.com"))
+          .contains("Logged in as demo@example.com");
+      actorWriter.println("PLAY demo");
+      assertThat(readLineAfterContains(actorReader, "OK PLAY Entered world: demo"))
+          .contains("OK PLAY Entered world: demo");
+
+      targetWriter.println("LOGIN demo@example.com swordfish");
+      assertThat(readBlockAfterContains(targetReader, "Logged in as demo@example.com"))
+          .contains("Logged in as demo@example.com");
+      targetWriter.println("PLAY demo Sora");
+      assertThat(readLineAfterContains(targetReader, "OK PLAY Entered world: demo"))
+          .contains("OK PLAY Entered world: demo");
+
+      observerWriter.println("LOGIN demo@example.com swordfish");
+      assertThat(readBlockAfterContains(observerReader, "Logged in as demo@example.com"))
+          .contains("Logged in as demo@example.com");
+      observerWriter.println("PLAY demo Nyx");
+      assertThat(readLineAfterContains(observerReader, "OK PLAY Entered world: demo"))
+          .contains("OK PLAY Entered world: demo");
+
+      SessionContextService sessionContextService = GAME_SESSION.bean(SessionContextService.class);
+      ActiveTransportSessionRegistry sessionRegistry =
+          GAME_SESSION.bean(ActiveTransportSessionRegistry.class);
+      ScreenBufferService screenBufferService = GAME_SESSION.bean(ScreenBufferService.class);
+      SessionContext targetContext =
+          sessionContextService
+              .findByGameplayName(TENANT_ID, DEMO_WORLD_INSTANCE_ID, "Sora")
+              .orElseThrow();
+      SessionContext observerContext =
+          sessionContextService
+              .findByGameplayName(TENANT_ID, DEMO_WORLD_INSTANCE_ID, "Nyx")
+              .orElseThrow();
+      assertThat(sessionRegistry.find(targetContext.sessionId())).isPresent();
+      assertThat(sessionRegistry.find(observerContext.sessionId())).isPresent();
+
+      actorWriter.println("WHISPER Sora Keep quiet");
+      assertBufferedScreenEventuallyContains(
+          screenBufferService, targetContext, ChatTestFixtures.canonicalWhisperTargetText());
+      assertBufferedScreenEventuallyContains(
+          screenBufferService,
+          observerContext,
+          ChatTestFixtures.canonicalWhisperObserverMetadataText());
+      assertThat(readLineAfterContains(actorReader, "You whisper to Sora, \"Keep quiet\""))
+          .contains(ChatTestFixtures.canonicalWhisperText());
+      assertThat(readLineAfterContains(targetReader, "Emberline whispers to you, \"Keep quiet\""))
+          .contains(ChatTestFixtures.canonicalWhisperTargetText());
+      assertThat(readLineAfterContains(observerReader, "Emberline whispers something to Sora."))
+          .contains(ChatTestFixtures.canonicalWhisperObserverMetadataText());
+    }
+  }
+
+  @Test
+  void telnetTellDeliversTargetView() throws Exception {
+    ensureTestServicesStarted();
+    ENTITY_STUB.setRoomEntities(ChatTestFixtures.sampleEntities());
+
+    try (Socket actorSocket = new Socket("localhost", telnetServer.getPort());
+        PrintWriter actorWriter =
+            new PrintWriter(
+                new OutputStreamWriter(actorSocket.getOutputStream(), StandardCharsets.ISO_8859_1),
+                true);
+        BufferedReader actorReader =
+            new BufferedReader(
+                new InputStreamReader(actorSocket.getInputStream(), StandardCharsets.ISO_8859_1));
+        Socket targetSocket = new Socket("localhost", telnetServer.getPort());
+        PrintWriter targetWriter =
+            new PrintWriter(
+                new OutputStreamWriter(targetSocket.getOutputStream(), StandardCharsets.ISO_8859_1),
+                true);
+        BufferedReader targetReader =
+            new BufferedReader(
+                new InputStreamReader(
+                    targetSocket.getInputStream(), StandardCharsets.ISO_8859_1))) {
+      actorSocket.setSoTimeout((int) COMMAND_WAIT.toMillis());
+      targetSocket.setSoTimeout((int) COMMAND_WAIT.toMillis());
+
+      actorWriter.println("LOGIN demo@example.com swordfish");
+      assertThat(readBlockAfterContains(actorReader, "Logged in as demo@example.com"))
+          .contains("Logged in as demo@example.com");
+      actorWriter.println("PLAY demo Emberline");
+      assertThat(readLineAfterContains(actorReader, "OK PLAY Entered world: demo"))
+          .contains("OK PLAY Entered world: demo");
+
+      targetWriter.println("LOGIN demo@example.com swordfish");
+      assertThat(readBlockAfterContains(targetReader, "Logged in as demo@example.com"))
+          .contains("Logged in as demo@example.com");
+      targetWriter.println("PLAY demo Sora");
+      assertThat(readLineAfterContains(targetReader, "OK PLAY Entered world: demo"))
+          .contains("OK PLAY Entered world: demo");
+
+      SessionContextService sessionContextService = GAME_SESSION.bean(SessionContextService.class);
+      ActiveTransportSessionRegistry sessionRegistry =
+          GAME_SESSION.bean(ActiveTransportSessionRegistry.class);
+      ScreenBufferService screenBufferService = GAME_SESSION.bean(ScreenBufferService.class);
+      SessionContext targetContext =
+          sessionContextService
+              .findByGameplayName(TENANT_ID, DEMO_WORLD_INSTANCE_ID, "Sora")
+              .orElseThrow();
+      assertThat(sessionRegistry.find(targetContext.sessionId())).isPresent();
+
+      actorWriter.println("TELL Sora Meet me at the forge");
+      assertBufferedScreenEventuallyContains(
+          screenBufferService, targetContext, ChatTestFixtures.canonicalTellTargetText());
+      assertThat(readLineAfterContains(actorReader, "You tell Sora, \"Meet me at the forge\""))
+          .contains(ChatTestFixtures.canonicalTellText());
+      assertThat(
+              readLineAfterContains(targetReader, "Emberline tells you, \"Meet me at the forge\""))
+          .contains(ChatTestFixtures.canonicalTellTargetText());
+    }
   }
 
   private static synchronized void ensureTestServicesStarted() {
@@ -807,6 +961,28 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     }
   }
 
+  private static void assertBufferedScreenEventuallyContains(
+      ScreenBufferService screenBufferService, SessionContext context, String expectedSubstring)
+      throws InterruptedException {
+    long deadline = System.currentTimeMillis() + COMMAND_WAIT.toMillis();
+    while (System.currentTimeMillis() < deadline) {
+      Optional<ScreenBufferService.BufferedScreen> maybeBuffer =
+          screenBufferService.get(
+              context.tenantId(), context.gameInstanceId(), context.characterId());
+      if (maybeBuffer.isPresent()
+          && maybeBuffer.orElseThrow().protocolText().contains(expectedSubstring)) {
+        return;
+      }
+      Thread.sleep(50L);
+    }
+    Optional<ScreenBufferService.BufferedScreen> maybeBuffer =
+        screenBufferService.get(
+            context.tenantId(), context.gameInstanceId(), context.characterId());
+    String actual = maybeBuffer.map(ScreenBufferService.BufferedScreen::protocolText).orElse("");
+    throw new AssertionError(
+        "Expected buffered screen to contain '" + expectedSubstring + "', got '" + actual + "'");
+  }
+
   private static final class AccountServiceStub extends AccountServiceGrpc.AccountServiceImplBase {
     private final Server server;
     private final List<AuthenticateRequest> requests = new CopyOnWriteArrayList<>();
@@ -839,9 +1015,14 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     public void authenticate(
         AuthenticateRequest request, StreamObserver<AuthenticateResponse> responseObserver) {
       requests.add(request);
+      long accountId =
+          switch (request.getUsername()) {
+            case "sora@example.com" -> SORA_ACCOUNT_ID;
+            default -> ACCOUNT_ID;
+          };
       AuthenticateResponse response =
           AuthenticateResponse.newBuilder()
-              .setAccountId(String.valueOf(ACCOUNT_ID))
+              .setAccountId(String.valueOf(accountId))
               .setAuthToken("stub-token")
               .build();
       responseObserver.onNext(response);

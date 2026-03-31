@@ -189,7 +189,7 @@ Implementation note:
 Player → Game Session Service → Social & Groups Service → Logging & Admin Service
 ```
 
-Current gameplay implementation note: the foundational shared communication path is now live for `SAY`, `WHISPER`, and `TELL`. Structured metadata-only observer handling for `WHISPER` now exists in the shared communication model, while broader audible scopes (`area`, `map`, `region`, `continent`, channel-level) and recipient-side live push delivery remain later communication slices.
+Current gameplay implementation note: the foundational shared communication path is now live for `SAY`, `WHISPER`, and `TELL`. Structured metadata-only observer handling for `WHISPER` and recipient-side live delivery for generic WebSocket and Telnet now exist in the shared communication model. Broader audible scopes (`area`, `map`, `region`, `continent`, channel-level) and first-party/MCP-aware recipient presentation remain later communication slices.
 
 ---
 

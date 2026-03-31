@@ -12,6 +12,7 @@ import net.firedevops.firemud.gamelogic.v1.SendCommunicationResponse;
 import net.firedevops.firemud.gamesession.client.EntityManagementClient;
 import net.firedevops.firemud.gamesession.client.GameLogicClient;
 import net.firedevops.firemud.gamesession.config.GameLogicProperties;
+import net.firedevops.firemud.gamesession.service.CommunicationRecipientDeliveryService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
@@ -26,6 +27,8 @@ class CommunicationCommandHandlerTest {
   private final GameLogicProperties gameLogicProperties = new GameLogicProperties();
   private final SessionContextService sessionContextService =
       Mockito.mock(SessionContextService.class);
+  private final CommunicationRecipientDeliveryService recipientDeliveryService =
+      Mockito.mock(CommunicationRecipientDeliveryService.class);
   private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
   private CommunicationCommandHandler handler;
   private final SessionContext sessionContext =
@@ -40,6 +43,7 @@ class CommunicationCommandHandlerTest {
             gameLogicClient,
             gameLogicProperties,
             sessionContextService,
+            recipientDeliveryService,
             meterRegistry);
   }
 

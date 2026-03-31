@@ -15,10 +15,8 @@ import java.net.http.WebSocket.Listener;
 import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import net.firedevops.firemud.account.v1.AccountServiceGrpc;
 import net.firedevops.firemud.account.v1.AuthenticateRequest;
@@ -52,6 +50,7 @@ class CommunicationWebSocketCrossServiceTest {
   private static final Duration COMMAND_WAIT = Duration.ofSeconds(5);
   private static final long TENANT_ID = 1L;
   private static final long ACCOUNT_ID = Long.parseLong(ChatTestFixtures.PLAYER_EMBERLINE);
+  private static final long SORA_ACCOUNT_ID = Long.parseLong(ChatTestFixtures.PLAYER_SORA);
   private static final long DEMO_WORLD_INSTANCE_ID = 1L;
 
   @Container
@@ -171,6 +170,59 @@ class CommunicationWebSocketCrossServiceTest {
     assertMetricEventually("gamesession.command.tell.invocations", 1.0, "tenantId", "1");
   }
 
+  @Test
+  void websocketWhisperPushesTargetAndObserverViewsToLiveRecipients() throws Exception {
+    ensureTestServicesStarted();
+    long sessionId = prepareGameInstance();
+
+    try (RecordingWebSocketClient actor = openSessionClient(sessionId, "actor-conn");
+        RecordingWebSocketClient target = openSessionClient(sessionId, "target-conn");
+        RecordingWebSocketClient observer = openSessionClient(sessionId, "observer-conn")) {
+      actor.send("LOGIN demo@example.com swordfish");
+      actor.awaitResponseCount(1);
+      actor.send("PLAY demo");
+      actor.awaitResponseCount(2);
+
+      target.send("LOGIN demo@example.com swordfish");
+      target.awaitResponseCount(1);
+      target.send("PLAY demo Sora");
+      target.awaitResponseCount(2);
+
+      observer.send("LOGIN demo@example.com swordfish");
+      observer.awaitResponseCount(1);
+      observer.send("PLAY demo Nyx");
+      observer.awaitResponseCount(2);
+
+      actor.send("WHISPER Sora Keep quiet");
+      actor.awaitContains(ChatTestFixtures.canonicalWhisperText());
+      target.awaitContains(ChatTestFixtures.canonicalWhisperTargetText());
+      observer.awaitContains(ChatTestFixtures.canonicalWhisperObserverMetadataText());
+    }
+  }
+
+  @Test
+  void websocketTellPushesTargetViewToLiveRecipient() throws Exception {
+    ensureTestServicesStarted();
+    long sessionId = prepareGameInstance();
+
+    try (RecordingWebSocketClient actor = openSessionClient(sessionId, "actor-tell-conn");
+        RecordingWebSocketClient target = openSessionClient(sessionId, "target-tell-conn")) {
+      actor.send("LOGIN demo@example.com swordfish");
+      actor.awaitResponseCount(1);
+      actor.send("PLAY demo Emberline");
+      actor.awaitResponseCount(2);
+
+      target.send("LOGIN demo@example.com swordfish");
+      target.awaitResponseCount(1);
+      target.send("PLAY demo Sora");
+      target.awaitResponseCount(2);
+
+      actor.send("TELL Sora Meet me at the forge");
+      actor.awaitContains(ChatTestFixtures.canonicalTellText());
+      target.awaitContains(ChatTestFixtures.canonicalTellTargetText());
+    }
+  }
+
   private static synchronized void ensureTestServicesStarted() throws Exception {
     if (ACCOUNT_STUB == null) {
       ACCOUNT_STUB = new AccountServiceStub(TestSocketUtils.findAvailableTcpPort());
@@ -228,6 +280,12 @@ class CommunicationWebSocketCrossServiceTest {
     GAME_SESSION
         .bean(ScreenBufferService.class)
         .clear(TENANT_ID, DEMO_WORLD_INSTANCE_ID, ACCOUNT_ID);
+    GAME_SESSION
+        .bean(ScreenBufferService.class)
+        .clear(TENANT_ID, DEMO_WORLD_INSTANCE_ID, Long.parseLong(ChatTestFixtures.PLAYER_SORA));
+    GAME_SESSION
+        .bean(ScreenBufferService.class)
+        .clear(TENANT_ID, DEMO_WORLD_INSTANCE_ID, Long.parseLong(ChatTestFixtures.PLAYER_NYX));
     JdbcTemplate jdbc = new JdbcTemplate(GAME_SESSION.bean(javax.sql.DataSource.class));
     jdbc.execute(
         """
@@ -273,46 +331,20 @@ class CommunicationWebSocketCrossServiceTest {
 
   private List<String> runCommunicationSequence(long sessionId, String commandText)
       throws Exception {
-    HttpClient client = HttpClient.newHttpClient();
-    URI uri = URI.create("ws://localhost:" + GAME_SESSION.port() + "/ws/game");
-    CopyOnWriteArrayList<String> responses = new CopyOnWriteArrayList<>();
-    AtomicInteger received = new AtomicInteger();
-    CompletableFuture<Void> ready = new CompletableFuture<>();
+    try (RecordingWebSocketClient client =
+        openSessionClient(sessionId, "flow-" + commandText.hashCode())) {
+      client.send("LOGIN demo@example.com swordfish");
+      client.awaitResponseCount(1);
+      client.send("PLAY demo");
+      client.awaitResponseCount(2);
+      client.send(commandText);
+      client.awaitResponseCount(3);
+      return List.copyOf(client.responses);
+    }
+  }
 
-    WebSocket webSocket =
-        client
-            .newWebSocketBuilder()
-            .header("X-Game-Instance-Id", String.valueOf(sessionId))
-            .buildAsync(
-                uri,
-                new Listener() {
-                  @Override
-                  public void onOpen(WebSocket webSocket) {
-                    webSocket.request(1);
-                  }
-
-                  @Override
-                  public CompletionStage<?> onText(
-                      WebSocket webSocket, CharSequence data, boolean last) {
-                    responses.add(data.toString());
-                    int count = received.incrementAndGet();
-                    webSocket.request(1);
-                    if (count >= 3) {
-                      ready.complete(null);
-                    }
-                    return Listener.super.onText(webSocket, data, last);
-                  }
-                })
-            .join();
-
-    webSocket.sendText("LOGIN demo@example.com swordfish", true).join();
-    waitForResponseCount(responses, 1);
-    webSocket.sendText("PLAY demo", true).join();
-    waitForResponseCount(responses, 2);
-    webSocket.sendText(commandText, true).join();
-    ready.get(COMMAND_WAIT.toMillis(), TimeUnit.MILLISECONDS);
-    webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "done").join();
-    return responses;
+  private RecordingWebSocketClient openSessionClient(long sessionId, String proxyConnectionId) {
+    return new RecordingWebSocketClient(sessionId, proxyConnectionId);
   }
 
   private void waitForResponseCount(List<String> responses, int expected)
@@ -359,9 +391,14 @@ class CommunicationWebSocketCrossServiceTest {
                     public void authenticate(
                         AuthenticateRequest request,
                         StreamObserver<AuthenticateResponse> responseObserver) {
+                      long accountId =
+                          switch (request.getUsername()) {
+                            case "sora@example.com" -> SORA_ACCOUNT_ID;
+                            default -> ACCOUNT_ID;
+                          };
                       AuthenticateResponse response =
                           AuthenticateResponse.newBuilder()
-                              .setAccountId(String.valueOf(ACCOUNT_ID))
+                              .setAccountId(String.valueOf(accountId))
                               .setAuthToken("stub-token")
                               .build();
                       responseObserver.onNext(response);
@@ -411,6 +448,74 @@ class CommunicationWebSocketCrossServiceTest {
       if (server != null) {
         server.shutdownNow();
       }
+    }
+  }
+
+  private final class RecordingWebSocketClient implements AutoCloseable {
+    private final CopyOnWriteArrayList<String> responses = new CopyOnWriteArrayList<>();
+    private final AtomicInteger received = new AtomicInteger();
+    private final WebSocket webSocket;
+
+    private RecordingWebSocketClient(long sessionId, String proxyConnectionId) {
+      HttpClient client = HttpClient.newHttpClient();
+      URI uri = URI.create("ws://localhost:" + GAME_SESSION.port() + "/ws/game");
+      this.webSocket =
+          client
+              .newWebSocketBuilder()
+              .header("X-Game-Instance-Id", String.valueOf(sessionId))
+              .header("X-Tenant-Id", String.valueOf(TENANT_ID))
+              .header("X-Proxy-Connection-Id", proxyConnectionId)
+              .buildAsync(
+                  uri,
+                  new Listener() {
+                    @Override
+                    public void onOpen(WebSocket webSocket) {
+                      webSocket.request(1);
+                    }
+
+                    @Override
+                    public CompletionStage<?> onText(
+                        WebSocket webSocket, CharSequence data, boolean last) {
+                      responses.add(data.toString());
+                      received.incrementAndGet();
+                      webSocket.request(1);
+                      return Listener.super.onText(webSocket, data, last);
+                    }
+                  })
+              .join();
+    }
+
+    private void send(String text) {
+      webSocket.sendText(text, true).join();
+    }
+
+    private void awaitResponseCount(int expected) throws Exception {
+      long deadline = System.currentTimeMillis() + COMMAND_WAIT.toMillis();
+      while (System.currentTimeMillis() < deadline) {
+        if (received.get() >= expected) {
+          return;
+        }
+        Thread.sleep(50);
+      }
+      throw new AssertionError(
+          "Expected at least " + expected + " responses, got " + received.get());
+    }
+
+    private void awaitContains(String expectedSubstring) throws Exception {
+      long deadline = System.currentTimeMillis() + COMMAND_WAIT.toMillis();
+      while (System.currentTimeMillis() < deadline) {
+        if (responses.stream().anyMatch(response -> response.contains(expectedSubstring))) {
+          return;
+        }
+        Thread.sleep(50);
+      }
+      throw new AssertionError(
+          "Expected a response containing '" + expectedSubstring + "', got " + responses);
+    }
+
+    @Override
+    public void close() {
+      webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "done").join();
     }
   }
 }

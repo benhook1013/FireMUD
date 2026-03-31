@@ -10,6 +10,7 @@ public final class ChatTestFixtures {
   public static final String TENANT = "demo";
   public static final String PLAYER_EMBERLINE = "7";
   public static final String PLAYER_SORA = "8";
+  public static final String PLAYER_NYX = "9";
 
   private ChatTestFixtures() {}
 
@@ -28,6 +29,14 @@ public final class ChatTestFixtures {
             .setEntityType(EntityType.PLAYER)
             .setRole("listener")
             .build();
+    RoomEntity nyx =
+        RoomEntity.newBuilder()
+            .setEntityId(PLAYER_NYX)
+            .setDisplayName("Nyx")
+            .setEntityType(EntityType.PLAYER)
+            .setRole("observer")
+            .addStateFlags("observer_metadata_only")
+            .build();
     RoomEntity kobold =
         RoomEntity.newBuilder()
             .setEntityId("NPC-001")
@@ -38,6 +47,7 @@ public final class ChatTestFixtures {
     return ListRoomEntitiesResponse.newBuilder()
         .addEntities(emberline)
         .addEntities(sora)
+        .addEntities(nyx)
         .addEntities(kobold)
         .build();
   }
@@ -57,6 +67,14 @@ public final class ChatTestFixtures {
           .setTenantId("1")
           .setAccountId("8")
           .setName("Sora")
+          .build();
+    }
+    if ("Nyx".equalsIgnoreCase(name)) {
+      return Character.newBuilder()
+          .setId(PLAYER_NYX)
+          .setTenantId("1")
+          .setAccountId("9")
+          .setName("Nyx")
           .build();
     }
     return Character.getDefaultInstance();
