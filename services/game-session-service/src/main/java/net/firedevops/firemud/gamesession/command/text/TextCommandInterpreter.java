@@ -107,7 +107,10 @@ public class TextCommandInterpreter {
       }
       PlayCommandHandlingResult playResult = playHandler.handle(sessionId, command);
       return new TextCommandInterpretationResult(
-          playResult.commandResult(), playResult.responseText(), true);
+          playResult.commandResult(),
+          playResult.responseText(),
+          true,
+          playResult.reconnectRedrawRecommended());
     }
 
     if (requiresGameplayAuthentication(command.type()) && !hasLogin) {

@@ -160,10 +160,11 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
               Optional<ScreenBufferService.BufferedScreen> maybeBuffer =
                   screenBufferService.get(
                       context.tenantId(), context.gameInstanceId(), context.characterId());
-              if (maybeBuffer.isEmpty()) {
+              if (!interpretation.reconnectRedrawRecommended() && maybeBuffer.isEmpty()) {
                 return;
               }
-              sendReplayChunk(session, maybeBuffer.orElseThrow().protocolText(), "screen buffer");
+              maybeBuffer.ifPresent(
+                  buffer -> sendReplayChunk(session, buffer.protocolText(), "screen buffer"));
               String look = lookHandler.describeProtocol(sessionId);
               if (StringUtils.hasText(look)) {
                 sendReplayChunk(session, look, "fresh LOOK");

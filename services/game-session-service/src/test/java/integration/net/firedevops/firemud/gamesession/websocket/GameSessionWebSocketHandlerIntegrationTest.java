@@ -224,11 +224,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
     verify(gameLogicClient).resolveLook("22", "41", "123", "1021");
     verify(lookCacheService)
         .cache(
-            eq(22L),
-            eq(1L),
-            eq("1021"),
-            eq("Login Hall text"),
-            eq("OK LOOK\nLogin Hall text\n\n"));
+            eq(22L), eq(1L), eq("1021"), eq("Login Hall text"), eq("OK LOOK\nLogin Hall text\n\n"));
   }
 
   @Test
@@ -293,10 +289,6 @@ class GameSessionWebSocketHandlerIntegrationTest {
     verify(gameLogicClient).resolveMove("22", "42", "123", "1021", "north");
     verify(lookCacheService)
         .cache(
-            eq(22L),
-            eq(1L),
-            eq("2045"),
-            eq("North Hall text"),
-            eq("OK LOOK\nNorth Hall text\n\n"));
+            eq(22L), eq(1L), eq("2045"), eq("North Hall text"), eq("OK LOOK\nNorth Hall text\n\n"));
   }
 }

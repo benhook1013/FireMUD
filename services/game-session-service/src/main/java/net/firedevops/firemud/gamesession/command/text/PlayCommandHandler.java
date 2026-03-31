@@ -143,16 +143,21 @@ public class PlayCommandHandler {
           context.sessionId());
       return new PlayCommandHandlingResult(
           CommandEnqueueResult.success(),
-          formatSuccessResponse(selectedWorld.getSlug(), character));
+          formatSuccessResponse(selectedWorld.getSlug(), character),
+          true);
     }
 
-    maybeRecordFreshEntryFallback(
-        context, selectedWorld, character, gameInstanceId, characterId, tenantTag);
+    boolean freshEntryFallback =
+        maybeRecordFreshEntryFallback(
+            context, selectedWorld, character, gameInstanceId, characterId, tenantTag);
 
     Optional<SessionContext> existingBinding =
-        sessionContextService.findByGameplayIdentity(context.tenantId(), gameInstanceId, characterId);
-    existingBinding.ifPresent(
-        existing -> handleExistingBinding(context, existing, gameInstanceId, characterId));
+        sessionContextService.findByGameplayIdentity(
+            context.tenantId(), gameInstanceId, characterId);
+    boolean resumedOrTookOver =
+        existingBinding
+            .map(existing -> handleExistingBinding(context, existing, gameInstanceId, characterId))
+            .orElse(false);
 
     String roomInstanceId =
         existingBinding
@@ -175,7 +180,9 @@ public class PlayCommandHandler {
     sessionContextService.save(updated);
 
     return new PlayCommandHandlingResult(
-        CommandEnqueueResult.success(), formatSuccessResponse(selectedWorld.getSlug(), character));
+        CommandEnqueueResult.success(),
+        formatSuccessResponse(selectedWorld.getSlug(), character),
+        resumedOrTookOver || freshEntryFallback);
   }
 
   private PlayCommandHandlingResult failure(
@@ -221,7 +228,7 @@ public class PlayCommandHandler {
     return "character-" + characterId;
   }
 
-  private void handleExistingBinding(
+  private boolean handleExistingBinding(
       SessionContext incoming, SessionContext existing, long gameInstanceId, long characterId) {
     if (existing.sessionId() == incoming.sessionId()) {
       resumeCounter.increment();
@@ -234,7 +241,7 @@ public class PlayCommandHandler {
           gameInstanceId,
           characterId,
           incoming.sessionId());
-      return;
+      return true;
     }
 
     takeoverCounter.increment();
@@ -249,6 +256,7 @@ public class PlayCommandHandler {
         existing.sessionId(),
         incoming.sessionId());
     sessionContextService.deleteBySessionId(existing.tenantId(), existing.sessionId());
+    return true;
   }
 
   private String formatSuccessResponse(String world, String character) {
@@ -385,7 +393,7 @@ public class PlayCommandHandler {
     return Optional.of(error);
   }
 
-  private void maybeRecordFreshEntryFallback(
+  private boolean maybeRecordFreshEntryFallback(
       SessionContext context,
       GameSessionProperties.WorldOption selectedWorld,
       String requestedCharacter,
@@ -394,14 +402,14 @@ public class PlayCommandHandler {
       String tenantTag) {
     if (context.gameInstanceId() != requestedGameInstanceId
         || context.characterId() != requestedCharacterId) {
-      return;
+      return false;
     }
     if (StringUtils.hasText(context.roomInstanceId())
         && Objects.equals(
             normalizeName(context.characterName()),
             normalizeName(
                 resolveCharacterName(context, requestedCharacterId, requestedCharacter)))) {
-      return;
+      return false;
     }
     meterRegistry
         .counter(
@@ -417,6 +425,7 @@ public class PlayCommandHandler {
         selectedWorld.getGameInstanceId(),
         requestedCharacterId,
         context.sessionId());
+    return true;
   }
 
   private void recordResumeDeniedIfApplicable(

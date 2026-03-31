@@ -5,14 +5,22 @@ import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 
 /** Result of interpreting a text command, including any immediate response text. */
 public record TextCommandInterpretationResult(
-    CommandEnqueueResult commandResult, String responseText, boolean protocolResponse) {
+    CommandEnqueueResult commandResult,
+    String responseText,
+    boolean protocolResponse,
+    boolean reconnectRedrawRecommended) {
 
   public TextCommandInterpretationResult {
     Objects.requireNonNull(commandResult, "commandResult must not be null");
   }
 
   public TextCommandInterpretationResult(CommandEnqueueResult commandResult, String responseText) {
-    this(commandResult, responseText, false);
+    this(commandResult, responseText, false, false);
+  }
+
+  public TextCommandInterpretationResult(
+      CommandEnqueueResult commandResult, String responseText, boolean protocolResponse) {
+    this(commandResult, responseText, protocolResponse, false);
   }
 
   public boolean hasResponse() {

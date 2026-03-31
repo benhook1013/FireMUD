@@ -239,6 +239,25 @@ class LookWebSocketCrossServiceTest {
         .anyMatch(response -> response.trim().equals(LookTestFixtures.canonicalLookText().trim()));
   }
 
+  @Test
+  void websocketReconnectWithoutBufferedTranscriptStillGetsFreshLook() throws Exception {
+    ensureTestServicesStarted();
+    ACCOUNT_STUB.allowGameplayAdmission();
+    long sessionId = prepareGameInstance();
+
+    List<String> firstConnection = runPlayThenDisconnect(sessionId);
+    assertThat(firstConnection).hasSizeGreaterThanOrEqualTo(2);
+    assertThat(firstConnection.get(0)).startsWith("OK LOGIN");
+    assertThat(firstConnection.get(1)).startsWith("OK PLAY");
+
+    List<String> reconnectResponses = runPlayAfterReconnectExpectingFreshLook(sessionId);
+    assertThat(reconnectResponses).hasSizeGreaterThanOrEqualTo(3);
+    assertThat(reconnectResponses.get(0)).startsWith("OK LOGIN");
+    assertThat(reconnectResponses.get(1)).startsWith("OK PLAY");
+    assertThat(reconnectResponses)
+        .anyMatch(response -> response.trim().equals(LookTestFixtures.canonicalLookText().trim()));
+  }
+
   private static synchronized void ensureTestServicesStarted() throws Exception {
     if (ACCOUNT_STUB == null) {
       ACCOUNT_STUB = new AccountServiceStub(TestSocketUtils.findAvailableTcpPort());
@@ -450,6 +469,41 @@ class LookWebSocketCrossServiceTest {
     return responses;
   }
 
+  private List<String> runPlayThenDisconnect(long sessionId) throws Exception {
+    HttpClient client = HttpClient.newHttpClient();
+    URI uri = URI.create("ws://localhost:" + GAME_SESSION.port() + "/ws/game");
+    CopyOnWriteArrayList<String> responses = new CopyOnWriteArrayList<>();
+
+    WebSocket webSocket =
+        client
+            .newWebSocketBuilder()
+            .header("X-Game-Instance-Id", String.valueOf(sessionId))
+            .buildAsync(
+                uri,
+                new Listener() {
+                  @Override
+                  public void onOpen(WebSocket webSocket) {
+                    webSocket.request(1);
+                  }
+
+                  @Override
+                  public CompletionStage<?> onText(
+                      WebSocket webSocket, CharSequence data, boolean last) {
+                    responses.add(data.toString());
+                    webSocket.request(1);
+                    return Listener.super.onText(webSocket, data, last);
+                  }
+                })
+            .join();
+
+    webSocket.sendText("LOGIN demo@example.com swordfish", true).join();
+    waitForResponseCount(responses, 1);
+    webSocket.sendText("PLAY demo", true).join();
+    waitForResponseCount(responses, 2);
+    webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "done").join();
+    return responses;
+  }
+
   private List<String> runLookAfterReconnect(long sessionId) throws Exception {
     HttpClient client = HttpClient.newHttpClient();
     URI uri = URI.create("ws://localhost:" + GAME_SESSION.port() + "/ws/game");
@@ -522,6 +576,41 @@ class LookWebSocketCrossServiceTest {
     waitForResponseCount(responses, 1);
     webSocket.sendText("PLAY demo", true).join();
     waitForResponseCount(responses, 2);
+    webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "done").join();
+    return responses;
+  }
+
+  private List<String> runPlayAfterReconnectExpectingFreshLook(long sessionId) throws Exception {
+    HttpClient client = HttpClient.newHttpClient();
+    URI uri = URI.create("ws://localhost:" + GAME_SESSION.port() + "/ws/game");
+    CopyOnWriteArrayList<String> responses = new CopyOnWriteArrayList<>();
+
+    WebSocket webSocket =
+        client
+            .newWebSocketBuilder()
+            .header("X-Game-Instance-Id", String.valueOf(sessionId))
+            .buildAsync(
+                uri,
+                new Listener() {
+                  @Override
+                  public void onOpen(WebSocket webSocket) {
+                    webSocket.request(1);
+                  }
+
+                  @Override
+                  public CompletionStage<?> onText(
+                      WebSocket webSocket, CharSequence data, boolean last) {
+                    responses.add(data.toString());
+                    webSocket.request(1);
+                    return Listener.super.onText(webSocket, data, last);
+                  }
+                })
+            .join();
+
+    webSocket.sendText("LOGIN demo@example.com swordfish", true).join();
+    waitForResponseCount(responses, 1);
+    webSocket.sendText("PLAY demo", true).join();
+    waitForResponseCount(responses, 3);
     webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "done").join();
     return responses;
   }
