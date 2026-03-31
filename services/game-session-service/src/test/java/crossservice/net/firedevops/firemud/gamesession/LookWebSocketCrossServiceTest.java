@@ -190,6 +190,30 @@ class LookWebSocketCrossServiceTest {
   }
 
   @Test
+  void websocketMovedPlayerStaysInGameAcrossGameLogicRestart() throws Exception {
+    ensureTestServicesStarted();
+    ACCOUNT_STUB.allowGameplayAdmission();
+    long sessionId = prepareGameInstance();
+    URI uri = URI.create("ws://localhost:" + GAME_SESSION.port() + "/ws/game");
+
+    try (TrackingSocket socket = connectTrackingSocket(uri, sessionId)) {
+      socket.sendAndAwait("LOGIN demo@example.com swordfish", 1);
+      socket.sendAndAwait("PLAY demo", 2);
+      socket.sendAndAwait("north", 3);
+      assertThat(socket.responses().get(2).trim())
+          .isEqualTo(
+              LookTestFixtures.canonicalLookText(LookTestFixtures.DESTINATION_ROOM_ID).trim());
+
+      GAME_LOGIC = GAME_LOGIC.restart();
+
+      socket.sendAndAwait("LOOK", 4);
+      assertThat(socket.responses().get(3).trim())
+          .isEqualTo(
+              LookTestFixtures.canonicalLookText(LookTestFixtures.DESTINATION_ROOM_ID).trim());
+    }
+  }
+
+  @Test
   void websocketReconnectAfterRevocationFailsClosed() throws Exception {
     ensureTestServicesStarted();
     ACCOUNT_STUB.allowGameplayAdmission();
