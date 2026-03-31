@@ -19,7 +19,7 @@ firemud:
     gameplay:
       bridge:
         upstream-url: ws://game-session-service:8080/ws/game
-        reconnect-attempts: 3
+        reconnect-attempts: 40
         reconnect-delay-ms: 250
     header-trust:
       forwarded-client-ip:

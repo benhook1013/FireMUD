@@ -24,6 +24,7 @@ import reactor.core.publisher.Sinks;
 /** Keeps the downstream gameplay socket open while rebinding a replacement upstream session. */
 public class GameplayWebSocketBridgeHandler implements WebSocketHandler {
   private static final Logger LOG = LoggerFactory.getLogger(GameplayWebSocketBridgeHandler.class);
+  private static final Duration UPSTREAM_CONNECT_TIMEOUT = Duration.ofSeconds(1);
   private static final String CONNECTION_MODE_HEADER = "X-Firemud-Connection-Mode";
   private static final String CONNECT_CONTEXT_HEADER = "X-Firemud-Connect-Context";
   private static final String TRANSPORT_SESSION_HEADER = "X-Firemud-Transport-Session-Id";
@@ -83,8 +84,16 @@ public class GameplayWebSocketBridgeHandler implements WebSocketHandler {
     if (state.downstreamClosed.get()) {
       return Mono.empty();
     }
-    return client
-        .execute(upstreamUri, upstreamHeaders, upstream -> bridgeUpstreamSession(upstream, state))
+    Sinks.One<Void> connected = Sinks.one();
+    Mono<Void> sessionLifecycle =
+        client.execute(
+            upstreamUri,
+            upstreamHeaders,
+            upstream -> {
+              connected.tryEmitEmpty();
+              return bridgeUpstreamSession(upstream, state);
+            });
+    return Mono.when(connected.asMono().timeout(UPSTREAM_CONNECT_TIMEOUT), sessionLifecycle)
         .onErrorResume(
             GameplayBridgeReconnectException.class,
             reconnect -> {
@@ -114,7 +123,34 @@ public class GameplayWebSocketBridgeHandler implements WebSocketHandler {
                 return Mono.empty();
               }
               return downstream.close(terminal.status());
-            });
+            })
+        .onErrorResume(
+            transportError ->
+                retryTransportFailure(downstream, upstreamUri, upstreamHeaders, state, attempt));
+  }
+
+  private Mono<Void> retryTransportFailure(
+      WebSocketSession downstream,
+      URI upstreamUri,
+      HttpHeaders upstreamHeaders,
+      BridgeState state,
+      int attempt) {
+    if (state.downstreamClosed.get()) {
+      return Mono.empty();
+    }
+    if (attempt >= properties.reconnectAttempts()) {
+      LOG.warn(
+          "Gameplay upstream transport reconnect exhausted after {} attempts for downstream {}",
+          attempt + 1,
+          downstream.getId());
+      return downstream.close(BACKEND_UNAVAILABLE);
+    }
+    LOG.info(
+        "Gameplay upstream transport reconnecting attempt {} for downstream {}",
+        attempt + 1,
+        downstream.getId());
+    return Mono.delay(Duration.ofMillis(properties.reconnectDelayMs()))
+        .then(connectWithRetry(downstream, upstreamUri, upstreamHeaders, state, attempt + 1));
   }
 
   private Mono<Void> bridgeUpstreamSession(WebSocketSession upstream, BridgeState state) {

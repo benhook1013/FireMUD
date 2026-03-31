@@ -1,5 +1,7 @@
 package net.firedevops.firemud.springcloudgateway.config;
 
+import io.netty.channel.ChannelOption;
+import java.time.Duration;
 import java.util.Map;
 import net.firedevops.firemud.springcloudgateway.websocket.GameplayWebSocketBridgeHandler;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
@@ -11,6 +13,7 @@ import org.springframework.web.reactive.HandlerMapping;
 import org.springframework.web.reactive.handler.SimpleUrlHandlerMapping;
 import org.springframework.web.reactive.socket.client.ReactorNettyWebSocketClient;
 import org.springframework.web.reactive.socket.server.support.WebSocketHandlerAdapter;
+import reactor.netty.http.client.HttpClient;
 
 @Configuration
 @EnableConfigurationProperties(GameplayWebSocketBridgeProperties.class)
@@ -19,7 +22,11 @@ public class GameplayWebSocketBridgeConfig {
   @Bean
   @Primary
   ReactorNettyWebSocketClient gameplayWebSocketClient() {
-    return new ReactorNettyWebSocketClient();
+    HttpClient httpClient =
+        HttpClient.newConnection()
+            .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 1_000)
+            .responseTimeout(Duration.ofSeconds(1));
+    return new ReactorNettyWebSocketClient(httpClient);
   }
 
   @Bean

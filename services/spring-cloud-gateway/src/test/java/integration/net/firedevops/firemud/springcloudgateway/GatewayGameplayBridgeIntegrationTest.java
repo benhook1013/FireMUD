@@ -10,6 +10,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.command.text.LookCommandConstants;
 import net.firedevops.firemud.springcloudgateway.SpringCloudGatewayApplication;
@@ -18,6 +19,7 @@ import net.firedevops.firemud.springcloudgateway.health.GameplayRouteReadinessHe
 import net.firedevops.firemud.test.GatewayTestProperties;
 import net.firedevops.firemud.test.NoGrpcServerTestConfiguration;
 import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.SpringBootConfiguration;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
@@ -28,7 +30,9 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Primary;
+import org.springframework.http.client.ReactorResourceFactory;
 import org.springframework.http.codec.ServerCodecConfigurer;
+import org.springframework.test.util.TestSocketUtils;
 import org.springframework.web.reactive.HandlerMapping;
 import org.springframework.web.reactive.handler.SimpleUrlHandlerMapping;
 import org.springframework.web.reactive.socket.WebSocketHandler;
@@ -45,6 +49,13 @@ class GatewayGameplayBridgeIntegrationTest {
   private static UpstreamHolder UPSTREAM;
   private static GatewayHolder GATEWAY;
   private static final AtomicReference<String> TEST_UPSTREAM_URL = new AtomicReference<>();
+  private static final AtomicReference<UpstreamRuntimeState> TEST_UPSTREAM_STATE =
+      new AtomicReference<>();
+
+  @AfterEach
+  void shutdownAfterEach() {
+    shutdown();
+  }
 
   @AfterAll
   static void shutdown() {
@@ -115,16 +126,84 @@ class GatewayGameplayBridgeIntegrationTest {
     sessionRef.get().sendMessage(new TextMessage("LOOK"));
     assertThat(firstLook.await(5, TimeUnit.SECONDS)).isTrue();
     sessionRef.get().sendMessage(new TextMessage("FORCE_DROP"));
-    assertThat(UPSTREAM.stub().secondConnection.await(5, TimeUnit.SECONDS)).isTrue();
+    assertThat(UPSTREAM.awaitConnections(2, 5, TimeUnit.SECONDS)).isTrue();
     assertThat(downstreamClosed.get()).isFalse();
     session.sendMessage(new TextMessage("LOOK"));
     assertThat(secondLook.await(5, TimeUnit.SECONDS)).isTrue();
     session.close();
 
     assertThat(responses).contains(LookCommandConstants.LOOK_RESPONSE);
-    assertThat(UPSTREAM.stub().seenTransportSessionIds()).hasSize(2);
-    assertThat(UPSTREAM.stub().seenTransportSessionIds().get(0))
-        .isEqualTo(UPSTREAM.stub().seenTransportSessionIds().get(1));
+    assertThat(UPSTREAM.seenTransportSessionIds()).hasSize(2);
+    assertThat(UPSTREAM.seenTransportSessionIds().get(0))
+        .isEqualTo(UPSTREAM.seenTransportSessionIds().get(1));
+  }
+
+  @Test
+  @SuppressWarnings("removal")
+  void gatewayRebindsAfterRealUpstreamRestartWithoutDroppingClientSocket() throws Exception {
+    ensureStarted();
+
+    StandardWebSocketClient client = new StandardWebSocketClient();
+    WebSocketHttpHeaders headers = new WebSocketHttpHeaders();
+    headers.add("X-Game-Instance-Id", "42");
+    headers.add("X-Tenant-Id", "22");
+    headers.add("X-Proxy-Connection-Id", "bridge-test-conn");
+
+    AtomicBoolean downstreamClosed = new AtomicBoolean(false);
+    AtomicReference<WebSocketSession> sessionRef = new AtomicReference<>();
+    CountDownLatch firstReady = new CountDownLatch(1);
+    CountDownLatch firstLook = new CountDownLatch(1);
+    CountDownLatch secondLook = new CountDownLatch(1);
+
+    WebSocketSession session =
+        client
+            .execute(
+                new TextWebSocketHandler() {
+                  @Override
+                  public void afterConnectionEstablished(WebSocketSession session)
+                      throws IOException {
+                    sessionRef.set(session);
+                  }
+
+                  @Override
+                  protected void handleTextMessage(WebSocketSession session, TextMessage message) {
+                    if (message.getPayload().startsWith("UPSTREAM_READY")) {
+                      if (firstReady.getCount() > 0) {
+                        firstReady.countDown();
+                      }
+                    }
+                    if (message.getPayload().startsWith("OK LOOK")) {
+                      firstLook.countDown();
+                      secondLook.countDown();
+                    }
+                  }
+
+                  @Override
+                  public void afterConnectionClosed(
+                      WebSocketSession session,
+                      org.springframework.web.socket.CloseStatus closeStatus) {
+                    downstreamClosed.set(true);
+                  }
+                },
+                headers,
+                URI.create(GATEWAY.websocketUrl()))
+            .get(5, TimeUnit.SECONDS);
+
+    assertThat(firstReady.await(5, TimeUnit.SECONDS)).isTrue();
+    sessionRef.get().sendMessage(new TextMessage("LOOK"));
+    assertThat(firstLook.await(5, TimeUnit.SECONDS)).isTrue();
+
+    UPSTREAM.restart();
+    assertThat(UPSTREAM.awaitConnections(2, 30, TimeUnit.SECONDS)).isTrue();
+    assertThat(downstreamClosed.get()).isFalse();
+
+    session.sendMessage(new TextMessage("LOOK"));
+    assertThat(secondLook.await(30, TimeUnit.SECONDS)).isTrue();
+    session.close();
+
+    assertThat(UPSTREAM.seenTransportSessionIds()).hasSize(2);
+    assertThat(UPSTREAM.seenTransportSessionIds().get(0))
+        .isEqualTo(UPSTREAM.seenTransportSessionIds().get(1));
   }
 
   private static synchronized void ensureStarted() {
@@ -137,15 +216,9 @@ class GatewayGameplayBridgeIntegrationTest {
   }
 
   private static UpstreamHolder startUpstream() {
-    ConfigurableApplicationContext context =
-        new SpringApplicationBuilder(UpstreamStubApplication.class)
-            .properties(
-                "server.port=0",
-                "spring.main.web-application-type=reactive",
-                "spring.main.allow-bean-definition-overriding=true")
-            .run();
-    int port = ((WebServerApplicationContext) context).getWebServer().getPort();
-    return new UpstreamHolder(context, port);
+    int port = TestSocketUtils.findAvailableTcpPort();
+    TEST_UPSTREAM_STATE.set(new UpstreamRuntimeState());
+    return UpstreamHolder.start(port);
   }
 
   private static GatewayHolder startGateway(String upstreamUrl) {
@@ -176,13 +249,56 @@ class GatewayGameplayBridgeIntegrationTest {
     }
   }
 
-  private record UpstreamHolder(ConfigurableApplicationContext context, int port) {
+  private static final class UpstreamHolder {
+    private ConfigurableApplicationContext context;
+    private final int port;
+
+    private UpstreamHolder(ConfigurableApplicationContext context, int port) {
+      this.context = context;
+      this.port = port;
+    }
+
+    static UpstreamHolder start(int port) {
+      ConfigurableApplicationContext context =
+          new SpringApplicationBuilder(UpstreamStubApplication.class)
+              .properties(
+                  "server.port=" + port,
+                  "server.shutdown=immediate",
+                  "spring.main.web-application-type=reactive",
+                  "spring.main.allow-bean-definition-overriding=true")
+              .run();
+      return new UpstreamHolder(context, port);
+    }
+
     String websocketUrl() {
       return "ws://localhost:" + port + "/ws/game";
     }
 
-    UpstreamStub stub() {
-      return context.getBean("upstreamStub", UpstreamStub.class);
+    boolean awaitConnections(int count, long timeout, TimeUnit unit) throws InterruptedException {
+      long deadline = System.nanoTime() + unit.toNanos(timeout);
+      while (System.nanoTime() < deadline) {
+        if (TEST_UPSTREAM_STATE.get().connectionCount() >= count) {
+          return true;
+        }
+        Thread.sleep(50);
+      }
+      return TEST_UPSTREAM_STATE.get().connectionCount() >= count;
+    }
+
+    List<String> seenTransportSessionIds() {
+      return TEST_UPSTREAM_STATE.get().seenTransportSessionIds();
+    }
+
+    void restart() {
+      context.close();
+      context =
+          new SpringApplicationBuilder(UpstreamStubApplication.class)
+              .properties(
+                  "server.port=" + port,
+                  "server.shutdown=immediate",
+                  "spring.main.web-application-type=reactive",
+                  "spring.main.allow-bean-definition-overriding=true")
+              .run();
     }
 
     void close() {
@@ -204,7 +320,7 @@ class GatewayGameplayBridgeIntegrationTest {
   static class UpstreamStubConfiguration {
     @Bean
     UpstreamStub upstreamStub() {
-      return new UpstreamStub();
+      return new UpstreamStub(TEST_UPSTREAM_STATE.get());
     }
 
     @Bean
@@ -231,6 +347,13 @@ class GatewayGameplayBridgeIntegrationTest {
     ServerCodecConfigurer serverCodecConfigurer() {
       return ServerCodecConfigurer.create();
     }
+
+    @Bean
+    ReactorResourceFactory reactorResourceFactory() {
+      ReactorResourceFactory factory = new ReactorResourceFactory();
+      factory.setUseGlobalResources(false);
+      return factory;
+    }
   }
 
   @Configuration
@@ -238,25 +361,25 @@ class GatewayGameplayBridgeIntegrationTest {
     @Bean
     @Primary
     GameplayWebSocketBridgeProperties gameplayWebSocketBridgeProperties() {
-      return new GameplayWebSocketBridgeProperties(TEST_UPSTREAM_URL.get(), 3, 250L);
+      return new GameplayWebSocketBridgeProperties(TEST_UPSTREAM_URL.get(), 40, 250L);
     }
   }
 
   static final class UpstreamStub implements WebSocketHandler {
-    private final List<String> seenTransportSessionIds = new CopyOnWriteArrayList<>();
-    private final AtomicBoolean firstConnectionDropped = new AtomicBoolean(false);
-    private final CountDownLatch secondConnection = new CountDownLatch(1);
+    private final UpstreamRuntimeState state;
+
+    UpstreamStub(UpstreamRuntimeState state) {
+      this.state = state;
+    }
 
     @Override
     public Mono<Void> handle(org.springframework.web.reactive.socket.WebSocketSession session) {
       String transportSessionId =
           session.getHandshakeInfo().getHeaders().getFirst("X-Firemud-Transport-Session-Id");
       if (transportSessionId != null) {
-        seenTransportSessionIds.add(transportSessionId);
+        state.recordTransportSessionId(transportSessionId);
       }
-      if (seenTransportSessionIds.size() >= 2) {
-        secondConnection.countDown();
-      }
+      state.incrementConnectionCount();
 
       return session
           .send(Mono.just(session.textMessage("UPSTREAM_READY " + transportSessionId)))
@@ -270,8 +393,7 @@ class GatewayGameplayBridgeIntegrationTest {
 
     private Mono<Void> handleCommand(
         org.springframework.web.reactive.socket.WebSocketSession session, String command) {
-      if ("FORCE_DROP".equalsIgnoreCase(command)
-          && firstConnectionDropped.compareAndSet(false, true)) {
+      if ("FORCE_DROP".equalsIgnoreCase(command) && state.markFirstConnectionDropped()) {
         return Mono.error(new IllegalStateException("simulated upstream restart"));
       }
       if ("LOOK".equalsIgnoreCase(command)) {
@@ -279,9 +401,31 @@ class GatewayGameplayBridgeIntegrationTest {
       }
       return session.send(Mono.just(session.textMessage("OK " + command)));
     }
+  }
+
+  private static final class UpstreamRuntimeState {
+    private final List<String> seenTransportSessionIds = new CopyOnWriteArrayList<>();
+    private final AtomicBoolean firstConnectionDropped = new AtomicBoolean(false);
+    private final AtomicInteger connectionCount = new AtomicInteger();
+
+    void recordTransportSessionId(String transportSessionId) {
+      seenTransportSessionIds.add(transportSessionId);
+    }
+
+    void incrementConnectionCount() {
+      connectionCount.incrementAndGet();
+    }
+
+    int connectionCount() {
+      return connectionCount.get();
+    }
 
     List<String> seenTransportSessionIds() {
       return seenTransportSessionIds;
+    }
+
+    boolean markFirstConnectionDropped() {
+      return firstConnectionDropped.compareAndSet(false, true);
     }
   }
 }
