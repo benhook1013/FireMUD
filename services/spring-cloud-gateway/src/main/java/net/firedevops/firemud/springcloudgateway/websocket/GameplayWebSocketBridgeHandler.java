@@ -130,7 +130,16 @@ public class GameplayWebSocketBridgeHandler implements WebSocketHandler {
         upstream
             .receive()
             .map(WebSocketMessage::getPayloadAsText)
-            .doOnNext(payload -> state.outboundToClient.tryEmitNext(payload))
+            .doOnNext(
+                payload -> {
+                  Sinks.EmitResult result = state.outboundToClient.tryEmitNext(payload);
+                  if (result.isFailure()) {
+                    LOG.warn(
+                        "Failed to emit gameplay bridge payload '{}' to downstream: {}",
+                        payload,
+                        result);
+                  }
+                })
             .then();
 
     return Mono.firstWithSignal(send, receive)
@@ -200,7 +209,7 @@ public class GameplayWebSocketBridgeHandler implements WebSocketHandler {
     private final Sinks.Many<String> inboundToUpstream =
         Sinks.many().multicast().onBackpressureBuffer();
     private final Sinks.Many<String> outboundToClient =
-        Sinks.many().multicast().onBackpressureBuffer();
+        Sinks.many().unicast().onBackpressureBuffer();
     private final AtomicBoolean upstreamConnected = new AtomicBoolean(false);
     private final AtomicBoolean downstreamClosed = new AtomicBoolean(false);
   }

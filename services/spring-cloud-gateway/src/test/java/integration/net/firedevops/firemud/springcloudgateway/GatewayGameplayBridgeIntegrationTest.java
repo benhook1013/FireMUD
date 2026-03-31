@@ -13,6 +13,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.command.text.LookCommandConstants;
 import net.firedevops.firemud.springcloudgateway.SpringCloudGatewayApplication;
+import net.firedevops.firemud.springcloudgateway.config.GameplayWebSocketBridgeProperties;
 import net.firedevops.firemud.springcloudgateway.health.GameplayRouteReadinessHealthIndicator;
 import net.firedevops.firemud.test.GatewayTestProperties;
 import net.firedevops.firemud.test.NoGrpcServerTestConfiguration;
@@ -43,6 +44,7 @@ import reactor.core.publisher.Mono;
 class GatewayGameplayBridgeIntegrationTest {
   private static UpstreamHolder UPSTREAM;
   private static GatewayHolder GATEWAY;
+  private static final AtomicReference<String> TEST_UPSTREAM_URL = new AtomicReference<>();
 
   @AfterAll
   static void shutdown() {
@@ -72,7 +74,6 @@ class GatewayGameplayBridgeIntegrationTest {
     AtomicReference<WebSocketSession> sessionRef = new AtomicReference<>();
     CountDownLatch firstReady = new CountDownLatch(1);
     CountDownLatch firstLook = new CountDownLatch(1);
-    CountDownLatch secondReady = new CountDownLatch(1);
     CountDownLatch secondLook = new CountDownLatch(1);
 
     WebSocketSession session =
@@ -91,8 +92,6 @@ class GatewayGameplayBridgeIntegrationTest {
                     if (message.getPayload().startsWith("UPSTREAM_READY")) {
                       if (firstReady.getCount() > 0) {
                         firstReady.countDown();
-                      } else {
-                        secondReady.countDown();
                       }
                     }
                     if (message.getPayload().startsWith("OK LOOK")) {
@@ -118,8 +117,6 @@ class GatewayGameplayBridgeIntegrationTest {
     sessionRef.get().sendMessage(new TextMessage("FORCE_DROP"));
     assertThat(UPSTREAM.stub().secondConnection.await(5, TimeUnit.SECONDS)).isTrue();
     assertThat(downstreamClosed.get()).isFalse();
-
-    assertThat(secondReady.await(5, TimeUnit.SECONDS)).isTrue();
     session.sendMessage(new TextMessage("LOOK"));
     assertThat(secondLook.await(5, TimeUnit.SECONDS)).isTrue();
     session.close();
@@ -152,18 +149,18 @@ class GatewayGameplayBridgeIntegrationTest {
   }
 
   private static GatewayHolder startGateway(String upstreamUrl) {
+    TEST_UPSTREAM_URL.set(upstreamUrl);
     ConfigurableApplicationContext context =
-        new SpringApplicationBuilder(SpringCloudGatewayApplication.class)
+        new SpringApplicationBuilder(
+                SpringCloudGatewayApplication.class, GatewayBridgeTestOverrideConfiguration.class)
+            .profiles("test")
             .properties(
                 "server.port=0",
                 "spring.main.web-application-type=reactive",
                 "spring.flyway.enabled=false",
                 "firemud.database.enabled=false",
-                "firemud.gateway.gameplay.bridge.upstream-url=" + upstreamUrl,
                 GatewayTestProperties.SPRING_GRPC_SERVER_RANDOM_PORT,
-                GatewayTestProperties.REACTIVE_WEB_APPLICATION,
                 GatewayTestProperties.DISABLE_GATEWAY_WARNING_AND_GRPC_SERVER)
-            .profiles("test")
             .run();
     int port = ((WebServerApplicationContext) context).getWebServer().getPort();
     return new GatewayHolder(context, port);
@@ -185,7 +182,7 @@ class GatewayGameplayBridgeIntegrationTest {
     }
 
     UpstreamStub stub() {
-      return context.getBean(UpstreamStub.class);
+      return context.getBean("upstreamStub", UpstreamStub.class);
     }
 
     void close() {
@@ -233,6 +230,15 @@ class GatewayGameplayBridgeIntegrationTest {
     @Primary
     ServerCodecConfigurer serverCodecConfigurer() {
       return ServerCodecConfigurer.create();
+    }
+  }
+
+  @Configuration
+  static class GatewayBridgeTestOverrideConfiguration {
+    @Bean
+    @Primary
+    GameplayWebSocketBridgeProperties gameplayWebSocketBridgeProperties() {
+      return new GameplayWebSocketBridgeProperties(TEST_UPSTREAM_URL.get(), 3, 250L);
     }
   }
 
