@@ -16,6 +16,7 @@ dependencies {
     implementation(libs.grpc.spring.boot.starter)
     implementation(libs.spring.boot.starter.data.redis.reactive)
     implementation(project(":common-platform-core"))
+    implementation(project(":common-security"))
     implementation(libs.jjwt.api)
     runtimeOnly(libs.jjwt.impl)
     runtimeOnly(libs.jjwt.jackson)

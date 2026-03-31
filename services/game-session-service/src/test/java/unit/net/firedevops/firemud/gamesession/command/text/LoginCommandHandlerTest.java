@@ -25,6 +25,8 @@ import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.CommandService;
+import net.firedevops.firemud.gamesession.service.FirstPartyConnectContext;
+import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.gamesession.service.devisolated.DevIsolatedGameInstanceRegistry;
@@ -45,6 +47,8 @@ class LoginCommandHandlerTest {
       Mockito.mock(SessionContextService.class);
   private final AccountClient accountClient = Mockito.mock(AccountClient.class);
   private final CommandService commandService = Mockito.mock(CommandService.class);
+  private final FirstPartyConnectContextRegistry firstPartyConnectContextRegistry =
+      Mockito.mock(FirstPartyConnectContextRegistry.class);
   private final DevIsolatedProperties devIsolatedProperties = new DevIsolatedProperties(false);
   private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
   private final ObjectProvider<DevIsolatedGameInstanceRegistry> devIsolatedRegistryProvider =
@@ -67,6 +71,7 @@ class LoginCommandHandlerTest {
             sessionContextService,
             accountClient,
             commandService,
+            firstPartyConnectContextRegistry,
             devIsolatedProperties,
             devIsolatedRegistryProvider,
             meterRegistry);
@@ -126,7 +131,7 @@ class LoginCommandHandlerTest {
   void missingCredentialsReturnsPromptError() {
     TextCommand command = new TextCommand(TextCommandType.LOGIN, List.of(), "LOGIN");
 
-    LoginCommandHandlingResult result = handler.handle("session-1", command, true);
+    LoginCommandHandlingResult result = handler.handle("1", command, true);
 
     assertFalse(result.commandResult().accepted());
     assertEquals(
@@ -134,6 +139,22 @@ class LoginCommandHandlerTest {
     assertEquals(
         LoginCommandConstants.PROMPT_MODE_UNSUPPORTED_MESSAGE,
         result.commandResult().errorMessage());
+  }
+
+  @Test
+  void bareLoginConsumesVerifiedFirstPartyContext() {
+    TextCommand command = new TextCommand(TextCommandType.LOGIN, List.of(), "LOGIN");
+    GameInstance instance = buildInstance(1L, 22L, 77L);
+    when(firstPartyConnectContextRegistry.find(1L))
+        .thenReturn(Optional.of(new FirstPartyConnectContext(77L, 22L, 1L, "jti-1", "req-1")));
+    when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
+
+    LoginCommandHandlingResult result = handler.handle("1", command, false);
+
+    assertTrue(result.commandResult().accepted());
+    assertEquals("Logged in as first-party account 77", result.responseText());
+    verify(accountClient, never()).authenticate(anyString(), anyString(), anyString(), anyString());
+    verify(commandService).enqueue("1", "LOGIN", false);
   }
 
   @Test

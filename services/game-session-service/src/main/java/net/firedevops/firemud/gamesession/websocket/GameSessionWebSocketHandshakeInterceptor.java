@@ -18,10 +18,14 @@ public class GameSessionWebSocketHandshakeInterceptor implements HandshakeInterc
   static final String PROXY_CONNECTION_HEADER = "X-Proxy-Connection-Id";
   static final String TENANT_HEADER = "X-Tenant-Id";
   static final String SOLO_TICK_HEADER = "X-Requires-Solo-Tick";
+  static final String CONNECTION_MODE_HEADER = "X-Firemud-Connection-Mode";
+  static final String CONNECT_CONTEXT_HEADER = "X-Firemud-Connect-Context";
   static final String SESSION_ID_ATTR = "firemud.websocket.sessionId";
   static final String BOOTSTRAP_GAME_INSTANCE_ATTR = "firemud.websocket.bootstrapGameInstanceId";
   static final String TENANT_ID_ATTR = "firemud.websocket.tenantId";
   static final String SOLO_TICK_ATTR = "firemud.websocket.requiresSoloTick";
+  static final String CONNECTION_MODE_ATTR = "firemud.websocket.connectionMode";
+  static final String CONNECT_CONTEXT_ATTR = "firemud.websocket.connectContext";
 
   @Override
   public boolean beforeHandshake(
@@ -32,11 +36,15 @@ public class GameSessionWebSocketHandshakeInterceptor implements HandshakeInterc
     String bootstrapGameInstanceId = request.getHeaders().getFirst(GAME_INSTANCE_HEADER);
     String sessionId =
         deriveTransportSessionId(
-            request.getHeaders().getFirst(PROXY_CONNECTION_HEADER), bootstrapGameInstanceId);
+            request.getHeaders().getFirst(PROXY_CONNECTION_HEADER),
+            bootstrapGameInstanceId,
+            request.getHeaders().getFirst(CONNECT_CONTEXT_HEADER));
     attributes.put(SESSION_ID_ATTR, sessionId);
     attributes.put(BOOTSTRAP_GAME_INSTANCE_ATTR, bootstrapGameInstanceId);
     attributes.put(TENANT_ID_ATTR, request.getHeaders().getFirst(TENANT_HEADER));
     attributes.put(SOLO_TICK_ATTR, request.getHeaders().getFirst(SOLO_TICK_HEADER));
+    attributes.put(CONNECTION_MODE_ATTR, request.getHeaders().getFirst(CONNECTION_MODE_HEADER));
+    attributes.put(CONNECT_CONTEXT_ATTR, request.getHeaders().getFirst(CONNECT_CONTEXT_HEADER));
     return true;
   }
 
@@ -48,9 +56,12 @@ public class GameSessionWebSocketHandshakeInterceptor implements HandshakeInterc
       Exception exception) {}
 
   private String deriveTransportSessionId(
-      String proxyConnectionId, String bootstrapGameInstanceId) {
+      String proxyConnectionId, String bootstrapGameInstanceId, String connectContext) {
     if (proxyConnectionId != null && !proxyConnectionId.isBlank()) {
       return Long.toUnsignedString(stablePositiveLong(proxyConnectionId));
+    }
+    if (connectContext != null && !connectContext.isBlank()) {
+      return Long.toUnsignedString(stablePositiveLong(connectContext));
     }
     return bootstrapGameInstanceId;
   }

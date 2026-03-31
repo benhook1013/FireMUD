@@ -16,6 +16,7 @@ import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
 import net.firedevops.firemud.cache.LookCacheService;
 import net.firedevops.firemud.cache.ScreenBufferService;
+import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.gamelogic.v1.LookResult;
 import net.firedevops.firemud.gamesession.GameSessionServiceApplication;
 import net.firedevops.firemud.gamesession.client.AccountClient;
@@ -61,6 +62,7 @@ import org.springframework.web.socket.handler.TextWebSocketHandler;
       "spring.data.redis.repositories.enabled=false",
       "spring.application.name=game-session-service",
       "spring.grpc.server.port=0",
+      "firemud.gateway.connect-context.jwt-secret=testsecretkeytestsecretkeytest1234",
     })
 @ActiveProfiles("test")
 @Import({NoGrpcServerTestConfiguration.class, InMemorySessionContextTestConfiguration.class})
@@ -290,5 +292,182 @@ class GameSessionWebSocketHandlerIntegrationTest {
     verify(lookCacheService)
         .cache(
             eq(22L), eq(1L), eq("2045"), eq("North Hall text"), eq("OK LOOK\nNorth Hall text\n\n"));
+  }
+
+  @Test
+  void websocketFirstPartyLoginConsumesVerifiedConnectContext() throws Exception {
+    StandardWebSocketClient client = new StandardWebSocketClient();
+    WebSocketHttpHeaders headers = new WebSocketHttpHeaders();
+    headers.add("X-Firemud-Connection-Mode", "first_party_web");
+    headers.add(
+        "X-Firemud-Connect-Context",
+        new JwtUtil("testsecretkeytestsecretkeytest1234", 60_000L)
+            .generateToken(
+                "123",
+                java.util.Map.of(
+                    "tenantId", "22",
+                    "gameInstanceId", "41",
+                    "connectTokenJti", "connect-jti-1",
+                    "gatewayRequestId", "gateway-req-1")));
+    List<String> payloads = new java.util.concurrent.CopyOnWriteArrayList<>();
+    CountDownLatch latch = new CountDownLatch(2);
+
+    var future =
+        client.execute(
+            new TextWebSocketHandler() {
+              @Override
+              public void afterConnectionEstablished(WebSocketSession session) throws IOException {
+                session.sendMessage(new TextMessage("LOGIN"));
+                session.sendMessage(new TextMessage("PLAY demo"));
+              }
+
+              @Override
+              protected void handleTextMessage(WebSocketSession session, TextMessage message) {
+                payloads.add(message.getPayload());
+                latch.countDown();
+              }
+            },
+            headers,
+            URI.create("ws://localhost:" + port + "/ws/game"));
+
+    WebSocketSession session = future.get(5, TimeUnit.SECONDS);
+    assertThat(latch.await(5, TimeUnit.SECONDS)).isTrue();
+    session.close();
+
+    assertThat(payloads.get(0)).startsWith("OK LOGIN");
+    assertThat(payloads.get(1)).startsWith("OK PLAY");
+    verify(accountClient)
+        .getTenantMembershipForRuntime(
+            eq("123"), eq("22"), org.mockito.ArgumentMatchers.anyString());
+    verify(accountClient)
+        .getTenantEntitlementsForRuntime(eq("22"), org.mockito.ArgumentMatchers.anyString());
+  }
+
+  @Test
+  void websocketFirstPartyReconnectReplaysBufferedScreenAndFreshLookAfterPlay() throws Exception {
+    when(screenBufferService.get(eq(22L), eq(1L), eq(123L)))
+        .thenReturn(
+            Optional.of(
+                new ScreenBufferService.BufferedScreen(
+                    "Recent combat line\nSecond recent line\n", 2, 32)));
+
+    StandardWebSocketClient client = new StandardWebSocketClient();
+    WebSocketHttpHeaders headers = new WebSocketHttpHeaders();
+    headers.add("X-Firemud-Connection-Mode", "first_party_web");
+    headers.add(
+        "X-Firemud-Connect-Context",
+        new JwtUtil("testsecretkeytestsecretkeytest1234", 60_000L)
+            .generateToken(
+                "123",
+                java.util.Map.of(
+                    "tenantId", "22",
+                    "gameInstanceId", "41",
+                    "connectTokenJti", "connect-jti-2",
+                    "gatewayRequestId", "gateway-req-2")));
+    List<String> payloads = new java.util.concurrent.CopyOnWriteArrayList<>();
+    CountDownLatch latch = new CountDownLatch(4);
+
+    var future =
+        client.execute(
+            new TextWebSocketHandler() {
+              @Override
+              public void afterConnectionEstablished(WebSocketSession session) throws IOException {
+                session.sendMessage(new TextMessage("LOGIN"));
+                session.sendMessage(new TextMessage("PLAY demo"));
+              }
+
+              @Override
+              protected void handleTextMessage(WebSocketSession session, TextMessage message) {
+                payloads.add(message.getPayload());
+                latch.countDown();
+              }
+            },
+            headers,
+            URI.create("ws://localhost:" + port + "/ws/game"));
+
+    WebSocketSession session = future.get(5, TimeUnit.SECONDS);
+    assertThat(latch.await(5, TimeUnit.SECONDS)).isTrue();
+    session.close();
+
+    assertThat(payloads.get(0)).startsWith("OK LOGIN");
+    assertThat(payloads.get(1)).startsWith("OK PLAY");
+    assertThat(payloads.get(2)).contains("Recent combat line");
+    assertThat(payloads.get(3)).startsWith("OK LOOK");
+  }
+
+  @Test
+  void websocketFirstPartyInvalidConnectContextClosesImmediately() throws Exception {
+    StandardWebSocketClient client = new StandardWebSocketClient();
+    WebSocketHttpHeaders headers = new WebSocketHttpHeaders();
+    headers.add("X-Firemud-Connection-Mode", "first_party_web");
+    headers.add("X-Firemud-Connect-Context", "not-a-valid-context");
+    CountDownLatch latch = new CountDownLatch(1);
+    java.util.concurrent.atomic.AtomicReference<org.springframework.web.socket.CloseStatus> close =
+        new java.util.concurrent.atomic.AtomicReference<>();
+
+    var future =
+        client.execute(
+            new TextWebSocketHandler() {
+              @Override
+              public void afterConnectionClosed(
+                  WebSocketSession session, org.springframework.web.socket.CloseStatus status) {
+                close.set(status);
+                latch.countDown();
+              }
+            },
+            headers,
+            URI.create("ws://localhost:" + port + "/ws/game"));
+
+    WebSocketSession session = future.get(5, TimeUnit.SECONDS);
+    assertThat(latch.await(5, TimeUnit.SECONDS)).isTrue();
+    session.close();
+
+    assertThat(close.get()).isNotNull();
+    assertThat(close.get().getCode()).isEqualTo(1008);
+    assertThat(close.get().getReason()).isEqualTo("CONNECT_CONTEXT_INVALID");
+  }
+
+  @Test
+  void websocketFirstPartyPlayRejectsScopeMismatch() throws Exception {
+    StandardWebSocketClient client = new StandardWebSocketClient();
+    WebSocketHttpHeaders headers = new WebSocketHttpHeaders();
+    headers.add("X-Firemud-Connection-Mode", "first_party_web");
+    headers.add(
+        "X-Firemud-Connect-Context",
+        new JwtUtil("testsecretkeytestsecretkeytest1234", 60_000L)
+            .generateToken(
+                "123",
+                java.util.Map.of(
+                    "tenantId", "22",
+                    "gameInstanceId", "41",
+                    "connectTokenJti", "connect-jti-2",
+                    "gatewayRequestId", "gateway-req-2")));
+    List<String> payloads = new java.util.concurrent.CopyOnWriteArrayList<>();
+    CountDownLatch latch = new CountDownLatch(2);
+
+    var future =
+        client.execute(
+            new TextWebSocketHandler() {
+              @Override
+              public void afterConnectionEstablished(WebSocketSession session) throws IOException {
+                session.sendMessage(new TextMessage("LOGIN"));
+                session.sendMessage(new TextMessage("PLAY sandbox Sora"));
+              }
+
+              @Override
+              protected void handleTextMessage(WebSocketSession session, TextMessage message) {
+                payloads.add(message.getPayload());
+                latch.countDown();
+              }
+            },
+            headers,
+            URI.create("ws://localhost:" + port + "/ws/game"));
+
+    WebSocketSession session = future.get(5, TimeUnit.SECONDS);
+    assertThat(latch.await(5, TimeUnit.SECONDS)).isTrue();
+    session.close();
+
+    assertThat(payloads.get(0)).startsWith("OK LOGIN");
+    assertThat(payloads.get(1)).startsWith("ERROR CONNECT_SCOPE_MISMATCH");
   }
 }

@@ -11,6 +11,8 @@ import net.firedevops.firemud.gamesession.command.text.TextCommandParser;
 import net.firedevops.firemud.gamesession.command.text.TextCommandType;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.service.ActiveTransportSessionRegistry;
+import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
+import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import org.slf4j.Logger;
@@ -31,6 +33,8 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
   private final LookCommandHandler lookHandler;
   private final SessionContextService sessionContextService;
   private final ActiveTransportSessionRegistry activeTransportSessionRegistry;
+  private final FirstPartyConnectContextService firstPartyConnectContextService;
+  private final FirstPartyConnectContextRegistry firstPartyConnectContextRegistry;
   private final ScreenBufferService screenBufferService;
   private final TextCommandParser parser = new TextCommandParser();
 
@@ -39,11 +43,15 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       LookCommandHandler lookHandler,
       SessionContextService sessionContextService,
       ActiveTransportSessionRegistry activeTransportSessionRegistry,
+      FirstPartyConnectContextService firstPartyConnectContextService,
+      FirstPartyConnectContextRegistry firstPartyConnectContextRegistry,
       ScreenBufferService screenBufferService) {
     this.interpreter = interpreter;
     this.lookHandler = lookHandler;
     this.sessionContextService = sessionContextService;
     this.activeTransportSessionRegistry = activeTransportSessionRegistry;
+    this.firstPartyConnectContextService = firstPartyConnectContextService;
+    this.firstPartyConnectContextRegistry = firstPartyConnectContextRegistry;
     this.screenBufferService = screenBufferService;
   }
 
@@ -62,7 +70,11 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
   @Override
   public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
     parseNumericSessionId(resolveTransportSessionId(session))
-        .ifPresent(sessionId -> activeTransportSessionRegistry.unregister(sessionId, session));
+        .ifPresent(
+            sessionId -> {
+              activeTransportSessionRegistry.unregister(sessionId, session);
+              firstPartyConnectContextRegistry.unregister(sessionId);
+            });
   }
 
   @Override
@@ -111,6 +123,18 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
   private String resolveTenantId(WebSocketSession session) {
     Object cached =
         session.getAttributes().get(GameSessionWebSocketHandshakeInterceptor.TENANT_ID_ATTR);
+    return cached instanceof String text ? text : null;
+  }
+
+  private String resolveConnectionMode(WebSocketSession session) {
+    Object cached =
+        session.getAttributes().get(GameSessionWebSocketHandshakeInterceptor.CONNECTION_MODE_ATTR);
+    return cached instanceof String text ? text : null;
+  }
+
+  private String resolveConnectContext(WebSocketSession session) {
+    Object cached =
+        session.getAttributes().get(GameSessionWebSocketHandshakeInterceptor.CONNECT_CONTEXT_ATTR);
     return cached instanceof String text ? text : null;
   }
 
@@ -206,15 +230,29 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
 
   private void bootstrapSessionContext(WebSocketSession session) {
     String transportSessionId = resolveTransportSessionId(session);
-    String tenantId = resolveTenantId(session);
-    String bootstrapGameInstanceId = resolveBootstrapGameInstanceId(session);
-    if (!StringUtils.hasText(transportSessionId)
-        || !StringUtils.hasText(tenantId)
-        || !StringUtils.hasText(bootstrapGameInstanceId)) {
+    if (!StringUtils.hasText(transportSessionId)) {
       return;
     }
     try {
       long sessionId = Long.parseLong(transportSessionId);
+      if ("first_party_web".equals(resolveConnectionMode(session))) {
+        bootstrapFirstPartySessionContext(session, sessionId);
+        return;
+      }
+      bootstrapGenericSessionContext(session, sessionId);
+    } catch (NumberFormatException ex) {
+      logger.debug(
+          "Skipping bootstrap session context for transportSessionId={}", transportSessionId, ex);
+    }
+  }
+
+  private void bootstrapGenericSessionContext(WebSocketSession session, long sessionId) {
+    String tenantId = resolveTenantId(session);
+    String bootstrapGameInstanceId = resolveBootstrapGameInstanceId(session);
+    if (!StringUtils.hasText(tenantId) || !StringUtils.hasText(bootstrapGameInstanceId)) {
+      return;
+    }
+    try {
       long tenant = Long.parseLong(tenantId);
       long bootstrapGameInstance = Long.parseLong(bootstrapGameInstanceId);
       if (sessionContextService.findByTenantAndSessionId(tenant, sessionId).isPresent()) {
@@ -225,11 +263,48 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
               sessionId, tenant, 0L, null, 0L, null, 0L, null, null, bootstrapGameInstance));
     } catch (NumberFormatException ex) {
       logger.debug(
-          "Skipping bootstrap session context for transportSessionId={} tenantId={} bootstrapGameInstanceId={}",
-          transportSessionId,
+          "Skipping generic bootstrap session context for transportSessionId={} tenantId={} bootstrapGameInstanceId={}",
+          sessionId,
           tenantId,
           bootstrapGameInstanceId,
           ex);
+    }
+  }
+
+  private void bootstrapFirstPartySessionContext(WebSocketSession session, long sessionId) {
+    Optional<net.firedevops.firemud.gamesession.service.FirstPartyConnectContext> maybeContext =
+        firstPartyConnectContextService.parse(resolveConnectContext(session));
+    if (maybeContext.isEmpty()) {
+      closeInvalidFirstPartyContext(session);
+      return;
+    }
+    var connectContext = maybeContext.orElseThrow();
+    firstPartyConnectContextRegistry.register(sessionId, connectContext);
+    if (sessionContextService
+        .findByTenantAndSessionId(connectContext.tenantId(), sessionId)
+        .isPresent()) {
+      return;
+    }
+    sessionContextService.save(
+        new SessionContext(
+            sessionId,
+            connectContext.tenantId(),
+            0L,
+            null,
+            0L,
+            null,
+            0L,
+            null,
+            null,
+            connectContext.gameInstanceId()));
+  }
+
+  private void closeInvalidFirstPartyContext(WebSocketSession session) {
+    try {
+      session.close(
+          new CloseStatus(CloseStatus.POLICY_VIOLATION.getCode(), "CONNECT_CONTEXT_INVALID"));
+    } catch (IOException ex) {
+      logger.warn("Failed to close session with invalid first-party connect context", ex);
     }
   }
 

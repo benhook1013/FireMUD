@@ -45,6 +45,10 @@ tasks.named("generateTestFixturesProto") {
 
 dependencies {
     implementation(libs.spring.boot.starter.websocket)
+    implementation(project(":common-security"))
+    implementation(libs.jjwt.api)
+    runtimeOnly(libs.jjwt.impl)
+    runtimeOnly(libs.jjwt.jackson)
     testFixturesApi(project(":entity-management-service"))
     testFixturesApi(project(":game-logic-service"))
     testFixturesApi(project(":social-groups-service"))

@@ -58,6 +58,52 @@ components:
           type: integer
         authToken:
           type: string
+    PlayerBootstrapResult:
+      type: object
+      properties:
+        accountId:
+          type: integer
+        bootstrapToken:
+          type: string
+        issuedAt:
+          type: string
+        expiresAt:
+          type: string
+    ConnectTokenRequest:
+      type: object
+      properties:
+        connectScopeId:
+          type: string
+        tenantId:
+          type: string
+        gameInstanceId:
+          type: string
+        realmSlug:
+          type: string
+        requestId:
+          type: string
+      required: [connectScopeId, tenantId, gameInstanceId]
+    ConnectTokenResult:
+      type: object
+      properties:
+        accountId:
+          type: integer
+        tenantId:
+          type: integer
+        gameInstanceId:
+          type: integer
+        realmSlug:
+          type: string
+        connectScopeId:
+          type: string
+        connectToken:
+          type: string
+        jti:
+          type: string
+        issuedAt:
+          type: string
+        expiresAt:
+          type: string
     ResultStatus:
       type: string
       enum: [SUCCESS, ERROR]
@@ -190,6 +236,60 @@ paths:
                     $ref: '#/components/schemas/ErrorDetail'
         '400':
           description: Invalid credentials
+  /auth/player-bootstrap:
+    post:
+      summary: Authenticate and return a short-lived first-party bootstrap token
+      operationId: playerBootstrap
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Bootstrap result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    $ref: '#/components/schemas/ResultStatus'
+                  data:
+                    $ref: '#/components/schemas/PlayerBootstrapResult'
+                  error:
+                    $ref: '#/components/schemas/ErrorDetail'
+        '400':
+          description: Invalid credentials
+  /auth/connect-token:
+    post:
+      summary: Mint a short-lived gameplay connect token from a valid player-bootstrap token
+      operationId: connectToken
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConnectTokenRequest'
+      responses:
+        '200':
+          description: Connect token result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    $ref: '#/components/schemas/ResultStatus'
+                  data:
+                    $ref: '#/components/schemas/ConnectTokenResult'
+                  error:
+                    $ref: '#/components/schemas/ErrorDetail'
+        '401':
+          description: Invalid or expired bootstrap token
   /auth/request-password-reset:
     post:
       summary: Request password reset

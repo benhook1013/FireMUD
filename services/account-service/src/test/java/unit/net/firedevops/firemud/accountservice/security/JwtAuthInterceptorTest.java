@@ -58,4 +58,28 @@ class JwtAuthInterceptorTest {
     assertTrue(result);
     assertEquals(200, response.getStatus());
   }
+
+  @Test
+  void allowsPublicPlayerBootstrapRequestWithoutToken() throws Exception {
+    MockHttpServletRequest request = new MockHttpServletRequest();
+    request.setRequestURI("/auth/player-bootstrap");
+    MockHttpServletResponse response = new MockHttpServletResponse();
+
+    boolean result = interceptor.preHandle(request, response, new Object());
+
+    assertTrue(result);
+    assertEquals(200, response.getStatus());
+  }
+
+  @Test
+  void allowsPublicConnectTokenRequestWithoutToken() throws Exception {
+    MockHttpServletRequest request = new MockHttpServletRequest();
+    request.setRequestURI("/auth/connect-token");
+    MockHttpServletResponse response = new MockHttpServletResponse();
+
+    boolean result = interceptor.preHandle(request, response, new Object());
+
+    assertTrue(result);
+    assertEquals(200, response.getStatus());
+  }
 }

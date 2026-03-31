@@ -28,6 +28,7 @@ import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.CommandService;
+import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
@@ -56,6 +57,8 @@ class TextCommandInterpreterTest {
   private final MoveCommandHandler moveHandler = Mockito.mock(MoveCommandHandler.class);
   private final CommunicationCommandHandler communicationHandler =
       Mockito.mock(CommunicationCommandHandler.class);
+  private final FirstPartyConnectContextRegistry firstPartyConnectContextRegistry =
+      Mockito.mock(FirstPartyConnectContextRegistry.class);
   private final ObjectProvider<DevIsolatedGameInstanceRegistry> devIsolatedRegistryProvider =
       Mockito.mock(ObjectProvider.class);
   private TextCommandInterpreter interpreter;
@@ -117,6 +120,7 @@ class TextCommandInterpreterTest {
             sessionContextService,
             accountClient,
             commandService,
+            firstPartyConnectContextRegistry,
             devIsolatedProperties,
             devIsolatedRegistryProvider,
             meterRegistry);
@@ -128,6 +132,7 @@ class TextCommandInterpreterTest {
             worldCatalog,
             gameLogicProperties,
             accountClient,
+            firstPartyConnectContextRegistry,
             meterRegistry);
     LookCommandHandler lookHandler =
         new LookCommandHandler(

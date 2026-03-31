@@ -3,8 +3,11 @@ package net.firedevops.firemud.accountservice.service;
 import net.firedevops.firemud.accountservice.dto.AccountDataExportDto;
 import net.firedevops.firemud.accountservice.dto.AccountDto;
 import net.firedevops.firemud.accountservice.dto.CompletePasswordResetRequest;
+import net.firedevops.firemud.accountservice.dto.ConnectTokenRequest;
+import net.firedevops.firemud.accountservice.dto.ConnectTokenResult;
 import net.firedevops.firemud.accountservice.dto.CreateAccountRequest;
 import net.firedevops.firemud.accountservice.dto.PasswordResetRequest;
+import net.firedevops.firemud.accountservice.dto.PlayerBootstrapResult;
 import net.firedevops.firemud.accountservice.dto.ProfileDto;
 import net.firedevops.firemud.accountservice.dto.RuntimeEntitlementsDto;
 import net.firedevops.firemud.accountservice.dto.RuntimeMembershipDto;
@@ -15,6 +18,11 @@ public interface AccountService {
 
   net.firedevops.firemud.accountservice.dto.AuthenticationResult authenticate(
       Long tenantId, String username, String password, String otp);
+
+  PlayerBootstrapResult issuePlayerBootstrap(
+      Long tenantId, String username, String password, String otp);
+
+  ConnectTokenResult issueConnectToken(String bootstrapToken, ConnectTokenRequest request);
 
   RuntimeMembershipDto getTenantMembershipForRuntime(
       Long accountId, Long tenantId, String requestId);

@@ -26,6 +26,7 @@ import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.CommandService;
+import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
@@ -60,6 +61,8 @@ class SessionResumptionFlowTest {
   private SessionAuthenticationService sessionAuthenticationService;
   private final ObjectProvider<DevIsolatedGameInstanceRegistry> devIsolatedRegistryProvider =
       Mockito.mock(ObjectProvider.class);
+  private final FirstPartyConnectContextRegistry firstPartyConnectContextRegistry =
+      Mockito.mock(FirstPartyConnectContextRegistry.class);
   private PlayCommandHandler playHandler;
   private final MoveCommandHandler moveHandler = Mockito.mock(MoveCommandHandler.class);
   private final CommunicationCommandHandler communicationHandler =
@@ -118,6 +121,7 @@ class SessionResumptionFlowTest {
             sessionContextService,
             accountClient,
             commandService,
+            firstPartyConnectContextRegistry,
             devIsolatedProperties,
             devIsolatedRegistryProvider,
             meterRegistry);
@@ -144,6 +148,7 @@ class SessionResumptionFlowTest {
             worldCatalog,
             gameLogicProperties,
             accountClient,
+            firstPartyConnectContextRegistry,
             meterRegistry);
     worldsHandler = new WorldsCommandHandler(worldCatalog);
     interpreter =

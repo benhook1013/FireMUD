@@ -6,12 +6,16 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import net.firedevops.firemud.accountservice.dto.AuthenticationResult;
+import net.firedevops.firemud.accountservice.dto.ConnectTokenRequest;
+import net.firedevops.firemud.accountservice.dto.ConnectTokenResult;
 import net.firedevops.firemud.accountservice.dto.LoginRequest;
 import net.firedevops.firemud.accountservice.dto.PasswordResetRequest;
+import net.firedevops.firemud.accountservice.dto.PlayerBootstrapResult;
 import net.firedevops.firemud.accountservice.service.AccountService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
@@ -40,6 +44,55 @@ class AuthControllerTest {
         .andExpect(jsonPath("$.status").value("SUCCESS"))
         .andExpect(jsonPath("$.data.accountId").value(1))
         .andExpect(jsonPath("$.data.authToken").value("tok123"));
+  }
+
+  @Test
+  void playerBootstrapReturnsShortLivedToken() throws Exception {
+    LoginRequest request = new LoginRequest(1L, "demo", "password", null);
+    when(accountService.issuePlayerBootstrap(1L, "demo", "password", null))
+        .thenReturn(
+            new PlayerBootstrapResult(
+                1L, "boot123", "2026-03-30T00:00:00Z", "2026-03-30T00:05:00Z"));
+
+    mockMvc
+        .perform(
+            post("/auth/player-bootstrap")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request)))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.status").value("SUCCESS"))
+        .andExpect(jsonPath("$.data.accountId").value(1))
+        .andExpect(jsonPath("$.data.bootstrapToken").value("boot123"));
+  }
+
+  @Test
+  void connectTokenReturnsMintedToken() throws Exception {
+    ConnectTokenRequest request =
+        new ConnectTokenRequest("scope-1", 1L, 42L, "production", "req-7");
+    when(accountService.issueConnectToken(
+            "boot123", new ConnectTokenRequest("scope-1", 1L, 42L, "production", "req-7")))
+        .thenReturn(
+            new ConnectTokenResult(
+                1L,
+                1L,
+                42L,
+                "production",
+                "scope-1",
+                "conn123",
+                "jti-1",
+                "2026-03-30T00:00:00Z",
+                "2026-03-30T00:00:30Z"));
+
+    mockMvc
+        .perform(
+            post("/auth/connect-token")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer boot123")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request)))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.status").value("SUCCESS"))
+        .andExpect(jsonPath("$.data.connectToken").value("conn123"))
+        .andExpect(jsonPath("$.data.connectScopeId").value("scope-1"));
   }
 
   @Test

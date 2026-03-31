@@ -5,15 +5,20 @@ import jakarta.validation.Valid;
 import net.firedevops.firemud.accountservice.dto.AccountRefRequest;
 import net.firedevops.firemud.accountservice.dto.AuthenticationResult;
 import net.firedevops.firemud.accountservice.dto.CompletePasswordResetRequest;
+import net.firedevops.firemud.accountservice.dto.ConnectTokenRequest;
+import net.firedevops.firemud.accountservice.dto.ConnectTokenResult;
 import net.firedevops.firemud.accountservice.dto.LoginRequest;
 import net.firedevops.firemud.accountservice.dto.PasswordResetRequest;
+import net.firedevops.firemud.accountservice.dto.PlayerBootstrapResult;
 import net.firedevops.firemud.accountservice.dto.UsernameRecoveryRequest;
 import net.firedevops.firemud.accountservice.dto.VerifyEmailRequest;
 import net.firedevops.firemud.accountservice.service.AccountService;
 import net.firedevops.firemud.common.ApiResponse;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -36,6 +41,24 @@ public class AuthController {
         accountService.authenticate(
             request.tenantId(), request.username(), request.password(), request.otp());
     return ResponseEntity.ok(ApiResponse.success(auth));
+  }
+
+  @PostMapping("/player-bootstrap")
+  public ResponseEntity<ApiResponse<PlayerBootstrapResult>> playerBootstrap(
+      @Valid @RequestBody LoginRequest request) {
+    PlayerBootstrapResult bootstrap =
+        accountService.issuePlayerBootstrap(
+            request.tenantId(), request.username(), request.password(), request.otp());
+    return ResponseEntity.ok(ApiResponse.success(bootstrap));
+  }
+
+  @PostMapping("/connect-token")
+  public ResponseEntity<ApiResponse<ConnectTokenResult>> connectToken(
+      @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
+      @Valid @RequestBody ConnectTokenRequest request) {
+    String bootstrapToken = extractBearerToken(authorization);
+    ConnectTokenResult result = accountService.issueConnectToken(bootstrapToken, request);
+    return ResponseEntity.ok(ApiResponse.success(result));
   }
 
   @PostMapping("/request-password-reset")
@@ -71,5 +94,16 @@ public class AuthController {
       @Valid @RequestBody UsernameRecoveryRequest request) {
     accountService.sendUsernameReminder(request);
     return ResponseEntity.ok(ApiResponse.success(null));
+  }
+
+  private String extractBearerToken(String authorization) {
+    if (authorization == null || authorization.isBlank()) {
+      return null;
+    }
+    String prefix = "Bearer ";
+    if (authorization.regionMatches(true, 0, prefix, 0, prefix.length())) {
+      return authorization.substring(prefix.length()).trim();
+    }
+    return authorization.trim();
   }
 }

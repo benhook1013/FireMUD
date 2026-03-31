@@ -12,6 +12,8 @@ import net.firedevops.firemud.gamesession.client.AccountClient;
 import net.firedevops.firemud.gamesession.config.GameLogicProperties;
 import net.firedevops.firemud.gamesession.config.GameSessionProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
+import net.firedevops.firemud.gamesession.service.FirstPartyConnectContext;
+import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
@@ -25,6 +27,8 @@ class PlayCommandHandlerTest {
   private final SessionContextService sessionContextService =
       Mockito.mock(SessionContextService.class);
   private final AccountClient accountClient = Mockito.mock(AccountClient.class);
+  private final FirstPartyConnectContextRegistry firstPartyConnectContextRegistry =
+      Mockito.mock(FirstPartyConnectContextRegistry.class);
   private final GameLogicProperties gameLogicProperties = new GameLogicProperties();
   private final GameplayWorldCatalog worldCatalog =
       new GameplayWorldCatalog(new GameSessionProperties());
@@ -40,6 +44,7 @@ class PlayCommandHandlerTest {
             worldCatalog,
             gameLogicProperties,
             accountClient,
+            firstPartyConnectContextRegistry,
             meterRegistry);
     when(accountClient.getTenantMembershipForRuntime(
             Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
@@ -87,6 +92,23 @@ class PlayCommandHandlerTest {
                 gameLogicProperties.getDefaultRoomId(),
                 "jwt-token",
                 0L));
+  }
+
+  @Test
+  void firstPartyPlayRejectsMismatchedConnectScope() {
+    SessionContext context =
+        new SessionContext(1L, 22L, 123L, "first-party:123", 0L, null, 0L, null, null, 41L);
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    when(firstPartyConnectContextRegistry.find(1L))
+        .thenReturn(Optional.of(new FirstPartyConnectContext(123L, 22L, 41L, "jti-1", "req-1")));
+
+    PlayCommandHandlingResult result =
+        handler.handle(
+            "1",
+            new TextCommand(TextCommandType.PLAY, List.of("sandbox", "Sora"), "PLAY sandbox Sora"));
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode()).isEqualTo("CONNECT_SCOPE_MISMATCH");
   }
 
   @Test

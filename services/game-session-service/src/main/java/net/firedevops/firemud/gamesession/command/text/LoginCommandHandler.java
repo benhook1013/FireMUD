@@ -13,6 +13,7 @@ import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.CommandService;
+import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.gamesession.service.devisolated.DevIsolatedGameInstanceRegistry;
@@ -32,6 +33,7 @@ public final class LoginCommandHandler {
   private final SessionContextService sessionContextService;
   private final AccountClient accountClient;
   private final CommandService commandService;
+  private final FirstPartyConnectContextRegistry firstPartyConnectContextRegistry;
   private final DevIsolatedProperties devIsolatedProperties;
   private final DevIsolatedGameInstanceRegistry devIsolatedGameInstanceRegistry;
 
@@ -41,6 +43,7 @@ public final class LoginCommandHandler {
       SessionContextService sessionContextService,
       AccountClient accountClient,
       CommandService commandService,
+      FirstPartyConnectContextRegistry firstPartyConnectContextRegistry,
       DevIsolatedProperties devIsolatedProperties,
       ObjectProvider<DevIsolatedGameInstanceRegistry> devIsolatedGameInstanceRegistryProvider,
       MeterRegistry meterRegistry) {
@@ -50,6 +53,9 @@ public final class LoginCommandHandler {
         Objects.requireNonNull(sessionContextService, "sessionContextService must not be null");
     this.accountClient = Objects.requireNonNull(accountClient, "accountClient must not be null");
     this.commandService = Objects.requireNonNull(commandService, "commandService must not be null");
+    this.firstPartyConnectContextRegistry =
+        Objects.requireNonNull(
+            firstPartyConnectContextRegistry, "firstPartyConnectContextRegistry must not be null");
     this.devIsolatedProperties =
         Objects.requireNonNull(devIsolatedProperties, "devIsolatedProperties must not be null");
     this.devIsolatedGameInstanceRegistry = devIsolatedGameInstanceRegistryProvider.getIfAvailable();
@@ -60,11 +66,7 @@ public final class LoginCommandHandler {
       String sessionId, TextCommand command, boolean requiresSoloTick) {
     List<String> args = command.args();
     if (args.size() < 2) {
-      CommandEnqueueResult failure =
-          CommandEnqueueResult.failure(
-              LoginCommandConstants.PROMPT_MODE_UNSUPPORTED_CODE,
-              LoginCommandConstants.PROMPT_MODE_UNSUPPORTED_MESSAGE);
-      return new LoginCommandHandlingResult(failure, null);
+      return handleVerifiedFirstPartyLogin(sessionId, command, requiresSoloTick);
     }
 
     Long numericSessionId = parseSessionId(sessionId);
@@ -124,6 +126,55 @@ public final class LoginCommandHandler {
         bootstrapGameInstanceId);
     String responseText = "Logged in as " + args.get(0);
     return new LoginCommandHandlingResult(enqueueResult, responseText);
+  }
+
+  private LoginCommandHandlingResult handleVerifiedFirstPartyLogin(
+      String sessionId, TextCommand command, boolean requiresSoloTick) {
+    Long numericSessionId = parseSessionId(sessionId);
+    if (numericSessionId == null) {
+      return invalidSessionFailure();
+    }
+    Optional<net.firedevops.firemud.gamesession.service.FirstPartyConnectContext> maybeContext =
+        firstPartyConnectContextRegistry.find(numericSessionId);
+    if (maybeContext.isEmpty()) {
+      CommandEnqueueResult failure =
+          CommandEnqueueResult.failure(
+              LoginCommandConstants.PROMPT_MODE_UNSUPPORTED_CODE,
+              LoginCommandConstants.PROMPT_MODE_UNSUPPORTED_MESSAGE);
+      return new LoginCommandHandlingResult(failure, null);
+    }
+
+    var verifiedContext = maybeContext.get();
+    Optional<GameInstance> maybeInstance =
+        gameInstanceRepository.findById(verifiedContext.gameInstanceId());
+    if (maybeInstance.isEmpty()) {
+      CommandEnqueueResult failure =
+          CommandEnqueueResult.failure("SESSION_NOT_FOUND", "Session not found");
+      return new LoginCommandHandlingResult(failure, null);
+    }
+    GameInstance instance = maybeInstance.get();
+    if (instance.getTenantId() != verifiedContext.tenantId()) {
+      return new LoginCommandHandlingResult(
+          CommandEnqueueResult.failure("CONNECT_SCOPE_INVALID", "Connect scope invalid"), null);
+    }
+    if (!Objects.equals(instance.getOwnerAccountId(), verifiedContext.accountId())) {
+      return accountMismatchFailure();
+    }
+
+    CommandEnqueueResult enqueueResult =
+        commandService.enqueue(sessionId, command.rawLine(), requiresSoloTick);
+    if (!enqueueResult.accepted()) {
+      return new LoginCommandHandlingResult(enqueueResult, null);
+    }
+    persistSessionContext(
+        numericSessionId,
+        verifiedContext.tenantId(),
+        verifiedContext.accountId(),
+        "first-party:" + verifiedContext.accountId(),
+        null,
+        verifiedContext.gameInstanceId());
+    return new LoginCommandHandlingResult(
+        enqueueResult, "Logged in as first-party account " + verifiedContext.accountId());
   }
 
   private void persistSessionContext(

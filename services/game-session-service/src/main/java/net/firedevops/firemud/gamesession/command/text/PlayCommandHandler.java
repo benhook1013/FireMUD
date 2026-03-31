@@ -13,6 +13,7 @@ import net.firedevops.firemud.gamesession.client.AccountClient;
 import net.firedevops.firemud.gamesession.config.GameLogicProperties;
 import net.firedevops.firemud.gamesession.config.GameSessionProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
+import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
@@ -42,6 +43,7 @@ public class PlayCommandHandler {
   private final GameplayWorldCatalog gameplayWorldCatalog;
   private final GameLogicProperties gameLogicProperties;
   private final AccountClient accountClient;
+  private final FirstPartyConnectContextRegistry firstPartyConnectContextRegistry;
   private final MeterRegistry meterRegistry;
   private final Counter takeoverCounter;
   private final Counter resumeCounter;
@@ -52,6 +54,7 @@ public class PlayCommandHandler {
       GameplayWorldCatalog gameplayWorldCatalog,
       GameLogicProperties gameLogicProperties,
       AccountClient accountClient,
+      FirstPartyConnectContextRegistry firstPartyConnectContextRegistry,
       MeterRegistry meterRegistry) {
     this.sessionAuthenticationService =
         Objects.requireNonNull(
@@ -63,6 +66,9 @@ public class PlayCommandHandler {
     this.gameLogicProperties =
         Objects.requireNonNull(gameLogicProperties, "gameLogicProperties must not be null");
     this.accountClient = Objects.requireNonNull(accountClient, "accountClient must not be null");
+    this.firstPartyConnectContextRegistry =
+        Objects.requireNonNull(
+            firstPartyConnectContextRegistry, "firstPartyConnectContextRegistry must not be null");
     this.meterRegistry = Objects.requireNonNull(meterRegistry, "meterRegistry must not be null");
     this.takeoverCounter = this.meterRegistry.counter(TAKEOVER_METRIC);
     this.resumeCounter = this.meterRegistry.counter(RESUME_METRIC);
@@ -108,6 +114,11 @@ public class PlayCommandHandler {
     }
 
     GameSessionProperties.WorldOption selectedWorld = maybeWorld.get();
+    Optional<PlayCommandHandlingResult> connectScopeFailure =
+        validateFirstPartyConnectScope(context, selectedWorld, tenantTag);
+    if (connectScopeFailure.isPresent()) {
+      return connectScopeFailure.get();
+    }
     Optional<PlayCommandHandlingResult> authorityFailure =
         validateRuntimeAdmission(
             context, selectedWorld, tenantTag, args.size() > 1 ? args.get(1) : null);
@@ -183,6 +194,19 @@ public class PlayCommandHandler {
         CommandEnqueueResult.success(),
         formatSuccessResponse(selectedWorld.getSlug(), character),
         resumedOrTookOver || freshEntryFallback);
+  }
+
+  private Optional<PlayCommandHandlingResult> validateFirstPartyConnectScope(
+      SessionContext context, GameSessionProperties.WorldOption selectedWorld, String tenantTag) {
+    return firstPartyConnectContextRegistry
+        .find(context.sessionId())
+        .filter(
+            connectContext ->
+                connectContext.tenantId() != context.tenantId()
+                    || connectContext.gameInstanceId() != selectedWorld.getGameInstanceId())
+        .map(
+            ignored ->
+                failure("CONNECT_SCOPE_MISMATCH", "Connect scope mismatch", tenantTag, null));
   }
 
   private PlayCommandHandlingResult failure(

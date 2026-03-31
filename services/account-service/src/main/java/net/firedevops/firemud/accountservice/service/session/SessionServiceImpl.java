@@ -24,10 +24,14 @@ public class SessionServiceImpl implements SessionService {
   @Override
   @Timed(value = "session.store")
   public void storeSession(Long tenantId, Long accountId, String token) {
+    storeSession(tenantId, accountId, token, authProperties.getSessionExpirationMs());
+  }
+
+  @Override
+  @Timed(value = "session.store_ttl")
+  public void storeSession(Long tenantId, Long accountId, String token, long expirationMs) {
     String key = buildKey(tenantId, token);
-    redisTemplate
-        .opsForValue()
-        .set(key, accountId, Duration.ofMillis(authProperties.getSessionExpirationMs()));
+    redisTemplate.opsForValue().set(key, accountId, Duration.ofMillis(expirationMs));
   }
 
   @Override

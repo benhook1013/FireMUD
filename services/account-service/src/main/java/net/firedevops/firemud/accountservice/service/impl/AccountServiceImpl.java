@@ -4,19 +4,29 @@ import com.bastiaanjansen.otp.TOTPGenerator;
 import de.mkammerer.argon2.Argon2;
 import de.mkammerer.argon2.Argon2Factory;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.Jwts;
+import io.jsonwebtoken.security.Keys;
 import io.micrometer.core.annotation.Timed;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.util.Date;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.accountservice.client.LoggingAdminClient;
+import net.firedevops.firemud.accountservice.config.AuthProperties;
 import net.firedevops.firemud.accountservice.config.MailProperties;
 import net.firedevops.firemud.accountservice.dto.AccountDataExportDto;
 import net.firedevops.firemud.accountservice.dto.AccountDto;
 import net.firedevops.firemud.accountservice.dto.CompletePasswordResetRequest;
+import net.firedevops.firemud.accountservice.dto.ConnectTokenRequest;
+import net.firedevops.firemud.accountservice.dto.ConnectTokenResult;
 import net.firedevops.firemud.accountservice.dto.CreateAccountRequest;
 import net.firedevops.firemud.accountservice.dto.PasswordResetRequest;
+import net.firedevops.firemud.accountservice.dto.PlayerBootstrapResult;
 import net.firedevops.firemud.accountservice.dto.ProfileDto;
 import net.firedevops.firemud.accountservice.dto.RuntimeEntitlementsDto;
 import net.firedevops.firemud.accountservice.dto.RuntimeMembershipDto;
@@ -64,6 +74,7 @@ public class AccountServiceImpl implements AccountService {
   private final NotificationService notificationService;
   private final EmailService emailService;
   private final MailProperties mailProperties;
+  private final AuthProperties authProperties;
   private final LoggingAdminClient loggingAdminClient;
   private final JwtUtil jwtUtil;
   private final net.firedevops.firemud.accountservice.service.session.SessionService sessionService;
@@ -85,6 +96,7 @@ public class AccountServiceImpl implements AccountService {
       NotificationService notificationService,
       EmailService emailService,
       MailProperties mailProperties,
+      AuthProperties authProperties,
       LoggingAdminClient loggingAdminClient,
       JwtUtil jwtUtil,
       net.firedevops.firemud.accountservice.service.session.SessionService sessionService,
@@ -101,6 +113,7 @@ public class AccountServiceImpl implements AccountService {
     this.notificationService = notificationService;
     this.emailService = emailService;
     this.mailProperties = mailProperties;
+    this.authProperties = authProperties;
     this.loggingAdminClient = loggingAdminClient;
     this.jwtUtil = jwtUtil;
     this.sessionService = sessionService;
@@ -183,6 +196,127 @@ public class AccountServiceImpl implements AccountService {
 
   @Override
   @Transactional(readOnly = true)
+  @Timed(value = "account.player_bootstrap")
+  public PlayerBootstrapResult issuePlayerBootstrap(
+      Long tenantId, String username, String password, String otp) {
+    var auth = authenticate(tenantId, username, password, otp);
+    String jti = UUID.randomUUID().toString();
+    long issuedAt = System.currentTimeMillis();
+    long expiresAt = issuedAt + authProperties.getPlayerBootstrapExpirationMs();
+    String bootstrapToken =
+        mintToken(
+            String.valueOf(auth.accountId()),
+            authProperties.getPlayerBootstrapExpirationMs(),
+            Map.of(
+                "aud",
+                "player-bootstrap",
+                "accountId",
+                auth.accountId(),
+                "tenantId",
+                tenantId,
+                "jti",
+                jti));
+    sessionService.storeSession(
+        tenantId,
+        auth.accountId(),
+        bootstrapToken,
+        authProperties.getPlayerBootstrapExpirationMs());
+    logger.info(
+        "Issued player bootstrap token for account {} tenant {}", auth.accountId(), tenantId);
+    return new PlayerBootstrapResult(
+        auth.accountId(),
+        bootstrapToken,
+        Instant.ofEpochMilli(issuedAt).toString(),
+        Instant.ofEpochMilli(expiresAt).toString());
+  }
+
+  @Override
+  @Transactional(readOnly = true)
+  @Timed(value = "account.connect_token")
+  public ConnectTokenResult issueConnectToken(String bootstrapToken, ConnectTokenRequest request) {
+    if (bootstrapToken == null || bootstrapToken.isBlank()) {
+      throw new AuthenticationException("CONNECT_CONTEXT_INVALID", "Missing bootstrap token");
+    }
+    Claims claims;
+    try {
+      claims = jwtUtil.parseToken(bootstrapToken).getPayload();
+    } catch (RuntimeException ex) {
+      throw new AuthenticationException("CONNECT_CONTEXT_INVALID", "Invalid bootstrap token", ex);
+    }
+    String audience = claimText(claims.get("aud"));
+    if (!"player-bootstrap".equals(audience)) {
+      throw new AuthenticationException("CONNECT_CONTEXT_INVALID", "Invalid bootstrap token");
+    }
+    Long accountId = parseLong(claims.get("accountId"));
+    Long bootstrapTenantId = parseLong(claims.get("tenantId"));
+    if (accountId == null || bootstrapTenantId == null) {
+      throw new AuthenticationException("CONNECT_CONTEXT_INVALID", "Invalid bootstrap token");
+    }
+    Long storedAccountId = sessionService.getAccountId(bootstrapTenantId, bootstrapToken);
+    if (storedAccountId == null || !storedAccountId.equals(accountId)) {
+      throw new AuthenticationException("CONNECT_CONTEXT_INVALID", "Bootstrap token expired");
+    }
+    if (!bootstrapTenantId.equals(request.tenantId())) {
+      throw new AuthenticationException("CONNECT_CONTEXT_INVALID", "Tenant mismatch");
+    }
+
+    RuntimeMembershipDto membership =
+        getTenantMembershipForRuntime(accountId, request.tenantId(), request.requestId());
+    if (!membership.gameplayAdmissionAllowed()) {
+      throw new AuthenticationException(
+          "CONNECT_TOKEN_REJECTED", "Gameplay admission is not allowed for this account");
+    }
+    RuntimeEntitlementsDto entitlements =
+        getTenantEntitlementsForRuntime(request.tenantId(), request.requestId());
+    if (!entitlements.gameplayAvailable()) {
+      throw new AuthenticationException(
+          "CONNECT_TOKEN_REJECTED", "Gameplay is not available for this tenant");
+    }
+
+    String jti = UUID.randomUUID().toString();
+    long issuedAt = System.currentTimeMillis();
+    long expiresAt = issuedAt + authProperties.getConnectTokenExpirationMs();
+    String connectToken =
+        mintToken(
+            String.valueOf(accountId),
+            authProperties.getConnectTokenExpirationMs(),
+            Map.of(
+                "aud",
+                "gameplay-connect",
+                "accountId",
+                accountId,
+                "tenantId",
+                request.tenantId(),
+                "gameInstanceId",
+                request.gameInstanceId(),
+                "realmSlug",
+                request.realmSlug() == null ? "" : request.realmSlug(),
+                "connectScopeId",
+                request.connectScopeId(),
+                "jti",
+                jti));
+    sessionService.storeSession(
+        request.tenantId(), accountId, connectToken, authProperties.getConnectTokenExpirationMs());
+    logger.info(
+        "Issued connect token for account {} tenant {} gameInstance {} jti {}",
+        accountId,
+        request.tenantId(),
+        request.gameInstanceId(),
+        jti);
+    return new ConnectTokenResult(
+        accountId,
+        request.tenantId(),
+        request.gameInstanceId(),
+        request.realmSlug(),
+        request.connectScopeId(),
+        connectToken,
+        jti,
+        Instant.ofEpochMilli(issuedAt).toString(),
+        Instant.ofEpochMilli(expiresAt).toString());
+  }
+
+  @Override
+  @Transactional(readOnly = true)
   @Timed(value = "account.runtime_membership")
   public RuntimeMembershipDto getTenantMembershipForRuntime(
       Long accountId, Long tenantId, String requestId) {
@@ -233,6 +367,53 @@ public class AccountServiceImpl implements AccountService {
     }
 
     return accountRepository.findByTenantIdAndEmail(0L, usernameOrEmail);
+  }
+
+  private String mintToken(String subject, long expirationMs, Map<String, Object> claims) {
+    long now = System.currentTimeMillis();
+    String secret = authProperties.getJwtSecret();
+    if (secret == null || secret.isBlank()) {
+      throw new IllegalStateException("JWT secret must be configured");
+    }
+    Object audience = claims.get("aud");
+    Map<String, Object> nonRegisteredClaims = new java.util.HashMap<>(claims);
+    nonRegisteredClaims.remove("aud");
+    var builder =
+        Jwts.builder()
+            .subject(subject)
+            .claims(nonRegisteredClaims)
+            .issuedAt(new Date(now))
+            .expiration(new Date(now + expirationMs));
+    if (audience != null) {
+      builder.audience().add(audience.toString()).and();
+    }
+    return builder.signWith(Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8))).compact();
+  }
+
+  private Long parseLong(Object value) {
+    if (value == null) {
+      return null;
+    }
+    try {
+      return Long.valueOf(value.toString());
+    } catch (NumberFormatException ex) {
+      return null;
+    }
+  }
+
+  private String claimText(Object value) {
+    if (value == null) {
+      return "";
+    }
+    if (value instanceof Iterable<?> iterable) {
+      for (Object candidate : iterable) {
+        if (candidate != null) {
+          return candidate.toString();
+        }
+      }
+      return "";
+    }
+    return value.toString();
   }
 
   private boolean isGameplayAvailableStatus(String status) {

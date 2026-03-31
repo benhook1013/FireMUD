@@ -37,6 +37,8 @@ firemud:
   auth:
     jwt-expiration-ms: 3600000
     session-expiration-ms: 3600000
+    player-bootstrap-expiration-ms: 300000
+    connect-token-expiration-ms: 30000
   mail:
     from: no-reply@firemud.local
     verification-url: http://localhost:8080/auth/verify-email?token=%s
