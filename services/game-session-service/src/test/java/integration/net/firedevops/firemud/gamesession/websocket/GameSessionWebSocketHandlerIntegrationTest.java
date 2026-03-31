@@ -170,6 +170,8 @@ class GameSessionWebSocketHandlerIntegrationTest {
                 .setTenantBillingSequence(1L)
                 .setEvaluatedAt("2026-03-30T00:00:00Z")
                 .build());
+    when(commandService.enqueue(eq("41"), eq("LOGIN"), eq(false)))
+        .thenReturn(CommandEnqueueResult.success());
     when(commandService.enqueue(eq("41"), eq("LOGIN demo@example.com swordfish"), eq(false)))
         .thenReturn(CommandEnqueueResult.success());
     when(commandService.enqueue(eq("41"), eq("LOOK"), eq(false)))
