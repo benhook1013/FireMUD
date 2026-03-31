@@ -227,6 +227,22 @@ The first standard built-ins should be understood as:
 
 The built-in communication parser enforces that `SAY`, `WHISPER`, and `TELL` include the required message and target fields for their mode. `WHISPER` and `TELL` now flow through the same shared communication path as `SAY` instead of acting as room-speech aliases. Submitting an empty payload or exceeding the configured message limit, currently 512 characters, yields `ERROR INVALID_ARGUMENT Message text must be 1-512 characters long`.
 
+Canonical baseline prose for the built-in communication modes is:
+
+- `say` sender view: `You say, "Hello travelers"`
+- `whisper` sender view: `You whisper to Sora, "Keep quiet"`
+- `whisper` target view: `Emberline whispers to you, "Keep quiet"`
+- `whisper` metadata-only observer view: `Emberline whispers something to Sora.`
+- `tell` sender view: `You tell Sora, "Meet me at the forge"`
+- `tell` target view: `Emberline tells you, "Meet me at the forge"`
+
+Baseline failure mapping for the target-directed modes is:
+
+- invalid or missing room target for `whisper` -> `ERROR COMMUNICATION_NOT_DELIVERED Target not present in room: <name>`
+- unresolved or unavailable direct target for `tell` -> `ERROR INVALID_ARGUMENT Target is not available: <name>` or `ERROR INVALID_ARGUMENT Character not found: <name>`
+- muted or silenced sender -> `ERROR COMMUNICATION_NOT_DELIVERED silenced`
+- generic downstream failure -> `ERROR COMMUNICATION_NOT_DELIVERED <backend message>`
+
 ### LOOK transcripts
 
 Telnet `LOOK` example:
@@ -276,8 +292,8 @@ The protocol should not frame these cases primarily as backend or world-state fa
 
 1. Game Session validates that the caller has completed `LOGIN` and `PLAY` and has a valid Redis-backed gameplay session context. If the caller is still in the login/menu stages, it returns a stage-aware `LOGIN_REQUIRED` or `PLAY_REQUIRED` error rather than a generic gameplay-auth failure.
 2. Authenticated `LOOK` commands call Game Logic's `ResolveLook`, passing `tenantId`, `gameInstanceId`, `sessionId`, `characterId`, and `roomInstanceId`.
-3. Game Logic returns a structured `LookResult`, which Game Session renders into the `OK LOOK` text response, emits `gamesession.command.look.*` metrics/logs, and caches per session so reconnections can replay it quickly.
-4. Reconnecting Telnet or WebSocket clients receive the cached snapshot before buffered commands replay. If the snapshot is missing or stale, Game Session reruns `ResolveLook`.
+3. Game Logic returns a structured `LookResult`, which Game Session renders into the `OK LOOK` text response, emits `gamesession.command.look.*` metrics/logs, and stores as a bounded derived room-view cache keyed to gameplay identity so reconnect flows can reuse it.
+4. Reconnecting Telnet or WebSocket clients do not receive buffered command replay. Instead, after successful `LOGIN` and `PLAY`, Game Session may replay the bounded per-player transcript/screen buffer and then emits a fresh `LOOK` so authoritative current state wins over any stale context.
 
 ### LOOK error mapping and metrics
 

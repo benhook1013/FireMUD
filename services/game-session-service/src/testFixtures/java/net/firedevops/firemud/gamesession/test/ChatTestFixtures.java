@@ -70,7 +70,19 @@ public final class ChatTestFixtures {
     return "You whisper to Sora, \"Keep quiet\"";
   }
 
+  public static String canonicalWhisperTargetText() {
+    return "Emberline whispers to you, \"Keep quiet\"";
+  }
+
+  public static String canonicalWhisperObserverMetadataText() {
+    return "Emberline whispers something to Sora.";
+  }
+
   public static String canonicalTellText() {
     return "You tell Sora, \"Meet me at the forge\"";
+  }
+
+  public static String canonicalTellTargetText() {
+    return "Emberline tells you, \"Meet me at the forge\"";
   }
 }
