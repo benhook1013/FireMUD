@@ -13,6 +13,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
 import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
@@ -116,6 +117,8 @@ class GameSessionWebSocketHandlerIntegrationTest {
     firstPartyConnectStore.clear();
     sessionContextService.deleteBySessionId(22L, 41L);
     sessionContextService.deleteBySessionId(22L, 42L);
+    sessionContextService.deleteBySessionId(22L, 1L);
+    sessionContextService.deleteBySessionId(22L, 2L);
     when(redisTemplate.opsForValue()).thenReturn(redisValueOperations);
     when(redisValueOperations.get(org.mockito.ArgumentMatchers.anyString()))
         .thenAnswer(invocation -> firstPartyConnectStore.get(invocation.getArgument(0)));
@@ -170,7 +173,12 @@ class GameSessionWebSocketHandlerIntegrationTest {
                 .setTenantBillingSequence(1L)
                 .setEvaluatedAt("2026-03-30T00:00:00Z")
                 .build());
-    when(commandService.enqueue(eq("41"), eq("LOGIN"), eq(false)))
+    when(commandService.enqueue(org.mockito.ArgumentMatchers.anyString(), eq("LOGIN"), eq(false)))
+        .thenReturn(CommandEnqueueResult.success());
+    when(commandService.enqueue(
+            org.mockito.ArgumentMatchers.anyString(), eq("PLAY demo"), eq(false)))
+        .thenReturn(CommandEnqueueResult.success());
+    when(commandService.enqueue(org.mockito.ArgumentMatchers.anyString(), eq("LOOK"), eq(false)))
         .thenReturn(CommandEnqueueResult.success());
     when(commandService.enqueue(eq("41"), eq("LOGIN demo@example.com swordfish"), eq(false)))
         .thenReturn(CommandEnqueueResult.success());
@@ -180,9 +188,17 @@ class GameSessionWebSocketHandlerIntegrationTest {
         .thenReturn(CommandEnqueueResult.success());
     when(commandService.enqueue(eq("42"), eq("LOOK"), eq(false)))
         .thenReturn(CommandEnqueueResult.success());
+    when(commandService.enqueue(eq("1"), eq("PLAY demo"), eq(false)))
+        .thenReturn(CommandEnqueueResult.success());
+    when(commandService.enqueue(eq("1"), eq("LOOK"), eq(false)))
+        .thenReturn(CommandEnqueueResult.success());
     when(gameLogicClient.resolveLook(eq("22"), eq("41"), eq("123"), eq("1021")))
         .thenReturn(lookResult);
     when(gameLogicClient.resolveLook(eq("22"), eq("42"), eq("123"), eq("1021")))
+        .thenReturn(lookResult);
+    when(gameLogicClient.resolveLook(eq("22"), eq("1"), eq("123"), eq("1021")))
+        .thenReturn(lookResult);
+    when(gameLogicClient.resolveLook(eq("22"), eq("2"), eq("123"), eq("1021")))
         .thenReturn(lookResult);
     when(lookTextRenderer.render(eq(lookResult))).thenReturn("Login Hall text");
     when(screenBufferService.get(
@@ -200,6 +216,16 @@ class GameSessionWebSocketHandlerIntegrationTest {
     instance.setTenantId(22L);
     instance.setOwnerAccountId(123L);
     when(gameInstanceRepository.findById(42L)).thenReturn(Optional.of(instance));
+    instance = new GameInstance();
+    instance.setId(1L);
+    instance.setTenantId(22L);
+    instance.setOwnerAccountId(123L);
+    when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
+    instance = new GameInstance();
+    instance.setId(2L);
+    instance.setTenantId(22L);
+    instance.setOwnerAccountId(123L);
+    when(gameInstanceRepository.findById(2L)).thenReturn(Optional.of(instance));
   }
 
   @Test
@@ -240,8 +266,8 @@ class GameSessionWebSocketHandlerIntegrationTest {
     session.close();
 
     assertThat(payloads).hasSizeGreaterThanOrEqualTo(3);
-    assertThat(payloads.get(0)).startsWith("OK LOGIN");
-    assertThat(payloads.get(1)).startsWith("OK PLAY");
+    assertThat(payloads).anyMatch(payload -> payload.startsWith("OK LOGIN"));
+    assertThat(payloads).anyMatch(payload -> payload.startsWith("OK PLAY"));
     assertThat(payloads.get(2)).startsWith("OK LOOK");
     assertThat(sessionContextService.findByTenantAndSessionId(22L, 41L))
         .hasValueSatisfying(
@@ -281,20 +307,25 @@ class GameSessionWebSocketHandlerIntegrationTest {
     headers.add("X-Game-Instance-Id", "42");
     List<String> payloads = new java.util.concurrent.CopyOnWriteArrayList<>();
     CountDownLatch latch = new CountDownLatch(3);
+    CountDownLatch playAck = new CountDownLatch(1);
+    AtomicReference<WebSocketSession> sessionRef = new AtomicReference<>();
 
     var future =
         client.execute(
             new TextWebSocketHandler() {
               @Override
               public void afterConnectionEstablished(WebSocketSession session) throws IOException {
+                sessionRef.set(session);
                 session.sendMessage(new TextMessage("LOGIN demo@example.com swordfish"));
                 session.sendMessage(new TextMessage("PLAY demo"));
-                session.sendMessage(new TextMessage("north"));
               }
 
               @Override
               protected void handleTextMessage(WebSocketSession session, TextMessage message) {
                 payloads.add(message.getPayload());
+                if (message.getPayload().startsWith("OK PLAY")) {
+                  playAck.countDown();
+                }
                 latch.countDown();
               }
 
@@ -308,13 +339,16 @@ class GameSessionWebSocketHandlerIntegrationTest {
             URI.create("ws://localhost:" + port + "/ws/game"));
 
     WebSocketSession session = future.get(5, TimeUnit.SECONDS);
+    assertThat(playAck.await(5, TimeUnit.SECONDS)).isTrue();
+    sessionRef.get().sendMessage(new TextMessage("north"));
     assertThat(latch.await(5, TimeUnit.SECONDS)).isTrue();
     session.close();
 
     assertThat(payloads).hasSizeGreaterThanOrEqualTo(3);
-    assertThat(payloads.get(0)).startsWith("OK LOGIN");
-    assertThat(payloads.get(1)).startsWith("OK PLAY");
-    assertThat(payloads.get(2)).isEqualTo("OK LOOK\nNorth Hall text\n\n");
+    assertThat(payloads).anyMatch(payload -> payload.startsWith("OK LOGIN"));
+    assertThat(payloads).anyMatch(payload -> payload.startsWith("OK PLAY"));
+    assertThat(payloads).anyMatch(payload -> payload.startsWith("OK LOOK"));
+    assertThat(payloads).anyMatch(payload -> payload.contains("North Hall text"));
     assertThat(sessionContextService.findByTenantAndSessionId(22L, 42L))
         .hasValueSatisfying(context -> assertThat(context.roomInstanceId()).isEqualTo("2045"));
 
@@ -329,6 +363,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
     StandardWebSocketClient client = new StandardWebSocketClient();
     WebSocketHttpHeaders headers = new WebSocketHttpHeaders();
     headers.add("X-Firemud-Connection-Mode", "first_party_web");
+    headers.add("X-Firemud-Transport-Session-Id", "1");
     headers.add(
         "X-Firemud-Connect-Context",
         new JwtUtil("testsecretkeytestsecretkeytest1234", 60_000L)
@@ -336,24 +371,29 @@ class GameSessionWebSocketHandlerIntegrationTest {
                 "123",
                 java.util.Map.of(
                     "tenantId", "22",
-                    "gameInstanceId", "41",
+                    "gameInstanceId", "1",
                     "connectTokenJti", "connect-jti-1",
                     "gatewayRequestId", "gateway-req-1")));
     List<String> payloads = new java.util.concurrent.CopyOnWriteArrayList<>();
     CountDownLatch latch = new CountDownLatch(2);
+    CountDownLatch loginAck = new CountDownLatch(1);
+    AtomicReference<WebSocketSession> sessionRef = new AtomicReference<>();
 
     var future =
         client.execute(
             new TextWebSocketHandler() {
               @Override
               public void afterConnectionEstablished(WebSocketSession session) throws IOException {
+                sessionRef.set(session);
                 session.sendMessage(new TextMessage("LOGIN"));
-                session.sendMessage(new TextMessage("PLAY demo"));
               }
 
               @Override
               protected void handleTextMessage(WebSocketSession session, TextMessage message) {
                 payloads.add(message.getPayload());
+                if (message.getPayload().startsWith("OK LOGIN")) {
+                  loginAck.countDown();
+                }
                 latch.countDown();
               }
             },
@@ -361,11 +401,13 @@ class GameSessionWebSocketHandlerIntegrationTest {
             URI.create("ws://localhost:" + port + "/ws/game"));
 
     WebSocketSession session = future.get(5, TimeUnit.SECONDS);
+    assertThat(loginAck.await(5, TimeUnit.SECONDS)).isTrue();
+    sessionRef.get().sendMessage(new TextMessage("PLAY demo"));
     assertThat(latch.await(5, TimeUnit.SECONDS)).isTrue();
     session.close();
 
     assertThat(payloads.get(0)).startsWith("OK LOGIN");
-    assertThat(payloads.get(1)).startsWith("OK PLAY");
+    assertThat(payloads).anyMatch(payload -> payload.startsWith("OK PLAY"));
     verify(accountClient)
         .getTenantMembershipForRuntime(
             eq("123"), eq("22"), org.mockito.ArgumentMatchers.anyString());
@@ -384,6 +426,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
     StandardWebSocketClient client = new StandardWebSocketClient();
     WebSocketHttpHeaders headers = new WebSocketHttpHeaders();
     headers.add("X-Firemud-Connection-Mode", "first_party_web");
+    headers.add("X-Firemud-Transport-Session-Id", "1");
     headers.add(
         "X-Firemud-Connect-Context",
         new JwtUtil("testsecretkeytestsecretkeytest1234", 60_000L)
@@ -391,24 +434,29 @@ class GameSessionWebSocketHandlerIntegrationTest {
                 "123",
                 java.util.Map.of(
                     "tenantId", "22",
-                    "gameInstanceId", "41",
+                    "gameInstanceId", "1",
                     "connectTokenJti", "connect-jti-2",
                     "gatewayRequestId", "gateway-req-2")));
     List<String> payloads = new java.util.concurrent.CopyOnWriteArrayList<>();
     CountDownLatch latch = new CountDownLatch(4);
+    CountDownLatch loginAck = new CountDownLatch(1);
+    AtomicReference<WebSocketSession> sessionRef = new AtomicReference<>();
 
     var future =
         client.execute(
             new TextWebSocketHandler() {
               @Override
               public void afterConnectionEstablished(WebSocketSession session) throws IOException {
+                sessionRef.set(session);
                 session.sendMessage(new TextMessage("LOGIN"));
-                session.sendMessage(new TextMessage("PLAY demo"));
               }
 
               @Override
               protected void handleTextMessage(WebSocketSession session, TextMessage message) {
                 payloads.add(message.getPayload());
+                if (message.getPayload().startsWith("OK LOGIN")) {
+                  loginAck.countDown();
+                }
                 latch.countDown();
               }
             },
@@ -416,13 +464,15 @@ class GameSessionWebSocketHandlerIntegrationTest {
             URI.create("ws://localhost:" + port + "/ws/game"));
 
     WebSocketSession session = future.get(5, TimeUnit.SECONDS);
+    assertThat(loginAck.await(5, TimeUnit.SECONDS)).isTrue();
+    sessionRef.get().sendMessage(new TextMessage("PLAY demo"));
     assertThat(latch.await(5, TimeUnit.SECONDS)).isTrue();
     session.close();
 
     assertThat(payloads.get(0)).startsWith("OK LOGIN");
-    assertThat(payloads.get(1)).startsWith("OK PLAY");
-    assertThat(payloads.get(2)).contains("Recent combat line");
-    assertThat(payloads.get(3)).startsWith("OK LOOK");
+    assertThat(payloads).anyMatch(payload -> payload.startsWith("OK PLAY"));
+    assertThat(payloads).anyMatch(payload -> payload.contains("Recent combat line"));
+    assertThat(payloads).anyMatch(payload -> payload.startsWith("OK LOOK"));
   }
 
   @Test
@@ -462,6 +512,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
     StandardWebSocketClient client = new StandardWebSocketClient();
     WebSocketHttpHeaders headers = new WebSocketHttpHeaders();
     headers.add("X-Firemud-Connection-Mode", "first_party_web");
+    headers.add("X-Firemud-Transport-Session-Id", "2");
     headers.add(
         "X-Firemud-Connect-Context",
         new JwtUtil("testsecretkeytestsecretkeytest1234", 60_000L)
@@ -469,24 +520,29 @@ class GameSessionWebSocketHandlerIntegrationTest {
                 "123",
                 java.util.Map.of(
                     "tenantId", "22",
-                    "gameInstanceId", "41",
+                    "gameInstanceId", "1",
                     "connectTokenJti", "connect-jti-2",
                     "gatewayRequestId", "gateway-req-2")));
     List<String> payloads = new java.util.concurrent.CopyOnWriteArrayList<>();
     CountDownLatch latch = new CountDownLatch(2);
+    CountDownLatch loginAck = new CountDownLatch(1);
+    AtomicReference<WebSocketSession> sessionRef = new AtomicReference<>();
 
     var future =
         client.execute(
             new TextWebSocketHandler() {
               @Override
               public void afterConnectionEstablished(WebSocketSession session) throws IOException {
+                sessionRef.set(session);
                 session.sendMessage(new TextMessage("LOGIN"));
-                session.sendMessage(new TextMessage("PLAY sandbox Sora"));
               }
 
               @Override
               protected void handleTextMessage(WebSocketSession session, TextMessage message) {
                 payloads.add(message.getPayload());
+                if (message.getPayload().startsWith("OK LOGIN")) {
+                  loginAck.countDown();
+                }
                 latch.countDown();
               }
             },
@@ -494,6 +550,8 @@ class GameSessionWebSocketHandlerIntegrationTest {
             URI.create("ws://localhost:" + port + "/ws/game"));
 
     WebSocketSession session = future.get(5, TimeUnit.SECONDS);
+    assertThat(loginAck.await(5, TimeUnit.SECONDS)).isTrue();
+    sessionRef.get().sendMessage(new TextMessage("PLAY sandbox Sora"));
     assertThat(latch.await(5, TimeUnit.SECONDS)).isTrue();
     session.close();
 

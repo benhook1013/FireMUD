@@ -20,6 +20,7 @@ public class GameSessionWebSocketHandshakeInterceptor implements HandshakeInterc
   static final String SOLO_TICK_HEADER = "X-Requires-Solo-Tick";
   static final String CONNECTION_MODE_HEADER = "X-Firemud-Connection-Mode";
   static final String CONNECT_CONTEXT_HEADER = "X-Firemud-Connect-Context";
+  static final String TRANSPORT_SESSION_HEADER = "X-Firemud-Transport-Session-Id";
   static final String SESSION_ID_ATTR = "firemud.websocket.sessionId";
   static final String BOOTSTRAP_GAME_INSTANCE_ATTR = "firemud.websocket.bootstrapGameInstanceId";
   static final String TENANT_ID_ATTR = "firemud.websocket.tenantId";
@@ -36,6 +37,7 @@ public class GameSessionWebSocketHandshakeInterceptor implements HandshakeInterc
     String bootstrapGameInstanceId = request.getHeaders().getFirst(GAME_INSTANCE_HEADER);
     String sessionId =
         deriveTransportSessionId(
+            request.getHeaders().getFirst(TRANSPORT_SESSION_HEADER),
             request.getHeaders().getFirst(PROXY_CONNECTION_HEADER),
             bootstrapGameInstanceId,
             request.getHeaders().getFirst(CONNECT_CONTEXT_HEADER));
@@ -56,7 +58,13 @@ public class GameSessionWebSocketHandshakeInterceptor implements HandshakeInterc
       Exception exception) {}
 
   private String deriveTransportSessionId(
-      String proxyConnectionId, String bootstrapGameInstanceId, String connectContext) {
+      String transportSessionId,
+      String proxyConnectionId,
+      String bootstrapGameInstanceId,
+      String connectContext) {
+    if (transportSessionId != null && !transportSessionId.isBlank()) {
+      return transportSessionId;
+    }
     if (proxyConnectionId != null && !proxyConnectionId.isBlank()) {
       return Long.toUnsignedString(stablePositiveLong(proxyConnectionId));
     }
