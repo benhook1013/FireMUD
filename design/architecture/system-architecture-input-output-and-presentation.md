@@ -279,6 +279,27 @@ FireMUD should support at least a capability-aware model such as:
 
 The exact wire-level implementation may vary by client capability, but the settings model should not reduce color to a single boolean forever.
 
+### Localization and translation
+
+Localization should distinguish between two complementary mechanisms:
+
+- template/key-based localization for built-in platform and system text;
+- explicit localized content variants for authored world/game prose such as room descriptions, lore text, and item descriptions.
+
+These mechanisms solve different problems and should coexist rather than compete.
+
+For runtime behavior, FireMUD should prefer stored localized variants over live translation calls on the gameplay hot path. The platform should not assume per-message external translation during active gameplay because added network latency and jitter would directly hurt responsiveness.
+
+The preferred future AI-enabled model is:
+
+1. creators author canonical source content in one original language;
+2. creators provide world/tone/glossary guidance where needed;
+3. an offline or out-of-band AI localization workflow generates draft localized variants;
+4. creators optionally review and edit those generated variants;
+5. runtime serves the stored localized variants without depending on live translation APIs.
+
+This keeps runtime latency predictable while still allowing AI to reduce the authoring burden for accessibility and internationalization.
+
 ### BRIEF mode
 
 `BRIEF` mode should primarily be driven by output classification and renderer policy.
@@ -298,6 +319,8 @@ Examples:
 
 Alternate brief-specific prose should be the exception, not the default authoring burden. When needed, specific built-in outputs may supply a concise alternate rendering, but the platform should not require dual-authored prose for every event.
 
+Future movement/combat presentation policy may also treat "in combat" as a first-class presentation hint. A sensible default target is that when the player is currently flagged as in combat, movement-triggered room refreshes automatically render in brief-style form even if the player's general room-display mode is more verbose. This should remain a rendering-policy decision layered on top of the same room-view data, not a separate movement-specific room model.
+
 ### Prompt behavior
 
 Prompt behavior should be configurable and capability-aware.
@@ -308,6 +331,8 @@ Canonical default behavior:
 - prompts are not stored in the reconnect transcript buffer
 - reconnect restores transcript context first, then a fresh gameplay redraw such as `LOOK`, then one fresh prompt
 - first-party web and MCP-aware clients may consume prompt/state as structured data without showing prompt text in the main transcript
+
+Prompts should also remain compatible with future game-defined and player-configurable prompt composition. Different games may expose different status fields, and players may want to choose which fields appear in their text prompt or first-party UI status display. That future flexibility is another reason prompt/state should remain a structured output type rather than being treated as ordinary transcript text.
 
 ---
 

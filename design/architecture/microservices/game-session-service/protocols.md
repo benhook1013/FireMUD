@@ -4,6 +4,13 @@
 
 Telnet and WebSocket clients share a minimal line-based command protocol that powers the initial MVP gameplay set. Clients send ASCII lines terminated by `\n`; the first token is the command name, case-insensitive, and the rest of the line is command-specific arguments. Empty lines are ignored.
 
+The canonical player-facing paths are:
+
+- Telnet via TCP Proxy and Gateway
+- first-party web via `/ws/game/**` through Gateway
+
+Direct generic WebSocket access to Game Session remains useful as an internal/test and advanced-client seam, but it is not intended to be the primary product-facing client path. Real end-to-end client-path verification should prefer Gateway or TCP Proxy rather than relying only on direct Game Session WebSocket coverage.
+
 At the protocol level, commands are split into two groups:
 
 - **System commands** – session and connectivity operations fully owned by Game Session, such as `LOGIN`, `LOGON`, `PING`, and simple state/introspection queries that do not touch gameplay rules.
@@ -44,7 +51,7 @@ Selector rules for `PLAY` match the lobby helpers: `<world>` accepts a stable wo
 Telnet and WebSocket clients share the line-based syntax, but transport context determines which `LOGIN` form is valid:
 
 - For Telnet and generic WebSocket clients, bare `LOGIN` or `LOGON` is intended to start a prompt flow, while `LOGIN <username> <password> [otp]` performs an immediate authentication attempt.
-- For first-party `/ws/game/**` sessions that already carry a validated Gateway connect context, bare `LOGIN` completes gameplay authentication from the pre-established bootstrap identity instead of prompting for credentials.
+- For first-party `/ws/game/**` sessions that already carry a validated Gateway connect context, bare `LOGIN` completes gameplay authentication from the pre-established bootstrap identity instead of prompting for credentials. This bootstrap identity must not quietly reintroduce gameplay binding into `LOGIN`; `PLAY` remains the sole gameplay-admission and gameplay-scope binding step.
 - OTP values on credential-bearing logins are passed through verbatim to Account Service so two-factor accounts get the same behavior across transports.
 - The same `OK <COMMAND>` and `ERROR <CODE> <message>` response format applies to all transports so clients can react consistently.
 
@@ -294,8 +301,8 @@ The protocol should not frame these cases primarily as backend or world-state fa
 
 1. Game Session validates that the caller has completed `LOGIN` and `PLAY` and has a valid Redis-backed gameplay session context. If the caller is still in the login/menu stages, it returns a stage-aware `LOGIN_REQUIRED` or `PLAY_REQUIRED` error rather than a generic gameplay-auth failure.
 2. Authenticated `LOOK` commands call Game Logic's `ResolveLook`, passing `tenantId`, `gameInstanceId`, `sessionId`, `characterId`, and `roomInstanceId`.
-3. Game Logic returns a structured `LookResult`, which Game Session renders into the `OK LOOK` text response, emits `gamesession.command.look.*` metrics/logs, and stores as a bounded derived room-view cache keyed to gameplay identity so reconnect flows can reuse it.
-4. Reconnecting Telnet or WebSocket clients do not receive buffered command replay. Instead, after successful `LOGIN` and `PLAY`, Game Session may replay the bounded per-player transcript/screen buffer and then emits a fresh `LOOK` so authoritative current state wins over any stale context.
+3. Game Logic returns a structured `LookResult`, which Game Session renders into the `OK LOOK` text response and emits `gamesession.command.look.*` metrics/logs.
+4. Reconnecting Telnet or WebSocket clients do not receive buffered command replay. Instead, after successful `LOGIN` and `PLAY`, Game Session may replay the bounded per-player transcript/screen buffer and then emits a fresh authoritative `LOOK` so current room state wins over any stale context.
 
 ### LOOK error mapping and metrics
 
