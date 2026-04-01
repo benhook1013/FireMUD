@@ -8,11 +8,12 @@ The goal is to keep gameplay and UX decisions structured until the latest practi
 
 ## Canonical Decisions
 
-- Player input should be normalized into structured intents before gameplay execution rather than remaining raw strings through the whole stack.
-- Player-visible output should be represented as structured output objects and rendered as late as possible for the target client surface.
+- Player input should be normalized into a small structured command envelope with typed payload shapes before gameplay execution rather than remaining raw strings through the whole stack.
+- Player-visible output should be represented as a small structured output envelope with presentation tags and rendered as late as possible for the target client surface.
 - Prompt/status output is a separate output class from transcript lines and gameplay view redraws.
 - Player presentation settings such as color mode and `BRIEF` behavior should primarily alter rendering policy, not require duplicate authored gameplay prose for every action.
 - `BRIEF` mode should primarily suppress or omit tagged output segments rather than requiring a second fully-authored text path for every output.
+- FireMUD should avoid brittle one-class-per-command and one-class-per-output taxonomies as the default model. A richer schema-driven or document-tree representation may still become desirable later, but the first canonical model should stay smaller and easier to evolve.
 
 ---
 
@@ -39,7 +40,7 @@ This means FireMUD should distinguish between:
 
 - raw input line
 - parsed command
-- normalized input intent
+- normalized command envelope
 - gameplay or menu action
 
 Examples:
@@ -50,6 +51,50 @@ Examples:
 - `SAY Hello travelers` -> communication intent
 
 Smart-client metadata, such as future MCP-carried attach hints or prompt capabilities, should remain distinct from human command text and must not leak into the canonical typed command UX.
+
+### Preferred input representation
+
+The preferred first canonical representation is not one hard-coded class per command.
+
+Instead, FireMUD should use:
+
+- a normalized command envelope
+- a small set of typed payload shapes
+- a verb registry or schema that maps verbs and aliases to payload parsing and execution rules
+
+Examples of payload shapes include:
+
+- credentials payload
+- selection payload
+- targeted-message payload
+- directional payload
+- gameplay-view request payload
+
+This gives the platform enough structure for validation, dispatch, logging, and future creator tooling without forcing every built-in or future game-defined command into its own rigid class hierarchy.
+
+In practical terms, the platform should prefer a model like:
+
+- normalized command envelope
+  - stage
+  - normalized verb
+  - alias used
+  - raw line
+  - normalized payload
+  - client metadata
+
+over a model that requires a separate code type for every command in the system.
+
+### Future command-model evolution
+
+The first canonical model should stay relatively small.
+
+If FireMUD later needs more creator-driven configurability, richer client presentation, or stronger DSL compatibility, this normalized envelope approach can evolve into a more schema-driven command model where:
+
+- verbs are defined by metadata and validation rules
+- argument patterns come from declarative schemas
+- dispatch metadata is creator- or game-configurable
+
+That richer direction is valid future work, but it should build on the smaller normalized-command model rather than replacing raw strings with an equally brittle forest of command classes.
 
 ### Menu-stage and gameplay-stage handling
 
@@ -66,50 +111,68 @@ The session-stage guard remains authoritative for deciding whether a parsed inte
 
 The authoritative output abstraction should be structured output objects, not fully-rendered strings.
 
-Examples of output classes include:
+The preferred first canonical representation is not a large family of unrelated output classes. Instead, FireMUD should use a small normalized player-output envelope with a small set of top-level kinds plus presentation tags and delivery/replay policy.
 
-- transcript event
-- gameplay view
-- prompt/status snapshot
-- command error
-- system notice
-- asynchronous world event
+These structured outputs are then rendered into the final client-facing form appropriate for the transport and client capability.
 
-These output objects are then rendered into the final client-facing form appropriate for the transport and client capability.
+### Preferred output representation
 
-### Canonical output classes
+The top-level output kinds should stay deliberately small, for example:
 
-#### Transcript events
+- message
+- view
+- prompt
+- error
+- notice
 
-Transcript events are scrollback-worthy player-visible narrative lines or blocks such as:
+Most nuance should live in presentation tags and policies rather than exploding the number of top-level output types.
+
+In practical terms, the platform should prefer a model like:
+
+- player output envelope
+  - kind
+  - audience role
+  - structured content
+  - presentation tags
+  - replay policy
+  - brief policy
+  - color hints
+
+over a model that invents a separate hard-coded output class for every gameplay feature.
+
+### Canonical output kinds
+
+#### `message`
+
+Messages are scrollback-worthy player-visible narrative lines or blocks such as:
 
 - communication heard or sent
 - movement narration
 - combat narration
 - system notices that belong in history
 
-Transcript events are the main source for reconnect screen-buffer replay.
+Messages are the main source for reconnect screen-buffer replay.
 
-#### Gameplay views
+#### `view`
 
-Gameplay views are structured snapshots or redraws such as:
+Views are structured snapshots or redraws such as:
 
 - `LOOK`
 - later `QUICKLOOK`
 - later inventory/equipment views
 
-Gameplay views may be cached in narrow built-in view caches and replayed or redrawn on reconnect, but they are not equivalent to ordinary transcript lines.
+Views may be cached in narrow built-in view caches and replayed or redrawn on reconnect, but they are not equivalent to ordinary transcript lines.
 
-#### Prompt/status snapshots
+#### `prompt`
 
-Prompt/status is a distinct output class used for current player state summaries such as:
+Prompts are used for current player state summaries such as:
 
 - health
 - stamina or movement points
 - combat state
 - other game-configured short status indicators
 
-Prompt/status is not ordinary transcript output.
+Prompts are not ordinary transcript output.
 
 It should usually be:
 
@@ -117,9 +180,29 @@ It should usually be:
 - regenerated fresh rather than stored in the reconnect transcript buffer
 - consumable as structured data by first-party web or MCP-aware clients
 
-#### Command errors
+#### `error`
 
-Command errors remain structured outcomes that can be rendered into plain-text protocol errors, richer UI notices, or future accessibility-specific treatments.
+Errors remain structured outcomes that can be rendered into plain-text protocol errors, richer UI notices, or future accessibility-specific treatments.
+
+#### `notice`
+
+Notices are structured non-gameplay-status outputs such as:
+
+- security warnings
+- connection-state notices
+- bounded operator-visible or player-visible system messages
+
+Some notices may be rendered into transcript history, while others may be surfaced separately depending on client type and delivery policy.
+
+### Future presentation-model evolution
+
+If FireMUD later needs richer output composition for configurable games, accessibility features, or first-party UI rendering, this output envelope can evolve toward a more document-like or schema-driven presentation tree where:
+
+- outputs contain structured blocks and spans
+- semantic segments are tagged for styling and suppression
+- multiple renderers consume the same presentation tree
+
+That richer direction is a valid future option, but the first implementation should begin with the smaller output-envelope model rather than jumping immediately to a full presentation document system.
 
 ---
 
@@ -152,6 +235,13 @@ That means:
 - gameplay services should not become the primary owners of final transport strings
 - Game Session should apply presentation policy and render per client surface
 - built-in view caches and reconnect screen buffers should store player-facing rendered output only when that is the intentional cache purpose
+
+This means the canonical model has two related layers:
+
+- gameplay/domain result objects from downstream services
+- player-output envelopes and renderers in Game Session
+
+The latter is the player-presentation contract this document standardizes.
 
 ---
 
