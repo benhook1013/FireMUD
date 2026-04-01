@@ -260,7 +260,7 @@ class GameSessionGrpcServiceTest {
                 Mockito.anyString(), Mockito.anyString(), Mockito.anyBoolean()))
         .thenReturn(
             new TextCommandInterpretationResult(
-                CommandEnqueueResult.failure("RATE_LIMIT", "Command rate limit exceeded"), null));
+                CommandEnqueueResult.failure("RATE_LIMIT", "Command rate limit exceeded")));
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     GameSessionGrpcService service =
         new GameSessionGrpcService(

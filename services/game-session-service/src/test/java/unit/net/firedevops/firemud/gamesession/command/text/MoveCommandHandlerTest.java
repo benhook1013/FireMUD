@@ -11,6 +11,7 @@ import net.firedevops.firemud.gamelogic.v1.LookResult;
 import net.firedevops.firemud.gamelogic.v1.MoveResult;
 import net.firedevops.firemud.gamesession.client.GameLogicClient;
 import net.firedevops.firemud.gamesession.config.GameLogicProperties;
+import net.firedevops.firemud.gamesession.config.MovementProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
@@ -27,6 +28,7 @@ class MoveCommandHandlerTest {
       Mockito.mock(SessionContextService.class);
   private final LookCommandHandler lookCommandHandler = Mockito.mock(LookCommandHandler.class);
   private final GameLogicProperties gameLogicProperties = new GameLogicProperties();
+  private final MovementProperties movementProperties = new MovementProperties(true);
   private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
 
   private MoveCommandHandler handler;
@@ -40,6 +42,7 @@ class MoveCommandHandlerTest {
             sessionContextService,
             lookCommandHandler,
             gameLogicProperties,
+            movementProperties,
             meterRegistry);
     context =
         new SessionContext(
@@ -99,6 +102,40 @@ class MoveCommandHandlerTest {
     assertThat(result.commandResult().accepted()).isFalse();
     assertThat(result.commandResult().errorCode()).isEqualTo("INVALID_EXIT");
     verify(sessionContextService, never()).save(any());
+    verify(lookCommandHandler, never()).renderProtocol(any(), any());
+  }
+
+  @Test
+  void moveCanSkipAutomaticLookWhenConfiguredOff() {
+    handler =
+        new MoveCommandHandler(
+            gameLogicClient,
+            sessionContextService,
+            lookCommandHandler,
+            gameLogicProperties,
+            new MovementProperties(false),
+            meterRegistry);
+    LookResult destinationLook =
+        LookResult.newBuilder()
+            .setRoomInstance(
+                RoomInstanceRef.newBuilder()
+                    .setTenantId("22")
+                    .setGameInstanceId("game-inst-7")
+                    .setRoomInstanceId("R-2045")
+                    .build())
+            .setRoomName("Crafting Hall of Ember")
+            .build();
+    when(gameLogicClient.resolveMove("22", "42", "911", "R-1021", "north"))
+        .thenReturn(
+            MoveResult.newBuilder().setSuccess(true).setDestinationLook(destinationLook).build());
+
+    MoveCommandHandlingResult result =
+        handler.handle(
+            context, new TextCommand(TextCommandType.MOVE, java.util.List.of("north"), "north"));
+
+    assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
+    assertThat(result.responseText()).isNull();
+    verify(sessionContextService).save(any(SessionContext.class));
     verify(lookCommandHandler, never()).renderProtocol(any(), any());
   }
 }

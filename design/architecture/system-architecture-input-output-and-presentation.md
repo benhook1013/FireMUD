@@ -4,6 +4,14 @@ This document defines the canonical model for how FireMUD accepts player input, 
 
 The goal is to keep gameplay and UX decisions structured until the latest practical layer so the platform can support classic MUD text, richer clients, accessibility modes, and game-specific presentation policy without duplicating gameplay logic.
 
+## Implemented Status
+
+- Game Session now has a first normalized player-output seam: `TextCommandInterpretationResult` carries `PlayerOutput` envelopes instead of only a single raw response string.
+- The first output kinds and payloads are live in code for messages, views, prompts, and notices, with replay policy and brief-policy placeholders on the envelope.
+- `LOOK` has started moving onto that path through `LookViewOutput` and `TextPlayerOutputRenderer`, although some command paths still use transitional pre-rendered protocol text payloads.
+- Communication actor responses now flow through the same late renderer, but recipient delivery still pushes already-rendered strings and first-party web still shares the generic text payload path.
+- Prompt output is modeled separately, and presentation defaults are now bound from typed properties, but prompt coalescing and broad prompt emission are not yet fully implemented.
+
 ---
 
 ## Canonical Decisions

@@ -9,6 +9,7 @@ import java.time.Duration;
 import java.util.Optional;
 import net.firedevops.firemud.cache.LookCacheService;
 import net.firedevops.firemud.cache.RedisLookCacheService;
+import net.firedevops.firemud.common.config.FiremudReconnectionProperties;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -28,7 +29,12 @@ class RedisLookCacheServiceTest {
     redisTemplate = Mockito.mock(StringRedisTemplate.class);
     valueOperations = Mockito.mock(ValueOperations.class);
     when(redisTemplate.opsForValue()).thenReturn(valueOperations);
-    cacheService = new RedisLookCacheService(redisTemplate, new ObjectMapper());
+    cacheService =
+        new RedisLookCacheService(
+            redisTemplate,
+            new ObjectMapper(),
+            new FiremudReconnectionProperties(
+                null, null, new FiremudReconnectionProperties.ViewCache(600_000L), null));
   }
 
   @Test

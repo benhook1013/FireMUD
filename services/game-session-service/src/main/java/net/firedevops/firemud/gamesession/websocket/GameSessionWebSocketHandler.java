@@ -9,7 +9,8 @@ import net.firedevops.firemud.gamesession.command.text.TextCommandInterpretation
 import net.firedevops.firemud.gamesession.command.text.TextCommandInterpreter;
 import net.firedevops.firemud.gamesession.command.text.TextCommandParser;
 import net.firedevops.firemud.gamesession.command.text.TextCommandType;
-import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
+import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
+import net.firedevops.firemud.gamesession.presentation.TextPlayerOutputRenderer;
 import net.firedevops.firemud.gamesession.service.ActiveTransportSessionRegistry;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextService;
@@ -36,6 +37,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
   private final FirstPartyConnectContextService firstPartyConnectContextService;
   private final FirstPartyConnectContextRegistry firstPartyConnectContextRegistry;
   private final ScreenBufferService screenBufferService;
+  private final TextPlayerOutputRenderer outputRenderer;
   private final TextCommandParser parser = new TextCommandParser();
 
   public GameSessionWebSocketHandler(
@@ -45,7 +47,8 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       ActiveTransportSessionRegistry activeTransportSessionRegistry,
       FirstPartyConnectContextService firstPartyConnectContextService,
       FirstPartyConnectContextRegistry firstPartyConnectContextRegistry,
-      ScreenBufferService screenBufferService) {
+      ScreenBufferService screenBufferService,
+      TextPlayerOutputRenderer outputRenderer) {
     this.interpreter = interpreter;
     this.lookHandler = lookHandler;
     this.sessionContextService = sessionContextService;
@@ -53,6 +56,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     this.firstPartyConnectContextService = firstPartyConnectContextService;
     this.firstPartyConnectContextRegistry = firstPartyConnectContextRegistry;
     this.screenBufferService = screenBufferService;
+    this.outputRenderer = outputRenderer;
   }
 
   @Override
@@ -140,19 +144,8 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
 
   private String formatResponse(
       TextCommand command, TextCommandInterpretationResult interpretation) {
-    CommandEnqueueResult result = interpretation.commandResult();
-    if (result.accepted()) {
-      if (interpretation.hasResponse()) {
-        if (interpretation.protocolResponse()) {
-          return interpretation.responseText();
-        }
-        String base = "OK " + command.type().name();
-        return base + "\n" + interpretation.responseText() + "\n\n";
-      }
-      return "OK " + command.type().name();
-    }
-    String message = result.errorMessage() == null ? "" : result.errorMessage();
-    return "ERROR " + result.errorCode() + " " + message;
+    return outputRenderer.renderAll(
+        command, interpretation.commandResult(), interpretation.outputs());
   }
 
   private void sendProtocolMessage(WebSocketSession session, String text) throws IOException {
@@ -221,11 +214,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     if (!interpretation.commandResult().accepted() || !StringUtils.hasText(response)) {
       return false;
     }
-    return command.type() == TextCommandType.LOOK
-        || command.type() == TextCommandType.MOVE
-        || command.type() == TextCommandType.SAY
-        || command.type() == TextCommandType.WHISPER
-        || command.type() == TextCommandType.TELL;
+    return interpretation.outputs().stream().anyMatch(PlayerOutput::screenBufferEligible);
   }
 
   private void bootstrapSessionContext(WebSocketSession session) {

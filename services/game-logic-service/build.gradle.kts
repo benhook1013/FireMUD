@@ -7,4 +7,5 @@ plugins {
 }
 
 dependencies {
+    annotationProcessor(libs.spring.boot.configuration.processor)
 }

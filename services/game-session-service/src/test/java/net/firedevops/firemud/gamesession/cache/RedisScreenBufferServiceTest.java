@@ -9,6 +9,7 @@ import static org.mockito.Mockito.when;
 import java.util.Optional;
 import net.firedevops.firemud.cache.RedisScreenBufferService;
 import net.firedevops.firemud.cache.ScreenBufferService;
+import net.firedevops.firemud.common.config.FiremudReconnectionProperties;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -25,7 +26,15 @@ class RedisScreenBufferServiceTest {
   @BeforeEach
   void setUp() {
     when(redisTemplate.opsForValue()).thenReturn(valueOperations);
-    cacheService = new RedisScreenBufferService(redisTemplate, new ObjectMapper());
+    cacheService =
+        new RedisScreenBufferService(
+            redisTemplate,
+            new ObjectMapper(),
+            new FiremudReconnectionProperties(
+                null,
+                new FiremudReconnectionProperties.Buffer(1_800_000L, 8, 24, 16_384, 65_536),
+                null,
+                null));
   }
 
   @Test

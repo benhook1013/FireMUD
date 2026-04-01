@@ -12,6 +12,8 @@ import net.firedevops.firemud.gamelogic.v1.SendCommunicationResponse;
 import net.firedevops.firemud.gamesession.client.EntityManagementClient;
 import net.firedevops.firemud.gamesession.client.GameLogicClient;
 import net.firedevops.firemud.gamesession.config.GameLogicProperties;
+import net.firedevops.firemud.gamesession.config.PresentationProperties;
+import net.firedevops.firemud.gamesession.presentation.TextPlayerOutputRenderer;
 import net.firedevops.firemud.gamesession.service.CommunicationRecipientDeliveryService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
@@ -44,6 +46,11 @@ class CommunicationCommandHandlerTest {
             gameLogicProperties,
             sessionContextService,
             recipientDeliveryService,
+            new TextPlayerOutputRenderer(
+                new PresentationProperties(
+                    PresentationProperties.ColorMode.BASIC,
+                    false,
+                    new PresentationProperties.Prompt(false, false, true, 150L))),
             meterRegistry);
   }
 

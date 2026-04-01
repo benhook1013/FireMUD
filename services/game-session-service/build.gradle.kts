@@ -44,6 +44,7 @@ tasks.named("generateTestFixturesProto") {
 }
 
 dependencies {
+    annotationProcessor(libs.spring.boot.configuration.processor)
     implementation(libs.spring.boot.starter.websocket)
     implementation(project(":common-security"))
     implementation(libs.jjwt.api)

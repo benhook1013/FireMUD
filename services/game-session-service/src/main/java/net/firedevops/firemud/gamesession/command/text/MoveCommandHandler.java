@@ -8,6 +8,7 @@ import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.gamelogic.v1.MoveResult;
 import net.firedevops.firemud.gamesession.client.GameLogicClient;
 import net.firedevops.firemud.gamesession.config.GameLogicProperties;
+import net.firedevops.firemud.gamesession.config.MovementProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
@@ -31,6 +32,7 @@ public class MoveCommandHandler {
   private final SessionContextService sessionContextService;
   private final LookCommandHandler lookCommandHandler;
   private final GameLogicProperties gameLogicProperties;
+  private final MovementProperties movementProperties;
   private final MeterRegistry meterRegistry;
 
   public MoveCommandHandlingResult handle(SessionContext context, TextCommand command) {
@@ -72,6 +74,9 @@ public class MoveCommandHandler {
 
       SessionContext updatedContext = updatedContext(context, response);
       sessionContextService.save(updatedContext);
+      if (!movementProperties.postMoveLookEnabled()) {
+        return new MoveCommandHandlingResult(CommandEnqueueResult.success(), null);
+      }
       return new MoveCommandHandlingResult(
           CommandEnqueueResult.success(),
           lookCommandHandler.renderProtocol(updatedContext, response.getDestinationLook()));

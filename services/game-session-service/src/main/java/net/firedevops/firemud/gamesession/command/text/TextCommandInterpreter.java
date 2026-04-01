@@ -1,8 +1,10 @@
 package net.firedevops.firemud.gamesession.command.text;
 
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
+import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.service.CommandService;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -75,12 +77,12 @@ public class TextCommandInterpreter {
   public TextCommandInterpretationResult interpret(
       String sessionId, TextCommand command, boolean requiresSoloTick) {
     if (command.type() == TextCommandType.NOOP) {
-      return new TextCommandInterpretationResult(CommandEnqueueResult.success(), null);
+      return new TextCommandInterpretationResult(CommandEnqueueResult.success());
     }
     if (command.type() == TextCommandType.UNKNOWN) {
       String message = "Unknown command";
       return new TextCommandInterpretationResult(
-          CommandEnqueueResult.failure("UNKNOWN_COMMAND", message), null);
+          CommandEnqueueResult.failure("UNKNOWN_COMMAND", message));
     }
     if (command.type() == TextCommandType.WORLDS) {
       return new TextCommandInterpretationResult(
@@ -108,8 +110,9 @@ public class TextCommandInterpreter {
       PlayCommandHandlingResult playResult = playHandler.handle(sessionId, command);
       return new TextCommandInterpretationResult(
           playResult.commandResult(),
-          playResult.responseText(),
-          true,
+          playResult.responseText() == null
+              ? List.of()
+              : List.of(PlayerOutput.notice(playResult.responseText(), true)),
           playResult.reconnectRedrawRecommended());
     }
 
@@ -128,14 +131,20 @@ public class TextCommandInterpreter {
       CommunicationCommandHandlingResult communicationResult =
           communicationHandler.handle(maybeContext.orElseThrow(), command);
       return new TextCommandInterpretationResult(
-          communicationResult.commandResult(), communicationResult.responseText(), true);
+          communicationResult.commandResult(),
+          communicationResult.responseText() == null
+              ? List.of()
+              : List.of(PlayerOutput.message(communicationResult.responseText())));
     }
 
     if (command.type() == TextCommandType.MOVE) {
       MoveCommandHandlingResult moveResult =
           moveHandler.handle(maybeContext.orElseThrow(), command);
       return new TextCommandInterpretationResult(
-          moveResult.commandResult(), moveResult.responseText(), true);
+          moveResult.commandResult(),
+          moveResult.responseText() == null
+              ? List.of()
+              : List.of(PlayerOutput.protocolView(moveResult.responseText())));
     }
 
     CommandEnqueueResult enqueueResult =
@@ -146,10 +155,11 @@ public class TextCommandInterpreter {
       if (isLookError(lookText)) {
         enqueueResult = failureForLookError(lookText);
       } else {
-        response = lookText;
+        return new TextCommandInterpretationResult(
+            enqueueResult, lookText == null ? List.of() : List.of(PlayerOutput.view(lookText)));
       }
     }
-    return new TextCommandInterpretationResult(enqueueResult, response);
+    return new TextCommandInterpretationResult(enqueueResult);
   }
 
   private static boolean requiresGameplayAuthentication(TextCommandType type) {
@@ -165,7 +175,7 @@ public class TextCommandInterpreter {
   }
 
   private TextCommandInterpretationResult stageFailure(String code, String message) {
-    return new TextCommandInterpretationResult(CommandEnqueueResult.failure(code, message), null);
+    return new TextCommandInterpretationResult(CommandEnqueueResult.failure(code, message));
   }
 
   private boolean isLookError(String text) {

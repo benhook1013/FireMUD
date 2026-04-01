@@ -14,6 +14,7 @@ import net.firedevops.firemud.entitymanagement.v1.EntityType;
 import net.firedevops.firemud.entitymanagement.v1.ListRoomEntitiesRequest;
 import net.firedevops.firemud.entitymanagement.v1.ListRoomEntitiesResponse;
 import net.firedevops.firemud.entitymanagement.v1.RoomEntity;
+import net.firedevops.firemud.gamelogic.config.CommunicationProperties;
 import net.firedevops.firemud.gamelogic.v1.CommunicationPerception;
 import net.firedevops.firemud.gamelogic.v1.CommunicationRecipientRole;
 import net.firedevops.firemud.gamelogic.v1.CommunicationRecipientView;
@@ -35,11 +36,11 @@ import org.springframework.util.StringUtils;
 @RequiredArgsConstructor
 public class CommunicationAggregationService {
   private static final Logger LOG = LoggerFactory.getLogger(CommunicationAggregationService.class);
-  private static final int MAX_MESSAGE_LENGTH = 512;
   private static final String OBSERVER_METADATA_ONLY_FLAG = "observer_metadata_only";
 
   private final SocialGroupsServiceGrpc.SocialGroupsServiceBlockingStub socialStub;
   private final EntityManagementServiceGrpc.EntityManagementServiceBlockingStub entityStub;
+  private final CommunicationProperties communicationProperties;
   private final MeterRegistry meterRegistry;
 
   public SendCommunicationResponse send(SendCommunicationRequest request) {
@@ -52,11 +53,11 @@ public class CommunicationAggregationService {
     if (normalizedText.isBlank()) {
       return errorResponse(builder, "INVALID_ARGUMENT", "Message must not be empty");
     }
-    if (normalizedText.length() > MAX_MESSAGE_LENGTH) {
+    if (normalizedText.length() > communicationProperties.maxMessageLength()) {
       return errorResponse(
           builder,
           "INVALID_ARGUMENT",
-          "Message length exceeds " + MAX_MESSAGE_LENGTH + " characters");
+          "Message length exceeds " + communicationProperties.maxMessageLength() + " characters");
     }
 
     ListRoomEntitiesResponse roomEntities = loadRoomEntities(request);

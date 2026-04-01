@@ -10,6 +10,7 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import net.firedevops.firemud.entitymanagement.v1.EntityType;
 import net.firedevops.firemud.entitymanagement.v1.ListRoomEntitiesResponse;
 import net.firedevops.firemud.entitymanagement.v1.RoomEntity;
+import net.firedevops.firemud.gamelogic.config.CommunicationProperties;
 import net.firedevops.firemud.gamelogic.v1.CommunicationPerception;
 import net.firedevops.firemud.gamelogic.v1.CommunicationRecipientRole;
 import net.firedevops.firemud.gamelogic.v1.CommunicationType;
@@ -43,7 +44,9 @@ class CommunicationAggregationServiceTest {
   @BeforeEach
   void setUp() {
     meterRegistry = new SimpleMeterRegistry();
-    service = new CommunicationAggregationService(socialStub, entityStub, meterRegistry);
+    service =
+        new CommunicationAggregationService(
+            socialStub, entityStub, new CommunicationProperties(512), meterRegistry);
   }
 
   @Test

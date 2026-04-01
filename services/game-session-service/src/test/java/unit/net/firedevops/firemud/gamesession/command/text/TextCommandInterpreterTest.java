@@ -260,14 +260,15 @@ class TextCommandInterpreterTest {
     SessionContext played = sessionAuthenticationService.resolveSessionContext("1").orElseThrow();
     when(communicationHandler.handle(Mockito.eq(played), Mockito.any(TextCommand.class)))
         .thenReturn(
-            new CommunicationCommandHandlingResult(CommandEnqueueResult.success(), "OK SAY text"));
+            new CommunicationCommandHandlingResult(
+                CommandEnqueueResult.success(), "You say, \"Hello there\""));
 
     TextCommandInterpretationResult interpretation =
         interpreter.interpret("1", "SAY Hello there", false);
 
     assertTrue(interpretation.commandResult().accepted());
-    assertTrue(interpretation.protocolResponse());
-    assertEquals("OK SAY text", interpretation.responseText());
+    assertFalse(interpretation.protocolResponse());
+    assertEquals("You say, \"Hello there\"", interpretation.responseText());
     verify(communicationHandler).handle(Mockito.eq(played), Mockito.any(TextCommand.class));
   }
 

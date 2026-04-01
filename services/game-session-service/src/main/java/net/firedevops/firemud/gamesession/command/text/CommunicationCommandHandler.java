@@ -13,6 +13,8 @@ import net.firedevops.firemud.gamesession.client.EntityManagementClient;
 import net.firedevops.firemud.gamesession.client.GameLogicClient;
 import net.firedevops.firemud.gamesession.config.GameLogicProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
+import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
+import net.firedevops.firemud.gamesession.presentation.TextPlayerOutputRenderer;
 import net.firedevops.firemud.gamesession.service.CommunicationRecipientDeliveryService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
@@ -39,6 +41,7 @@ public class CommunicationCommandHandler {
   private final GameLogicProperties gameLogicProperties;
   private final SessionContextService sessionContextService;
   private final CommunicationRecipientDeliveryService recipientDeliveryService;
+  private final TextPlayerOutputRenderer playerOutputRenderer;
   private final MeterRegistry meterRegistry;
 
   public CommunicationCommandHandlingResult handle(SessionContext context, TextCommand command) {
@@ -96,7 +99,7 @@ public class CommunicationCommandHandler {
       recipientDeliveryService.deliver(context, response);
 
       return new CommunicationCommandHandlingResult(
-          CommandEnqueueResult.success(), formatSuccessResponse(command, response));
+          CommandEnqueueResult.success(), renderSuccessOutput(command, response));
     } catch (RuntimeException ex) {
       logFailure("UNAVAILABLE", "Game Logic unavailable", tenantTag, command.type(), ex);
       return new CommunicationCommandHandlingResult(
@@ -181,17 +184,19 @@ public class CommunicationCommandHandler {
         null);
   }
 
-  private String formatSuccessResponse(TextCommand command, SendCommunicationResponse response) {
+  private String renderSuccessOutput(TextCommand command, SendCommunicationResponse response) {
     if (StringUtils.hasText(response.getActorView())) {
-      return response.getActorView();
+      return playerOutputRenderer.render(PlayerOutput.message(response.getActorView()));
     }
-    return switch (command.type()) {
-      case SAY -> "You say, \"" + command.args().get(0) + "\"";
-      case WHISPER ->
-          "You whisper to " + command.args().get(0) + ", \"" + command.args().get(1) + "\"";
-      case TELL -> "You tell " + command.args().get(0) + ", \"" + command.args().get(1) + "\"";
-      default -> "Message sent.";
-    };
+    String fallback =
+        switch (command.type()) {
+          case SAY -> "You say, \"" + command.args().get(0) + "\"";
+          case WHISPER ->
+              "You whisper to " + command.args().get(0) + ", \"" + command.args().get(1) + "\"";
+          case TELL -> "You tell " + command.args().get(0) + ", \"" + command.args().get(1) + "\"";
+          default -> "Message sent.";
+        };
+    return playerOutputRenderer.render(PlayerOutput.message(fallback));
   }
 
   private CommunicationType mapType(TextCommandType type) {
