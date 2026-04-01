@@ -21,6 +21,7 @@ This zero-indexed overview sits at the top of the design/project-management/vert
 16. **Tell Communication** - The first direct non-room-scoped live gameplay tell is now baseline live, with canonical sender/target prose recorded in `04.3-task-list-tell-vertical-slice.md`.
 17. **Communication Observers & Interceptors** - The baseline observer/interceptor slice is now live for structured metadata-only `whisper` observer resolution in `04.4-task-list-communication-observers-and-interceptors-vertical-slice.md`.
 18. **Communication Recipient Delivery** - Target-side and metadata-only observer-side communication delivery are now baseline live for generic WebSocket and Telnet in `04.5-task-list-communication-recipient-delivery-vertical-slice.md`; first-party/MCP-aware delivery remains future work.
+19. **Basic Multiplayer Load Proof** - Add the first bounded real multiplayer/load validation with roughly 10 concurrent players performing `LOGIN` -> `PLAY` -> `LOOK` against the real service stack, using generated test data where practical (planned in `05.1-task-list-basic-multiplayer-load-proof-vertical-slice.md`).
 
 ---
 
