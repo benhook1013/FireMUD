@@ -3,22 +3,27 @@ package net.firedevops.firemud.cache;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Duration;
 import java.util.Optional;
-import lombok.RequiredArgsConstructor;
-import org.springframework.beans.factory.annotation.Value;
+import net.firedevops.firemud.common.config.FiremudReconnectionProperties;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.ObjectMapper;
 
-@RequiredArgsConstructor
 @SuppressFBWarnings(
     value = "EI_EXPOSE_REP2",
     justification = "Injected Redis/ObjectMapper dependencies are shared framework singletons")
 public class RedisLookCacheService implements LookCacheService {
   private final StringRedisTemplate redisTemplate;
   private final ObjectMapper objectMapper;
+  private final FiremudReconnectionProperties properties;
 
-  @Value("${firemud.look.cache.ttl-ms:600000}")
-  private long ttlMs;
+  public RedisLookCacheService(
+      StringRedisTemplate redisTemplate,
+      ObjectMapper objectMapper,
+      FiremudReconnectionProperties properties) {
+    this.redisTemplate = redisTemplate;
+    this.objectMapper = objectMapper;
+    this.properties = properties;
+  }
 
   private static final String KEY_TEMPLATE = "lookcache:%d:%d";
 
@@ -43,7 +48,7 @@ public class RedisLookCacheService implements LookCacheService {
           .set(
               key(tenantId, sessionId),
               objectMapper.writeValueAsString(payload),
-              Duration.ofMillis(ttlMs));
+              Duration.ofMillis(properties.viewCache().lookTtlMs()));
     } catch (JacksonException e) {
       throw new IllegalStateException("Failed to serialize LOOK cache payload", e);
     }

@@ -12,6 +12,7 @@ import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.AutoConfigureAfter;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -19,6 +20,7 @@ import tools.jackson.databind.ObjectMapper;
 
 @AutoConfiguration
 @AutoConfigureAfter(DatabaseAutoConfiguration.class)
+@EnableConfigurationProperties(FiremudReconnectionProperties.class)
 @Import(CommonCoreAutoConfiguration.class)
 public class CommonAutoConfiguration {
 
@@ -34,16 +36,20 @@ public class CommonAutoConfiguration {
   @ConditionalOnBean(StringRedisTemplate.class)
   @ConditionalOnMissingBean(LookCacheService.class)
   public LookCacheService lookCacheService(
-      StringRedisTemplate stringRedisTemplate, ObjectMapper objectMapper) {
-    return new RedisLookCacheService(stringRedisTemplate, objectMapper);
+      StringRedisTemplate stringRedisTemplate,
+      ObjectMapper objectMapper,
+      FiremudReconnectionProperties properties) {
+    return new RedisLookCacheService(stringRedisTemplate, objectMapper, properties);
   }
 
   @Bean
   @ConditionalOnBean(StringRedisTemplate.class)
   @ConditionalOnMissingBean(ScreenBufferService.class)
   public ScreenBufferService screenBufferService(
-      StringRedisTemplate stringRedisTemplate, ObjectMapper objectMapper) {
-    return new RedisScreenBufferService(stringRedisTemplate, objectMapper);
+      StringRedisTemplate stringRedisTemplate,
+      ObjectMapper objectMapper,
+      FiremudReconnectionProperties properties) {
+    return new RedisScreenBufferService(stringRedisTemplate, objectMapper, properties);
   }
 
   @Bean

@@ -5,14 +5,12 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
-import lombok.RequiredArgsConstructor;
-import org.springframework.beans.factory.annotation.Value;
+import net.firedevops.firemud.common.config.FiremudReconnectionProperties;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.util.StringUtils;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.ObjectMapper;
 
-@RequiredArgsConstructor
 @SuppressFBWarnings(
     value = "EI_EXPOSE_REP2",
     justification = "Injected Redis/ObjectMapper dependencies are shared framework singletons")
@@ -21,21 +19,16 @@ public class RedisScreenBufferService implements ScreenBufferService {
 
   private final StringRedisTemplate redisTemplate;
   private final ObjectMapper objectMapper;
+  private final FiremudReconnectionProperties properties;
 
-  @Value("${firemud.screen-buffer.ttl-ms:1800000}")
-  private long ttlMs;
-
-  @Value("${firemud.screen-buffer.min-messages:8}")
-  private int minMessages;
-
-  @Value("${firemud.screen-buffer.min-lines:24}")
-  private int minLines;
-
-  @Value("${firemud.screen-buffer.soft-max-bytes:16384}")
-  private int softMaxBytes;
-
-  @Value("${firemud.screen-buffer.hard-max-bytes:65536}")
-  private int hardMaxBytes;
+  public RedisScreenBufferService(
+      StringRedisTemplate redisTemplate,
+      ObjectMapper objectMapper,
+      FiremudReconnectionProperties properties) {
+    this.redisTemplate = redisTemplate;
+    this.objectMapper = objectMapper;
+    this.properties = properties;
+  }
 
   @Override
   public void append(long tenantId, long gameInstanceId, long characterId, String protocolText) {
@@ -90,20 +83,21 @@ public class RedisScreenBufferService implements ScreenBufferService {
           .set(
               key(tenantId, gameInstanceId, characterId),
               objectMapper.writeValueAsString(payload),
-              Duration.ofMillis(ttlMs));
+              Duration.ofMillis(properties.buffer().ttlMs()));
     } catch (JacksonException ex) {
       throw new IllegalStateException("Failed to serialize screen buffer payload", ex);
     }
   }
 
   private void trimPayload(BufferedPayload payload) {
+    FiremudReconnectionProperties.Buffer buffer = properties.buffer();
     while (payload.entries.size() > 1
-        && totalBytes(payload.entries) > softMaxBytes
-        && payload.entries.size() > minMessages
-        && totalLines(payload.entries) > minLines) {
+        && totalBytes(payload.entries) > buffer.softMaxBytes()
+        && payload.entries.size() > buffer.minMessages()
+        && totalLines(payload.entries) > buffer.minLines()) {
       payload.entries.remove(0);
     }
-    while (payload.entries.size() > 1 && totalBytes(payload.entries) > hardMaxBytes) {
+    while (payload.entries.size() > 1 && totalBytes(payload.entries) > buffer.hardMaxBytes()) {
       payload.entries.remove(0);
     }
   }
