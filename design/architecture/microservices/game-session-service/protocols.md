@@ -195,6 +195,8 @@ The canonical text renderer should preserve a classic MUD feel:
 
 A standard `QUICKLOOK` command should later reuse the same underlying room-view structure but skip the room-description prose, making it suitable for rapid redraws that still show visible occupants, room-ground items, exits, and the normal prompt/status line.
 
+The text protocol remains the canonical wire format for Telnet and generic text WebSocket clients, but it should not be treated as the deepest platform abstraction. FireMUD should preserve structured gameplay views, communication results, prompt/status snapshots, and command errors until the latest practical rendering step so player settings such as color mode and `BRIEF`, plus first-party web and future MCP-aware clients, can apply presentation policy without rewriting gameplay logic. See [Input, Output, and Presentation](../../system-architecture-input-output-and-presentation.md).
+
 The first live communication modes now emit canonical actor prose directly for the initiating player. After a successful command the server responds with text such as:
 
 ```text
@@ -328,6 +330,8 @@ Metrics `gamesession.command.look.invocations` and `gamesession.command.look.fai
 - A blank line terminates the response block so multiple responses can be streamed back-to-back without ambiguity.
 - Asynchronous world events use the same rules but are prefixed with `EVENT <TYPE>` to distinguish them from direct command responses.
 - Unknown commands return `ERROR UNKNOWN_COMMAND <rawLine>`.
+
+Prompt/status remains a separate output class from transcript lines and gameplay views even when plain-text clients receive it on the same socket. Prompt emission should be coalesced, reconnect transcript replay should exclude prompt lines, and first-party or MCP-aware clients may consume prompt/status as structured state rather than main-transcript text. See [Reconnection Strategy](../../system-architecture-reconnection.md#client-reconnection-behaviour) and [Input, Output, and Presentation](../../system-architecture-input-output-and-presentation.md).
 
 Examples:
 
