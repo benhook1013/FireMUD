@@ -5,9 +5,12 @@ import java.net.http.HttpClient;
 import java.net.http.WebSocket;
 import java.time.Duration;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.common.health.DependencyReadinessSupport;
 import net.firedevops.firemud.common.health.ReadinessTransitionTracker;
+import net.firedevops.firemud.common.security.JwtUtil;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.health.contributor.HealthIndicator;
 import org.springframework.stereotype.Component;
@@ -18,31 +21,34 @@ public class GameplayRouteReadinessHealthIndicator implements HealthIndicator {
   private static final String COMPONENT = "spring-cloud-gateway";
   private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(1);
   private static final String CONTRACT = "Gateway /ws/game upgrade";
+  private static final String CONNECT_TOKEN_HEADER = "X-Firemud-Connect-Token";
+  private static final String PROXY_CONNECTION_ID_HEADER = "X-Proxy-Connection-Id";
+  private static final String GAME_INSTANCE_ID_HEADER = "X-Game-Instance-Id";
+  private static final String TENANT_ID_HEADER = "X-Tenant-Id";
   private static final String SYNTHETIC_PROXY_CONNECTION_ID = "gateway-readiness-probe";
+  private static final String PROBE_ACCOUNT_ID = "__gateway_readiness__";
+  private static final String PROBE_TENANT_ID = "__gateway_tenant__";
+  private static final String PROBE_GAME_INSTANCE_ID = "__gateway_game__";
 
   private final int serverPort;
   private final ReadinessTransitionTracker readinessTransitionTracker;
+  private final JwtUtil jwtUtil;
   private final HttpClient client = HttpClient.newBuilder().connectTimeout(CONNECT_TIMEOUT).build();
 
   public GameplayRouteReadinessHealthIndicator(
       @Value("${local.server.port:${server.port:8080}}") int serverPort,
-      ReadinessTransitionTracker readinessTransitionTracker) {
+      ReadinessTransitionTracker readinessTransitionTracker,
+      ObjectProvider<JwtUtil> jwtUtilProvider) {
     this.serverPort = serverPort;
     this.readinessTransitionTracker = readinessTransitionTracker;
+    this.jwtUtil = jwtUtilProvider.getIfAvailable();
   }
 
   @Override
   public org.springframework.boot.health.contributor.Health health() {
     URI uri = URI.create("ws://127.0.0.1:" + serverPort + "/ws/game");
     try {
-      WebSocket socket =
-          client
-              .newWebSocketBuilder()
-              .header("X-Game-Instance-Id", "1")
-              .header("X-Tenant-Id", "1")
-              .header("X-Proxy-Connection-Id", SYNTHETIC_PROXY_CONNECTION_ID)
-              .buildAsync(uri, new NoopListener())
-              .get(2, TimeUnit.SECONDS);
+      WebSocket socket = buildClient().buildAsync(uri, new NoopListener()).get(2, TimeUnit.SECONDS);
       socket.abort();
       return DependencyReadinessSupport.recordUp(
           readinessTransitionTracker,
@@ -63,6 +69,25 @@ public class GameplayRouteReadinessHealthIndicator implements HealthIndicator {
               DependencyReadinessSupport.downDependency(
                   "websocketUpgrade", uri.toString(), DependencyReadinessSupport.message(ex))));
     }
+  }
+
+  private WebSocket.Builder buildClient() {
+    WebSocket.Builder builder = client.newWebSocketBuilder();
+    if (jwtUtil != null) {
+      return builder.header(
+          CONNECT_TOKEN_HEADER,
+          jwtUtil.generateToken(
+              PROBE_ACCOUNT_ID,
+              Map.of(
+                  "accountId", PROBE_ACCOUNT_ID,
+                  "tenantId", PROBE_TENANT_ID,
+                  "gameInstanceId", PROBE_GAME_INSTANCE_ID,
+                  "jti", "gateway-readiness-" + UUID.randomUUID())));
+    }
+    return builder
+        .header(GAME_INSTANCE_ID_HEADER, "1")
+        .header(TENANT_ID_HEADER, "1")
+        .header(PROXY_CONNECTION_ID_HEADER, SYNTHETIC_PROXY_CONNECTION_ID);
   }
 
   private static final class NoopListener implements WebSocket.Listener {}

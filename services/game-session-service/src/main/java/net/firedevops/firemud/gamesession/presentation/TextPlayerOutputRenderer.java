@@ -50,7 +50,8 @@ public class TextPlayerOutputRenderer {
     }
     boolean plainMessageOnly =
         outputs.stream()
-            .allMatch(output -> !output.protocolBlock() && output.kind() == PlayerOutputKind.MESSAGE);
+            .allMatch(
+                output -> !output.protocolBlock() && output.kind() == PlayerOutputKind.MESSAGE);
     boolean proseCommand =
         command.type().name().equals("SAY")
             || command.type().name().equals("WHISPER")
