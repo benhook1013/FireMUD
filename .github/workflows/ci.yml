@@ -226,7 +226,7 @@ jobs:
 
       - name: 🧪 Validate GitHub Actions Workflows
         run: |
-          go install github.com/rhysd/actionlint/cmd/actionlint@latest
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.11
           "$(go env GOPATH)/bin/actionlint"
 
   docs-check:

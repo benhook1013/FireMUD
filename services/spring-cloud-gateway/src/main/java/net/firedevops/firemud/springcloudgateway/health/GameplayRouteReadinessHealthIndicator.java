@@ -18,6 +18,7 @@ public class GameplayRouteReadinessHealthIndicator implements HealthIndicator {
   private static final String COMPONENT = "spring-cloud-gateway";
   private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(1);
   private static final String CONTRACT = "Gateway /ws/game upgrade";
+  private static final String SYNTHETIC_PROXY_CONNECTION_ID = "gateway-readiness-probe";
 
   private final int serverPort;
   private final ReadinessTransitionTracker readinessTransitionTracker;
@@ -39,6 +40,7 @@ public class GameplayRouteReadinessHealthIndicator implements HealthIndicator {
               .newWebSocketBuilder()
               .header("X-Game-Instance-Id", "1")
               .header("X-Tenant-Id", "1")
+              .header("X-Proxy-Connection-Id", SYNTHETIC_PROXY_CONNECTION_ID)
               .buildAsync(uri, new NoopListener())
               .get(2, TimeUnit.SECONDS);
       socket.abort();
