@@ -9,6 +9,8 @@ import io.grpc.ServerCall;
 import io.grpc.Status;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import net.firedevops.firemud.account.v1.AccountServiceGrpc;
 import net.firedevops.firemud.common.security.AuthTokenInterceptor;
 import net.firedevops.firemud.common.security.JwtUtil;
 import org.junit.jupiter.api.BeforeEach;
@@ -45,6 +47,23 @@ class GrpcJwtAuthInterceptorTest {
     assertEquals(null, call.status); // call not closed
   }
 
+  @Test
+  void allowsConfiguredUnauthenticatedRuntimeMethodWithoutToken() {
+    AuthTokenInterceptor runtimeAwareInterceptor =
+        new AuthTokenInterceptor(
+            jwtUtil,
+            Set.of(AccountServiceGrpc.getGetTenantMembershipForRuntimeMethod().getFullMethodName()));
+    TestServerCall call =
+        new TestServerCall(AccountServiceGrpc.getGetTenantMembershipForRuntimeMethod().getFullMethodName());
+    Metadata headers = new Metadata();
+
+    ServerCall.Listener<?> listener =
+        runtimeAwareInterceptor.interceptCall(call, headers, (c, h) -> new ServerCall.Listener<>() {});
+
+    assertNotNull(listener);
+    assertEquals(null, call.status);
+  }
+
   private static class TestServerCall extends ServerCall<Object, Object> {
     private static final MethodDescriptor.Marshaller<Object> NOOP_MARSHALLER =
         new MethodDescriptor.Marshaller<>() {
@@ -60,6 +79,15 @@ class GrpcJwtAuthInterceptorTest {
         };
 
     Status status;
+    private final String fullMethodName;
+
+    private TestServerCall() {
+      this("test.Service/Method");
+    }
+
+    private TestServerCall(String fullMethodName) {
+      this.fullMethodName = fullMethodName;
+    }
 
     @Override
     public void request(int numMessages) {}
@@ -84,7 +112,7 @@ class GrpcJwtAuthInterceptorTest {
     public MethodDescriptor<Object, Object> getMethodDescriptor() {
       return MethodDescriptor.<Object, Object>newBuilder()
           .setType(MethodDescriptor.MethodType.UNARY)
-          .setFullMethodName("test.Service/Method")
+          .setFullMethodName(fullMethodName)
           .setRequestMarshaller(NOOP_MARSHALLER)
           .setResponseMarshaller(NOOP_MARSHALLER)
           .build();
