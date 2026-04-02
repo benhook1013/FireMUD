@@ -20,15 +20,19 @@ public class TextPlayerOutputRenderer {
     if (output.protocolBlock()) {
       return output.text();
     }
+    if (presentationProperties.briefEnabledByDefault()
+        && output.briefRenderPolicy() == BriefRenderPolicy.SUPPRESS_IN_BRIEF) {
+      return "";
+    }
     return switch (output.kind()) {
-      case MESSAGE -> ((TextMessageOutput) output.payload()).text();
+      case MESSAGE -> renderMessage((TextMessageOutput) output.payload());
       case VIEW ->
           output.payload() instanceof LookViewOutput lookView
               ? renderLookView(lookView)
-              : ((TextMessageOutput) output.payload()).text();
+              : renderMessage((TextMessageOutput) output.payload());
       case PROMPT -> renderPrompt((PromptOutput) output.payload());
       case ERROR -> throw new IllegalArgumentException("Error outputs are rendered elsewhere");
-      case NOTICE -> ((NoticeOutput) output.payload()).text();
+      case NOTICE -> renderNotice((NoticeOutput) output.payload());
     };
   }
 
@@ -65,21 +69,21 @@ public class TextPlayerOutputRenderer {
   private String renderLookView(LookViewOutput result) {
     boolean brief = presentationProperties.briefEnabledByDefault();
     StringBuilder out = new StringBuilder();
-    out.append("Room: ")
-        .append(result.roomName())
+    out.append(colorizeLabel("Room: "))
+        .append(colorizeRoomName(result.roomName()))
         .append(" (ID: ")
         .append(result.roomId())
         .append(")\n");
-    out.append("Short: ").append(result.shortDescription()).append("\n");
+    out.append(colorizeLabel("Short: ")).append(result.shortDescription()).append("\n");
     if (!brief) {
-      out.append("Long: ").append(result.longDescription()).append("\n");
+      out.append(colorizeLabel("Long: ")).append(result.longDescription()).append("\n");
     }
-    out.append("Exits: ");
+    out.append(colorizeLabel("Exits: "));
     out.append(
         result.exits().stream()
             .map(exit -> exit.label() + " (" + exit.description() + ")")
             .collect(Collectors.joining(", ")));
-    out.append("\nEntities:\n");
+    out.append("\n").append(colorizeLabel("Entities:")).append("\n");
     for (LookViewEntity entity : result.entities()) {
       out.append("- ")
           .append(entity.entityType())
@@ -99,6 +103,53 @@ public class TextPlayerOutputRenderer {
     if (!presentationProperties.prompt().enabled() || !StringUtils.hasText(output.text())) {
       return "";
     }
+    return colorizePrompt(output.text());
+  }
+
+  private String renderMessage(TextMessageOutput output) {
     return output.text();
+  }
+
+  private String renderNotice(NoticeOutput output) {
+    return colorizeNotice(output.text());
+  }
+
+  private String colorizeLabel(String text) {
+    return switch (presentationProperties.defaultColorMode()) {
+      case NONE -> text;
+      case BASIC -> ansi(text, "1;36");
+      case RICH -> ansi(text, "38;5;81");
+    };
+  }
+
+  private String colorizeRoomName(String text) {
+    return switch (presentationProperties.defaultColorMode()) {
+      case NONE -> text;
+      case BASIC -> ansi(text, "1;33");
+      case RICH -> ansi(text, "38;5;229");
+    };
+  }
+
+  private String colorizePrompt(String text) {
+    return switch (presentationProperties.defaultColorMode()) {
+      case NONE -> text;
+      case BASIC -> ansi(text, "1;32");
+      case RICH -> ansi(text, "38;5;119");
+    };
+  }
+
+  private String colorizeNotice(String text) {
+    return switch (presentationProperties.defaultColorMode()) {
+      case NONE -> text;
+      case BASIC -> ansi(text, "1;33");
+      case RICH -> ansi(text, "38;5;221");
+    };
+  }
+
+  private String ansi(String text, String code) {
+    if (!StringUtils.hasText(text)) {
+      return text;
+    }
+    return "\u001B[" + code + "m" + text + "\u001B[0m";
   }
 }

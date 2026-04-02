@@ -8,7 +8,7 @@ public record PresentationProperties(
     ColorMode defaultColorMode, boolean briefEnabledByDefault, Prompt prompt) {
 
   public PresentationProperties {
-    defaultColorMode = defaultColorMode == null ? ColorMode.BASIC : defaultColorMode;
+    defaultColorMode = defaultColorMode == null ? ColorMode.NONE : defaultColorMode;
     prompt = prompt == null ? new Prompt(false, false, true, 150L) : prompt.normalize();
   }
 
