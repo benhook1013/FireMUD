@@ -29,6 +29,57 @@ To keep Kibana queries and alert triage consistent, log records and alert labels
 - Do not use alert-only identities as log `service` values.
 - For infra roles in logs, use additional structured fields (for example `component`, `redis_role`) rather than overloading log `service`.
 
+### Runtime Instance Identity Contract
+
+FireMUD distinguishes logical service identity from the identity of one running process instance:
+
+- `service` is the logical service name and remains stable across replicas and restarts (normally `spring.application.name`).
+- `serviceInstanceId` identifies one running microservice instance and must be unique for that runtime instance.
+- `serviceInstanceId` should come from true runtime identity when available (for example pod or container identity surfaced by the platform). When the runtime does not provide one, the service should generate a unique startup-time identifier.
+- Do not treat `serviceInstanceId` as static operator config by default. It is not a cluster/site/node label and should not be manually hardcoded as the normal model for replicated services.
+- Optional additional runtime fields such as `hostname`, `buildVersion`, `buildSha`, `imageTag`, or `bootedAt` may be emitted alongside `serviceInstanceId` when available.
+
+At minimum, player-path and request-handling logs should include:
+
+- `service`
+- `serviceInstanceId`
+- `traceId`
+- `correlationId`
+
+When known, logs should also include gameplay identity fields such as:
+
+- `tenantId`
+- `regionId`
+- `gameInstanceId`
+- `characterId`
+
+Every service should also emit one structured startup lifecycle log that includes:
+
+- `service`
+- `serviceInstanceId`
+- active profiles
+- build/version metadata when available
+
+This startup event exists to make restart correlation and incident drilldown easier without requiring operators to infer process identity only from pod names or timestamps.
+
+### Runtime Identity Exposure
+
+Runtime identity should be exposed consistently enough that operators and admin tooling can confirm which process is serving traffic:
+
+- Logs should carry the runtime identity fields described above.
+- Services should expose the same logical identity and runtime instance identity through a lightweight runtime-info surface (for example Spring Boot `info` contributors or an equivalent admin/debug endpoint).
+- Request correlation and runtime identity are separate concerns:
+  - `traceId` and `correlationId` follow one request or call chain.
+  - `serviceInstanceId` identifies which running service instance handled that work.
+
+### Metrics Cardinality Rule For Runtime Identity
+
+`serviceInstanceId` should not be added to most Prometheus metrics by default:
+
+- Keep `serviceInstanceId` in logs and traces first.
+- Add it to metrics only for narrowly justified low-volume diagnostic signals.
+- The standard metric `service` label should remain the bounded logical service identity rather than a per-instance identifier.
+
 ## Metrics & Tracing
 
 - **Prometheus** scrapes metrics from all services and triggers alerts via **Alertmanager**.
