@@ -42,18 +42,32 @@ public class TextPlayerOutputRenderer {
       String message = result.errorMessage() == null ? "" : result.errorMessage();
       return "ERROR " + result.errorCode() + " " + message;
     }
-    if (outputs.isEmpty()) {
+    String prompt = renderTrailingPrompt(outputs);
+    java.util.List<PlayerOutput> nonPromptOutputs =
+        outputs.stream().filter(output -> output.kind() != PlayerOutputKind.PROMPT).toList();
+    if (nonPromptOutputs.isEmpty()) {
+      if (StringUtils.hasText(prompt)) {
+        return prompt;
+      }
       return "OK " + command.type().name();
     }
-    if (outputs.size() == 1 && outputs.get(0).protocolBlock()) {
-      return render(outputs.get(0));
+    if (nonPromptOutputs.size() == 1 && nonPromptOutputs.get(0).protocolBlock()) {
+      String rendered = render(nonPromptOutputs.get(0));
+      return appendPrompt(rendered, prompt, false);
     }
-    String body = outputs.stream().map(this::render).collect(Collectors.joining("\n"));
+    String body =
+        nonPromptOutputs.stream()
+            .map(this::render)
+            .filter(StringUtils::hasText)
+            .collect(Collectors.joining("\n"));
     if (body.isBlank()) {
+      if (StringUtils.hasText(prompt)) {
+        return prompt;
+      }
       return "OK " + command.type().name();
     }
     boolean plainMessageOnly =
-        outputs.stream()
+        nonPromptOutputs.stream()
             .allMatch(
                 output -> !output.protocolBlock() && output.kind() == PlayerOutputKind.MESSAGE);
     boolean proseCommand =
@@ -61,9 +75,9 @@ public class TextPlayerOutputRenderer {
             || command.type().name().equals("WHISPER")
             || command.type().name().equals("TELL");
     if (plainMessageOnly && proseCommand) {
-      return body;
+      return appendPrompt(body, prompt, true);
     }
-    return "OK " + command.type().name() + "\n" + body + "\n\n";
+    return appendPrompt("OK " + command.type().name() + "\n" + body + "\n\n", prompt, false);
   }
 
   private String renderLookView(LookViewOutput result) {
@@ -151,5 +165,25 @@ public class TextPlayerOutputRenderer {
       return text;
     }
     return "\u001B[" + code + "m" + text + "\u001B[0m";
+  }
+
+  private String renderTrailingPrompt(java.util.List<PlayerOutput> outputs) {
+    for (int i = outputs.size() - 1; i >= 0; i--) {
+      PlayerOutput output = outputs.get(i);
+      if (output.kind() == PlayerOutputKind.PROMPT) {
+        return render(output);
+      }
+    }
+    return "";
+  }
+
+  private String appendPrompt(String base, String prompt, boolean inline) {
+    if (!StringUtils.hasText(prompt)) {
+      return base;
+    }
+    if (!StringUtils.hasText(base)) {
+      return prompt;
+    }
+    return inline ? base + "\n" + prompt : base + prompt;
   }
 }

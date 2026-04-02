@@ -12,6 +12,7 @@ import net.firedevops.firemud.gamesession.command.text.TextCommandInterpreter;
 import net.firedevops.firemud.gamesession.command.text.TextCommandParser;
 import net.firedevops.firemud.gamesession.command.text.TextCommandType;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
+import net.firedevops.firemud.gamesession.presentation.PromptComposer;
 import net.firedevops.firemud.gamesession.presentation.TextPlayerOutputRenderer;
 import net.firedevops.firemud.gamesession.service.ActiveTransportSessionRegistry;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
@@ -20,6 +21,7 @@ import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 import org.springframework.web.socket.CloseStatus;
@@ -40,9 +42,13 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
   private final FirstPartyConnectContextRegistry firstPartyConnectContextRegistry;
   private final ScreenBufferService screenBufferService;
   private final TextPlayerOutputRenderer outputRenderer;
+  private final PromptComposer promptComposer;
+  private final net.firedevops.firemud.gamesession.config.PresentationProperties
+      presentationProperties;
   private final RuntimeIdentity runtimeIdentity;
   private final TextCommandParser parser = new TextCommandParser();
 
+  @Autowired
   public GameSessionWebSocketHandler(
       TextCommandInterpreter interpreter,
       LookCommandHandler lookHandler,
@@ -52,6 +58,8 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       FirstPartyConnectContextRegistry firstPartyConnectContextRegistry,
       ScreenBufferService screenBufferService,
       TextPlayerOutputRenderer outputRenderer,
+      PromptComposer promptComposer,
+      net.firedevops.firemud.gamesession.config.PresentationProperties presentationProperties,
       RuntimeIdentity runtimeIdentity) {
     this.interpreter = interpreter;
     this.lookHandler = lookHandler;
@@ -61,6 +69,8 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     this.firstPartyConnectContextRegistry = firstPartyConnectContextRegistry;
     this.screenBufferService = screenBufferService;
     this.outputRenderer = outputRenderer;
+    this.promptComposer = promptComposer;
+    this.presentationProperties = presentationProperties;
     this.runtimeIdentity = runtimeIdentity;
   }
 
@@ -207,6 +217,10 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
               if (StringUtils.hasText(look)) {
                 sendReplayChunk(session, look, "fresh LOOK");
               }
+              if (presentationProperties.prompt().emitAfterReconnectRestore()) {
+                renderPrompt(context)
+                    .ifPresent(prompt -> sendReplayChunk(session, prompt, "fresh prompt"));
+              }
             });
   }
 
@@ -252,6 +266,10 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       correlationId = session.getId();
     }
     return RuntimeLoggingContext.open(runtimeIdentity, correlationId);
+  }
+
+  private Optional<String> renderPrompt(SessionContext context) {
+    return promptComposer.compose(context).map(outputRenderer::render).filter(StringUtils::hasText);
   }
 
   private void bootstrapGenericSessionContext(WebSocketSession session, long sessionId) {

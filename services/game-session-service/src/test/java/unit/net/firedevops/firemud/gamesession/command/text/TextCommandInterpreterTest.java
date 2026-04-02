@@ -26,6 +26,7 @@ import net.firedevops.firemud.gamesession.config.GameLogicProperties;
 import net.firedevops.firemud.gamesession.config.GameSessionProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
+import net.firedevops.firemud.gamesession.presentation.PromptComposer;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.CommandService;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
@@ -161,7 +162,8 @@ class TextCommandInterpreterTest {
             moveHandler,
             sessionAuthenticationService,
             communicationHandler,
-            worldsHandler);
+            worldsHandler,
+            new PromptComposer());
   }
 
   @Test
@@ -216,6 +218,17 @@ class TextCommandInterpreterTest {
   }
 
   @Test
+  void lookAfterPlayAppendsPromptOutput() {
+    interpreter.interpret("1", "LOGIN demo@example.com swordfish", false);
+    interpreter.interpret("1", "PLAY demo", false);
+
+    TextCommandInterpretationResult look = interpreter.interpret("1", "LOOK", false);
+
+    assertTrue(look.commandResult().accepted());
+    assertEquals("OK LOOK constructed\ndemo> ", look.responseText());
+  }
+
+  @Test
   void movementAfterLoginBeforePlayReturnsPlayRequired() {
     TextCommandInterpretationResult login =
         interpreter.interpret("1", "LOGIN demo@example.com swordfish", false);
@@ -242,9 +255,9 @@ class TextCommandInterpreterTest {
 
     assertTrue(login.commandResult().accepted());
     assertTrue(play.commandResult().accepted());
-    assertEquals("OK PLAY Entered world: demo", play.responseText());
+    assertEquals("OK PLAY Entered world: demo\ndemo> ", play.responseText());
     assertTrue(look.commandResult().accepted());
-    assertEquals("OK LOOK constructed", look.responseText());
+    assertEquals("OK LOOK constructed\ndemo> ", look.responseText());
     verify(commandService).enqueue("1", "LOGIN demo@example.com swordfish", false);
     verify(commandService).enqueue("1", "LOOK", false);
   }
@@ -268,7 +281,7 @@ class TextCommandInterpreterTest {
 
     assertTrue(interpretation.commandResult().accepted());
     assertFalse(interpretation.protocolResponse());
-    assertEquals("You say, \"Hello there\"", interpretation.responseText());
+    assertEquals("You say, \"Hello there\"\ndemo> ", interpretation.responseText());
     verify(communicationHandler).handle(Mockito.eq(played), Mockito.any(TextCommand.class));
   }
 

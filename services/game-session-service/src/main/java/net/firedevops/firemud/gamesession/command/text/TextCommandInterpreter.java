@@ -5,6 +5,7 @@ import java.util.Objects;
 import java.util.Optional;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
+import net.firedevops.firemud.gamesession.presentation.PromptComposer;
 import net.firedevops.firemud.gamesession.service.CommandService;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -21,6 +22,7 @@ public class TextCommandInterpreter {
   private final SessionAuthenticationService sessionAuthenticationService;
   private final CommunicationCommandHandler communicationHandler;
   private final WorldsCommandHandler worldsHandler;
+  private final PromptComposer promptComposer;
   private final TextCommandParser parser;
 
   @Autowired
@@ -32,7 +34,8 @@ public class TextCommandInterpreter {
       MoveCommandHandler moveHandler,
       SessionAuthenticationService sessionAuthenticationService,
       CommunicationCommandHandler communicationHandler,
-      WorldsCommandHandler worldsHandler) {
+      WorldsCommandHandler worldsHandler,
+      PromptComposer promptComposer) {
     this(
         commandService,
         lookHandler,
@@ -42,6 +45,7 @@ public class TextCommandInterpreter {
         sessionAuthenticationService,
         communicationHandler,
         worldsHandler,
+        promptComposer,
         new TextCommandParser());
   }
 
@@ -54,6 +58,7 @@ public class TextCommandInterpreter {
       SessionAuthenticationService sessionAuthenticationService,
       CommunicationCommandHandler communicationHandler,
       WorldsCommandHandler worldsHandler,
+      PromptComposer promptComposer,
       TextCommandParser parser) {
     this.commandService = Objects.requireNonNull(commandService, "commandService must not be null");
     this.lookHandler = Objects.requireNonNull(lookHandler, "lookHandler must not be null");
@@ -66,6 +71,7 @@ public class TextCommandInterpreter {
     this.communicationHandler =
         Objects.requireNonNull(communicationHandler, "communicationHandler must not be null");
     this.worldsHandler = Objects.requireNonNull(worldsHandler, "worldsHandler must not be null");
+    this.promptComposer = Objects.requireNonNull(promptComposer, "promptComposer must not be null");
     this.parser = Objects.requireNonNull(parser, "parser must not be null");
   }
 
@@ -108,12 +114,15 @@ public class TextCommandInterpreter {
             GameplayStageCommandConstants.LOGIN_REQUIRED_MESSAGE);
       }
       PlayCommandHandlingResult playResult = playHandler.handle(sessionId, command);
-      return new TextCommandInterpretationResult(
-          playResult.commandResult(),
+      List<PlayerOutput> outputs =
           playResult.responseText() == null
               ? List.of()
-              : List.of(PlayerOutput.notice(playResult.responseText(), true)),
-          playResult.reconnectRedrawRecommended());
+              : List.of(PlayerOutput.notice(playResult.responseText(), true));
+      if (playResult.commandResult().accepted() && !playResult.reconnectRedrawRecommended()) {
+        outputs = appendPrompt(sessionId, outputs);
+      }
+      return new TextCommandInterpretationResult(
+          playResult.commandResult(), outputs, playResult.reconnectRedrawRecommended());
     }
 
     if (requiresGameplayAuthentication(command.type()) && !hasLogin) {
@@ -130,21 +139,27 @@ public class TextCommandInterpreter {
     if (isCommunicationCommand(command.type())) {
       CommunicationCommandHandlingResult communicationResult =
           communicationHandler.handle(maybeContext.orElseThrow(), command);
-      return new TextCommandInterpretationResult(
-          communicationResult.commandResult(),
+      List<PlayerOutput> outputs =
           communicationResult.responseText() == null
               ? List.of()
-              : List.of(PlayerOutput.message(communicationResult.responseText())));
+              : List.of(PlayerOutput.message(communicationResult.responseText()));
+      if (communicationResult.commandResult().accepted()) {
+        outputs = appendPrompt(maybeContext.orElseThrow(), outputs);
+      }
+      return new TextCommandInterpretationResult(communicationResult.commandResult(), outputs);
     }
 
     if (command.type() == TextCommandType.MOVE) {
       MoveCommandHandlingResult moveResult =
           moveHandler.handle(maybeContext.orElseThrow(), command);
-      return new TextCommandInterpretationResult(
-          moveResult.commandResult(),
+      List<PlayerOutput> outputs =
           moveResult.responseText() == null
               ? List.of()
-              : List.of(PlayerOutput.protocolView(moveResult.responseText())));
+              : List.of(PlayerOutput.protocolView(moveResult.responseText()));
+      if (moveResult.commandResult().accepted()) {
+        outputs = appendPrompt(maybeContext.orElseThrow(), outputs);
+      }
+      return new TextCommandInterpretationResult(moveResult.commandResult(), outputs);
     }
 
     CommandEnqueueResult enqueueResult =
@@ -155,8 +170,10 @@ public class TextCommandInterpreter {
       if (isLookError(lookText)) {
         enqueueResult = failureForLookError(lookText);
       } else {
-        return new TextCommandInterpretationResult(
-            enqueueResult, lookText == null ? List.of() : List.of(PlayerOutput.view(lookText)));
+        List<PlayerOutput> outputs =
+            lookText == null ? List.of() : List.of(PlayerOutput.view(lookText));
+        outputs = appendPrompt(maybeContext.orElseThrow(), outputs);
+        return new TextCommandInterpretationResult(enqueueResult, outputs);
       }
     }
     return new TextCommandInterpretationResult(enqueueResult);
@@ -200,5 +217,26 @@ public class TextCommandInterpreter {
       message = "Look unavailable";
     }
     return CommandEnqueueResult.failure(code, message);
+  }
+
+  private List<PlayerOutput> appendPrompt(String sessionId, List<PlayerOutput> outputs) {
+    return sessionAuthenticationService
+        .resolveSessionContext(sessionId)
+        .map(context -> appendPrompt(context, outputs))
+        .orElse(outputs);
+  }
+
+  private List<PlayerOutput> appendPrompt(
+      net.firedevops.firemud.gamesession.service.SessionContext context,
+      List<PlayerOutput> outputs) {
+    return promptComposer
+        .compose(context)
+        .map(
+            prompt -> {
+              java.util.ArrayList<PlayerOutput> combined = new java.util.ArrayList<>(outputs);
+              combined.add(prompt);
+              return List.copyOf(combined);
+            })
+        .orElse(outputs);
   }
 }

@@ -24,6 +24,7 @@ import net.firedevops.firemud.gamesession.config.GameLogicProperties;
 import net.firedevops.firemud.gamesession.config.GameSessionProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
+import net.firedevops.firemud.gamesession.presentation.PromptComposer;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.CommandService;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
@@ -160,7 +161,8 @@ class SessionResumptionFlowTest {
             moveHandler,
             sessionAuthenticationService,
             communicationHandler,
-            worldsHandler);
+            worldsHandler,
+            new PromptComposer());
   }
 
   @Test
@@ -173,7 +175,7 @@ class SessionResumptionFlowTest {
 
     TextCommandInterpretationResult firstLook = interpreter.interpret("1", LOOK_PAYLOAD, false);
     assertTrue(firstLook.commandResult().accepted());
-    assertEquals("OK LOOK text", firstLook.responseText());
+    assertEquals("OK LOOK text\ndemo> ", firstLook.responseText());
 
     TextCommandInterpretationResult secondLogin = interpreter.interpret("1", LOGIN_PAYLOAD, false);
     assertTrue(secondLogin.commandResult().accepted());
@@ -183,7 +185,7 @@ class SessionResumptionFlowTest {
 
     TextCommandInterpretationResult secondLook = interpreter.interpret("1", LOOK_PAYLOAD, false);
     assertTrue(secondLook.commandResult().accepted());
-    assertEquals("OK LOOK text", secondLook.responseText());
+    assertEquals("OK LOOK text\ndemo> ", secondLook.responseText());
 
     assertEquals(1.0, meterRegistry.counter("gamesession.session.resume").count());
     assertEquals(0.0, meterRegistry.counter("gamesession.session.takeover").count());
@@ -204,7 +206,7 @@ class SessionResumptionFlowTest {
     assertTrue(secondPlay.commandResult().accepted());
     TextCommandInterpretationResult secondLook = interpreter.interpret("2", LOOK_PAYLOAD, false);
     assertTrue(secondLook.commandResult().accepted());
-    assertEquals("OK LOOK text", secondLook.responseText());
+    assertEquals("OK LOOK text\ndemo> ", secondLook.responseText());
 
     TextCommandInterpretationResult firstLookAfterTakeover =
         interpreter.interpret("1", LOOK_PAYLOAD, false);

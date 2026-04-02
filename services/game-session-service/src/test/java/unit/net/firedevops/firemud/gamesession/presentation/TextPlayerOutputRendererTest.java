@@ -3,7 +3,10 @@ package net.firedevops.firemud.gamesession.presentation;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.util.List;
+import net.firedevops.firemud.gamesession.command.text.TextCommand;
+import net.firedevops.firemud.gamesession.command.text.TextCommandType;
 import net.firedevops.firemud.gamesession.config.PresentationProperties;
+import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import org.junit.jupiter.api.Test;
 
 class TextPlayerOutputRendererTest {
@@ -101,5 +104,26 @@ class TextPlayerOutputRendererTest {
 
     assertThat(rendered).contains("Candle-lit Antechamber");
     assertThat(rendered).contains("\u001B[");
+  }
+
+  @Test
+  void renderAllCoalescesMultiplePromptsToOneTrailingPrompt() {
+    TextPlayerOutputRenderer renderer =
+        new TextPlayerOutputRenderer(
+            new PresentationProperties(
+                PresentationProperties.ColorMode.NONE,
+                false,
+                new PresentationProperties.Prompt(true, false, true, 150L)));
+
+    String rendered =
+        renderer.renderAll(
+            new TextCommand(TextCommandType.LOOK, List.of(), "LOOK"),
+            CommandEnqueueResult.success(),
+            List.of(
+                PlayerOutput.view("OK LOOK constructed"),
+                PlayerOutput.prompt("old> "),
+                PlayerOutput.prompt("new> ")));
+
+    assertThat(rendered).isEqualTo("OK LOOK\nOK LOOK constructed\n\nnew> ");
   }
 }
