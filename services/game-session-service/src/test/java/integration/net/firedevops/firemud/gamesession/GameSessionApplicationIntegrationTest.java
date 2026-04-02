@@ -83,4 +83,13 @@ class GameSessionApplicationIntegrationTest {
     assertThat(body.data().status()).isEqualTo("RUNNING");
     assertThat(body.data().id()).isPositive();
   }
+
+  @Test
+  void infoEndpointExposesRuntimeIdentity() throws Exception {
+    String body = HttpTestSupport.getBody("http://localhost:" + port + "/actuator/runtime");
+
+    assertThat(body).contains("\"service\":\"game-session-service\"");
+    assertThat(body).contains("\"serviceInstanceId\"");
+    assertThat(body).contains("\"bootedAt\"");
+  }
 }

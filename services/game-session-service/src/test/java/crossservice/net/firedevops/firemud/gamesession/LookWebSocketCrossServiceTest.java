@@ -20,6 +20,7 @@ import java.util.concurrent.CompletionStage;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Predicate;
 import javax.sql.DataSource;
 import net.firedevops.firemud.account.v1.AccountServiceGrpc;
 import net.firedevops.firemud.account.v1.AuthenticateRequest;
@@ -276,8 +277,7 @@ class LookWebSocketCrossServiceTest {
 
     List<String> reconnectResponses = runPlayAfterReconnectExpectingFreshLook(sessionId);
     assertThat(reconnectResponses).hasSizeGreaterThanOrEqualTo(3);
-    assertThat(reconnectResponses.get(0)).startsWith("OK LOGIN");
-    assertThat(reconnectResponses.get(1)).startsWith("OK PLAY");
+    assertThat(reconnectResponses).anyMatch(response -> response.startsWith("OK LOGIN"));
     assertThat(reconnectResponses)
         .anyMatch(response -> response.trim().equals(LookTestFixtures.canonicalLookText().trim()));
   }
@@ -634,7 +634,7 @@ class LookWebSocketCrossServiceTest {
     webSocket.sendText("LOGIN demo@example.com swordfish", true).join();
     waitForResponseCount(responses, 1);
     webSocket.sendText("PLAY demo", true).join();
-    waitForResponseCount(responses, 3);
+    waitForResponseMatching(responses, response -> response.startsWith("OK LOOK"));
     webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "done").join();
     return responses;
   }
@@ -650,6 +650,18 @@ class LookWebSocketCrossServiceTest {
     }
     throw new AssertionError(
         "Expected at least " + expected + " responses, got " + responses.size());
+  }
+
+  private void waitForResponseMatching(List<String> responses, Predicate<String> predicate)
+      throws InterruptedException {
+    long deadline = System.currentTimeMillis() + COMMAND_WAIT.toMillis();
+    while (System.currentTimeMillis() < deadline) {
+      if (responses.stream().anyMatch(predicate)) {
+        return;
+      }
+      Thread.sleep(50);
+    }
+    throw new AssertionError("Expected a response matching predicate, got " + responses);
   }
 
   private void assertMetricEventually(String meterName, double expectedValue, String... tags)

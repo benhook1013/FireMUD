@@ -49,9 +49,14 @@ firemud:
 
 management:
   endpoints:
+    access:
+      default: read-only
     web:
       exposure:
-        include: health,prometheus
+        include:
+          - health
+          - prometheus
+          - info
   health:
     mail:
       enabled: false

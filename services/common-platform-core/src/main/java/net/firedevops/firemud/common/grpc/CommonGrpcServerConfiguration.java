@@ -2,6 +2,7 @@ package net.firedevops.firemud.common.grpc;
 
 import io.micrometer.core.instrument.MeterRegistry;
 import io.opentelemetry.api.trace.Tracer;
+import net.firedevops.firemud.common.runtime.RuntimeIdentity;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
@@ -17,8 +18,8 @@ public class CommonGrpcServerConfiguration {
   @Bean
   @GlobalServerInterceptor
   @ConditionalOnMissingBean(LoggingInterceptor.class)
-  public LoggingInterceptor loggingInterceptor() {
-    return new LoggingInterceptor();
+  public LoggingInterceptor loggingInterceptor(RuntimeIdentity runtimeIdentity) {
+    return new LoggingInterceptor(runtimeIdentity);
   }
 
   @Bean
