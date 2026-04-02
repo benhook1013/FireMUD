@@ -245,7 +245,7 @@ class AccountServiceImplTest {
   void getTenantMembershipForRuntimeReturnsAdmissionAllowedForExistingAccount() {
     Account account = new Account();
     account.setId(11L);
-    account.setTenantId(7L);
+    account.setTenantId(0L);
     account.setUsername("demo");
     account.setEmail("demo@example.com");
     account.setPasswordHash(hash("password"));
@@ -258,6 +258,15 @@ class AccountServiceImplTest {
     assertTrue(dto.gameplayAdmissionAllowed());
     assertEquals(11L, dto.membershipVersion());
     assertNotNull(dto.evaluatedAt());
+  }
+
+  @Test
+  void getTenantMembershipForRuntimeRejectsMissingAccount() {
+    when(accountRepository.findById(11L)).thenReturn(Optional.empty());
+
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> service.getTenantMembershipForRuntime(11L, 7L, "req-1"));
   }
 
   @Test

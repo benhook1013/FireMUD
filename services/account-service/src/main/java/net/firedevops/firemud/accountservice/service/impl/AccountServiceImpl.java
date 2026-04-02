@@ -323,7 +323,6 @@ public class AccountServiceImpl implements AccountService {
     Account account =
         accountRepository
             .findById(accountId)
-            .filter(a -> a.getTenantId().equals(tenantId))
             .orElseThrow(() -> new IllegalArgumentException("Account not found"));
     return new RuntimeMembershipDto(
         account.getId(), tenantId, true, Math.max(1L, account.getId()), Instant.now().toString());
