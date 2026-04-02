@@ -79,6 +79,8 @@ Runtime identity should be exposed consistently enough that operators and admin 
 - Keep `serviceInstanceId` in logs and traces first.
 - Add it to metrics only for narrowly justified low-volume diagnostic signals.
 - The standard metric `service` label should remain the bounded logical service identity rather than a per-instance identifier.
+- No runtime-identity metric-label exceptions are currently approved in the canonical FireMUD metrics set.
+- If a future low-volume diagnostic metric truly needs a per-instance runtime label, the exception must be documented in this section before it is treated as canonical.
 
 ## Metrics & Tracing
 
