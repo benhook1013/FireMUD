@@ -23,6 +23,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
+import org.springframework.util.StringUtils;
 
 /** Handles LOGIN/LOGON commands and generates immediate responses when possible. */
 @Component
@@ -64,7 +65,18 @@ public final class LoginCommandHandler {
 
   public LoginCommandHandlingResult handle(
       String sessionId, TextCommand command, boolean requiresSoloTick) {
-    List<String> args = command.args();
+    List<String> args =
+        command
+            .credentialsPayload()
+            .map(
+                credentials -> {
+                  if (StringUtils.hasText(credentials.otp())) {
+                    return List.of(
+                        credentials.loginName(), credentials.password(), credentials.otp());
+                  }
+                  return List.of(credentials.loginName(), credentials.password());
+                })
+            .orElse(command.args());
     if (args.size() < 2) {
       return handleVerifiedFirstPartyLogin(sessionId, command, requiresSoloTick);
     }

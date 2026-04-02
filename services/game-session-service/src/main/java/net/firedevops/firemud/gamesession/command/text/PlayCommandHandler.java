@@ -94,7 +94,15 @@ public class PlayCommandHandler {
           null);
     }
 
-    List<String> args = command.args();
+    List<String> args =
+        command
+            .selectionPayload()
+            .map(
+                selection ->
+                    StringUtils.hasText(selection.secondary())
+                        ? List.of(selection.primary(), selection.secondary())
+                        : List.of(selection.primary()))
+            .orElse(command.args());
     if (args.isEmpty()) {
       return failure(
           GameplayStageCommandConstants.PLAY_INVALID_ARGUMENT_CODE,

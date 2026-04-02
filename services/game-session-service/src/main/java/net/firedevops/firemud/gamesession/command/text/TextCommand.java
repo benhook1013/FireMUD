@@ -2,13 +2,64 @@ package net.firedevops.firemud.gamesession.command.text;
 
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
+import org.springframework.util.StringUtils;
 
 /** Parsed representation of a single text command line. */
-public record TextCommand(TextCommandType type, List<String> args, String rawLine) {
+public record TextCommand(
+    TextCommandType type,
+    List<String> args,
+    String rawLine,
+    String aliasUsed,
+    TextCommandPayload payload) {
   public TextCommand {
     Objects.requireNonNull(type, "type must not be null");
     Objects.requireNonNull(args, "args must not be null");
     Objects.requireNonNull(rawLine, "rawLine must not be null");
+    payload = payload == null ? TextCommandPayload.fromLegacy(type, args) : payload;
     args = List.copyOf(args);
+  }
+
+  public TextCommand(TextCommandType type, List<String> args, String rawLine) {
+    this(type, args, rawLine, extractAlias(rawLine), TextCommandPayload.fromLegacy(type, args));
+  }
+
+  public Optional<TextCommandPayload.Credentials> credentialsPayload() {
+    return payload instanceof TextCommandPayload.Credentials credentials
+        ? Optional.of(credentials)
+        : Optional.empty();
+  }
+
+  public Optional<TextCommandPayload.Selection> selectionPayload() {
+    return payload instanceof TextCommandPayload.Selection selection
+        ? Optional.of(selection)
+        : Optional.empty();
+  }
+
+  public Optional<TextCommandPayload.Message> messagePayload() {
+    return payload instanceof TextCommandPayload.Message message
+        ? Optional.of(message)
+        : Optional.empty();
+  }
+
+  public Optional<TextCommandPayload.TargetedMessage> targetedMessagePayload() {
+    return payload instanceof TextCommandPayload.TargetedMessage targetedMessage
+        ? Optional.of(targetedMessage)
+        : Optional.empty();
+  }
+
+  public Optional<TextCommandPayload.Directional> directionalPayload() {
+    return payload instanceof TextCommandPayload.Directional directional
+        ? Optional.of(directional)
+        : Optional.empty();
+  }
+
+  private static String extractAlias(String rawLine) {
+    if (!StringUtils.hasText(rawLine)) {
+      return "";
+    }
+    String trimmed = rawLine.trim();
+    int firstSpace = trimmed.indexOf(' ');
+    return firstSpace < 0 ? trimmed : trimmed.substring(0, firstSpace);
   }
 }

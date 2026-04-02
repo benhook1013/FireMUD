@@ -113,24 +113,39 @@ public class CommunicationCommandHandler {
 
   private ParsedCommunication parseCommunication(SessionContext context, TextCommand command) {
     return switch (command.type()) {
-      case SAY -> parseSay(command.args());
-      case WHISPER -> parseWhisper(command.args());
-      case TELL -> parseTell(context, command.args());
+      case SAY -> parseSay(command);
+      case WHISPER -> parseWhisper(command);
+      case TELL -> parseTell(context, command);
       default ->
           new ParsedCommunication(
               false, null, Optional.empty(), Optional.empty(), "Unsupported communication command");
     };
   }
 
-  private ParsedCommunication parseSay(List<String> args) {
-    if (args.isEmpty()) {
+  private ParsedCommunication parseSay(TextCommand command) {
+    String message =
+        command
+            .messagePayload()
+            .map(TextCommandPayload.Message::text)
+            .orElseGet(() -> command.args().isEmpty() ? null : command.args().get(0));
+    if (!StringUtils.hasText(message)) {
       return new ParsedCommunication(
           false, null, Optional.empty(), Optional.empty(), "SAY command requires a message");
     }
-    return new ParsedCommunication(true, args.get(0), Optional.empty(), Optional.empty(), null);
+    return new ParsedCommunication(true, message, Optional.empty(), Optional.empty(), null);
   }
 
-  private ParsedCommunication parseWhisper(List<String> args) {
+  private ParsedCommunication parseWhisper(TextCommand command) {
+    List<String> args = command.args();
+    Optional<TextCommandPayload.TargetedMessage> payload = command.targetedMessagePayload();
+    if (payload.isPresent()) {
+      return new ParsedCommunication(
+          true,
+          payload.get().message(),
+          Optional.empty(),
+          Optional.of(payload.get().target()),
+          null);
+    }
     if (args.size() < 2) {
       return new ParsedCommunication(
           false,
@@ -143,7 +158,12 @@ public class CommunicationCommandHandler {
         true, args.get(1), Optional.empty(), Optional.of(args.get(0)), null);
   }
 
-  private ParsedCommunication parseTell(SessionContext context, List<String> args) {
+  private ParsedCommunication parseTell(SessionContext context, TextCommand command) {
+    List<String> args =
+        command
+            .targetedMessagePayload()
+            .map(payload -> List.of(payload.target(), payload.message()))
+            .orElse(command.args());
     if (args.size() < 2) {
       return new ParsedCommunication(
           false,

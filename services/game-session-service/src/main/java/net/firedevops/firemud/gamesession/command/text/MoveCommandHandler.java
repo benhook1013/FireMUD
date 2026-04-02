@@ -42,7 +42,7 @@ public class MoveCommandHandler {
     String tenantTag = Long.toString(context.tenantId());
     try (GameplayLoggingContext ignored = GameplayLoggingContext.from(context)) {
       meterRegistry.counter(INVOCATIONS_METRIC, "tenantId", tenantTag).increment();
-      String direction = extractDirection(command.args());
+      String direction = extractDirection(command);
       if (!StringUtils.hasText(direction)) {
         return failure(
             "INVALID_ARGUMENT",
@@ -116,6 +116,13 @@ public class MoveCommandHandler {
       return "";
     }
     return args.get(0);
+  }
+
+  private String extractDirection(TextCommand command) {
+    return command
+        .directionalPayload()
+        .map(TextCommandPayload.Directional::direction)
+        .orElseGet(() -> extractDirection(command.args()));
   }
 
   private SessionContext updatedContext(SessionContext current, MoveResult response) {

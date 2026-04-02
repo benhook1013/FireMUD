@@ -9,22 +9,48 @@ public class TextCommandParser {
     String source = rawLine == null ? "" : rawLine;
     String trimmed = source.trim();
     if (trimmed.isEmpty()) {
-      return new TextCommand(TextCommandType.NOOP, List.of(), source);
+      return new TextCommand(
+          TextCommandType.NOOP, List.of(), source, "", new TextCommandPayload.None());
     }
 
     String[] tokens = trimmed.split("\\s+");
-    TextCommandType type = TextCommandType.fromToken(tokens[0]);
-    List<String> args =
+    String aliasUsed = tokens[0];
+    TextCommandType type = TextCommandType.fromToken(aliasUsed);
+    ParsedCommandData parsed =
         switch (type) {
-          case WORLDS, LOOK, NOOP -> List.of();
-          case LOGIN -> parseRemainingTokens(tokens);
-          case PLAY -> parseRemainingTokens(tokens);
-          case SAY -> extractSayMessage(trimmed);
-          case WHISPER, TELL -> extractTargetedCommunicationArguments(trimmed);
-          case MOVE -> extractMoveArguments(tokens);
-          case UNKNOWN -> parseRemainingTokens(tokens);
+          case WORLDS ->
+              new ParsedCommandData(List.of(), new TextCommandPayload.ViewRequest("WORLDS"));
+          case LOOK -> new ParsedCommandData(List.of(), new TextCommandPayload.ViewRequest("LOOK"));
+          case NOOP -> new ParsedCommandData(List.of(), new TextCommandPayload.None());
+          case LOGIN -> parseLogin(tokens);
+          case PLAY -> parsePlay(tokens);
+          case SAY -> parseSay(trimmed);
+          case WHISPER, TELL -> parseTargetedCommunication(trimmed);
+          case MOVE -> parseMove(aliasUsed, tokens);
+          case UNKNOWN -> parseUnknown(tokens);
         };
-    return new TextCommand(type, args, source);
+    return new TextCommand(type, parsed.args(), source, aliasUsed, parsed.payload());
+  }
+
+  private ParsedCommandData parseLogin(String[] tokens) {
+    List<String> args = parseRemainingTokens(tokens);
+    if (args.size() >= 2) {
+      return new ParsedCommandData(
+          args,
+          new TextCommandPayload.Credentials(
+              args.get(0), args.get(1), args.size() > 2 ? args.get(2) : ""));
+    }
+    return new ParsedCommandData(args, new TextCommandPayload.Tokens(args));
+  }
+
+  private ParsedCommandData parsePlay(String[] tokens) {
+    List<String> args = parseRemainingTokens(tokens);
+    if (!args.isEmpty()) {
+      return new ParsedCommandData(
+          args,
+          new TextCommandPayload.Selection(args.get(0), args.size() > 1 ? args.get(1) : null));
+    }
+    return new ParsedCommandData(args, new TextCommandPayload.Tokens(args));
   }
 
   private List<String> parseRemainingTokens(String[] tokens) {
@@ -32,6 +58,14 @@ public class TextCommandParser {
       return List.of();
     }
     return List.of(Arrays.copyOfRange(tokens, 1, tokens.length));
+  }
+
+  private ParsedCommandData parseSay(String trimmed) {
+    List<String> args = extractSayMessage(trimmed);
+    if (!args.isEmpty()) {
+      return new ParsedCommandData(args, new TextCommandPayload.Message(args.get(0)));
+    }
+    return new ParsedCommandData(args, new TextCommandPayload.Tokens(args));
   }
 
   private List<String> extractSayMessage(String trimmed) {
@@ -44,6 +78,15 @@ public class TextCommandParser {
       return List.of();
     }
     return List.of(message);
+  }
+
+  private ParsedCommandData parseTargetedCommunication(String trimmed) {
+    List<String> args = extractTargetedCommunicationArguments(trimmed);
+    if (args.size() >= 2) {
+      return new ParsedCommandData(
+          args, new TextCommandPayload.TargetedMessage(args.get(0), args.get(1)));
+    }
+    return new ParsedCommandData(args, new TextCommandPayload.Tokens(args));
   }
 
   private List<String> extractTargetedCommunicationArguments(String trimmed) {
@@ -70,6 +113,22 @@ public class TextCommandParser {
     return List.of(target, message);
   }
 
+  private ParsedCommandData parseMove(String aliasUsed, String[] tokens) {
+    List<String> args = extractMoveArguments(tokens);
+    if (!args.isEmpty()) {
+      return new ParsedCommandData(args, new TextCommandPayload.Directional(args.get(0)));
+    }
+    if ("NORTH".equalsIgnoreCase(aliasUsed)
+        || "SOUTH".equalsIgnoreCase(aliasUsed)
+        || "EAST".equalsIgnoreCase(aliasUsed)
+        || "WEST".equalsIgnoreCase(aliasUsed)) {
+      return new ParsedCommandData(
+          List.of(aliasUsed.trim().toLowerCase()),
+          new TextCommandPayload.Directional(aliasUsed.trim().toLowerCase()));
+    }
+    return new ParsedCommandData(args, new TextCommandPayload.Tokens(args));
+  }
+
   private List<String> extractMoveArguments(String[] tokens) {
     if (tokens.length == 0) {
       return List.of();
@@ -83,4 +142,11 @@ public class TextCommandParser {
     }
     return List.of(Arrays.copyOfRange(tokens, 1, tokens.length));
   }
+
+  private ParsedCommandData parseUnknown(String[] tokens) {
+    List<String> args = parseRemainingTokens(tokens);
+    return new ParsedCommandData(args, new TextCommandPayload.Tokens(args));
+  }
+
+  private record ParsedCommandData(List<String> args, TextCommandPayload payload) {}
 }
