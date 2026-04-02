@@ -1,0 +1,56 @@
+{
+  "groups": [
+    {
+      "name": "firemud.movement",
+      "type": "net.firedevops.firemud.gamesession.config.MovementProperties",
+      "sourceType": "net.firedevops.firemud.gamesession.config.MovementProperties"
+    },
+    {
+      "name": "firemud.world-topology",
+      "type": "net.firedevops.firemud.gamesession.config.WorldTopologyProperties",
+      "sourceType": "net.firedevops.firemud.gamesession.config.WorldTopologyProperties"
+    }
+  ],
+  "properties": [
+    {
+      "name": "firemud.movement.post-move-look-enabled",
+      "type": "java.lang.Boolean",
+      "defaultValue": true,
+      "description": "Whether a successful MOVE automatically renders the destination room view instead of returning only command acknowledgement.",
+      "sourceType": "net.firedevops.firemud.gamesession.config.MovementProperties"
+    },
+    {
+      "name": "firemud.world-topology.scope-model",
+      "type": "net.firedevops.firemud.gamesession.config.WorldTopologyProperties$ScopeModel",
+      "defaultValue": "MAP_ONLY",
+      "description": "The highest topology model the current game/runtime expresses for future scope-sensitive communication and world behaviors.",
+      "sourceType": "net.firedevops.firemud.gamesession.config.WorldTopologyProperties"
+    },
+    {
+      "name": "firemud.world-topology.regions-enabled",
+      "type": "java.lang.Boolean",
+      "defaultValue": false,
+      "description": "Whether explicit world regions are enabled in the current topology model.",
+      "sourceType": "net.firedevops.firemud.gamesession.config.WorldTopologyProperties"
+    }
+  ],
+  "hints": [
+    {
+      "name": "firemud.world-topology.scope-model",
+      "values": [
+        {
+          "value": "MAP_ONLY",
+          "description": "World layout only distinguishes map-level scope."
+        },
+        {
+          "value": "AREA_AND_MAP",
+          "description": "World layout distinguishes areas within a map."
+        },
+        {
+          "value": "REGION_AREA_AND_MAP",
+          "description": "World layout distinguishes regions above areas and maps."
+        }
+      ]
+    }
+  ]
+}

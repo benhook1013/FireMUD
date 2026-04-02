@@ -17,6 +17,29 @@ TLS certificates are supplied via [`FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC
 | `FIREMUD_SERVICES_ENTITY_MANAGEMENT_SERVICE` | gRPC endpoint (`host:port`) for Entity Management Service | `entity-management-service:6565` |
 | `FIREMUD_CONFLICT_TTL_SECONDS` | TTL for conflict hotspot tracking in Redis | `300` |
 
+## FireMUD Settings Domains
+
+The first surfaced platform settings domains in Game Session are now generation-ready through typed configuration properties plus configuration metadata.
+
+### `firemud.movement`
+
+| Key | Purpose | Default |
+| --- | ------- | ------- |
+| `firemud.movement.post-move-look-enabled` | Whether successful `MOVE` automatically renders the destination room view instead of returning only command acknowledgement | `true` |
+
+### `firemud.world-topology`
+
+| Key | Purpose | Default |
+| --- | ------- | ------- |
+| `firemud.world-topology.scope-model` | Highest topology model the game expresses for later scope-sensitive behavior such as `shout` routing | `MAP_ONLY` |
+| `firemud.world-topology.regions-enabled` | Whether explicit world regions are enabled in the topology model | `false` |
+
+`firemud.world-topology.scope-model` currently supports:
+
+- `MAP_ONLY`
+- `AREA_AND_MAP`
+- `REGION_AREA_AND_MAP`
+
 ## Configuration Notes
 
 - Environment variables configure PostgreSQL and Redis connections via `DatabaseAutoConfiguration` and `RedisProperties`.
@@ -24,3 +47,4 @@ TLS certificates are supplied via [`FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC
 - [Deployment Environments](../../infrastructure/deployment-environments.md) remains the canonical source for concrete environment examples and deployment-specific binding expectations.
 - The service enforces multi-tenant isolation. All tables include a `tenant_id` column and Redis keys are prefixed with this value as outlined in [Multi-Tenancy](../../system-architecture-multi-tenancy.md).
 - Service discovery for downstream gRPC calls uses `ServiceEndpointsProperties` and mTLS identities issued through cert-manager.
+- `firemud.movement` and `firemud.world-topology` are still file/env-backed operator defaults today; the later tenant/game override model remains part of the broader platform settings work in `02.9` through `02.12`.

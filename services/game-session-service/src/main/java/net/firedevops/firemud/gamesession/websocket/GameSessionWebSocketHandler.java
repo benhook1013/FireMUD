@@ -12,6 +12,7 @@ import net.firedevops.firemud.gamesession.command.text.TextCommandInterpreter;
 import net.firedevops.firemud.gamesession.command.text.TextCommandParser;
 import net.firedevops.firemud.gamesession.command.text.TextCommandType;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
+import net.firedevops.firemud.gamesession.presentation.PromptBurstCoordinator;
 import net.firedevops.firemud.gamesession.presentation.PromptComposer;
 import net.firedevops.firemud.gamesession.presentation.TextPlayerOutputRenderer;
 import net.firedevops.firemud.gamesession.service.ActiveTransportSessionRegistry;
@@ -42,6 +43,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
   private final FirstPartyConnectContextRegistry firstPartyConnectContextRegistry;
   private final ScreenBufferService screenBufferService;
   private final TextPlayerOutputRenderer outputRenderer;
+  private final PromptBurstCoordinator promptBurstCoordinator;
   private final PromptComposer promptComposer;
   private final net.firedevops.firemud.gamesession.config.PresentationProperties
       presentationProperties;
@@ -58,6 +60,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       FirstPartyConnectContextRegistry firstPartyConnectContextRegistry,
       ScreenBufferService screenBufferService,
       TextPlayerOutputRenderer outputRenderer,
+      PromptBurstCoordinator promptBurstCoordinator,
       PromptComposer promptComposer,
       net.firedevops.firemud.gamesession.config.PresentationProperties presentationProperties,
       RuntimeIdentity runtimeIdentity) {
@@ -69,6 +72,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     this.firstPartyConnectContextRegistry = firstPartyConnectContextRegistry;
     this.screenBufferService = screenBufferService;
     this.outputRenderer = outputRenderer;
+    this.promptBurstCoordinator = promptBurstCoordinator;
     this.promptComposer = promptComposer;
     this.presentationProperties = presentationProperties;
     this.runtimeIdentity = runtimeIdentity;
@@ -95,6 +99,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
             sessionId -> {
               activeTransportSessionRegistry.unregister(sessionId, session);
               firstPartyConnectContextRegistry.unregister(sessionId);
+              promptBurstCoordinator.evict(Long.toString(sessionId));
             });
   }
 
@@ -115,8 +120,11 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       }
       TextCommandInterpretationResult interpretation =
           interpreter.interpret(sessionId, command, requiresSoloTick);
-      String response = formatResponse(command, interpretation);
+      java.util.List<PlayerOutput> outputs =
+          promptBurstCoordinator.applyPromptWindow(sessionId, interpretation.outputs(), false);
+      String response = formatResponse(command, interpretation, outputs);
       sendProtocolMessage(session, response);
+      promptBurstCoordinator.recordPromptEmission(sessionId, outputs);
       maybeAppendToScreenBuffer(sessionId, command, interpretation, response);
       maybeReplayScreenBufferAndRefreshLook(session, sessionId, command, interpretation);
     }
@@ -162,9 +170,10 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
   }
 
   private String formatResponse(
-      TextCommand command, TextCommandInterpretationResult interpretation) {
-    return outputRenderer.renderAll(
-        command, interpretation.commandResult(), interpretation.outputs());
+      TextCommand command,
+      TextCommandInterpretationResult interpretation,
+      java.util.List<PlayerOutput> outputs) {
+    return outputRenderer.renderAll(command, interpretation.commandResult(), outputs);
   }
 
   private void sendProtocolMessage(WebSocketSession session, String text) throws IOException {
@@ -219,7 +228,11 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
               }
               if (presentationProperties.prompt().emitAfterReconnectRestore()) {
                 renderPrompt(context)
-                    .ifPresent(prompt -> sendReplayChunk(session, prompt, "fresh prompt"));
+                    .ifPresent(
+                        prompt -> {
+                          sendReplayChunk(session, prompt, "fresh prompt");
+                          promptBurstCoordinator.recordPromptEmission(sessionId);
+                        });
               }
             });
   }

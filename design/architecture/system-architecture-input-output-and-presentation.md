@@ -11,6 +11,7 @@ The goal is to keep gameplay and UX decisions structured until the latest practi
 - `LOOK` has started moving onto that path through `LookViewOutput` and `TextPlayerOutputRenderer`, although some command paths still use transitional pre-rendered protocol text payloads.
 - Communication actor responses now flow through the same late renderer, but recipient delivery still pushes already-rendered strings and first-party web still shares the generic text payload path.
 - Prompt output is modeled separately, and presentation defaults are now bound from typed properties, but prompt coalescing and broad prompt emission are not yet fully implemented.
+- Prompt output now has a first baseline pipeline plus a narrow per-session prompt-throttling window, but richer burst-end scheduling and structured prompt/status delivery are still future work.
 
 ---
 
@@ -187,6 +188,19 @@ It should usually be:
 - coalesced rather than emitted after every single output event
 - regenerated fresh rather than stored in the reconnect transcript buffer
 - consumable as structured data by first-party web or MCP-aware clients
+
+The next intended refinement is not global transport batching. Instead, FireMUD should prefer:
+
+- a very small per-session burst window that can catch naturally adjacent outputs from one logical event chain
+- a prompt-throttling policy that appends a prompt at most every configured interval when output is already flowing
+- prompt emission as a command-completion or burst-end opportunity rather than every command path hardcoding `+ prompt`
+
+This means FireMUD should usually avoid a blanket rule like "flush all client output every 100 ms". That would add unnecessary latency and make normal play feel sluggish. The better policy is:
+
+- ordinary command results and urgent output flush immediately
+- tiny burst coalescing applies only where it reduces prompt or status chatter
+- reconnect restore still ends with one fresh prompt after transcript replay and fresh `LOOK`
+- explicit commands like `LOOK` usually still create a prompt opportunity, but the prompt pipeline decides whether to emit immediately, append to a trailing burst, or suppress because one was just emitted moments ago
 
 #### `error`
 

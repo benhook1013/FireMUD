@@ -40,6 +40,11 @@ firemud:
     game-logic-service: game-logic-service:6565
   conflict:
     ttlSeconds: 300
+  movement:
+    post-move-look-enabled: true
+  world-topology:
+    scope-model: MAP_ONLY
+    regions-enabled: false
   grpc:
     cert-chain: ${FIREMUD_GRPC_CERT_CHAIN_PATH:certs/client.crt}
     private-key: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:certs/client.key}
