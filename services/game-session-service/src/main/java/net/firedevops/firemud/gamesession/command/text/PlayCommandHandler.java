@@ -89,6 +89,8 @@ public class PlayCommandHandler {
           GameplayStageCommandConstants.LOGIN_REQUIRED_CODE,
           GameplayStageCommandConstants.LOGIN_REQUIRED_MESSAGE,
           tenantTag,
+          null,
+          null,
           null);
     }
 
@@ -98,102 +100,128 @@ public class PlayCommandHandler {
           GameplayStageCommandConstants.PLAY_INVALID_ARGUMENT_CODE,
           GameplayStageCommandConstants.PLAY_INVALID_ARGUMENT_MESSAGE,
           tenantTag,
+          null,
+          null,
           null);
     }
 
     SessionContext context = maybeContext.get();
-    String worldSelector = args.get(0);
-    Optional<GameSessionProperties.WorldOption> maybeWorld =
-        gameplayWorldCatalog.resolve(worldSelector);
-    if (maybeWorld.isEmpty()) {
-      return failure(
-          GameplayStageCommandConstants.PLAY_SELECTION_REQUIRED_CODE,
-          GameplayStageCommandConstants.PLAY_SELECTION_REQUIRED_MESSAGE,
-          tenantTag,
-          null);
+    try (GameplayLoggingContext baseContext =
+        GameplayLoggingContext.open(Long.toString(context.tenantId()), null, null, null)) {
+      String worldSelector = args.get(0);
+      Optional<GameSessionProperties.WorldOption> maybeWorld =
+          gameplayWorldCatalog.resolve(worldSelector);
+      if (maybeWorld.isEmpty()) {
+        return failure(
+            GameplayStageCommandConstants.PLAY_SELECTION_REQUIRED_CODE,
+            GameplayStageCommandConstants.PLAY_SELECTION_REQUIRED_MESSAGE,
+            tenantTag,
+            null,
+            null,
+            null);
+      }
+
+      GameSessionProperties.WorldOption selectedWorld = maybeWorld.get();
+      try (GameplayLoggingContext worldContext =
+          GameplayLoggingContext.open(
+              Long.toString(context.tenantId()),
+              Long.toString(selectedWorld.getGameInstanceId()),
+              null,
+              null)) {
+        Optional<PlayCommandHandlingResult> connectScopeFailure =
+            validateFirstPartyConnectScope(context, selectedWorld, tenantTag);
+        if (connectScopeFailure.isPresent()) {
+          return connectScopeFailure.get();
+        }
+        Optional<PlayCommandHandlingResult> authorityFailure =
+            validateRuntimeAdmission(
+                context, selectedWorld, tenantTag, args.size() > 1 ? args.get(1) : null);
+        if (authorityFailure.isPresent()) {
+          return authorityFailure.get();
+        }
+
+        String character = args.size() > 1 ? args.get(1) : null;
+        if (selectedWorld.isRequiresCharacterSelection() && !StringUtils.hasText(character)) {
+          return failure(
+              "PLAY_SELECTION_REQUIRED",
+              "Selection required. Use PLAY "
+                  + selectedWorld.getSlug()
+                  + " <character> or browse CHARS first.",
+              tenantTag,
+              Long.toString(selectedWorld.getGameInstanceId()),
+              null,
+              null);
+        }
+
+        long gameInstanceId = selectedWorld.getGameInstanceId();
+        long characterId = resolveCharacterId(context, selectedWorld, character);
+        String characterName = resolveCharacterName(context, characterId, character);
+        try (GameplayLoggingContext gameplayContext =
+            GameplayLoggingContext.open(
+                Long.toString(context.tenantId()),
+                Long.toString(gameInstanceId),
+                Long.toString(characterId),
+                null)) {
+          if (StringUtils.hasText(context.roomInstanceId())
+              && context.gameInstanceId() == gameInstanceId
+              && context.characterId() == characterId
+              && Objects.equals(
+                  normalizeName(context.characterName()), normalizeName(characterName))) {
+            resumeCounter.increment();
+            meterRegistry.counter(RESUME_METRIC, "tenantId", tenantTag).increment();
+            LOG.debug(
+                "PLAY resumed existing gameplay binding for tenant {} gameInstance {} character {} on session {}",
+                context.tenantId(),
+                gameInstanceId,
+                characterId,
+                context.sessionId());
+            return new PlayCommandHandlingResult(
+                CommandEnqueueResult.success(),
+                formatSuccessResponse(selectedWorld.getSlug(), character),
+                true);
+          }
+
+          boolean freshEntryFallback =
+              maybeRecordFreshEntryFallback(
+                  context, selectedWorld, character, gameInstanceId, characterId, tenantTag);
+
+          Optional<SessionContext> existingBinding =
+              sessionContextService.findByGameplayIdentity(
+                  context.tenantId(), gameInstanceId, characterId);
+          boolean resumedOrTookOver =
+              existingBinding
+                  .map(
+                      existing ->
+                          handleExistingBinding(context, existing, gameInstanceId, characterId))
+                  .orElse(false);
+
+          String roomInstanceId =
+              existingBinding
+                  .map(SessionContext::roomInstanceId)
+                  .filter(StringUtils::hasText)
+                  .orElse(gameLogicProperties.getDefaultRoomId());
+
+          SessionContext updated =
+              new SessionContext(
+                  context.sessionId(),
+                  context.tenantId(),
+                  context.accountId(),
+                  context.loginName(),
+                  characterId,
+                  characterName,
+                  gameInstanceId,
+                  roomInstanceId,
+                  context.jwt(),
+                  context.bootstrapGameInstanceId());
+          sessionContextService.save(updated);
+
+          return new PlayCommandHandlingResult(
+              CommandEnqueueResult.success(),
+              formatSuccessResponse(selectedWorld.getSlug(), character),
+              resumedOrTookOver || freshEntryFallback);
+        }
+      }
     }
-
-    GameSessionProperties.WorldOption selectedWorld = maybeWorld.get();
-    Optional<PlayCommandHandlingResult> connectScopeFailure =
-        validateFirstPartyConnectScope(context, selectedWorld, tenantTag);
-    if (connectScopeFailure.isPresent()) {
-      return connectScopeFailure.get();
-    }
-    Optional<PlayCommandHandlingResult> authorityFailure =
-        validateRuntimeAdmission(
-            context, selectedWorld, tenantTag, args.size() > 1 ? args.get(1) : null);
-    if (authorityFailure.isPresent()) {
-      return authorityFailure.get();
-    }
-
-    String character = args.size() > 1 ? args.get(1) : null;
-    if (selectedWorld.isRequiresCharacterSelection() && !StringUtils.hasText(character)) {
-      return failure(
-          "PLAY_SELECTION_REQUIRED",
-          "Selection required. Use PLAY "
-              + selectedWorld.getSlug()
-              + " <character> or browse CHARS first.",
-          tenantTag,
-          null);
-    }
-
-    long gameInstanceId = selectedWorld.getGameInstanceId();
-    long characterId = resolveCharacterId(context, selectedWorld, character);
-    String characterName = resolveCharacterName(context, characterId, character);
-    if (StringUtils.hasText(context.roomInstanceId())
-        && context.gameInstanceId() == gameInstanceId
-        && context.characterId() == characterId
-        && Objects.equals(normalizeName(context.characterName()), normalizeName(characterName))) {
-      resumeCounter.increment();
-      meterRegistry.counter(RESUME_METRIC, "tenantId", tenantTag).increment();
-      LOG.debug(
-          "PLAY resumed existing gameplay binding for tenant {} gameInstance {} character {} on session {}",
-          context.tenantId(),
-          gameInstanceId,
-          characterId,
-          context.sessionId());
-      return new PlayCommandHandlingResult(
-          CommandEnqueueResult.success(),
-          formatSuccessResponse(selectedWorld.getSlug(), character),
-          true);
-    }
-
-    boolean freshEntryFallback =
-        maybeRecordFreshEntryFallback(
-            context, selectedWorld, character, gameInstanceId, characterId, tenantTag);
-
-    Optional<SessionContext> existingBinding =
-        sessionContextService.findByGameplayIdentity(
-            context.tenantId(), gameInstanceId, characterId);
-    boolean resumedOrTookOver =
-        existingBinding
-            .map(existing -> handleExistingBinding(context, existing, gameInstanceId, characterId))
-            .orElse(false);
-
-    String roomInstanceId =
-        existingBinding
-            .map(SessionContext::roomInstanceId)
-            .filter(StringUtils::hasText)
-            .orElse(gameLogicProperties.getDefaultRoomId());
-
-    SessionContext updated =
-        new SessionContext(
-            context.sessionId(),
-            context.tenantId(),
-            context.accountId(),
-            context.loginName(),
-            characterId,
-            characterName,
-            gameInstanceId,
-            roomInstanceId,
-            context.jwt(),
-            context.bootstrapGameInstanceId());
-    sessionContextService.save(updated);
-
-    return new PlayCommandHandlingResult(
-        CommandEnqueueResult.success(),
-        formatSuccessResponse(selectedWorld.getSlug(), character),
-        resumedOrTookOver || freshEntryFallback);
   }
 
   private Optional<PlayCommandHandlingResult> validateFirstPartyConnectScope(
@@ -206,16 +234,40 @@ public class PlayCommandHandler {
                     || connectContext.gameInstanceId() != selectedWorld.getGameInstanceId())
         .map(
             ignored ->
-                failure("CONNECT_SCOPE_MISMATCH", "Connect scope mismatch", tenantTag, null));
+                failure(
+                    "CONNECT_SCOPE_MISMATCH",
+                    "Connect scope mismatch",
+                    tenantTag,
+                    Long.toString(selectedWorld.getGameInstanceId()),
+                    null,
+                    null));
   }
 
   private PlayCommandHandlingResult failure(
-      String errorCode, String message, String tenantTag, RuntimeException ex) {
+      String errorCode,
+      String message,
+      String tenantTag,
+      String gameInstanceTag,
+      String characterTag,
+      RuntimeException ex) {
     meterRegistry.counter(FAILURES_METRIC, "tenantId", tenantTag, "error", errorCode).increment();
     if (ex == null) {
-      LOG.warn("PLAY failed tenantId={} error={} reason={}", tenantTag, errorCode, message);
+      LOG.warn(
+          "PLAY failed tenantId={} gameInstanceId={} characterId={} error={} reason={}",
+          tenantTag,
+          gameInstanceTag,
+          characterTag,
+          errorCode,
+          message);
     } else {
-      LOG.warn("PLAY failed tenantId={} error={} reason={}", tenantTag, errorCode, message, ex);
+      LOG.warn(
+          "PLAY failed tenantId={} gameInstanceId={} characterId={} error={} reason={}",
+          tenantTag,
+          gameInstanceTag,
+          characterTag,
+          errorCode,
+          message,
+          ex);
     }
     return new PlayCommandHandlingResult(CommandEnqueueResult.failure(errorCode, message), null);
   }
@@ -336,6 +388,8 @@ public class PlayCommandHandler {
                 GameplayStageCommandConstants.WORLD_ACCESS_DENIED_CODE,
                 GameplayStageCommandConstants.WORLD_ACCESS_DENIED_MESSAGE,
                 tenantTag,
+                Long.toString(selectedWorld.getGameInstanceId()),
+                Long.toString(requestedCharacterId),
                 null));
       }
       recordResumeDeniedIfApplicable(
@@ -349,6 +403,8 @@ public class PlayCommandHandler {
               GameplayStageCommandConstants.MEMBERSHIP_AUTH_UNAVAILABLE_CODE,
               GameplayStageCommandConstants.MEMBERSHIP_AUTH_UNAVAILABLE_MESSAGE,
               tenantTag,
+              Long.toString(selectedWorld.getGameInstanceId()),
+              Long.toString(requestedCharacterId),
               null));
     }
     if (!response.getGameplayAdmissionAllowed()) {
@@ -363,6 +419,8 @@ public class PlayCommandHandler {
               GameplayStageCommandConstants.WORLD_ACCESS_DENIED_CODE,
               GameplayStageCommandConstants.WORLD_ACCESS_DENIED_MESSAGE,
               tenantTag,
+              Long.toString(selectedWorld.getGameInstanceId()),
+              Long.toString(requestedCharacterId),
               null));
     }
     return Optional.empty();
@@ -387,6 +445,8 @@ public class PlayCommandHandler {
               GameplayStageCommandConstants.ENTITLEMENT_UNAVAILABLE_CODE,
               GameplayStageCommandConstants.ENTITLEMENT_UNAVAILABLE_MESSAGE,
               tenantTag,
+              Long.toString(selectedWorld.getGameInstanceId()),
+              Long.toString(requestedCharacterId),
               null));
     }
     if (!response.getGameplayAvailable()) {
@@ -401,6 +461,8 @@ public class PlayCommandHandler {
               GameplayStageCommandConstants.TENANT_BILLING_BLOCKED_CODE,
               GameplayStageCommandConstants.TENANT_BILLING_BLOCKED_MESSAGE,
               tenantTag,
+              Long.toString(selectedWorld.getGameInstanceId()),
+              Long.toString(requestedCharacterId),
               null));
     }
     return Optional.empty();

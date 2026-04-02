@@ -45,25 +45,27 @@ public final class LookCommandHandler {
       return null;
     }
     SessionContext context = maybeContext.get();
-    String tenantTag = Long.toString(context.tenantId());
-    meterRegistry.counter(INVOCATIONS_METRIC, "tenantId", tenantTag).increment();
-    if (devIsolatedProperties.isDevIsolated()) {
-      return LookCommandConstants.ROOM_DESCRIPTION;
-    }
-    try {
-      LookResult lookResult = resolveLook(context);
-      String rendered = lookTextRenderer.render(lookResult);
-      if (!devIsolatedProperties.isDevIsolated()) {
-        cacheLook(context, lookResult, rendered);
+    try (GameplayLoggingContext ignored = GameplayLoggingContext.from(context)) {
+      String tenantTag = Long.toString(context.tenantId());
+      meterRegistry.counter(INVOCATIONS_METRIC, "tenantId", tenantTag).increment();
+      if (devIsolatedProperties.isDevIsolated()) {
+        return LookCommandConstants.ROOM_DESCRIPTION;
       }
-      return rendered;
-    } catch (StatusRuntimeException ex) {
-      String errorCode = mapStatusToError(ex);
-      recordFailure(tenantTag, errorCode, ex);
-      return formatErrorResponse(errorCode, ex.getStatus().getDescription());
-    } catch (RuntimeException ex) {
-      recordFailure(tenantTag, "UNEXPECTED", ex);
-      return formatErrorResponse("UNEXPECTED", "Internal LOOK failure");
+      try {
+        LookResult lookResult = resolveLook(context);
+        String rendered = lookTextRenderer.render(lookResult);
+        if (!devIsolatedProperties.isDevIsolated()) {
+          cacheLook(context, lookResult, rendered);
+        }
+        return rendered;
+      } catch (StatusRuntimeException ex) {
+        String errorCode = mapStatusToError(ex);
+        recordFailure(context, tenantTag, errorCode, ex);
+        return formatErrorResponse(errorCode, ex.getStatus().getDescription());
+      } catch (RuntimeException ex) {
+        recordFailure(context, tenantTag, "UNEXPECTED", ex);
+        return formatErrorResponse("UNEXPECTED", "Internal LOOK failure");
+      }
     }
   }
 
@@ -123,11 +125,14 @@ public final class LookCommandHandler {
     return "ERROR " + code + " " + message;
   }
 
-  private void recordFailure(String tenantTag, String errorTag, RuntimeException ex) {
+  private void recordFailure(
+      SessionContext context, String tenantTag, String errorTag, RuntimeException ex) {
     meterRegistry.counter(FAILURES_METRIC, "tenantId", tenantTag, "error", errorTag).increment();
     LOG.warn(
-        "LOOK failed for tenantId={}, error={}, sessionId={}",
+        "LOOK failed tenantId={} gameInstanceId={} characterId={} error={} reason={}",
         tenantTag,
+        context.gameInstanceId(),
+        context.characterId(),
         errorTag,
         ex.getMessage(),
         ex);
@@ -143,7 +148,13 @@ public final class LookCommandHandler {
           rendered,
           buildProtocolResponse(rendered));
     } catch (RuntimeException ex) {
-      LOG.warn("Failed to cache LOOK for game instance {}", cacheKey, ex);
+      LOG.warn(
+          "Failed to cache LOOK tenantId={} gameInstanceId={} characterId={} cacheKey={}",
+          context.tenantId(),
+          context.gameInstanceId(),
+          context.characterId(),
+          cacheKey,
+          ex);
     }
   }
 

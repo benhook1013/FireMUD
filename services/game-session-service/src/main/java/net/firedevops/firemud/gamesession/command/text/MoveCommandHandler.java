@@ -40,48 +40,74 @@ public class MoveCommandHandler {
     Objects.requireNonNull(command, "command must not be null");
 
     String tenantTag = Long.toString(context.tenantId());
-    meterRegistry.counter(INVOCATIONS_METRIC, "tenantId", tenantTag).increment();
-    String direction = extractDirection(command.args());
-    if (!StringUtils.hasText(direction)) {
-      return failure("INVALID_ARGUMENT", "MOVE command requires a direction", tenantTag, null);
-    }
+    try (GameplayLoggingContext ignored = GameplayLoggingContext.from(context)) {
+      meterRegistry.counter(INVOCATIONS_METRIC, "tenantId", tenantTag).increment();
+      String direction = extractDirection(command.args());
+      if (!StringUtils.hasText(direction)) {
+        return failure(
+            "INVALID_ARGUMENT",
+            "MOVE command requires a direction",
+            tenantTag,
+            Long.toString(context.gameInstanceId()),
+            Long.toString(context.characterId()),
+            null);
+      }
 
-    try {
-      MoveResult response =
-          gameLogicClient.resolveMove(
-              Long.toString(context.tenantId()),
-              Long.toString(context.sessionId()),
+      try {
+        MoveResult response =
+            gameLogicClient.resolveMove(
+                Long.toString(context.tenantId()),
+                Long.toString(context.sessionId()),
+                Long.toString(context.characterId()),
+                StringUtils.hasText(context.roomInstanceId())
+                    ? context.roomInstanceId()
+                    : gameLogicProperties.getDefaultRoomId(),
+                direction);
+        if (!response.getSuccess()) {
+          String code =
+              response.hasError() && StringUtils.hasText(response.getError().getCode())
+                  ? response.getError().getCode()
+                  : "MOVE_UNAVAILABLE";
+          String errorMessage =
+              response.hasError() && StringUtils.hasText(response.getError().getMessage())
+                  ? response.getError().getMessage()
+                  : "Move unavailable";
+          return failure(
+              code,
+              errorMessage,
+              tenantTag,
+              Long.toString(context.gameInstanceId()),
               Long.toString(context.characterId()),
-              StringUtils.hasText(context.roomInstanceId())
-                  ? context.roomInstanceId()
-                  : gameLogicProperties.getDefaultRoomId(),
-              direction);
-      if (!response.getSuccess()) {
-        String code =
-            response.hasError() && StringUtils.hasText(response.getError().getCode())
-                ? response.getError().getCode()
-                : "MOVE_UNAVAILABLE";
-        String errorMessage =
-            response.hasError() && StringUtils.hasText(response.getError().getMessage())
-                ? response.getError().getMessage()
-                : "Move unavailable";
-        return failure(code, errorMessage, tenantTag, null);
-      }
+              null);
+        }
 
-      if (!response.hasDestinationLook()) {
-        return failure("MOVE_UNAVAILABLE", "Move destination unavailable", tenantTag, null);
-      }
+        if (!response.hasDestinationLook()) {
+          return failure(
+              "MOVE_UNAVAILABLE",
+              "Move destination unavailable",
+              tenantTag,
+              Long.toString(context.gameInstanceId()),
+              Long.toString(context.characterId()),
+              null);
+        }
 
-      SessionContext updatedContext = updatedContext(context, response);
-      sessionContextService.save(updatedContext);
-      if (!movementProperties.postMoveLookEnabled()) {
-        return new MoveCommandHandlingResult(CommandEnqueueResult.success(), null);
+        SessionContext updatedContext = updatedContext(context, response);
+        sessionContextService.save(updatedContext);
+        if (!movementProperties.postMoveLookEnabled()) {
+          return new MoveCommandHandlingResult(CommandEnqueueResult.success(), null);
+        }
+        return new MoveCommandHandlingResult(
+            CommandEnqueueResult.success(),
+            lookCommandHandler.renderProtocol(updatedContext, response.getDestinationLook()));
+      } catch (RuntimeException ex) {
+        return failure(
+            "MOVE_UNAVAILABLE",
+            "Game Logic unavailable",
+            tenantTag,
+            Long.toString(context.gameInstanceId()),
+            Long.toString(context.characterId()),
+            ex);
       }
-      return new MoveCommandHandlingResult(
-          CommandEnqueueResult.success(),
-          lookCommandHandler.renderProtocol(updatedContext, response.getDestinationLook()));
-    } catch (RuntimeException ex) {
-      return failure("MOVE_UNAVAILABLE", "Game Logic unavailable", tenantTag, ex);
     }
   }
 
@@ -108,12 +134,30 @@ public class MoveCommandHandler {
   }
 
   private MoveCommandHandlingResult failure(
-      String errorCode, String message, String tenantTag, RuntimeException ex) {
+      String errorCode,
+      String message,
+      String tenantTag,
+      String gameInstanceTag,
+      String characterTag,
+      RuntimeException ex) {
     meterRegistry.counter(FAILURES_METRIC, "tenantId", tenantTag, "error", errorCode).increment();
     if (ex == null) {
-      LOG.warn("MOVE failed tenantId={} error={} reason={}", tenantTag, errorCode, message);
+      LOG.warn(
+          "MOVE failed tenantId={} gameInstanceId={} characterId={} error={} reason={}",
+          tenantTag,
+          gameInstanceTag,
+          characterTag,
+          errorCode,
+          message);
     } else {
-      LOG.warn("MOVE failed tenantId={} error={} reason={}", tenantTag, errorCode, message, ex);
+      LOG.warn(
+          "MOVE failed tenantId={} gameInstanceId={} characterId={} error={} reason={}",
+          tenantTag,
+          gameInstanceTag,
+          characterTag,
+          errorCode,
+          message,
+          ex);
     }
     return new MoveCommandHandlingResult(CommandEnqueueResult.failure(errorCode, message), null);
   }

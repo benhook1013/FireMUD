@@ -48,63 +48,66 @@ public class CommunicationCommandHandler {
     Objects.requireNonNull(context, "context must not be null");
     Objects.requireNonNull(command, "command must not be null");
 
-    String tenantTag = Long.toString(context.tenantId());
-    String typeTag = command.type().name().toLowerCase(Locale.ROOT);
-    meterRegistry
-        .counter(COMMUNICATION_INVOCATIONS_METRIC, "tenantId", tenantTag, "type", typeTag)
-        .increment();
-    meterRegistry
-        .counter(metricPrefix(command.type()) + ".invocations", "tenantId", tenantTag)
-        .increment();
+    try (GameplayLoggingContext ignored = GameplayLoggingContext.from(context)) {
+      String tenantTag = Long.toString(context.tenantId());
+      String typeTag = command.type().name().toLowerCase(Locale.ROOT);
+      meterRegistry
+          .counter(COMMUNICATION_INVOCATIONS_METRIC, "tenantId", tenantTag, "type", typeTag)
+          .increment();
+      meterRegistry
+          .counter(metricPrefix(command.type()) + ".invocations", "tenantId", tenantTag)
+          .increment();
 
-    ParsedCommunication parsed = parseCommunication(context, command);
-    if (!parsed.valid()) {
-      logFailure("INVALID_ARGUMENT", parsed.errorMessage(), tenantTag, command.type(), null);
-      return new CommunicationCommandHandlingResult(
-          CommandEnqueueResult.failure("INVALID_ARGUMENT", parsed.errorMessage()), null);
-    }
-
-    try {
-      SendCommunicationResponse response =
-          gameLogicClient.sendCommunication(
-              Long.toString(context.tenantId()),
-              Long.toString(context.sessionId()),
-              Long.toString(context.characterId()),
-              Long.toString(context.accountId()),
-              Long.toString(context.gameInstanceId()),
-              StringUtils.hasText(context.characterName())
-                  ? context.characterName()
-                  : context.loginName(),
-              StringUtils.hasText(context.roomInstanceId())
-                  ? context.roomInstanceId()
-                  : gameLogicProperties.getDefaultRoomId(),
-              mapType(command.type()),
-              parsed.message(),
-              parsed.targetCharacterId().orElse(""),
-              parsed.targetCharacterName().orElse(""));
-      if (!response.getSuccess()) {
-        String errorMessage =
-            response.hasError() && response.getError().getMessage() != null
-                ? response.getError().getMessage()
-                : "Message delivery failed";
-        String errorTag =
-            response.hasError() && response.getError().getCode() != null
-                ? response.getError().getCode()
-                : "UNAVAILABLE";
-        logFailure(errorTag, errorMessage, tenantTag, command.type(), null);
+      ParsedCommunication parsed = parseCommunication(context, command);
+      if (!parsed.valid()) {
+        logFailure(
+            "INVALID_ARGUMENT", parsed.errorMessage(), context, tenantTag, command.type(), null);
         return new CommunicationCommandHandlingResult(
-            CommandEnqueueResult.failure("COMMUNICATION_NOT_DELIVERED", errorMessage), null);
+            CommandEnqueueResult.failure("INVALID_ARGUMENT", parsed.errorMessage()), null);
       }
 
-      recipientDeliveryService.deliver(context, response);
+      try {
+        SendCommunicationResponse response =
+            gameLogicClient.sendCommunication(
+                Long.toString(context.tenantId()),
+                Long.toString(context.sessionId()),
+                Long.toString(context.characterId()),
+                Long.toString(context.accountId()),
+                Long.toString(context.gameInstanceId()),
+                StringUtils.hasText(context.characterName())
+                    ? context.characterName()
+                    : context.loginName(),
+                StringUtils.hasText(context.roomInstanceId())
+                    ? context.roomInstanceId()
+                    : gameLogicProperties.getDefaultRoomId(),
+                mapType(command.type()),
+                parsed.message(),
+                parsed.targetCharacterId().orElse(""),
+                parsed.targetCharacterName().orElse(""));
+        if (!response.getSuccess()) {
+          String errorMessage =
+              response.hasError() && response.getError().getMessage() != null
+                  ? response.getError().getMessage()
+                  : "Message delivery failed";
+          String errorTag =
+              response.hasError() && response.getError().getCode() != null
+                  ? response.getError().getCode()
+                  : "UNAVAILABLE";
+          logFailure(errorTag, errorMessage, context, tenantTag, command.type(), null);
+          return new CommunicationCommandHandlingResult(
+              CommandEnqueueResult.failure("COMMUNICATION_NOT_DELIVERED", errorMessage), null);
+        }
 
-      return new CommunicationCommandHandlingResult(
-          CommandEnqueueResult.success(), renderSuccessOutput(command, response));
-    } catch (RuntimeException ex) {
-      logFailure("UNAVAILABLE", "Game Logic unavailable", tenantTag, command.type(), ex);
-      return new CommunicationCommandHandlingResult(
-          CommandEnqueueResult.failure("COMMUNICATION_NOT_DELIVERED", "Game Logic unavailable"),
-          null);
+        recipientDeliveryService.deliver(context, response);
+
+        return new CommunicationCommandHandlingResult(
+            CommandEnqueueResult.success(), renderSuccessOutput(command, response));
+      } catch (RuntimeException ex) {
+        logFailure("UNAVAILABLE", "Game Logic unavailable", context, tenantTag, command.type(), ex);
+        return new CommunicationCommandHandlingResult(
+            CommandEnqueueResult.failure("COMMUNICATION_NOT_DELIVERED", "Game Logic unavailable"),
+            null);
+      }
     }
   }
 
@@ -211,6 +214,7 @@ public class CommunicationCommandHandler {
   private void logFailure(
       String errorTag,
       String reason,
+      SessionContext context,
       String tenantTag,
       TextCommandType commandType,
       RuntimeException ex) {
@@ -230,15 +234,19 @@ public class CommunicationCommandHandler {
         .increment();
     if (ex == null) {
       LOG.warn(
-          "Communication failed tenantId={} type={} error={} reason={}",
+          "Communication failed tenantId={} gameInstanceId={} characterId={} type={} error={} reason={}",
           tenantTag,
+          context.gameInstanceId(),
+          context.characterId(),
           typeTag,
           errorTag,
           reason);
     } else {
       LOG.warn(
-          "Communication failed tenantId={} type={} error={} reason={}",
+          "Communication failed tenantId={} gameInstanceId={} characterId={} type={} error={} reason={}",
           tenantTag,
+          context.gameInstanceId(),
+          context.characterId(),
           typeTag,
           errorTag,
           reason,
