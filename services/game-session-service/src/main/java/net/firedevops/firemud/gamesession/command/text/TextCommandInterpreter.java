@@ -88,7 +88,8 @@ public class TextCommandInterpreter {
     if (command.type() == TextCommandType.UNKNOWN) {
       String message = "Unknown command";
       return new TextCommandInterpretationResult(
-          CommandEnqueueResult.failure("UNKNOWN_COMMAND", message));
+          CommandEnqueueResult.failure("UNKNOWN_COMMAND", message),
+          List.of(PlayerOutput.error("UNKNOWN_COMMAND", message)));
     }
     if (command.type() == TextCommandType.WORLDS) {
       return new TextCommandInterpretationResult(
@@ -168,7 +169,7 @@ public class TextCommandInterpreter {
     if (enqueueResult.accepted() && command.type() == TextCommandType.LOOK) {
       String lookText = lookHandler.describe(sessionId);
       if (isLookError(lookText)) {
-        enqueueResult = failureForLookError(lookText);
+        return failureResultForLookError(lookText);
       } else {
         List<PlayerOutput> outputs =
             lookText == null ? List.of() : List.of(PlayerOutput.view(lookText));
@@ -192,14 +193,15 @@ public class TextCommandInterpreter {
   }
 
   private TextCommandInterpretationResult stageFailure(String code, String message) {
-    return new TextCommandInterpretationResult(CommandEnqueueResult.failure(code, message));
+    return new TextCommandInterpretationResult(
+        CommandEnqueueResult.failure(code, message), List.of(PlayerOutput.error(code, message)));
   }
 
   private boolean isLookError(String text) {
     return text != null && text.startsWith("ERROR ");
   }
 
-  private CommandEnqueueResult failureForLookError(String errorText) {
+  private TextCommandInterpretationResult failureResultForLookError(String errorText) {
     String payload = errorText.substring("ERROR ".length());
     String code;
     String message = "";
@@ -216,7 +218,8 @@ public class TextCommandInterpreter {
     if (message.isBlank()) {
       message = "Look unavailable";
     }
-    return CommandEnqueueResult.failure(code, message);
+    return new TextCommandInterpretationResult(
+        CommandEnqueueResult.failure(code, message), List.of(PlayerOutput.error(code, message)));
   }
 
   private List<PlayerOutput> appendPrompt(String sessionId, List<PlayerOutput> outputs) {

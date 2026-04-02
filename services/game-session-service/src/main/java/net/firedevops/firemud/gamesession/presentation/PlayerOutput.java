@@ -75,11 +75,24 @@ public record PlayerOutput(
         protocolBlock);
   }
 
+  public static PlayerOutput error(String code, String message) {
+    return new PlayerOutput(
+        PlayerOutputKind.ERROR,
+        new ErrorOutput(code, message),
+        ReplayPolicy.NO_REPLAY,
+        BriefRenderPolicy.ALWAYS_SHOW,
+        false);
+  }
+
   public String text() {
     return switch (payload) {
       case TextMessageOutput message -> message.text();
       case PromptOutput prompt -> prompt.text();
       case NoticeOutput notice -> notice.text();
+      case ErrorOutput error ->
+          "ERROR "
+              + error.code()
+              + (error.message() == null || error.message().isBlank() ? "" : " " + error.message());
       case LookViewOutput ignored -> null;
       default -> null;
     };

@@ -182,7 +182,9 @@ class TextCommandInterpreterTest {
 
     assertFalse(interpretation.commandResult().accepted());
     assertEquals("LOGIN_REQUIRED", interpretation.commandResult().errorCode());
-    assertNull(interpretation.responseText());
+    assertEquals(
+        "ERROR LOGIN_REQUIRED " + GameplayStageCommandConstants.LOGIN_REQUIRED_MESSAGE,
+        interpretation.responseText());
     verify(commandService, never()).enqueue(anyString(), anyString(), anyBoolean());
   }
 
@@ -213,8 +215,19 @@ class TextCommandInterpreterTest {
 
     assertFalse(interpretation.commandResult().accepted());
     assertEquals("PLAY_REQUIRED", interpretation.commandResult().errorCode());
-    assertNull(interpretation.responseText());
+    assertEquals(
+        "ERROR PLAY_REQUIRED " + GameplayStageCommandConstants.PLAY_REQUIRED_MESSAGE,
+        interpretation.responseText());
     verify(commandService, never()).enqueue("1", "LOOK", false);
+  }
+
+  @Test
+  void unknownCommandReturnsStructuredErrorOutput() {
+    TextCommandInterpretationResult interpretation = interpreter.interpret("1", "FROBULATE", false);
+
+    assertFalse(interpretation.commandResult().accepted());
+    assertEquals("UNKNOWN_COMMAND", interpretation.commandResult().errorCode());
+    assertEquals("ERROR UNKNOWN_COMMAND Unknown command", interpretation.responseText());
   }
 
   @Test

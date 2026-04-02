@@ -31,7 +31,7 @@ public class TextPlayerOutputRenderer {
               ? renderLookView(lookView)
               : renderMessage((TextMessageOutput) output.payload());
       case PROMPT -> renderPrompt((PromptOutput) output.payload());
-      case ERROR -> throw new IllegalArgumentException("Error outputs are rendered elsewhere");
+      case ERROR -> renderError((ErrorOutput) output.payload());
       case NOTICE -> renderNotice((NoticeOutput) output.payload());
     };
   }
@@ -39,6 +39,15 @@ public class TextPlayerOutputRenderer {
   public String renderAll(
       TextCommand command, CommandEnqueueResult result, java.util.List<PlayerOutput> outputs) {
     if (!result.accepted()) {
+      String renderedError =
+          outputs.stream()
+              .filter(output -> output.kind() == PlayerOutputKind.ERROR)
+              .reduce((first, second) -> second)
+              .map(this::render)
+              .orElse(null);
+      if (StringUtils.hasText(renderedError)) {
+        return renderedError;
+      }
       String message = result.errorMessage() == null ? "" : result.errorMessage();
       return "ERROR " + result.errorCode() + " " + message;
     }
@@ -126,6 +135,12 @@ public class TextPlayerOutputRenderer {
 
   private String renderNotice(NoticeOutput output) {
     return colorizeNotice(output.text());
+  }
+
+  private String renderError(ErrorOutput output) {
+    return "ERROR "
+        + output.code()
+        + (StringUtils.hasText(output.message()) ? " " + output.message() : "");
   }
 
   private String colorizeLabel(String text) {

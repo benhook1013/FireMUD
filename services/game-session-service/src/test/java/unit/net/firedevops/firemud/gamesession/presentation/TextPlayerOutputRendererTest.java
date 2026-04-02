@@ -126,4 +126,23 @@ class TextPlayerOutputRendererTest {
 
     assertThat(rendered).isEqualTo("OK LOOK\nOK LOOK constructed\n\nnew> ");
   }
+
+  @Test
+  void renderAllPrefersStructuredErrorOutputForFailedCommands() {
+    TextPlayerOutputRenderer renderer =
+        new TextPlayerOutputRenderer(
+            new PresentationProperties(
+                PresentationProperties.ColorMode.NONE,
+                false,
+                new PresentationProperties.Prompt(true, false, true, 150L)));
+
+    String rendered =
+        renderer.renderAll(
+            new TextCommand(TextCommandType.LOOK, List.of(), "LOOK"),
+            CommandEnqueueResult.failure("LOGIN_REQUIRED", "fallback"),
+            List.of(
+                PlayerOutput.error("LOGIN_REQUIRED", "You must LOGIN before gameplay commands.")));
+
+    assertThat(rendered).isEqualTo("ERROR LOGIN_REQUIRED You must LOGIN before gameplay commands.");
+  }
 }
