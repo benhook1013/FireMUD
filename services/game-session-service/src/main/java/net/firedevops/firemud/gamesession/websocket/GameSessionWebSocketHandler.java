@@ -3,6 +3,8 @@ package net.firedevops.firemud.gamesession.websocket;
 import java.io.IOException;
 import java.util.Optional;
 import net.firedevops.firemud.cache.ScreenBufferService;
+import net.firedevops.firemud.common.runtime.RuntimeIdentity;
+import net.firedevops.firemud.common.runtime.RuntimeLoggingContext;
 import net.firedevops.firemud.gamesession.command.text.LookCommandHandler;
 import net.firedevops.firemud.gamesession.command.text.TextCommand;
 import net.firedevops.firemud.gamesession.command.text.TextCommandInterpretationResult;
@@ -38,6 +40,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
   private final FirstPartyConnectContextRegistry firstPartyConnectContextRegistry;
   private final ScreenBufferService screenBufferService;
   private final TextPlayerOutputRenderer outputRenderer;
+  private final RuntimeIdentity runtimeIdentity;
   private final TextCommandParser parser = new TextCommandParser();
 
   public GameSessionWebSocketHandler(
@@ -48,7 +51,8 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       FirstPartyConnectContextService firstPartyConnectContextService,
       FirstPartyConnectContextRegistry firstPartyConnectContextRegistry,
       ScreenBufferService screenBufferService,
-      TextPlayerOutputRenderer outputRenderer) {
+      TextPlayerOutputRenderer outputRenderer,
+      RuntimeIdentity runtimeIdentity) {
     this.interpreter = interpreter;
     this.lookHandler = lookHandler;
     this.sessionContextService = sessionContextService;
@@ -57,18 +61,21 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     this.firstPartyConnectContextRegistry = firstPartyConnectContextRegistry;
     this.screenBufferService = screenBufferService;
     this.outputRenderer = outputRenderer;
+    this.runtimeIdentity = runtimeIdentity;
   }
 
   @Override
   public void afterConnectionEstablished(WebSocketSession session) {
-    logger.debug(
-        "WebSocket session {} established with sessionId={} tenantId={}",
-        session.getId(),
-        resolveTransportSessionId(session),
-        resolveTenantId(session));
-    bootstrapSessionContext(session);
-    parseNumericSessionId(resolveTransportSessionId(session))
-        .ifPresent(sessionId -> activeTransportSessionRegistry.register(sessionId, session));
+    try (RuntimeLoggingContext ignored = openLoggingContext(session)) {
+      logger.debug(
+          "WebSocket session {} established with sessionId={} tenantId={}",
+          session.getId(),
+          resolveTransportSessionId(session),
+          resolveTenantId(session));
+      bootstrapSessionContext(session);
+      parseNumericSessionId(resolveTransportSessionId(session))
+          .ifPresent(sessionId -> activeTransportSessionRegistry.register(sessionId, session));
+    }
   }
 
   @Override
@@ -84,23 +91,25 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
   @Override
   protected void handleTextMessage(WebSocketSession session, TextMessage message)
       throws IOException {
-    String sessionId = resolveTransportSessionId(session);
-    if (!StringUtils.hasText(sessionId)) {
-      session.sendMessage(new TextMessage("ERROR INVALID_ARGUMENT sessionId header required"));
-      session.close(CloseStatus.BAD_DATA);
-      return;
+    try (RuntimeLoggingContext ignored = openLoggingContext(session)) {
+      String sessionId = resolveTransportSessionId(session);
+      if (!StringUtils.hasText(sessionId)) {
+        session.sendMessage(new TextMessage("ERROR INVALID_ARGUMENT sessionId header required"));
+        session.close(CloseStatus.BAD_DATA);
+        return;
+      }
+      boolean requiresSoloTick = parseSoloTick(session);
+      TextCommand command = parser.parse(message.getPayload());
+      if (command.type() == TextCommandType.NOOP) {
+        return;
+      }
+      TextCommandInterpretationResult interpretation =
+          interpreter.interpret(sessionId, command, requiresSoloTick);
+      String response = formatResponse(command, interpretation);
+      sendProtocolMessage(session, response);
+      maybeAppendToScreenBuffer(sessionId, command, interpretation, response);
+      maybeReplayScreenBufferAndRefreshLook(session, sessionId, command, interpretation);
     }
-    boolean requiresSoloTick = parseSoloTick(session);
-    TextCommand command = parser.parse(message.getPayload());
-    if (command.type() == TextCommandType.NOOP) {
-      return;
-    }
-    TextCommandInterpretationResult interpretation =
-        interpreter.interpret(sessionId, command, requiresSoloTick);
-    String response = formatResponse(command, interpretation);
-    sendProtocolMessage(session, response);
-    maybeAppendToScreenBuffer(sessionId, command, interpretation, response);
-    maybeReplayScreenBufferAndRefreshLook(session, sessionId, command, interpretation);
   }
 
   private boolean parseSoloTick(WebSocketSession session) {
@@ -202,10 +211,12 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
   }
 
   private void sendReplayChunk(WebSocketSession session, String text, String label) {
-    try {
-      sendProtocolMessage(session, text);
-    } catch (IOException ex) {
-      logger.warn("Failed to send reconnect {}", label, ex);
+    try (RuntimeLoggingContext ignored = openLoggingContext(session)) {
+      try {
+        sendProtocolMessage(session, text);
+      } catch (IOException ex) {
+        logger.warn("Failed to send reconnect {}", label, ex);
+      }
     }
   }
 
@@ -233,6 +244,14 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       logger.debug(
           "Skipping bootstrap session context for transportSessionId={}", transportSessionId, ex);
     }
+  }
+
+  private RuntimeLoggingContext openLoggingContext(WebSocketSession session) {
+    String correlationId = resolveTransportSessionId(session);
+    if (!StringUtils.hasText(correlationId)) {
+      correlationId = session.getId();
+    }
+    return RuntimeLoggingContext.open(runtimeIdentity, correlationId);
   }
 
   private void bootstrapGenericSessionContext(WebSocketSession session, long sessionId) {

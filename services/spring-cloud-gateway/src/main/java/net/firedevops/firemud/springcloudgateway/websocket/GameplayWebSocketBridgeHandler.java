@@ -8,6 +8,8 @@ import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
+import net.firedevops.firemud.common.runtime.RuntimeIdentity;
+import net.firedevops.firemud.common.runtime.RuntimeLoggingContext;
 import net.firedevops.firemud.springcloudgateway.config.GameplayWebSocketBridgeProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -42,11 +44,15 @@ public class GameplayWebSocketBridgeHandler implements WebSocketHandler {
 
   private final ReactorNettyWebSocketClient client;
   private final GameplayWebSocketBridgeProperties properties;
+  private final RuntimeIdentity runtimeIdentity;
 
   public GameplayWebSocketBridgeHandler(
-      ReactorNettyWebSocketClient client, GameplayWebSocketBridgeProperties properties) {
+      ReactorNettyWebSocketClient client,
+      GameplayWebSocketBridgeProperties properties,
+      RuntimeIdentity runtimeIdentity) {
     this.client = client;
     this.properties = properties;
+    this.runtimeIdentity = runtimeIdentity;
   }
 
   @Override
@@ -101,16 +107,20 @@ public class GameplayWebSocketBridgeHandler implements WebSocketHandler {
                 return Mono.empty();
               }
               if (attempt >= properties.reconnectAttempts()) {
-                LOG.warn(
-                    "Gameplay upstream reconnect exhausted after {} attempts for downstream {}",
-                    attempt + 1,
-                    downstream.getId());
+                try (RuntimeLoggingContext ignored = openLoggingContext(downstream)) {
+                  LOG.warn(
+                      "Gameplay upstream reconnect exhausted after {} attempts for downstream {}",
+                      attempt + 1,
+                      downstream.getId());
+                }
                 return downstream.close(BACKEND_UNAVAILABLE);
               }
-              LOG.info(
-                  "Gameplay upstream reconnecting attempt {} for downstream {}",
-                  attempt + 1,
-                  downstream.getId());
+              try (RuntimeLoggingContext ignored = openLoggingContext(downstream)) {
+                LOG.info(
+                    "Gameplay upstream reconnecting attempt {} for downstream {}",
+                    attempt + 1,
+                    downstream.getId());
+              }
               return Mono.delay(Duration.ofMillis(properties.reconnectDelayMs()))
                   .then(
                       connectWithRetry(
@@ -139,16 +149,20 @@ public class GameplayWebSocketBridgeHandler implements WebSocketHandler {
       return Mono.empty();
     }
     if (attempt >= properties.reconnectAttempts()) {
-      LOG.warn(
-          "Gameplay upstream transport reconnect exhausted after {} attempts for downstream {}",
-          attempt + 1,
-          downstream.getId());
+      try (RuntimeLoggingContext ignored = openLoggingContext(downstream)) {
+        LOG.warn(
+            "Gameplay upstream transport reconnect exhausted after {} attempts for downstream {}",
+            attempt + 1,
+            downstream.getId());
+      }
       return downstream.close(BACKEND_UNAVAILABLE);
     }
-    LOG.info(
-        "Gameplay upstream transport reconnecting attempt {} for downstream {}",
-        attempt + 1,
-        downstream.getId());
+    try (RuntimeLoggingContext ignored = openLoggingContext(downstream)) {
+      LOG.info(
+          "Gameplay upstream transport reconnecting attempt {} for downstream {}",
+          attempt + 1,
+          downstream.getId());
+    }
     return Mono.delay(Duration.ofMillis(properties.reconnectDelayMs()))
         .then(connectWithRetry(downstream, upstreamUri, upstreamHeaders, state, attempt + 1));
   }
@@ -170,10 +184,12 @@ public class GameplayWebSocketBridgeHandler implements WebSocketHandler {
                 payload -> {
                   Sinks.EmitResult result = state.outboundToClient.tryEmitNext(payload);
                   if (result.isFailure()) {
-                    LOG.warn(
-                        "Failed to emit gameplay bridge payload '{}' to downstream: {}",
-                        payload,
-                        result);
+                    try (RuntimeLoggingContext ignored = openLoggingContext(upstream)) {
+                      LOG.warn(
+                          "Failed to emit gameplay bridge payload '{}' to downstream: {}",
+                          payload,
+                          result);
+                    }
                   }
                 })
             .then();
@@ -205,12 +221,28 @@ public class GameplayWebSocketBridgeHandler implements WebSocketHandler {
 
   private void emitIfConnected(BridgeState state, String payload) {
     if (!state.upstreamConnected.get()) {
-      LOG.debug("Queuing downstream gameplay message during upstream stall");
+      try (RuntimeLoggingContext ignored = RuntimeLoggingContext.open(runtimeIdentity)) {
+        LOG.debug("Queuing downstream gameplay message during upstream stall");
+      }
     }
     Sinks.EmitResult result = state.inboundToUpstream.tryEmitNext(payload);
     if (result.isFailure()) {
-      LOG.debug("Failed to queue downstream gameplay message: {}", result);
+      try (RuntimeLoggingContext ignored = RuntimeLoggingContext.open(runtimeIdentity)) {
+        LOG.debug("Failed to queue downstream gameplay message: {}", result);
+      }
     }
+  }
+
+  private RuntimeLoggingContext openLoggingContext(WebSocketSession session) {
+    String correlationId =
+        firstNonBlank(
+            session.getHandshakeInfo().getHeaders().getFirst(TRANSPORT_SESSION_HEADER),
+            session.getId());
+    return RuntimeLoggingContext.open(runtimeIdentity, correlationId);
+  }
+
+  private static String firstNonBlank(String primary, String fallback) {
+    return StringUtils.hasText(primary) ? primary : fallback;
   }
 
   private HttpHeaders buildUpstreamHeaders(WebSocketSession downstream) {

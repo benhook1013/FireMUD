@@ -3,6 +3,7 @@ package net.firedevops.firemud.springcloudgateway.config;
 import io.netty.channel.ChannelOption;
 import java.time.Duration;
 import java.util.Map;
+import net.firedevops.firemud.common.runtime.RuntimeIdentity;
 import net.firedevops.firemud.springcloudgateway.websocket.GameplayWebSocketBridgeHandler;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -32,8 +33,9 @@ public class GameplayWebSocketBridgeConfig {
   @Bean
   GameplayWebSocketBridgeHandler gameplayWebSocketBridgeHandler(
       ReactorNettyWebSocketClient gameplayWebSocketClient,
-      GameplayWebSocketBridgeProperties properties) {
-    return new GameplayWebSocketBridgeHandler(gameplayWebSocketClient, properties);
+      GameplayWebSocketBridgeProperties properties,
+      RuntimeIdentity runtimeIdentity) {
+    return new GameplayWebSocketBridgeHandler(gameplayWebSocketClient, properties, runtimeIdentity);
   }
 
   @Bean
