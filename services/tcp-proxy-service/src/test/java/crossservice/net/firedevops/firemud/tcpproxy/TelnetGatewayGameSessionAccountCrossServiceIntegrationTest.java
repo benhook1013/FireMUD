@@ -76,7 +76,6 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
-import org.springframework.test.util.TestSocketUtils;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -740,7 +739,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     }
     if (SOCIAL_STUB == null) {
       try {
-        SOCIAL_STUB = new SocialGroupsStubServer(TestSocketUtils.findAvailableTcpPort());
+        SOCIAL_STUB = new SocialGroupsStubServer(0);
       } catch (IOException e) {
         throw new IllegalStateException("Failed to start social stub", e);
       }
@@ -757,25 +756,23 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
   }
 
   private static AccountServiceStub startAccountStub() throws IOException {
-    int port = TestSocketUtils.findAvailableTcpPort();
-    return new AccountServiceStub(port);
+    return new AccountServiceStub(0);
   }
 
   private static WorldManagementStubServer startWorldStub() throws IOException {
-    return new WorldManagementStubServer(TestSocketUtils.findAvailableTcpPort());
+    return new WorldManagementStubServer(0);
   }
 
   private static EntityManagementStubServer startEntityStub() throws IOException {
-    return new EntityManagementStubServer(TestSocketUtils.findAvailableTcpPort());
+    return new EntityManagementStubServer(0);
   }
 
   private static GameLogicHolder startGameLogic(int worldPort, int entityPort, int socialPort) {
     Map<String, Object> props = new java.util.LinkedHashMap<>();
-    int grpcPort = TestSocketUtils.findAvailableTcpPort();
     props.put("spring.profiles.active", "test");
     props.put("spring.application.name", "game-logic-service");
     props.put("server.port", "0");
-    props.put("spring.grpc.server.port", String.valueOf(grpcPort));
+    props.put("spring.grpc.server.port", "0");
     props.put("firemud.grpc.plaintext", "true");
     props.put("otel.endpoint", "disabled");
     props.put("firemud.database.enabled", "false");
@@ -789,7 +786,8 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
         new SpringApplicationBuilder(
                 GameLogicServiceApplication.class, NestedReadinessOverrides.class)
             .run(toCommandLineArgs(props));
-    return new GameLogicHolder(context, grpcPort);
+    int boundGrpcPort = context.getBean(GrpcServerLifecycle.class).getPort();
+    return new GameLogicHolder(context, boundGrpcPort);
   }
 
   private static GameSessionHolder startGameSession(int gameLogicPort, int accountPort) {
@@ -991,8 +989,8 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     private final int port;
 
     AccountServiceStub(int port) throws IOException {
-      this.port = port;
       this.server = ServerBuilder.forPort(port).addService(this).build().start();
+      this.port = server.getPort();
     }
 
     List<AuthenticateRequest> capturedRequests() {

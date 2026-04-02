@@ -20,7 +20,6 @@ public final class EntityManagementStubServer implements AutoCloseable {
       new AtomicReference<>(LookTestFixtures.sampleEntities());
 
   public EntityManagementStubServer(int port) throws IOException {
-    this.port = port;
     this.server =
         ServerBuilder.forPort(port)
             .addService(
@@ -49,6 +48,7 @@ public final class EntityManagementStubServer implements AutoCloseable {
                 })
             .build()
             .start();
+    this.port = server.getPort();
   }
 
   public String endpoint() {

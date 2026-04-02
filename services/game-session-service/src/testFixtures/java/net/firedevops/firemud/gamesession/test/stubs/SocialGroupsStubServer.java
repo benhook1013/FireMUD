@@ -16,7 +16,6 @@ public final class SocialGroupsStubServer implements AutoCloseable {
   private final AtomicReference<SendMessageRequest> lastRequest = new AtomicReference<>();
 
   public SocialGroupsStubServer(int port) throws IOException {
-    this.port = port;
     this.server =
         ServerBuilder.forPort(port)
             .addService(
@@ -34,6 +33,7 @@ public final class SocialGroupsStubServer implements AutoCloseable {
                 })
             .build()
             .start();
+    this.port = server.getPort();
   }
 
   public String endpoint() {
