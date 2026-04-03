@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamesession.command.text;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.instrument.MeterRegistry;
+import java.util.Map;
 import java.util.Objects;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.gamelogic.v1.MoveResult;
@@ -46,6 +47,8 @@ public class MoveCommandHandler {
         return failure(
             "INVALID_ARGUMENT",
             "MOVE command requires a direction",
+            "error.move.direction-required",
+            Map.of(),
             tenantTag,
             Long.toString(context.gameInstanceId()),
             Long.toString(context.characterId()),
@@ -75,6 +78,8 @@ public class MoveCommandHandler {
           return failure(
               code,
               errorMessage,
+              moveErrorMessageKey(code),
+              moveErrorArguments(code, direction, context.roomInstanceId()),
               tenantTag,
               Long.toString(context.gameInstanceId()),
               Long.toString(context.characterId()),
@@ -85,6 +90,8 @@ public class MoveCommandHandler {
           return failure(
               "MOVE_UNAVAILABLE",
               "Move destination unavailable",
+              "error.move.destination-unavailable",
+              Map.of(),
               tenantTag,
               Long.toString(context.gameInstanceId()),
               Long.toString(context.characterId()),
@@ -110,6 +117,8 @@ public class MoveCommandHandler {
         return failure(
             "MOVE_UNAVAILABLE",
             "Game Logic unavailable",
+            "error.move.unavailable",
+            Map.of(),
             tenantTag,
             Long.toString(context.gameInstanceId()),
             Long.toString(context.characterId()),
@@ -141,6 +150,8 @@ public class MoveCommandHandler {
   private MoveCommandHandlingResult failure(
       String errorCode,
       String message,
+      String messageKey,
+      Map<String, String> arguments,
       String tenantTag,
       String gameInstanceTag,
       String characterTag,
@@ -164,6 +175,33 @@ public class MoveCommandHandler {
           message,
           ex);
     }
-    return new MoveCommandHandlingResult(CommandEnqueueResult.failure(errorCode, message), null);
+    return new MoveCommandHandlingResult(
+        CommandEnqueueResult.failure(errorCode, message),
+        net.firedevops.firemud.gamesession.presentation.PlayerOutput.error(
+            errorCode, message, messageKey, arguments));
+  }
+
+  private String moveErrorMessageKey(String errorCode) {
+    if (errorCode == null) {
+      return null;
+    }
+    return switch (errorCode) {
+      case "INVALID_EXIT" -> "error.move.invalid-exit";
+      case "WORLD_UNAVAILABLE" -> "error.move.world-unavailable";
+      case "ENTITY_UNAVAILABLE" -> "error.move.entity-unavailable";
+      case "NOT_AUTHORIZED" -> "error.move.not-authorized";
+      case "MOVE_UNAVAILABLE" -> "error.move.unavailable";
+      default -> null;
+    };
+  }
+
+  private Map<String, String> moveErrorArguments(
+      String errorCode, String direction, String roomInstanceId) {
+    if ("INVALID_EXIT".equals(errorCode)) {
+      return Map.of(
+          "direction", direction == null ? "" : direction.toUpperCase(java.util.Locale.ROOT),
+          "roomId", roomInstanceId == null ? "" : roomInstanceId);
+    }
+    return Map.of();
   }
 }

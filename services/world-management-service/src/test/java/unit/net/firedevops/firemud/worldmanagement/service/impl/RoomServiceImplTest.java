@@ -130,11 +130,33 @@ class RoomServiceImplTest {
                     .withVariant("fr", "Des stalactites perlent le long du mur nord.")));
     when(repository.findById(1021L)).thenReturn(Optional.of(room));
 
+    Room targetRoom = new Room();
+    targetRoom.setId(2045L);
+    targetRoom.setTenantId(1L);
+    targetRoom.setRegion(region);
+    targetRoom.setName("North Hall");
+    targetRoom.setNameLocalizedVariantsJson(
+        new tools.jackson.databind.ObjectMapper()
+            .writeValueAsString(
+                LocalizedTextVariants.source("en-NZ", "North Hall")
+                    .withVariant("fr", "Salle du Nord")));
+
+    RoomExit exit = new RoomExit();
+    exit.setId(5001L);
+    exit.setTenantId(1L);
+    exit.setFromRoom(room);
+    exit.setToRoom(targetRoom);
+    exit.setDirection("NORTH");
+    exit.setCost(1);
+    when(exitRepository.findByTenantIdAndFromRoomId(1L, 1021L)).thenReturn(List.of(exit));
+
     RoomSnapshotDto snapshot = service.getRoomSnapshot(1L, 1021L, "fr");
 
     assertEquals("Antichambre eclairee par les chandelles", snapshot.roomName());
     assertEquals("Des stalactites perlent le long du mur nord.", snapshot.longDescription());
     assertEquals("Des stalactites perlent le long du mur nord.", snapshot.shortDescription());
+    assertEquals("Salle du Nord", snapshot.exits().get(0).targetRoomName());
+    assertEquals("Leads toward Salle du Nord", snapshot.exits().get(0).description());
   }
 
   @Test

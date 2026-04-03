@@ -28,7 +28,7 @@ The communication settings domain is now generation-ready through typed configur
 
 These settings are currently file/env-backed operator configuration. The settings metadata lives alongside the code so generated reference docs can track the same canonical defaults.
 
-The current effective communication defaults are also exposed for operator/debug inspection at `/actuator/settings/effective/communication`. This is still a bounded operator-default read surface, not a DB-backed tenant/game settings authority.
+The current effective communication result is also exposed for operator/debug inspection at `/actuator/settings/effective/communication`. It resolves service-local operator defaults plus shared persisted tenant and optional game-instance overrides from the Game Design settings authority. The shared persisted layer is merged in `common-platform-core`; this is still a bounded read model with local TTL/refresh/evict cache semantics rather than a distributed config platform.
 
 ## Dependent-Service Variables
 

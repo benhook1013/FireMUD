@@ -30,13 +30,20 @@ class RedisScreenBufferServiceTest {
         new RedisScreenBufferService(
             redisTemplate,
             new ObjectMapper(),
-            new FiremudReconnectionProperties(
-                null, new FiremudReconnectionProperties.Buffer(1_800_000L, 8, 24, 16_384, 65_536)));
+            (tenantId, gameInstanceId) ->
+                new FiremudReconnectionProperties(
+                    null,
+                    new FiremudReconnectionProperties.Buffer(1_800_000L, 8, 24, 16_384, 65_536)));
   }
 
   @Test
   void appendsAndReadsBufferedTranscript() {
-    cacheService.append(22L, 1L, 123L, "OK SAY\nYou say, \"hello\"\n\n");
+    cacheService.append(
+        22L,
+        1L,
+        123L,
+        java.util.List.of(
+            ScreenBufferService.BufferedEntry.fromText("OK SAY\nYou say, \"hello\"\n\n")));
 
     ArgumentCaptor<String> valueCaptor = ArgumentCaptor.forClass(String.class);
     verify(valueOperations)

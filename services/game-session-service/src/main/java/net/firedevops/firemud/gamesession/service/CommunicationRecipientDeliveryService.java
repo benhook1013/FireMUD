@@ -95,7 +95,7 @@ public final class CommunicationRecipientDeliveryService {
             recipient.tenantId(),
             recipient.gameInstanceId(),
             recipient.characterId(),
-            rendered + "\n");
+            java.util.List.of(ScreenBufferService.BufferedEntry.fromText(rendered + "\n")));
 
         activeTransportSessionRegistry
             .find(recipient.sessionId())

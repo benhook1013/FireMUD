@@ -382,6 +382,28 @@ class TextPlayerOutputRendererTest {
   }
 
   @Test
+  void localizedErrorAppliesStructuredArgumentsForAlternateLocale() {
+    TextPlayerOutputRenderer renderer =
+        new TextPlayerOutputRenderer(
+            new PresentationProperties(
+                "fr",
+                PresentationProperties.ColorMode.NONE,
+                false,
+                new PresentationProperties.Prompt(true, true, 150L)));
+
+    String rendered =
+        renderer.render(
+            PlayerOutput.error(
+                "INVALID_EXIT",
+                "fallback",
+                "error.move.invalid-exit",
+                java.util.Map.of("direction", "OUEST", "roomId", "R-1021")));
+
+    assertThat(rendered)
+        .isEqualTo("ERROR INVALID_EXIT Aucune sortie OUEST depuis la salle R-1021.");
+  }
+
+  @Test
   void localizedLookLabelsUseConfiguredLocaleTemplate() {
     TextPlayerOutputRenderer renderer =
         new TextPlayerOutputRenderer(

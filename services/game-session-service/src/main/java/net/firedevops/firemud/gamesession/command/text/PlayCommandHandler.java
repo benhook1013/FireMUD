@@ -90,6 +90,8 @@ public class PlayCommandHandler {
       return failure(
           GameplayStageCommandConstants.LOGIN_REQUIRED_CODE,
           GameplayStageCommandConstants.LOGIN_REQUIRED_MESSAGE,
+          "error.login-required",
+          Map.of(),
           tenantTag,
           null,
           null,
@@ -101,6 +103,8 @@ public class PlayCommandHandler {
       return failure(
           GameplayStageCommandConstants.PLAY_INVALID_ARGUMENT_CODE,
           GameplayStageCommandConstants.PLAY_INVALID_ARGUMENT_MESSAGE,
+          "error.play.invalid-argument",
+          Map.of(),
           tenantTag,
           null,
           null,
@@ -118,6 +122,8 @@ public class PlayCommandHandler {
         return failure(
             GameplayStageCommandConstants.PLAY_SELECTION_REQUIRED_CODE,
             GameplayStageCommandConstants.PLAY_SELECTION_REQUIRED_MESSAGE,
+            "error.play.selection-required",
+            Map.of(),
             tenantTag,
             null,
             null,
@@ -149,6 +155,8 @@ public class PlayCommandHandler {
               "Selection required. Use PLAY "
                   + selectedWorld.getSlug()
                   + " <character> or browse CHARS first.",
+              "error.play.character-selection-required",
+              Map.of("worldSlug", selectedWorld.getSlug()),
               tenantTag,
               Long.toString(selectedWorld.getGameInstanceId()),
               null,
@@ -240,6 +248,8 @@ public class PlayCommandHandler {
                 failure(
                     "CONNECT_SCOPE_MISMATCH",
                     "Connect scope mismatch",
+                    "error.play.connect-scope-mismatch",
+                    Map.of(),
                     tenantTag,
                     Long.toString(selectedWorld.getGameInstanceId()),
                     null,
@@ -249,6 +259,8 @@ public class PlayCommandHandler {
   private PlayCommandHandlingResult failure(
       String errorCode,
       String message,
+      String messageKey,
+      Map<String, String> arguments,
       String tenantTag,
       String gameInstanceTag,
       String characterTag,
@@ -273,7 +285,8 @@ public class PlayCommandHandler {
           ex);
     }
     return new PlayCommandHandlingResult(
-        CommandEnqueueResult.failure(errorCode, message), List.of());
+        CommandEnqueueResult.failure(errorCode, message),
+        List.of(PlayerOutput.error(errorCode, message, messageKey, arguments)));
   }
 
   private long resolveCharacterId(
@@ -399,6 +412,8 @@ public class PlayCommandHandler {
             failure(
                 GameplayStageCommandConstants.WORLD_ACCESS_DENIED_CODE,
                 GameplayStageCommandConstants.WORLD_ACCESS_DENIED_MESSAGE,
+                "error.play.world-access-denied",
+                Map.of(),
                 tenantTag,
                 Long.toString(selectedWorld.getGameInstanceId()),
                 Long.toString(requestedCharacterId),
@@ -414,6 +429,8 @@ public class PlayCommandHandler {
           failure(
               GameplayStageCommandConstants.MEMBERSHIP_AUTH_UNAVAILABLE_CODE,
               GameplayStageCommandConstants.MEMBERSHIP_AUTH_UNAVAILABLE_MESSAGE,
+              "error.play.membership-unavailable",
+              Map.of(),
               tenantTag,
               Long.toString(selectedWorld.getGameInstanceId()),
               Long.toString(requestedCharacterId),
@@ -430,6 +447,8 @@ public class PlayCommandHandler {
           failure(
               GameplayStageCommandConstants.WORLD_ACCESS_DENIED_CODE,
               GameplayStageCommandConstants.WORLD_ACCESS_DENIED_MESSAGE,
+              "error.play.world-access-denied",
+              Map.of(),
               tenantTag,
               Long.toString(selectedWorld.getGameInstanceId()),
               Long.toString(requestedCharacterId),
@@ -456,6 +475,8 @@ public class PlayCommandHandler {
           failure(
               GameplayStageCommandConstants.ENTITLEMENT_UNAVAILABLE_CODE,
               GameplayStageCommandConstants.ENTITLEMENT_UNAVAILABLE_MESSAGE,
+              "error.play.entitlement-unavailable",
+              Map.of(),
               tenantTag,
               Long.toString(selectedWorld.getGameInstanceId()),
               Long.toString(requestedCharacterId),
@@ -472,6 +493,8 @@ public class PlayCommandHandler {
           failure(
               GameplayStageCommandConstants.TENANT_BILLING_BLOCKED_CODE,
               GameplayStageCommandConstants.TENANT_BILLING_BLOCKED_MESSAGE,
+              "error.play.billing-blocked",
+              Map.of(),
               tenantTag,
               Long.toString(selectedWorld.getGameInstanceId()),
               Long.toString(requestedCharacterId),

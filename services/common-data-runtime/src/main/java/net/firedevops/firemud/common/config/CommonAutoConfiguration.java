@@ -46,8 +46,16 @@ public class CommonAutoConfiguration {
   public ScreenBufferService screenBufferService(
       StringRedisTemplate stringRedisTemplate,
       ObjectMapper objectMapper,
+      ReconnectionSettingsResolver reconnectionSettingsResolver) {
+    return new RedisScreenBufferService(
+        stringRedisTemplate, objectMapper, reconnectionSettingsResolver);
+  }
+
+  @Bean
+  @ConditionalOnMissingBean(ReconnectionSettingsResolver.class)
+  public ReconnectionSettingsResolver reconnectionSettingsResolver(
       FiremudReconnectionProperties properties) {
-    return new RedisScreenBufferService(stringRedisTemplate, objectMapper, properties);
+    return (tenantId, gameInstanceId) -> properties;
   }
 
   @Bean
@@ -56,7 +64,10 @@ public class CommonAutoConfiguration {
     return new ScreenBufferService() {
       @Override
       public void append(
-          long tenantId, long gameInstanceId, long characterId, String protocolText) {}
+          long tenantId,
+          long gameInstanceId,
+          long characterId,
+          java.util.List<ScreenBufferService.BufferedEntry> entries) {}
 
       @Override
       public Optional<BufferedScreen> get(long tenantId, long gameInstanceId, long characterId) {

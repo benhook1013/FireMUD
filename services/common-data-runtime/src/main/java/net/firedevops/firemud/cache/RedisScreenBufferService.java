@@ -6,6 +6,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import net.firedevops.firemud.common.config.FiremudReconnectionProperties;
+import net.firedevops.firemud.common.config.ReconnectionSettingsResolver;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.util.StringUtils;
 import tools.jackson.core.JacksonException;
@@ -19,27 +20,32 @@ public class RedisScreenBufferService implements ScreenBufferService {
 
   private final StringRedisTemplate redisTemplate;
   private final ObjectMapper objectMapper;
-  private final FiremudReconnectionProperties properties;
+  private final ReconnectionSettingsResolver settingsResolver;
 
   public RedisScreenBufferService(
       StringRedisTemplate redisTemplate,
       ObjectMapper objectMapper,
-      FiremudReconnectionProperties properties) {
+      ReconnectionSettingsResolver settingsResolver) {
     this.redisTemplate = redisTemplate;
     this.objectMapper = objectMapper;
-    this.properties = properties;
+    this.settingsResolver = settingsResolver;
   }
 
   @Override
-  public void append(long tenantId, long gameInstanceId, long characterId, String protocolText) {
-    if (!StringUtils.hasText(protocolText)) {
+  public void append(
+      long tenantId, long gameInstanceId, long characterId, List<BufferedEntry> entries) {
+    List<BufferedEntry> filtered =
+        entries == null
+            ? List.of()
+            : entries.stream().filter(entry -> StringUtils.hasText(entry.text())).toList();
+    if (filtered.isEmpty()) {
       return;
     }
     BufferedPayload payload =
         readPayload(tenantId, gameInstanceId, characterId).orElseGet(BufferedPayload::new);
-    payload.entries.add(EntryPayload.from(protocolText));
+    filtered.stream().map(EntryPayload::from).forEach(payload.entries::add);
     payload.updatedAtMs = System.currentTimeMillis();
-    trimPayload(payload);
+    trimPayload(payload, tenantId, gameInstanceId);
     writePayload(tenantId, gameInstanceId, characterId, payload);
   }
 
@@ -50,7 +56,7 @@ public class RedisScreenBufferService implements ScreenBufferService {
         .map(
             payload ->
                 new BufferedScreen(
-                    joinProtocolText(payload.entries),
+                    payload.entries.stream().map(EntryPayload::toPublicEntry).toList(),
                     payload.entries.size(),
                     payload.entries.stream().mapToInt(entry -> entry.lineCount).sum(),
                     payload.updatedAtMs));
@@ -77,6 +83,7 @@ public class RedisScreenBufferService implements ScreenBufferService {
 
   private void writePayload(
       long tenantId, long gameInstanceId, long characterId, BufferedPayload payload) {
+    FiremudReconnectionProperties properties = settingsResolver.resolve(tenantId, gameInstanceId);
     try {
       redisTemplate
           .opsForValue()
@@ -89,8 +96,9 @@ public class RedisScreenBufferService implements ScreenBufferService {
     }
   }
 
-  private void trimPayload(BufferedPayload payload) {
-    FiremudReconnectionProperties.Buffer buffer = properties.buffer();
+  private void trimPayload(BufferedPayload payload, long tenantId, long gameInstanceId) {
+    FiremudReconnectionProperties.Buffer buffer =
+        settingsResolver.resolve(tenantId, gameInstanceId).buffer();
     while (payload.entries.size() > 1
         && totalBytes(payload.entries) > buffer.softMaxBytes()
         && payload.entries.size() > buffer.minMessages()
@@ -110,14 +118,6 @@ public class RedisScreenBufferService implements ScreenBufferService {
     return entries.stream().mapToInt(entry -> entry.lineCount).sum();
   }
 
-  private String joinProtocolText(List<EntryPayload> entries) {
-    StringBuilder builder = new StringBuilder();
-    for (EntryPayload entry : entries) {
-      builder.append(entry.protocolText);
-    }
-    return builder.toString();
-  }
-
   private String key(long tenantId, long gameInstanceId, long characterId) {
     return String.format(KEY_TEMPLATE, tenantId, gameInstanceId, characterId);
   }
@@ -133,17 +133,17 @@ public class RedisScreenBufferService implements ScreenBufferService {
     public int byteSize;
     public long appendedAtMs;
 
-    static EntryPayload from(String protocolText) {
+    static EntryPayload from(BufferedEntry entry) {
       EntryPayload payload = new EntryPayload();
-      payload.protocolText = protocolText;
-      payload.lineCount = countLines(protocolText);
-      payload.byteSize = protocolText.getBytes(java.nio.charset.StandardCharsets.UTF_8).length;
-      payload.appendedAtMs = System.currentTimeMillis();
+      payload.protocolText = entry.text();
+      payload.lineCount = entry.lineCount();
+      payload.byteSize = entry.byteSize();
+      payload.appendedAtMs = entry.appendedAtMs();
       return payload;
     }
 
-    private static int countLines(String protocolText) {
-      return (int) protocolText.lines().filter(line -> !line.isBlank()).count();
+    BufferedEntry toPublicEntry() {
+      return new BufferedEntry(protocolText, lineCount, byteSize, appendedAtMs);
     }
   }
 }

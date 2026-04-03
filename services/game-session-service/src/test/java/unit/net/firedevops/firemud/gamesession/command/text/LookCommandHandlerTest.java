@@ -14,12 +14,12 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.Optional;
 import net.firedevops.firemud.cache.LookCacheService;
 import net.firedevops.firemud.command.text.LookCommandConstants;
+import net.firedevops.firemud.common.settings.ScopedSettingsSnapshot;
 import net.firedevops.firemud.gamelogic.v1.LookResult;
 import net.firedevops.firemud.gamesession.client.GameLogicClient;
 import net.firedevops.firemud.gamesession.config.DevIsolatedProperties;
 import net.firedevops.firemud.gamesession.config.EffectiveSettingsResolver;
 import net.firedevops.firemud.gamesession.config.GameLogicProperties;
-import net.firedevops.firemud.gamesession.config.GameSessionSettingsOverridesProperties;
 import net.firedevops.firemud.gamesession.config.MovementProperties;
 import net.firedevops.firemud.gamesession.config.PresentationProperties;
 import net.firedevops.firemud.gamesession.config.WorldTopologyProperties;
@@ -123,7 +123,12 @@ class LookCommandHandlerTest {
         new StatusRuntimeException(Status.UNAVAILABLE.withDescription("WorldManagement: down"));
     when(gameLogicClient.resolveLook("22", "1", "911", "room-42", "")).thenThrow(worldDown);
     PlayerOutput response = handler.describePlayerOutput("123", true);
-    assertEquals("ERROR WORLD_UNAVAILABLE WorldManagement: down", outputRenderer.render(response));
+    assertEquals(
+        "ERROR WORLD_UNAVAILABLE World data is temporarily unavailable.",
+        outputRenderer.render(response));
+    assertEquals(
+        "ERROR WORLD_UNAVAILABLE Les donnees du monde sont temporairement indisponibles.",
+        outputRenderer.render(response, "fr"));
     Counter failures =
         meterRegistry
             .get("gamesession.command.look.failures")
@@ -272,6 +277,6 @@ class LookCommandHandlerTest {
         new PresentationProperties(),
         new MovementProperties(),
         new WorldTopologyProperties(),
-        new GameSessionSettingsOverridesProperties(null, null, null, null, null, null));
+        (tenantId, gameInstanceId) -> ScopedSettingsSnapshot.empty());
   }
 }

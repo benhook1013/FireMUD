@@ -141,7 +141,12 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
           formatResponse(command, interpretation, session, outputs, effectivePresentation);
       sendProtocolMessage(session, response);
       promptBurstCoordinator.recordPromptEmission(sessionId, outputs);
-      maybeAppendToScreenBuffer(sessionId, command, interpretation, response);
+      maybeAppendToScreenBuffer(
+          sessionId,
+          interpretation,
+          outputs,
+          resolveLocaleTag(session, sessionId),
+          effectivePresentation);
       maybeReplayScreenBufferAndRefreshLook(session, sessionId, command, interpretation);
     }
   }
@@ -238,10 +243,13 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
 
   private void maybeAppendToScreenBuffer(
       String sessionId,
-      TextCommand command,
       TextCommandInterpretationResult interpretation,
-      String response) {
-    if (!shouldBuffer(command, interpretation, response)) {
+      java.util.List<PlayerOutput> outputs,
+      String localeTag,
+      PresentationProperties effectivePresentation) {
+    java.util.List<ScreenBufferService.BufferedEntry> replayEntries =
+        replayableEntries(outputs, localeTag, effectivePresentation);
+    if (!shouldBuffer(interpretation, replayEntries)) {
       return;
     }
     sessionContextService
@@ -250,7 +258,10 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
         .ifPresent(
             context ->
                 screenBufferService.append(
-                    context.tenantId(), context.gameInstanceId(), context.characterId(), response));
+                    context.tenantId(),
+                    context.gameInstanceId(),
+                    context.characterId(),
+                    replayEntries));
   }
 
   private void maybeReplayScreenBufferAndRefreshLook(
@@ -334,12 +345,34 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     }
   }
 
+  private java.util.List<ScreenBufferService.BufferedEntry> replayableEntries(
+      java.util.List<PlayerOutput> outputs,
+      String localeTag,
+      PresentationProperties effectivePresentation) {
+    return outputs.stream()
+        .filter(PlayerOutput::screenBufferEligible)
+        .map(output -> renderReplayableOutput(output, localeTag, effectivePresentation))
+        .filter(StringUtils::hasText)
+        .map(text -> ScreenBufferService.BufferedEntry.fromText(text + "\n"))
+        .toList();
+  }
+
+  private String renderReplayableOutput(
+      PlayerOutput output, String localeTag, PresentationProperties effectivePresentation) {
+    if (output.kind() == PlayerOutputKind.VIEW) {
+      return outputRenderer.renderSuccessfulForCommandType(
+          TextCommandType.LOOK, java.util.List.of(output), localeTag, effectivePresentation);
+    }
+    return outputRenderer.render(output, localeTag, effectivePresentation);
+  }
+
   private boolean shouldBuffer(
-      TextCommand command, TextCommandInterpretationResult interpretation, String response) {
-    if (!interpretation.commandResult().accepted() || !StringUtils.hasText(response)) {
+      TextCommandInterpretationResult interpretation,
+      java.util.List<ScreenBufferService.BufferedEntry> replayEntries) {
+    if (!interpretation.commandResult().accepted() || replayEntries.isEmpty()) {
       return false;
     }
-    return interpretation.outputs().stream().anyMatch(PlayerOutput::screenBufferEligible);
+    return true;
   }
 
   private void bootstrapSessionContext(WebSocketSession session) {

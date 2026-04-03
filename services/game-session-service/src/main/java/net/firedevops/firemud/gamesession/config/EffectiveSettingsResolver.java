@@ -3,7 +3,11 @@ package net.firedevops.firemud.gamesession.config;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import net.firedevops.firemud.common.settings.ScopedSettingsOverrides;
+import net.firedevops.firemud.common.settings.SharedEffectiveSettingsResolver;
+import net.firedevops.firemud.common.settings.SharedSettingsAuthorityReader;
 import net.firedevops.firemud.gamesession.service.SessionContext;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
@@ -13,20 +17,35 @@ public class EffectiveSettingsResolver {
   private final PresentationProperties presentationDefaults;
   private final MovementProperties movementDefaults;
   private final WorldTopologyProperties worldTopologyDefaults;
-  private final GameSessionSettingsOverridesProperties overrides;
+  private final SharedEffectiveSettingsResolver sharedEffectiveSettingsResolver;
 
+  @Autowired
   public EffectiveSettingsResolver(
       PresentationProperties presentationDefaults,
       MovementProperties movementDefaults,
       WorldTopologyProperties worldTopologyDefaults,
-      GameSessionSettingsOverridesProperties overrides) {
+      SharedEffectiveSettingsResolver sharedEffectiveSettingsResolver) {
     this.presentationDefaults =
         Objects.requireNonNull(presentationDefaults, "presentationDefaults must not be null");
     this.movementDefaults =
         Objects.requireNonNull(movementDefaults, "movementDefaults must not be null");
     this.worldTopologyDefaults =
         Objects.requireNonNull(worldTopologyDefaults, "worldTopologyDefaults must not be null");
-    this.overrides = Objects.requireNonNull(overrides, "overrides must not be null");
+    this.sharedEffectiveSettingsResolver =
+        Objects.requireNonNull(
+            sharedEffectiveSettingsResolver, "sharedEffectiveSettingsResolver must not be null");
+  }
+
+  public EffectiveSettingsResolver(
+      PresentationProperties presentationDefaults,
+      MovementProperties movementDefaults,
+      WorldTopologyProperties worldTopologyDefaults,
+      SharedSettingsAuthorityReader settingsAuthorityReader) {
+    this(
+        presentationDefaults,
+        movementDefaults,
+        worldTopologyDefaults,
+        new SharedEffectiveSettingsResolver(settingsAuthorityReader));
   }
 
   public PresentationProperties presentation(SessionContext context) {
@@ -34,23 +53,16 @@ public class EffectiveSettingsResolver {
   }
 
   public ResolvedValue<PresentationProperties> resolvedPresentation(SessionContext context) {
-    PresentationProperties effective = presentationDefaults;
-    List<String> sources = new ArrayList<>();
-    sources.add("operatorDefaults");
-    String tenantKey = resolveTenantKey(context);
-    GameSessionSettingsOverridesProperties.PresentationOverride tenantOverride =
-        lookup(overrides.presentationByTenant(), tenantKey);
-    if (tenantOverride != null) {
-      effective = merge(effective, tenantOverride);
-      sources.add("tenantOverride:" + tenantKey);
-    }
-    String gameInstanceKey = resolveGameInstanceKey(context);
-    GameSessionSettingsOverridesProperties.PresentationOverride gameInstanceOverride =
-        lookup(overrides.presentationByGameInstance(), gameInstanceKey);
-    if (gameInstanceOverride != null) {
-      effective = merge(effective, gameInstanceOverride);
-      sources.add("gameInstanceOverride:" + gameInstanceKey);
-    }
+    SharedEffectiveSettingsResolver.ResolvedScopedSettings persistedOverrides =
+        resolvedPersistedOverrides(context);
+    PresentationProperties effective =
+        merge(presentationDefaults, persistedOverrides.effectiveOverrides().presentation());
+    List<String> sources =
+        sources(
+            persistedOverrides,
+            ScopedSettingsOverrides.SettingsDomain.PRESENTATION,
+            context == null ? 0L : context.tenantId(),
+            resolveGameInstanceId(context));
     return new ResolvedValue<>(effective, List.copyOf(sources));
   }
 
@@ -59,23 +71,16 @@ public class EffectiveSettingsResolver {
   }
 
   public ResolvedValue<MovementProperties> resolvedMovement(SessionContext context) {
-    MovementProperties effective = movementDefaults;
-    List<String> sources = new ArrayList<>();
-    sources.add("operatorDefaults");
-    String tenantKey = resolveTenantKey(context);
-    GameSessionSettingsOverridesProperties.MovementOverride tenantOverride =
-        lookup(overrides.movementByTenant(), tenantKey);
-    if (tenantOverride != null) {
-      effective = merge(effective, tenantOverride);
-      sources.add("tenantOverride:" + tenantKey);
-    }
-    String gameInstanceKey = resolveGameInstanceKey(context);
-    GameSessionSettingsOverridesProperties.MovementOverride gameInstanceOverride =
-        lookup(overrides.movementByGameInstance(), gameInstanceKey);
-    if (gameInstanceOverride != null) {
-      effective = merge(effective, gameInstanceOverride);
-      sources.add("gameInstanceOverride:" + gameInstanceKey);
-    }
+    SharedEffectiveSettingsResolver.ResolvedScopedSettings persistedOverrides =
+        resolvedPersistedOverrides(context);
+    MovementProperties effective =
+        merge(movementDefaults, persistedOverrides.effectiveOverrides().movement());
+    List<String> sources =
+        sources(
+            persistedOverrides,
+            ScopedSettingsOverrides.SettingsDomain.MOVEMENT,
+            context == null ? 0L : context.tenantId(),
+            resolveGameInstanceId(context));
     return new ResolvedValue<>(effective, List.copyOf(sources));
   }
 
@@ -84,23 +89,16 @@ public class EffectiveSettingsResolver {
   }
 
   public ResolvedValue<WorldTopologyProperties> resolvedWorldTopology(SessionContext context) {
-    WorldTopologyProperties effective = worldTopologyDefaults;
-    List<String> sources = new ArrayList<>();
-    sources.add("operatorDefaults");
-    String tenantKey = resolveTenantKey(context);
-    GameSessionSettingsOverridesProperties.WorldTopologyOverride tenantOverride =
-        lookup(overrides.worldTopologyByTenant(), tenantKey);
-    if (tenantOverride != null) {
-      effective = merge(effective, tenantOverride);
-      sources.add("tenantOverride:" + tenantKey);
-    }
-    String gameInstanceKey = resolveGameInstanceKey(context);
-    GameSessionSettingsOverridesProperties.WorldTopologyOverride gameInstanceOverride =
-        lookup(overrides.worldTopologyByGameInstance(), gameInstanceKey);
-    if (gameInstanceOverride != null) {
-      effective = merge(effective, gameInstanceOverride);
-      sources.add("gameInstanceOverride:" + gameInstanceKey);
-    }
+    SharedEffectiveSettingsResolver.ResolvedScopedSettings persistedOverrides =
+        resolvedPersistedOverrides(context);
+    WorldTopologyProperties effective =
+        merge(worldTopologyDefaults, persistedOverrides.effectiveOverrides().worldTopology());
+    List<String> sources =
+        sources(
+            persistedOverrides,
+            ScopedSettingsOverrides.SettingsDomain.WORLD_TOPOLOGY,
+            context == null ? 0L : context.tenantId(),
+            resolveGameInstanceId(context));
     return new ResolvedValue<>(effective, List.copyOf(sources));
   }
 
@@ -110,16 +108,8 @@ public class EffectiveSettingsResolver {
     }
   }
 
-  private static <T> T lookup(java.util.Map<String, T> source, String key) {
-    if (!StringUtils.hasText(key)) {
-      return null;
-    }
-    return source.get(key);
-  }
-
   private PresentationProperties merge(
-      PresentationProperties base,
-      GameSessionSettingsOverridesProperties.PresentationOverride override) {
+      PresentationProperties base, ScopedSettingsOverrides.PresentationOverride override) {
     if (override == null) {
       return base;
     }
@@ -128,7 +118,9 @@ public class EffectiveSettingsResolver {
         StringUtils.hasText(override.defaultLocaleTag())
             ? override.defaultLocaleTag()
             : base.defaultLocaleTag(),
-        override.defaultColorMode() != null ? override.defaultColorMode() : base.defaultColorMode(),
+        override.defaultColorMode() != null
+            ? map(override.defaultColorMode())
+            : base.defaultColorMode(),
         override.briefEnabledByDefault() != null
             ? override.briefEnabledByDefault()
             : base.briefEnabledByDefault(),
@@ -137,7 +129,7 @@ public class EffectiveSettingsResolver {
 
   private PresentationProperties.Prompt merge(
       PresentationProperties.Prompt base,
-      GameSessionSettingsOverridesProperties.PresentationOverride.PromptOverride override) {
+      ScopedSettingsOverrides.PresentationOverride.PromptOverride override) {
     if (override == null) {
       return base;
     }
@@ -152,7 +144,7 @@ public class EffectiveSettingsResolver {
   }
 
   private MovementProperties merge(
-      MovementProperties base, GameSessionSettingsOverridesProperties.MovementOverride override) {
+      MovementProperties base, ScopedSettingsOverrides.MovementOverride override) {
     if (override == null || override.postMoveLookEnabled() == null) {
       return base;
     }
@@ -160,30 +152,66 @@ public class EffectiveSettingsResolver {
   }
 
   private WorldTopologyProperties merge(
-      WorldTopologyProperties base,
-      GameSessionSettingsOverridesProperties.WorldTopologyOverride override) {
+      WorldTopologyProperties base, ScopedSettingsOverrides.WorldTopologyOverride override) {
     if (override == null) {
       return base;
     }
     return new WorldTopologyProperties(
-        override.scopeModel() != null ? override.scopeModel() : base.scopeModel(),
+        override.scopeModel() != null ? map(override.scopeModel()) : base.scopeModel(),
         override.regionsEnabled() != null ? override.regionsEnabled() : base.regionsEnabled());
   }
 
-  private String resolveTenantKey(SessionContext context) {
-    return context != null && context.tenantId() > 0 ? Long.toString(context.tenantId()) : null;
+  private SharedEffectiveSettingsResolver.ResolvedScopedSettings resolvedPersistedOverrides(
+      SessionContext context) {
+    if (context == null || context.tenantId() <= 0L) {
+      return new SharedEffectiveSettingsResolver.ResolvedScopedSettings(
+          ScopedSettingsOverrides.empty(),
+          ScopedSettingsOverrides.empty(),
+          ScopedSettingsOverrides.empty());
+    }
+    return sharedEffectiveSettingsResolver.resolve(
+        context.tenantId(), resolveGameInstanceId(context));
   }
 
-  private String resolveGameInstanceKey(SessionContext context) {
+  private List<String> sources(
+      SharedEffectiveSettingsResolver.ResolvedScopedSettings persistedOverrides,
+      ScopedSettingsOverrides.SettingsDomain domain,
+      long tenantId,
+      Long gameInstanceId) {
+    List<String> sources = new ArrayList<>();
+    sources.add("operatorDefaults");
+    sources.addAll(persistedOverrides.sourcesFor(domain, tenantId, gameInstanceId));
+    return sources;
+  }
+
+  private Long resolveGameInstanceId(SessionContext context) {
     if (context == null) {
       return null;
     }
     if (context.gameInstanceId() > 0) {
-      return Long.toString(context.gameInstanceId());
+      return context.gameInstanceId();
     }
     if (context.bootstrapGameInstanceId() > 0) {
-      return Long.toString(context.bootstrapGameInstanceId());
+      return context.bootstrapGameInstanceId();
     }
     return null;
+  }
+
+  private PresentationProperties.ColorMode map(
+      ScopedSettingsOverrides.PresentationOverride.ColorMode colorMode) {
+    return switch (colorMode) {
+      case NONE -> PresentationProperties.ColorMode.NONE;
+      case BASIC -> PresentationProperties.ColorMode.BASIC;
+      case RICH -> PresentationProperties.ColorMode.RICH;
+    };
+  }
+
+  private WorldTopologyProperties.ScopeModel map(
+      ScopedSettingsOverrides.WorldTopologyOverride.ScopeModel scopeModel) {
+    return switch (scopeModel) {
+      case MAP_ONLY -> WorldTopologyProperties.ScopeModel.MAP_ONLY;
+      case AREA_AND_MAP -> WorldTopologyProperties.ScopeModel.AREA_AND_MAP;
+      case REGION_AREA_AND_MAP -> WorldTopologyProperties.ScopeModel.REGION_AREA_AND_MAP;
+    };
   }
 }

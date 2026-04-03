@@ -45,7 +45,9 @@ public class CommunicationAggregationService {
   private final MeterRegistry meterRegistry;
 
   public SendCommunicationResponse send(SendCommunicationRequest request) {
-    CommunicationProperties communicationProperties = settingsResolver.communication();
+    CommunicationProperties communicationProperties =
+        settingsResolver.communication(
+            parseTenantId(request.getTenantId()), parseGameInstanceId(request.getGameInstanceId()));
     String normalizedText = normalizeText(request.getText());
     SendCommunicationResponse.Builder builder =
         SendCommunicationResponse.newBuilder()
@@ -215,7 +217,9 @@ public class CommunicationAggregationService {
             roomEntities,
             speakerName,
             resolvedTargetName,
-            settingsResolver.communication()));
+            settingsResolver.communication(
+                parseTenantId(request.getTenantId()),
+                parseGameInstanceId(request.getGameInstanceId()))));
     return new CommunicationAudience(
         List.of(speakerName, resolvedTargetName),
         List.of(),
@@ -342,6 +346,29 @@ public class CommunicationAggregationService {
 
   private String normalizeText(String text) {
     return text == null ? "" : text.trim();
+  }
+
+  private Long parseTenantId(String tenantId) {
+    if (tenantId == null || tenantId.isBlank()) {
+      return null;
+    }
+    try {
+      return Long.parseLong(tenantId);
+    } catch (NumberFormatException ignored) {
+      return null;
+    }
+  }
+
+  private Long parseGameInstanceId(String gameInstanceId) {
+    if (gameInstanceId == null || gameInstanceId.isBlank()) {
+      return null;
+    }
+    try {
+      long parsed = Long.parseLong(gameInstanceId);
+      return parsed > 0L ? parsed : null;
+    } catch (NumberFormatException ignored) {
+      return null;
+    }
   }
 
   private SendCommunicationResponse errorResponse(

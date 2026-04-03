@@ -63,13 +63,6 @@ firemud:
   world-topology:
     scope-model: MAP_ONLY
     regions-enabled: false
-  settings-overrides:
-    presentation-by-tenant: {}
-    presentation-by-game-instance: {}
-    movement-by-tenant: {}
-    movement-by-game-instance: {}
-    world-topology-by-tenant: {}
-    world-topology-by-game-instance: {}
   grpc:
     cert-chain: ${FIREMUD_GRPC_CERT_CHAIN_PATH:certs/client.crt}
     private-key: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:certs/client.key}

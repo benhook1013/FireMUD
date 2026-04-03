@@ -3,6 +3,7 @@ package net.firedevops.firemud.gamesession.controller;
 import java.util.List;
 import net.firedevops.firemud.common.ApiResponse;
 import net.firedevops.firemud.common.config.FiremudReconnectionProperties;
+import net.firedevops.firemud.gamesession.config.EffectiveReconnectionSettingsResolver;
 import net.firedevops.firemud.gamesession.config.EffectiveSettingsResolver;
 import net.firedevops.firemud.gamesession.config.MovementProperties;
 import net.firedevops.firemud.gamesession.config.PresentationProperties;
@@ -22,16 +23,16 @@ import org.springframework.web.server.ResponseStatusException;
 @RequestMapping("/actuator/settings")
 public class EffectiveSettingsController {
   private final EffectiveSettingsResolver settingsResolver;
+  private final EffectiveReconnectionSettingsResolver reconnectionSettingsResolver;
   private final SessionContextService sessionContextService;
-  private final FiremudReconnectionProperties reconnectionProperties;
 
   public EffectiveSettingsController(
       EffectiveSettingsResolver settingsResolver,
-      SessionContextService sessionContextService,
-      FiremudReconnectionProperties reconnectionProperties) {
+      EffectiveReconnectionSettingsResolver reconnectionSettingsResolver,
+      SessionContextService sessionContextService) {
     this.settingsResolver = settingsResolver;
+    this.reconnectionSettingsResolver = reconnectionSettingsResolver;
     this.sessionContextService = sessionContextService;
-    this.reconnectionProperties = reconnectionProperties;
   }
 
   @GetMapping("/effective")
@@ -48,6 +49,8 @@ public class EffectiveSettingsController {
         settingsResolver.resolvedMovement(resolution.context());
     EffectiveSettingsResolver.ResolvedValue<WorldTopologyProperties> worldTopology =
         settingsResolver.resolvedWorldTopology(resolution.context());
+    EffectiveReconnectionSettingsResolver.ResolvedValue<FiremudReconnectionProperties>
+        reconnection = reconnectionSettingsResolver.resolvedReconnection(resolution.context());
     EffectiveSettingsResponse response =
         new EffectiveSettingsResponse(
             new Scope(
@@ -58,7 +61,7 @@ public class EffectiveSettingsController {
                 resolution.context().bootstrapGameInstanceId(),
                 resolution.context().localeTag()),
             new DomainSettings<>(presentation.effective(), presentation.sources()),
-            new DomainSettings<>(reconnectionProperties, List.of("operatorDefaults")),
+            new DomainSettings<>(reconnection.effective(), reconnection.sources()),
             new DomainSettings<>(movement.effective(), movement.sources()),
             new DomainSettings<>(worldTopology.effective(), worldTopology.sources()));
     return ResponseEntity.ok(ApiResponse.success(response));

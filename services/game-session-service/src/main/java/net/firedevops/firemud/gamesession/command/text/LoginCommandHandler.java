@@ -315,8 +315,14 @@ public final class LoginCommandHandler {
   }
 
   private LoginCommandHandlingResult failure(String code, String message) {
+    return failure(code, message, loginErrorMessageKey(code), Map.of());
+  }
+
+  private LoginCommandHandlingResult failure(
+      String code, String message, String messageKey, Map<String, String> arguments) {
     return new LoginCommandHandlingResult(
-        CommandEnqueueResult.failure(code, message), List.of(PlayerOutput.error(code, message)));
+        CommandEnqueueResult.failure(code, message),
+        List.of(PlayerOutput.error(code, message, messageKey, arguments)));
   }
 
   private LoginCommandHandlingResult fromCommandResult(CommandEnqueueResult result) {
@@ -324,5 +330,23 @@ public final class LoginCommandHandler {
       return new LoginCommandHandlingResult(result, List.of());
     }
     return failure(result.errorCode(), result.errorMessage());
+  }
+
+  private String loginErrorMessageKey(String code) {
+    if (code == null) {
+      return null;
+    }
+    return switch (code) {
+      case "SESSION_NOT_FOUND" -> "error.login.session-not-found";
+      case "INVALID_ARGUMENT" -> "error.login.invalid-session-id";
+      case LoginCommandConstants.PROMPT_MODE_UNSUPPORTED_CODE -> "error.login.prompt-unsupported";
+      case LoginCommandConstants.ACCOUNT_MISMATCH_CODE -> "error.login.account-mismatch";
+      case LoginCommandConstants.INVALID_ACCOUNT_CODE -> "error.login.invalid-account";
+      case "INVALID_CREDENTIALS" -> "error.login.invalid-credentials";
+      case "OTP_REQUIRED" -> "error.login.otp-required";
+      case "ACCOUNT_LOCKED" -> "error.login.account-locked";
+      case "UPSTREAM_FAILURE" -> "error.login.upstream-failure";
+      default -> null;
+    };
   }
 }

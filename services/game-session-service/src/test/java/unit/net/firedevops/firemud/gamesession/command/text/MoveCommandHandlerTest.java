@@ -8,18 +8,19 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import net.firedevops.firemud.common.settings.ScopedSettingsSnapshot;
 import net.firedevops.firemud.gamelogic.v1.LookResult;
 import net.firedevops.firemud.gamelogic.v1.MoveResult;
 import net.firedevops.firemud.gamesession.client.GameLogicClient;
 import net.firedevops.firemud.gamesession.config.EffectiveSettingsResolver;
 import net.firedevops.firemud.gamesession.config.GameLogicProperties;
-import net.firedevops.firemud.gamesession.config.GameSessionSettingsOverridesProperties;
 import net.firedevops.firemud.gamesession.config.MovementProperties;
 import net.firedevops.firemud.gamesession.config.PresentationProperties;
 import net.firedevops.firemud.gamesession.config.WorldTopologyProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.presentation.LookViewOutput;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
+import net.firedevops.firemud.gamesession.presentation.TextPlayerOutputRenderer;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
@@ -40,13 +41,7 @@ class MoveCommandHandlerTest {
           new PresentationProperties(),
           new MovementProperties(true),
           new WorldTopologyProperties(),
-          new GameSessionSettingsOverridesProperties(
-              java.util.Map.of(),
-              java.util.Map.of(),
-              java.util.Map.of(),
-              java.util.Map.of(),
-              java.util.Map.of(),
-              java.util.Map.of()));
+          (tenantId, gameInstanceId) -> ScopedSettingsSnapshot.empty());
   private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
 
   private MoveCommandHandler handler;
@@ -147,6 +142,11 @@ class MoveCommandHandlerTest {
 
     assertThat(result.commandResult().accepted()).isFalse();
     assertThat(result.commandResult().errorCode()).isEqualTo("INVALID_EXIT");
+    assertThat(result.responseOutput()).isNotNull();
+    assertThat(
+            new TextPlayerOutputRenderer(new PresentationProperties())
+                .render(result.responseOutput(), "fr"))
+        .isEqualTo("ERROR INVALID_EXIT Aucune sortie WEST depuis la salle R-1021.");
     verify(sessionContextService, never()).save(any());
     verify(lookCommandHandler, never()).toPlayerOutput(any(), any(), anyBoolean(), any());
   }
@@ -163,13 +163,7 @@ class MoveCommandHandlerTest {
                 new PresentationProperties(),
                 new MovementProperties(false),
                 new WorldTopologyProperties(),
-                new GameSessionSettingsOverridesProperties(
-                    java.util.Map.of(),
-                    java.util.Map.of(),
-                    java.util.Map.of(),
-                    java.util.Map.of(),
-                    java.util.Map.of(),
-                    java.util.Map.of())),
+                (tenantId, gameInstanceId) -> ScopedSettingsSnapshot.empty()),
             meterRegistry);
     LookResult destinationLook =
         LookResult.newBuilder()

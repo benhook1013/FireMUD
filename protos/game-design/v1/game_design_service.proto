@@ -14,6 +14,12 @@ service GameDesignService {
   rpc PublishScriptPatchVersion(PublishScriptPatchVersionRequest)
       returns (PublishScriptPatchVersionResponse);
   rpc ListVersions(ListVersionsRequest) returns (ListVersionsResponse);
+  rpc GetScopedSettingsOverrides(GetScopedSettingsOverridesRequest)
+      returns (GetScopedSettingsOverridesResponse);
+  rpc PutSettingsDomainOverride(PutSettingsDomainOverrideRequest)
+      returns (PutSettingsDomainOverrideResponse);
+  rpc DeleteSettingsDomainOverride(DeleteSettingsDomainOverrideRequest)
+      returns (DeleteSettingsDomainOverrideResponse);
 }
 
 message SaveRevisionRequest {
@@ -71,4 +77,119 @@ message PingRequest {}
 message PingResponse {
   string message = 1;
   shared.v1.ErrorDetail error = 2;
+}
+
+message GetScopedSettingsOverridesRequest {
+  string tenant_id = 1;
+  optional int64 game_instance_id = 2;
+}
+
+message GetScopedSettingsOverridesResponse {
+  SettingsOverrides tenant_overrides = 1;
+  SettingsOverrides game_instance_overrides = 2;
+  shared.v1.ErrorDetail error = 3;
+}
+
+message PutSettingsDomainOverrideRequest {
+  string tenant_id = 1;
+  optional int64 game_instance_id = 2;
+  SettingsDomain domain = 3;
+  SettingsOverrides overrides = 4;
+}
+
+message PutSettingsDomainOverrideResponse {
+  shared.v1.ErrorDetail error = 1;
+}
+
+message DeleteSettingsDomainOverrideRequest {
+  string tenant_id = 1;
+  optional int64 game_instance_id = 2;
+  SettingsDomain domain = 3;
+}
+
+message DeleteSettingsDomainOverrideResponse {
+  shared.v1.ErrorDetail error = 1;
+}
+
+enum SettingsDomain {
+  SETTINGS_DOMAIN_UNSPECIFIED = 0;
+  SETTINGS_DOMAIN_RECONNECTION = 1;
+  SETTINGS_DOMAIN_COMMUNICATION = 2;
+  SETTINGS_DOMAIN_PRESENTATION = 3;
+  SETTINGS_DOMAIN_MOVEMENT = 4;
+  SETTINGS_DOMAIN_WORLD_TOPOLOGY = 5;
+}
+
+message SettingsOverrides {
+  ReconnectionSettingsOverride reconnection = 1;
+  CommunicationSettingsOverride communication = 2;
+  PresentationSettingsOverride presentation = 3;
+  MovementSettingsOverride movement = 4;
+  WorldTopologySettingsOverride world_topology = 5;
+}
+
+message ReconnectionSettingsOverride {
+  ReconnectionPolicyOverride policy = 1;
+  ReconnectionBufferOverride buffer = 2;
+}
+
+message ReconnectionPolicyOverride {
+  optional int64 resume_window_ms = 1;
+  optional bool stale_resume_falls_through_to_fresh_entry = 2;
+}
+
+message ReconnectionBufferOverride {
+  optional int64 ttl_ms = 1;
+  optional int32 min_messages = 2;
+  optional int32 min_lines = 3;
+  optional int32 soft_max_bytes = 4;
+  optional int32 hard_max_bytes = 5;
+}
+
+message CommunicationSettingsOverride {
+  optional int32 max_message_length = 1;
+  CommunicationDefaultsOverride defaults = 2;
+}
+
+message CommunicationDefaultsOverride {
+  optional bool say_enabled = 1;
+  optional bool whisper_enabled = 2;
+  optional bool tell_enabled = 3;
+  optional bool whisper_observer_metadata_enabled = 4;
+}
+
+message PresentationSettingsOverride {
+  optional string default_locale_tag = 1;
+  optional PresentationColorMode default_color_mode = 2;
+  optional bool brief_enabled_by_default = 3;
+  PresentationPromptOverride prompt = 4;
+}
+
+enum PresentationColorMode {
+  PRESENTATION_COLOR_MODE_UNSPECIFIED = 0;
+  PRESENTATION_COLOR_MODE_NONE = 1;
+  PRESENTATION_COLOR_MODE_BASIC = 2;
+  PRESENTATION_COLOR_MODE_RICH = 3;
+}
+
+message PresentationPromptOverride {
+  optional bool enabled = 1;
+  optional bool emit_after_reconnect_restore = 2;
+  optional int64 coalesce_window_ms = 3;
+}
+
+message MovementSettingsOverride {
+  optional bool post_move_look_enabled = 1;
+}
+
+message WorldTopologySettingsOverride {
+  optional WorldTopologyScopeModel scope_model = 1;
+  optional bool regions_enabled = 2;
+}
+
+enum WorldTopologyScopeModel {
+  WORLD_TOPOLOGY_SCOPE_MODEL_UNSPECIFIED = 0;
+  WORLD_TOPOLOGY_SCOPE_MODEL_MAP_ONLY = 1;
+  WORLD_TOPOLOGY_SCOPE_MODEL_AREA_AND_MAP = 2;
+  WORLD_TOPOLOGY_SCOPE_MODEL_REGION_AREA_AND_MAP = 3;
 }

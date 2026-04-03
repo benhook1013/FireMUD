@@ -690,7 +690,12 @@ class GameSessionWebSocketHandlerIntegrationTest {
         .thenReturn(
             Optional.of(
                 new ScreenBufferService.BufferedScreen(
-                    "Recent combat line\nSecond recent line\n", 2, 2, 32L)));
+                    java.util.List.of(
+                        ScreenBufferService.BufferedEntry.fromText("Recent combat line\n"),
+                        ScreenBufferService.BufferedEntry.fromText("Second recent line\n")),
+                    2,
+                    2,
+                    32L)));
 
     StandardWebSocketClient client = new StandardWebSocketClient();
     WebSocketHttpHeaders headers = new WebSocketHttpHeaders();

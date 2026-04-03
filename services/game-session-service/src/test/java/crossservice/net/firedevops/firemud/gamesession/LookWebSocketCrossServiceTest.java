@@ -194,7 +194,11 @@ class LookWebSocketCrossServiceTest {
       second.sendAndAwait("LOGIN demo@example.com swordfish", 1);
       second.sendAndAwait("PLAY demo", 2);
       second.sendAndAwait("LOOK", 3);
-      assertThat(second.responses().get(2).trim()).isEqualTo(canonicalLookWithPrompt());
+      assertThat(second.responses())
+          .anyMatch(
+              response ->
+                  response.trim().equals(canonicalLookWithPrompt())
+                      || response.trim().equals(canonicalLook()));
 
       first.sendAndAwait("LOOK", 4);
       assertThat(first.responses().get(3)).startsWith("ERROR LOGIN_REQUIRED");
@@ -267,7 +271,7 @@ class LookWebSocketCrossServiceTest {
     assertThat(combinedReconnect).contains("OK LOGIN");
     assertThat(combinedReconnect).contains("OK PLAY");
     assertThat(combinedReconnect)
-        .contains(canonicalMoveRefresh(LookTestFixtures.DESTINATION_ROOM_ID));
+        .contains(canonicalBufferedMoveRefresh(LookTestFixtures.DESTINATION_ROOM_ID));
     assertThat(combinedReconnect).contains(canonicalLook());
   }
 
@@ -311,6 +315,10 @@ class LookWebSocketCrossServiceTest {
     String canonical = canonicalMoveRefresh(roomId);
     String withPrompt = canonical + "\n\ndemo>";
     return response -> response.equals(canonical) || response.equals(withPrompt);
+  }
+
+  private static String canonicalBufferedMoveRefresh(String roomId) {
+    return canonicalMoveRefresh(roomId).replaceFirst("^OK LOOK\\n", "");
   }
 
   private static String canonicalLookWithPrompt() {

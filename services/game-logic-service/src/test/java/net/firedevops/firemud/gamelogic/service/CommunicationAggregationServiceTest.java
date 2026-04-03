@@ -7,6 +7,7 @@ import static org.mockito.Mockito.when;
 
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import net.firedevops.firemud.common.settings.SharedSettingsAuthorityReader;
 import net.firedevops.firemud.entitymanagement.v1.EntityType;
 import net.firedevops.firemud.entitymanagement.v1.ListRoomEntitiesResponse;
 import net.firedevops.firemud.entitymanagement.v1.RoomEntity;
@@ -39,6 +40,8 @@ class CommunicationAggregationServiceTest {
           .EntityManagementServiceBlockingStub
       entityStub;
 
+  @Mock private SharedSettingsAuthorityReader sharedSettingsAuthorityReader;
+
   private MeterRegistry meterRegistry;
   private CommunicationAggregationService service;
 
@@ -49,7 +52,8 @@ class CommunicationAggregationServiceTest {
         new CommunicationAggregationService(
             socialStub,
             entityStub,
-            new EffectiveCommunicationSettingsResolver(new CommunicationProperties(512)),
+            new EffectiveCommunicationSettingsResolver(
+                new CommunicationProperties(512), sharedSettingsAuthorityReader),
             meterRegistry);
   }
 
@@ -61,7 +65,8 @@ class CommunicationAggregationServiceTest {
             entityStub,
             new EffectiveCommunicationSettingsResolver(
                 new CommunicationProperties(
-                    512, new CommunicationProperties.Defaults(false, true, true, true))),
+                    512, new CommunicationProperties.Defaults(false, true, true, true)),
+                sharedSettingsAuthorityReader),
             meterRegistry);
 
     SendCommunicationResponse resp =
@@ -78,6 +83,48 @@ class CommunicationAggregationServiceTest {
     assertThat(resp.getSuccess()).isFalse();
     assertThat(resp.getError().getCode()).isEqualTo("COMMUNICATION_DISABLED");
     assertThat(resp.getError().getMessage()).isEqualTo("SAY is disabled by operator policy");
+  }
+
+  @Test
+  void gameInstanceOverrideCanDisableSay() {
+    when(sharedSettingsAuthorityReader.readOverrides(1L, 7L))
+        .thenReturn(
+            new net.firedevops.firemud.common.settings.ScopedSettingsSnapshot(
+                new net.firedevops.firemud.common.settings.ScopedSettingsOverrides(
+                    null,
+                    new net.firedevops.firemud.common.settings.ScopedSettingsOverrides
+                        .CommunicationOverride(
+                        512,
+                        new net.firedevops.firemud.common.settings.ScopedSettingsOverrides
+                            .CommunicationOverride.DefaultsOverride(true, true, true, true)),
+                    null,
+                    null,
+                    null),
+                new net.firedevops.firemud.common.settings.ScopedSettingsOverrides(
+                    null,
+                    new net.firedevops.firemud.common.settings.ScopedSettingsOverrides
+                        .CommunicationOverride(
+                        null,
+                        new net.firedevops.firemud.common.settings.ScopedSettingsOverrides
+                            .CommunicationOverride.DefaultsOverride(false, null, null, null)),
+                    null,
+                    null,
+                    null)));
+
+    SendCommunicationResponse resp =
+        service.send(
+            SendCommunicationRequest.newBuilder()
+                .setTenantId("1")
+                .setGameInstanceId("7")
+                .setSessionId("sess-1")
+                .setCharacterId("player-0")
+                .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("room-7").build())
+                .setType(CommunicationType.SAY)
+                .setText("Hello travelers")
+                .build());
+
+    assertThat(resp.getSuccess()).isFalse();
+    assertThat(resp.getError().getCode()).isEqualTo("COMMUNICATION_DISABLED");
   }
 
   @Test
@@ -268,7 +315,8 @@ class CommunicationAggregationServiceTest {
             entityStub,
             new EffectiveCommunicationSettingsResolver(
                 new CommunicationProperties(
-                    512, new CommunicationProperties.Defaults(true, true, true, false))),
+                    512, new CommunicationProperties.Defaults(true, true, true, false)),
+                sharedSettingsAuthorityReader),
             meterRegistry);
     ListRoomEntitiesResponse roomEntities =
         ListRoomEntitiesResponse.newBuilder()

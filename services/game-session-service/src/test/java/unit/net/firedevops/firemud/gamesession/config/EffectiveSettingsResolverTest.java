@@ -1,14 +1,45 @@
 package net.firedevops.firemud.gamesession.config;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.when;
 
-import java.util.Map;
+import net.firedevops.firemud.common.settings.ScopedSettingsOverrides;
+import net.firedevops.firemud.common.settings.ScopedSettingsSnapshot;
+import net.firedevops.firemud.common.settings.SharedSettingsAuthorityReader;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
 
 class EffectiveSettingsResolverTest {
   @Test
   void presentationOverridesMergeTenantThenGameInstance() {
+    SharedSettingsAuthorityReader authorityReader =
+        Mockito.mock(SharedSettingsAuthorityReader.class);
+    when(authorityReader.readOverrides(22L, 7L))
+        .thenReturn(
+            new ScopedSettingsSnapshot(
+                new ScopedSettingsOverrides(
+                    null,
+                    null,
+                    new ScopedSettingsOverrides.PresentationOverride(
+                        null,
+                        ScopedSettingsOverrides.PresentationOverride.ColorMode.BASIC,
+                        true,
+                        new ScopedSettingsOverrides.PresentationOverride.PromptOverride(
+                            null, null, 500L)),
+                    null,
+                    null),
+                new ScopedSettingsOverrides(
+                    null,
+                    null,
+                    new ScopedSettingsOverrides.PresentationOverride(
+                        "fr",
+                        null,
+                        null,
+                        new ScopedSettingsOverrides.PresentationOverride.PromptOverride(
+                            false, null, null)),
+                    null,
+                    null)));
     EffectiveSettingsResolver resolver =
         new EffectiveSettingsResolver(
             new PresentationProperties(
@@ -18,27 +49,7 @@ class EffectiveSettingsResolverTest {
                 new PresentationProperties.Prompt(true, true, 150L)),
             new MovementProperties(true),
             new WorldTopologyProperties(),
-            new GameSessionSettingsOverridesProperties(
-                Map.of(
-                    "22",
-                    new GameSessionSettingsOverridesProperties.PresentationOverride(
-                        null,
-                        PresentationProperties.ColorMode.BASIC,
-                        true,
-                        new GameSessionSettingsOverridesProperties.PresentationOverride
-                            .PromptOverride(null, null, 500L))),
-                Map.of(
-                    "7",
-                    new GameSessionSettingsOverridesProperties.PresentationOverride(
-                        "fr",
-                        null,
-                        null,
-                        new GameSessionSettingsOverridesProperties.PresentationOverride
-                            .PromptOverride(false, null, null))),
-                Map.of(),
-                Map.of(),
-                Map.of(),
-                Map.of()));
+            authorityReader);
 
     PresentationProperties effective =
         resolver.presentation(
@@ -53,21 +64,27 @@ class EffectiveSettingsResolverTest {
 
   @Test
   void movementAndTopologyOverridesResolveAgainstBootstrapGameInstanceBeforePlay() {
+    SharedSettingsAuthorityReader authorityReader =
+        Mockito.mock(SharedSettingsAuthorityReader.class);
+    when(authorityReader.readOverrides(22L, 41L))
+        .thenReturn(
+            new ScopedSettingsSnapshot(
+                ScopedSettingsOverrides.empty(),
+                new ScopedSettingsOverrides(
+                    null,
+                    null,
+                    null,
+                    new ScopedSettingsOverrides.MovementOverride(false),
+                    new ScopedSettingsOverrides.WorldTopologyOverride(
+                        ScopedSettingsOverrides.WorldTopologyOverride.ScopeModel
+                            .REGION_AREA_AND_MAP,
+                        true))));
     EffectiveSettingsResolver resolver =
         new EffectiveSettingsResolver(
             new PresentationProperties(),
             new MovementProperties(true),
             new WorldTopologyProperties(WorldTopologyProperties.ScopeModel.MAP_ONLY, false),
-            new GameSessionSettingsOverridesProperties(
-                Map.of(),
-                Map.of(),
-                Map.of(),
-                Map.of("41", new GameSessionSettingsOverridesProperties.MovementOverride(false)),
-                Map.of(),
-                Map.of(
-                    "41",
-                    new GameSessionSettingsOverridesProperties.WorldTopologyOverride(
-                        WorldTopologyProperties.ScopeModel.REGION_AREA_AND_MAP, true))));
+            authorityReader);
 
     SessionContext prePlay =
         new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, null, null, null, 41L);

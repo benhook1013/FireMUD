@@ -7,6 +7,7 @@ import net.firedevops.firemud.gamelogic.config.EffectiveCommunicationSettingsRes
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /** Operator/debug surface for inspecting effective communication settings in Game Logic. */
@@ -21,9 +22,11 @@ public class EffectiveCommunicationSettingsController {
   }
 
   @GetMapping("/communication")
-  public ResponseEntity<ApiResponse<DomainSettings<CommunicationProperties>>> communication() {
+  public ResponseEntity<ApiResponse<DomainSettings<CommunicationProperties>>> communication(
+      @RequestParam(required = false) Long tenantId,
+      @RequestParam(required = false) Long gameInstanceId) {
     EffectiveCommunicationSettingsResolver.ResolvedValue<CommunicationProperties> resolved =
-        settingsResolver.resolvedCommunication();
+        settingsResolver.resolvedCommunication(tenantId, gameInstanceId);
     return ResponseEntity.ok(
         ApiResponse.success(new DomainSettings<>(resolved.effective(), resolved.sources())));
   }

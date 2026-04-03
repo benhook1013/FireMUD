@@ -14,6 +14,9 @@ import net.firedevops.firemud.common.runtime.RuntimeIdentityController;
 import net.firedevops.firemud.common.runtime.RuntimeIdentityFactory;
 import net.firedevops.firemud.common.runtime.RuntimeIdentityInfoContributor;
 import net.firedevops.firemud.common.runtime.RuntimeIdentityStartupLogger;
+import net.firedevops.firemud.common.settings.GameDesignSettingsAuthorityClient;
+import net.firedevops.firemud.common.settings.SharedEffectiveSettingsResolver;
+import net.firedevops.firemud.common.settings.SharedSettingsAuthorityReader;
 import net.firedevops.firemud.common.web.ReactiveRequestLoggingFilter;
 import net.firedevops.firemud.common.web.ServletRequestLoggingFilter;
 import org.springframework.beans.factory.ObjectProvider;
@@ -99,6 +102,23 @@ public class CommonCoreAutoConfiguration {
   @ConditionalOnMissingBean
   public GrpcTlsMaterialResolver grpcTlsMaterialResolver() {
     return new GrpcTlsMaterialResolver();
+  }
+
+  @Bean
+  @ConditionalOnMissingBean(SharedSettingsAuthorityReader.class)
+  public SharedSettingsAuthorityReader sharedSettingsAuthorityReader(
+      ServiceEndpointsProperties endpoints,
+      CommonGrpcClientProperties grpcClientProperties,
+      GrpcChannelFactory grpcChannelFactory) {
+    return new GameDesignSettingsAuthorityClient(
+        endpoints, grpcClientProperties, grpcChannelFactory);
+  }
+
+  @Bean
+  @ConditionalOnMissingBean
+  public SharedEffectiveSettingsResolver sharedEffectiveSettingsResolver(
+      SharedSettingsAuthorityReader sharedSettingsAuthorityReader) {
+    return new SharedEffectiveSettingsResolver(sharedSettingsAuthorityReader);
   }
 
   @Bean

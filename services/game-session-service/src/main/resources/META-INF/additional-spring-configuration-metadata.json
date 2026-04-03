@@ -133,42 +133,6 @@
       "defaultValue": false,
       "description": "Whether explicit world regions are enabled in the current topology model.",
       "sourceType": "net.firedevops.firemud.gamesession.config.WorldTopologyProperties"
-    },
-    {
-      "name": "firemud.settings-overrides.presentation-by-tenant",
-      "type": "java.util.Map<java.lang.String,net.firedevops.firemud.gamesession.config.GameSessionSettingsOverridesProperties$PresentationOverride>",
-      "description": "Optional tenant-scoped presentation overrides layered above firemud.presentation defaults inside Game Session's first bounded effective-settings resolver.",
-      "sourceType": "net.firedevops.firemud.gamesession.config.GameSessionSettingsOverridesProperties"
-    },
-    {
-      "name": "firemud.settings-overrides.presentation-by-game-instance",
-      "type": "java.util.Map<java.lang.String,net.firedevops.firemud.gamesession.config.GameSessionSettingsOverridesProperties$PresentationOverride>",
-      "description": "Optional game-instance-scoped presentation overrides layered above tenant and operator defaults inside Game Session's first bounded effective-settings resolver.",
-      "sourceType": "net.firedevops.firemud.gamesession.config.GameSessionSettingsOverridesProperties"
-    },
-    {
-      "name": "firemud.settings-overrides.movement-by-tenant",
-      "type": "java.util.Map<java.lang.String,net.firedevops.firemud.gamesession.config.GameSessionSettingsOverridesProperties$MovementOverride>",
-      "description": "Optional tenant-scoped movement overrides layered above firemud.movement defaults inside Game Session's first bounded effective-settings resolver.",
-      "sourceType": "net.firedevops.firemud.gamesession.config.GameSessionSettingsOverridesProperties"
-    },
-    {
-      "name": "firemud.settings-overrides.movement-by-game-instance",
-      "type": "java.util.Map<java.lang.String,net.firedevops.firemud.gamesession.config.GameSessionSettingsOverridesProperties$MovementOverride>",
-      "description": "Optional game-instance-scoped movement overrides layered above tenant and operator defaults inside Game Session's first bounded effective-settings resolver.",
-      "sourceType": "net.firedevops.firemud.gamesession.config.GameSessionSettingsOverridesProperties"
-    },
-    {
-      "name": "firemud.settings-overrides.world-topology-by-tenant",
-      "type": "java.util.Map<java.lang.String,net.firedevops.firemud.gamesession.config.GameSessionSettingsOverridesProperties$WorldTopologyOverride>",
-      "description": "Optional tenant-scoped topology overrides layered above firemud.world-topology defaults inside Game Session's first bounded effective-settings resolver.",
-      "sourceType": "net.firedevops.firemud.gamesession.config.GameSessionSettingsOverridesProperties"
-    },
-    {
-      "name": "firemud.settings-overrides.world-topology-by-game-instance",
-      "type": "java.util.Map<java.lang.String,net.firedevops.firemud.gamesession.config.GameSessionSettingsOverridesProperties$WorldTopologyOverride>",
-      "description": "Optional game-instance-scoped topology overrides layered above tenant and operator defaults inside Game Session's first bounded effective-settings resolver.",
-      "sourceType": "net.firedevops.firemud.gamesession.config.GameSessionSettingsOverridesProperties"
     }
   ],
   "hints": [

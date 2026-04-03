@@ -1,9 +1,13 @@
 package net.firedevops.firemud.gamesession;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.when;
 
 import net.firedevops.firemud.common.ApiResponse;
 import net.firedevops.firemud.common.ResultStatus;
+import net.firedevops.firemud.common.settings.ScopedSettingsOverrides;
+import net.firedevops.firemud.common.settings.ScopedSettingsSnapshot;
+import net.firedevops.firemud.common.settings.SharedSettingsAuthorityReader;
 import net.firedevops.firemud.gamesession.client.EntityManagementClient;
 import net.firedevops.firemud.gamesession.client.GameLogicClient;
 import net.firedevops.firemud.gamesession.client.WorldManagementClient;
@@ -35,13 +39,7 @@ import tools.jackson.databind.ObjectMapper;
     properties = {
       "game-session.dev-isolated=false",
       "spring.application.name=game-session-service",
-      "spring.grpc.server.port=0",
-      "firemud.settings-overrides.presentation-by-tenant.42.brief-enabled-by-default=true",
-      "firemud.settings-overrides.presentation-by-game-instance.7.default-color-mode=BASIC",
-      "firemud.settings-overrides.presentation-by-game-instance.7.prompt.coalesce-window-ms=275",
-      "firemud.settings-overrides.movement-by-game-instance.7.post-move-look-enabled=false",
-      "firemud.settings-overrides.world-topology-by-tenant.42.scope-model=REGION_AREA_AND_MAP",
-      "firemud.settings-overrides.world-topology-by-game-instance.7.regions-enabled=true",
+      "spring.grpc.server.port=0"
     })
 class GameSessionApplicationIntegrationTest {
   private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
@@ -70,6 +68,7 @@ class GameSessionApplicationIntegrationTest {
   @MockitoBean private WorldManagementClient worldManagementClient;
   @MockitoBean private EntityManagementClient entityManagementClient;
   @MockitoBean private GrpcServerLifecycle grpcServerLifecycle;
+  @MockitoBean private SharedSettingsAuthorityReader sharedSettingsAuthorityReader;
 
   @org.springframework.beans.factory.annotation.Autowired
   private SessionContextService sessionContextService;
@@ -106,6 +105,33 @@ class GameSessionApplicationIntegrationTest {
 
   @Test
   void effectiveSettingsEndpointMergesScopedOverridesForPersistedSession() {
+    when(sharedSettingsAuthorityReader.readOverrides(42L, 7L))
+        .thenReturn(
+            new ScopedSettingsSnapshot(
+                new ScopedSettingsOverrides(
+                    new ScopedSettingsOverrides.ReconnectionOverride(
+                        new ScopedSettingsOverrides.ReconnectionOverride.PolicyOverride(
+                            240_000L, null),
+                        null),
+                    null,
+                    new ScopedSettingsOverrides.PresentationOverride(null, null, true, null),
+                    null,
+                    new ScopedSettingsOverrides.WorldTopologyOverride(
+                        ScopedSettingsOverrides.WorldTopologyOverride.ScopeModel
+                            .REGION_AREA_AND_MAP,
+                        null)),
+                new ScopedSettingsOverrides(
+                    null,
+                    null,
+                    new ScopedSettingsOverrides.PresentationOverride(
+                        null,
+                        ScopedSettingsOverrides.PresentationOverride.ColorMode.BASIC,
+                        null,
+                        new ScopedSettingsOverrides.PresentationOverride.PromptOverride(
+                            null, null, 275L)),
+                    new ScopedSettingsOverrides.MovementOverride(false),
+                    new ScopedSettingsOverrides.WorldTopologyOverride(null, true))));
+
     sessionContextService.save(
         new SessionContext(
             999L,
@@ -134,8 +160,9 @@ class GameSessionApplicationIntegrationTest {
     assertThat(body).contains("\"postMoveLookEnabled\":false");
     assertThat(body).contains("\"scopeModel\":\"REGION_AREA_AND_MAP\"");
     assertThat(body).contains("\"regionsEnabled\":true");
-    assertThat(body).contains("\"sources\":[\"operatorDefaults\",\"tenantOverride:42\"");
-    assertThat(body).contains("\"sources\":[\"operatorDefaults\",\"gameInstanceOverride:7\"]");
-    assertThat(body).contains("\"resumeWindowMs\":180000");
+    assertThat(body).contains("\"sources\":[\"operatorDefaults\",\"tenantPersistedOverride:42\"");
+    assertThat(body)
+        .contains("\"sources\":[\"operatorDefaults\",\"gameInstancePersistedOverride:7\"]");
+    assertThat(body).contains("\"resumeWindowMs\":240000");
   }
 }

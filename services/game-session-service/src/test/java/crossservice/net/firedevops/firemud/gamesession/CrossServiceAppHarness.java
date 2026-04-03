@@ -132,19 +132,26 @@ public final class CrossServiceAppHarness {
 
         @Override
         public void append(
-            long tenantId, long gameInstanceId, long characterId, String protocolText) {
-          if (protocolText == null || protocolText.isBlank()) {
+            long tenantId,
+            long gameInstanceId,
+            long characterId,
+            java.util.List<BufferedEntry> entries) {
+          java.util.List<BufferedEntry> filtered =
+              entries == null
+                  ? java.util.List.of()
+                  : entries.stream().filter(entry -> !entry.text().isBlank()).toList();
+          if (filtered.isEmpty()) {
             return;
           }
           String key = tenantId + ":" + gameInstanceId + ":" + characterId;
           BufferedScreen previous = buffers.get(key);
-          String combined =
-              previous == null ? protocolText : previous.protocolText() + protocolText;
-          int messages = previous == null ? 1 : previous.messageCount() + 1;
-          int lines =
-              previous == null
-                  ? countLines(protocolText)
-                  : previous.lineCount() + countLines(protocolText);
+          java.util.List<BufferedEntry> combined = new java.util.ArrayList<>();
+          if (previous != null) {
+            combined.addAll(previous.entries());
+          }
+          combined.addAll(filtered);
+          int messages = combined.size();
+          int lines = combined.stream().mapToInt(BufferedEntry::lineCount).sum();
           buffers.put(
               key, new BufferedScreen(combined, messages, lines, System.currentTimeMillis()));
         }
@@ -158,10 +165,6 @@ public final class CrossServiceAppHarness {
         @Override
         public void clear(long tenantId, long gameInstanceId, long characterId) {
           buffers.remove(tenantId + ":" + gameInstanceId + ":" + characterId);
-        }
-
-        private int countLines(String protocolText) {
-          return (int) protocolText.lines().filter(line -> !line.isBlank()).count();
         }
       };
     }

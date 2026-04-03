@@ -6,12 +6,18 @@ import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
+import net.firedevops.firemud.common.settings.GameDesignSettingsProtoMapper;
 import net.firedevops.firemud.gamedesign.dto.RevisionDto;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
 import net.firedevops.firemud.gamedesign.service.PingService;
 import net.firedevops.firemud.gamedesign.service.RevisionService;
+import net.firedevops.firemud.gamedesign.service.SettingsAuthorityService;
 import net.firedevops.firemud.gamedesign.service.VersionService;
+import net.firedevops.firemud.gamedesign.v1.DeleteSettingsDomainOverrideRequest;
+import net.firedevops.firemud.gamedesign.v1.DeleteSettingsDomainOverrideResponse;
 import net.firedevops.firemud.gamedesign.v1.GameDesignServiceGrpc;
+import net.firedevops.firemud.gamedesign.v1.GetScopedSettingsOverridesRequest;
+import net.firedevops.firemud.gamedesign.v1.GetScopedSettingsOverridesResponse;
 import net.firedevops.firemud.gamedesign.v1.ListVersionsRequest;
 import net.firedevops.firemud.gamedesign.v1.ListVersionsResponse;
 import net.firedevops.firemud.gamedesign.v1.PingRequest;
@@ -20,6 +26,8 @@ import net.firedevops.firemud.gamedesign.v1.PublishScriptPatchVersionRequest;
 import net.firedevops.firemud.gamedesign.v1.PublishScriptPatchVersionResponse;
 import net.firedevops.firemud.gamedesign.v1.PublishVersionRequest;
 import net.firedevops.firemud.gamedesign.v1.PublishVersionResponse;
+import net.firedevops.firemud.gamedesign.v1.PutSettingsDomainOverrideRequest;
+import net.firedevops.firemud.gamedesign.v1.PutSettingsDomainOverrideResponse;
 import net.firedevops.firemud.gamedesign.v1.SaveRevisionRequest;
 import net.firedevops.firemud.gamedesign.v1.SaveRevisionResponse;
 import org.slf4j.Logger;
@@ -33,6 +41,7 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
   private final PingService pingService;
   private final RevisionService revisionService;
   private final VersionService versionService;
+  private final SettingsAuthorityService settingsAuthorityService;
 
   @SuppressFBWarnings(
       value = "EI_EXPOSE_REP2",
@@ -143,6 +152,99 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
               meterRegistry, logger, "ListVersions", "INVALID_ARGUMENT", ex.getMessage()));
     } catch (Exception ex) {
       builder.setError(GrpcAppErrors.internal(meterRegistry, logger, "ListVersions", ex));
+    }
+    responseObserver.onNext(builder.build());
+    responseObserver.onCompleted();
+  }
+
+  @Override
+  @Timed(value = "gamedesignGrpc.getScopedSettingsOverrides")
+  public void getScopedSettingsOverrides(
+      GetScopedSettingsOverridesRequest request,
+      StreamObserver<GetScopedSettingsOverridesResponse> responseObserver) {
+    GetScopedSettingsOverridesResponse.Builder builder =
+        GetScopedSettingsOverridesResponse.newBuilder();
+    try {
+      var snapshot =
+          settingsAuthorityService.getScopedOverrides(
+              request.getTenantId(),
+              request.hasGameInstanceId() ? request.getGameInstanceId() : null);
+      if (!snapshot.tenantOverrides().isEmpty()) {
+        builder.setTenantOverrides(
+            GameDesignSettingsProtoMapper.toProto(snapshot.tenantOverrides()));
+      }
+      if (!snapshot.gameInstanceOverrides().isEmpty()) {
+        builder.setGameInstanceOverrides(
+            GameDesignSettingsProtoMapper.toProto(snapshot.gameInstanceOverrides()));
+      }
+    } catch (IllegalArgumentException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry,
+              logger,
+              "GetScopedSettingsOverrides",
+              "INVALID_ARGUMENT",
+              ex.getMessage()));
+    } catch (Exception ex) {
+      builder.setError(
+          GrpcAppErrors.internal(meterRegistry, logger, "GetScopedSettingsOverrides", ex));
+    }
+    responseObserver.onNext(builder.build());
+    responseObserver.onCompleted();
+  }
+
+  @Override
+  @Timed(value = "gamedesignGrpc.putSettingsDomainOverride")
+  public void putSettingsDomainOverride(
+      PutSettingsDomainOverrideRequest request,
+      StreamObserver<PutSettingsDomainOverrideResponse> responseObserver) {
+    PutSettingsDomainOverrideResponse.Builder builder =
+        PutSettingsDomainOverrideResponse.newBuilder();
+    try {
+      settingsAuthorityService.putDomainOverride(
+          request.getTenantId(),
+          request.hasGameInstanceId() ? request.getGameInstanceId() : null,
+          GameDesignSettingsProtoMapper.fromProto(request.getDomain()),
+          GameDesignSettingsProtoMapper.fromProto(request.getOverrides()));
+    } catch (IllegalArgumentException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry,
+              logger,
+              "PutSettingsDomainOverride",
+              "INVALID_ARGUMENT",
+              ex.getMessage()));
+    } catch (Exception ex) {
+      builder.setError(
+          GrpcAppErrors.internal(meterRegistry, logger, "PutSettingsDomainOverride", ex));
+    }
+    responseObserver.onNext(builder.build());
+    responseObserver.onCompleted();
+  }
+
+  @Override
+  @Timed(value = "gamedesignGrpc.deleteSettingsDomainOverride")
+  public void deleteSettingsDomainOverride(
+      DeleteSettingsDomainOverrideRequest request,
+      StreamObserver<DeleteSettingsDomainOverrideResponse> responseObserver) {
+    DeleteSettingsDomainOverrideResponse.Builder builder =
+        DeleteSettingsDomainOverrideResponse.newBuilder();
+    try {
+      settingsAuthorityService.deleteDomainOverride(
+          request.getTenantId(),
+          request.hasGameInstanceId() ? request.getGameInstanceId() : null,
+          GameDesignSettingsProtoMapper.fromProto(request.getDomain()));
+    } catch (IllegalArgumentException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry,
+              logger,
+              "DeleteSettingsDomainOverride",
+              "INVALID_ARGUMENT",
+              ex.getMessage()));
+    } catch (Exception ex) {
+      builder.setError(
+          GrpcAppErrors.internal(meterRegistry, logger, "DeleteSettingsDomainOverride", ex));
     }
     responseObserver.onNext(builder.build());
     responseObserver.onCompleted();

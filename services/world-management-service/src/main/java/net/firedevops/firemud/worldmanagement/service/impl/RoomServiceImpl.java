@@ -103,7 +103,7 @@ public class RoomServiceImpl implements RoomService {
             .orElseThrow(() -> new IllegalArgumentException("Room not found"));
     List<RoomExitSnapshotDto> exits =
         roomExitRepository.findByTenantIdAndFromRoomId(tenantId, roomId).stream()
-            .map(this::toExitSnapshot)
+            .map(exit -> toExitSnapshot(exit, preferredLocaleTag))
             .collect(Collectors.toList());
     String roomName =
         resolveLocalizedText(
@@ -122,8 +122,12 @@ public class RoomServiceImpl implements RoomService {
         List.of());
   }
 
-  private RoomExitSnapshotDto toExitSnapshot(RoomExit exit) {
-    String targetName = exit.getToRoom().getName();
+  private RoomExitSnapshotDto toExitSnapshot(RoomExit exit, String preferredLocaleTag) {
+    String targetName =
+        resolveLocalizedText(
+            exit.getToRoom().getName(),
+            exit.getToRoom().getNameLocalizedVariantsJson(),
+            preferredLocaleTag);
     String description = "Leads toward " + targetName;
     return new RoomExitSnapshotDto(
         exit.getId(),

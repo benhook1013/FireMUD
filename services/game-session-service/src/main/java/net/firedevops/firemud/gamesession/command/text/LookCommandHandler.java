@@ -4,6 +4,7 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.micrometer.core.instrument.MeterRegistry;
+import java.util.Map;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.cache.LookCacheService;
@@ -92,10 +93,15 @@ public final class LookCommandHandler {
       } catch (StatusRuntimeException ex) {
         String errorCode = mapStatusToError(ex);
         recordFailure(context, tenantTag, errorCode, ex);
-        return PlayerOutput.error(errorCode, errorMessage(ex.getStatus().getDescription()));
+        return PlayerOutput.error(
+            errorCode,
+            errorMessage(ex.getStatus().getDescription()),
+            lookErrorMessageKey(errorCode),
+            Map.of());
       } catch (RuntimeException ex) {
         recordFailure(context, tenantTag, "UNEXPECTED", ex);
-        return PlayerOutput.error("UNEXPECTED", "Internal LOOK failure");
+        return PlayerOutput.error(
+            "UNEXPECTED", "Internal LOOK failure", "error.look.internal-failure", Map.of());
       }
     }
   }
@@ -249,5 +255,19 @@ public final class LookCommandHandler {
 
   private long effectiveLookCacheKey(SessionContext context) {
     return context.gameInstanceId() > 0 ? context.gameInstanceId() : context.sessionId();
+  }
+
+  private String lookErrorMessageKey(String errorCode) {
+    if (errorCode == null) {
+      return null;
+    }
+    return switch (errorCode) {
+      case "ROOM_NOT_FOUND" -> "error.look.room-not-found";
+      case "WORLD_UNAVAILABLE" -> "error.look.world-unavailable";
+      case "ENTITY_UNAVAILABLE" -> "error.look.entity-unavailable";
+      case "NOT_AUTHORIZED" -> "error.look.not-authorized";
+      case "LOOK_UNAVAILABLE" -> "error.look.unavailable";
+      default -> null;
+    };
   }
 }

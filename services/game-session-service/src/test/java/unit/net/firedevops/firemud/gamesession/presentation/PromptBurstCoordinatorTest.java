@@ -6,9 +6,9 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
-import java.util.Map;
+import net.firedevops.firemud.common.settings.ScopedSettingsOverrides;
+import net.firedevops.firemud.common.settings.ScopedSettingsSnapshot;
 import net.firedevops.firemud.gamesession.config.EffectiveSettingsResolver;
-import net.firedevops.firemud.gamesession.config.GameSessionSettingsOverridesProperties;
 import net.firedevops.firemud.gamesession.config.PresentationProperties;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import org.junit.jupiter.api.Test;
@@ -83,20 +83,20 @@ class PromptBurstCoordinatorTest {
                     new PresentationProperties.Prompt(true, true, 150L)),
                 new net.firedevops.firemud.gamesession.config.MovementProperties(true),
                 new net.firedevops.firemud.gamesession.config.WorldTopologyProperties(),
-                new GameSessionSettingsOverridesProperties(
-                    Map.of(),
-                    Map.of(
-                        "7",
-                        new GameSessionSettingsOverridesProperties.PresentationOverride(
+                (tenantId, gameInstanceId) ->
+                    new ScopedSettingsSnapshot(
+                        ScopedSettingsOverrides.empty(),
+                        new ScopedSettingsOverrides(
                             null,
                             null,
+                            new ScopedSettingsOverrides.PresentationOverride(
+                                null,
+                                null,
+                                null,
+                                new ScopedSettingsOverrides.PresentationOverride.PromptOverride(
+                                    null, null, 500L)),
                             null,
-                            new GameSessionSettingsOverridesProperties.PresentationOverride
-                                .PromptOverride(null, null, 500L))),
-                    Map.of(),
-                    Map.of(),
-                    Map.of(),
-                    Map.of())),
+                            null))),
             Clock.fixed(Instant.parse("2026-04-02T23:00:00Z"), ZoneOffset.UTC));
 
     List<PlayerOutput> outputs =
@@ -119,7 +119,6 @@ class PromptBurstCoordinatorTest {
             new PresentationProperties.Prompt(true, true, coalesceWindowMs)),
         new net.firedevops.firemud.gamesession.config.MovementProperties(true),
         new net.firedevops.firemud.gamesession.config.WorldTopologyProperties(),
-        new GameSessionSettingsOverridesProperties(
-            Map.of(), Map.of(), Map.of(), Map.of(), Map.of(), Map.of()));
+        (tenantId, gameInstanceId) -> ScopedSettingsSnapshot.empty());
   }
 }
