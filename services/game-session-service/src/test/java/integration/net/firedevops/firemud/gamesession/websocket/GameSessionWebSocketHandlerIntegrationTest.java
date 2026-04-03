@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamesession.websocket;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -202,14 +203,36 @@ class GameSessionWebSocketHandlerIntegrationTest {
         .thenReturn(lookResult);
     when(gameLogicClient.resolveLook(eq("22"), eq("2"), eq("123"), eq("1021")))
         .thenReturn(lookResult);
-    when(lookTextRenderer.render(eq(lookResult), eq(true))).thenReturn("Login Hall text");
-    when(lookTextRenderer.toPlayerOutput(eq(lookResult), eq(true)))
+    when(lookTextRenderer.render(
+            eq(lookResult),
+            eq(true),
+            any(
+                net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
+                    .class)))
+        .thenReturn("Login Hall text");
+    when(lookTextRenderer.toPlayerOutput(
+            eq(lookResult),
+            eq(true),
+            any(
+                net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
+                    .class)))
         .thenReturn(
             net.firedevops.firemud.gamesession.presentation.PlayerOutput.view("Login Hall text"));
-    when(lookTextRenderer.toPlayerOutput(eq(lookResult), eq(false)))
+    when(lookTextRenderer.toPlayerOutput(
+            eq(lookResult),
+            eq(false),
+            any(
+                net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
+                    .class)))
         .thenReturn(
             net.firedevops.firemud.gamesession.presentation.PlayerOutput.view("Quick Hall text"));
-    when(lookTextRenderer.render(eq(lookResult), eq(false))).thenReturn("Quick Hall text");
+    when(lookTextRenderer.render(
+            eq(lookResult),
+            eq(false),
+            any(
+                net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
+                    .class)))
+        .thenReturn("Quick Hall text");
     when(screenBufferService.get(
             org.mockito.ArgumentMatchers.anyLong(),
             org.mockito.ArgumentMatchers.anyLong(),
@@ -383,10 +406,26 @@ class GameSessionWebSocketHandlerIntegrationTest {
                 .setSuccess(true)
                 .setDestinationLook(destinationLook)
                 .build());
-    when(lookTextRenderer.toPlayerOutput(eq(destinationLook), eq(true)))
+    when(lookTextRenderer.toPlayerOutput(
+            eq(destinationLook),
+            eq(true),
+            eq(
+                net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
+                    .MOVE_REFRESH)))
         .thenReturn(
-            net.firedevops.firemud.gamesession.presentation.PlayerOutput.view("North Hall text"));
-    when(lookTextRenderer.render(eq(destinationLook), eq(true))).thenReturn("North Hall text");
+            net.firedevops.firemud.gamesession.presentation.PlayerOutput.view(
+                net.firedevops.firemud.gamesession.presentation.LookViewOutput.from(
+                    destinationLook,
+                    true,
+                    net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
+                        .MOVE_REFRESH)));
+    when(lookTextRenderer.render(
+            eq(destinationLook),
+            eq(true),
+            eq(
+                net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
+                    .MOVE_REFRESH)))
+        .thenReturn("North Hall text");
 
     StandardWebSocketClient client = new StandardWebSocketClient();
     WebSocketHttpHeaders headers = new WebSocketHttpHeaders();
@@ -434,7 +473,8 @@ class GameSessionWebSocketHandlerIntegrationTest {
     assertThat(payloads).anyMatch(payload -> payload.startsWith("OK LOGIN"));
     assertThat(payloads).anyMatch(payload -> payload.startsWith("OK PLAY"));
     assertThat(payloads).anyMatch(payload -> payload.startsWith("OK LOOK"));
-    assertThat(payloads).anyMatch(payload -> payload.contains("North Hall text"));
+    assertThat(payloads).anyMatch(payload -> payload.contains("Room: North Hall"));
+    assertThat(payloads).anyMatch(payload -> payload.contains("A northern hall"));
     assertThat(sessionContextService.findByTenantAndSessionId(22L, 42L))
         .hasValueSatisfying(context -> assertThat(context.roomInstanceId()).isEqualTo("2045"));
 

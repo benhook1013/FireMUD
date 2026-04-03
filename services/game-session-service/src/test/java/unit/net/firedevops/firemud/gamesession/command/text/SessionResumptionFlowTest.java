@@ -144,8 +144,19 @@ class SessionResumptionFlowTest {
             .build();
     when(gameLogicClient.resolveLook(anyString(), anyString(), anyString(), anyString()))
         .thenReturn(lookResult);
-    when(lookTextRenderer.render(lookResult)).thenReturn("OK LOOK text");
-    when(lookTextRenderer.toPlayerOutput(lookResult, true))
+    when(lookTextRenderer.render(
+            Mockito.eq(lookResult),
+            Mockito.eq(true),
+            Mockito.any(
+                net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
+                    .class)))
+        .thenReturn("OK LOOK text");
+    when(lookTextRenderer.toPlayerOutput(
+            Mockito.eq(lookResult),
+            Mockito.eq(true),
+            Mockito.any(
+                net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
+                    .class)))
         .thenReturn(
             PlayerOutput.view(
                 new LookViewOutput(

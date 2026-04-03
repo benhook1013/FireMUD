@@ -12,6 +12,7 @@ import net.firedevops.firemud.gamesession.client.AccountClient;
 import net.firedevops.firemud.gamesession.config.GameLogicProperties;
 import net.firedevops.firemud.gamesession.config.GameSessionProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
+import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContext;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
@@ -78,7 +79,7 @@ class PlayCommandHandlerTest {
         handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
 
     assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
-    assertThat(result.responseText()).isEqualTo("Entered world: demo");
+    assertThat(joinedOutputText(result.outputs())).isEqualTo("Entered world: demo");
     Mockito.verify(sessionContextService)
         .save(
             new SessionContext(
@@ -273,7 +274,7 @@ class PlayCommandHandlerTest {
         handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
 
     assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
-    assertThat(result.responseText()).isEqualTo("Entered world: demo");
+    assertThat(joinedOutputText(result.outputs())).isEqualTo("Entered world: demo");
     Mockito.verify(sessionContextService)
         .save(
             new SessionContext(
@@ -296,5 +297,13 @@ class PlayCommandHandlerTest {
                     "stale_or_missing_context")
                 .count())
         .isEqualTo(1.0);
+  }
+
+  private static String joinedOutputText(List<PlayerOutput> outputs) {
+    return outputs.stream()
+        .map(PlayerOutput::text)
+        .filter(text -> text != null && !text.isBlank())
+        .reduce((left, right) -> left + "\n" + right)
+        .orElse(null);
   }
 }

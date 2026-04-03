@@ -32,6 +32,8 @@ class TextCommandParserTest {
     assertTrue(command.args().isEmpty());
     assertEquals("WORLDS", command.rawLine());
     assertTrue(command.payload() instanceof TextCommandPayload.ViewRequest);
+    assertTrue(command.viewRequestPayload().isPresent());
+    assertEquals("WORLDS", command.viewRequestPayload().orElseThrow().viewName());
   }
 
   @Test
@@ -54,6 +56,8 @@ class TextCommandParserTest {
     assertTrue(command.args().isEmpty());
     assertEquals("   LOOK   ", command.rawLine());
     assertTrue(command.payload() instanceof TextCommandPayload.ViewRequest);
+    assertTrue(command.viewRequestPayload().isPresent());
+    assertEquals("LOOK", command.viewRequestPayload().orElseThrow().viewName());
   }
 
   @Test
@@ -65,6 +69,8 @@ class TextCommandParserTest {
     assertTrue(command.args().isEmpty());
     assertEquals("qlook", command.rawLine());
     assertTrue(command.payload() instanceof TextCommandPayload.ViewRequest);
+    assertTrue(command.viewRequestPayload().isPresent());
+    assertEquals("QUICKLOOK", command.viewRequestPayload().orElseThrow().viewName());
   }
 
   @Test

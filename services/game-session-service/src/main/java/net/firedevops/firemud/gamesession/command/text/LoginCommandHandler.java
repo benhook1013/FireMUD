@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamesession.command.text;
 
 import io.micrometer.core.instrument.MeterRegistry;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -10,6 +11,7 @@ import net.firedevops.firemud.gamesession.client.AccountClient;
 import net.firedevops.firemud.gamesession.config.DevIsolatedProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
+import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.CommandService;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
@@ -83,9 +85,7 @@ public final class LoginCommandHandler {
       maybeInstance = devIsolatedGameInstanceRegistry.findById(bootstrapGameInstanceId);
     }
     if (maybeInstance.isEmpty()) {
-      CommandEnqueueResult failure =
-          CommandEnqueueResult.failure("SESSION_NOT_FOUND", "Session not found");
-      return new LoginCommandHandlingResult(failure, null);
+      return failure("SESSION_NOT_FOUND", "Session not found");
     }
     GameInstance instance = maybeInstance.get();
 
@@ -100,8 +100,7 @@ public final class LoginCommandHandler {
     if (error != null
         && (!Optional.ofNullable(error.getCode()).orElse("").isBlank()
             || !Optional.ofNullable(error.getMessage()).orElse("").isBlank())) {
-      return new LoginCommandHandlingResult(
-          CommandEnqueueResult.failure(mapErrorCode(error), error.getMessage()), null);
+      return failure(mapErrorCode(error), error.getMessage());
     }
 
     Long authenticatedAccountId = parseAccountId(authResponse.getAccountId());
@@ -119,7 +118,7 @@ public final class LoginCommandHandler {
     CommandEnqueueResult enqueueResult =
         commandService.enqueue(sessionId, command.rawLine(), requiresSoloTick);
     if (!enqueueResult.accepted()) {
-      return new LoginCommandHandlingResult(enqueueResult, null);
+      return fromCommandResult(enqueueResult);
     }
     persistSessionContext(
         numericSessionId,
@@ -128,8 +127,13 @@ public final class LoginCommandHandler {
         credentials.loginName(),
         authResponse.getAuthToken(),
         bootstrapGameInstanceId);
-    String responseText = "Logged in as " + credentials.loginName();
-    return new LoginCommandHandlingResult(enqueueResult, responseText);
+    return new LoginCommandHandlingResult(
+        enqueueResult,
+        List.of(
+            PlayerOutput.message(
+                "Logged in as " + credentials.loginName(),
+                "message.login.success",
+                Map.of("loginName", credentials.loginName()))));
   }
 
   private LoginCommandHandlingResult handleVerifiedFirstPartyLogin(
@@ -141,25 +145,20 @@ public final class LoginCommandHandler {
     Optional<net.firedevops.firemud.gamesession.service.FirstPartyConnectContext> maybeContext =
         firstPartyConnectContextRegistry.find(numericSessionId);
     if (maybeContext.isEmpty()) {
-      CommandEnqueueResult failure =
-          CommandEnqueueResult.failure(
-              LoginCommandConstants.PROMPT_MODE_UNSUPPORTED_CODE,
-              LoginCommandConstants.PROMPT_MODE_UNSUPPORTED_MESSAGE);
-      return new LoginCommandHandlingResult(failure, null);
+      return failure(
+          LoginCommandConstants.PROMPT_MODE_UNSUPPORTED_CODE,
+          LoginCommandConstants.PROMPT_MODE_UNSUPPORTED_MESSAGE);
     }
 
     var verifiedContext = maybeContext.get();
     Optional<GameInstance> maybeInstance =
         gameInstanceRepository.findById(verifiedContext.gameInstanceId());
     if (maybeInstance.isEmpty()) {
-      CommandEnqueueResult failure =
-          CommandEnqueueResult.failure("SESSION_NOT_FOUND", "Session not found");
-      return new LoginCommandHandlingResult(failure, null);
+      return failure("SESSION_NOT_FOUND", "Session not found");
     }
     GameInstance instance = maybeInstance.get();
     if (instance.getTenantId() != verifiedContext.tenantId()) {
-      return new LoginCommandHandlingResult(
-          CommandEnqueueResult.failure("CONNECT_SCOPE_INVALID", "Connect scope invalid"), null);
+      return failure("CONNECT_SCOPE_INVALID", "Connect scope invalid");
     }
     if (!Objects.equals(instance.getOwnerAccountId(), verifiedContext.accountId())) {
       return accountMismatchFailure();
@@ -168,7 +167,7 @@ public final class LoginCommandHandler {
     CommandEnqueueResult enqueueResult =
         commandService.enqueue(sessionId, command.rawLine(), requiresSoloTick);
     if (!enqueueResult.accepted()) {
-      return new LoginCommandHandlingResult(enqueueResult, null);
+      return fromCommandResult(enqueueResult);
     }
     persistSessionContext(
         numericSessionId,
@@ -178,7 +177,12 @@ public final class LoginCommandHandler {
         null,
         verifiedContext.gameInstanceId());
     return new LoginCommandHandlingResult(
-        enqueueResult, "Logged in as first-party account " + verifiedContext.accountId());
+        enqueueResult,
+        List.of(
+            PlayerOutput.message(
+                "Logged in as first-party account " + verifiedContext.accountId(),
+                "message.login.first-party-success",
+                Map.of("accountId", Long.toString(verifiedContext.accountId())))));
   }
 
   private void persistSessionContext(
@@ -294,23 +298,29 @@ public final class LoginCommandHandler {
   }
 
   private LoginCommandHandlingResult invalidSessionFailure() {
-    return new LoginCommandHandlingResult(
-        CommandEnqueueResult.failure("INVALID_ARGUMENT", "sessionId must be numeric"), null);
+    return failure("INVALID_ARGUMENT", "sessionId must be numeric");
   }
 
   private LoginCommandHandlingResult invalidAccountFailure() {
-    return new LoginCommandHandlingResult(
-        CommandEnqueueResult.failure(
-            LoginCommandConstants.INVALID_ACCOUNT_CODE,
-            LoginCommandConstants.INVALID_ACCOUNT_MESSAGE),
-        null);
+    return failure(
+        LoginCommandConstants.INVALID_ACCOUNT_CODE, LoginCommandConstants.INVALID_ACCOUNT_MESSAGE);
   }
 
   private LoginCommandHandlingResult accountMismatchFailure() {
+    return failure(
+        LoginCommandConstants.ACCOUNT_MISMATCH_CODE,
+        LoginCommandConstants.ACCOUNT_MISMATCH_MESSAGE);
+  }
+
+  private LoginCommandHandlingResult failure(String code, String message) {
     return new LoginCommandHandlingResult(
-        CommandEnqueueResult.failure(
-            LoginCommandConstants.ACCOUNT_MISMATCH_CODE,
-            LoginCommandConstants.ACCOUNT_MISMATCH_MESSAGE),
-        null);
+        CommandEnqueueResult.failure(code, message), List.of(PlayerOutput.error(code, message)));
+  }
+
+  private LoginCommandHandlingResult fromCommandResult(CommandEnqueueResult result) {
+    if (result.accepted()) {
+      return new LoginCommandHandlingResult(result, List.of());
+    }
+    return failure(result.errorCode(), result.errorMessage());
   }
 }

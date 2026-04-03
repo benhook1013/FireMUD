@@ -241,7 +241,12 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
               }
               maybeBuffer.ifPresent(
                   buffer -> sendReplayChunk(session, buffer.protocolText(), "screen buffer"));
-              String look = lookHandler.describeProtocol(sessionId);
+              String look =
+                  lookHandler.describeProtocol(
+                      sessionId,
+                      true,
+                      net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
+                          .RECONNECT_REFRESH);
               if (StringUtils.hasText(look)) {
                 sendReplayChunk(session, look, "fresh LOOK");
               }

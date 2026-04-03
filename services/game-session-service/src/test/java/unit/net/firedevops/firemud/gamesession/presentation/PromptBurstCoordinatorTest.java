@@ -16,6 +16,7 @@ class PromptBurstCoordinatorTest {
     PromptBurstCoordinator coordinator =
         new PromptBurstCoordinator(
             new PresentationProperties(
+                "en-NZ",
                 PresentationProperties.ColorMode.NONE,
                 false,
                 new PresentationProperties.Prompt(true, true, 150L)),
@@ -35,6 +36,7 @@ class PromptBurstCoordinatorTest {
     PromptBurstCoordinator coordinator =
         new PromptBurstCoordinator(
             new PresentationProperties(
+                "en-NZ",
                 PresentationProperties.ColorMode.NONE,
                 false,
                 new PresentationProperties.Prompt(true, true, 150L)),
@@ -53,6 +55,7 @@ class PromptBurstCoordinatorTest {
     PromptBurstCoordinator coordinator =
         new PromptBurstCoordinator(
             new PresentationProperties(
+                "en-NZ",
                 PresentationProperties.ColorMode.NONE,
                 false,
                 new PresentationProperties.Prompt(true, true, 150L)),

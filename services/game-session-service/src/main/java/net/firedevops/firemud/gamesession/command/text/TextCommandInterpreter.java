@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamesession.command.text;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
@@ -89,9 +90,10 @@ public class TextCommandInterpreter {
       String message = "Unknown command";
       return new TextCommandInterpretationResult(
           CommandEnqueueResult.failure("UNKNOWN_COMMAND", message),
-          List.of(PlayerOutput.error("UNKNOWN_COMMAND", message)));
+          List.of(
+              PlayerOutput.error("UNKNOWN_COMMAND", message, "error.unknown-command", Map.of())));
     }
-    if (command.type() == TextCommandType.WORLDS) {
+    if (command.viewRequestPayload().isPresent() && command.type() == TextCommandType.WORLDS) {
       return new TextCommandInterpretationResult(
           CommandEnqueueResult.success(), List.of(PlayerOutput.notice(worldsHandler.describe())));
     }
@@ -99,7 +101,7 @@ public class TextCommandInterpreter {
       LoginCommandHandlingResult loginResult =
           loginHandler.handle(sessionId, command, requiresSoloTick);
       return new TextCommandInterpretationResult(
-          loginResult.commandResult(), loginResult.responseText());
+          loginResult.commandResult(), loginResult.outputs());
     }
 
     Optional<net.firedevops.firemud.gamesession.service.SessionContext> maybeContext =
@@ -115,10 +117,7 @@ public class TextCommandInterpreter {
             GameplayStageCommandConstants.LOGIN_REQUIRED_MESSAGE);
       }
       PlayCommandHandlingResult playResult = playHandler.handle(sessionId, command);
-      List<PlayerOutput> outputs =
-          playResult.responseText() == null
-              ? List.of()
-              : List.of(PlayerOutput.notice(playResult.responseText()));
+      List<PlayerOutput> outputs = playResult.outputs();
       if (playResult.commandResult().accepted() && !playResult.reconnectRedrawRecommended()) {
         outputs = appendPrompt(sessionId, outputs);
       }
@@ -140,10 +139,7 @@ public class TextCommandInterpreter {
     if (isCommunicationCommand(command.type())) {
       CommunicationCommandHandlingResult communicationResult =
           communicationHandler.handle(maybeContext.orElseThrow(), command);
-      List<PlayerOutput> outputs =
-          communicationResult.responseText() == null
-              ? List.of()
-              : List.of(PlayerOutput.message(communicationResult.responseText()));
+      List<PlayerOutput> outputs = communicationResult.outputs();
       if (communicationResult.commandResult().accepted()) {
         outputs = appendPrompt(maybeContext.orElseThrow(), outputs);
       }
@@ -164,7 +160,9 @@ public class TextCommandInterpreter {
     CommandEnqueueResult enqueueResult =
         commandService.enqueue(sessionId, command.rawLine(), requiresSoloTick);
     String response = null;
-    if (enqueueResult.accepted() && isLookCommand(command.type())) {
+    if (enqueueResult.accepted()
+        && command.viewRequestPayload().isPresent()
+        && isLookCommand(command.type())) {
       PlayerOutput lookOutput =
           lookHandler.describePlayerOutput(sessionId, command.type() != TextCommandType.QUICKLOOK);
       if (lookOutput == null) {
@@ -201,8 +199,15 @@ public class TextCommandInterpreter {
   }
 
   private TextCommandInterpretationResult stageFailure(String code, String message) {
+    String messageKey =
+        switch (code) {
+          case GameplayStageCommandConstants.LOGIN_REQUIRED_CODE -> "error.login-required";
+          case GameplayStageCommandConstants.PLAY_REQUIRED_CODE -> "error.play-required";
+          default -> null;
+        };
     return new TextCommandInterpretationResult(
-        CommandEnqueueResult.failure(code, message), List.of(PlayerOutput.error(code, message)));
+        CommandEnqueueResult.failure(code, message),
+        List.of(PlayerOutput.error(code, message, messageKey, Map.of())));
   }
 
   private List<PlayerOutput> appendPrompt(String sessionId, List<PlayerOutput> outputs) {

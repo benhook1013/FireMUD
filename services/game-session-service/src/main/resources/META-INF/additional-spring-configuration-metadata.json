@@ -23,6 +23,13 @@
   ],
   "properties": [
     {
+      "name": "firemud.presentation.default-locale-tag",
+      "type": "java.lang.String",
+      "defaultValue": "en-NZ",
+      "description": "Default renderer locale tag used for built-in localized notice, error, and other platform text when no per-player preference overrides it.",
+      "sourceType": "net.firedevops.firemud.gamesession.config.PresentationProperties"
+    },
+    {
       "name": "firemud.presentation.default-color-mode",
       "type": "net.firedevops.firemud.gamesession.config.PresentationProperties$ColorMode",
       "defaultValue": "NONE",

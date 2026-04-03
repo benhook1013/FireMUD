@@ -39,10 +39,27 @@ public final class LookCommandHandler {
   private final DevIsolatedProperties devIsolatedProperties;
 
   public String describe(String sessionId) {
-    return describe(sessionId, true);
+    return describe(
+        sessionId,
+        true,
+        net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason.EXPLICIT_LOOK);
   }
 
   public String describe(String sessionId, boolean includeLongDescription) {
+    return describe(
+        sessionId,
+        includeLongDescription,
+        includeLongDescription
+            ? net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
+                .EXPLICIT_LOOK
+            : net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
+                .QUICKLOOK);
+  }
+
+  public String describe(
+      String sessionId,
+      boolean includeLongDescription,
+      net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason refreshReason) {
     Optional<SessionContext> maybeContext =
         sessionAuthenticationService.resolveSessionContext(sessionId);
     if (maybeContext.isEmpty()) {
@@ -58,7 +75,8 @@ public final class LookCommandHandler {
       }
       try {
         LookResult lookResult = resolveLook(context);
-        String rendered = lookTextRenderer.render(lookResult, includeLongDescription);
+        String rendered =
+            lookTextRenderer.render(lookResult, includeLongDescription, refreshReason);
         if (!devIsolatedProperties.isDevIsolated()) {
           cacheLook(context, lookResult, rendered);
         }
@@ -75,10 +93,27 @@ public final class LookCommandHandler {
   }
 
   public String describeProtocol(String sessionId) {
-    return describeProtocol(sessionId, true);
+    return describeProtocol(
+        sessionId,
+        true,
+        net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason.EXPLICIT_LOOK);
   }
 
   public String describeProtocol(String sessionId, boolean includeLongDescription) {
+    return describeProtocol(
+        sessionId,
+        includeLongDescription,
+        includeLongDescription
+            ? net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
+                .EXPLICIT_LOOK
+            : net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
+                .QUICKLOOK);
+  }
+
+  public String describeProtocol(
+      String sessionId,
+      boolean includeLongDescription,
+      net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason refreshReason) {
     Optional<SessionContext> maybeContext =
         sessionAuthenticationService.resolveSessionContext(sessionId);
     if (maybeContext.isEmpty()) {
@@ -86,7 +121,7 @@ public final class LookCommandHandler {
       return null;
     }
     SessionContext context = maybeContext.get();
-    String rendered = describe(sessionId, includeLongDescription);
+    String rendered = describe(sessionId, includeLongDescription, refreshReason);
     if (rendered == null || rendered.isBlank() || rendered.startsWith("ERROR ")) {
       return rendered;
     }
@@ -94,6 +129,20 @@ public final class LookCommandHandler {
   }
 
   public PlayerOutput describePlayerOutput(String sessionId, boolean includeLongDescription) {
+    return describePlayerOutput(
+        sessionId,
+        includeLongDescription,
+        includeLongDescription
+            ? net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
+                .EXPLICIT_LOOK
+            : net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
+                .QUICKLOOK);
+  }
+
+  public PlayerOutput describePlayerOutput(
+      String sessionId,
+      boolean includeLongDescription,
+      net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason refreshReason) {
     Optional<SessionContext> maybeContext =
         sessionAuthenticationService.resolveSessionContext(sessionId);
     if (maybeContext.isEmpty()) {
@@ -109,7 +158,7 @@ public final class LookCommandHandler {
       }
       try {
         LookResult lookResult = resolveLook(context);
-        return toPlayerOutput(context, lookResult, includeLongDescription);
+        return toPlayerOutput(context, lookResult, includeLongDescription, refreshReason);
       } catch (StatusRuntimeException ex) {
         String errorCode = mapStatusToError(ex);
         recordFailure(context, tenantTag, errorCode, ex);
@@ -130,14 +179,38 @@ public final class LookCommandHandler {
   }
 
   PlayerOutput toPlayerOutput(SessionContext context, LookResult lookResult) {
-    return toPlayerOutput(context, lookResult, true);
+    return toPlayerOutput(
+        context,
+        lookResult,
+        true,
+        net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason.EXPLICIT_LOOK);
   }
 
   PlayerOutput toPlayerOutput(
       SessionContext context, LookResult lookResult, boolean includeLongDescription) {
-    PlayerOutput output = lookTextRenderer.toPlayerOutput(lookResult, includeLongDescription);
+    return toPlayerOutput(
+        context,
+        lookResult,
+        includeLongDescription,
+        includeLongDescription
+            ? net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
+                .EXPLICIT_LOOK
+            : net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
+                .QUICKLOOK);
+  }
+
+  PlayerOutput toPlayerOutput(
+      SessionContext context,
+      LookResult lookResult,
+      boolean includeLongDescription,
+      net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason refreshReason) {
+    PlayerOutput output =
+        lookTextRenderer.toPlayerOutput(lookResult, includeLongDescription, refreshReason);
     if (!devIsolatedProperties.isDevIsolated()) {
-      cacheLook(context, lookResult, lookTextRenderer.render(lookResult, includeLongDescription));
+      cacheLook(
+          context,
+          lookResult,
+          lookTextRenderer.render(lookResult, includeLongDescription, refreshReason));
     }
     return output;
   }

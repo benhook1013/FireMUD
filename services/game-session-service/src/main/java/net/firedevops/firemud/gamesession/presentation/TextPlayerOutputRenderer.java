@@ -4,6 +4,7 @@ import java.util.stream.Collectors;
 import net.firedevops.firemud.gamesession.command.text.TextCommand;
 import net.firedevops.firemud.gamesession.config.PresentationProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
@@ -11,15 +12,21 @@ import org.springframework.util.StringUtils;
 @Component
 public class TextPlayerOutputRenderer {
   private final PresentationProperties presentationProperties;
+  private final PresentationMessageCatalog presentationMessageCatalog;
 
   public TextPlayerOutputRenderer(PresentationProperties presentationProperties) {
+    this(presentationProperties, new PresentationMessageCatalog());
+  }
+
+  @Autowired
+  public TextPlayerOutputRenderer(
+      PresentationProperties presentationProperties,
+      PresentationMessageCatalog presentationMessageCatalog) {
     this.presentationProperties = presentationProperties;
+    this.presentationMessageCatalog = presentationMessageCatalog;
   }
 
   public String render(PlayerOutput output) {
-    if (output.protocolBlock()) {
-      return output.text();
-    }
     if (presentationProperties.briefEnabledByDefault()
         && output.briefRenderPolicy() == BriefRenderPolicy.SUPPRESS_IN_BRIEF) {
       return "";
@@ -60,11 +67,6 @@ public class TextPlayerOutputRenderer {
       }
       return "OK " + command.type().name();
     }
-    if (nonPromptOutputs.size() == 1 && nonPromptOutputs.get(0).protocolBlock()) {
-      String rendered = renderProtocolBlock(command, nonPromptOutputs.get(0));
-      return appendPrompt(
-          rendered, prompt, !rendered.contains("\n") && StringUtils.hasText(prompt));
-    }
     if (nonPromptOutputs.size() == 1 && nonPromptOutputs.get(0).kind() == PlayerOutputKind.NOTICE) {
       String rendered = renderNoticeWithCommand(command, nonPromptOutputs.get(0));
       return appendPrompt(
@@ -83,9 +85,7 @@ public class TextPlayerOutputRenderer {
     }
     String commandLabel = responseCommandLabel(command, nonPromptOutputs);
     boolean plainMessageOnly =
-        nonPromptOutputs.stream()
-            .allMatch(
-                output -> !output.protocolBlock() && output.kind() == PlayerOutputKind.MESSAGE);
+        nonPromptOutputs.stream().allMatch(output -> output.kind() == PlayerOutputKind.MESSAGE);
     boolean proseCommand =
         command.type().name().equals("SAY")
             || command.type().name().equals("WHISPER")
@@ -97,23 +97,29 @@ public class TextPlayerOutputRenderer {
   }
 
   private String renderLookView(LookViewOutput result) {
-    boolean brief = presentationProperties.briefEnabledByDefault();
+    boolean brief = shouldUseBriefRendering(result);
     StringBuilder out = new StringBuilder();
-    out.append(colorizeLabel("Room: "))
+    out.append(colorizeLabel(localizedLabel("label.room", "Room: ")))
         .append(colorizeRoomName(result.roomName()))
         .append(" (ID: ")
         .append(result.roomId())
         .append(")\n");
-    out.append(colorizeLabel("Short: ")).append(result.shortDescription()).append("\n");
+    out.append(colorizeLabel(localizedLabel("label.short", "Short: ")))
+        .append(result.shortDescription())
+        .append("\n");
     if (!brief && result.includeLongDescription()) {
-      out.append(colorizeLabel("Long: ")).append(result.longDescription()).append("\n");
+      out.append(colorizeLabel(localizedLabel("label.long", "Long: ")))
+          .append(result.longDescription())
+          .append("\n");
     }
-    out.append(colorizeLabel("Exits: "));
+    out.append(colorizeLabel(localizedLabel("label.exits", "Exits: ")));
     out.append(
         result.exits().stream()
             .map(exit -> exit.label() + " (" + exit.description() + ")")
             .collect(Collectors.joining(", ")));
-    out.append("\n").append(colorizeLabel("Entities:")).append("\n");
+    out.append("\n")
+        .append(colorizeLabel(localizedLabel("label.entities", "Entities:")))
+        .append("\n");
     for (LookViewEntity entity : result.entities()) {
       out.append("- ")
           .append(entity.entityType())
@@ -137,20 +143,20 @@ public class TextPlayerOutputRenderer {
   }
 
   private String renderMessage(TextMessageOutput output) {
-    return output.text();
+    return presentationMessageCatalog.render(
+        output.text(),
+        output.messageKey(),
+        output.arguments(),
+        presentationProperties.defaultLocaleTag());
   }
 
   private String renderNotice(NoticeOutput output) {
-    return colorizeNotice(output.text());
-  }
-
-  private String renderProtocolBlock(TextCommand command, PlayerOutput output) {
-    String body = render(output);
-    String commandLabel = command.type().name();
-    if (body.contains("\n")) {
-      return "OK " + commandLabel + "\n" + body + "\n\n";
-    }
-    return "OK " + commandLabel + " " + body;
+    return colorizeNotice(
+        presentationMessageCatalog.render(
+            output.text(),
+            output.messageKey(),
+            output.arguments(),
+            presentationProperties.defaultLocaleTag()));
   }
 
   private String renderNoticeWithCommand(TextCommand command, PlayerOutput output) {
@@ -165,7 +171,19 @@ public class TextPlayerOutputRenderer {
   private String renderError(ErrorOutput output) {
     return "ERROR "
         + output.code()
-        + (StringUtils.hasText(output.message()) ? " " + output.message() : "");
+        + (StringUtils.hasText(output.message())
+            ? " "
+                + presentationMessageCatalog.render(
+                    output.message(),
+                    output.messageKey(),
+                    output.arguments(),
+                    presentationProperties.defaultLocaleTag())
+            : "");
+  }
+
+  private String localizedLabel(String messageKey, String fallbackText) {
+    return presentationMessageCatalog.render(
+        fallbackText, messageKey, java.util.Map.of(), presentationProperties.defaultLocaleTag());
   }
 
   private String colorizeLabel(String text) {
@@ -232,6 +250,24 @@ public class TextPlayerOutputRenderer {
         && outputs.stream().allMatch(output -> output.kind() == PlayerOutputKind.VIEW)) {
       return net.firedevops.firemud.gamesession.command.text.TextCommandType.LOOK.name();
     }
+    if (outputs.stream().allMatch(output -> output.kind() == PlayerOutputKind.VIEW)
+        && outputs.stream()
+            .map(PlayerOutput::payload)
+            .filter(LookViewOutput.class::isInstance)
+            .map(LookViewOutput.class::cast)
+            .anyMatch(view -> view.refreshReason() == LookViewOutput.RefreshReason.MOVE_REFRESH)) {
+      return net.firedevops.firemud.gamesession.command.text.TextCommandType.LOOK.name();
+    }
     return command.type().name();
+  }
+
+  private boolean shouldUseBriefRendering(LookViewOutput result) {
+    if (!result.includeLongDescription()) {
+      return true;
+    }
+    if (presentationProperties.briefEnabledByDefault()) {
+      return true;
+    }
+    return result.refreshReason() == LookViewOutput.RefreshReason.MOVE_REFRESH;
   }
 }

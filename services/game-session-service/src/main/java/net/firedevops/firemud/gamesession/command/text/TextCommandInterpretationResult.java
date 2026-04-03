@@ -5,7 +5,7 @@ import java.util.Objects;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 
-/** Result of interpreting a text command, including any immediate response text. */
+/** Result of interpreting a text command with structured player outputs. */
 public record TextCommandInterpretationResult(
     CommandEnqueueResult commandResult,
     List<PlayerOutput> outputs,
@@ -25,42 +25,7 @@ public record TextCommandInterpretationResult(
     this(commandResult, outputs, false);
   }
 
-  public TextCommandInterpretationResult(CommandEnqueueResult commandResult, String responseText) {
-    this(
-        commandResult,
-        responseText == null ? List.of() : List.of(PlayerOutput.message(responseText)),
-        false);
-  }
-
-  public TextCommandInterpretationResult(
-      CommandEnqueueResult commandResult, String responseText, boolean protocolResponse) {
-    this(
-        commandResult,
-        responseText == null
-            ? List.of()
-            : List.of(
-                protocolResponse
-                    ? PlayerOutput.notice(responseText, true)
-                    : PlayerOutput.message(responseText)),
-        false);
-  }
-
   public boolean hasResponse() {
     return !outputs.isEmpty();
-  }
-
-  public String responseText() {
-    if (outputs.isEmpty()) {
-      return null;
-    }
-    return outputs.stream()
-        .map(PlayerOutput::text)
-        .filter(Objects::nonNull)
-        .reduce((left, right) -> left + "\n" + right)
-        .orElse(null);
-  }
-
-  public boolean protocolResponse() {
-    return outputs.size() == 1 && outputs.get(0).protocolBlock();
   }
 }

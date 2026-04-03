@@ -41,6 +41,7 @@ firemud:
   conflict:
     ttlSeconds: 300
   presentation:
+    default-locale-tag: en-NZ
     default-color-mode: NONE
     brief-enabled-by-default: false
     prompt:

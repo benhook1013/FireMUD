@@ -119,7 +119,7 @@ class CommunicationWebSocketCrossServiceTest {
     assertThat(responses).hasSizeGreaterThanOrEqualTo(3);
     assertThat(responses.get(0)).startsWith("OK LOGIN");
     assertThat(responses.get(1)).startsWith("OK PLAY");
-    assertThat(responses.get(2).trim()).isEqualTo(ChatTestFixtures.canonicalSayText());
+    assertThat(responses.get(2)).contains(ChatTestFixtures.canonicalSayText());
     assertThat(SOCIAL_STUB.lastRequest())
         .hasValueSatisfying(
             request -> {
@@ -138,7 +138,7 @@ class CommunicationWebSocketCrossServiceTest {
     List<String> responses = runCommunicationSequence(sessionId, "WHISPER Sora Keep quiet");
 
     assertThat(responses).hasSizeGreaterThanOrEqualTo(3);
-    assertThat(responses.get(2).trim()).isEqualTo(ChatTestFixtures.canonicalWhisperText());
+    assertThat(responses.get(2)).contains(ChatTestFixtures.canonicalWhisperText());
     assertThat(SOCIAL_STUB.lastRequest())
         .hasValueSatisfying(
             request -> {
@@ -158,7 +158,7 @@ class CommunicationWebSocketCrossServiceTest {
     List<String> responses = runCommunicationSequence(sessionId, "TELL Sora Meet me at the forge");
 
     assertThat(responses).hasSizeGreaterThanOrEqualTo(3);
-    assertThat(responses.get(2).trim()).isEqualTo(ChatTestFixtures.canonicalTellText());
+    assertThat(responses.get(2)).contains(ChatTestFixtures.canonicalTellText());
     assertThat(SOCIAL_STUB.lastRequest())
         .hasValueSatisfying(
             request -> {

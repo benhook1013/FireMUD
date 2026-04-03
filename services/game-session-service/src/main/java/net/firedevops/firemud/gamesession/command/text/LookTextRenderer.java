@@ -17,18 +17,42 @@ public class LookTextRenderer {
   }
 
   public PlayerOutput toPlayerOutput(LookResult result) {
-    return toPlayerOutput(result, true);
+    return toPlayerOutput(result, true, LookViewOutput.RefreshReason.EXPLICIT_LOOK);
   }
 
   public PlayerOutput toPlayerOutput(LookResult result, boolean includeLongDescription) {
-    return PlayerOutput.view(LookViewOutput.from(result, includeLongDescription));
+    return toPlayerOutput(
+        result,
+        includeLongDescription,
+        includeLongDescription
+            ? LookViewOutput.RefreshReason.EXPLICIT_LOOK
+            : LookViewOutput.RefreshReason.QUICKLOOK);
+  }
+
+  public PlayerOutput toPlayerOutput(
+      LookResult result,
+      boolean includeLongDescription,
+      LookViewOutput.RefreshReason refreshReason) {
+    return PlayerOutput.view(LookViewOutput.from(result, includeLongDescription, refreshReason));
   }
 
   public String render(LookResult result) {
-    return render(result, true);
+    return render(result, true, LookViewOutput.RefreshReason.EXPLICIT_LOOK);
   }
 
   public String render(LookResult result, boolean includeLongDescription) {
-    return renderer.render(toPlayerOutput(result, includeLongDescription));
+    return render(
+        result,
+        includeLongDescription,
+        includeLongDescription
+            ? LookViewOutput.RefreshReason.EXPLICIT_LOOK
+            : LookViewOutput.RefreshReason.QUICKLOOK);
+  }
+
+  public String render(
+      LookResult result,
+      boolean includeLongDescription,
+      LookViewOutput.RefreshReason refreshReason) {
+    return renderer.render(toPlayerOutput(result, includeLongDescription, refreshReason));
   }
 }

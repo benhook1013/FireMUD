@@ -3,6 +3,8 @@ package net.firedevops.firemud.gamesession.command.text;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
+import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
@@ -12,6 +14,7 @@ import net.firedevops.firemud.gamesession.client.AccountClient;
 import net.firedevops.firemud.gamesession.config.GameLogicProperties;
 import net.firedevops.firemud.gamesession.config.GameSessionProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
+import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
@@ -176,7 +179,7 @@ public class PlayCommandHandler {
                 context.sessionId());
             return new PlayCommandHandlingResult(
                 CommandEnqueueResult.success(),
-                formatSuccessResponse(selectedWorld.getSlug(), character),
+                List.of(successNotice(selectedWorld.getSlug(), character)),
                 true);
           }
 
@@ -216,7 +219,7 @@ public class PlayCommandHandler {
 
           return new PlayCommandHandlingResult(
               CommandEnqueueResult.success(),
-              formatSuccessResponse(selectedWorld.getSlug(), character),
+              List.of(successNotice(selectedWorld.getSlug(), character)),
               resumedOrTookOver || freshEntryFallback);
         }
       }
@@ -268,7 +271,8 @@ public class PlayCommandHandler {
           message,
           ex);
     }
-    return new PlayCommandHandlingResult(CommandEnqueueResult.failure(errorCode, message), null);
+    return new PlayCommandHandlingResult(
+        CommandEnqueueResult.failure(errorCode, message), List.of());
   }
 
   private long resolveCharacterId(
@@ -337,6 +341,14 @@ public class PlayCommandHandler {
   private String formatSuccessResponse(String world, String character) {
     String suffix = StringUtils.hasText(character) ? " as " + character : "";
     return "Entered world: " + world + suffix;
+  }
+
+  private PlayerOutput successNotice(String world, String character) {
+    String characterSuffix = StringUtils.hasText(character) ? " as " + character : "";
+    return PlayerOutput.notice(
+        formatSuccessResponse(world, character),
+        "notice.world.entered",
+        Map.of("worldName", world, "characterSuffix", characterSuffix));
   }
 
   private String normalizeName(String value) {

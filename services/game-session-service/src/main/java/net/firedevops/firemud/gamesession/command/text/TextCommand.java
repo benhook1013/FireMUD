@@ -54,6 +54,12 @@ public record TextCommand(
         : Optional.empty();
   }
 
+  public Optional<TextCommandPayload.ViewRequest> viewRequestPayload() {
+    return payload instanceof TextCommandPayload.ViewRequest viewRequest
+        ? Optional.of(viewRequest)
+        : Optional.empty();
+  }
+
   private static String extractAlias(String rawLine) {
     if (!StringUtils.hasText(rawLine)) {
       return "";

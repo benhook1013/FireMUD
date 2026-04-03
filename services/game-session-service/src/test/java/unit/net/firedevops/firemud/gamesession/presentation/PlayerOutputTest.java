@@ -10,7 +10,6 @@ class PlayerOutputTest {
   void screenBufferEligibilityFollowsReplayPolicyAndOutputKind() {
     assertThat(PlayerOutput.message("hello").screenBufferEligible()).isTrue();
     assertThat(PlayerOutput.view("look").screenBufferEligible()).isTrue();
-    assertThat(PlayerOutput.protocolView("OK LOOK\nlook\n\n").screenBufferEligible()).isTrue();
     assertThat(PlayerOutput.prompt("demo> ").screenBufferEligible()).isFalse();
     assertThat(PlayerOutput.notice("notice").screenBufferEligible()).isFalse();
     assertThat(PlayerOutput.error("LOGIN_REQUIRED", "Use LOGIN").screenBufferEligible()).isFalse();

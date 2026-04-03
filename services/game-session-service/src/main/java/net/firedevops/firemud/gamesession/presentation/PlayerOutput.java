@@ -7,8 +7,7 @@ public record PlayerOutput(
     PlayerOutputKind kind,
     PlayerOutputPayload payload,
     ReplayPolicy replayPolicy,
-    BriefRenderPolicy briefRenderPolicy,
-    boolean protocolBlock) {
+    BriefRenderPolicy briefRenderPolicy) {
   public PlayerOutput {
     Objects.requireNonNull(kind, "kind must not be null");
     Objects.requireNonNull(payload, "payload must not be null");
@@ -21,8 +20,20 @@ public record PlayerOutput(
         PlayerOutputKind.MESSAGE,
         new TextMessageOutput(text),
         ReplayPolicy.BUFFERABLE,
-        BriefRenderPolicy.DEFAULT,
-        false);
+        BriefRenderPolicy.DEFAULT);
+  }
+
+  public static PlayerOutput message(String fallbackText, String messageKey) {
+    return message(fallbackText, messageKey, java.util.Map.of());
+  }
+
+  public static PlayerOutput message(
+      String fallbackText, String messageKey, java.util.Map<String, String> arguments) {
+    return new PlayerOutput(
+        PlayerOutputKind.MESSAGE,
+        new TextMessageOutput(fallbackText, messageKey, arguments),
+        ReplayPolicy.BUFFERABLE,
+        BriefRenderPolicy.DEFAULT);
   }
 
   public static PlayerOutput view(String text) {
@@ -30,22 +41,12 @@ public record PlayerOutput(
         PlayerOutputKind.VIEW,
         new TextMessageOutput(text),
         ReplayPolicy.BUFFERABLE,
-        BriefRenderPolicy.DEFAULT,
-        false);
-  }
-
-  public static PlayerOutput protocolView(String protocolText) {
-    return new PlayerOutput(
-        PlayerOutputKind.VIEW,
-        new TextMessageOutput(protocolText),
-        ReplayPolicy.BUFFERABLE,
-        BriefRenderPolicy.DEFAULT,
-        true);
+        BriefRenderPolicy.DEFAULT);
   }
 
   public static PlayerOutput view(LookViewOutput payload) {
     return new PlayerOutput(
-        PlayerOutputKind.VIEW, payload, ReplayPolicy.BUFFERABLE, BriefRenderPolicy.DEFAULT, false);
+        PlayerOutputKind.VIEW, payload, ReplayPolicy.BUFFERABLE, BriefRenderPolicy.DEFAULT);
   }
 
   public static PlayerOutput prompt(String text) {
@@ -57,8 +58,7 @@ public record PlayerOutput(
         PlayerOutputKind.PROMPT,
         new PromptOutput(text, fields),
         ReplayPolicy.NO_REPLAY,
-        BriefRenderPolicy.ALWAYS_SHOW,
-        false);
+        BriefRenderPolicy.ALWAYS_SHOW);
   }
 
   public static PlayerOutput notice(String text) {
@@ -66,17 +66,16 @@ public record PlayerOutput(
         PlayerOutputKind.NOTICE,
         new NoticeOutput(text),
         ReplayPolicy.NO_REPLAY,
-        BriefRenderPolicy.ALWAYS_SHOW,
-        false);
+        BriefRenderPolicy.ALWAYS_SHOW);
   }
 
-  public static PlayerOutput notice(String text, boolean protocolBlock) {
+  public static PlayerOutput notice(
+      String fallbackText, String messageKey, java.util.Map<String, String> arguments) {
     return new PlayerOutput(
         PlayerOutputKind.NOTICE,
-        new NoticeOutput(text),
+        new NoticeOutput(fallbackText, messageKey, arguments),
         ReplayPolicy.NO_REPLAY,
-        BriefRenderPolicy.ALWAYS_SHOW,
-        protocolBlock);
+        BriefRenderPolicy.ALWAYS_SHOW);
   }
 
   public static PlayerOutput error(String code, String message) {
@@ -84,8 +83,19 @@ public record PlayerOutput(
         PlayerOutputKind.ERROR,
         new ErrorOutput(code, message),
         ReplayPolicy.NO_REPLAY,
-        BriefRenderPolicy.ALWAYS_SHOW,
-        false);
+        BriefRenderPolicy.ALWAYS_SHOW);
+  }
+
+  public static PlayerOutput error(
+      String code,
+      String fallbackMessage,
+      String messageKey,
+      java.util.Map<String, String> arguments) {
+    return new PlayerOutput(
+        PlayerOutputKind.ERROR,
+        new ErrorOutput(code, fallbackMessage, messageKey, arguments),
+        ReplayPolicy.NO_REPLAY,
+        BriefRenderPolicy.ALWAYS_SHOW);
   }
 
   public String text() {

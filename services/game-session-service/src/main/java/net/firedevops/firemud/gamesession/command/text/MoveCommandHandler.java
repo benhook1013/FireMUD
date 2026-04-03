@@ -97,7 +97,12 @@ public class MoveCommandHandler {
         }
         return new MoveCommandHandlingResult(
             CommandEnqueueResult.success(),
-            lookCommandHandler.toPlayerOutput(updatedContext, response.getDestinationLook()));
+            lookCommandHandler.toPlayerOutput(
+                updatedContext,
+                response.getDestinationLook(),
+                true,
+                net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
+                    .MOVE_REFRESH));
       } catch (RuntimeException ex) {
         return failure(
             "MOVE_UNAVAILABLE",

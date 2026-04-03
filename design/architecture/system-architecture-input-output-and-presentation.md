@@ -7,11 +7,14 @@ The goal is to keep gameplay and UX decisions structured until the latest practi
 ## Implemented Status
 
 - Game Session now has a first normalized player-output seam: `TextCommandInterpretationResult` carries `PlayerOutput` envelopes instead of only a single raw response string.
-- The first output kinds and payloads are live in code for messages, views, prompts, and notices, with replay policy and brief-policy placeholders on the envelope.
-- `LOOK` has started moving onto that path through `LookViewOutput` and `TextPlayerOutputRenderer`, although some command paths still use transitional pre-rendered protocol text payloads.
+- The first output kinds and payloads are live in code for messages, views, prompts, notices, and errors, with replay policy and brief-policy placeholders on the envelope.
+- `LOGIN`, `PLAY`, room views, movement refresh, and direct communication acknowledgements now all have real structured output paths; remaining transitional seams are narrower protocol-block and compatibility helpers rather than the main built-in handlers.
+- `LOOK` and `QUICKLOOK` now flow through `LookViewOutput` and `TextPlayerOutputRenderer`; room views carry explicit refresh reasons for `LOOK`, `QUICKLOOK`, movement refresh, and reconnect refresh, although some command paths still use transitional pre-rendered protocol text payloads.
 - Communication actor responses now flow through the same late renderer, but recipient delivery still pushes already-rendered strings and first-party web still shares the generic text payload path.
 - Prompt output is modeled separately, presentation defaults are now bound from typed properties, and prompt payloads now carry a first minimal structured field list alongside classic prompt text, but prompt coalescing and broad prompt emission are not yet fully implemented.
 - Prompt output now has a first baseline pipeline plus a narrow per-session prompt-throttling window, but richer burst-end scheduling and structured prompt/status delivery are still future work.
+- Built-in/system text now has the first localization foundation in Game Session: stable keys plus structured variables on selected outputs, renderer locale selection via `firemud.presentation.default-locale-tag`, localized login/play/error outputs, localized room-view labels, and bounded alternate-locale renderer tests.
+- Authored localized content now also has a first bounded model: locale-tagged explicit variants with a required source locale and deterministic exact-locale, language-only, then source-locale fallback. World/item/room runtime adoption remains future work.
 
 ---
 
@@ -310,6 +313,16 @@ Localization should distinguish between two complementary mechanisms:
 - explicit localized content variants for authored world/game prose such as room descriptions, lore text, and item descriptions.
 
 These mechanisms solve different problems and should coexist rather than compete.
+
+The first authored-content model should stay small and explicit:
+
+- one canonical source locale is required;
+- localized variants are stored by locale tag;
+- runtime resolves:
+  - exact locale first;
+  - then language-only match where available;
+  - then the source locale text;
+- the runtime should not synthesize or fetch missing translations on demand during live gameplay.
 
 For runtime behavior, FireMUD should prefer stored localized variants over live translation calls on the gameplay hot path. The platform should not assume per-message external translation during active gameplay because added network latency and jitter would directly hurt responsiveness.
 

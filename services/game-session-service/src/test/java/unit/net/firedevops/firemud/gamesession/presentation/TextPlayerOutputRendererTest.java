@@ -16,6 +16,7 @@ class TextPlayerOutputRendererTest {
     TextPlayerOutputRenderer renderer =
         new TextPlayerOutputRenderer(
             new PresentationProperties(
+                "en-NZ",
                 PresentationProperties.ColorMode.NONE,
                 true,
                 new PresentationProperties.Prompt(false, true, 150L)));
@@ -43,6 +44,7 @@ class TextPlayerOutputRendererTest {
     TextPlayerOutputRenderer renderer =
         new TextPlayerOutputRenderer(
             new PresentationProperties(
+                "en-NZ",
                 PresentationProperties.ColorMode.BASIC,
                 false,
                 new PresentationProperties.Prompt(false, true, 150L)));
@@ -55,6 +57,7 @@ class TextPlayerOutputRendererTest {
     TextPlayerOutputRenderer renderer =
         new TextPlayerOutputRenderer(
             new PresentationProperties(
+                "en-NZ",
                 PresentationProperties.ColorMode.NONE,
                 true,
                 new PresentationProperties.Prompt(false, true, 150L)));
@@ -64,8 +67,7 @@ class TextPlayerOutputRendererTest {
             PlayerOutputKind.MESSAGE,
             new TextMessageOutput("ambient dust drifts from the rafters"),
             ReplayPolicy.BUFFERABLE,
-            BriefRenderPolicy.SUPPRESS_IN_BRIEF,
-            false);
+            BriefRenderPolicy.SUPPRESS_IN_BRIEF);
 
     assertThat(renderer.render(suppressed)).isEmpty();
   }
@@ -75,6 +77,7 @@ class TextPlayerOutputRendererTest {
     TextPlayerOutputRenderer renderer =
         new TextPlayerOutputRenderer(
             new PresentationProperties(
+                "en-NZ",
                 PresentationProperties.ColorMode.BASIC,
                 false,
                 new PresentationProperties.Prompt(true, true, 150L)));
@@ -88,6 +91,7 @@ class TextPlayerOutputRendererTest {
     TextPlayerOutputRenderer renderer =
         new TextPlayerOutputRenderer(
             new PresentationProperties(
+                "en-NZ",
                 PresentationProperties.ColorMode.RICH,
                 false,
                 new PresentationProperties.Prompt(false, true, 150L)));
@@ -113,6 +117,7 @@ class TextPlayerOutputRendererTest {
     TextPlayerOutputRenderer renderer =
         new TextPlayerOutputRenderer(
             new PresentationProperties(
+                "en-NZ",
                 PresentationProperties.ColorMode.NONE,
                 false,
                 new PresentationProperties.Prompt(true, true, 150L)));
@@ -134,6 +139,7 @@ class TextPlayerOutputRendererTest {
     TextPlayerOutputRenderer renderer =
         new TextPlayerOutputRenderer(
             new PresentationProperties(
+                "en-NZ",
                 PresentationProperties.ColorMode.NONE,
                 false,
                 new PresentationProperties.Prompt(false, true, 150L)));
@@ -161,6 +167,7 @@ class TextPlayerOutputRendererTest {
     TextPlayerOutputRenderer renderer =
         new TextPlayerOutputRenderer(
             new PresentationProperties(
+                "en-NZ",
                 PresentationProperties.ColorMode.NONE,
                 false,
                 new PresentationProperties.Prompt(true, true, 150L)));
@@ -180,6 +187,7 @@ class TextPlayerOutputRendererTest {
     TextPlayerOutputRenderer renderer =
         new TextPlayerOutputRenderer(
             new PresentationProperties(
+                "en-NZ",
                 PresentationProperties.ColorMode.NONE,
                 false,
                 new PresentationProperties.Prompt(true, true, 150L)));
@@ -188,9 +196,73 @@ class TextPlayerOutputRendererTest {
         renderer.renderAll(
             new TextCommand(TextCommandType.MOVE, List.of("north"), "MOVE north"),
             CommandEnqueueResult.success(),
-            List.of(PlayerOutput.view("North Hall text"), PlayerOutput.prompt("demo> ")));
+            List.of(
+                PlayerOutput.view(
+                    new LookViewOutput(
+                        "R-205",
+                        "North Hall",
+                        "North Hall text",
+                        "Detailed north hall text",
+                        true,
+                        LookViewOutput.RefreshReason.MOVE_REFRESH,
+                        List.of(),
+                        List.of())),
+                PlayerOutput.prompt("demo> ")));
 
-    assertThat(rendered).isEqualTo("OK LOOK\nNorth Hall text\n\ndemo> ");
+    assertThat(rendered)
+        .isEqualTo(
+            "OK LOOK\n"
+                + "Room: North Hall (ID: R-205)\n"
+                + "Short: North Hall text\n"
+                + "Exits: \n"
+                + "Entities:\n\n"
+                + "demo> ");
+  }
+
+  @Test
+  void renderAllMapsTransitionalMoveViewTextToLookLabel() {
+    TextPlayerOutputRenderer renderer =
+        new TextPlayerOutputRenderer(
+            new PresentationProperties(
+                "en-NZ",
+                PresentationProperties.ColorMode.NONE,
+                false,
+                new PresentationProperties.Prompt(true, true, 150L)));
+
+    String rendered =
+        renderer.renderAll(
+            new TextCommand(TextCommandType.MOVE, List.of("north"), "MOVE north"),
+            CommandEnqueueResult.success(),
+            List.of(PlayerOutput.view("North Hall text")));
+
+    assertThat(rendered).isEqualTo("OK LOOK\nNorth Hall text\n\n");
+  }
+
+  @Test
+  void moveRefreshUsesBriefStyleLongDescriptionSuppressionByDefault() {
+    TextPlayerOutputRenderer renderer =
+        new TextPlayerOutputRenderer(
+            new PresentationProperties(
+                "en-NZ",
+                PresentationProperties.ColorMode.NONE,
+                false,
+                new PresentationProperties.Prompt(true, true, 150L)));
+
+    String rendered =
+        renderer.render(
+            PlayerOutput.view(
+                new LookViewOutput(
+                    "R-301",
+                    "South Hall",
+                    "A narrow corridor bends south.",
+                    "The corridor runs beneath low stone arches lined with guttering lamps.",
+                    true,
+                    LookViewOutput.RefreshReason.MOVE_REFRESH,
+                    List.of(new LookViewExit("NORTH", "stairs")),
+                    List.of())));
+
+    assertThat(rendered).contains("Short: A narrow corridor bends south.");
+    assertThat(rendered).doesNotContain("Long:");
   }
 
   @Test
@@ -198,6 +270,7 @@ class TextPlayerOutputRendererTest {
     TextPlayerOutputRenderer renderer =
         new TextPlayerOutputRenderer(
             new PresentationProperties(
+                "en-NZ",
                 PresentationProperties.ColorMode.NONE,
                 false,
                 new PresentationProperties.Prompt(true, true, 150L)));
@@ -212,10 +285,78 @@ class TextPlayerOutputRendererTest {
   }
 
   @Test
+  void localizedNoticeUsesConfiguredLocaleTemplate() {
+    TextPlayerOutputRenderer renderer =
+        new TextPlayerOutputRenderer(
+            new PresentationProperties(
+                "en-NZ",
+                PresentationProperties.ColorMode.NONE,
+                false,
+                new PresentationProperties.Prompt(true, true, 150L)));
+
+    String rendered =
+        renderer.render(
+            PlayerOutput.notice(
+                "fallback",
+                "notice.world.entered",
+                java.util.Map.of("worldName", "demo", "characterSuffix", "")));
+
+    assertThat(rendered).isEqualTo("Entered world: demo");
+  }
+
+  @Test
+  void localizedErrorUsesConfiguredLocaleTemplate() {
+    TextPlayerOutputRenderer renderer =
+        new TextPlayerOutputRenderer(
+            new PresentationProperties(
+                "en-NZ",
+                PresentationProperties.ColorMode.NONE,
+                false,
+                new PresentationProperties.Prompt(true, true, 150L)));
+
+    String rendered =
+        renderer.render(
+            PlayerOutput.error(
+                "LOGIN_REQUIRED", "fallback", "error.login-required", java.util.Map.of()));
+
+    assertThat(rendered).isEqualTo("ERROR LOGIN_REQUIRED You must LOGIN before gameplay commands.");
+  }
+
+  @Test
+  void localizedLookLabelsUseConfiguredLocaleTemplate() {
+    TextPlayerOutputRenderer renderer =
+        new TextPlayerOutputRenderer(
+            new PresentationProperties(
+                "fr",
+                PresentationProperties.ColorMode.NONE,
+                false,
+                new PresentationProperties.Prompt(false, true, 150L)));
+
+    String rendered =
+        renderer.render(
+            PlayerOutput.view(
+                new LookViewOutput(
+                    "R-707",
+                    "Galerie",
+                    "Un couloir etroit file vers le sud.",
+                    "Des lampes fument sous les arches de pierre.",
+                    true,
+                    List.of(new LookViewExit("SUD", "porte etroite")),
+                    List.of())));
+
+    assertThat(rendered).contains("Salle : Galerie (ID: R-707)");
+    assertThat(rendered).contains("Court : Un couloir etroit file vers le sud.");
+    assertThat(rendered).contains("Long : Des lampes fument sous les arches de pierre.");
+    assertThat(rendered).contains("Sorties : SUD (porte etroite)");
+    assertThat(rendered).contains("Entites:");
+  }
+
+  @Test
   void renderAllFormatsMultilineNoticeAsCommandBody() {
     TextPlayerOutputRenderer renderer =
         new TextPlayerOutputRenderer(
             new PresentationProperties(
+                "en-NZ",
                 PresentationProperties.ColorMode.NONE,
                 false,
                 new PresentationProperties.Prompt(false, true, 150L)));

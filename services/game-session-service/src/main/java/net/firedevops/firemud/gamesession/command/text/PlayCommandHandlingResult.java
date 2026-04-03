@@ -1,17 +1,22 @@
 package net.firedevops.firemud.gamesession.command.text;
 
+import java.util.List;
 import java.util.Objects;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
+import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 
-/** Result of handling a PLAY command. */
+/** Structured result of handling a PLAY command. */
 public record PlayCommandHandlingResult(
-    CommandEnqueueResult commandResult, String responseText, boolean reconnectRedrawRecommended) {
+    CommandEnqueueResult commandResult,
+    List<PlayerOutput> outputs,
+    boolean reconnectRedrawRecommended) {
 
   public PlayCommandHandlingResult {
     Objects.requireNonNull(commandResult, "commandResult must not be null");
+    outputs = outputs == null ? List.of() : List.copyOf(outputs);
   }
 
-  public PlayCommandHandlingResult(CommandEnqueueResult commandResult, String responseText) {
-    this(commandResult, responseText, false);
+  public PlayCommandHandlingResult(CommandEnqueueResult commandResult, List<PlayerOutput> outputs) {
+    this(commandResult, outputs, false);
   }
 }

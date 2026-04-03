@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamesession.command.text;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.instrument.MeterRegistry;
+import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
@@ -13,7 +14,6 @@ import net.firedevops.firemud.gamesession.client.GameLogicClient;
 import net.firedevops.firemud.gamesession.config.GameLogicProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
-import net.firedevops.firemud.gamesession.presentation.TextPlayerOutputRenderer;
 import net.firedevops.firemud.gamesession.service.CommunicationRecipientDeliveryService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
@@ -40,7 +40,6 @@ public class CommunicationCommandHandler {
   private final GameLogicProperties gameLogicProperties;
   private final SessionContextService sessionContextService;
   private final CommunicationRecipientDeliveryService recipientDeliveryService;
-  private final TextPlayerOutputRenderer playerOutputRenderer;
   private final MeterRegistry meterRegistry;
 
   public CommunicationCommandHandlingResult handle(SessionContext context, TextCommand command) {
@@ -62,7 +61,7 @@ public class CommunicationCommandHandler {
         logFailure(
             "INVALID_ARGUMENT", parsed.errorMessage(), context, tenantTag, command.type(), null);
         return new CommunicationCommandHandlingResult(
-            CommandEnqueueResult.failure("INVALID_ARGUMENT", parsed.errorMessage()), null);
+            CommandEnqueueResult.failure("INVALID_ARGUMENT", parsed.errorMessage()), List.of());
       }
 
       try {
@@ -94,18 +93,18 @@ public class CommunicationCommandHandler {
                   : "UNAVAILABLE";
           logFailure(errorTag, errorMessage, context, tenantTag, command.type(), null);
           return new CommunicationCommandHandlingResult(
-              CommandEnqueueResult.failure("COMMUNICATION_NOT_DELIVERED", errorMessage), null);
+              CommandEnqueueResult.failure("COMMUNICATION_NOT_DELIVERED", errorMessage), List.of());
         }
 
         recipientDeliveryService.deliver(context, response);
 
         return new CommunicationCommandHandlingResult(
-            CommandEnqueueResult.success(), renderSuccessOutput(command, response));
+            CommandEnqueueResult.success(), List.of(renderSuccessOutput(command, response)));
       } catch (RuntimeException ex) {
         logFailure("UNAVAILABLE", "Game Logic unavailable", context, tenantTag, command.type(), ex);
         return new CommunicationCommandHandlingResult(
             CommandEnqueueResult.failure("COMMUNICATION_NOT_DELIVERED", "Game Logic unavailable"),
-            null);
+            List.of());
       }
     }
   }
@@ -193,9 +192,10 @@ public class CommunicationCommandHandler {
         null);
   }
 
-  private String renderSuccessOutput(TextCommand command, SendCommunicationResponse response) {
+  private PlayerOutput renderSuccessOutput(
+      TextCommand command, SendCommunicationResponse response) {
     if (StringUtils.hasText(response.getActorView())) {
-      return playerOutputRenderer.render(PlayerOutput.message(response.getActorView()));
+      return PlayerOutput.message(response.getActorView());
     }
     String fallback =
         switch (command.type()) {
@@ -219,7 +219,7 @@ public class CommunicationCommandHandler {
                   .orElse("Message sent.");
           default -> "Message sent.";
         };
-    return playerOutputRenderer.render(PlayerOutput.message(fallback));
+    return PlayerOutput.message(fallback);
   }
 
   private CommunicationType mapType(TextCommandType type) {

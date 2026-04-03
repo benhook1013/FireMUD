@@ -12,8 +12,8 @@ import net.firedevops.firemud.gamelogic.v1.SendCommunicationResponse;
 import net.firedevops.firemud.gamesession.client.EntityManagementClient;
 import net.firedevops.firemud.gamesession.client.GameLogicClient;
 import net.firedevops.firemud.gamesession.config.GameLogicProperties;
-import net.firedevops.firemud.gamesession.config.PresentationProperties;
-import net.firedevops.firemud.gamesession.presentation.TextPlayerOutputRenderer;
+import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
+import net.firedevops.firemud.gamesession.presentation.PlayerOutputKind;
 import net.firedevops.firemud.gamesession.service.CommunicationRecipientDeliveryService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
@@ -46,11 +46,6 @@ class CommunicationCommandHandlerTest {
             gameLogicProperties,
             sessionContextService,
             recipientDeliveryService,
-            new TextPlayerOutputRenderer(
-                new PresentationProperties(
-                    PresentationProperties.ColorMode.BASIC,
-                    false,
-                    new PresentationProperties.Prompt(false, true, 150L))),
             meterRegistry);
   }
 
@@ -85,7 +80,10 @@ class CommunicationCommandHandlerTest {
                 TextCommandType.SAY, List.of("Hello travelers"), "SAY Hello travelers"));
 
     assertThat(result.commandResult().accepted()).isTrue();
-    assertThat(result.responseText()).isEqualTo("You say, \"Hello travelers\"");
+    assertThat(result.outputs())
+        .extracting(output -> output.kind())
+        .containsExactly(PlayerOutputKind.MESSAGE);
+    assertThat(joinedOutputText(result.outputs())).isEqualTo("You say, \"Hello travelers\"");
     Mockito.verify(gameLogicClient)
         .sendCommunication(
             "22",
@@ -165,5 +163,13 @@ class CommunicationCommandHandlerTest {
     assertThat(result.commandResult().accepted()).isFalse();
     assertThat(result.commandResult().errorCode()).isEqualTo("COMMUNICATION_NOT_DELIVERED");
     assertThat(result.commandResult().errorMessage()).isEqualTo("silenced");
+  }
+
+  private static String joinedOutputText(List<PlayerOutput> outputs) {
+    return outputs.stream()
+        .map(PlayerOutput::text)
+        .filter(text -> text != null && !text.isBlank())
+        .reduce((left, right) -> left + "\n" + right)
+        .orElse(null);
   }
 }

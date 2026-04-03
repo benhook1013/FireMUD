@@ -23,6 +23,8 @@ import net.firedevops.firemud.gamesession.client.AccountClient;
 import net.firedevops.firemud.gamesession.config.DevIsolatedProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
+import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
+import net.firedevops.firemud.gamesession.presentation.PlayerOutputKind;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.CommandService;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContext;
@@ -90,7 +92,10 @@ class LoginCommandHandlerTest {
     LoginCommandHandlingResult result = handler.handle("1", command, false);
 
     assertTrue(result.commandResult().accepted());
-    assertEquals("Logged in as demo@example.com", result.responseText());
+    assertEquals("Logged in as demo@example.com", joinedOutputText(result.outputs()));
+    assertEquals(
+        List.of(PlayerOutputKind.MESSAGE),
+        result.outputs().stream().map(output -> output.kind()).toList());
     verify(accountClient).authenticate(eq("22"), eq("demo@example.com"), eq("swordfish"), eq(""));
     verify(commandService).enqueue("1", command.rawLine(), false);
   }
@@ -107,6 +112,8 @@ class LoginCommandHandlerTest {
 
     assertFalse(result.commandResult().accepted());
     assertEquals("INVALID_ARGUMENT", result.commandResult().errorCode());
+    assertEquals(
+        "ERROR INVALID_ARGUMENT sessionId must be numeric", joinedOutputText(result.outputs()));
     verify(gameInstanceRepository, never()).findById(anyLong());
     verify(commandService, never()).enqueue(anyString(), anyString(), anyBoolean());
   }
@@ -124,6 +131,7 @@ class LoginCommandHandlerTest {
 
     assertFalse(result.commandResult().accepted());
     assertEquals("SESSION_NOT_FOUND", result.commandResult().errorCode());
+    assertEquals("ERROR SESSION_NOT_FOUND Session not found", joinedOutputText(result.outputs()));
     verify(commandService, never()).enqueue(anyString(), anyString(), anyBoolean());
   }
 
@@ -139,6 +147,12 @@ class LoginCommandHandlerTest {
     assertEquals(
         LoginCommandConstants.PROMPT_MODE_UNSUPPORTED_MESSAGE,
         result.commandResult().errorMessage());
+    assertEquals(
+        "ERROR "
+            + LoginCommandConstants.PROMPT_MODE_UNSUPPORTED_CODE
+            + " "
+            + LoginCommandConstants.PROMPT_MODE_UNSUPPORTED_MESSAGE,
+        joinedOutputText(result.outputs()));
   }
 
   @Test
@@ -152,7 +166,7 @@ class LoginCommandHandlerTest {
     LoginCommandHandlingResult result = handler.handle("1", command, false);
 
     assertTrue(result.commandResult().accepted());
-    assertEquals("Logged in as first-party account 77", result.responseText());
+    assertEquals("Logged in as first-party account 77", joinedOutputText(result.outputs()));
     verify(accountClient, never()).authenticate(anyString(), anyString(), anyString(), anyString());
     verify(commandService).enqueue("1", "LOGIN", false);
   }
@@ -277,6 +291,9 @@ class LoginCommandHandlerTest {
 
     assertFalse(result.commandResult().accepted());
     assertEquals("ACCOUNT_MISMATCH", result.commandResult().errorCode());
+    assertEquals(
+        "ERROR ACCOUNT_MISMATCH " + LoginCommandConstants.ACCOUNT_MISMATCH_MESSAGE,
+        joinedOutputText(result.outputs()));
     verify(sessionContextService, never())
         .save(any(net.firedevops.firemud.gamesession.service.SessionContext.class));
   }
@@ -305,6 +322,8 @@ class LoginCommandHandlerTest {
 
     assertFalse(result.commandResult().accepted());
     assertEquals("INVALID_CREDENTIALS", result.commandResult().errorCode());
+    assertEquals(
+        "ERROR INVALID_CREDENTIALS Invalid credentials", joinedOutputText(result.outputs()));
   }
 
   @Test
@@ -331,6 +350,7 @@ class LoginCommandHandlerTest {
 
     assertFalse(result.commandResult().accepted());
     assertEquals("ACCOUNT_LOCKED", result.commandResult().errorCode());
+    assertEquals("ERROR ACCOUNT_LOCKED Locked out", joinedOutputText(result.outputs()));
   }
 
   @Test
@@ -358,6 +378,7 @@ class LoginCommandHandlerTest {
     assertFalse(result.commandResult().accepted());
     assertEquals("UPSTREAM_FAILURE", result.commandResult().errorCode());
     assertEquals("Backend unreachable", result.commandResult().errorMessage());
+    assertEquals("ERROR UPSTREAM_FAILURE Backend unreachable", joinedOutputText(result.outputs()));
   }
 
   @Test
@@ -380,6 +401,7 @@ class LoginCommandHandlerTest {
 
     assertFalse(result.commandResult().accepted());
     assertEquals("OTP_REQUIRED", result.commandResult().errorCode());
+    assertEquals("ERROR OTP_REQUIRED Invalid 2FA code", joinedOutputText(result.outputs()));
   }
 
   @Test
@@ -448,5 +470,13 @@ class LoginCommandHandlerTest {
     instance.setTenantId(tenantId);
     instance.setOwnerAccountId(ownerAccountId);
     return instance;
+  }
+
+  private static String joinedOutputText(List<PlayerOutput> outputs) {
+    return outputs.stream()
+        .map(PlayerOutput::text)
+        .filter(text -> text != null && !text.isBlank())
+        .reduce((left, right) -> left + "\n" + right)
+        .orElse(null);
   }
 }

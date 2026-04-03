@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamesession.command.text;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -66,7 +67,13 @@ class MoveCommandHandlerTest {
         .thenReturn(
             MoveResult.newBuilder().setSuccess(true).setDestinationLook(destinationLook).build());
     PlayerOutput destinationOutput = PlayerOutput.view("Crafting Hall of Ember");
-    when(lookCommandHandler.toPlayerOutput(any(SessionContext.class), Mockito.eq(destinationLook)))
+    when(lookCommandHandler.toPlayerOutput(
+            any(SessionContext.class),
+            Mockito.eq(destinationLook),
+            Mockito.eq(true),
+            Mockito.eq(
+                net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
+                    .MOVE_REFRESH)))
         .thenReturn(destinationOutput);
 
     MoveCommandHandlingResult result =
@@ -81,7 +88,13 @@ class MoveCommandHandlerTest {
     assertThat(contextCaptor.getValue().roomInstanceId()).isEqualTo("R-2045");
     assertThat(contextCaptor.getValue().loginName()).isEqualTo("emberline@example.com");
     assertThat(contextCaptor.getValue().characterName()).isEqualTo("Emberline");
-    verify(lookCommandHandler).toPlayerOutput(contextCaptor.getValue(), destinationLook);
+    verify(lookCommandHandler)
+        .toPlayerOutput(
+            contextCaptor.getValue(),
+            destinationLook,
+            true,
+            net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
+                .MOVE_REFRESH);
   }
 
   @Test
@@ -104,7 +117,7 @@ class MoveCommandHandlerTest {
     assertThat(result.commandResult().accepted()).isFalse();
     assertThat(result.commandResult().errorCode()).isEqualTo("INVALID_EXIT");
     verify(sessionContextService, never()).save(any());
-    verify(lookCommandHandler, never()).toPlayerOutput(any(), any());
+    verify(lookCommandHandler, never()).toPlayerOutput(any(), any(), anyBoolean(), any());
   }
 
   @Test
@@ -138,6 +151,6 @@ class MoveCommandHandlerTest {
     assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
     assertThat(result.responseOutput()).isNull();
     verify(sessionContextService).save(any(SessionContext.class));
-    verify(lookCommandHandler, never()).toPlayerOutput(any(), any());
+    verify(lookCommandHandler, never()).toPlayerOutput(any(), any(), anyBoolean(), any());
   }
 }

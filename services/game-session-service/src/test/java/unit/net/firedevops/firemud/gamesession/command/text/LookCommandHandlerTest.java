@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamesession.command.text;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -58,9 +59,26 @@ class LookCommandHandlerTest {
             String.valueOf(sessionContext.sessionId())))
         .thenReturn(Optional.of(sessionContext));
     when(gameLogicClient.resolveLook("22", "1", "911", "room-42")).thenReturn(lookResult);
-    when(lookTextRenderer.render(lookResult, true)).thenReturn("OK LOOK text");
-    when(lookTextRenderer.render(lookResult, false)).thenReturn("OK QUICKLOOK text");
-    when(lookTextRenderer.toPlayerOutput(lookResult, false))
+    when(lookTextRenderer.render(
+            eq(lookResult),
+            eq(true),
+            any(
+                net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
+                    .class)))
+        .thenReturn("OK LOOK text");
+    when(lookTextRenderer.render(
+            eq(lookResult),
+            eq(false),
+            any(
+                net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
+                    .class)))
+        .thenReturn("OK QUICKLOOK text");
+    when(lookTextRenderer.toPlayerOutput(
+            eq(lookResult),
+            eq(false),
+            any(
+                net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
+                    .class)))
         .thenReturn(PlayerOutput.view("OK QUICKLOOK text"));
   }
 
@@ -99,7 +117,11 @@ class LookCommandHandlerTest {
   void quickLookUsesSharedLookupButShorterRenderVariant() {
     assertThat(handler.describePlayerOutput("123", false))
         .isEqualTo(PlayerOutput.view("OK QUICKLOOK text"));
-    verify(lookTextRenderer).toPlayerOutput(lookResult, false);
+    verify(lookTextRenderer)
+        .toPlayerOutput(
+            lookResult,
+            false,
+            net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason.QUICKLOOK);
     verify(lookCacheService)
         .cache(
             eq(22L),
@@ -142,7 +164,12 @@ class LookCommandHandlerTest {
     assertThat(handler.cachedLook("22", "1")).contains("OK LOOK\ncached text\n\n");
     Mockito.verifyNoInteractions(gameLogicClient);
     Mockito.clearInvocations(gameLogicClient);
-    when(lookTextRenderer.render(lookResult, true)).thenReturn("fresh text");
+    when(lookTextRenderer.render(
+            lookResult,
+            true,
+            net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
+                .EXPLICIT_LOOK))
+        .thenReturn("fresh text");
     assertEquals("fresh text", handler.describe("123"));
     verify(gameLogicClient).resolveLook("22", "1", "911", "room-42");
   }
