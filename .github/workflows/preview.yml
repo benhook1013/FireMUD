@@ -149,7 +149,9 @@ jobs:
 
   preview-deploy:
     name: Deploy Preview Release
-    runs-on: ubuntu-latest
+    runs-on:
+      - self-hosted
+      - preview
     needs: preview-plan
     if: ${{ needs.preview-plan.outputs.eligible == 'true' && needs.preview-plan.outputs.action == 'deploy' }}
     environment: pr-preview
@@ -327,7 +329,9 @@ jobs:
 
   preview-destroy:
     name: Destroy Preview Release
-    runs-on: ubuntu-latest
+    runs-on:
+      - self-hosted
+      - preview
     needs: preview-plan
     if: ${{ needs.preview-plan.outputs.eligible == 'true' && needs.preview-plan.outputs.action == 'destroy' }}
     environment: pr-preview
