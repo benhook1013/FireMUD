@@ -98,8 +98,8 @@ def build_outputs() -> tuple[dict, str]:
         markdown_lines.extend(
             [
                 "",
-                "| Key | Description | Default | Valid values or range | Current scope | Future scope | Hot reloadable | Advanced | Example |",
-                "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+                "| Key | Group | Description | Default | Valid values or range | Current scope | Future scope | Hot reloadable | Advanced | Example |",
+                "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
             ]
         )
 
@@ -149,7 +149,7 @@ def build_outputs() -> tuple[dict, str]:
                 valid_values_or_range = metadata_node["type"]
 
             markdown_lines.append(
-                f"| `{property_name}` | {metadata_node['description']} | {render_value(metadata_node.get('defaultValue'))} | {valid_values_or_range} | `{property_spec['scope']}` | `{property_spec['futureScope']}` | `{'yes' if property_spec['hotReloadable'] else 'no'}` | `{'yes' if property_spec['advanced'] else 'no'}` | {render_value(property_spec.get('exampleValue'))} |"
+                f"| `{property_name}` | `{property_spec['group']}` | {metadata_node['description']} | {render_value(metadata_node.get('defaultValue'))} | {valid_values_or_range} | `{property_spec['scope']}` | `{property_spec['futureScope']}` | `{'yes' if property_spec['hotReloadable'] else 'no'}` | `{'yes' if property_spec['advanced'] else 'no'}` | {render_value(property_spec.get('exampleValue'))} |"
             )
 
     extra_property_specs = sorted(set(property_specs.keys()) - seen_property_names)

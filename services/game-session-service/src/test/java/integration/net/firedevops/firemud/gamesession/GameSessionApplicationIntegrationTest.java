@@ -113,7 +113,10 @@ class GameSessionApplicationIntegrationTest {
                         new ScopedSettingsOverrides.ReconnectionOverride.PolicyOverride(
                             240_000L, null),
                         null),
-                    null,
+                    new ScopedSettingsOverrides.CommunicationOverride(
+                        640,
+                        new ScopedSettingsOverrides.CommunicationOverride.DefaultsOverride(
+                            true, true, true, false)),
                     new ScopedSettingsOverrides.PresentationOverride(null, null, true, null),
                     null,
                     new ScopedSettingsOverrides.WorldTopologyOverride(
@@ -127,8 +130,7 @@ class GameSessionApplicationIntegrationTest {
                         null,
                         ScopedSettingsOverrides.PresentationOverride.ColorMode.BASIC,
                         null,
-                        new ScopedSettingsOverrides.PresentationOverride.PromptOverride(
-                            null, null, 275L)),
+                        null),
                     new ScopedSettingsOverrides.MovementOverride(false),
                     new ScopedSettingsOverrides.WorldTopologyOverride(null, true))));
 
@@ -156,13 +158,22 @@ class GameSessionApplicationIntegrationTest {
     assertThat(body).contains("\"gameInstanceId\":7");
     assertThat(body).contains("\"briefEnabledByDefault\":true");
     assertThat(body).contains("\"defaultColorMode\":\"BASIC\"");
-    assertThat(body).contains("\"coalesceWindowMs\":275");
+    assertThat(body).contains("\"prompt\":");
+    assertThat(body).contains("\"enabled\":true");
+    assertThat(body).contains("\"transcriptRendering\":");
+    assertThat(body).contains("\"reconnectionPolicy\":");
+    assertThat(body).contains("\"reconnectBuffer\":");
     assertThat(body).contains("\"postMoveLookEnabled\":false");
     assertThat(body).contains("\"scopeModel\":\"REGION_AREA_AND_MAP\"");
     assertThat(body).contains("\"regionsEnabled\":true");
+    assertThat(body).contains("\"communicationOverrides\":");
+    assertThat(body).contains("\"maxMessageLength\":640");
+    assertThat(body).contains("\"whisperObserverMetadataEnabled\":false");
     assertThat(body).contains("\"sources\":[\"operatorDefaults\",\"tenantPersistedOverride:42\"");
     assertThat(body)
         .contains("\"sources\":[\"operatorDefaults\",\"gameInstancePersistedOverride:7\"]");
+    assertThat(body).contains("\"sources\":[\"tenantPersistedOverride:42\"]");
     assertThat(body).contains("\"resumeWindowMs\":240000");
+    assertThat(body).contains("\"minMessages\":8");
   }
 }

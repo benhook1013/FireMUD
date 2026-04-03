@@ -44,6 +44,8 @@ The generated reference carries the current defaults, descriptions, valid values
 - Tenant/game overrides for these surfaced domains now come from the shared Game Design settings authority rather than service-local file/env maps.
 - The generated per-key schema/reference for those domains is the canonical operator/admin-facing documentation surface; this service doc keeps only the Game Session-specific ownership and runtime notes.
 - The current resolved result of that bounded read surface is available for operator/debug inspection at `/actuator/settings/effective`. With a persisted `sessionId` it resolves settings against the stored session scope; without one it can synthesize scope from query parameters such as `tenantId`, `gameInstanceId`, and `bootstrapGameInstanceId`.
+- That response now also exposes a first-class `prompt` section plus the scoped shared `communicationOverrides` view Game Session sees for the same scope, so the 02.10 communication/prompt neighborhood is inspectable from one session-oriented surface. The fully merged effective `communication` result remains owned by Game Logic at `/actuator/settings/effective/communication`.
+- In addition to the raw domain payloads, that response now includes normalized subgroup views for the live room-view/transcript seams so operators can inspect `transcriptRendering`, `reconnectionPolicy`, and `reconnectBuffer` directly without reverse-mapping service property classes.
 - The current precedence inside Game Session is:
 
 `firemud.*` operator defaults, then tenant-scoped persisted overrides from Game Design, then game-instance-scoped persisted overrides from Game Design.

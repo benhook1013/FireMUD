@@ -3,6 +3,8 @@ package net.firedevops.firemud.gamesession.controller;
 import java.util.List;
 import net.firedevops.firemud.common.ApiResponse;
 import net.firedevops.firemud.common.config.FiremudReconnectionProperties;
+import net.firedevops.firemud.common.settings.ScopedSettingsOverrides;
+import net.firedevops.firemud.common.settings.SharedEffectiveSettingsResolver;
 import net.firedevops.firemud.gamesession.config.EffectiveReconnectionSettingsResolver;
 import net.firedevops.firemud.gamesession.config.EffectiveSettingsResolver;
 import net.firedevops.firemud.gamesession.config.MovementProperties;
@@ -24,14 +26,17 @@ import org.springframework.web.server.ResponseStatusException;
 public class EffectiveSettingsController {
   private final EffectiveSettingsResolver settingsResolver;
   private final EffectiveReconnectionSettingsResolver reconnectionSettingsResolver;
+  private final SharedEffectiveSettingsResolver sharedEffectiveSettingsResolver;
   private final SessionContextService sessionContextService;
 
   public EffectiveSettingsController(
       EffectiveSettingsResolver settingsResolver,
       EffectiveReconnectionSettingsResolver reconnectionSettingsResolver,
+      SharedEffectiveSettingsResolver sharedEffectiveSettingsResolver,
       SessionContextService sessionContextService) {
     this.settingsResolver = settingsResolver;
     this.reconnectionSettingsResolver = reconnectionSettingsResolver;
+    this.sharedEffectiveSettingsResolver = sharedEffectiveSettingsResolver;
     this.sessionContextService = sessionContextService;
   }
 
@@ -51,6 +56,15 @@ public class EffectiveSettingsController {
         settingsResolver.resolvedWorldTopology(resolution.context());
     EffectiveReconnectionSettingsResolver.ResolvedValue<FiremudReconnectionProperties>
         reconnection = reconnectionSettingsResolver.resolvedReconnection(resolution.context());
+    Long effectiveGameInstanceId = effectiveGameInstanceId(resolution.context());
+    SharedEffectiveSettingsResolver.ResolvedScopedSettings sharedOverrides =
+        resolution.context().tenantId() > 0L
+            ? sharedEffectiveSettingsResolver.resolve(
+                resolution.context().tenantId(), effectiveGameInstanceId)
+            : new SharedEffectiveSettingsResolver.ResolvedScopedSettings(
+                ScopedSettingsOverrides.empty(),
+                ScopedSettingsOverrides.empty(),
+                ScopedSettingsOverrides.empty());
     EffectiveSettingsResponse response =
         new EffectiveSettingsResponse(
             new Scope(
@@ -61,9 +75,21 @@ public class EffectiveSettingsController {
                 resolution.context().bootstrapGameInstanceId(),
                 resolution.context().localeTag()),
             new DomainSettings<>(presentation.effective(), presentation.sources()),
+            new DomainSettings<>(
+                PromptSettings.from(presentation.effective().prompt()), presentation.sources()),
+            new DomainSettings<>(
+                TranscriptRenderingSettings.from(presentation.effective()), presentation.sources()),
             new DomainSettings<>(reconnection.effective(), reconnection.sources()),
+            new DomainSettings<>(reconnection.effective().policy(), reconnection.sources()),
+            new DomainSettings<>(reconnection.effective().buffer(), reconnection.sources()),
             new DomainSettings<>(movement.effective(), movement.sources()),
-            new DomainSettings<>(worldTopology.effective(), worldTopology.sources()));
+            new DomainSettings<>(worldTopology.effective(), worldTopology.sources()),
+            new ScopedOverrideSettings<>(
+                sharedOverrides.effectiveOverrides().communication(),
+                sharedOverrides.sourcesFor(
+                    ScopedSettingsOverrides.SettingsDomain.COMMUNICATION,
+                    resolution.context().tenantId(),
+                    effectiveGameInstanceId)));
     return ResponseEntity.ok(ApiResponse.success(response));
   }
 
@@ -105,9 +131,15 @@ public class EffectiveSettingsController {
   public record EffectiveSettingsResponse(
       Scope scope,
       DomainSettings<PresentationProperties> presentation,
+      DomainSettings<PromptSettings> prompt,
+      DomainSettings<TranscriptRenderingSettings> transcriptRendering,
       DomainSettings<FiremudReconnectionProperties> reconnection,
+      DomainSettings<FiremudReconnectionProperties.Policy> reconnectionPolicy,
+      DomainSettings<FiremudReconnectionProperties.Buffer> reconnectBuffer,
       DomainSettings<MovementProperties> movement,
-      DomainSettings<WorldTopologyProperties> worldTopology) {}
+      DomainSettings<WorldTopologyProperties> worldTopology,
+      ScopedOverrideSettings<ScopedSettingsOverrides.CommunicationOverride>
+          communicationOverrides) {}
 
   public record Scope(
       boolean persistedSession,
@@ -121,5 +153,41 @@ public class EffectiveSettingsController {
     public DomainSettings {
       sources = sources == null ? List.of() : List.copyOf(sources);
     }
+  }
+
+  public record ScopedOverrideSettings<T>(T effectiveOverride, List<String> sources) {
+    public ScopedOverrideSettings {
+      sources = sources == null ? List.of() : List.copyOf(sources);
+    }
+  }
+
+  public record PromptSettings(
+      boolean enabled, boolean emitAfterReconnectRestore, long coalesceWindowMs) {
+    static PromptSettings from(PresentationProperties.Prompt prompt) {
+      return new PromptSettings(
+          prompt.enabled(), prompt.emitAfterReconnectRestore(), prompt.coalesceWindowMs());
+    }
+  }
+
+  public record TranscriptRenderingSettings(
+      String defaultLocaleTag,
+      PresentationProperties.ColorMode defaultColorMode,
+      boolean briefEnabledByDefault) {
+    static TranscriptRenderingSettings from(PresentationProperties presentation) {
+      return new TranscriptRenderingSettings(
+          presentation.defaultLocaleTag(),
+          presentation.defaultColorMode(),
+          presentation.briefEnabledByDefault());
+    }
+  }
+
+  private Long effectiveGameInstanceId(SessionContext context) {
+    if (context == null) {
+      return null;
+    }
+    if (context.gameInstanceId() > 0L) {
+      return context.gameInstanceId();
+    }
+    return context.bootstrapGameInstanceId() > 0L ? context.bootstrapGameInstanceId() : null;
   }
 }
