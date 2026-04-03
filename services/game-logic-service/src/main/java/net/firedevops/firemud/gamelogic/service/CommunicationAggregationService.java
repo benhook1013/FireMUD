@@ -50,6 +50,12 @@ public class CommunicationAggregationService {
             .setType(request.getType())
             .setMessage(normalizedText);
 
+    if (!communicationProperties.enabled(request.getType())) {
+      return errorResponse(
+          builder,
+          "COMMUNICATION_DISABLED",
+          request.getType().name() + " is disabled by operator policy");
+    }
     if (normalizedText.isBlank()) {
       return errorResponse(builder, "INVALID_ARGUMENT", "Message must not be empty");
     }
@@ -254,6 +260,9 @@ public class CommunicationAggregationService {
       String targetId,
       ListRoomEntitiesResponse roomEntities,
       String renderedText) {
+    if (!communicationProperties.defaults().whisperObserverMetadataEnabled()) {
+      return List.of();
+    }
     return roomEntities.getEntitiesList().stream()
         .filter(entity -> !entity.getEntityId().equals(speakerId))
         .filter(entity -> !entity.getEntityId().equals(targetId))

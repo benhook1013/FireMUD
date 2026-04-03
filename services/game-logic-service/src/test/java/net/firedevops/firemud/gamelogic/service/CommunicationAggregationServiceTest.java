@@ -50,6 +50,32 @@ class CommunicationAggregationServiceTest {
   }
 
   @Test
+  void disabledSayReturnsApplicationErrorWithoutCallingSocialService() {
+    service =
+        new CommunicationAggregationService(
+            socialStub,
+            entityStub,
+            new CommunicationProperties(
+                512, new CommunicationProperties.Defaults(false, true, true, true)),
+            meterRegistry);
+
+    SendCommunicationResponse resp =
+        service.send(
+            SendCommunicationRequest.newBuilder()
+                .setTenantId("tenant-1")
+                .setSessionId("sess-1")
+                .setCharacterId("player-0")
+                .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("room-7").build())
+                .setType(CommunicationType.SAY)
+                .setText("Hello travelers")
+                .build());
+
+    assertThat(resp.getSuccess()).isFalse();
+    assertThat(resp.getError().getCode()).isEqualTo("COMMUNICATION_DISABLED");
+    assertThat(resp.getError().getMessage()).isEqualTo("SAY is disabled by operator policy");
+  }
+
+  @Test
   void sayIncludesDeliveryMetadata() {
     ListRoomEntitiesResponse roomEntities =
         ListRoomEntitiesResponse.newBuilder()
@@ -208,6 +234,61 @@ class CommunicationAggregationServiceTest {
                   .isEqualTo(CommunicationPerception.COMMUNICATION_PERCEPTION_METADATA_ONLY);
               assertThat(view.getRenderedText()).isEqualTo("Emberline whispers something to Sora.");
             });
+  }
+
+  @Test
+  void whisperObserverMetadataCanBeDisabled() {
+    service =
+        new CommunicationAggregationService(
+            socialStub,
+            entityStub,
+            new CommunicationProperties(
+                512, new CommunicationProperties.Defaults(true, true, true, false)),
+            meterRegistry);
+    ListRoomEntitiesResponse roomEntities =
+        ListRoomEntitiesResponse.newBuilder()
+            .addEntities(
+                RoomEntity.newBuilder()
+                    .setEntityId("player-0")
+                    .setDisplayName("Emberline")
+                    .setEntityType(EntityType.PLAYER)
+                    .build())
+            .addEntities(
+                RoomEntity.newBuilder()
+                    .setEntityId("player-1")
+                    .setDisplayName("Sora")
+                    .setEntityType(EntityType.PLAYER)
+                    .build())
+            .addEntities(
+                RoomEntity.newBuilder()
+                    .setEntityId("player-2")
+                    .setDisplayName("Nyx")
+                    .setEntityType(EntityType.PLAYER)
+                    .addStateFlags("observer_metadata_only")
+                    .build())
+            .build();
+    when(entityStub.listRoomEntities(any())).thenReturn(roomEntities);
+    when(socialStub.sendMessage(any()))
+        .thenReturn(SendMessageResponse.newBuilder().setSuccess(true).build());
+
+    SendCommunicationResponse resp =
+        service.send(
+            SendCommunicationRequest.newBuilder()
+                .setTenantId("tenant-1")
+                .setSessionId("sess-1")
+                .setCharacterId("player-0")
+                .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("room-7").build())
+                .setType(CommunicationType.WHISPER)
+                .setTargetCharacterName("Sora")
+                .setText("Keep quiet")
+                .build());
+
+    assertThat(resp.getSuccess()).isTrue();
+    assertThat(resp.getRecipientViewsList())
+        .filteredOn(
+            view ->
+                view.getRole() == CommunicationRecipientRole.COMMUNICATION_RECIPIENT_ROLE_OBSERVER)
+        .isEmpty();
   }
 
   @Test

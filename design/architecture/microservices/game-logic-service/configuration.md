@@ -21,8 +21,12 @@ The communication settings domain is now generation-ready through typed configur
 | Key | Purpose | Default |
 | --- | ------- | ------- |
 | `firemud.communication.max-message-length` | Maximum number of characters accepted for a single communication message before the service rejects it. | `512` |
+| `firemud.communication.defaults.say-enabled` | Whether the built-in `SAY` mode is enabled in the shared communication pipeline. | `true` |
+| `firemud.communication.defaults.whisper-enabled` | Whether the built-in `WHISPER` mode is enabled in the shared communication pipeline. | `true` |
+| `firemud.communication.defaults.tell-enabled` | Whether the built-in `TELL` mode is enabled in the shared communication pipeline. | `true` |
+| `firemud.communication.defaults.whisper-observer-metadata-enabled` | Whether flagged whisper observers receive metadata-only bystander views by default. | `true` |
 
-`firemud.communication.max-message-length` is currently file/env-backed operator configuration. The settings metadata lives alongside the code so generated reference docs can track the same canonical default.
+These settings are currently file/env-backed operator configuration. The settings metadata lives alongside the code so generated reference docs can track the same canonical defaults.
 
 ## Dependent-Service Variables
 
