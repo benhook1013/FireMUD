@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamesession.presentation;
 
 import java.util.stream.Collectors;
 import net.firedevops.firemud.gamesession.command.text.TextCommand;
+import net.firedevops.firemud.gamesession.command.text.TextCommandType;
 import net.firedevops.firemud.gamesession.config.PresentationProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -81,6 +82,17 @@ public class TextPlayerOutputRenderer {
       java.util.List<PlayerOutput> outputs,
       String localeTag,
       PresentationProperties effectivePresentationProperties) {
+    return renderAllForCommandType(
+        command.type(), result, outputs, localeTag, effectivePresentationProperties);
+  }
+
+  public String renderAllForCommandType(
+      TextCommandType commandType,
+      CommandEnqueueResult result,
+      java.util.List<PlayerOutput> outputs,
+      String localeTag,
+      PresentationProperties effectivePresentationProperties) {
+    TextCommand command = syntheticCommand(commandType);
     if (!result.accepted()) {
       String renderedError =
           outputs.stream()
@@ -132,6 +144,19 @@ public class TextPlayerOutputRenderer {
       return appendPrompt(body, prompt, true);
     }
     return appendPrompt("OK " + commandLabel + "\n" + body + "\n\n", prompt, false);
+  }
+
+  public String renderSuccessfulForCommandType(
+      TextCommandType commandType,
+      java.util.List<PlayerOutput> outputs,
+      String localeTag,
+      PresentationProperties effectivePresentationProperties) {
+    return renderAllForCommandType(
+        commandType,
+        CommandEnqueueResult.success(),
+        outputs,
+        localeTag,
+        effectivePresentationProperties);
   }
 
   private String renderLookView(
@@ -338,5 +363,9 @@ public class TextPlayerOutputRenderer {
       return true;
     }
     return result.briefRenderingHint() == LookViewOutput.BriefRenderingHint.PREFER_BRIEF;
+  }
+
+  private TextCommand syntheticCommand(TextCommandType commandType) {
+    return new TextCommand(commandType, java.util.List.of(), commandType.name());
   }
 }

@@ -31,14 +31,10 @@ public class ReactiveRequestLoggingFilter implements WebFilter, Ordered {
   public Mono<Void> filter(ServerWebExchange exchange, WebFilterChain chain) {
     ServerHttpRequest request = exchange.getRequest();
     String correlationId =
-        resolveCorrelationId(
-            request.getHeaders().getFirst(ServletRequestLoggingFilter.CORRELATION_HEADER));
+        resolveCorrelationId(request.getHeaders().getFirst(RequestLoggingHeaders.CORRELATION_ID));
     String traceId = currentTraceId();
     long start = System.currentTimeMillis();
-    exchange
-        .getResponse()
-        .getHeaders()
-        .set(ServletRequestLoggingFilter.CORRELATION_HEADER, correlationId);
+    exchange.getResponse().getHeaders().set(RequestLoggingHeaders.CORRELATION_ID, correlationId);
 
     logger.info(
         "HTTP request started method={} path={} service={} serviceInstanceId={} correlationId={} traceId={}",

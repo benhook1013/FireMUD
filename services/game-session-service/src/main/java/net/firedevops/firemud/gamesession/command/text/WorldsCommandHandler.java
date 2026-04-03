@@ -13,10 +13,6 @@ public class WorldsCommandHandler {
     this.worldCatalog = Objects.requireNonNull(worldCatalog, "worldCatalog must not be null");
   }
 
-  public String describe() {
-    return worldCatalog.describeWorlds();
-  }
-
   public WorldsViewOutput browseView() {
     return worldCatalog.browseView();
   }

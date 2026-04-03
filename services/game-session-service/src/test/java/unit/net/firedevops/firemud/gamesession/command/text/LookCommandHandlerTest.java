@@ -23,7 +23,9 @@ import net.firedevops.firemud.gamesession.config.GameSessionSettingsOverridesPro
 import net.firedevops.firemud.gamesession.config.MovementProperties;
 import net.firedevops.firemud.gamesession.config.PresentationProperties;
 import net.firedevops.firemud.gamesession.config.WorldTopologyProperties;
+import net.firedevops.firemud.gamesession.presentation.LookViewOutput;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
+import net.firedevops.firemud.gamesession.presentation.TextPlayerOutputRenderer;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.shared.v1.RoomInstanceRef;
@@ -41,6 +43,8 @@ class LookCommandHandlerTest {
   private final DevIsolatedProperties devIsolatedProperties = new DevIsolatedProperties(false);
   private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
   private final EffectiveSettingsResolver settingsResolver = defaultSettingsResolver();
+  private final TextPlayerOutputRenderer outputRenderer =
+      new TextPlayerOutputRenderer(new PresentationProperties());
   private final LookCommandHandler handler =
       new LookCommandHandler(
           gameLogicClient,
@@ -50,7 +54,8 @@ class LookCommandHandlerTest {
           settingsResolver,
           meterRegistry,
           lookCacheService,
-          devIsolatedProperties);
+          devIsolatedProperties,
+          outputRenderer);
   private final SessionContext sessionContext =
       new SessionContext(1L, 22L, 123L, 911L, 0L, "room-42", "jwt");
   private final LookResult lookResult =
@@ -66,40 +71,6 @@ class LookCommandHandlerTest {
             String.valueOf(sessionContext.sessionId())))
         .thenReturn(Optional.of(sessionContext));
     when(gameLogicClient.resolveLook("22", "1", "911", "room-42", "")).thenReturn(lookResult);
-    when(lookTextRenderer.render(
-            eq(lookResult),
-            eq(true),
-            any(
-                net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
-                    .class)))
-        .thenReturn("OK LOOK text");
-    when(lookTextRenderer.render(
-            eq(lookResult),
-            eq(true),
-            any(net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason.class),
-            any(
-                net.firedevops.firemud.gamesession.presentation.LookViewOutput.BriefRenderingHint
-                    .class),
-            any(),
-            any()))
-        .thenReturn("OK LOOK text");
-    when(lookTextRenderer.render(
-            eq(lookResult),
-            eq(false),
-            any(
-                net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
-                    .class)))
-        .thenReturn("OK QUICKLOOK text");
-    when(lookTextRenderer.render(
-            eq(lookResult),
-            eq(false),
-            any(net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason.class),
-            any(
-                net.firedevops.firemud.gamesession.presentation.LookViewOutput.BriefRenderingHint
-                    .class),
-            any(),
-            any()))
-        .thenReturn("OK QUICKLOOK text");
     when(lookTextRenderer.toPlayerOutput(
             eq(lookResult),
             eq(false),
@@ -107,12 +78,40 @@ class LookCommandHandlerTest {
             any(
                 net.firedevops.firemud.gamesession.presentation.LookViewOutput.BriefRenderingHint
                     .class)))
-        .thenReturn(PlayerOutput.view("OK QUICKLOOK text"));
+        .thenReturn(
+            PlayerOutput.view(
+                new LookViewOutput(
+                    "1021",
+                    "Quick Hall",
+                    "Quick hall short",
+                    "Quick hall long",
+                    false,
+                    LookViewOutput.RefreshReason.QUICKLOOK,
+                    java.util.List.of(),
+                    java.util.List.of())));
+    when(lookTextRenderer.toPlayerOutput(
+            eq(lookResult),
+            eq(true),
+            any(LookViewOutput.RefreshReason.class),
+            any(LookViewOutput.BriefRenderingHint.class)))
+        .thenReturn(
+            PlayerOutput.view(
+                new LookViewOutput(
+                    "1021",
+                    "Login Hall",
+                    "OK LOOK text",
+                    "Detailed look text",
+                    true,
+                    LookViewOutput.RefreshReason.EXPLICIT_LOOK,
+                    java.util.List.of(),
+                    java.util.List.of())));
   }
 
   @Test
-  void returnsRendererOutput() {
-    assertEquals("OK LOOK text", handler.describe("123"));
+  void returnsStructuredLookOutput() {
+    PlayerOutput output = handler.describePlayerOutput("123", true);
+
+    assertThat(output.payload()).isInstanceOf(LookViewOutput.class);
     Counter invocations =
         meterRegistry.get("gamesession.command.look.invocations").tag("tenantId", "22").counter();
     assertEquals(1.0, invocations.count());
@@ -123,8 +122,8 @@ class LookCommandHandlerTest {
     StatusRuntimeException worldDown =
         new StatusRuntimeException(Status.UNAVAILABLE.withDescription("WorldManagement: down"));
     when(gameLogicClient.resolveLook("22", "1", "911", "room-42", "")).thenThrow(worldDown);
-    String response = handler.describe("123");
-    assertEquals("ERROR WORLD_UNAVAILABLE WorldManagement: down", response);
+    PlayerOutput response = handler.describePlayerOutput("123", true);
+    assertEquals("ERROR WORLD_UNAVAILABLE WorldManagement: down", outputRenderer.render(response));
     Counter failures =
         meterRegistry
             .get("gamesession.command.look.failures")
@@ -136,15 +135,41 @@ class LookCommandHandlerTest {
 
   @Test
   void cachesRenderedLook() {
-    handler.describe("123");
+    handler.describePlayerOutput("123", true);
     verify(lookCacheService)
-        .cache(eq(22L), eq(1L), eq("1021"), eq("OK LOOK text"), eq("OK LOOK\nOK LOOK text\n\n"));
+        .cache(
+            eq(22L),
+            eq(1L),
+            eq("1021"),
+            eq(
+                "Room: Login Hall (ID: 1021)\n"
+                    + "Short: OK LOOK text\n"
+                    + "Long: Detailed look text\n"
+                    + "Exits: \n"
+                    + "Entities:"),
+            eq(
+                "OK LOOK\n"
+                    + "Room: Login Hall (ID: 1021)\n"
+                    + "Short: OK LOOK text\n"
+                    + "Long: Detailed look text\n"
+                    + "Exits: \n"
+                    + "Entities:\n\n"));
   }
 
   @Test
   void quickLookUsesSharedLookupButShorterRenderVariant() {
     assertThat(handler.describePlayerOutput("123", false))
-        .isEqualTo(PlayerOutput.view("OK QUICKLOOK text"));
+        .isEqualTo(
+            PlayerOutput.view(
+                new LookViewOutput(
+                    "1021",
+                    "Quick Hall",
+                    "Quick hall short",
+                    "Quick hall long",
+                    false,
+                    LookViewOutput.RefreshReason.QUICKLOOK,
+                    java.util.List.of(),
+                    java.util.List.of())));
     verify(lookTextRenderer)
         .toPlayerOutput(
             lookResult,
@@ -157,8 +182,17 @@ class LookCommandHandlerTest {
             eq(22L),
             eq(1L),
             eq("1021"),
-            eq("OK QUICKLOOK text"),
-            eq("OK LOOK\nOK QUICKLOOK text\n\n"));
+            eq(
+                "Room: Quick Hall (ID: 1021)\n"
+                    + "Short: Quick hall short\n"
+                    + "Exits: \n"
+                    + "Entities:"),
+            eq(
+                "OK LOOK\n"
+                    + "Room: Quick Hall (ID: 1021)\n"
+                    + "Short: Quick hall short\n"
+                    + "Exits: \n"
+                    + "Entities:\n\n"));
   }
 
   @Test
@@ -169,10 +203,26 @@ class LookCommandHandlerTest {
         .thenReturn(Optional.of(playedContext));
     when(gameLogicClient.resolveLook("22", "17", "911", "room-42", "")).thenReturn(lookResult);
 
-    handler.describe("played");
+    handler.describePlayerOutput("played", true);
 
     verify(lookCacheService)
-        .cache(eq(22L), eq(77L), eq("1021"), eq("OK LOOK text"), eq("OK LOOK\nOK LOOK text\n\n"));
+        .cache(
+            eq(22L),
+            eq(77L),
+            eq("1021"),
+            eq(
+                "Room: Login Hall (ID: 1021)\n"
+                    + "Short: OK LOOK text\n"
+                    + "Long: Detailed look text\n"
+                    + "Exits: \n"
+                    + "Entities:"),
+            eq(
+                "OK LOOK\n"
+                    + "Room: Login Hall (ID: 1021)\n"
+                    + "Short: OK LOOK text\n"
+                    + "Long: Detailed look text\n"
+                    + "Exits: \n"
+                    + "Entities:\n\n"));
   }
 
   @Test
@@ -194,20 +244,8 @@ class LookCommandHandlerTest {
     assertThat(handler.cachedLook("22", "1")).contains("OK LOOK\ncached text\n\n");
     Mockito.verifyNoInteractions(gameLogicClient);
     Mockito.clearInvocations(gameLogicClient);
-    when(lookTextRenderer.render(
-            lookResult,
-            true,
-            net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
-                .EXPLICIT_LOOK,
-            net.firedevops.firemud.gamesession.presentation.LookViewOutput
-                .defaultBriefRenderingHint(
-                    net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
-                        .EXPLICIT_LOOK,
-                    true),
-            sessionContext.localeTag(),
-            settingsResolver.presentation(sessionContext)))
-        .thenReturn("fresh text");
-    assertEquals("fresh text", handler.describe("123"));
+    PlayerOutput output = handler.describePlayerOutput("123", true);
+    assertThat(output.payload()).isInstanceOf(LookViewOutput.class);
     verify(gameLogicClient).resolveLook("22", "1", "911", "room-42", "");
   }
 
@@ -222,9 +260,10 @@ class LookCommandHandlerTest {
             settingsResolver,
             new SimpleMeterRegistry(),
             lookCacheService,
-            new DevIsolatedProperties(true));
-    String response = devHandler.describe("123");
-    assertEquals(LookCommandConstants.ROOM_DESCRIPTION, response);
+            new DevIsolatedProperties(true),
+            outputRenderer);
+    PlayerOutput response = devHandler.describePlayerOutput("123", true);
+    assertEquals(LookCommandConstants.ROOM_DESCRIPTION, response.text());
     Mockito.verifyNoInteractions(gameLogicClient, lookCacheService);
   }
 

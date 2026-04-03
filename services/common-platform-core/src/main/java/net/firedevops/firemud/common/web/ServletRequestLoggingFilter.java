@@ -15,8 +15,6 @@ import org.springframework.web.filter.OncePerRequestFilter;
 
 /** Shared servlet request logging with runtime identity and correlation context. */
 public class ServletRequestLoggingFilter extends OncePerRequestFilter {
-  public static final String CORRELATION_HEADER = "X-Correlation-Id";
-
   private static final Logger logger = LoggingUtil.getLogger(ServletRequestLoggingFilter.class);
 
   private final RuntimeIdentity runtimeIdentity;
@@ -29,10 +27,11 @@ public class ServletRequestLoggingFilter extends OncePerRequestFilter {
   protected void doFilterInternal(
       HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
       throws ServletException, IOException {
-    String correlationId = resolveCorrelationId(request.getHeader(CORRELATION_HEADER));
+    String correlationId =
+        resolveCorrelationId(request.getHeader(RequestLoggingHeaders.CORRELATION_ID));
     String traceId = currentTraceId();
     long start = System.currentTimeMillis();
-    response.setHeader(CORRELATION_HEADER, correlationId);
+    response.setHeader(RequestLoggingHeaders.CORRELATION_ID, correlationId);
 
     try (MDC.MDCCloseable service = MDC.putCloseable("service", runtimeIdentity.service());
         MDC.MDCCloseable serviceInstance =

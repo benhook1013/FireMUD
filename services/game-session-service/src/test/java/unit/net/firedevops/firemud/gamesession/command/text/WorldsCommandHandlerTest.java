@@ -11,20 +11,12 @@ class WorldsCommandHandlerTest {
       new WorldsCommandHandler(new GameplayWorldCatalog(new GameSessionProperties()));
 
   @Test
-  void describeReturnsBrowseMenu() {
-    String response = handler.describe();
-
-    assertThat(response).doesNotContain("OK WORLDS");
-    assertThat(response).contains("Demo World");
-    assertThat(response).contains("Builder Sandbox");
-  }
-
-  @Test
   void browseViewReturnsStructuredWorldList() {
     WorldsViewOutput response = handler.browseView();
 
     assertThat(response.worlds()).hasSize(2);
     assertThat(response.worlds().get(0).slug()).isEqualTo("demo");
     assertThat(response.worlds().get(0).displayName()).isEqualTo("Demo World");
+    assertThat(response.worlds().get(1).displayName()).isEqualTo("Builder Sandbox");
   }
 }

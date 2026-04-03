@@ -33,6 +33,7 @@ import net.firedevops.firemud.gamesession.presentation.LookViewOutput;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutputKind;
 import net.firedevops.firemud.gamesession.presentation.PromptComposer;
+import net.firedevops.firemud.gamesession.presentation.TextPlayerOutputRenderer;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.CommandService;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
@@ -147,7 +148,8 @@ class SessionResumptionFlowTest {
                 new GameSessionSettingsOverridesProperties(null, null, null, null, null, null)),
             meterRegistry,
             lookCacheService,
-            devIsolatedProperties);
+            devIsolatedProperties,
+            new TextPlayerOutputRenderer(new PresentationProperties()));
     LookResult lookResult =
         LookResult.newBuilder()
             .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("1021").build())
@@ -155,24 +157,6 @@ class SessionResumptionFlowTest {
     when(gameLogicClient.resolveLook(
             anyString(), anyString(), anyString(), anyString(), anyString()))
         .thenReturn(lookResult);
-    when(lookTextRenderer.render(
-            Mockito.eq(lookResult),
-            Mockito.eq(true),
-            Mockito.any(
-                net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
-                    .class)))
-        .thenReturn("OK LOOK text");
-    when(lookTextRenderer.render(
-            Mockito.eq(lookResult),
-            Mockito.eq(true),
-            Mockito.any(
-                net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason.class),
-            Mockito.any(
-                net.firedevops.firemud.gamesession.presentation.LookViewOutput.BriefRenderingHint
-                    .class),
-            Mockito.any(),
-            Mockito.any()))
-        .thenReturn("OK LOOK text");
     when(lookTextRenderer.toPlayerOutput(
             Mockito.eq(lookResult),
             Mockito.eq(true),

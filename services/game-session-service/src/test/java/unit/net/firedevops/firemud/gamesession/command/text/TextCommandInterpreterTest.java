@@ -166,7 +166,8 @@ class TextCommandInterpreterTest {
                 new GameSessionSettingsOverridesProperties(null, null, null, null, null, null)),
             meterRegistry,
             lookCacheService,
-            devIsolatedProperties);
+            devIsolatedProperties,
+            new TextPlayerOutputRenderer(new PresentationProperties()));
     WorldsCommandHandler worldsHandler = new WorldsCommandHandler(worldCatalog);
 
     LookResult lookResult =
@@ -180,17 +181,6 @@ class TextCommandInterpreterTest {
             Mockito.eq("1021"),
             Mockito.anyString()))
         .thenReturn(lookResult);
-    when(lookTextRenderer.render(
-            Mockito.eq(lookResult),
-            Mockito.eq(true),
-            Mockito.any(
-                net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason.class),
-            Mockito.any(
-                net.firedevops.firemud.gamesession.presentation.LookViewOutput.BriefRenderingHint
-                    .class),
-            Mockito.any(),
-            Mockito.any()))
-        .thenReturn("OK LOOK constructed");
     when(lookTextRenderer.toPlayerOutput(
             Mockito.eq(lookResult),
             Mockito.eq(true),

@@ -17,21 +17,6 @@ public final class GameplayWorldCatalog {
     this.properties = Objects.requireNonNull(properties, "properties must not be null");
   }
 
-  public String describeWorlds() {
-    StringBuilder builder = new StringBuilder();
-    for (WorldsViewOutput.WorldEntry world : worldEntries()) {
-      builder
-          .append(world.ordinal())
-          .append(") ")
-          .append(world.displayName())
-          .append(" (")
-          .append(world.slug())
-          .append(")\n");
-    }
-    builder.append('\n');
-    return builder.toString();
-  }
-
   public WorldsViewOutput browseView() {
     return new WorldsViewOutput(worldEntries());
   }
