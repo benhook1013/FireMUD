@@ -267,8 +267,9 @@ class GameSessionWebSocketHandlerIntegrationTest {
 
     assertThat(payloads).hasSizeGreaterThanOrEqualTo(3);
     assertThat(payloads).anyMatch(payload -> payload.startsWith("OK LOGIN"));
-    assertThat(payloads).anyMatch(payload -> payload.startsWith("OK PLAY"));
-    assertThat(payloads.get(2)).startsWith("OK LOOK");
+    assertThat(payloads)
+        .anyMatch(payload -> payload.startsWith("OK PLAY") && payload.endsWith("demo> "));
+    assertThat(payloads.get(2)).startsWith("OK LOOK").endsWith("demo> ");
     assertThat(sessionContextService.findByTenantAndSessionId(22L, 41L))
         .hasValueSatisfying(
             context -> {
@@ -283,6 +284,43 @@ class GameSessionWebSocketHandlerIntegrationTest {
     verify(lookCacheService)
         .cache(
             eq(22L), eq(1L), eq("1021"), eq("Login Hall text"), eq("OK LOOK\nLogin Hall text\n\n"));
+  }
+
+  @Test
+  void repeatedLookStillShowsPromptInsideBurstWindow() throws Exception {
+    StandardWebSocketClient client = new StandardWebSocketClient();
+    WebSocketHttpHeaders headers = new WebSocketHttpHeaders();
+    headers.add("X-Game-Instance-Id", "41");
+    List<String> payloads = new java.util.concurrent.CopyOnWriteArrayList<>();
+    CountDownLatch latch = new CountDownLatch(4);
+
+    var future =
+        client.execute(
+            new TextWebSocketHandler() {
+              @Override
+              public void afterConnectionEstablished(WebSocketSession session) throws IOException {
+                session.sendMessage(new TextMessage("LOGIN demo@example.com swordfish"));
+                session.sendMessage(new TextMessage("PLAY demo"));
+                session.sendMessage(new TextMessage("LOOK"));
+                session.sendMessage(new TextMessage("LOOK"));
+              }
+
+              @Override
+              protected void handleTextMessage(WebSocketSession session, TextMessage message) {
+                payloads.add(message.getPayload());
+                latch.countDown();
+              }
+            },
+            headers,
+            URI.create("ws://localhost:" + port + "/ws/game"));
+
+    WebSocketSession session = future.get(5, TimeUnit.SECONDS);
+    assertThat(latch.await(5, TimeUnit.SECONDS)).isTrue();
+    session.close();
+
+    assertThat(payloads).hasSizeGreaterThanOrEqualTo(4);
+    assertThat(payloads.get(2)).startsWith("OK LOOK").endsWith("demo> ");
+    assertThat(payloads.get(3)).startsWith("OK LOOK").endsWith("demo> ");
   }
 
   @Test

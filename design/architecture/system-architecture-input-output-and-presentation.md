@@ -201,6 +201,7 @@ This means FireMUD should usually avoid a blanket rule like "flush all client ou
 - tiny burst coalescing applies only where it reduces prompt or status chatter
 - reconnect restore still ends with one fresh prompt after transcript replay and fresh `LOOK`
 - explicit commands like `LOOK` usually still create a prompt opportunity, but the prompt pipeline decides whether to emit immediately, append to a trailing burst, or suppress because one was just emitted moments ago
+- explicit view/boundary commands such as `LOOK` and accepted non-redraw `PLAY` may still force prompt retention inside the small prompt window so classic command-completion behavior stays crisp
 
 #### `error`
 

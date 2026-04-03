@@ -12,6 +12,18 @@ This service follows the conventions in [Environment Variables & Secrets Managem
 - The gRPC server listens on port `6565` by default as configured in `application.yml`.
 - The OpenTelemetry collector endpoint can be overridden via `OTEL_ENDPOINT`.
 
+## FireMUD Settings Domains
+
+The communication settings domain is now generation-ready through typed configuration properties, service defaults, and Spring configuration metadata.
+
+### `firemud.communication`
+
+| Key | Purpose | Default |
+| --- | ------- | ------- |
+| `firemud.communication.max-message-length` | Maximum number of characters accepted for a single communication message before the service rejects it. | `512` |
+
+`firemud.communication.max-message-length` is currently file/env-backed operator configuration. The settings metadata lives alongside the code so generated reference docs can track the same canonical default.
+
 ## Dependent-Service Variables
 
 | Variable | Purpose | Default |

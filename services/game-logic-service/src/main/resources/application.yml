@@ -50,6 +50,8 @@ firemud:
     world-management-service: world-management-service:6565
     entity-management-service: entity-management-service:6565
     social-groups-service: social-groups-service:6565
+  communication:
+    max-message-length: 512
   grpc:
     cert-chain: ${FIREMUD_GRPC_CERT_CHAIN_PATH:certs/client.crt}
     private-key: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:certs/client.key}

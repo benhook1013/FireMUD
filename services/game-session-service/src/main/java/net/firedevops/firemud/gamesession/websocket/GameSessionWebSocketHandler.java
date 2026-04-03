@@ -12,6 +12,7 @@ import net.firedevops.firemud.gamesession.command.text.TextCommandInterpreter;
 import net.firedevops.firemud.gamesession.command.text.TextCommandParser;
 import net.firedevops.firemud.gamesession.command.text.TextCommandType;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
+import net.firedevops.firemud.gamesession.presentation.PlayerOutputKind;
 import net.firedevops.firemud.gamesession.presentation.PromptBurstCoordinator;
 import net.firedevops.firemud.gamesession.presentation.PromptComposer;
 import net.firedevops.firemud.gamesession.presentation.TextPlayerOutputRenderer;
@@ -121,7 +122,10 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       TextCommandInterpretationResult interpretation =
           interpreter.interpret(sessionId, command, requiresSoloTick);
       java.util.List<PlayerOutput> outputs =
-          promptBurstCoordinator.applyPromptWindow(sessionId, interpretation.outputs(), false);
+          promptBurstCoordinator.applyPromptWindow(
+              sessionId,
+              interpretation.outputs(),
+              shouldForcePromptEmission(command, interpretation));
       String response = formatResponse(command, interpretation, outputs);
       sendProtocolMessage(session, response);
       promptBurstCoordinator.recordPromptEmission(sessionId, outputs);
@@ -174,6 +178,21 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       TextCommandInterpretationResult interpretation,
       java.util.List<PlayerOutput> outputs) {
     return outputRenderer.renderAll(command, interpretation.commandResult(), outputs);
+  }
+
+  private boolean shouldForcePromptEmission(
+      TextCommand command, TextCommandInterpretationResult interpretation) {
+    if (!interpretation.commandResult().accepted()) {
+      return false;
+    }
+    if (command.type() == TextCommandType.LOOK) {
+      return true;
+    }
+    if (command.type() == TextCommandType.PLAY && !interpretation.reconnectRedrawRecommended()) {
+      return true;
+    }
+    return interpretation.outputs().stream()
+        .allMatch(output -> output.kind() == PlayerOutputKind.PROMPT);
   }
 
   private void sendProtocolMessage(WebSocketSession session, String text) throws IOException {
