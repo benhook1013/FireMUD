@@ -14,19 +14,12 @@ This service follows the conventions in [Environment Variables & Secrets Managem
 
 ## FireMUD Settings Domains
 
-The communication settings domain is now generation-ready through typed configuration properties, service defaults, and Spring configuration metadata.
+The canonical per-key reference for the surfaced pre-`06` platform settings now lives in the generated artifacts below rather than being hand-maintained in this service doc:
 
-### `firemud.communication`
+- [Platform Settings Reference](../../generated/platform-settings-reference.md)
+- [Platform Settings Schema](../../generated/platform-settings-schema.json)
 
-| Key | Purpose | Default |
-| --- | ------- | ------- |
-| `firemud.communication.max-message-length` | Maximum number of characters accepted for a single communication message before the service rejects it. | `512` |
-| `firemud.communication.defaults.say-enabled` | Whether the built-in `SAY` mode is enabled in the shared communication pipeline. | `true` |
-| `firemud.communication.defaults.whisper-enabled` | Whether the built-in `WHISPER` mode is enabled in the shared communication pipeline. | `true` |
-| `firemud.communication.defaults.tell-enabled` | Whether the built-in `TELL` mode is enabled in the shared communication pipeline. | `true` |
-| `firemud.communication.defaults.whisper-observer-metadata-enabled` | Whether flagged whisper observers receive metadata-only bystander views by default. | `true` |
-
-These settings are currently file/env-backed operator configuration. The settings metadata lives alongside the code so generated reference docs can track the same canonical defaults.
+Game Logic currently owns the operator-default `firemud.communication` layer. The generated reference carries the current defaults, descriptions, valid values or ranges, scope/owner metadata, hot-reloadability, advanced flags, and example values for those keys.
 
 The current effective communication result is also exposed for operator/debug inspection at `/actuator/settings/effective/communication`. It resolves service-local operator defaults plus shared persisted tenant and optional game-instance overrides from the Game Design settings authority. The shared persisted layer is merged in `common-platform-core`; this is still a bounded read model with local TTL/refresh/evict cache semantics rather than a distributed config platform.
 

@@ -11,6 +11,7 @@ This document defines the canonical FireMUD settings model for operator/bootstra
   - `firemud.movement`
   - `firemud.world-topology`
 - Game Session and Game Logic now publish generation-ready configuration metadata and service-level configuration reference docs for the surfaced domains above.
+- The first consolidated generated publication outputs are now checked in at `design/architecture/generated/platform-settings-schema.json` and `design/architecture/generated/platform-settings-reference.md`, both produced from the surfaced Spring metadata plus one machine-readable publication spec for the extra operator/admin fields.
 - The canonical layered ownership model is agreed and documented here.
 - Game Design now owns the first shared persisted tenant/game settings authority for `reconnection`, `communication`, `presentation`, `movement`, and `worldTopology`.
 - `common-platform-core` now owns the first shared effective persisted-override resolver for those surfaced domains, merging tenant then game-instance overrides into one bounded read model for runtime consumers.
@@ -158,10 +159,11 @@ The expected generated or generation-ready outputs are:
 
 - Spring configuration metadata for surfaced keys
 - service-level generated-facing configuration reference docs
-- later machine-readable schema output
+- machine-readable schema output
+- generated Markdown settings reference
 - later admin/creator form metadata
 
-The repo should not grow a second hand-maintained settings encyclopedia that drifts away from the typed metadata and surfaced configuration docs.
+Later admin/operator or creator tooling should consume the generated machine-readable schema output and avoid inventing a second schema for the same surfaced keys. The repo should not grow a second hand-maintained settings encyclopedia that drifts away from the typed metadata and generated reference.
 
 ## Effective Config Resolution
 

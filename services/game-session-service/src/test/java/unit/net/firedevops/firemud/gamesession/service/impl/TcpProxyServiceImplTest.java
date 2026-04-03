@@ -20,6 +20,7 @@ import net.firedevops.firemud.tcpproxy.v1.NotifyDisconnectResponse;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
+import org.slf4j.MDC;
 
 class TcpProxyServiceImplTest {
   @Test
@@ -67,6 +68,49 @@ class TcpProxyServiceImplTest {
     ArgumentCaptor<GameInstanceDto> stateCaptor = ArgumentCaptor.forClass(GameInstanceDto.class);
     Mockito.verify(sessionStateService).saveState(stateCaptor.capture());
     assertEquals("SUSPENDED", stateCaptor.getValue().status());
+  }
+
+  @Test
+  void notifyDisconnectAddsGameplayLoggingContext() {
+    GameInstanceRepository repository = Mockito.mock(GameInstanceRepository.class);
+    SessionStateService sessionStateService = Mockito.mock(SessionStateService.class);
+    MeterRegistry meterRegistry = new SimpleMeterRegistry();
+    PingService pingService = Mockito.mock(PingService.class);
+    DisconnectDeduplicationService disconnectDeduplicationService =
+        Mockito.mock(DisconnectDeduplicationService.class);
+    Mockito.when(
+            disconnectDeduplicationService.shouldProcess(Mockito.anyString(), Mockito.anyLong()))
+        .thenReturn(true);
+    GameInstance entity = buildEntity(12L, 7L);
+    Mockito.when(repository.findById(12L)).thenReturn(Optional.of(entity));
+    Mockito.doAnswer(
+            ignored -> {
+              assertEquals("7", MDC.get("tenantId"));
+              assertEquals("12", MDC.get("gameInstanceId"));
+              assertEquals(null, MDC.get("characterId"));
+              return null;
+            })
+        .when(sessionStateService)
+        .saveState(Mockito.any());
+
+    TcpProxyServiceImpl service =
+        new TcpProxyServiceImpl(
+            repository,
+            sessionStateService,
+            meterRegistry,
+            pingService,
+            new DevIsolatedProperties(false),
+            disconnectDeduplicationService);
+
+    AtomicReference<NotifyDisconnectResponse> ref = new AtomicReference<>();
+    service.notifyDisconnect(
+        NotifyDisconnectRequest.newBuilder().setSessionId("12").setTenantId("7").build(),
+        observerFor(ref));
+
+    assertEquals("OK", ref.get().getError().getCode());
+    assertEquals(null, MDC.get("tenantId"));
+    assertEquals(null, MDC.get("gameInstanceId"));
+    assertEquals(null, MDC.get("characterId"));
   }
 
   @Test

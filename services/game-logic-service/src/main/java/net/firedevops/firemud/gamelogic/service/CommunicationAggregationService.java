@@ -45,71 +45,74 @@ public class CommunicationAggregationService {
   private final MeterRegistry meterRegistry;
 
   public SendCommunicationResponse send(SendCommunicationRequest request) {
-    CommunicationProperties communicationProperties =
-        settingsResolver.communication(
-            parseTenantId(request.getTenantId()), parseGameInstanceId(request.getGameInstanceId()));
-    String normalizedText = normalizeText(request.getText());
-    SendCommunicationResponse.Builder builder =
-        SendCommunicationResponse.newBuilder()
-            .setType(request.getType())
-            .setMessage(normalizedText);
+    try (GameplayLoggingContext ignored = GameplayLoggingContext.from(request)) {
+      CommunicationProperties communicationProperties =
+          settingsResolver.communication(
+              parseTenantId(request.getTenantId()),
+              parseGameInstanceId(request.getGameInstanceId()));
+      String normalizedText = normalizeText(request.getText());
+      SendCommunicationResponse.Builder builder =
+          SendCommunicationResponse.newBuilder()
+              .setType(request.getType())
+              .setMessage(normalizedText);
 
-    if (!communicationProperties.enabled(request.getType())) {
-      return errorResponse(
-          builder,
-          "COMMUNICATION_DISABLED",
-          request.getType().name() + " is disabled by operator policy");
-    }
-    if (normalizedText.isBlank()) {
-      return errorResponse(builder, "INVALID_ARGUMENT", "Message must not be empty");
-    }
-    if (normalizedText.length() > communicationProperties.maxMessageLength()) {
-      return errorResponse(
-          builder,
-          "INVALID_ARGUMENT",
-          "Message length exceeds " + communicationProperties.maxMessageLength() + " characters");
-    }
+      if (!communicationProperties.enabled(request.getType())) {
+        return errorResponse(
+            builder,
+            "COMMUNICATION_DISABLED",
+            request.getType().name() + " is disabled by operator policy");
+      }
+      if (normalizedText.isBlank()) {
+        return errorResponse(builder, "INVALID_ARGUMENT", "Message must not be empty");
+      }
+      if (normalizedText.length() > communicationProperties.maxMessageLength()) {
+        return errorResponse(
+            builder,
+            "INVALID_ARGUMENT",
+            "Message length exceeds " + communicationProperties.maxMessageLength() + " characters");
+      }
 
-    ListRoomEntitiesResponse roomEntities = loadRoomEntities(request);
-    if (roomEntities.hasError()) {
-      return errorResponse(builder, roomEntities.getError(), "EntityManagementService");
-    }
+      ListRoomEntitiesResponse roomEntities = loadRoomEntities(request);
+      if (roomEntities.hasError()) {
+        return errorResponse(builder, roomEntities.getError(), "EntityManagementService");
+      }
 
-    CommunicationAudience audience = resolveAudience(request, roomEntities);
-    if (!audience.valid()) {
-      return errorResponse(builder, "INVALID_ARGUMENT", audience.errorMessage());
-    }
+      CommunicationAudience audience = resolveAudience(request, roomEntities);
+      if (!audience.valid()) {
+        return errorResponse(builder, "INVALID_ARGUMENT", audience.errorMessage());
+      }
 
-    builder.addAllDeliveredTo(audience.deliveredTo());
-    builder.addAllNpcEchoes(audience.npcEchoes());
-    if (StringUtils.hasText(audience.speakerName())) {
-      builder.setSpeakerName(audience.speakerName());
-    }
-    builder.addAllRecipientViews(audience.recipientViews());
+      builder.addAllDeliveredTo(audience.deliveredTo());
+      builder.addAllNpcEchoes(audience.npcEchoes());
+      if (StringUtils.hasText(audience.speakerName())) {
+        builder.setSpeakerName(audience.speakerName());
+      }
+      builder.addAllRecipientViews(audience.recipientViews());
 
-    SendMessageResponse socialResponse;
-    try {
-      socialResponse =
-          socialStub.sendMessage(
-              SendMessageRequest.newBuilder()
-                  .setTenantId(request.getTenantId())
-                  .setSenderId(resolveSenderId(request))
-                  .setType(mapType(request.getType()))
-                  .setContent(normalizedText)
-                  .setRecipientId(audience.recipientId().orElse(""))
-                  .build());
-    } catch (StatusRuntimeException ex) {
-      LOG.warn("SocialGroupsService unavailable for communication send", ex);
-      return errorResponse(builder, ex, "SocialGroupsService");
-    }
+      SendMessageResponse socialResponse;
+      try {
+        socialResponse =
+            socialStub.sendMessage(
+                SendMessageRequest.newBuilder()
+                    .setTenantId(request.getTenantId())
+                    .setSenderId(resolveSenderId(request))
+                    .setType(mapType(request.getType()))
+                    .setContent(normalizedText)
+                    .setRecipientId(audience.recipientId().orElse(""))
+                    .build());
+      } catch (StatusRuntimeException ex) {
+        LOG.warn("SocialGroupsService unavailable for communication send", ex);
+        return errorResponse(builder, ex, "SocialGroupsService");
+      }
 
-    if (!socialResponse.getSuccess()) {
-      ErrorDetail error = socialResponse.hasError() ? socialResponse.getError() : genericError();
-      GrpcAppErrors.countIfError(meterRegistry, error);
-      return builder.setSuccess(false).setError(error).build();
-    }
+      if (!socialResponse.getSuccess()) {
+        ErrorDetail error = socialResponse.hasError() ? socialResponse.getError() : genericError();
+        GrpcAppErrors.countIfError(meterRegistry, error);
+        return builder.setSuccess(false).setError(error).build();
+      }
 
-    return builder.setSuccess(true).build();
+      return builder.setSuccess(true).build();
+    }
   }
 
   private ListRoomEntitiesResponse loadRoomEntities(SendCommunicationRequest request) {

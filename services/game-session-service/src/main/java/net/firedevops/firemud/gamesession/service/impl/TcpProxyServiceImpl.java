@@ -7,6 +7,7 @@ import io.micrometer.core.instrument.MeterRegistry;
 import java.util.Optional;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
+import net.firedevops.firemud.gamesession.command.text.GameplayLoggingContext;
 import net.firedevops.firemud.gamesession.config.DevIsolatedProperties;
 import net.firedevops.firemud.gamesession.dto.GameInstanceDto;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
@@ -71,19 +72,27 @@ public final class TcpProxyServiceImpl extends TcpProxyServiceGrpc.TcpProxyServi
   @Timed("tcpProxyGrpc.notifyDisconnect")
   public void notifyDisconnect(
       NotifyDisconnectRequest request, StreamObserver<NotifyDisconnectResponse> responseObserver) {
-    logger.debug(
-        "NotifyDisconnect session={} gameInstanceId={} tenant={} proxyConnectionId={} disconnectSequence={}",
-        request.getSessionId(),
-        request.getGameInstanceId(),
-        request.getTenantId(),
-        request.getProxyConnectionId(),
-        request.getDisconnectSequence());
-    ErrorDetail error = handleNotifyDisconnect(request);
-    responseObserver.onNext(NotifyDisconnectResponse.newBuilder().setError(error).build());
-    responseObserver.onCompleted();
+    String gameInstanceIdText =
+        StringUtils.hasText(request.getGameInstanceId())
+            ? request.getGameInstanceId()
+            : request.getSessionId();
+    try (GameplayLoggingContext ignored =
+        GameplayLoggingContext.open(request.getTenantId(), gameInstanceIdText, null, null)) {
+      logger.debug(
+          "NotifyDisconnect session={} gameInstanceId={} tenant={} proxyConnectionId={} disconnectSequence={}",
+          request.getSessionId(),
+          request.getGameInstanceId(),
+          request.getTenantId(),
+          request.getProxyConnectionId(),
+          request.getDisconnectSequence());
+      ErrorDetail error = handleNotifyDisconnect(request, gameInstanceIdText);
+      responseObserver.onNext(NotifyDisconnectResponse.newBuilder().setError(error).build());
+      responseObserver.onCompleted();
+    }
   }
 
-  private ErrorDetail handleNotifyDisconnect(NotifyDisconnectRequest request) {
+  private ErrorDetail handleNotifyDisconnect(
+      NotifyDisconnectRequest request, String gameInstanceIdText) {
     if (StringUtils.hasText(request.getProxyConnectionId())
         && request.getDisconnectSequence() > 0) {
       if (!disconnectDeduplicationService.shouldProcess(
@@ -93,10 +102,6 @@ public final class TcpProxyServiceImpl extends TcpProxyServiceGrpc.TcpProxyServi
       }
     }
 
-    String gameInstanceIdText =
-        StringUtils.hasText(request.getGameInstanceId())
-            ? request.getGameInstanceId()
-            : request.getSessionId();
     if (!StringUtils.hasText(gameInstanceIdText) || !StringUtils.hasText(request.getTenantId())) {
       meterRegistry.counter(MISSING_CONTEXT_METRIC).increment();
       return GrpcAppErrors.ok("Disconnect recorded (no proxy bootstrap metadata)");

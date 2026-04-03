@@ -30,6 +30,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.slf4j.MDC;
 
 @ExtendWith(MockitoExtension.class)
 class CommunicationAggregationServiceTest {
@@ -241,6 +242,62 @@ class CommunicationAggregationServiceTest {
     verify(socialStub).sendMessage(captor.capture());
     assertThat(captor.getValue().getType()).isEqualTo(ChatType.CHAT_TYPE_WHISPER);
     assertThat(captor.getValue().getRecipientId()).isEqualTo("player-1");
+  }
+
+  @Test
+  void sendAddsGameplayLoggingContext() {
+    when(sharedSettingsAuthorityReader.readOverrides(1L, 7L))
+        .thenReturn(
+            new net.firedevops.firemud.common.settings.ScopedSettingsSnapshot(
+                net.firedevops.firemud.common.settings.ScopedSettingsOverrides.empty(),
+                net.firedevops.firemud.common.settings.ScopedSettingsOverrides.empty()));
+    ListRoomEntitiesResponse roomEntities =
+        ListRoomEntitiesResponse.newBuilder()
+            .addEntities(
+                RoomEntity.newBuilder()
+                    .setEntityId("player-0")
+                    .setDisplayName("Emberline")
+                    .setEntityType(EntityType.PLAYER)
+                    .build())
+            .addEntities(
+                RoomEntity.newBuilder()
+                    .setEntityId("player-1")
+                    .setDisplayName("Sora")
+                    .setEntityType(EntityType.PLAYER)
+                    .build())
+            .build();
+    when(entityStub.listRoomEntities(any()))
+        .thenAnswer(
+            ignored -> {
+              assertThat(MDC.get("tenantId")).isEqualTo("1");
+              assertThat(MDC.get("gameInstanceId")).isEqualTo("7");
+              assertThat(MDC.get("characterId")).isEqualTo("player-0");
+              return roomEntities;
+            });
+    when(socialStub.sendMessage(any()))
+        .thenAnswer(
+            ignored -> {
+              assertThat(MDC.get("tenantId")).isEqualTo("1");
+              assertThat(MDC.get("gameInstanceId")).isEqualTo("7");
+              assertThat(MDC.get("characterId")).isEqualTo("player-0");
+              return SendMessageResponse.newBuilder().setSuccess(true).build();
+            });
+
+    service.send(
+        SendCommunicationRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("7")
+            .setSessionId("sess-1")
+            .setCharacterId("player-0")
+            .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("room-7").build())
+            .setType(CommunicationType.WHISPER)
+            .setTargetCharacterName("Sora")
+            .setText("Keep quiet")
+            .build());
+
+    assertThat(MDC.get("tenantId")).isNull();
+    assertThat(MDC.get("gameInstanceId")).isNull();
+    assertThat(MDC.get("characterId")).isNull();
   }
 
   @Test

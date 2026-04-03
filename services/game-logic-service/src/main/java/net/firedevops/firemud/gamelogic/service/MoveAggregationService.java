@@ -32,66 +32,68 @@ public class MoveAggregationService {
   private final MeterRegistry meterRegistry;
 
   public MoveResult resolve(MoveRequest request) {
-    MoveResult.Builder builder = MoveResult.newBuilder();
-    String direction = normalizeDirection(request.getDirection());
-    if (direction.isBlank()) {
-      return errorResponse(builder, "INVALID_ARGUMENT", "Direction must not be empty");
-    }
-
-    RoomInstanceRef currentRoom = request.getRoomInstance();
-    if (currentRoom.getRoomInstanceId().isBlank()) {
-      return errorResponse(
-          builder, "INVALID_ARGUMENT", "room_instance.room_instance_id is required");
-    }
-    RoomSnapshot snapshot;
-    try {
-      GetRoomSnapshotResponse response =
-          worldStub.getRoomSnapshot(
-              GetRoomSnapshotRequest.newBuilder()
-                  .setTenantId(resolveTenantId(request))
-                  .setRoomInstance(currentRoom)
-                  .setPreferredLocale(request.getPreferredLocale())
-                  .build());
-      if (response.hasError()) {
-        return errorResponse(builder, response.getError(), "WorldManagementService");
+    try (GameplayLoggingContext ignored = GameplayLoggingContext.from(request)) {
+      MoveResult.Builder builder = MoveResult.newBuilder();
+      String direction = normalizeDirection(request.getDirection());
+      if (direction.isBlank()) {
+        return errorResponse(builder, "INVALID_ARGUMENT", "Direction must not be empty");
       }
-      snapshot = response.getSnapshot();
-    } catch (StatusRuntimeException ex) {
-      LOG.warn("WorldManagementService unavailable for MOVE request", ex);
-      return errorResponse(builder, ex, "WorldManagementService");
-    }
 
-    Optional<RoomExitSnapshot> maybeExit = findExit(snapshot, direction);
-    if (maybeExit.isEmpty()) {
-      return errorResponse(
-          builder,
-          "INVALID_EXIT",
-          "No exit " + direction + " from room " + currentRoom.getRoomInstanceId());
-    }
+      RoomInstanceRef currentRoom = request.getRoomInstance();
+      if (currentRoom.getRoomInstanceId().isBlank()) {
+        return errorResponse(
+            builder, "INVALID_ARGUMENT", "room_instance.room_instance_id is required");
+      }
+      RoomSnapshot snapshot;
+      try {
+        GetRoomSnapshotResponse response =
+            worldStub.getRoomSnapshot(
+                GetRoomSnapshotRequest.newBuilder()
+                    .setTenantId(resolveTenantId(request))
+                    .setRoomInstance(currentRoom)
+                    .setPreferredLocale(request.getPreferredLocale())
+                    .build());
+        if (response.hasError()) {
+          return errorResponse(builder, response.getError(), "WorldManagementService");
+        }
+        snapshot = response.getSnapshot();
+      } catch (StatusRuntimeException ex) {
+        LOG.warn("WorldManagementService unavailable for MOVE request", ex);
+        return errorResponse(builder, ex, "WorldManagementService");
+      }
 
-    RoomExitSnapshot exit = maybeExit.get();
-    try {
-      LookResult destination =
-          lookAggregationService.resolve(
-              LookRequest.newBuilder()
-                  .setTenantId(snapshot.getTenantId())
-                  .setSessionId(request.getSessionId())
-                  .setCharacterId(request.getCharacterId())
-                  .setRoomInstance(
-                      RoomInstanceRef.newBuilder()
-                          .setTenantId(snapshot.getTenantId())
-                          .setGameInstanceId(snapshot.getGameInstanceId())
-                          .setRoomInstanceId(exit.getTargetRoomInstanceId())
-                          .build())
-                  .setPreferredLocale(request.getPreferredLocale())
-                  .build());
-      return builder.setSuccess(true).setDestinationLook(destination).build();
-    } catch (StatusRuntimeException ex) {
-      LOG.warn("Look resolution failed after MOVE request", ex);
-      return errorResponse(builder, ex, "LookAggregationService");
-    } catch (RuntimeException ex) {
-      LOG.warn("Unexpected MOVE resolution failure", ex);
-      return errorResponse(builder, "UNAVAILABLE", "Move unavailable");
+      Optional<RoomExitSnapshot> maybeExit = findExit(snapshot, direction);
+      if (maybeExit.isEmpty()) {
+        return errorResponse(
+            builder,
+            "INVALID_EXIT",
+            "No exit " + direction + " from room " + currentRoom.getRoomInstanceId());
+      }
+
+      RoomExitSnapshot exit = maybeExit.get();
+      try {
+        LookResult destination =
+            lookAggregationService.resolve(
+                LookRequest.newBuilder()
+                    .setTenantId(snapshot.getTenantId())
+                    .setSessionId(request.getSessionId())
+                    .setCharacterId(request.getCharacterId())
+                    .setRoomInstance(
+                        RoomInstanceRef.newBuilder()
+                            .setTenantId(snapshot.getTenantId())
+                            .setGameInstanceId(snapshot.getGameInstanceId())
+                            .setRoomInstanceId(exit.getTargetRoomInstanceId())
+                            .build())
+                    .setPreferredLocale(request.getPreferredLocale())
+                    .build());
+        return builder.setSuccess(true).setDestinationLook(destination).build();
+      } catch (StatusRuntimeException ex) {
+        LOG.warn("Look resolution failed after MOVE request", ex);
+        return errorResponse(builder, ex, "LookAggregationService");
+      } catch (RuntimeException ex) {
+        LOG.warn("Unexpected MOVE resolution failure", ex);
+        return errorResponse(builder, "UNAVAILABLE", "Move unavailable");
+      }
     }
   }
 

@@ -19,6 +19,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.conflict.ConflictTracker;
+import net.firedevops.firemud.gamesession.command.text.GameplayLoggingContext;
 import net.firedevops.firemud.gamesession.config.DevIsolatedProperties;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.SessionContext;
@@ -153,54 +154,100 @@ public class TickServiceImpl implements TickService {
   @Override
   @Timed(value = "gamesession.command.enqueue")
   public void enqueueCommand(Long sessionId, String command, boolean requiresSoloTick) {
-    if (devIsolatedProperties.isDevIsolated()) {
-      logger.info(
-          "Dev-isolated mode enabled; recording enqueue request for session {} command {}",
-          sessionId,
-          command);
-      return;
-    }
+    Optional<SessionContext> maybeContext = sessionContextService.findBySessionId(sessionId);
+    Long tenantId =
+        maybeContext.map(SessionContext::tenantId).orElseGet(() -> findTenantId(sessionId));
+    try (GameplayLoggingContext ignored =
+        maybeContext
+            .<GameplayLoggingContext>map(GameplayLoggingContext::from)
+            .orElseGet(
+                () ->
+                    GameplayLoggingContext.open(
+                        tenantId != null ? Long.toString(tenantId) : null, null, null, null))) {
+      if (devIsolatedProperties.isDevIsolated()) {
+        logger.info(
+            "Dev-isolated mode enabled; recording enqueue request for session {} command {}",
+            sessionId,
+            command);
+        return;
+      }
 
-    Long tenantId = findTenantId(sessionId);
-    String value = (requiresSoloTick ? "S|" : "N|") + command;
-    redisTemplate.opsForList().rightPush(queueKey(tenantId, sessionId), value);
-    enqueueCounter.increment();
-    logger.debug("Queued command for {}:{}", tenantId, sessionId);
+      String value = (requiresSoloTick ? "S|" : "N|") + command;
+      redisTemplate.opsForList().rightPush(queueKey(tenantId, sessionId), value);
+      enqueueCounter.increment();
+      logger.debug("Queued command for {}:{}", tenantId, sessionId);
+    }
   }
 
   @Override
   @Timed(value = "gamesession.tick.process")
   @Async("tickExecutor")
   public void processTick(Long sessionId) {
-    if (devIsolatedProperties.isDevIsolated()) {
-      logger.info("Dev-isolated mode enabled; skipping tick processing for session {}", sessionId);
-      return;
-    }
+    Optional<SessionContext> maybeContext = sessionContextService.findBySessionId(sessionId);
+    Long tenantId =
+        maybeContext.map(SessionContext::tenantId).orElseGet(() -> findTenantId(sessionId));
+    try (GameplayLoggingContext ignored =
+        maybeContext
+            .<GameplayLoggingContext>map(GameplayLoggingContext::from)
+            .orElseGet(
+                () ->
+                    GameplayLoggingContext.open(
+                        tenantId != null ? Long.toString(tenantId) : null, null, null, null))) {
+      if (devIsolatedProperties.isDevIsolated()) {
+        logger.info(
+            "Dev-isolated mode enabled; skipping tick processing for session {}", sessionId);
+        return;
+      }
 
-    if (pauseRequested.get() || pausedGameInstances.contains(sessionId)) {
-      logger.debug("Tick processing skipped while paused");
-      return;
-    }
-    long start = System.nanoTime();
-    Long tenantId = findTenantId(sessionId);
-    String lockKey = lockKey(tenantId, sessionId);
-    Boolean acquired =
-        redisTemplate.opsForValue().setIfAbsent(lockKey, "1", Duration.ofMillis(tickDurationMs));
-    if (Boolean.FALSE.equals(acquired)) {
-      lockContentionCounter.increment();
-      conflictTracker.recordConflict("session:" + tenantId + ":" + sessionId);
-      logger.debug("Could not acquire tick lock {}", lockKey);
-      return;
-    }
-    activeTicks.incrementAndGet();
-    String head = null;
-    boolean solo = false;
-    try {
-      Long pending = redisTemplate.opsForList().size(pendingKey(tenantId, sessionId));
-      long depth = pending != null ? pending : 0L;
-      retryQueueDepthGauge(tenantId, sessionId).set(depth);
-      if (pending != null && pending > 0) {
-        logger.info("Replaying {} pending commands for {}", pending, sessionId);
+      if (pauseRequested.get() || pausedGameInstances.contains(sessionId)) {
+        logger.debug("Tick processing skipped while paused");
+        return;
+      }
+      long start = System.nanoTime();
+      String lockKey = lockKey(tenantId, sessionId);
+      Boolean acquired =
+          redisTemplate.opsForValue().setIfAbsent(lockKey, "1", Duration.ofMillis(tickDurationMs));
+      if (Boolean.FALSE.equals(acquired)) {
+        lockContentionCounter.increment();
+        conflictTracker.recordConflict("session:" + tenantId + ":" + sessionId);
+        logger.debug("Could not acquire tick lock {}", lockKey);
+        return;
+      }
+      activeTicks.incrementAndGet();
+      String head = null;
+      boolean solo = false;
+      try {
+        Long pending = redisTemplate.opsForList().size(pendingKey(tenantId, sessionId));
+        long depth = pending != null ? pending : 0L;
+        retryQueueDepthGauge(tenantId, sessionId).set(depth);
+        if (pending != null && pending > 0) {
+          logger.info("Replaying {} pending commands for {}", pending, sessionId);
+          tickTimer.record(
+              () -> {
+                luaTimer.record(
+                    () -> {
+                      executeScriptWithRetry(
+                          commitScript, List.of(pendingKey(tenantId, sessionId)));
+                    });
+              });
+          awaitReplication();
+        }
+        Object headObj = redisTemplate.opsForList().index(queueKey(tenantId, sessionId), 0);
+        head = headObj != null ? headObj.toString() : null;
+        solo = head != null && head.startsWith("S|");
+        int max = solo ? 1 : tickMaxCommands;
+        tickTimer.record(
+            () -> {
+              luaTimer.record(
+                  () -> {
+                    redisTemplate.execute(
+                        stageScript,
+                        scriptArgsSerializer,
+                        scriptResultSerializer,
+                        List.of(queueKey(tenantId, sessionId), pendingKey(tenantId, sessionId)),
+                        String.valueOf(max));
+                  });
+            });
         tickTimer.record(
             () -> {
               luaTimer.record(
@@ -209,51 +256,27 @@ public class TickServiceImpl implements TickService {
                   });
             });
         awaitReplication();
+      } catch (Exception ex) {
+        logger.error("Tick processing failed, rolling back", ex);
+        conflictTracker.recordConflict("session:" + tenantId + ":" + sessionId);
+        luaTimer.record(
+            () -> {
+              executeScriptWithRetry(
+                  rollbackScript,
+                  List.of(pendingKey(tenantId, sessionId), queueKey(tenantId, sessionId)));
+            });
+        requeuedActionCounter.increment();
+        awaitReplication();
+      } finally {
+        long elapsed = (System.nanoTime() - start) / 1_000_000;
+        long budget = solo ? soloTickBudgetMs : tickBudgetMs;
+        if (elapsed > budget) {
+          budgetExceededCounter.increment();
+          logger.debug("Tick budget exceeded: {} ms", elapsed);
+        }
+        redisTemplate.delete(lockKey);
+        activeTicks.decrementAndGet();
       }
-      Object headObj = redisTemplate.opsForList().index(queueKey(tenantId, sessionId), 0);
-      head = headObj != null ? headObj.toString() : null;
-      solo = head != null && head.startsWith("S|");
-      int max = solo ? 1 : tickMaxCommands;
-      tickTimer.record(
-          () -> {
-            luaTimer.record(
-                () -> {
-                  redisTemplate.execute(
-                      stageScript,
-                      scriptArgsSerializer,
-                      scriptResultSerializer,
-                      List.of(queueKey(tenantId, sessionId), pendingKey(tenantId, sessionId)),
-                      String.valueOf(max));
-                });
-          });
-      tickTimer.record(
-          () -> {
-            luaTimer.record(
-                () -> {
-                  executeScriptWithRetry(commitScript, List.of(pendingKey(tenantId, sessionId)));
-                });
-          });
-      awaitReplication();
-    } catch (Exception ex) {
-      logger.error("Tick processing failed, rolling back", ex);
-      conflictTracker.recordConflict("session:" + tenantId + ":" + sessionId);
-      luaTimer.record(
-          () -> {
-            executeScriptWithRetry(
-                rollbackScript,
-                List.of(pendingKey(tenantId, sessionId), queueKey(tenantId, sessionId)));
-          });
-      requeuedActionCounter.increment();
-      awaitReplication();
-    } finally {
-      long elapsed = (System.nanoTime() - start) / 1_000_000;
-      long budget = solo ? soloTickBudgetMs : tickBudgetMs;
-      if (elapsed > budget) {
-        budgetExceededCounter.increment();
-        logger.debug("Tick budget exceeded: {} ms", elapsed);
-      }
-      redisTemplate.delete(lockKey);
-      activeTicks.decrementAndGet();
     }
   }
 
@@ -272,14 +295,24 @@ public class TickServiceImpl implements TickService {
   @Override
   @Timed(value = "gamesession.state.query")
   public String queryState(Long sessionId) {
-    if (devIsolatedProperties.isDevIsolated()) {
-      logger.info("Dev-isolated mode enabled; returning empty state for session {}", sessionId);
-      return "{}";
-    }
+    Optional<SessionContext> maybeContext = sessionContextService.findBySessionId(sessionId);
+    Long tenantId =
+        maybeContext.map(SessionContext::tenantId).orElseGet(() -> findTenantId(sessionId));
+    try (GameplayLoggingContext ignored =
+        maybeContext
+            .<GameplayLoggingContext>map(GameplayLoggingContext::from)
+            .orElseGet(
+                () ->
+                    GameplayLoggingContext.open(
+                        tenantId != null ? Long.toString(tenantId) : null, null, null, null))) {
+      if (devIsolatedProperties.isDevIsolated()) {
+        logger.info("Dev-isolated mode enabled; returning empty state for session {}", sessionId);
+        return "{}";
+      }
 
-    Long tenantId = findTenantId(sessionId);
-    Object state = redisTemplate.opsForValue().get(stateKey(tenantId, sessionId));
-    return state != null ? state.toString() : "{}";
+      Object state = redisTemplate.opsForValue().get(stateKey(tenantId, sessionId));
+      return state != null ? state.toString() : "{}";
+    }
   }
 
   @Override

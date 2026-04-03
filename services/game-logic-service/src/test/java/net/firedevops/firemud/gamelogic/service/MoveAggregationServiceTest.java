@@ -25,6 +25,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.slf4j.MDC;
 
 @ExtendWith(MockitoExtension.class)
 class MoveAggregationServiceTest {
@@ -166,5 +167,55 @@ class MoveAggregationServiceTest {
     assertThat(result.getSuccess()).isFalse();
     assertThat(result.getError().getCode()).isEqualTo("WORLD_UNAVAILABLE");
     assertThat(result.getError().getMessage()).contains("WorldManagementService");
+  }
+
+  @Test
+  void resolveAddsGameplayLoggingContext() {
+    when(worldStub.getRoomSnapshot(any()))
+        .thenAnswer(
+            ignored -> {
+              assertThat(MDC.get("tenantId")).isEqualTo(LookTestFixtures.TENANT);
+              assertThat(MDC.get("characterId")).isEqualTo("player-1");
+              assertThat(MDC.get("gameInstanceId")).isNull();
+              return GetRoomSnapshotResponse.newBuilder()
+                  .setSnapshot(
+                      RoomSnapshot.newBuilder()
+                          .setTenantId(LookTestFixtures.TENANT)
+                          .setGameInstanceId(LookTestFixtures.GAME_INSTANCE_ID)
+                          .setRoomInstanceId(LookTestFixtures.ROOM_INSTANCE_ID)
+                          .setRoomName(LookTestFixtures.ROOM_NAME)
+                          .addExits(
+                              RoomExitSnapshot.newBuilder()
+                                  .setDirection("EAST")
+                                  .setLabel("EAST")
+                                  .setTargetRoomInstanceId("R-2045")
+                                  .build())
+                          .build())
+                  .build();
+            });
+    when(lookAggregationService.resolve(any()))
+        .thenAnswer(
+            ignored -> {
+              assertThat(MDC.get("tenantId")).isEqualTo(LookTestFixtures.TENANT);
+              assertThat(MDC.get("characterId")).isEqualTo("player-1");
+              assertThat(MDC.get("gameInstanceId")).isNull();
+              return LookTestFixtures.sampleLookResult();
+            });
+
+    service.resolve(
+        MoveRequest.newBuilder()
+            .setTenantId(LookTestFixtures.TENANT)
+            .setSessionId("session-1")
+            .setCharacterId("player-1")
+            .setRoomInstance(
+                RoomInstanceRef.newBuilder()
+                    .setRoomInstanceId(LookTestFixtures.ROOM_INSTANCE_ID)
+                    .build())
+            .setDirection("east")
+            .build());
+
+    assertThat(MDC.get("tenantId")).isNull();
+    assertThat(MDC.get("characterId")).isNull();
+    assertThat(MDC.get("gameInstanceId")).isNull();
   }
 }

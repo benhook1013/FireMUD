@@ -19,57 +19,19 @@ TLS certificates are supplied via [`FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC
 
 ## FireMUD Settings Domains
 
-The first surfaced platform settings domains in Game Session are now generation-ready through typed configuration properties plus configuration metadata.
+The canonical per-key reference for the surfaced pre-`06` platform settings now lives in the generated artifacts below rather than being hand-maintained in this service doc:
 
-### `firemud.presentation`
+- [Platform Settings Reference](../../generated/platform-settings-reference.md)
+- [Platform Settings Schema](../../generated/platform-settings-schema.json)
 
-| Key | Purpose | Default |
-| --- | ------- | ------- |
-| `firemud.presentation.default-locale-tag` | Default locale tag used when rendering built-in localized platform text such as stage errors and entry notices | `en-NZ` |
-| `firemud.presentation.default-color-mode` | Default text-renderer color/emphasis mode when no per-player preference overrides it | `NONE` |
-| `firemud.presentation.brief-enabled-by-default` | Whether suppressible room-view and transcript segments default to BRIEF-style rendering | `false` |
-| `firemud.presentation.prompt.enabled` | Whether prompt output is enabled by default for text-session rendering | `true` |
-| `firemud.presentation.prompt.emit-after-reconnect-restore` | Whether reconnect restore appends a fresh prompt after replay and fresh `LOOK` | `true` |
-| `firemud.presentation.prompt.coalesce-window-ms` | Small prompt burst window used to reduce prompt spam while still retaining prompts for explicit boundary commands like `LOOK` | `150` |
+Game Session currently owns the operator-default `firemud.*` layer for these surfaced domains:
 
-`firemud.presentation.default-color-mode` currently supports:
+- `firemud.presentation`
+- `firemud.reconnection`
+- `firemud.movement`
+- `firemud.world-topology`
 
-- `NONE`
-- `BASIC`
-- `RICH`
-
-### `firemud.reconnection`
-
-| Key | Purpose | Default |
-| --- | ------- | ------- |
-| `firemud.reconnection.policy.resume-window-ms` | Maximum resume window before a stale gameplay binding is treated as non-resumable | `180000` |
-| `firemud.reconnection.policy.stale-resume-falls-through-to-fresh-entry` | Whether stale resume state falls through to fresh entry when `PLAY` admission still succeeds | `true` |
-| `firemud.reconnection.buffer.ttl-ms` | TTL for the bounded reconnect transcript screen buffer | `1800000` |
-| `firemud.reconnection.buffer.min-messages` | Minimum message floor retained for reconnect transcript replay | `8` |
-| `firemud.reconnection.buffer.min-lines` | Minimum line floor retained for reconnect transcript replay | `24` |
-| `firemud.reconnection.buffer.soft-max-bytes` | Soft byte ceiling used once reconnect transcript floors are satisfied | `16384` |
-| `firemud.reconnection.buffer.hard-max-bytes` | Hard byte ceiling for reconnect transcript retention | `65536` |
-
-`firemud.reconnection` currently governs reconnect/session recovery and transcript retention policy. Prompt emission after restore remains part of `firemud.presentation.prompt.*`, not `firemud.reconnection`.
-
-### `firemud.movement`
-
-| Key | Purpose | Default |
-| --- | ------- | ------- |
-| `firemud.movement.post-move-look-enabled` | Whether successful `MOVE` automatically renders the destination room view instead of returning only command acknowledgement | `true` |
-
-### `firemud.world-topology`
-
-| Key | Purpose | Default |
-| --- | ------- | ------- |
-| `firemud.world-topology.scope-model` | Highest topology model the game expresses for later scope-sensitive behavior such as `shout` routing | `MAP_ONLY` |
-| `firemud.world-topology.regions-enabled` | Whether explicit world regions are enabled in the topology model | `false` |
-
-`firemud.world-topology.scope-model` currently supports:
-
-- `MAP_ONLY`
-- `AREA_AND_MAP`
-- `REGION_AREA_AND_MAP`
+The generated reference carries the current defaults, descriptions, valid values or ranges, scope/owner metadata, hot-reloadability, advanced flags, and example values for those keys.
 
 ## Configuration Notes
 
@@ -80,6 +42,7 @@ The first surfaced platform settings domains in Game Session are now generation-
 - Service discovery for downstream gRPC calls uses `ServiceEndpointsProperties` and mTLS identities issued through cert-manager.
 - `firemud.presentation`, `firemud.reconnection`, `firemud.movement`, and `firemud.world-topology` remain file/env-backed operator defaults.
 - Tenant/game overrides for these surfaced domains now come from the shared Game Design settings authority rather than service-local file/env maps.
+- The generated per-key schema/reference for those domains is the canonical operator/admin-facing documentation surface; this service doc keeps only the Game Session-specific ownership and runtime notes.
 - The current resolved result of that bounded read surface is available for operator/debug inspection at `/actuator/settings/effective`. With a persisted `sessionId` it resolves settings against the stored session scope; without one it can synthesize scope from query parameters such as `tenantId`, `gameInstanceId`, and `bootstrapGameInstanceId`.
 - The current precedence inside Game Session is:
 

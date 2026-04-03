@@ -23,8 +23,7 @@ class EffectiveReconnectionSettingsResolverTest {
                 new ScopedSettingsOverrides(
                     null,
                     null,
-                    new ScopedSettingsOverrides.PresentationOverride(
-                        "fr", null, null, null),
+                    new ScopedSettingsOverrides.PresentationOverride("fr", null, null, null),
                     null,
                     null)));
     EffectiveReconnectionSettingsResolver resolver =
@@ -36,8 +35,7 @@ class EffectiveReconnectionSettingsResolverTest {
 
     FiremudReconnectionProperties effective =
         resolver.reconnection(
-            new SessionContext(
-                1L, 22L, 123L, "demo@example.com", 911L, "Ember", 7L, "R-1", null));
+            new SessionContext(1L, 22L, 123L, "demo@example.com", 911L, "Ember", 7L, "R-1", null));
 
     assertThat(effective.policy().resumeWindowMs()).isEqualTo(45_000L);
     assertThat(effective.policy().staleResumeFallsThroughToFreshEntry()).isTrue();

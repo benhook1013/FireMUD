@@ -45,6 +45,14 @@ java {
 val fullCheck = project.hasProperty("fullCheck") || System.getenv("CI") != null
 val checkstyleToolVersion = "13.3.0"
 val spotbugsToolVersion = "4.9.8"
+val platformSettingsMetadataFiles = listOf(
+    file("services/game-session-service/src/main/resources/META-INF/additional-spring-configuration-metadata.json"),
+    file("services/game-logic-service/src/main/resources/META-INF/additional-spring-configuration-metadata.json")
+)
+val platformSettingsPublicationSpec = file("config/settings/platform-settings-publication.json")
+val platformSettingsGeneratorScript = file("dev-tools/docs/generate-platform-settings-docs.py")
+val checkedInPlatformSettingsSchema = file("design/architecture/generated/platform-settings-schema.json")
+val checkedInPlatformSettingsReference = file("design/architecture/generated/platform-settings-reference.md")
 
 allprojects {
     repositories {
@@ -317,9 +325,48 @@ tasks.register<Exec>("validateObservabilityContract") {
     commandLine("python3", "dev-tools/observability/validate-observability-contract.py")
 }
 
+tasks.register<Exec>("generatePlatformSettingsDocs") {
+    group = "documentation"
+    description = "Generates the consolidated surfaced platform settings schema and Markdown reference."
+    inputs.files(platformSettingsMetadataFiles + listOf(platformSettingsPublicationSpec, platformSettingsGeneratorScript))
+    outputs.files(checkedInPlatformSettingsSchema, checkedInPlatformSettingsReference)
+    commandLine(
+        "python3",
+        "dev-tools/docs/generate-platform-settings-docs.py",
+        "--mode",
+        "write"
+    )
+}
+
+tasks.register<Exec>("updatePlatformSettingsDocs") {
+    group = "documentation"
+    description = "Regenerates and updates the checked-in surfaced platform settings schema and Markdown reference."
+    inputs.files(platformSettingsMetadataFiles + listOf(platformSettingsPublicationSpec, platformSettingsGeneratorScript))
+    outputs.files(checkedInPlatformSettingsSchema, checkedInPlatformSettingsReference)
+    commandLine(
+        "python3",
+        "dev-tools/docs/generate-platform-settings-docs.py",
+        "--mode",
+        "write"
+    )
+}
+
+tasks.register<Exec>("verifyPlatformSettingsDocs") {
+    group = "verification"
+    description = "Fails if the checked-in surfaced platform settings docs drift from the generator inputs."
+    inputs.files(platformSettingsMetadataFiles + listOf(platformSettingsPublicationSpec, platformSettingsGeneratorScript, checkedInPlatformSettingsSchema, checkedInPlatformSettingsReference))
+    mustRunAfter("updatePlatformSettingsDocs")
+    commandLine(
+        "python3",
+        "dev-tools/docs/generate-platform-settings-docs.py",
+        "--mode",
+        "check"
+    )
+}
+
 tasks.named("check") {
     // Always run Markdown lint and link checks; they are relatively fast.
-    dependsOn("lintMarkdown", "linkCheck", "validateObservabilityContract")
+    dependsOn("lintMarkdown", "linkCheck", "validateObservabilityContract", "verifyPlatformSettingsDocs")
     if (fullCheck) {
         dependsOn(
             "checkstyleMain",
