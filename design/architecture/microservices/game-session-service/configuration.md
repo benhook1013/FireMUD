@@ -49,7 +49,6 @@ The first surfaced platform settings domains in Game Session are now generation-
 | `firemud.reconnection.buffer.min-lines` | Minimum line floor retained for reconnect transcript replay | `24` |
 | `firemud.reconnection.buffer.soft-max-bytes` | Soft byte ceiling used once reconnect transcript floors are satisfied | `16384` |
 | `firemud.reconnection.buffer.hard-max-bytes` | Hard byte ceiling for reconnect transcript retention | `65536` |
-| `firemud.reconnection.view-cache.look-ttl-ms` | TTL for the reconnect-adjacent room-view snapshot helper used by the current view-cache implementation | `600000` |
 
 `firemud.reconnection` currently governs reconnect/session recovery and transcript retention policy. Prompt emission after restore remains part of `firemud.presentation.prompt.*`, not `firemud.reconnection`.
 
@@ -81,3 +80,4 @@ The first surfaced platform settings domains in Game Session are now generation-
 - Service discovery for downstream gRPC calls uses `ServiceEndpointsProperties` and mTLS identities issued through cert-manager.
 - `firemud.presentation`, `firemud.reconnection`, `firemud.movement`, and `firemud.world-topology` are still file/env-backed operator defaults today; the later tenant/game override model remains part of the broader platform settings work in `02.9` through `02.12`.
 - Prompt exclusion from reconnect transcript replay remains part of the canonical reconnect/output policy; it is not yet surfaced as an operator-facing `firemud.presentation` setting.
+- The older internal reconnect-adjacent rendered-room snapshot helper is no longer part of the surfaced settings model and should not be treated as an authoritative `LOOK` cache.

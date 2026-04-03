@@ -58,8 +58,6 @@ firemud:
       min-lines: 24
       soft-max-bytes: 16384
       hard-max-bytes: 65536
-    view-cache:
-      look-ttl-ms: 600000
   movement:
     post-move-look-enabled: true
   world-topology:

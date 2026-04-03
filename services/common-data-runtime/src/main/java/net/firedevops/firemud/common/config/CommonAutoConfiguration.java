@@ -36,10 +36,8 @@ public class CommonAutoConfiguration {
   @ConditionalOnBean(StringRedisTemplate.class)
   @ConditionalOnMissingBean(LookCacheService.class)
   public LookCacheService lookCacheService(
-      StringRedisTemplate stringRedisTemplate,
-      ObjectMapper objectMapper,
-      FiremudReconnectionProperties properties) {
-    return new RedisLookCacheService(stringRedisTemplate, objectMapper, properties);
+      StringRedisTemplate stringRedisTemplate, ObjectMapper objectMapper) {
+    return new RedisLookCacheService(stringRedisTemplate, objectMapper);
   }
 
   @Bean

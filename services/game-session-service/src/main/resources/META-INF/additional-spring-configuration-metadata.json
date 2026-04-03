@@ -114,13 +114,6 @@
       "sourceType": "net.firedevops.firemud.common.config.FiremudReconnectionProperties$Buffer"
     },
     {
-      "name": "firemud.reconnection.view-cache.look-ttl-ms",
-      "type": "java.lang.Long",
-      "defaultValue": 600000,
-      "description": "TTL, in milliseconds, for the reconnect-adjacent room-view snapshot helper used by the current view-cache implementation.",
-      "sourceType": "net.firedevops.firemud.common.config.FiremudReconnectionProperties$ViewCache"
-    },
-    {
       "name": "firemud.movement.post-move-look-enabled",
       "type": "java.lang.Boolean",
       "defaultValue": true,
