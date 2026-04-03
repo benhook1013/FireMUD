@@ -319,7 +319,8 @@ class GameSessionWebSocketHandlerIntegrationTest {
 
     assertThat(payloads).hasSizeGreaterThanOrEqualTo(3);
     assertThat(payloads).anyMatch(payload -> payload.startsWith("OK LOGIN"));
-    assertThat(payloads).anyMatch(payload -> payload.startsWith("OK PLAY") && payload.endsWith("> "));
+    assertThat(payloads)
+        .anyMatch(payload -> payload.startsWith("OK PLAY") && payload.endsWith("> "));
     assertThat(payloads)
         .anyMatch(
             payload ->
@@ -375,7 +376,9 @@ class GameSessionWebSocketHandlerIntegrationTest {
     session.close();
 
     assertThat(payloads).hasSizeGreaterThanOrEqualTo(4);
-    assertThat(payloads.stream().filter(payload -> payload.startsWith("OK LOOK") && payload.endsWith("> ")))
+    assertThat(
+            payloads.stream()
+                .filter(payload -> payload.startsWith("OK LOOK") && payload.endsWith("> ")))
         .hasSizeGreaterThanOrEqualTo(2);
   }
 
