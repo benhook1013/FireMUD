@@ -34,7 +34,7 @@ class RedisLookCacheServiceTest {
             redisTemplate,
             new ObjectMapper(),
             new FiremudReconnectionProperties(
-                null, null, new FiremudReconnectionProperties.ViewCache(600_000L), null));
+                null, null, new FiremudReconnectionProperties.ViewCache(600_000L)));
   }
 
   @Test
