@@ -102,7 +102,9 @@ public class MoveCommandHandler {
                 response.getDestinationLook(),
                 true,
                 net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
-                    .MOVE_REFRESH));
+                    .MOVE_REFRESH,
+                net.firedevops.firemud.gamesession.presentation.LookViewOutput.BriefRenderingHint
+                    .PREFER_BRIEF));
       } catch (RuntimeException ex) {
         return failure(
             "MOVE_UNAVAILABLE",

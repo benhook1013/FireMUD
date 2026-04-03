@@ -73,7 +73,10 @@ class MoveCommandHandlerTest {
             Mockito.eq(true),
             Mockito.eq(
                 net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
-                    .MOVE_REFRESH)))
+                    .MOVE_REFRESH),
+            Mockito.eq(
+                net.firedevops.firemud.gamesession.presentation.LookViewOutput.BriefRenderingHint
+                    .PREFER_BRIEF)))
         .thenReturn(destinationOutput);
 
     MoveCommandHandlingResult result =
@@ -94,7 +97,9 @@ class MoveCommandHandlerTest {
             destinationLook,
             true,
             net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
-                .MOVE_REFRESH);
+                .MOVE_REFRESH,
+            net.firedevops.firemud.gamesession.presentation.LookViewOutput.BriefRenderingHint
+                .PREFER_BRIEF);
   }
 
   @Test

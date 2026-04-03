@@ -68,16 +68,37 @@ class LookCommandHandlerTest {
         .thenReturn("OK LOOK text");
     when(lookTextRenderer.render(
             eq(lookResult),
+            eq(true),
+            any(
+                net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
+                    .class),
+            any(
+                net.firedevops.firemud.gamesession.presentation.LookViewOutput.BriefRenderingHint
+                    .class)))
+        .thenReturn("OK LOOK text");
+    when(lookTextRenderer.render(
+            eq(lookResult),
             eq(false),
             any(
                 net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
                     .class)))
         .thenReturn("OK QUICKLOOK text");
-    when(lookTextRenderer.toPlayerOutput(
+    when(lookTextRenderer.render(
             eq(lookResult),
             eq(false),
             any(
                 net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
+                    .class),
+            any(
+                net.firedevops.firemud.gamesession.presentation.LookViewOutput.BriefRenderingHint
+                    .class)))
+        .thenReturn("OK QUICKLOOK text");
+    when(lookTextRenderer.toPlayerOutput(
+            eq(lookResult),
+            eq(false),
+            any(net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason.class),
+            any(
+                net.firedevops.firemud.gamesession.presentation.LookViewOutput.BriefRenderingHint
                     .class)))
         .thenReturn(PlayerOutput.view("OK QUICKLOOK text"));
   }
@@ -121,7 +142,9 @@ class LookCommandHandlerTest {
         .toPlayerOutput(
             lookResult,
             false,
-            net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason.QUICKLOOK);
+            net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason.QUICKLOOK,
+            net.firedevops.firemud.gamesession.presentation.LookViewOutput.BriefRenderingHint
+                .PREFER_BRIEF);
     verify(lookCacheService)
         .cache(
             eq(22L),

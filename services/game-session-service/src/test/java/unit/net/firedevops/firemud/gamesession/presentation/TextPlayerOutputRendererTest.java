@@ -266,6 +266,34 @@ class TextPlayerOutputRendererTest {
   }
 
   @Test
+  void moveRefreshCanRenderFullLookWhenBriefHintDoesNotPreferBrief() {
+    TextPlayerOutputRenderer renderer =
+        new TextPlayerOutputRenderer(
+            new PresentationProperties(
+                "en-NZ",
+                PresentationProperties.ColorMode.NONE,
+                false,
+                new PresentationProperties.Prompt(true, true, 150L)));
+
+    String rendered =
+        renderer.render(
+            PlayerOutput.view(
+                new LookViewOutput(
+                    "R-302",
+                    "Gallery Walk",
+                    "A gallery opens to the east.",
+                    "Portraits and weathered banners line the length of the gallery.",
+                    true,
+                    LookViewOutput.RefreshReason.MOVE_REFRESH,
+                    LookViewOutput.BriefRenderingHint.FOLLOW_DEFAULT,
+                    List.of(new LookViewExit("EAST", "archway")),
+                    List.of())));
+
+    assertThat(rendered).contains("Short: A gallery opens to the east.");
+    assertThat(rendered).contains("Long: Portraits and weathered banners line the length");
+  }
+
+  @Test
   void renderAllFormatsSingleLineNoticeAsInlineCommandSuccess() {
     TextPlayerOutputRenderer renderer =
         new TextPlayerOutputRenderer(

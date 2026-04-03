@@ -33,7 +33,20 @@ public class LookTextRenderer {
       LookResult result,
       boolean includeLongDescription,
       LookViewOutput.RefreshReason refreshReason) {
-    return PlayerOutput.view(LookViewOutput.from(result, includeLongDescription, refreshReason));
+    return toPlayerOutput(
+        result,
+        includeLongDescription,
+        refreshReason,
+        LookViewOutput.defaultBriefRenderingHint(refreshReason, includeLongDescription));
+  }
+
+  public PlayerOutput toPlayerOutput(
+      LookResult result,
+      boolean includeLongDescription,
+      LookViewOutput.RefreshReason refreshReason,
+      LookViewOutput.BriefRenderingHint briefRenderingHint) {
+    return PlayerOutput.view(
+        LookViewOutput.from(result, includeLongDescription, refreshReason, briefRenderingHint));
   }
 
   public String render(LookResult result) {
@@ -53,6 +66,19 @@ public class LookTextRenderer {
       LookResult result,
       boolean includeLongDescription,
       LookViewOutput.RefreshReason refreshReason) {
-    return renderer.render(toPlayerOutput(result, includeLongDescription, refreshReason));
+    return render(
+        result,
+        includeLongDescription,
+        refreshReason,
+        LookViewOutput.defaultBriefRenderingHint(refreshReason, includeLongDescription));
+  }
+
+  public String render(
+      LookResult result,
+      boolean includeLongDescription,
+      LookViewOutput.RefreshReason refreshReason,
+      LookViewOutput.BriefRenderingHint briefRenderingHint) {
+    return renderer.render(
+        toPlayerOutput(result, includeLongDescription, refreshReason, briefRenderingHint));
   }
 }

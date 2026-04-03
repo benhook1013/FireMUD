@@ -143,6 +143,20 @@ public final class LookCommandHandler {
       String sessionId,
       boolean includeLongDescription,
       net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason refreshReason) {
+    return describePlayerOutput(
+        sessionId,
+        includeLongDescription,
+        refreshReason,
+        net.firedevops.firemud.gamesession.presentation.LookViewOutput.defaultBriefRenderingHint(
+            refreshReason, includeLongDescription));
+  }
+
+  public PlayerOutput describePlayerOutput(
+      String sessionId,
+      boolean includeLongDescription,
+      net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason refreshReason,
+      net.firedevops.firemud.gamesession.presentation.LookViewOutput.BriefRenderingHint
+          briefRenderingHint) {
     Optional<SessionContext> maybeContext =
         sessionAuthenticationService.resolveSessionContext(sessionId);
     if (maybeContext.isEmpty()) {
@@ -158,7 +172,8 @@ public final class LookCommandHandler {
       }
       try {
         LookResult lookResult = resolveLook(context);
-        return toPlayerOutput(context, lookResult, includeLongDescription, refreshReason);
+        return toPlayerOutput(
+            context, lookResult, includeLongDescription, refreshReason, briefRenderingHint);
       } catch (StatusRuntimeException ex) {
         String errorCode = mapStatusToError(ex);
         recordFailure(context, tenantTag, errorCode, ex);
@@ -204,13 +219,31 @@ public final class LookCommandHandler {
       LookResult lookResult,
       boolean includeLongDescription,
       net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason refreshReason) {
+    return toPlayerOutput(
+        context,
+        lookResult,
+        includeLongDescription,
+        refreshReason,
+        net.firedevops.firemud.gamesession.presentation.LookViewOutput.defaultBriefRenderingHint(
+            refreshReason, includeLongDescription));
+  }
+
+  PlayerOutput toPlayerOutput(
+      SessionContext context,
+      LookResult lookResult,
+      boolean includeLongDescription,
+      net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason refreshReason,
+      net.firedevops.firemud.gamesession.presentation.LookViewOutput.BriefRenderingHint
+          briefRenderingHint) {
     PlayerOutput output =
-        lookTextRenderer.toPlayerOutput(lookResult, includeLongDescription, refreshReason);
+        lookTextRenderer.toPlayerOutput(
+            lookResult, includeLongDescription, refreshReason, briefRenderingHint);
     if (!devIsolatedProperties.isDevIsolated()) {
       cacheLook(
           context,
           lookResult,
-          lookTextRenderer.render(lookResult, includeLongDescription, refreshReason));
+          lookTextRenderer.render(
+              lookResult, includeLongDescription, refreshReason, briefRenderingHint));
     }
     return output;
   }

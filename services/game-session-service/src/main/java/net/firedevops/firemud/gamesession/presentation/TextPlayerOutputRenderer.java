@@ -272,6 +272,6 @@ public class TextPlayerOutputRenderer {
     if (presentationProperties.briefEnabledByDefault()) {
       return true;
     }
-    return result.refreshReason() == LookViewOutput.RefreshReason.MOVE_REFRESH;
+    return result.briefRenderingHint() == LookViewOutput.BriefRenderingHint.PREFER_BRIEF;
   }
 }

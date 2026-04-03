@@ -151,11 +151,24 @@ class SessionResumptionFlowTest {
                 net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
                     .class)))
         .thenReturn("OK LOOK text");
+    when(lookTextRenderer.render(
+            Mockito.eq(lookResult),
+            Mockito.eq(true),
+            Mockito.any(
+                net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
+                    .class),
+            Mockito.any(
+                net.firedevops.firemud.gamesession.presentation.LookViewOutput.BriefRenderingHint
+                    .class)))
+        .thenReturn("OK LOOK text");
     when(lookTextRenderer.toPlayerOutput(
             Mockito.eq(lookResult),
             Mockito.eq(true),
             Mockito.any(
                 net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
+                    .class),
+            Mockito.any(
+                net.firedevops.firemud.gamesession.presentation.LookViewOutput.BriefRenderingHint
                     .class)))
         .thenReturn(
             PlayerOutput.view(

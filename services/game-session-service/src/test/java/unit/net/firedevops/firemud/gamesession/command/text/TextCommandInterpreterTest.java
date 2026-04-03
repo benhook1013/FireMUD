@@ -173,6 +173,9 @@ class TextCommandInterpreterTest {
             Mockito.eq(true),
             Mockito.any(
                 net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
+                    .class),
+            Mockito.any(
+                net.firedevops.firemud.gamesession.presentation.LookViewOutput.BriefRenderingHint
                     .class)))
         .thenReturn(
             PlayerOutput.view(
@@ -189,6 +192,9 @@ class TextCommandInterpreterTest {
             Mockito.eq(false),
             Mockito.any(
                 net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
+                    .class),
+            Mockito.any(
+                net.firedevops.firemud.gamesession.presentation.LookViewOutput.BriefRenderingHint
                     .class)))
         .thenReturn(
             PlayerOutput.view(
@@ -205,6 +211,16 @@ class TextCommandInterpreterTest {
             Mockito.anyBoolean(),
             Mockito.any(
                 net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
+                    .class)))
+        .thenReturn("OK LOOK constructed");
+    when(lookTextRenderer.render(
+            Mockito.eq(lookResult),
+            Mockito.anyBoolean(),
+            Mockito.any(
+                net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
+                    .class),
+            Mockito.any(
+                net.firedevops.firemud.gamesession.presentation.LookViewOutput.BriefRenderingHint
                     .class)))
         .thenReturn("OK LOOK constructed");
 

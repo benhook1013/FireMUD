@@ -210,11 +210,24 @@ class GameSessionWebSocketHandlerIntegrationTest {
                 net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
                     .class)))
         .thenReturn("Login Hall text");
+    when(lookTextRenderer.render(
+            eq(lookResult),
+            eq(true),
+            any(
+                net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
+                    .class),
+            any(
+                net.firedevops.firemud.gamesession.presentation.LookViewOutput.BriefRenderingHint
+                    .class)))
+        .thenReturn("Login Hall text");
     when(lookTextRenderer.toPlayerOutput(
             eq(lookResult),
             eq(true),
             any(
                 net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
+                    .class),
+            any(
+                net.firedevops.firemud.gamesession.presentation.LookViewOutput.BriefRenderingHint
                     .class)))
         .thenReturn(
             net.firedevops.firemud.gamesession.presentation.PlayerOutput.view("Login Hall text"));
@@ -223,6 +236,9 @@ class GameSessionWebSocketHandlerIntegrationTest {
             eq(false),
             any(
                 net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
+                    .class),
+            any(
+                net.firedevops.firemud.gamesession.presentation.LookViewOutput.BriefRenderingHint
                     .class)))
         .thenReturn(
             net.firedevops.firemud.gamesession.presentation.PlayerOutput.view("Quick Hall text"));
@@ -231,6 +247,16 @@ class GameSessionWebSocketHandlerIntegrationTest {
             eq(false),
             any(
                 net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
+                    .class)))
+        .thenReturn("Quick Hall text");
+    when(lookTextRenderer.render(
+            eq(lookResult),
+            eq(false),
+            any(
+                net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
+                    .class),
+            any(
+                net.firedevops.firemud.gamesession.presentation.LookViewOutput.BriefRenderingHint
                     .class)))
         .thenReturn("Quick Hall text");
     when(screenBufferService.get(
@@ -413,7 +439,10 @@ class GameSessionWebSocketHandlerIntegrationTest {
             eq(true),
             eq(
                 net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
-                    .EXPLICIT_LOOK)))
+                    .EXPLICIT_LOOK),
+            eq(
+                net.firedevops.firemud.gamesession.presentation.LookViewOutput.BriefRenderingHint
+                    .FOLLOW_DEFAULT)))
         .thenReturn(
             net.firedevops.firemud.gamesession.presentation.PlayerOutput.view(
                 net.firedevops.firemud.gamesession.presentation.LookViewOutput.from(
@@ -428,20 +457,27 @@ class GameSessionWebSocketHandlerIntegrationTest {
     headers.add("X-Firemud-Locale", "fr");
     List<String> payloads = new java.util.concurrent.CopyOnWriteArrayList<>();
     CountDownLatch latch = new CountDownLatch(3);
+    AtomicReference<WebSocketSession> sessionRef = new AtomicReference<>();
+    java.util.concurrent.atomic.AtomicBoolean lookSent = new java.util.concurrent.atomic.AtomicBoolean();
 
     var future =
         client.execute(
             new TextWebSocketHandler() {
               @Override
               public void afterConnectionEstablished(WebSocketSession session) throws IOException {
+                sessionRef.set(session);
                 session.sendMessage(new TextMessage("LOGIN demo@example.com swordfish"));
                 session.sendMessage(new TextMessage("PLAY demo"));
-                session.sendMessage(new TextMessage("LOOK"));
               }
 
               @Override
-              protected void handleTextMessage(WebSocketSession session, TextMessage message) {
-                payloads.add(message.getPayload());
+              protected void handleTextMessage(WebSocketSession session, TextMessage message)
+                  throws Exception {
+                String payload = message.getPayload();
+                payloads.add(payload);
+                if (payload.startsWith("OK PLAY") && lookSent.compareAndSet(false, true)) {
+                  session.sendMessage(new TextMessage("LOOK"));
+                }
                 latch.countDown();
               }
             },
@@ -453,8 +489,11 @@ class GameSessionWebSocketHandlerIntegrationTest {
     session.close();
 
     assertThat(payloads).hasSizeGreaterThanOrEqualTo(3);
-    assertThat(payloads.get(2)).contains("Salle : Galerie");
-    assertThat(payloads.get(2)).contains("Court : Un couloir etroit file vers le sud.");
+    assertThat(payloads)
+        .anyMatch(
+            payload ->
+                payload.contains("Salle : Galerie")
+                    && payload.contains("Court : Un couloir etroit file vers le sud."));
     assertThat(sessionContextService.findByTenantAndSessionId(22L, 41L))
         .hasValueSatisfying(context -> assertThat(context.localeTag()).isEqualTo("fr"));
   }
@@ -479,20 +518,28 @@ class GameSessionWebSocketHandlerIntegrationTest {
             eq(true),
             eq(
                 net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
-                    .MOVE_REFRESH)))
+                    .MOVE_REFRESH),
+            eq(
+                net.firedevops.firemud.gamesession.presentation.LookViewOutput.BriefRenderingHint
+                    .PREFER_BRIEF)))
         .thenReturn(
             net.firedevops.firemud.gamesession.presentation.PlayerOutput.view(
                 net.firedevops.firemud.gamesession.presentation.LookViewOutput.from(
                     destinationLook,
                     true,
                     net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
-                        .MOVE_REFRESH)));
+                        .MOVE_REFRESH,
+                    net.firedevops.firemud.gamesession.presentation.LookViewOutput
+                        .BriefRenderingHint.PREFER_BRIEF)));
     when(lookTextRenderer.render(
             eq(destinationLook),
             eq(true),
             eq(
                 net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
-                    .MOVE_REFRESH)))
+                    .MOVE_REFRESH),
+            eq(
+                net.firedevops.firemud.gamesession.presentation.LookViewOutput.BriefRenderingHint
+                    .PREFER_BRIEF)))
         .thenReturn("North Hall text");
 
     StandardWebSocketClient client = new StandardWebSocketClient();
