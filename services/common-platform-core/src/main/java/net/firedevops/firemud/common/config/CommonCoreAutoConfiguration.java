@@ -29,6 +29,7 @@ import org.springframework.boot.info.BuildProperties;
 import org.springframework.boot.info.GitProperties;
 import org.springframework.boot.micrometer.metrics.autoconfigure.MeterRegistryCustomizer;
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
 import org.springframework.core.env.Environment;
 
@@ -112,20 +113,25 @@ public class CommonCoreAutoConfiguration {
     return new ReadinessTransitionTracker(meterRegistry);
   }
 
-  @Bean
-  @ConditionalOnMissingBean
+  @Configuration(proxyBeanMethods = false)
   @ConditionalOnWebApplication(type = Type.SERVLET)
   @ConditionalOnClass(name = "jakarta.servlet.Filter")
-  public ServletRequestLoggingFilter servletRequestLoggingFilter(RuntimeIdentity runtimeIdentity) {
-    return new ServletRequestLoggingFilter(runtimeIdentity);
+  static class ServletLoggingConfiguration {
+    @Bean
+    @ConditionalOnMissingBean
+    ServletRequestLoggingFilter servletRequestLoggingFilter(RuntimeIdentity runtimeIdentity) {
+      return new ServletRequestLoggingFilter(runtimeIdentity);
+    }
   }
 
-  @Bean
-  @ConditionalOnMissingBean
+  @Configuration(proxyBeanMethods = false)
   @ConditionalOnWebApplication(type = Type.REACTIVE)
   @ConditionalOnClass(name = "org.springframework.web.server.WebFilter")
-  public ReactiveRequestLoggingFilter reactiveRequestLoggingFilter(
-      RuntimeIdentity runtimeIdentity) {
-    return new ReactiveRequestLoggingFilter(runtimeIdentity);
+  static class ReactiveLoggingConfiguration {
+    @Bean
+    @ConditionalOnMissingBean
+    ReactiveRequestLoggingFilter reactiveRequestLoggingFilter(RuntimeIdentity runtimeIdentity) {
+      return new ReactiveRequestLoggingFilter(runtimeIdentity);
+    }
   }
 }

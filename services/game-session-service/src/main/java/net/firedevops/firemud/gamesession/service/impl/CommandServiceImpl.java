@@ -2,7 +2,9 @@ package net.firedevops.firemud.gamesession.service.impl;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.opentelemetry.api.trace.Span;
+import java.util.Optional;
 import net.firedevops.firemud.common.LoggingUtil;
+import net.firedevops.firemud.gamesession.command.text.GameplayLoggingContext;
 import net.firedevops.firemud.gamesession.config.DevIsolatedProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
@@ -53,13 +55,20 @@ public class CommandServiceImpl implements CommandService {
   public CommandEnqueueResult enqueue(
       String sessionIdText, String command, boolean requiresSoloTick) {
     String traceId = Span.current().getSpanContext().getTraceId();
-    String tenantContext = resolveTenantContext(sessionIdText);
+    var sessionContext = resolveSessionContext(sessionIdText);
+    String tenantContext = resolveTenantContext(sessionIdText, sessionContext);
+    GameplayLoggingContext gameplayLoggingContext =
+        sessionContext
+            .<GameplayLoggingContext>map(GameplayLoggingContext::from)
+            .orElseGet(() -> GameplayLoggingContext.open(tenantContext, null, null, null));
     try (MDC.MDCCloseable trace = MDC.putCloseable("traceId", traceId);
-        MDC.MDCCloseable tenant = MDC.putCloseable("tenantId", tenantContext)) {
+        GameplayLoggingContext ignored = gameplayLoggingContext) {
       logger.info(
-          "Enqueue request traceId={} tenantId={} sessionId={} command={}",
+          "Enqueue request traceId={} tenantId={} gameInstanceId={} characterId={} sessionId={} command={}",
           traceId,
           tenantContext,
+          sessionContext.map(SessionContext::gameInstanceId).filter(id -> id > 0).orElse(null),
+          sessionContext.map(SessionContext::characterId).filter(id -> id > 0).orElse(null),
           sessionIdText,
           command);
 
@@ -95,13 +104,22 @@ public class CommandServiceImpl implements CommandService {
     }
   }
 
-  private String resolveTenantContext(String sessionIdText) {
+  private Optional<SessionContext> resolveSessionContext(String sessionIdText) {
     try {
       long sessionId = Long.parseLong(sessionIdText);
-      var context = sessionContextService.findBySessionId(sessionId);
-      if (context.isPresent()) {
-        return String.valueOf(context.get().tenantId());
-      }
+      return sessionContextService.findBySessionId(sessionId);
+    } catch (NumberFormatException ex) {
+      return Optional.empty();
+    }
+  }
+
+  private String resolveTenantContext(
+      String sessionIdText, Optional<SessionContext> sessionContext) {
+    if (sessionContext.isPresent()) {
+      return String.valueOf(sessionContext.get().tenantId());
+    }
+    try {
+      long sessionId = Long.parseLong(sessionIdText);
       return gameInstanceRepository
           .findById(sessionId)
           .map(GameInstance::getTenantId)

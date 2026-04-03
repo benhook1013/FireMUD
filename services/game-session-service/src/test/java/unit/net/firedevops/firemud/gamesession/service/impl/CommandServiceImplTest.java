@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -17,6 +18,7 @@ import net.firedevops.firemud.gamesession.service.SessionRateLimiter;
 import net.firedevops.firemud.gamesession.service.TickService;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
+import org.slf4j.MDC;
 
 class CommandServiceImplTest {
   @Test
@@ -111,5 +113,42 @@ class CommandServiceImplTest {
 
     assertTrue(result.accepted());
     verify(tickService, times(1)).enqueueCommand(99L, "look", false);
+  }
+
+  @Test
+  void enqueueAddsGameplayLoggingContextWhenSessionIsBound() {
+    TickService tickService = Mockito.mock(TickService.class);
+    SessionRateLimiter rateLimiter = Mockito.mock(SessionRateLimiter.class);
+    Mockito.when(rateLimiter.allow(17L)).thenReturn(true);
+    GameInstanceRepository repository = Mockito.mock(GameInstanceRepository.class);
+    SessionContextService sessionContextService = Mockito.mock(SessionContextService.class);
+    Mockito.when(sessionContextService.findBySessionId(17L))
+        .thenReturn(
+            Optional.of(new SessionContext(17L, 9L, 3L, "demo", 44L, "char", 99L, "room", "jwt")));
+    Mockito.doAnswer(
+            invocation -> {
+              assertEquals("9", MDC.get("tenantId"));
+              assertEquals("99", MDC.get("gameInstanceId"));
+              assertEquals("44", MDC.get("characterId"));
+              assertNull(MDC.get("regionId"));
+              return null;
+            })
+        .when(tickService)
+        .enqueueCommand(99L, "look", false);
+
+    CommandServiceImpl service =
+        new CommandServiceImpl(
+            tickService,
+            rateLimiter,
+            new DevIsolatedProperties(false),
+            repository,
+            sessionContextService);
+
+    CommandEnqueueResult result = service.enqueue("17", "look", false);
+
+    assertTrue(result.accepted());
+    assertNull(MDC.get("tenantId"));
+    assertNull(MDC.get("gameInstanceId"));
+    assertNull(MDC.get("characterId"));
   }
 }

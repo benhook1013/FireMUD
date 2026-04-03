@@ -7,14 +7,18 @@ import net.firedevops.firemud.gamesession.service.SessionContext;
 import org.slf4j.MDC;
 
 /** Attaches gameplay identity fields to MDC where that context is already known. */
-final class GameplayLoggingContext implements AutoCloseable {
+public final class GameplayLoggingContext implements AutoCloseable {
   private final List<AutoCloseable> closeables;
 
   private GameplayLoggingContext(List<AutoCloseable> closeables) {
     this.closeables = closeables;
   }
 
-  static GameplayLoggingContext from(SessionContext context) {
+  public static GameplayLoggingContext empty() {
+    return new GameplayLoggingContext(List.of());
+  }
+
+  public static GameplayLoggingContext from(SessionContext context) {
     return open(
         Long.toString(context.tenantId()),
         context.gameInstanceId() > 0 ? Long.toString(context.gameInstanceId()) : null,
@@ -22,7 +26,7 @@ final class GameplayLoggingContext implements AutoCloseable {
         null);
   }
 
-  static GameplayLoggingContext open(
+  public static GameplayLoggingContext open(
       String tenantId, String gameInstanceId, String characterId, String regionId) {
     List<AutoCloseable> closeables = new ArrayList<>(4);
     put(closeables, "tenantId", tenantId);
