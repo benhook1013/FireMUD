@@ -202,6 +202,8 @@ The canonical text renderer should preserve a classic MUD feel:
 
 The standard `QUICKLOOK` command reuses the same underlying room-view structure as `LOOK` but skips the room-description prose, making it suitable for rapid redraws that still show visible occupants, room-ground items, exits, and the normal prompt/status line.
 
+Prompt outputs now also carry a first minimal structured status field list alongside their rendered classic text. Text clients still receive the traditional prompt line, while first-party web and later richer clients can consume the same prompt payload without scraping transcript text.
+
 The text protocol remains the canonical wire format for Telnet and generic text WebSocket clients, but it should not be treated as the deepest platform abstraction. FireMUD should preserve structured gameplay views, communication results, prompt/status snapshots, and command errors until the latest practical rendering step so player settings such as color mode and `BRIEF`, plus first-party web and future MCP-aware clients, can apply presentation policy without rewriting gameplay logic. See [Input, Output, and Presentation](../../system-architecture-input-output-and-presentation.md).
 
 The first live communication modes now emit canonical actor prose directly for the initiating player. After a successful command the server responds with text such as:

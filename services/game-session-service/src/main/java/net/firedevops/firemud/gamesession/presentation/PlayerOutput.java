@@ -49,9 +49,13 @@ public record PlayerOutput(
   }
 
   public static PlayerOutput prompt(String text) {
+    return prompt(text, java.util.List.of());
+  }
+
+  public static PlayerOutput prompt(String text, java.util.List<PromptField> fields) {
     return new PlayerOutput(
         PlayerOutputKind.PROMPT,
-        new PromptOutput(text),
+        new PromptOutput(text, fields),
         ReplayPolicy.NO_REPLAY,
         BriefRenderPolicy.ALWAYS_SHOW,
         false);

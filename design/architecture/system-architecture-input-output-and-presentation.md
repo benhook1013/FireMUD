@@ -10,7 +10,7 @@ The goal is to keep gameplay and UX decisions structured until the latest practi
 - The first output kinds and payloads are live in code for messages, views, prompts, and notices, with replay policy and brief-policy placeholders on the envelope.
 - `LOOK` has started moving onto that path through `LookViewOutput` and `TextPlayerOutputRenderer`, although some command paths still use transitional pre-rendered protocol text payloads.
 - Communication actor responses now flow through the same late renderer, but recipient delivery still pushes already-rendered strings and first-party web still shares the generic text payload path.
-- Prompt output is modeled separately, and presentation defaults are now bound from typed properties, but prompt coalescing and broad prompt emission are not yet fully implemented.
+- Prompt output is modeled separately, presentation defaults are now bound from typed properties, and prompt payloads now carry a first minimal structured field list alongside classic prompt text, but prompt coalescing and broad prompt emission are not yet fully implemented.
 - Prompt output now has a first baseline pipeline plus a narrow per-session prompt-throttling window, but richer burst-end scheduling and structured prompt/status delivery are still future work.
 
 ---
