@@ -189,6 +189,14 @@ It should usually be:
 - regenerated fresh rather than stored in the reconnect transcript buffer
 - consumable as structured data by first-party web or MCP-aware clients
 
+Future game-defined prompt composition should extend this model by separating:
+
+- upstream status-field production
+- prompt-layout selection
+- final client rendering
+
+In practical terms, gameplay/domain services should publish structured status fields, the prompt pipeline should choose and order those fields according to player/game layout policy, and the text renderer should remain only one projection of that structured prompt payload for classic clients.
+
 The next intended refinement is not global transport batching. Instead, FireMUD should prefer:
 
 - a very small per-session burst window that can catch naturally adjacent outputs from one logical event chain

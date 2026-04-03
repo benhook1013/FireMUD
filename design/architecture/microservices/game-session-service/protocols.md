@@ -204,6 +204,8 @@ The standard `QUICKLOOK` command reuses the same underlying room-view structure 
 
 Prompt outputs now also carry a first minimal structured status field list alongside their rendered classic text. Text clients still receive the traditional prompt line, while first-party web and later richer clients can consume the same prompt payload without scraping transcript text.
 
+Later game-defined prompt composition should plug in ahead of rendering: upstream gameplay/status providers add structured fields, the prompt pipeline selects and orders fields according to player/game layout policy, and the Game Session renderer continues turning that payload into the final client-facing prompt for the active surface.
+
 The text protocol remains the canonical wire format for Telnet and generic text WebSocket clients, but it should not be treated as the deepest platform abstraction. FireMUD should preserve structured gameplay views, communication results, prompt/status snapshots, and command errors until the latest practical rendering step so player settings such as color mode and `BRIEF`, plus first-party web and future MCP-aware clients, can apply presentation policy without rewriting gameplay logic. See [Input, Output, and Presentation](../../system-architecture-input-output-and-presentation.md).
 
 The first live communication modes now emit canonical actor prose directly for the initiating player. After a successful command the server responds with text such as:
