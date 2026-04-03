@@ -53,6 +53,8 @@ When known, logs should also include gameplay identity fields such as:
 - `gameInstanceId`
 - `characterId`
 
+These gameplay fields should be attached through shared logging-context helpers where possible rather than repeated ad hoc message formatting. The current bounded baseline now covers the highest-value command/admission paths plus reconnect replay/refresh and live communication-recipient delivery when a bound gameplay context is already known.
+
 Every service should also emit one structured startup lifecycle log that includes:
 
 - `service`

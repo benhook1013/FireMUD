@@ -6,6 +6,7 @@ import java.util.Optional;
 import net.firedevops.firemud.cache.ScreenBufferService;
 import net.firedevops.firemud.common.runtime.RuntimeIdentity;
 import net.firedevops.firemud.common.runtime.RuntimeLoggingContext;
+import net.firedevops.firemud.gamesession.command.text.GameplayLoggingContext;
 import net.firedevops.firemud.gamesession.command.text.LookCommandHandler;
 import net.firedevops.firemud.gamesession.command.text.TextCommand;
 import net.firedevops.firemud.gamesession.command.text.TextCommandInterpretationResult;
@@ -83,7 +84,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
 
   @Override
   public void afterConnectionEstablished(WebSocketSession session) {
-    try (RuntimeLoggingContext ignored = openLoggingContext(session)) {
+    try (CombinedLoggingContext ignored = openLoggingContext(session)) {
       logger.debug(
           "WebSocket session {} established with sessionId={} tenantId={}",
           session.getId(),
@@ -109,7 +110,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
   @Override
   protected void handleTextMessage(WebSocketSession session, TextMessage message)
       throws IOException {
-    try (RuntimeLoggingContext ignored = openLoggingContext(session)) {
+    try (CombinedLoggingContext ignored = openLoggingContext(session)) {
       String sessionId = resolveTransportSessionId(session);
       if (!StringUtils.hasText(sessionId)) {
         session.sendMessage(new TextMessage("ERROR INVALID_ARGUMENT sessionId header required"));
@@ -255,31 +256,33 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
         .filter(context -> context.gameInstanceId() > 0 && context.characterId() > 0)
         .ifPresent(
             context -> {
-              Optional<ScreenBufferService.BufferedScreen> maybeBuffer =
-                  screenBufferService.get(
-                      context.tenantId(), context.gameInstanceId(), context.characterId());
-              if (!interpretation.reconnectRedrawRecommended() && maybeBuffer.isEmpty()) {
-                return;
-              }
-              maybeBuffer.ifPresent(
-                  buffer -> sendReplayChunk(session, buffer.protocolText(), "screen buffer"));
-              String look = renderReconnectLook(session, sessionId);
-              if (StringUtils.hasText(look)) {
-                sendReplayChunk(session, look, "fresh LOOK");
-              }
-              if (presentationProperties.prompt().emitAfterReconnectRestore()) {
-                renderPrompt(context, resolveLocaleTag(session, sessionId))
-                    .ifPresent(
-                        prompt -> {
-                          sendReplayChunk(session, prompt, "fresh prompt");
-                          promptBurstCoordinator.recordPromptEmission(sessionId);
-                        });
+              try (GameplayLoggingContext ignored = GameplayLoggingContext.from(context)) {
+                Optional<ScreenBufferService.BufferedScreen> maybeBuffer =
+                    screenBufferService.get(
+                        context.tenantId(), context.gameInstanceId(), context.characterId());
+                if (!interpretation.reconnectRedrawRecommended() && maybeBuffer.isEmpty()) {
+                  return;
+                }
+                maybeBuffer.ifPresent(
+                    buffer -> sendReplayChunk(session, buffer.protocolText(), "screen buffer"));
+                String look = renderReconnectLook(session, sessionId);
+                if (StringUtils.hasText(look)) {
+                  sendReplayChunk(session, look, "fresh LOOK");
+                }
+                if (presentationProperties.prompt().emitAfterReconnectRestore()) {
+                  renderPrompt(context, resolveLocaleTag(session, sessionId))
+                      .ifPresent(
+                          prompt -> {
+                            sendReplayChunk(session, prompt, "fresh prompt");
+                            promptBurstCoordinator.recordPromptEmission(sessionId);
+                          });
+                }
               }
             });
   }
 
   private void sendReplayChunk(WebSocketSession session, String text, String label) {
-    try (RuntimeLoggingContext ignored = openLoggingContext(session)) {
+    try (CombinedLoggingContext ignored = openLoggingContext(session)) {
       try {
         sendProtocolMessage(session, text);
       } catch (IOException ex) {
@@ -314,12 +317,29 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     }
   }
 
-  private RuntimeLoggingContext openLoggingContext(WebSocketSession session) {
+  private CombinedLoggingContext openLoggingContext(WebSocketSession session) {
     String correlationId = resolveTransportSessionId(session);
     if (!StringUtils.hasText(correlationId)) {
       correlationId = session.getId();
     }
-    return RuntimeLoggingContext.open(runtimeIdentity, correlationId);
+    RuntimeLoggingContext runtimeContext =
+        RuntimeLoggingContext.open(runtimeIdentity, correlationId);
+    GameplayLoggingContext gameplayContext =
+        parseNumericSessionId(correlationId)
+            .flatMap(sessionContextService::findBySessionId)
+            .map(GameplayLoggingContext::from)
+            .orElseGet(GameplayLoggingContext::empty);
+    return new CombinedLoggingContext(runtimeContext, gameplayContext);
+  }
+
+  private record CombinedLoggingContext(
+      RuntimeLoggingContext runtimeContext, GameplayLoggingContext gameplayContext)
+      implements AutoCloseable {
+    @Override
+    public void close() {
+      gameplayContext.close();
+      runtimeContext.close();
+    }
   }
 
   private Optional<String> renderPrompt(SessionContext context, String localeTag) {

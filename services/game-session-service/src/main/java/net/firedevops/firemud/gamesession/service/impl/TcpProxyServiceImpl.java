@@ -118,7 +118,13 @@ public final class TcpProxyServiceImpl extends TcpProxyServiceGrpc.TcpProxyServi
       sessionStateService.saveState(suspendedState);
       return GrpcAppErrors.ok("Disconnect recorded");
     } catch (RuntimeException ex) {
-      logger.error("Failed to save suspended session state", ex);
+      logger.error(
+          "Failed to save suspended session state tenantId={} gameInstanceId={} proxyConnectionId={} disconnectSequence={}",
+          request.getTenantId(),
+          gameInstanceIdText,
+          request.getProxyConnectionId(),
+          request.getDisconnectSequence(),
+          ex);
       return GrpcAppErrors.error(meterRegistry, "INTERNAL", "Failed to update session state");
     }
   }

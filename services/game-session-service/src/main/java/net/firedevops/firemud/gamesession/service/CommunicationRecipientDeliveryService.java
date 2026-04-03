@@ -7,6 +7,7 @@ import net.firedevops.firemud.cache.ScreenBufferService;
 import net.firedevops.firemud.gamelogic.v1.CommunicationRecipientRole;
 import net.firedevops.firemud.gamelogic.v1.CommunicationRecipientView;
 import net.firedevops.firemud.gamelogic.v1.SendCommunicationResponse;
+import net.firedevops.firemud.gamesession.command.text.GameplayLoggingContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -47,35 +48,42 @@ public final class CommunicationRecipientDeliveryService {
     if (!StringUtils.hasText(view.getRenderedText())) {
       return;
     }
-    Optional<SessionContext> maybeRecipient = resolveRecipient(actorContext, view);
-    if (maybeRecipient.isEmpty()) {
-      meterRegistry
-          .counter("gamesession.communication.delivery.missed", "role", roleTag(view))
-          .increment();
-      return;
+    try (GameplayLoggingContext actorLoggingContext = GameplayLoggingContext.from(actorContext)) {
+      Optional<SessionContext> maybeRecipient = resolveRecipient(actorContext, view);
+      if (maybeRecipient.isEmpty()) {
+        meterRegistry
+            .counter("gamesession.communication.delivery.missed", "role", roleTag(view))
+            .increment();
+        return;
+      }
+
+      SessionContext recipient = maybeRecipient.orElseThrow();
+      if (recipient.gameInstanceId() <= 0 || recipient.characterId() <= 0) {
+        return;
+      }
+
+      try (GameplayLoggingContext recipientLoggingContext =
+          GameplayLoggingContext.from(recipient)) {
+        screenBufferService.append(
+            recipient.tenantId(),
+            recipient.gameInstanceId(),
+            recipient.characterId(),
+            view.getRenderedText() + "\n");
+
+        activeTransportSessionRegistry
+            .find(recipient.sessionId())
+            .filter(WebSocketSession::isOpen)
+            .ifPresentOrElse(
+                session -> push(session, recipient, view),
+                () ->
+                    meterRegistry
+                        .counter(
+                            "gamesession.communication.delivery.buffered_only",
+                            "role",
+                            roleTag(view))
+                        .increment());
+      }
     }
-
-    SessionContext recipient = maybeRecipient.orElseThrow();
-    if (recipient.gameInstanceId() <= 0 || recipient.characterId() <= 0) {
-      return;
-    }
-
-    screenBufferService.append(
-        recipient.tenantId(),
-        recipient.gameInstanceId(),
-        recipient.characterId(),
-        view.getRenderedText() + "\n");
-
-    activeTransportSessionRegistry
-        .find(recipient.sessionId())
-        .filter(WebSocketSession::isOpen)
-        .ifPresentOrElse(
-            session -> push(session, recipient.sessionId(), view),
-            () ->
-                meterRegistry
-                    .counter(
-                        "gamesession.communication.delivery.buffered_only", "role", roleTag(view))
-                    .increment());
   }
 
   private Optional<SessionContext> resolveRecipient(
@@ -98,18 +106,25 @@ public final class CommunicationRecipientDeliveryService {
         actorContext.tenantId(), actorContext.gameInstanceId(), view.getRecipientName());
   }
 
-  private void push(WebSocketSession session, long sessionId, CommunicationRecipientView view) {
-    try {
-      session.sendMessage(new TextMessage(view.getRenderedText()));
-      meterRegistry
-          .counter("gamesession.communication.delivery.pushed", "role", roleTag(view))
-          .increment();
-    } catch (IOException ex) {
-      LOG.warn("Failed to push {} communication view to session {}", roleTag(view), sessionId, ex);
-      meterRegistry
-          .counter("gamesession.communication.delivery.failed", "role", roleTag(view))
-          .increment();
-      activeTransportSessionRegistry.unregister(sessionId, session);
+  private void push(
+      WebSocketSession session, SessionContext recipient, CommunicationRecipientView view) {
+    try (GameplayLoggingContext ignored = GameplayLoggingContext.from(recipient)) {
+      try {
+        session.sendMessage(new TextMessage(view.getRenderedText()));
+        meterRegistry
+            .counter("gamesession.communication.delivery.pushed", "role", roleTag(view))
+            .increment();
+      } catch (IOException ex) {
+        LOG.warn(
+            "Failed to push {} communication view to session {}",
+            roleTag(view),
+            recipient.sessionId(),
+            ex);
+        meterRegistry
+            .counter("gamesession.communication.delivery.failed", "role", roleTag(view))
+            .increment();
+        activeTransportSessionRegistry.unregister(recipient.sessionId(), session);
+      }
     }
   }
 

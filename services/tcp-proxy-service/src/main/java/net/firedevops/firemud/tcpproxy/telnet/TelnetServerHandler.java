@@ -38,6 +38,7 @@ import net.firedevops.firemud.tcpproxy.service.TcpProxyEventService;
 import net.firedevops.firemud.tcpproxy.v1.NotifyDisconnectResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.util.StringUtils;
 
 /** Handler that forwards Telnet lines to the gateway via WebSocket. */
@@ -366,7 +367,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   }
 
   private void closeIfIdle() {
-    try (RuntimeLoggingContext ignored = openLoggingContext()) {
+    try (CombinedLoggingContext ignored = openLoggingContext()) {
       if (closing) {
         return;
       }
@@ -397,7 +398,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     outstandingSends.add(pingFuture);
     pingFuture.whenComplete(
         (ws, error) -> {
-          try (RuntimeLoggingContext ignored = openLoggingContext()) {
+          try (CombinedLoggingContext ignored = openLoggingContext()) {
             outstandingSends.remove(pingFuture);
             sample.stop(heartbeatTimer);
             if (error != null) {
@@ -421,7 +422,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     outstandingSends.add(sendFuture);
     sendFuture.whenComplete(
         (ws, error) -> {
-          try (RuntimeLoggingContext ignored = openLoggingContext()) {
+          try (CombinedLoggingContext ignored = openLoggingContext()) {
             outstandingSends.remove(sendFuture);
             inFlightSend = null;
             if (error == null) {
@@ -440,7 +441,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   @Override
   public void channelActive(ChannelHandlerContext ctx) {
     context = ctx;
-    try (RuntimeLoggingContext ignored = openLoggingContext()) {
+    try (CombinedLoggingContext ignored = openLoggingContext()) {
       touchActivity();
       var remote = ctx.channel() != null ? ctx.channel().remoteAddress() : null;
       clientIp = extractIp(remote);
@@ -470,7 +471,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   @Timed(value = "tcpproxy.command")
   protected void channelRead0(ChannelHandlerContext ctx, String msg) {
     Timer.Sample sample = Timer.start(meterRegistry);
-    try (RuntimeLoggingContext ignored = openLoggingContext()) {
+    try (CombinedLoggingContext ignored = openLoggingContext()) {
       try {
         if (closing) {
           return;
@@ -520,7 +521,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
 
   @Override
   public void channelInactive(ChannelHandlerContext ctx) {
-    try (RuntimeLoggingContext ignored = openLoggingContext()) {
+    try (CombinedLoggingContext ignored = openLoggingContext()) {
       closing = true;
       stopHeartbeat();
       cancelIdleCheck();
@@ -738,7 +739,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
                     response, sessionContext.gameInstanceId(), sessionContext.tenantId()))
         .exceptionally(
             failure -> {
-              try (RuntimeLoggingContext ignored = openLoggingContext()) {
+              try (CombinedLoggingContext ignored = openLoggingContext()) {
                 logger.warn(
                     "Failed to notify Game Session Service about disconnect for session {} tenant {}",
                     sessionContext.gameInstanceId(),
@@ -756,7 +757,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
 
   private void handleDisconnectResponse(
       NotifyDisconnectResponse response, String sessionId, String tenantId) {
-    try (RuntimeLoggingContext ignored = openLoggingContext()) {
+    try (CombinedLoggingContext ignored = openLoggingContext()) {
       if (response == null) {
         logger.warn(
             "Disconnect notification returned no response for session {} tenant {}",
@@ -828,7 +829,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     return new Listener() {
       @Override
       public void onOpen(WebSocket webSocket) {
-        try (RuntimeLoggingContext ignored = openLoggingContext()) {
+        try (CombinedLoggingContext ignored = openLoggingContext()) {
           boolean wasConnected = connectedOnce;
           connectedOnce = true;
           setWebSocket(webSocket, wasConnected);
@@ -840,7 +841,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
 
       @Override
       public CompletionStage<?> onText(WebSocket webSocket, CharSequence data, boolean last) {
-        try (RuntimeLoggingContext ignored = openLoggingContext()) {
+        try (CombinedLoggingContext ignored = openLoggingContext()) {
           touchActivity();
           if (logger.isDebugEnabled()) {
             logger.debug("Gateway response: {}", data);
@@ -870,7 +871,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
 
       @Override
       public CompletionStage<?> onClose(WebSocket webSocket, int statusCode, String reason) {
-        try (RuntimeLoggingContext ignored = openLoggingContext()) {
+        try (CombinedLoggingContext ignored = openLoggingContext()) {
           logger.warn(
               "Gateway WebSocket closed for {} with status {} and reason {}",
               gatewayWsUrl,
@@ -883,7 +884,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
 
       @Override
       public void onError(WebSocket webSocket, Throwable error) {
-        try (RuntimeLoggingContext ignored = openLoggingContext()) {
+        try (CombinedLoggingContext ignored = openLoggingContext()) {
           logger.error("WebSocket error for {}", gatewayWsUrl, error);
           handleGatewayDisconnect();
         }
@@ -893,14 +894,48 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
 
   @Override
   public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
-    try (RuntimeLoggingContext ignored = openLoggingContext()) {
+    try (CombinedLoggingContext ignored = openLoggingContext()) {
       logger.error("Telnet handler error", cause);
       ctx.close();
     }
   }
 
-  private RuntimeLoggingContext openLoggingContext() {
-    return RuntimeLoggingContext.open(runtimeIdentity, proxyConnectionId);
+  private CombinedLoggingContext openLoggingContext() {
+    RuntimeLoggingContext runtimeContext =
+        RuntimeLoggingContext.open(runtimeIdentity, proxyConnectionId);
+    AutoCloseable tenantContext =
+        StringUtils.hasText(sessionContext.tenantId())
+            ? MDC.putCloseable("tenantId", sessionContext.tenantId())
+            : null;
+    AutoCloseable gameInstanceContext =
+        StringUtils.hasText(sessionContext.gameInstanceId())
+            ? MDC.putCloseable("gameInstanceId", sessionContext.gameInstanceId())
+            : null;
+    return new CombinedLoggingContext(runtimeContext, gameInstanceContext, tenantContext);
+  }
+
+  private record CombinedLoggingContext(
+      RuntimeLoggingContext runtimeContext,
+      AutoCloseable gameInstanceContext,
+      AutoCloseable tenantContext)
+      implements AutoCloseable {
+    @Override
+    public void close() {
+      closeQuietly(gameInstanceContext);
+      closeQuietly(tenantContext);
+      runtimeContext.close();
+    }
+
+    private static void closeQuietly(AutoCloseable closeable) {
+      if (closeable == null) {
+        return;
+      }
+      try {
+        closeable.close();
+      } catch (Exception ignored) {
+        // MDC cleanup should never affect runtime flow.
+      }
+    }
   }
 
   private static final byte IAC = (byte) 255;
