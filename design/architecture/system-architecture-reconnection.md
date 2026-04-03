@@ -198,6 +198,14 @@ Prompt/status output is a separate output class from transcript lines:
 - reconnect should restore transcript context first, then emit a fresh `LOOK`, then emit one fresh current prompt;
 - first-party web and MCP-aware clients may consume prompt/status as structured data instead of rendering it into the main text transcript.
 
+In the current Game Session settings surface, prompt enablement and restore/coalescing defaults are exposed through:
+
+- `firemud.presentation.prompt.enabled`
+- `firemud.presentation.prompt.emit-after-reconnect-restore`
+- `firemud.presentation.prompt.coalesce-window-ms`
+
+These remain operator/file-env defaults today, while prompt exclusion from reconnect transcript replay remains a canonical reconnect/output rule rather than a separately surfaced toggle.
+
 ### Abnormal WebSocket Transport Loss
 
 Client implementations must not assume every disconnect includes a close frame and reason token. Planned drains and many graceful failures will carry canonical close codes, but abrupt process/node/network failures can terminate transport before the edge emits a close frame.
