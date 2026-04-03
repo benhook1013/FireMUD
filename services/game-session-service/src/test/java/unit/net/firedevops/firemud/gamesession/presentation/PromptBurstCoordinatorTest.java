@@ -18,7 +18,7 @@ class PromptBurstCoordinatorTest {
             new PresentationProperties(
                 PresentationProperties.ColorMode.NONE,
                 false,
-                new PresentationProperties.Prompt(true, false, true, 150L)),
+                new PresentationProperties.Prompt(true, true, 150L)),
             Clock.fixed(Instant.parse("2026-04-02T23:00:00Z"), ZoneOffset.UTC));
 
     List<PlayerOutput> outputs =
@@ -37,7 +37,7 @@ class PromptBurstCoordinatorTest {
             new PresentationProperties(
                 PresentationProperties.ColorMode.NONE,
                 false,
-                new PresentationProperties.Prompt(true, false, true, 150L)),
+                new PresentationProperties.Prompt(true, true, 150L)),
             Clock.fixed(Instant.parse("2026-04-02T23:00:00Z"), ZoneOffset.UTC));
 
     List<PlayerOutput> outputs =
@@ -55,7 +55,7 @@ class PromptBurstCoordinatorTest {
             new PresentationProperties(
                 PresentationProperties.ColorMode.NONE,
                 false,
-                new PresentationProperties.Prompt(true, false, true, 150L)),
+                new PresentationProperties.Prompt(true, true, 150L)),
             Clock.fixed(Instant.parse("2026-04-02T23:00:00Z"), ZoneOffset.UTC));
 
     List<PlayerOutput> outputs = List.of(PlayerOutput.prompt("demo> "));

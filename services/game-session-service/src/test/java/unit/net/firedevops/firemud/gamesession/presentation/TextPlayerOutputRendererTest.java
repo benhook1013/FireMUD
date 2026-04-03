@@ -18,7 +18,7 @@ class TextPlayerOutputRendererTest {
             new PresentationProperties(
                 PresentationProperties.ColorMode.NONE,
                 true,
-                new PresentationProperties.Prompt(false, false, true, 150L)));
+                new PresentationProperties.Prompt(false, true, 150L)));
 
     String rendered =
         renderer.render(
@@ -44,7 +44,7 @@ class TextPlayerOutputRendererTest {
             new PresentationProperties(
                 PresentationProperties.ColorMode.BASIC,
                 false,
-                new PresentationProperties.Prompt(false, false, true, 150L)));
+                new PresentationProperties.Prompt(false, true, 150L)));
 
     assertThat(renderer.render(PlayerOutput.prompt("HP: 10/10 >"))).isEmpty();
   }
@@ -56,7 +56,7 @@ class TextPlayerOutputRendererTest {
             new PresentationProperties(
                 PresentationProperties.ColorMode.NONE,
                 true,
-                new PresentationProperties.Prompt(false, false, true, 150L)));
+                new PresentationProperties.Prompt(false, true, 150L)));
 
     PlayerOutput suppressed =
         new PlayerOutput(
@@ -76,7 +76,7 @@ class TextPlayerOutputRendererTest {
             new PresentationProperties(
                 PresentationProperties.ColorMode.BASIC,
                 false,
-                new PresentationProperties.Prompt(true, false, true, 150L)));
+                new PresentationProperties.Prompt(true, true, 150L)));
 
     assertThat(renderer.render(PlayerOutput.prompt("HP: 10/10 >")))
         .isEqualTo("\u001B[1;32mHP: 10/10 >\u001B[0m");
@@ -89,7 +89,7 @@ class TextPlayerOutputRendererTest {
             new PresentationProperties(
                 PresentationProperties.ColorMode.RICH,
                 false,
-                new PresentationProperties.Prompt(false, false, true, 150L)));
+                new PresentationProperties.Prompt(false, true, 150L)));
 
     String rendered =
         renderer.render(
@@ -113,7 +113,7 @@ class TextPlayerOutputRendererTest {
             new PresentationProperties(
                 PresentationProperties.ColorMode.NONE,
                 false,
-                new PresentationProperties.Prompt(true, false, true, 150L)));
+                new PresentationProperties.Prompt(true, true, 150L)));
 
     String rendered =
         renderer.renderAll(
@@ -134,7 +134,7 @@ class TextPlayerOutputRendererTest {
             new PresentationProperties(
                 PresentationProperties.ColorMode.NONE,
                 false,
-                new PresentationProperties.Prompt(true, false, true, 150L)));
+                new PresentationProperties.Prompt(true, true, 150L)));
 
     String rendered =
         renderer.renderAll(
@@ -153,7 +153,7 @@ class TextPlayerOutputRendererTest {
             new PresentationProperties(
                 PresentationProperties.ColorMode.NONE,
                 false,
-                new PresentationProperties.Prompt(true, false, true, 150L)));
+                new PresentationProperties.Prompt(true, true, 150L)));
 
     String rendered =
         renderer.renderAll(

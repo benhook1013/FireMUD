@@ -9,7 +9,7 @@ public record PresentationProperties(
 
   public PresentationProperties {
     defaultColorMode = defaultColorMode == null ? ColorMode.NONE : defaultColorMode;
-    prompt = prompt == null ? new Prompt(false, false, true, 150L) : prompt.normalize();
+    prompt = prompt == null ? new Prompt(false, true, 150L) : prompt.normalize();
   }
 
   public enum ColorMode {
@@ -18,18 +18,11 @@ public record PresentationProperties(
     RICH
   }
 
-  public record Prompt(
-      boolean enabled,
-      boolean includeInScreenBuffer,
-      boolean emitAfterReconnectRestore,
-      long coalesceWindowMs) {
+  public record Prompt(boolean enabled, boolean emitAfterReconnectRestore, long coalesceWindowMs) {
 
     Prompt normalize() {
       return new Prompt(
-          enabled,
-          includeInScreenBuffer,
-          emitAfterReconnectRestore,
-          coalesceWindowMs > 0 ? coalesceWindowMs : 150L);
+          enabled, emitAfterReconnectRestore, coalesceWindowMs > 0 ? coalesceWindowMs : 150L);
     }
   }
 }

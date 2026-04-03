@@ -316,9 +316,13 @@ class TextCommandInterpreterTest {
     assertTrue(interpretation.commandResult().accepted());
     assertFalse(interpretation.protocolResponse());
     assertEquals(2, interpretation.outputs().size());
-    assertEquals(net.firedevops.firemud.gamesession.presentation.PlayerOutputKind.VIEW, interpretation.outputs().get(0).kind());
+    assertEquals(
+        net.firedevops.firemud.gamesession.presentation.PlayerOutputKind.VIEW,
+        interpretation.outputs().get(0).kind());
     assertEquals("North Hall text", interpretation.outputs().get(0).text());
-    assertEquals(net.firedevops.firemud.gamesession.presentation.PlayerOutputKind.PROMPT, interpretation.outputs().get(1).kind());
+    assertEquals(
+        net.firedevops.firemud.gamesession.presentation.PlayerOutputKind.PROMPT,
+        interpretation.outputs().get(1).kind());
     assertEquals("demo> ", interpretation.outputs().get(1).text());
     verify(moveHandler).handle(Mockito.eq(played), Mockito.any(TextCommand.class));
   }

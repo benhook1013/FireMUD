@@ -50,7 +50,7 @@ class CommunicationCommandHandlerTest {
                 new PresentationProperties(
                     PresentationProperties.ColorMode.BASIC,
                     false,
-                    new PresentationProperties.Prompt(false, false, true, 150L))),
+                    new PresentationProperties.Prompt(false, true, 150L))),
             meterRegistry);
   }
 
