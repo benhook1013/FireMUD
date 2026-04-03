@@ -236,11 +236,13 @@ jobs:
         id: effective-image-tag
         env:
           GH_TOKEN: ${{ github.token }}
+          PREVIEW_HEAD_BRANCH: ${{ github.head_ref || github.ref_name }}
+          PREVIEW_BASE_BRANCH: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.ref || 'develop' }}
         run: |
           EFFECTIVE_IMAGE_TAG="$(bash ./dev-tools/preview/resolve-preview-image-tag.sh \
             "${{ needs.preview-plan.outputs.image_tag }}" \
-            "${{ github.head_ref || github.ref_name }}" \
-            "${{ github.event_name == 'pull_request' && github.event.pull_request.base.ref || 'develop' }}")"
+            "${PREVIEW_HEAD_BRANCH}" \
+            "${PREVIEW_BASE_BRANCH}")"
           echo "image_tag=${EFFECTIVE_IMAGE_TAG}" >> "$GITHUB_OUTPUT"
 
       - name: Wait for preview runtime images
