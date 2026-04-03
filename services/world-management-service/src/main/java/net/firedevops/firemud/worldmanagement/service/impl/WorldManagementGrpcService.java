@@ -125,7 +125,8 @@ public class WorldManagementGrpcService
     try {
       Long roomId = Long.valueOf(resolveRoomId(request));
       Long tenantId = Long.valueOf(resolveTenantId(request));
-      RoomSnapshotDto snapshot = roomService.getRoomSnapshot(tenantId, roomId);
+      RoomSnapshotDto snapshot =
+          roomService.getRoomSnapshot(tenantId, roomId, request.getPreferredLocale());
       GetRoomSnapshotResponse response =
           GetRoomSnapshotResponse.newBuilder().setSnapshot(toProto(snapshot)).build();
       responseObserver.onNext(response);

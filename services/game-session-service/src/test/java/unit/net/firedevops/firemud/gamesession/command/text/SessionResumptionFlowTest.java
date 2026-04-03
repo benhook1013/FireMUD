@@ -142,7 +142,8 @@ class SessionResumptionFlowTest {
         LookResult.newBuilder()
             .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("1021").build())
             .build();
-    when(gameLogicClient.resolveLook(anyString(), anyString(), anyString(), anyString()))
+    when(gameLogicClient.resolveLook(
+            anyString(), anyString(), anyString(), anyString(), anyString()))
         .thenReturn(lookResult);
     when(lookTextRenderer.render(
             Mockito.eq(lookResult),

@@ -40,10 +40,7 @@ public class RedisLookCacheService implements LookCacheService {
     try {
       redisTemplate
           .opsForValue()
-          .set(
-              key(tenantId, sessionId),
-              objectMapper.writeValueAsString(payload),
-              LOOK_CACHE_TTL);
+          .set(key(tenantId, sessionId), objectMapper.writeValueAsString(payload), LOOK_CACHE_TTL);
     } catch (JacksonException e) {
       throw new IllegalStateException("Failed to serialize LOOK cache payload", e);
     }

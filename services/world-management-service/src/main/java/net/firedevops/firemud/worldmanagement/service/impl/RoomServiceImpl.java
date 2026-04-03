@@ -10,10 +10,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
+import net.firedevops.firemud.common.i18n.LocalizedTextVariants;
 import net.firedevops.firemud.worldmanagement.config.WorldProperties;
 import net.firedevops.firemud.worldmanagement.dto.RoomDto;
 import net.firedevops.firemud.worldmanagement.dto.RoomSnapshotDto;
 import net.firedevops.firemud.worldmanagement.dto.RoomSnapshotDto.RoomExitSnapshotDto;
+import net.firedevops.firemud.worldmanagement.entity.Room;
 import net.firedevops.firemud.worldmanagement.entity.RoomExit;
 import net.firedevops.firemud.worldmanagement.mapper.RoomMapper;
 import net.firedevops.firemud.worldmanagement.repository.RoomExitRepository;
@@ -32,6 +34,7 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class RoomServiceImpl implements RoomService {
   private static final Logger LOG = LoggerFactory.getLogger(RoomServiceImpl.class);
+  private static final String DEFAULT_SOURCE_LOCALE = "en-NZ";
 
   private final RoomRepository roomRepository;
   private final RoomMapper roomMapper;
@@ -39,6 +42,8 @@ public class RoomServiceImpl implements RoomService {
   private final MeterRegistry meterRegistry;
   private final WorldProperties worldProperties;
   private final RoomExitRepository roomExitRepository;
+  private final tools.jackson.databind.ObjectMapper objectMapper =
+      new tools.jackson.databind.ObjectMapper();
 
   private static final int SHORT_DESCRIPTION_LENGTH = 120;
 
@@ -90,17 +95,26 @@ public class RoomServiceImpl implements RoomService {
   @Override
   @Timed(value = "room.snapshot")
   @Transactional(readOnly = true)
-  public RoomSnapshotDto getRoomSnapshot(Long tenantId, Long roomId) {
-    RoomDto room = getRoom(tenantId, roomId);
+  public RoomSnapshotDto getRoomSnapshot(Long tenantId, Long roomId, String preferredLocaleTag) {
+    Room room =
+        roomRepository
+            .findById(roomId)
+            .filter(r -> r.getTenantId().equals(tenantId))
+            .orElseThrow(() -> new IllegalArgumentException("Room not found"));
     List<RoomExitSnapshotDto> exits =
         roomExitRepository.findByTenantIdAndFromRoomId(tenantId, roomId).stream()
             .map(this::toExitSnapshot)
             .collect(Collectors.toList());
-    String longDescription = room.description() == null ? "" : room.description();
+    String roomName =
+        resolveLocalizedText(
+            room.getName(), room.getNameLocalizedVariantsJson(), preferredLocaleTag);
+    String longDescription =
+        resolveLocalizedText(
+            room.getDescription(), room.getDescriptionLocalizedVariantsJson(), preferredLocaleTag);
     return new RoomSnapshotDto(
-        room.id(),
-        room.tenantId(),
-        room.name(),
+        room.getId(),
+        room.getTenantId(),
+        roomName,
         buildShortDescription(longDescription),
         longDescription,
         exits,
@@ -133,5 +147,32 @@ public class RoomServiceImpl implements RoomService {
 
   private String cacheKey(Long tenantId, Long roomId) {
     return "room:" + tenantId + ":" + roomId;
+  }
+
+  private String resolveLocalizedText(
+      String sourceText, String localizedVariantsJson, String preferredLocaleTag) {
+    if (localizedVariantsJson == null || localizedVariantsJson.isBlank()) {
+      return sourceText == null ? "" : sourceText;
+    }
+    try {
+      LocalizedTextVariants parsed =
+          objectMapper.readValue(localizedVariantsJson, LocalizedTextVariants.class);
+      String effectiveSourceText =
+          sourceText != null && !sourceText.isBlank() ? sourceText : parsed.sourceText();
+      if (effectiveSourceText == null || effectiveSourceText.isBlank()) {
+        return "";
+      }
+      LocalizedTextVariants variants =
+          new LocalizedTextVariants(
+              parsed.sourceLocaleTag() == null || parsed.sourceLocaleTag().isBlank()
+                  ? DEFAULT_SOURCE_LOCALE
+                  : parsed.sourceLocaleTag(),
+              effectiveSourceText,
+              parsed.localizedVariants());
+      return variants.resolve(preferredLocaleTag).text();
+    } catch (Exception ex) {
+      LOG.warn("Failed to parse localized room text variants; falling back to source text", ex);
+      return sourceText == null ? "" : sourceText;
+    }
   }
 }

@@ -38,5 +38,11 @@ public class Room {
   @Column(length = 255)
   private String description;
 
+  @Column(columnDefinition = "TEXT")
+  private String nameLocalizedVariantsJson;
+
+  @Column(columnDefinition = "TEXT")
+  private String descriptionLocalizedVariantsJson;
+
   @Version private int version;
 }

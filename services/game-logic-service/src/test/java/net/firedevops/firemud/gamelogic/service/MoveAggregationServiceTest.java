@@ -83,6 +83,7 @@ class MoveAggregationServiceTest {
                 .setTenantId(LookTestFixtures.TENANT)
                 .setSessionId("session-1")
                 .setCharacterId("player-1")
+                .setPreferredLocale("fr")
                 .setRoomInstance(
                     RoomInstanceRef.newBuilder()
                         .setTenantId(LookTestFixtures.TENANT)
@@ -99,6 +100,7 @@ class MoveAggregationServiceTest {
     verify(lookAggregationService).resolve(lookRequestCaptor.capture());
     assertThat(lookRequestCaptor.getValue().getRoomInstance().getRoomInstanceId())
         .isEqualTo("R-2045");
+    assertThat(lookRequestCaptor.getValue().getPreferredLocale()).isEqualTo("fr");
     verify(worldStub).getRoomSnapshot(any());
   }
 
@@ -127,6 +129,7 @@ class MoveAggregationServiceTest {
                 .setTenantId(LookTestFixtures.TENANT)
                 .setSessionId("session-1")
                 .setCharacterId("player-1")
+                .setPreferredLocale("fr")
                 .setRoomInstance(
                     RoomInstanceRef.newBuilder()
                         .setTenantId(LookTestFixtures.TENANT)
@@ -151,6 +154,7 @@ class MoveAggregationServiceTest {
                 .setTenantId(LookTestFixtures.TENANT)
                 .setSessionId("session-1")
                 .setCharacterId("player-1")
+                .setPreferredLocale("fr")
                 .setRoomInstance(
                     RoomInstanceRef.newBuilder()
                         .setTenantId(LookTestFixtures.TENANT)

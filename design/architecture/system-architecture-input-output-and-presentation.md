@@ -14,7 +14,7 @@ The goal is to keep gameplay and UX decisions structured until the latest practi
 - Prompt output is modeled separately, presentation defaults are now bound from typed properties, and prompt payloads now carry a first minimal structured field list alongside classic prompt text, but prompt coalescing and broad prompt emission are not yet fully implemented.
 - Prompt output now has a first baseline pipeline plus a narrow per-session prompt-throttling window, but richer burst-end scheduling and structured prompt/status delivery are still future work.
 - Built-in/system text now has the first localization foundation in Game Session: stable keys plus structured variables on selected outputs, per-session renderer locale selection, localized login/play/error outputs, localized room-view labels, and bounded alternate-locale renderer/integration tests.
-- Authored localized content now also has a first bounded model: locale-tagged explicit variants with a required source locale and deterministic exact-locale, language-only, then source-locale fallback. World/item/room runtime adoption remains future work.
+- Authored localized content now also has a first bounded model: locale-tagged explicit variants with a required source locale and deterministic exact-locale, language-only, then source-locale fallback. Room prose is now partially live on the authoritative `LOOK` and movement-refresh path by passing a preferred locale through Game Session and Game Logic into World Management snapshot reads; broader world/item adoption remains future work.
 
 ---
 
@@ -329,6 +329,13 @@ The first authored-content model should stay small and explicit:
   - then language-only match where available;
   - then the source locale text;
 - the runtime should not synthesize or fetch missing translations on demand during live gameplay.
+
+The first authored-content runtime adoption should stay equally small and explicit:
+
+- Game Session should forward the current preferred locale on canonical room-read paths such as explicit `LOOK` and movement-triggered room refresh;
+- Game Logic should propagate that locale through room snapshot requests without inventing a second localization authority;
+- World Management should resolve stored localized room variants before returning the authoritative room snapshot;
+- richer item/world/lore adoption can follow the same model later without moving localization onto the live renderer hot path.
 
 For runtime behavior, FireMUD should prefer stored localized variants over live translation calls on the gameplay hot path. The platform should not assume per-message external translation during active gameplay because added network latency and jitter would directly hurt responsiveness.
 

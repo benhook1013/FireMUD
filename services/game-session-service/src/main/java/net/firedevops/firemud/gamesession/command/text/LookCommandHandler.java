@@ -257,7 +257,8 @@ public final class LookCommandHandler {
         Long.toString(context.tenantId()),
         Long.toString(context.sessionId()),
         Long.toString(context.characterId()),
-        roomId);
+        roomId,
+        StringUtils.hasText(context.localeTag()) ? context.localeTag() : "");
   }
 
   private String mapStatusToError(StatusRuntimeException ex) {

@@ -23,6 +23,7 @@ import net.firedevops.firemud.worldmanagement.v1.WorldManagementServiceGrpc;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -78,6 +79,7 @@ class LookAggregationServiceTest {
             .setTenantId("tenant-1")
             .setSessionId("session-1")
             .setCharacterId("player-1")
+            .setPreferredLocale("fr")
             .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("1021").build())
             .build();
   }
@@ -94,6 +96,11 @@ class LookAggregationServiceTest {
     assertThat(result.getEntitiesList()).hasSize(1);
     assertThat(result.getEntitiesList().get(0).getDisplayName()).isEqualTo("Kobold");
     assertThat(result.getAmbientState().getWeather()).isEqualTo("dim");
+    ArgumentCaptor<net.firedevops.firemud.worldmanagement.v1.GetRoomSnapshotRequest> captor =
+        ArgumentCaptor.forClass(
+            net.firedevops.firemud.worldmanagement.v1.GetRoomSnapshotRequest.class);
+    org.mockito.Mockito.verify(worldStub).getRoomSnapshot(captor.capture());
+    assertThat(captor.getValue().getPreferredLocale()).isEqualTo("fr");
   }
 
   @Test

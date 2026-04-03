@@ -39,6 +39,7 @@ message LookRequest {
   string session_id = 2;
   string character_id = 3;
   shared.v1.RoomInstanceRef room_instance = 4;
+  string preferred_locale = 5;
 }
 
 message LookResult {
@@ -87,6 +88,7 @@ message MoveRequest {
   string character_id = 3;
   shared.v1.RoomInstanceRef room_instance = 4;
   string direction = 5;
+  string preferred_locale = 6;
 }
 
 message MoveResult {

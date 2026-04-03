@@ -165,7 +165,11 @@ class TextCommandInterpreterTest {
             .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("1021").build())
             .build();
     when(gameLogicClient.resolveLook(
-            Mockito.eq("22"), Mockito.eq("1"), Mockito.anyString(), Mockito.eq("1021")))
+            Mockito.eq("22"),
+            Mockito.eq("1"),
+            Mockito.anyString(),
+            Mockito.eq("1021"),
+            Mockito.anyString()))
         .thenReturn(lookResult);
     when(lookTextRenderer.render(lookResult)).thenReturn("OK LOOK constructed");
     when(lookTextRenderer.toPlayerOutput(

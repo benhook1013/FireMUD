@@ -61,7 +61,8 @@ public class MoveCommandHandler {
                 StringUtils.hasText(context.roomInstanceId())
                     ? context.roomInstanceId()
                     : gameLogicProperties.getDefaultRoomId(),
-                direction);
+                direction,
+                StringUtils.hasText(context.localeTag()) ? context.localeTag() : "");
         if (!response.getSuccess()) {
           String code =
               response.hasError() && StringUtils.hasText(response.getError().getCode())

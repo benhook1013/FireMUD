@@ -54,12 +54,13 @@ public class GameLogicClient
   }
 
   public LookResult resolveLook(
-      String tenantId, String sessionId, String characterId, String roomId) {
+      String tenantId, String sessionId, String characterId, String roomId, String localeTag) {
     LookRequest request =
         LookRequest.newBuilder()
             .setTenantId(tenantId)
             .setSessionId(sessionId)
             .setCharacterId(characterId)
+            .setPreferredLocale(localeTag == null ? "" : localeTag)
             .setRoomInstance(
                 RoomInstanceRef.newBuilder()
                     .setTenantId(tenantId)
@@ -122,12 +123,18 @@ public class GameLogicClient
   }
 
   public MoveResult resolveMove(
-      String tenantId, String sessionId, String characterId, String roomId, String direction) {
+      String tenantId,
+      String sessionId,
+      String characterId,
+      String roomId,
+      String direction,
+      String localeTag) {
     MoveRequest request =
         MoveRequest.newBuilder()
             .setTenantId(tenantId)
             .setSessionId(sessionId)
             .setCharacterId(characterId)
+            .setPreferredLocale(localeTag == null ? "" : localeTag)
             .setRoomInstance(
                 RoomInstanceRef.newBuilder()
                     .setTenantId(tenantId)

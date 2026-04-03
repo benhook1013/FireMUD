@@ -87,7 +87,7 @@ class WorldManagementGrpcServiceTest {
   void getRoomSnapshotReturnsSnapshot() {
     PingService pingService = Mockito.mock(PingService.class);
     RoomService roomService = Mockito.mock(RoomService.class);
-    Mockito.when(roomService.getRoomSnapshot(1L, 1L))
+    Mockito.when(roomService.getRoomSnapshot(1L, 1L, "fr"))
         .thenReturn(
             new RoomSnapshotDto(
                 1L,
@@ -111,6 +111,7 @@ class WorldManagementGrpcServiceTest {
     service.getRoomSnapshot(
         GetRoomSnapshotRequest.newBuilder()
             .setTenantId("1")
+            .setPreferredLocale("fr")
             .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("1").build())
             .build(),
         new StreamObserver<>() {

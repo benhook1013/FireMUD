@@ -69,6 +69,7 @@ public class LookAggregationService {
               GetRoomSnapshotRequest.newBuilder()
                   .setTenantId(resolveTenantId(request))
                   .setRoomInstance(resolveRoomInstance(request))
+                  .setPreferredLocale(request.getPreferredLocale())
                   .build());
       if (response.hasError()) {
         throw statusFromError(response.getError(), "WorldManagement");
