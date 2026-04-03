@@ -62,6 +62,21 @@ Every service should also emit one structured startup lifecycle log that include
 
 This startup event exists to make restart correlation and incident drilldown easier without requiring operators to infer process identity only from pod names or timestamps.
 
+### Request-Path Logging Baseline and Bounded Exceptions
+
+The `02.14` shared logging baseline is now canonical for the main request-handling paths:
+
+- Shared servlet HTTP logging should carry the runtime identity and request-correlation field set described above.
+- Shared reactive HTTP logging should carry the same baseline field set.
+- Shared gRPC server logging should carry the same baseline field set.
+- Custom WebSocket edge handlers that bypass the shared HTTP filters should normalize their local logs through the shared runtime logging context so runtime identity and stable connection-correlation fields are still present.
+
+This baseline is intentionally bounded:
+
+- Full reactive-request MDC propagation outside the shared filters is not required for the canonical contract as long as the shared request logs and major handler logs carry the standard field set.
+- Telnet-edge logging in `tcp-proxy-service` does not yet normalize every local handler log through the same runtime logging context helper and remains a documented follow-up area rather than hidden incomplete scope.
+- These bounded exceptions do not change the rule that runtime identity and request correlation must be present on the canonical HTTP, gRPC, and WebSocket request paths.
+
 ### Runtime Identity Exposure
 
 Runtime identity should be exposed consistently enough that operators and admin tooling can confirm which process is serving traffic:
