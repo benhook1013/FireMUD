@@ -24,6 +24,7 @@ This document defines the canonical FireMUD settings model for operator/bootstra
 - Some operator-scoped settings may also support deliberate runtime override through operator/admin tooling without becoming ordinary tenant/game settings.
 - Tenant/game behavior settings should eventually live in a database-backed design/settings authority rather than being scattered across service-local tables.
 - Effective configuration is a validated merge, not a single source.
+- FireMUD should prefer strong defaults and sparse override usage. Most operators should not need to tune many individual knobs to reach a sane deployment baseline.
 - Generated docs and later admin/creator tooling should come from one typed schema/metadata source of truth rather than hand-maintained parallel references.
 
 ## Ownership and Precedence
@@ -31,18 +32,38 @@ This document defines the canonical FireMUD settings model for operator/bootstra
 FireMUD should resolve settings in this order:
 
 1. hardcoded safe defaults
-2. operator bootstrap file/env settings
-3. operator runtime overrides where explicitly supported
-4. operator caps and bounds
-5. tenant/game overrides
+2. selected preset baseline
+3. operator bootstrap file/env settings
+4. operator runtime overrides where explicitly supported
+5. operator caps and bounds
+6. tenant/game overrides
 
 Tenant/game overrides are always constrained by operator caps where those caps exist.
 
 This means:
 
+- most deployments should start from a small number of named preset baselines rather than requiring manual tuning of many individual settings;
 - infrastructure wiring, connection targets, and service bootstrap values stay operator-owned;
 - live operational tuning may be operator-overridable at runtime when there is a real need;
 - player-visible game behavior should not remain buried in code or raw Spring properties forever.
+
+## Preset Baselines
+
+FireMUD should support a small number of operator-facing preset baselines for common deployment shapes. A preset is a named bundle of predefined setting values that overrides the hardcoded safe defaults before normal operator overrides apply.
+
+The important rule is that presets are a convenience baseline, not a second parallel settings system. Operators should still be able to:
+
+- start from a preset that matches the deployment shape;
+- override only the specific settings that need to differ;
+- apply higher-precedence runtime overrides and caps where explicitly supported.
+
+This keeps the operator experience defaults-first:
+
+- most operators should rarely need to touch most settings;
+- advanced knobs remain available for exceptional cases rather than mandatory setup;
+- FireMUD avoids a model where hobby or SaaS operators must hand-tune dozens of unrelated values before the system feels sane.
+
+The first preset model should stay small and operator-facing. It does not require a full preset-management UI before the underlying settings authority exists.
 
 ## Canonical Domains
 
