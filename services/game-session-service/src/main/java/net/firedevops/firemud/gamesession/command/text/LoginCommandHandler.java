@@ -212,6 +212,7 @@ public final class LoginCommandHandler {
                 0L,
                 null,
                 jwt,
+                null,
                 bootstrapGameInstanceId)
             : new SessionContext(
                 sessionId,
@@ -223,6 +224,7 @@ public final class LoginCommandHandler {
                 existing.gameInstanceId(),
                 existing.roomInstanceId(),
                 jwt,
+                existing.localeTag(),
                 existing.bootstrapGameInstanceId() > 0
                     ? existing.bootstrapGameInstanceId()
                     : bootstrapGameInstanceId);

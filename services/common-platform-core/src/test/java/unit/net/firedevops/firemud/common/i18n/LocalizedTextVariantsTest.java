@@ -10,8 +10,7 @@ class LocalizedTextVariantsTest {
   @Test
   void resolveReturnsExactStoredVariantWhenPresent() {
     LocalizedTextVariants variants =
-        LocalizedTextVariants.source(
-                "en-NZ", "A narrow stone corridor runs along the cliff face.")
+        LocalizedTextVariants.source("en-NZ", "A narrow stone corridor runs along the cliff face.")
             .withVariant("fr-FR", "Un étroit couloir de pierre longe la falaise.");
 
     LocalizedTextVariants.ResolvedLocalizedText resolved = variants.resolve("fr-FR");
@@ -38,8 +37,7 @@ class LocalizedTextVariantsTest {
   @Test
   void resolveFallsBackToCanonicalSourceWhenNoVariantExists() {
     LocalizedTextVariants variants =
-        LocalizedTextVariants.source(
-                "en-NZ", "A narrow stone corridor runs along the cliff face.")
+        LocalizedTextVariants.source("en-NZ", "A narrow stone corridor runs along the cliff face.")
             .withVariant("fr-FR", "Un étroit couloir de pierre longe la falaise.");
 
     LocalizedTextVariants.ResolvedLocalizedText resolved = variants.resolve("de-DE");

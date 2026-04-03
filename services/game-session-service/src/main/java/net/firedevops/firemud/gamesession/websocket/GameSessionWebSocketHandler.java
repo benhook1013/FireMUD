@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamesession.websocket;
 
 import java.io.IOException;
+import java.util.List;
 import java.util.Optional;
 import net.firedevops.firemud.cache.ScreenBufferService;
 import net.firedevops.firemud.common.runtime.RuntimeIdentity;
@@ -11,6 +12,7 @@ import net.firedevops.firemud.gamesession.command.text.TextCommandInterpretation
 import net.firedevops.firemud.gamesession.command.text.TextCommandInterpreter;
 import net.firedevops.firemud.gamesession.command.text.TextCommandParser;
 import net.firedevops.firemud.gamesession.command.text.TextCommandType;
+import net.firedevops.firemud.gamesession.presentation.ErrorOutput;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutputKind;
 import net.firedevops.firemud.gamesession.presentation.PromptBurstCoordinator;
@@ -126,7 +128,8 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
               sessionId,
               interpretation.outputs(),
               shouldForcePromptEmission(command, interpretation));
-      String response = formatResponse(command, interpretation, outputs);
+      maybePersistLocaleTag(sessionId, resolveLocaleTag(session));
+      String response = formatResponse(command, interpretation, session, outputs);
       sendProtocolMessage(session, response);
       promptBurstCoordinator.recordPromptEmission(sessionId, outputs);
       maybeAppendToScreenBuffer(sessionId, command, interpretation, response);
@@ -173,11 +176,30 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     return cached instanceof String text ? text : null;
   }
 
+  private String resolveLocaleTag(WebSocketSession session) {
+    Object cached =
+        session.getAttributes().get(GameSessionWebSocketHandshakeInterceptor.LOCALE_ATTR);
+    return cached instanceof String text ? text : null;
+  }
+
+  private String resolveLocaleTag(WebSocketSession session, String sessionId) {
+    return parseNumericSessionId(sessionId)
+        .flatMap(sessionContextService::findBySessionId)
+        .map(SessionContext::localeTag)
+        .filter(StringUtils::hasText)
+        .orElse(resolveLocaleTag(session));
+  }
+
   private String formatResponse(
       TextCommand command,
       TextCommandInterpretationResult interpretation,
+      WebSocketSession session,
       java.util.List<PlayerOutput> outputs) {
-    return outputRenderer.renderAll(command, interpretation.commandResult(), outputs);
+    return outputRenderer.renderAll(
+        command,
+        interpretation.commandResult(),
+        outputs,
+        resolveLocaleTag(session, resolveTransportSessionId(session)));
   }
 
   private boolean shouldForcePromptEmission(
@@ -241,17 +263,12 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
               }
               maybeBuffer.ifPresent(
                   buffer -> sendReplayChunk(session, buffer.protocolText(), "screen buffer"));
-              String look =
-                  lookHandler.describeProtocol(
-                      sessionId,
-                      true,
-                      net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
-                          .RECONNECT_REFRESH);
+              String look = renderReconnectLook(session, sessionId);
               if (StringUtils.hasText(look)) {
                 sendReplayChunk(session, look, "fresh LOOK");
               }
               if (presentationProperties.prompt().emitAfterReconnectRestore()) {
-                renderPrompt(context)
+                renderPrompt(context, resolveLocaleTag(session, sessionId))
                     .ifPresent(
                         prompt -> {
                           sendReplayChunk(session, prompt, "fresh prompt");
@@ -305,8 +322,63 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     return RuntimeLoggingContext.open(runtimeIdentity, correlationId);
   }
 
-  private Optional<String> renderPrompt(SessionContext context) {
-    return promptComposer.compose(context).map(outputRenderer::render).filter(StringUtils::hasText);
+  private Optional<String> renderPrompt(SessionContext context, String localeTag) {
+    String effectiveLocaleTag =
+        StringUtils.hasText(context.localeTag()) ? context.localeTag() : localeTag;
+    return promptComposer
+        .compose(context)
+        .map(prompt -> outputRenderer.render(prompt, effectiveLocaleTag))
+        .filter(StringUtils::hasText);
+  }
+
+  private void maybePersistLocaleTag(String sessionId, String localeTag) {
+    if (!StringUtils.hasText(localeTag)) {
+      return;
+    }
+    parseNumericSessionId(sessionId)
+        .flatMap(sessionContextService::findBySessionId)
+        .filter(context -> !StringUtils.hasText(context.localeTag()))
+        .ifPresent(
+            context ->
+                sessionContextService.save(
+                    new SessionContext(
+                        context.sessionId(),
+                        context.tenantId(),
+                        context.accountId(),
+                        context.loginName(),
+                        context.characterId(),
+                        context.characterName(),
+                        context.gameInstanceId(),
+                        context.roomInstanceId(),
+                        context.jwt(),
+                        localeTag,
+                        context.bootstrapGameInstanceId())));
+  }
+
+  private String renderReconnectLook(WebSocketSession session, String sessionId) {
+    PlayerOutput lookOutput =
+        lookHandler.describePlayerOutput(
+            sessionId,
+            true,
+            net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
+                .RECONNECT_REFRESH);
+    if (lookOutput == null) {
+      return null;
+    }
+    String localeTag = resolveLocaleTag(session, sessionId);
+    if (lookOutput.payload() instanceof ErrorOutput errorOutput) {
+      return outputRenderer.renderAll(
+          new TextCommand(TextCommandType.LOOK, List.of(), "LOOK"),
+          net.firedevops.firemud.gamesession.dto.CommandEnqueueResult.failure(
+              errorOutput.code(), errorOutput.message()),
+          List.of(lookOutput),
+          localeTag);
+    }
+    return outputRenderer.renderAll(
+        new TextCommand(TextCommandType.LOOK, List.of(), "LOOK"),
+        net.firedevops.firemud.gamesession.dto.CommandEnqueueResult.success(),
+        List.of(lookOutput),
+        localeTag);
   }
 
   private void bootstrapGenericSessionContext(WebSocketSession session, long sessionId) {
@@ -323,7 +395,17 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       }
       sessionContextService.save(
           new SessionContext(
-              sessionId, tenant, 0L, null, 0L, null, 0L, null, null, bootstrapGameInstance));
+              sessionId,
+              tenant,
+              0L,
+              null,
+              0L,
+              null,
+              0L,
+              null,
+              null,
+              resolveLocaleTag(session),
+              bootstrapGameInstance));
     } catch (NumberFormatException ex) {
       logger.debug(
           "Skipping generic bootstrap session context for transportSessionId={} tenantId={} bootstrapGameInstanceId={}",
@@ -359,6 +441,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
             0L,
             null,
             null,
+            resolveLocaleTag(session),
             connectContext.gameInstanceId()));
   }
 

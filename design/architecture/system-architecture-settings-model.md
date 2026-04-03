@@ -57,6 +57,24 @@ The next expected gameplay-facing domains are:
 
 The important rule is that domains represent stable behavior areas, not individual commands. For example, `LOOK`, `QUICKLOOK`, reconnect redraw, and movement-triggered room refresh all belong under presentation and transcript policy rather than separate action-specific settings trees.
 
+## Current Domain Groupings
+
+The currently surfaced subgroup names are:
+
+- `reconnection.policy`
+- `reconnection.buffer`
+- `communication.defaults`
+- `prompts.coalescing`
+- `prompts.transportPresentation`
+- `transcript.reconnectBuffer`
+- `transcript.rendering`
+- `transcript.overlayPolicy`
+- `movement.postMoveView`
+- `worldTopology.scopeModel`
+- `worldTopology.regionBehavior`
+
+These group names are the canonical behavior buckets even when the first live file/env-backed properties are still split across service-local configuration classes. Service-local property classes must map back into one shared settings model rather than becoming unrelated permanent config blobs.
+
 ## Supported Scopes
 
 Each surfaced setting should declare one of these scopes:
@@ -67,6 +85,32 @@ Each surfaced setting should declare one of these scopes:
 - tenant/game-configurable within operator-enforced caps
 
 Internal transport/framework constants should not be promoted into this model unless they are deliberately meant to be operator- or game-facing.
+
+## Current Practical Scope Examples
+
+Today, all surfaced FireMUD settings are still operator-default file/env settings. The agreed target scope for the current domains is:
+
+- `reconnection.policy`
+  - operator-only today
+  - later tenant/game-configurable within operator caps for resume windows and stale-resume fallback
+- `reconnection.buffer`
+  - operator-only today
+  - later tenant/game-configurable within operator caps for transcript retention bounds
+- `communication.defaults`
+  - operator-only today
+  - later tenant/game-configurable within operator caps for built-in communication mode availability and whisper observer-metadata policy
+- `prompts.coalescing` and `prompts.transportPresentation`
+  - operator-only today
+  - later tenant/game-configurable for game-defined prompt behavior and player-facing transport defaults
+- `transcript.rendering`
+  - operator-only today
+  - later tenant/game-configurable for room-view and transcript presentation defaults such as briefness and color policy
+- `movement.postMoveView`
+  - operator-only today
+  - later tenant/game-configurable within operator caps
+- `worldTopology.scopeModel` and `worldTopology.regionBehavior`
+  - operator-only today
+  - later tenant/game-configurable when topology becomes part of per-game design state
 
 ## Schema Metadata
 
@@ -82,6 +126,15 @@ Every surfaced setting should carry at least:
 - example value
 
 The current Spring configuration metadata is the first live step toward that schema. Later generated markdown/schema output and admin/creator tooling should read from the same typed metadata source rather than inventing their own setting definitions.
+
+The expected generated or generation-ready outputs are:
+
+- Spring configuration metadata for surfaced keys
+- service-level generated-facing configuration reference docs
+- later machine-readable schema output
+- later admin/creator form metadata
+
+The repo should not grow a second hand-maintained settings encyclopedia that drifts away from the typed metadata and surfaced configuration docs.
 
 ## Effective Config Resolution
 
@@ -101,4 +154,6 @@ Until the shared settings authority exists:
 
 - surfaced file/env-backed settings in Game Session and Game Logic are the operator-default layer;
 - service docs and metadata should stay honest about what is operator-default today versus what is planned as tenant/game-configurable later;
-- new gameplay slices should attach their first settings seams to this model rather than adding fresh hardcoded constants and documenting them after the fact.
+- new gameplay slices should attach their first settings seams to this model rather than adding fresh hardcoded constants and documenting them after the fact;
+- runtime services should read typed properties directly rather than inventing per-service mini merge layers;
+- slice docs should record the intended future tenant/cap story for each surfaced domain even when the live implementation is still operator-only.

@@ -214,6 +214,7 @@ public class PlayCommandHandler {
                   gameInstanceId,
                   roomInstanceId,
                   context.jwt(),
+                  context.localeTag(),
                   context.bootstrapGameInstanceId());
           sessionContextService.save(updated);
 

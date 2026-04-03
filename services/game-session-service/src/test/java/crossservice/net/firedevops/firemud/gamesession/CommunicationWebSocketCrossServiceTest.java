@@ -15,6 +15,7 @@ import java.net.http.WebSocket.Listener;
 import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -515,7 +516,13 @@ class CommunicationWebSocketCrossServiceTest {
 
     @Override
     public void close() {
-      webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "done").join();
+      try {
+        webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "done").join();
+      } catch (CompletionException ex) {
+        if (!(ex.getCause() instanceof IOException)) {
+          throw ex;
+        }
+      }
     }
   }
 }

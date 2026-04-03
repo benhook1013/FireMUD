@@ -31,9 +31,7 @@ class RedisScreenBufferServiceTest {
             redisTemplate,
             new ObjectMapper(),
             new FiremudReconnectionProperties(
-                null,
-                new FiremudReconnectionProperties.Buffer(1_800_000L, 8, 24, 16_384, 65_536),
-                null));
+                null, new FiremudReconnectionProperties.Buffer(1_800_000L, 8, 24, 16_384, 65_536)));
   }
 
   @Test

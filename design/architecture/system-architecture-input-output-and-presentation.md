@@ -13,7 +13,7 @@ The goal is to keep gameplay and UX decisions structured until the latest practi
 - Communication actor responses now flow through the same late renderer, but recipient delivery still pushes already-rendered strings and first-party web still shares the generic text payload path.
 - Prompt output is modeled separately, presentation defaults are now bound from typed properties, and prompt payloads now carry a first minimal structured field list alongside classic prompt text, but prompt coalescing and broad prompt emission are not yet fully implemented.
 - Prompt output now has a first baseline pipeline plus a narrow per-session prompt-throttling window, but richer burst-end scheduling and structured prompt/status delivery are still future work.
-- Built-in/system text now has the first localization foundation in Game Session: stable keys plus structured variables on selected outputs, renderer locale selection via `firemud.presentation.default-locale-tag`, localized login/play/error outputs, localized room-view labels, and bounded alternate-locale renderer tests.
+- Built-in/system text now has the first localization foundation in Game Session: stable keys plus structured variables on selected outputs, per-session renderer locale selection, localized login/play/error outputs, localized room-view labels, and bounded alternate-locale renderer/integration tests.
 - Authored localized content now also has a first bounded model: locale-tagged explicit variants with a required source locale and deterministic exact-locale, language-only, then source-locale fallback. World/item/room runtime adoption remains future work.
 
 ---
@@ -313,6 +313,12 @@ Localization should distinguish between two complementary mechanisms:
 - explicit localized content variants for authored world/game prose such as room descriptions, lore text, and item descriptions.
 
 These mechanisms solve different problems and should coexist rather than compete.
+
+For built-in runtime rendering, locale selection should currently follow this precedence:
+
+- persisted session/player locale when known;
+- current websocket or bootstrap locale when present;
+- `firemud.presentation.default-locale-tag`.
 
 The first authored-content model should stay small and explicit:
 

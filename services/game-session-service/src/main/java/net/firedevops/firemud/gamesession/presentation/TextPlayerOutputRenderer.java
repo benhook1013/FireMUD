@@ -27,30 +27,42 @@ public class TextPlayerOutputRenderer {
   }
 
   public String render(PlayerOutput output) {
+    return render(output, presentationProperties.defaultLocaleTag());
+  }
+
+  public String render(PlayerOutput output, String localeTag) {
     if (presentationProperties.briefEnabledByDefault()
         && output.briefRenderPolicy() == BriefRenderPolicy.SUPPRESS_IN_BRIEF) {
       return "";
     }
     return switch (output.kind()) {
-      case MESSAGE -> renderMessage((TextMessageOutput) output.payload());
+      case MESSAGE -> renderMessage((TextMessageOutput) output.payload(), localeTag);
       case VIEW ->
           output.payload() instanceof LookViewOutput lookView
-              ? renderLookView(lookView)
-              : renderMessage((TextMessageOutput) output.payload());
+              ? renderLookView(lookView, localeTag)
+              : renderMessage((TextMessageOutput) output.payload(), localeTag);
       case PROMPT -> renderPrompt((PromptOutput) output.payload());
-      case ERROR -> renderError((ErrorOutput) output.payload());
-      case NOTICE -> renderNotice((NoticeOutput) output.payload());
+      case ERROR -> renderError((ErrorOutput) output.payload(), localeTag);
+      case NOTICE -> renderNotice((NoticeOutput) output.payload(), localeTag);
     };
   }
 
   public String renderAll(
       TextCommand command, CommandEnqueueResult result, java.util.List<PlayerOutput> outputs) {
+    return renderAll(command, result, outputs, presentationProperties.defaultLocaleTag());
+  }
+
+  public String renderAll(
+      TextCommand command,
+      CommandEnqueueResult result,
+      java.util.List<PlayerOutput> outputs,
+      String localeTag) {
     if (!result.accepted()) {
       String renderedError =
           outputs.stream()
               .filter(output -> output.kind() == PlayerOutputKind.ERROR)
               .reduce((first, second) -> second)
-              .map(this::render)
+              .map(output -> render(output, localeTag))
               .orElse(null);
       if (StringUtils.hasText(renderedError)) {
         return renderedError;
@@ -68,13 +80,13 @@ public class TextPlayerOutputRenderer {
       return "OK " + command.type().name();
     }
     if (nonPromptOutputs.size() == 1 && nonPromptOutputs.get(0).kind() == PlayerOutputKind.NOTICE) {
-      String rendered = renderNoticeWithCommand(command, nonPromptOutputs.get(0));
+      String rendered = renderNoticeWithCommand(command, nonPromptOutputs.get(0), localeTag);
       return appendPrompt(
           rendered, prompt, !rendered.contains("\n") && StringUtils.hasText(prompt));
     }
     String body =
         nonPromptOutputs.stream()
-            .map(this::render)
+            .map(output -> render(output, localeTag))
             .filter(StringUtils::hasText)
             .collect(Collectors.joining("\n"));
     if (body.isBlank()) {
@@ -96,29 +108,29 @@ public class TextPlayerOutputRenderer {
     return appendPrompt("OK " + commandLabel + "\n" + body + "\n\n", prompt, false);
   }
 
-  private String renderLookView(LookViewOutput result) {
+  private String renderLookView(LookViewOutput result, String localeTag) {
     boolean brief = shouldUseBriefRendering(result);
     StringBuilder out = new StringBuilder();
-    out.append(colorizeLabel(localizedLabel("label.room", "Room: ")))
+    out.append(colorizeLabel(localizedLabel("label.room", "Room: ", localeTag)))
         .append(colorizeRoomName(result.roomName()))
         .append(" (ID: ")
         .append(result.roomId())
         .append(")\n");
-    out.append(colorizeLabel(localizedLabel("label.short", "Short: ")))
+    out.append(colorizeLabel(localizedLabel("label.short", "Short: ", localeTag)))
         .append(result.shortDescription())
         .append("\n");
     if (!brief && result.includeLongDescription()) {
-      out.append(colorizeLabel(localizedLabel("label.long", "Long: ")))
+      out.append(colorizeLabel(localizedLabel("label.long", "Long: ", localeTag)))
           .append(result.longDescription())
           .append("\n");
     }
-    out.append(colorizeLabel(localizedLabel("label.exits", "Exits: ")));
+    out.append(colorizeLabel(localizedLabel("label.exits", "Exits: ", localeTag)));
     out.append(
         result.exits().stream()
             .map(exit -> exit.label() + " (" + exit.description() + ")")
             .collect(Collectors.joining(", ")));
     out.append("\n")
-        .append(colorizeLabel(localizedLabel("label.entities", "Entities:")))
+        .append(colorizeLabel(localizedLabel("label.entities", "Entities:", localeTag)))
         .append("\n");
     for (LookViewEntity entity : result.entities()) {
       out.append("- ")
@@ -142,25 +154,20 @@ public class TextPlayerOutputRenderer {
     return colorizePrompt(output.text());
   }
 
-  private String renderMessage(TextMessageOutput output) {
+  private String renderMessage(TextMessageOutput output, String localeTag) {
     return presentationMessageCatalog.render(
-        output.text(),
-        output.messageKey(),
-        output.arguments(),
-        presentationProperties.defaultLocaleTag());
+        output.text(), output.messageKey(), output.arguments(), localeTag);
   }
 
-  private String renderNotice(NoticeOutput output) {
+  private String renderNotice(NoticeOutput output, String localeTag) {
     return colorizeNotice(
         presentationMessageCatalog.render(
-            output.text(),
-            output.messageKey(),
-            output.arguments(),
-            presentationProperties.defaultLocaleTag()));
+            output.text(), output.messageKey(), output.arguments(), localeTag));
   }
 
-  private String renderNoticeWithCommand(TextCommand command, PlayerOutput output) {
-    String body = render(output);
+  private String renderNoticeWithCommand(
+      TextCommand command, PlayerOutput output, String localeTag) {
+    String body = render(output, localeTag);
     String commandLabel = responseCommandLabel(command, java.util.List.of(output));
     if (body.contains("\n")) {
       return "OK " + commandLabel + "\n" + body + "\n\n";
@@ -168,22 +175,19 @@ public class TextPlayerOutputRenderer {
     return "OK " + commandLabel + " " + body;
   }
 
-  private String renderError(ErrorOutput output) {
+  private String renderError(ErrorOutput output, String localeTag) {
     return "ERROR "
         + output.code()
         + (StringUtils.hasText(output.message())
             ? " "
                 + presentationMessageCatalog.render(
-                    output.message(),
-                    output.messageKey(),
-                    output.arguments(),
-                    presentationProperties.defaultLocaleTag())
+                    output.message(), output.messageKey(), output.arguments(), localeTag)
             : "");
   }
 
-  private String localizedLabel(String messageKey, String fallbackText) {
+  private String localizedLabel(String messageKey, String fallbackText, String localeTag) {
     return presentationMessageCatalog.render(
-        fallbackText, messageKey, java.util.Map.of(), presentationProperties.defaultLocaleTag());
+        fallbackText, messageKey, java.util.Map.of(), localeTag);
   }
 
   private String colorizeLabel(String text) {

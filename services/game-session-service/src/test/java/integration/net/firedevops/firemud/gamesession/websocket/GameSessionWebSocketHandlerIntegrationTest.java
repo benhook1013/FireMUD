@@ -392,6 +392,74 @@ class GameSessionWebSocketHandlerIntegrationTest {
   }
 
   @Test
+  void websocketLocaleHeaderAppliesToBuiltInLookRendering() throws Exception {
+    LookResult lookResult =
+        LookResult.newBuilder()
+            .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("1707").build())
+            .setRoomName("Galerie")
+            .setShortDescription("Un couloir etroit file vers le sud.")
+            .setLongDescription("Des lampes fument sous les arches de pierre.")
+            .addExits(
+                net.firedevops.firemud.gamelogic.v1.LookExit.newBuilder()
+                    .setLabel("SUD")
+                    .setTargetRoomInstanceId("R-1708")
+                    .setDescription("porte etroite")
+                    .build())
+            .build();
+    when(gameLogicClient.resolveLook(eq("22"), eq("41"), eq("123"), eq("1021")))
+        .thenReturn(lookResult);
+    when(lookTextRenderer.toPlayerOutput(
+            eq(lookResult),
+            eq(true),
+            eq(
+                net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
+                    .EXPLICIT_LOOK)))
+        .thenReturn(
+            net.firedevops.firemud.gamesession.presentation.PlayerOutput.view(
+                net.firedevops.firemud.gamesession.presentation.LookViewOutput.from(
+                    lookResult,
+                    true,
+                    net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
+                        .EXPLICIT_LOOK)));
+
+    StandardWebSocketClient client = new StandardWebSocketClient();
+    WebSocketHttpHeaders headers = new WebSocketHttpHeaders();
+    headers.add("X-Game-Instance-Id", "41");
+    headers.add("X-Firemud-Locale", "fr");
+    List<String> payloads = new java.util.concurrent.CopyOnWriteArrayList<>();
+    CountDownLatch latch = new CountDownLatch(3);
+
+    var future =
+        client.execute(
+            new TextWebSocketHandler() {
+              @Override
+              public void afterConnectionEstablished(WebSocketSession session) throws IOException {
+                session.sendMessage(new TextMessage("LOGIN demo@example.com swordfish"));
+                session.sendMessage(new TextMessage("PLAY demo"));
+                session.sendMessage(new TextMessage("LOOK"));
+              }
+
+              @Override
+              protected void handleTextMessage(WebSocketSession session, TextMessage message) {
+                payloads.add(message.getPayload());
+                latch.countDown();
+              }
+            },
+            headers,
+            URI.create("ws://localhost:" + port + "/ws/game"));
+
+    WebSocketSession session = future.get(5, TimeUnit.SECONDS);
+    assertThat(latch.await(5, TimeUnit.SECONDS)).isTrue();
+    session.close();
+
+    assertThat(payloads).hasSizeGreaterThanOrEqualTo(3);
+    assertThat(payloads.get(2)).contains("Salle : Galerie");
+    assertThat(payloads.get(2)).contains("Court : Un couloir etroit file vers le sud.");
+    assertThat(sessionContextService.findByTenantAndSessionId(22L, 41L))
+        .hasValueSatisfying(context -> assertThat(context.localeTag()).isEqualTo("fr"));
+  }
+
+  @Test
   void websocketMoveReturnsDestinationLookAndUpdatesSessionContext() throws Exception {
     LookResult destinationLook =
         LookResult.newBuilder()

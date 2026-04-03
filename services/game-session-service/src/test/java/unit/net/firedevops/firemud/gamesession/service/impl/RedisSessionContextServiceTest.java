@@ -81,4 +81,15 @@ class RedisSessionContextServiceTest {
     verify(redisTemplate).delete("sessionctx:10:1:context");
     verify(redisTemplate).delete("sessionctx:10:identity:40:30:context");
   }
+
+  @Test
+  void savePreservesLocaleTagInStoredContext() {
+    SessionContext context =
+        new SessionContext(1L, 10L, 20L, null, 30L, null, 40L, "room-1", "jwt", "fr", 40L);
+
+    service.save(context);
+
+    verify(valueOperations).set("sessionctx:10:1:context", context, TTL);
+    assertEquals("fr", context.localeTag());
+  }
 }

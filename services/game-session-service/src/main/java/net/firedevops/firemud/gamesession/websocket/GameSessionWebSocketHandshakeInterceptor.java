@@ -4,10 +4,12 @@ import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.Locale;
 import java.util.Map;
 import org.springframework.http.server.ServerHttpRequest;
 import org.springframework.http.server.ServerHttpResponse;
 import org.springframework.stereotype.Component;
+import org.springframework.util.StringUtils;
 import org.springframework.web.socket.WebSocketHandler;
 import org.springframework.web.socket.server.HandshakeInterceptor;
 
@@ -21,12 +23,15 @@ public class GameSessionWebSocketHandshakeInterceptor implements HandshakeInterc
   static final String CONNECTION_MODE_HEADER = "X-Firemud-Connection-Mode";
   static final String CONNECT_CONTEXT_HEADER = "X-Firemud-Connect-Context";
   static final String TRANSPORT_SESSION_HEADER = "X-Firemud-Transport-Session-Id";
+  static final String LOCALE_HEADER = "X-Firemud-Locale";
+  static final String ACCEPT_LANGUAGE_HEADER = "Accept-Language";
   static final String SESSION_ID_ATTR = "firemud.websocket.sessionId";
   static final String BOOTSTRAP_GAME_INSTANCE_ATTR = "firemud.websocket.bootstrapGameInstanceId";
   static final String TENANT_ID_ATTR = "firemud.websocket.tenantId";
   static final String SOLO_TICK_ATTR = "firemud.websocket.requiresSoloTick";
   static final String CONNECTION_MODE_ATTR = "firemud.websocket.connectionMode";
   static final String CONNECT_CONTEXT_ATTR = "firemud.websocket.connectContext";
+  static final String LOCALE_ATTR = "firemud.websocket.localeTag";
 
   @Override
   public boolean beforeHandshake(
@@ -47,6 +52,11 @@ public class GameSessionWebSocketHandshakeInterceptor implements HandshakeInterc
     attributes.put(SOLO_TICK_ATTR, request.getHeaders().getFirst(SOLO_TICK_HEADER));
     attributes.put(CONNECTION_MODE_ATTR, request.getHeaders().getFirst(CONNECTION_MODE_HEADER));
     attributes.put(CONNECT_CONTEXT_ATTR, request.getHeaders().getFirst(CONNECT_CONTEXT_HEADER));
+    attributes.put(
+        LOCALE_ATTR,
+        resolveLocaleTag(
+            request.getHeaders().getFirst(LOCALE_HEADER),
+            request.getHeaders().getFirst(ACCEPT_LANGUAGE_HEADER)));
     return true;
   }
 
@@ -83,5 +93,26 @@ public class GameSessionWebSocketHandshakeInterceptor implements HandshakeInterc
     } catch (NoSuchAlgorithmException ex) {
       throw new IllegalStateException("SHA-256 unavailable", ex);
     }
+  }
+
+  private String resolveLocaleTag(String localeHeader, String acceptLanguageHeader) {
+    String explicit = normalizeLocaleTag(localeHeader);
+    if (explicit != null) {
+      return explicit;
+    }
+    if (!StringUtils.hasText(acceptLanguageHeader)) {
+      return null;
+    }
+    String firstLanguageRange = acceptLanguageHeader.split(",")[0];
+    String candidate = firstLanguageRange.split(";")[0].trim();
+    return normalizeLocaleTag(candidate);
+  }
+
+  private String normalizeLocaleTag(String localeTag) {
+    if (!StringUtils.hasText(localeTag)) {
+      return null;
+    }
+    String normalized = Locale.forLanguageTag(localeTag.trim()).toLanguageTag();
+    return "und".equals(normalized) ? null : normalized;
   }
 }

@@ -131,6 +131,7 @@ public class MoveCommandHandler {
         current.gameInstanceId(),
         destinationRoomId,
         current.jwt(),
+        current.localeTag(),
         current.bootstrapGameInstanceId());
   }
 

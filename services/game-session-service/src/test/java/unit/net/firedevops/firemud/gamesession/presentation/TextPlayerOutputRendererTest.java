@@ -352,6 +352,33 @@ class TextPlayerOutputRendererTest {
   }
 
   @Test
+  void explicitLocaleOverrideWinsOverConfiguredDefault() {
+    TextPlayerOutputRenderer renderer =
+        new TextPlayerOutputRenderer(
+            new PresentationProperties(
+                "en-NZ",
+                PresentationProperties.ColorMode.NONE,
+                false,
+                new PresentationProperties.Prompt(false, true, 150L)));
+
+    String rendered =
+        renderer.render(
+            PlayerOutput.view(
+                new LookViewOutput(
+                    "R-808",
+                    "Galerie",
+                    "Un couloir etroit file vers le sud.",
+                    "Des lampes fument sous les arches de pierre.",
+                    true,
+                    List.of(new LookViewExit("SUD", "porte etroite")),
+                    List.of())),
+            "fr");
+
+    assertThat(rendered).contains("Salle : Galerie (ID: R-808)");
+    assertThat(rendered).doesNotContain("Room:");
+  }
+
+  @Test
   void renderAllFormatsMultilineNoticeAsCommandBody() {
     TextPlayerOutputRenderer renderer =
         new TextPlayerOutputRenderer(
