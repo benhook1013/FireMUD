@@ -95,7 +95,7 @@ public class TextCommandInterpreter {
     }
     if (command.viewRequestPayload().isPresent() && command.type() == TextCommandType.WORLDS) {
       return new TextCommandInterpretationResult(
-          CommandEnqueueResult.success(), List.of(PlayerOutput.notice(worldsHandler.describe())));
+          CommandEnqueueResult.success(), List.of(PlayerOutput.view(worldsHandler.browseView())));
     }
     if (command.type() == TextCommandType.LOGIN) {
       LoginCommandHandlingResult loginResult =

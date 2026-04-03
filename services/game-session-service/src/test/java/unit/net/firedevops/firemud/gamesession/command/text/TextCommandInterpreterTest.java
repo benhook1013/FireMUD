@@ -240,7 +240,7 @@ class TextCommandInterpreterTest {
 
     assertTrue(interpretation.commandResult().accepted());
     assertEquals(
-        List.of(PlayerOutputKind.NOTICE),
+        List.of(PlayerOutputKind.VIEW),
         interpretation.outputs().stream().map(PlayerOutput::kind).toList());
     assertTrue(renderedResponse("WORLDS", interpretation).startsWith("OK WORLDS\n1) Demo World"));
     assertTrue(renderedResponse("WORLDS", interpretation).contains("Demo World"));

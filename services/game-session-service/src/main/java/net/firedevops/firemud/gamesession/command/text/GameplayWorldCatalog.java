@@ -5,6 +5,7 @@ import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
 import net.firedevops.firemud.gamesession.config.GameSessionProperties;
+import net.firedevops.firemud.gamesession.presentation.WorldsViewOutput;
 import org.springframework.stereotype.Component;
 
 /** Resolves the current public world list and selector forms used by WORLDS/PLAY. */
@@ -18,19 +19,21 @@ public final class GameplayWorldCatalog {
 
   public String describeWorlds() {
     StringBuilder builder = new StringBuilder();
-    List<GameSessionProperties.WorldOption> worlds = properties.getWorlds();
-    for (int i = 0; i < worlds.size(); i++) {
-      GameSessionProperties.WorldOption world = worlds.get(i);
+    for (WorldsViewOutput.WorldEntry world : worldEntries()) {
       builder
-          .append(i + 1)
+          .append(world.ordinal())
           .append(") ")
-          .append(world.getDisplayName())
+          .append(world.displayName())
           .append(" (")
-          .append(world.getSlug())
+          .append(world.slug())
           .append(")\n");
     }
     builder.append('\n');
     return builder.toString();
+  }
+
+  public WorldsViewOutput browseView() {
+    return new WorldsViewOutput(worldEntries());
   }
 
   public Optional<GameSessionProperties.WorldOption> resolve(String selector) {
@@ -50,5 +53,22 @@ public final class GameplayWorldCatalog {
     return worlds.stream()
         .filter(world -> normalized.equals(world.getSlug().toLowerCase(Locale.ROOT)))
         .findFirst();
+  }
+
+  private List<WorldsViewOutput.WorldEntry> worldEntries() {
+    List<GameSessionProperties.WorldOption> worlds = properties.getWorlds();
+    java.util.ArrayList<WorldsViewOutput.WorldEntry> entries =
+        new java.util.ArrayList<>(worlds.size());
+    for (int i = 0; i < worlds.size(); i++) {
+      GameSessionProperties.WorldOption world = worlds.get(i);
+      entries.add(
+          new WorldsViewOutput.WorldEntry(
+              i + 1,
+              world.getSlug(),
+              world.getDisplayName(),
+              world.getGameInstanceId(),
+              world.isRequiresCharacterSelection()));
+    }
+    return entries;
   }
 }

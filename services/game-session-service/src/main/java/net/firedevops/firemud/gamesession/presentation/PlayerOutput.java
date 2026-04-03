@@ -49,6 +49,11 @@ public record PlayerOutput(
         PlayerOutputKind.VIEW, payload, ReplayPolicy.BUFFERABLE, BriefRenderPolicy.DEFAULT);
   }
 
+  public static PlayerOutput view(WorldsViewOutput payload) {
+    return new PlayerOutput(
+        PlayerOutputKind.VIEW, payload, ReplayPolicy.NO_REPLAY, BriefRenderPolicy.DEFAULT);
+  }
+
   public static PlayerOutput prompt(String text) {
     return prompt(text, java.util.List.of());
   }
@@ -108,6 +113,7 @@ public record PlayerOutput(
               + error.code()
               + (error.message() == null || error.message().isBlank() ? "" : " " + error.message());
       case LookViewOutput ignored -> null;
+      case WorldsViewOutput ignored -> null;
       default -> null;
     };
   }

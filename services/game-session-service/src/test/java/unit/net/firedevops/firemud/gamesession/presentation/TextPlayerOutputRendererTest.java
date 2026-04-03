@@ -425,4 +425,30 @@ class TextPlayerOutputRendererTest {
     assertThat(rendered)
         .isEqualTo("OK WORLDS\n1) Demo World (demo)\n2) Builder Sandbox (sandbox)\n\n");
   }
+
+  @Test
+  void renderAllFormatsWorldsViewAsCommandBody() {
+    TextPlayerOutputRenderer renderer =
+        new TextPlayerOutputRenderer(
+            new PresentationProperties(
+                "en-NZ",
+                PresentationProperties.ColorMode.NONE,
+                false,
+                new PresentationProperties.Prompt(false, true, 150L)));
+
+    String rendered =
+        renderer.renderAll(
+            new TextCommand(TextCommandType.WORLDS, List.of(), "WORLDS"),
+            CommandEnqueueResult.success(),
+            List.of(
+                PlayerOutput.view(
+                    new WorldsViewOutput(
+                        List.of(
+                            new WorldsViewOutput.WorldEntry(1, "demo", "Demo World", 1L, false),
+                            new WorldsViewOutput.WorldEntry(
+                                2, "sandbox", "Builder Sandbox", 2L, true))))));
+
+    assertThat(rendered)
+        .isEqualTo("OK WORLDS\n1) Demo World (demo)\n2) Builder Sandbox (sandbox)\n\n");
+  }
 }

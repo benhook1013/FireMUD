@@ -10,6 +10,13 @@ class PlayerOutputTest {
   void screenBufferEligibilityFollowsReplayPolicyAndOutputKind() {
     assertThat(PlayerOutput.message("hello").screenBufferEligible()).isTrue();
     assertThat(PlayerOutput.view("look").screenBufferEligible()).isTrue();
+    assertThat(
+            PlayerOutput.view(
+                    new WorldsViewOutput(
+                        java.util.List.of(
+                            new WorldsViewOutput.WorldEntry(1, "demo", "Demo World", 1L, false))))
+                .screenBufferEligible())
+        .isFalse();
     assertThat(PlayerOutput.prompt("demo> ").screenBufferEligible()).isFalse();
     assertThat(PlayerOutput.notice("notice").screenBufferEligible()).isFalse();
     assertThat(PlayerOutput.error("LOGIN_REQUIRED", "Use LOGIN").screenBufferEligible()).isFalse();

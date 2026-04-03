@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamesession.command.text;
 
 import java.util.Objects;
+import net.firedevops.firemud.gamesession.presentation.WorldsViewOutput;
 import org.springframework.stereotype.Component;
 
 /** Handles public world-browse commands before login and after login. */
@@ -14,5 +15,9 @@ public class WorldsCommandHandler {
 
   public String describe() {
     return worldCatalog.describeWorlds();
+  }
+
+  public WorldsViewOutput browseView() {
+    return worldCatalog.browseView();
   }
 }

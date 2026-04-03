@@ -40,7 +40,9 @@ public class TextPlayerOutputRenderer {
       case VIEW ->
           output.payload() instanceof LookViewOutput lookView
               ? renderLookView(lookView, localeTag)
-              : renderMessage((TextMessageOutput) output.payload(), localeTag);
+              : output.payload() instanceof WorldsViewOutput worldsView
+                  ? renderWorldsView(worldsView)
+                  : renderMessage((TextMessageOutput) output.payload(), localeTag);
       case PROMPT -> renderPrompt((PromptOutput) output.payload());
       case ERROR -> renderError((ErrorOutput) output.payload(), localeTag);
       case NOTICE -> renderNotice((NoticeOutput) output.payload(), localeTag);
@@ -152,6 +154,12 @@ public class TextPlayerOutputRenderer {
       return "";
     }
     return colorizePrompt(output.text());
+  }
+
+  private String renderWorldsView(WorldsViewOutput output) {
+    return output.worlds().stream()
+        .map(world -> world.ordinal() + ") " + world.displayName() + " (" + world.slug() + ")")
+        .collect(Collectors.joining("\n"));
   }
 
   private String renderMessage(TextMessageOutput output, String localeTag) {
