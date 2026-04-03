@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.time.Instant;
+import net.firedevops.firemud.common.runtime.RuntimeIdentity;
 import net.firedevops.firemud.springcloudgateway.websocket.DevEchoWebSocketHandler;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.runner.ReactiveWebApplicationContextRunner;
@@ -50,6 +52,12 @@ class DevWebSocketConfigTest {
     @Bean
     MeterRegistry meterRegistry() {
       return new SimpleMeterRegistry();
+    }
+
+    @Bean
+    RuntimeIdentity runtimeIdentity() {
+      return new RuntimeIdentity(
+          "spring-cloud-gateway", "gateway-test", "localhost", Instant.EPOCH, null, null, null);
     }
   }
 }

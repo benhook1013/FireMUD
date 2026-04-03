@@ -614,8 +614,10 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
         .whenComplete(
             (socket, error) -> {
               if (error != null) {
-                logger.error("WebSocket connection to {} failed", gatewayWsUrl, error);
-                failCloseBackendUnavailable("Gateway link unavailable; please reconnect");
+                try (CombinedLoggingContext ignored = openLoggingContext()) {
+                  logger.error("WebSocket connection to {} failed", gatewayWsUrl, error);
+                  failCloseBackendUnavailable("Gateway link unavailable; please reconnect");
+                }
               }
             });
   }

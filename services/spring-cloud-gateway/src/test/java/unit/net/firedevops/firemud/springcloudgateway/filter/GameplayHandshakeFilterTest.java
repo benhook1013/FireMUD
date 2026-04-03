@@ -3,7 +3,9 @@ package net.firedevops.firemud.springcloudgateway.filter;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.net.InetSocketAddress;
+import java.time.Instant;
 import java.util.Map;
+import net.firedevops.firemud.common.runtime.RuntimeIdentity;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.springcloudgateway.config.GatewayHeaderTrustProperties;
 import org.junit.jupiter.api.Test;
@@ -17,10 +19,14 @@ import reactor.core.publisher.Mono;
 
 class GameplayHandshakeFilterTest {
   private static final String SECRET = "testsecretkeytestsecretkeytest1234";
+  private static final RuntimeIdentity TEST_RUNTIME_IDENTITY =
+      new RuntimeIdentity(
+          "spring-cloud-gateway", "gateway-test", "localhost", Instant.EPOCH, null, null, null);
 
   @Test
   void rejectsFirstPartyHandshakeWithoutConnectToken() {
-    GameplayHandshakeFilter filter = new GameplayHandshakeFilter(new JwtUtil(SECRET, 30_000L));
+    GameplayHandshakeFilter filter =
+        new GameplayHandshakeFilter(new JwtUtil(SECRET, 30_000L), TEST_RUNTIME_IDENTITY);
 
     MockServerWebExchange exchange =
         MockServerWebExchange.from(MockServerHttpRequest.get("/ws/game/test").build());
@@ -34,7 +40,8 @@ class GameplayHandshakeFilterTest {
 
   @Test
   void rejectsScopeMismatchWhenRequestHeadersDisagreeWithTokenClaims() {
-    GameplayHandshakeFilter filter = new GameplayHandshakeFilter(new JwtUtil(SECRET, 30_000L));
+    GameplayHandshakeFilter filter =
+        new GameplayHandshakeFilter(new JwtUtil(SECRET, 30_000L), TEST_RUNTIME_IDENTITY);
     String token =
         new JwtUtil(SECRET, 30_000L)
             .generateToken(
@@ -61,7 +68,8 @@ class GameplayHandshakeFilterTest {
 
   @Test
   void promotesFirstPartyHandshakeWithValidToken() {
-    GameplayHandshakeFilter filter = new GameplayHandshakeFilter(new JwtUtil(SECRET, 30_000L));
+    GameplayHandshakeFilter filter =
+        new GameplayHandshakeFilter(new JwtUtil(SECRET, 30_000L), TEST_RUNTIME_IDENTITY);
     String token =
         new JwtUtil(SECRET, 30_000L)
             .generateToken(
@@ -101,7 +109,8 @@ class GameplayHandshakeFilterTest {
     props.getTcpProxy().setAllowInsecureHeadersFromTrustedCidrs(true);
     props.getTcpProxy().setInsecureTrustedCidrs(java.util.List.of("10.0.0.0/8"));
     HeaderTrustFilter headerTrustFilter = new HeaderTrustFilter(props);
-    GameplayHandshakeFilter filter = new GameplayHandshakeFilter(new JwtUtil(SECRET, 30_000L));
+    GameplayHandshakeFilter filter =
+        new GameplayHandshakeFilter(new JwtUtil(SECRET, 30_000L), TEST_RUNTIME_IDENTITY);
 
     MockServerHttpRequest request =
         MockServerHttpRequest.get("/ws/game/test")
@@ -122,7 +131,8 @@ class GameplayHandshakeFilterTest {
 
   @Test
   void rejectsExpiredConnectToken() {
-    GameplayHandshakeFilter filter = new GameplayHandshakeFilter(new JwtUtil(SECRET, 30_000L));
+    GameplayHandshakeFilter filter =
+        new GameplayHandshakeFilter(new JwtUtil(SECRET, 30_000L), TEST_RUNTIME_IDENTITY);
     JwtUtil expiredJwtUtil = new JwtUtil(SECRET, -1L);
     String token =
         expiredJwtUtil.generateToken(
@@ -148,7 +158,8 @@ class GameplayHandshakeFilterTest {
 
   @Test
   void rejectsReplayedConnectToken() {
-    GameplayHandshakeFilter filter = new GameplayHandshakeFilter(new JwtUtil(SECRET, 30_000L));
+    GameplayHandshakeFilter filter =
+        new GameplayHandshakeFilter(new JwtUtil(SECRET, 30_000L), TEST_RUNTIME_IDENTITY);
     String token =
         new JwtUtil(SECRET, 30_000L)
             .generateToken(

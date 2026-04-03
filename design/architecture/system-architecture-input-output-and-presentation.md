@@ -25,6 +25,7 @@ The goal is to keep gameplay and UX decisions structured until the latest practi
 - Prompt/status output is a separate output class from transcript lines and gameplay view redraws.
 - Player presentation settings such as color mode and `BRIEF` behavior should primarily alter rendering policy, not require duplicate authored gameplay prose for every action.
 - `BRIEF` mode should primarily suppress or omit tagged output segments rather than requiring a second fully-authored text path for every output.
+- Movement-triggered room refresh remains governed by the shared presentation plus movement settings model: transcript/rendering controls own briefness and locale/color policy, while `movement.postMoveView` owns whether a successful move produces a destination redraw at all.
 - FireMUD should avoid brittle one-class-per-command and one-class-per-output taxonomies as the default model. A richer schema-driven or document-tree representation may still become desirable later, but the first canonical model should stay smaller and easier to evolve.
 
 ---

@@ -83,7 +83,15 @@ public class EffectiveSettingsController {
             new DomainSettings<>(reconnection.effective().policy(), reconnection.sources()),
             new DomainSettings<>(reconnection.effective().buffer(), reconnection.sources()),
             new DomainSettings<>(movement.effective(), movement.sources()),
+            new DomainSettings<>(
+                MovementPostMoveViewSettings.from(movement.effective()), movement.sources()),
             new DomainSettings<>(worldTopology.effective(), worldTopology.sources()),
+            new DomainSettings<>(
+                WorldTopologyScopeModelSettings.from(worldTopology.effective()),
+                worldTopology.sources()),
+            new DomainSettings<>(
+                WorldTopologyRegionBehaviorSettings.from(worldTopology.effective()),
+                worldTopology.sources()),
             new ScopedOverrideSettings<>(
                 sharedOverrides.effectiveOverrides().communication(),
                 sharedOverrides.sourcesFor(
@@ -137,7 +145,10 @@ public class EffectiveSettingsController {
       DomainSettings<FiremudReconnectionProperties.Policy> reconnectionPolicy,
       DomainSettings<FiremudReconnectionProperties.Buffer> reconnectBuffer,
       DomainSettings<MovementProperties> movement,
+      DomainSettings<MovementPostMoveViewSettings> movementPostMoveView,
       DomainSettings<WorldTopologyProperties> worldTopology,
+      DomainSettings<WorldTopologyScopeModelSettings> worldTopologyScopeModel,
+      DomainSettings<WorldTopologyRegionBehaviorSettings> worldTopologyRegionBehavior,
       ScopedOverrideSettings<ScopedSettingsOverrides.CommunicationOverride>
           communicationOverrides) {}
 
@@ -178,6 +189,26 @@ public class EffectiveSettingsController {
           presentation.defaultLocaleTag(),
           presentation.defaultColorMode(),
           presentation.briefEnabledByDefault());
+    }
+  }
+
+  public record MovementPostMoveViewSettings(boolean postMoveLookEnabled) {
+    static MovementPostMoveViewSettings from(MovementProperties movement) {
+      return new MovementPostMoveViewSettings(movement.postMoveLookEnabled());
+    }
+  }
+
+  public record WorldTopologyScopeModelSettings(
+      WorldTopologyProperties.ScopeModel scopeModel, boolean mapEnabled, boolean areasEnabled) {
+    static WorldTopologyScopeModelSettings from(WorldTopologyProperties worldTopology) {
+      return new WorldTopologyScopeModelSettings(
+          worldTopology.scopeModel(), worldTopology.mapEnabled(), worldTopology.areasEnabled());
+    }
+  }
+
+  public record WorldTopologyRegionBehaviorSettings(boolean regionsEnabled) {
+    static WorldTopologyRegionBehaviorSettings from(WorldTopologyProperties worldTopology) {
+      return new WorldTopologyRegionBehaviorSettings(worldTopology.regionsEnabled());
     }
   }
 

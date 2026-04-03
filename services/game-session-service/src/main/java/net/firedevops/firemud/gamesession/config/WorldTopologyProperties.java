@@ -7,10 +7,24 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 public record WorldTopologyProperties(ScopeModel scopeModel, boolean regionsEnabled) {
   public WorldTopologyProperties {
     scopeModel = scopeModel == null ? ScopeModel.MAP_ONLY : scopeModel;
+    if (regionsEnabled && scopeModel != ScopeModel.REGION_AREA_AND_MAP) {
+      scopeModel = ScopeModel.REGION_AREA_AND_MAP;
+    }
+    if (scopeModel == ScopeModel.REGION_AREA_AND_MAP) {
+      regionsEnabled = true;
+    }
   }
 
   public WorldTopologyProperties() {
     this(ScopeModel.MAP_ONLY, false);
+  }
+
+  public boolean areasEnabled() {
+    return scopeModel != ScopeModel.MAP_ONLY;
+  }
+
+  public boolean mapEnabled() {
+    return true;
   }
 
   public enum ScopeModel {

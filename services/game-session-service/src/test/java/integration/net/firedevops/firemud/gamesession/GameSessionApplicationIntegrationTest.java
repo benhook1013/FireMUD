@@ -164,8 +164,13 @@ class GameSessionApplicationIntegrationTest {
     assertThat(body).contains("\"reconnectionPolicy\":");
     assertThat(body).contains("\"reconnectBuffer\":");
     assertThat(body).contains("\"postMoveLookEnabled\":false");
+    assertThat(body).contains("\"movementPostMoveView\":");
     assertThat(body).contains("\"scopeModel\":\"REGION_AREA_AND_MAP\"");
+    assertThat(body).contains("\"worldTopologyScopeModel\":");
+    assertThat(body).contains("\"mapEnabled\":true");
+    assertThat(body).contains("\"areasEnabled\":true");
     assertThat(body).contains("\"regionsEnabled\":true");
+    assertThat(body).contains("\"worldTopologyRegionBehavior\":");
     assertThat(body).contains("\"communicationOverrides\":");
     assertThat(body).contains("\"maxMessageLength\":640");
     assertThat(body).contains("\"whisperObserverMetadataEnabled\":false");

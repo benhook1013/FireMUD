@@ -68,7 +68,7 @@ public class GameplayWebSocketBridgeHandler implements WebSocketHandler {
         downstream
             .receive()
             .map(WebSocketMessage::getPayloadAsText)
-            .doOnNext(payload -> emitIfConnected(state, payload))
+            .doOnNext(payload -> emitIfConnected(downstream, state, payload))
             .doFinally(
                 signal -> {
                   state.downstreamClosed.set(true);
@@ -219,21 +219,21 @@ public class GameplayWebSocketBridgeHandler implements WebSocketHandler {
     return status.getCode() != 1000 && status.getCode() != 1008;
   }
 
-  private void emitIfConnected(BridgeState state, String payload) {
+  private void emitIfConnected(WebSocketSession downstream, BridgeState state, String payload) {
     if (!state.upstreamConnected.get()) {
-      try (RuntimeLoggingContext ignored = RuntimeLoggingContext.open(runtimeIdentity)) {
+      try (RuntimeLoggingContext ignored = openLoggingContext(downstream)) {
         LOG.debug("Queuing downstream gameplay message during upstream stall");
       }
     }
     Sinks.EmitResult result = state.inboundToUpstream.tryEmitNext(payload);
     if (result.isFailure()) {
-      try (RuntimeLoggingContext ignored = RuntimeLoggingContext.open(runtimeIdentity)) {
+      try (RuntimeLoggingContext ignored = openLoggingContext(downstream)) {
         LOG.debug("Failed to queue downstream gameplay message: {}", result);
       }
     }
   }
 
-  private RuntimeLoggingContext openLoggingContext(WebSocketSession session) {
+  RuntimeLoggingContext openLoggingContext(WebSocketSession session) {
     String correlationId =
         firstNonBlank(
             session.getHandshakeInfo().getHeaders().getFirst(TRANSPORT_SESSION_HEADER),

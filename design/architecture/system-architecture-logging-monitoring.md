@@ -71,6 +71,7 @@ The `02.14` shared logging baseline is now canonical for the main request-handli
 - Shared servlet HTTP logging should carry the runtime identity and request-correlation field set described above.
 - Shared reactive HTTP logging should carry the same baseline field set.
 - Shared gRPC server logging should carry the same baseline field set.
+- Gateway gameplay-admission logs that run in the custom handshake filter before WebSocket upgrade should normalize through the shared runtime logging context as well, using the gateway request ID or transport-session ID as stable correlation when available.
 - Custom WebSocket edge handlers that bypass the shared HTTP filters should normalize their local logs through the shared runtime logging context so runtime identity and stable connection-correlation fields are still present.
 - Telnet edge handlers in `tcp-proxy-service` should do the same so the main player-facing edge protocols share one runtime identity and connection-correlation contract.
 

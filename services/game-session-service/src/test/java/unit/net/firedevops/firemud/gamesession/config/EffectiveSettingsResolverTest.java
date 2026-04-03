@@ -94,4 +94,18 @@ class EffectiveSettingsResolverTest {
         .isEqualTo(WorldTopologyProperties.ScopeModel.REGION_AREA_AND_MAP);
     assertThat(resolver.worldTopology(prePlay).regionsEnabled()).isTrue();
   }
+
+  @Test
+  void worldTopologyNormalizesRegionCapableConfigurations() {
+    assertThat(new WorldTopologyProperties(WorldTopologyProperties.ScopeModel.MAP_ONLY, true))
+        .isEqualTo(
+            new WorldTopologyProperties(
+                WorldTopologyProperties.ScopeModel.REGION_AREA_AND_MAP, true));
+    assertThat(
+            new WorldTopologyProperties(
+                WorldTopologyProperties.ScopeModel.REGION_AREA_AND_MAP, false))
+        .isEqualTo(
+            new WorldTopologyProperties(
+                WorldTopologyProperties.ScopeModel.REGION_AREA_AND_MAP, true));
+  }
 }
