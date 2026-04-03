@@ -225,6 +225,31 @@ jobs:
         run: |
           bash ./dev-tools/preview/ensure-ghcr-pull-secret.sh "${{ needs.preview-plan.outputs.namespace }}"
 
+      - name: Login to GHCR for image availability checks
+        env:
+          PREVIEW_GHCR_USERNAME: ${{ secrets.PREVIEW_GHCR_USERNAME }}
+          PREVIEW_GHCR_TOKEN: ${{ secrets.PREVIEW_GHCR_TOKEN }}
+        run: |
+          printf '%s' "${PREVIEW_GHCR_TOKEN}" | docker login ghcr.io -u "${PREVIEW_GHCR_USERNAME}" --password-stdin
+
+      - name: Resolve effective preview image tag
+        id: effective-image-tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          EFFECTIVE_IMAGE_TAG="$(bash ./dev-tools/preview/resolve-preview-image-tag.sh \
+            "${{ needs.preview-plan.outputs.image_tag }}" \
+            "${{ github.head_ref || github.ref_name }}" \
+            "${{ github.event_name == 'pull_request' && github.event.pull_request.base.ref || 'develop' }}")"
+          echo "image_tag=${EFFECTIVE_IMAGE_TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for preview runtime images
+        env:
+          PREVIEW_GHCR_USERNAME: ${{ secrets.PREVIEW_GHCR_USERNAME }}
+          PREVIEW_GHCR_TOKEN: ${{ secrets.PREVIEW_GHCR_TOKEN }}
+        run: |
+          bash ./dev-tools/preview/wait-for-preview-images.sh "${{ steps.effective-image-tag.outputs.image_tag }}"
+
       - name: Ensure preview gRPC TLS secret exists
         run: |
           bash ./dev-tools/preview/ensure-grpc-tls-secret.sh "${{ needs.preview-plan.outputs.namespace }}"
@@ -244,7 +269,7 @@ jobs:
             "${{ needs.preview-plan.outputs.namespace }}" \
             "${{ needs.preview-plan.outputs.release_name }}" \
             "${{ needs.preview-plan.outputs.hostname }}" \
-            "${{ needs.preview-plan.outputs.image_tag }}" \
+            "${{ steps.effective-image-tag.outputs.image_tag }}" \
             "${{ steps.telnet-port.outputs.telnet_port }}"
 
       - name: Validate preview chart render
@@ -270,7 +295,7 @@ jobs:
             "${{ needs.preview-plan.outputs.namespace }}" \
             "${{ needs.preview-plan.outputs.pr_number }}" \
             "${{ needs.preview-plan.outputs.head_sha }}" \
-            "${{ needs.preview-plan.outputs.image_tag }}" \
+            "${{ steps.effective-image-tag.outputs.image_tag }}" \
             "${{ steps.telnet-port.outputs.telnet_port }}"
 
       - name: Deploy preview release
@@ -324,6 +349,7 @@ jobs:
             echo ""
             echo "- Web: https://${{ needs.preview-plan.outputs.hostname }}"
             echo "- TCP: telnet ${{ needs.preview-plan.outputs.hostname }} ${{ steps.telnet-port.outputs.telnet_port }}"
+            echo "- Image tag: ${{ steps.effective-image-tag.outputs.image_tag }}"
             echo "- Demo login: demo@example.com / swordfish"
           } >> "$GITHUB_STEP_SUMMARY"
 

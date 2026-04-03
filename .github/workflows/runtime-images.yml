@@ -22,9 +22,13 @@ on:
       - 'services/common-test-support/**'
       - 'services/common-web-support/**'
       - 'services/account-service/**'
+      - 'services/automation-scripting-service/**'
       - 'services/entity-management-service/**'
+      - 'services/game-design-service/**'
       - 'services/game-logic-service/**'
       - 'services/game-session-service/**'
+      - 'services/logging-admin-service/**'
+      - 'services/social-groups-service/**'
       - 'services/spring-cloud-gateway/**'
       - 'services/tcp-proxy-service/**'
       - 'services/world-management-service/**'
@@ -111,9 +115,13 @@ jobs:
       matrix:
         service:
           - account-service
+          - automation-scripting-service
           - entity-management-service
+          - game-design-service
           - game-logic-service
           - game-session-service
+          - logging-admin-service
+          - social-groups-service
           - spring-cloud-gateway
           - tcp-proxy-service
           - world-management-service
