@@ -213,9 +213,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
     when(lookTextRenderer.render(
             eq(lookResult),
             eq(true),
-            any(
-                net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
-                    .class),
+            any(net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason.class),
             any(
                 net.firedevops.firemud.gamesession.presentation.LookViewOutput.BriefRenderingHint
                     .class)))
@@ -223,9 +221,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
     when(lookTextRenderer.toPlayerOutput(
             eq(lookResult),
             eq(true),
-            any(
-                net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
-                    .class),
+            any(net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason.class),
             any(
                 net.firedevops.firemud.gamesession.presentation.LookViewOutput.BriefRenderingHint
                     .class)))
@@ -234,9 +230,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
     when(lookTextRenderer.toPlayerOutput(
             eq(lookResult),
             eq(false),
-            any(
-                net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
-                    .class),
+            any(net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason.class),
             any(
                 net.firedevops.firemud.gamesession.presentation.LookViewOutput.BriefRenderingHint
                     .class)))
@@ -252,9 +246,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
     when(lookTextRenderer.render(
             eq(lookResult),
             eq(false),
-            any(
-                net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
-                    .class),
+            any(net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason.class),
             any(
                 net.firedevops.firemud.gamesession.presentation.LookViewOutput.BriefRenderingHint
                     .class)))
@@ -458,7 +450,8 @@ class GameSessionWebSocketHandlerIntegrationTest {
     List<String> payloads = new java.util.concurrent.CopyOnWriteArrayList<>();
     CountDownLatch latch = new CountDownLatch(3);
     AtomicReference<WebSocketSession> sessionRef = new AtomicReference<>();
-    java.util.concurrent.atomic.AtomicBoolean lookSent = new java.util.concurrent.atomic.AtomicBoolean();
+    java.util.concurrent.atomic.AtomicBoolean lookSent =
+        new java.util.concurrent.atomic.AtomicBoolean();
 
     var future =
         client.execute(

@@ -172,8 +172,7 @@ class TextCommandInterpreterTest {
             Mockito.eq(lookResult),
             Mockito.eq(true),
             Mockito.any(
-                net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
-                    .class),
+                net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason.class),
             Mockito.any(
                 net.firedevops.firemud.gamesession.presentation.LookViewOutput.BriefRenderingHint
                     .class)))
@@ -191,8 +190,7 @@ class TextCommandInterpreterTest {
             Mockito.eq(lookResult),
             Mockito.eq(false),
             Mockito.any(
-                net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
-                    .class),
+                net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason.class),
             Mockito.any(
                 net.firedevops.firemud.gamesession.presentation.LookViewOutput.BriefRenderingHint
                     .class)))
@@ -217,8 +215,7 @@ class TextCommandInterpreterTest {
             Mockito.eq(lookResult),
             Mockito.anyBoolean(),
             Mockito.any(
-                net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
-                    .class),
+                net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason.class),
             Mockito.any(
                 net.firedevops.firemud.gamesession.presentation.LookViewOutput.BriefRenderingHint
                     .class)))

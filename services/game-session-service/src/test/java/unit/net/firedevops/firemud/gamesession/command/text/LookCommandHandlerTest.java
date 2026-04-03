@@ -69,9 +69,7 @@ class LookCommandHandlerTest {
     when(lookTextRenderer.render(
             eq(lookResult),
             eq(true),
-            any(
-                net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
-                    .class),
+            any(net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason.class),
             any(
                 net.firedevops.firemud.gamesession.presentation.LookViewOutput.BriefRenderingHint
                     .class)))
@@ -86,9 +84,7 @@ class LookCommandHandlerTest {
     when(lookTextRenderer.render(
             eq(lookResult),
             eq(false),
-            any(
-                net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
-                    .class),
+            any(net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason.class),
             any(
                 net.firedevops.firemud.gamesession.presentation.LookViewOutput.BriefRenderingHint
                     .class)))
