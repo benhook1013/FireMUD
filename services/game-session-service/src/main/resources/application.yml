@@ -40,6 +40,13 @@ firemud:
     game-logic-service: game-logic-service:6565
   conflict:
     ttlSeconds: 300
+  presentation:
+    default-color-mode: NONE
+    brief-enabled-by-default: false
+    prompt:
+      enabled: false
+      emit-after-reconnect-restore: true
+      coalesce-window-ms: 150
   movement:
     post-move-look-enabled: true
   world-topology:

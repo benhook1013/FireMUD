@@ -1,6 +1,11 @@
 {
   "groups": [
     {
+      "name": "firemud.presentation",
+      "type": "net.firedevops.firemud.gamesession.config.PresentationProperties",
+      "sourceType": "net.firedevops.firemud.gamesession.config.PresentationProperties"
+    },
+    {
       "name": "firemud.movement",
       "type": "net.firedevops.firemud.gamesession.config.MovementProperties",
       "sourceType": "net.firedevops.firemud.gamesession.config.MovementProperties"
@@ -12,6 +17,41 @@
     }
   ],
   "properties": [
+    {
+      "name": "firemud.presentation.default-color-mode",
+      "type": "net.firedevops.firemud.gamesession.config.PresentationProperties$ColorMode",
+      "defaultValue": "NONE",
+      "description": "Default color/emphasis mode for the text renderer when no per-player presentation preference overrides it.",
+      "sourceType": "net.firedevops.firemud.gamesession.config.PresentationProperties"
+    },
+    {
+      "name": "firemud.presentation.brief-enabled-by-default",
+      "type": "java.lang.Boolean",
+      "defaultValue": false,
+      "description": "Whether room-view rendering defaults to BRIEF-style suppression for movement-triggered and other suppressible output segments.",
+      "sourceType": "net.firedevops.firemud.gamesession.config.PresentationProperties"
+    },
+    {
+      "name": "firemud.presentation.prompt.enabled",
+      "type": "java.lang.Boolean",
+      "defaultValue": false,
+      "description": "Whether prompt output is enabled by default for text-session rendering.",
+      "sourceType": "net.firedevops.firemud.gamesession.config.PresentationProperties$Prompt"
+    },
+    {
+      "name": "firemud.presentation.prompt.emit-after-reconnect-restore",
+      "type": "java.lang.Boolean",
+      "defaultValue": true,
+      "description": "Whether reconnect restore appends a fresh prompt after replaying recent transcript context and rendering a fresh LOOK.",
+      "sourceType": "net.firedevops.firemud.gamesession.config.PresentationProperties$Prompt"
+    },
+    {
+      "name": "firemud.presentation.prompt.coalesce-window-ms",
+      "type": "java.lang.Long",
+      "defaultValue": 150,
+      "description": "Maximum prompt burst window, in milliseconds, used to suppress prompt spam while still retaining prompts for explicit boundary commands such as LOOK.",
+      "sourceType": "net.firedevops.firemud.gamesession.config.PresentationProperties$Prompt"
+    },
     {
       "name": "firemud.movement.post-move-look-enabled",
       "type": "java.lang.Boolean",
@@ -35,6 +75,23 @@
     }
   ],
   "hints": [
+    {
+      "name": "firemud.presentation.default-color-mode",
+      "values": [
+        {
+          "value": "NONE",
+          "description": "Render plain text without ANSI color or emphasis."
+        },
+        {
+          "value": "BASIC",
+          "description": "Render basic ANSI color/emphasis where supported."
+        },
+        {
+          "value": "RICH",
+          "description": "Render richer emphasis/color variants for capable clients."
+        }
+      ]
+    },
     {
       "name": "firemud.world-topology.scope-model",
       "values": [

@@ -21,6 +21,22 @@ TLS certificates are supplied via [`FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC
 
 The first surfaced platform settings domains in Game Session are now generation-ready through typed configuration properties plus configuration metadata.
 
+### `firemud.presentation`
+
+| Key | Purpose | Default |
+| --- | ------- | ------- |
+| `firemud.presentation.default-color-mode` | Default text-renderer color/emphasis mode when no per-player preference overrides it | `NONE` |
+| `firemud.presentation.brief-enabled-by-default` | Whether suppressible room-view and transcript segments default to BRIEF-style rendering | `false` |
+| `firemud.presentation.prompt.enabled` | Whether prompt output is enabled by default for text-session rendering | `false` |
+| `firemud.presentation.prompt.emit-after-reconnect-restore` | Whether reconnect restore appends a fresh prompt after replay and fresh `LOOK` | `true` |
+| `firemud.presentation.prompt.coalesce-window-ms` | Small prompt burst window used to reduce prompt spam while still retaining prompts for explicit boundary commands like `LOOK` | `150` |
+
+`firemud.presentation.default-color-mode` currently supports:
+
+- `NONE`
+- `BASIC`
+- `RICH`
+
 ### `firemud.movement`
 
 | Key | Purpose | Default |
@@ -47,4 +63,5 @@ The first surfaced platform settings domains in Game Session are now generation-
 - [Deployment Environments](../../infrastructure/deployment-environments.md) remains the canonical source for concrete environment examples and deployment-specific binding expectations.
 - The service enforces multi-tenant isolation. All tables include a `tenant_id` column and Redis keys are prefixed with this value as outlined in [Multi-Tenancy](../../system-architecture-multi-tenancy.md).
 - Service discovery for downstream gRPC calls uses `ServiceEndpointsProperties` and mTLS identities issued through cert-manager.
-- `firemud.movement` and `firemud.world-topology` are still file/env-backed operator defaults today; the later tenant/game override model remains part of the broader platform settings work in `02.9` through `02.12`.
+- `firemud.presentation`, `firemud.movement`, and `firemud.world-topology` are still file/env-backed operator defaults today; the later tenant/game override model remains part of the broader platform settings work in `02.9` through `02.12`.
+- Prompt exclusion from reconnect transcript replay remains part of the canonical reconnect/output policy; it is not yet surfaced as an operator-facing `firemud.presentation` setting.
