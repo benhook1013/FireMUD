@@ -36,14 +36,6 @@ public record PlayerOutput(
         BriefRenderPolicy.DEFAULT);
   }
 
-  public static PlayerOutput view(String text) {
-    return new PlayerOutput(
-        PlayerOutputKind.VIEW,
-        new TextMessageOutput(text),
-        ReplayPolicy.BUFFERABLE,
-        BriefRenderPolicy.DEFAULT);
-  }
-
   public static PlayerOutput view(LookViewOutput payload) {
     return new PlayerOutput(
         PlayerOutputKind.VIEW, payload, ReplayPolicy.BUFFERABLE, BriefRenderPolicy.DEFAULT);

@@ -9,7 +9,18 @@ class PlayerOutputTest {
   @Test
   void screenBufferEligibilityFollowsReplayPolicyAndOutputKind() {
     assertThat(PlayerOutput.message("hello").screenBufferEligible()).isTrue();
-    assertThat(PlayerOutput.view("look").screenBufferEligible()).isTrue();
+    assertThat(
+            PlayerOutput.view(
+                    new LookViewOutput(
+                        "R-100",
+                        "Look Hall",
+                        "look",
+                        "look detail",
+                        true,
+                        java.util.List.of(),
+                        java.util.List.of()))
+                .screenBufferEligible())
+        .isTrue();
     assertThat(
             PlayerOutput.view(
                     new WorldsViewOutput(

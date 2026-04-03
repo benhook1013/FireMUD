@@ -17,6 +17,7 @@ import net.firedevops.firemud.gamesession.config.GameSessionSettingsOverridesPro
 import net.firedevops.firemud.gamesession.config.MovementProperties;
 import net.firedevops.firemud.gamesession.config.PresentationProperties;
 import net.firedevops.firemud.gamesession.config.WorldTopologyProperties;
+import net.firedevops.firemud.gamesession.presentation.LookViewOutput;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.service.SessionContext;
@@ -81,7 +82,17 @@ class MoveCommandHandlerTest {
     when(gameLogicClient.resolveMove("22", "42", "911", "R-1021", "north", ""))
         .thenReturn(
             MoveResult.newBuilder().setSuccess(true).setDestinationLook(destinationLook).build());
-    PlayerOutput destinationOutput = PlayerOutput.view("Crafting Hall of Ember");
+    PlayerOutput destinationOutput =
+        PlayerOutput.view(
+            new LookViewOutput(
+                "R-2045",
+                "Crafting Hall of Ember",
+                "Crafting Hall of Ember",
+                "A forge-lit hall full of ember glow.",
+                true,
+                LookViewOutput.RefreshReason.MOVE_REFRESH,
+                java.util.List.of(),
+                java.util.List.of()));
     when(lookCommandHandler.toPlayerOutput(
             any(SessionContext.class),
             Mockito.eq(destinationLook),

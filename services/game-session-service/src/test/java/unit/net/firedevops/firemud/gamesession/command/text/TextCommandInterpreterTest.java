@@ -217,22 +217,6 @@ class TextCommandInterpreterTest {
                     false,
                     java.util.List.of(),
                     java.util.List.of())));
-    when(lookTextRenderer.render(
-            Mockito.eq(lookResult),
-            Mockito.anyBoolean(),
-            Mockito.any(
-                net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
-                    .class)))
-        .thenReturn("OK LOOK constructed");
-    when(lookTextRenderer.render(
-            Mockito.eq(lookResult),
-            Mockito.anyBoolean(),
-            Mockito.any(
-                net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason.class),
-            Mockito.any(
-                net.firedevops.firemud.gamesession.presentation.LookViewOutput.BriefRenderingHint
-                    .class)))
-        .thenReturn("OK LOOK constructed");
 
     interpreter =
         new TextCommandInterpreter(
@@ -395,7 +379,17 @@ class TextCommandInterpreterTest {
     when(moveHandler.handle(Mockito.eq(played), Mockito.any(TextCommand.class)))
         .thenReturn(
             new MoveCommandHandlingResult(
-                CommandEnqueueResult.success(), PlayerOutput.view("North Hall text")));
+                CommandEnqueueResult.success(),
+                PlayerOutput.view(
+                    new LookViewOutput(
+                        "R-205",
+                        "North Hall",
+                        "North Hall text",
+                        "Detailed north hall text",
+                        true,
+                        LookViewOutput.RefreshReason.MOVE_REFRESH,
+                        java.util.List.of(),
+                        java.util.List.of()))));
 
     TextCommandInterpretationResult interpretation = interpreter.interpret("1", "north", false);
 
@@ -455,7 +449,17 @@ class TextCommandInterpreterTest {
     when(moveHandler.handle(Mockito.eq(played), Mockito.any(TextCommand.class)))
         .thenReturn(
             new MoveCommandHandlingResult(
-                CommandEnqueueResult.success(), PlayerOutput.view("North Hall text")));
+                CommandEnqueueResult.success(),
+                PlayerOutput.view(
+                    new LookViewOutput(
+                        "R-205",
+                        "North Hall",
+                        "North Hall text",
+                        "Detailed north hall text",
+                        true,
+                        LookViewOutput.RefreshReason.MOVE_REFRESH,
+                        java.util.List.of(),
+                        java.util.List.of()))));
 
     TextCommandInterpretationResult interpretation =
         interpreter.interpret("1", "MOVE north", false);
@@ -465,7 +469,9 @@ class TextCommandInterpreterTest {
     assertEquals(
         net.firedevops.firemud.gamesession.presentation.PlayerOutputKind.VIEW,
         interpretation.outputs().get(0).kind());
-    assertEquals("North Hall text", interpretation.outputs().get(0).text());
+    assertEquals(
+        "North Hall text",
+        ((LookViewOutput) interpretation.outputs().get(0).payload()).shortDescription());
     assertEquals(
         net.firedevops.firemud.gamesession.presentation.PlayerOutputKind.PROMPT,
         interpretation.outputs().get(1).kind());

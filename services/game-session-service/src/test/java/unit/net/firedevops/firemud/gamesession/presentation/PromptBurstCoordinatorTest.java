@@ -39,7 +39,17 @@ class PromptBurstCoordinatorTest {
             Clock.fixed(Instant.parse("2026-04-02T23:00:00Z"), ZoneOffset.UTC));
 
     List<PlayerOutput> outputs =
-        List.of(PlayerOutput.view("OK LOOK constructed"), PlayerOutput.prompt("demo> "));
+        List.of(
+            PlayerOutput.view(
+                new LookViewOutput(
+                    "R-100",
+                    "Constructed Hall",
+                    "OK LOOK constructed",
+                    "Detailed constructed hall",
+                    true,
+                    List.of(),
+                    List.of())),
+            PlayerOutput.prompt("demo> "));
 
     coordinator.recordPromptEmission("1", outputs);
 

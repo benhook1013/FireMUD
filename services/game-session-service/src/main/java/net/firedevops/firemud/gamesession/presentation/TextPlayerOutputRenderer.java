@@ -45,12 +45,16 @@ public class TextPlayerOutputRenderer {
     }
     return switch (output.kind()) {
       case MESSAGE -> renderMessage((TextMessageOutput) output.payload(), localeTag);
-      case VIEW ->
-          output.payload() instanceof LookViewOutput lookView
-              ? renderLookView(lookView, localeTag, effectivePresentationProperties)
-              : output.payload() instanceof WorldsViewOutput worldsView
-                  ? renderWorldsView(worldsView)
-                  : renderMessage((TextMessageOutput) output.payload(), localeTag);
+      case VIEW -> {
+        if (output.payload() instanceof LookViewOutput lookView) {
+          yield renderLookView(lookView, localeTag, effectivePresentationProperties);
+        }
+        if (output.payload() instanceof WorldsViewOutput worldsView) {
+          yield renderWorldsView(worldsView);
+        }
+        throw new IllegalArgumentException(
+            "Unsupported view payload: " + output.payload().getClass().getName());
+      }
       case PROMPT -> renderPrompt((PromptOutput) output.payload(), effectivePresentationProperties);
       case ERROR -> renderError((ErrorOutput) output.payload(), localeTag);
       case NOTICE ->

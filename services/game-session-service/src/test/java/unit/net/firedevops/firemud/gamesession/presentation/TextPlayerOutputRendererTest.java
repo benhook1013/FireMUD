@@ -127,11 +127,26 @@ class TextPlayerOutputRendererTest {
             new TextCommand(TextCommandType.LOOK, List.of(), "LOOK"),
             CommandEnqueueResult.success(),
             List.of(
-                PlayerOutput.view("OK LOOK constructed"),
+                PlayerOutput.view(
+                    new LookViewOutput(
+                        "R-100",
+                        "Constructed Hall",
+                        "OK LOOK constructed",
+                        "Detailed constructed hall",
+                        true,
+                        List.of(),
+                        List.of())),
                 PlayerOutput.prompt("old> "),
                 PlayerOutput.prompt("new> ")));
 
-    assertThat(rendered).isEqualTo("OK LOOK\nOK LOOK constructed\n\nnew> ");
+    assertThat(rendered)
+        .isEqualTo(
+            "OK LOOK\n"
+                + "Room: Constructed Hall (ID: R-100)\n"
+                + "Short: OK LOOK constructed\n"
+                + "Long: Detailed constructed hall\n"
+                + "Exits: \n"
+                + "Entities:\n\nnew> ");
   }
 
   @Test
@@ -220,7 +235,7 @@ class TextPlayerOutputRendererTest {
   }
 
   @Test
-  void renderAllMapsTransitionalMoveViewTextToLookLabel() {
+  void renderAllMapsMoveViewToLookLabel() {
     TextPlayerOutputRenderer renderer =
         new TextPlayerOutputRenderer(
             new PresentationProperties(
@@ -233,9 +248,25 @@ class TextPlayerOutputRendererTest {
         renderer.renderAll(
             new TextCommand(TextCommandType.MOVE, List.of("north"), "MOVE north"),
             CommandEnqueueResult.success(),
-            List.of(PlayerOutput.view("North Hall text")));
+            List.of(
+                PlayerOutput.view(
+                    new LookViewOutput(
+                        "R-205",
+                        "North Hall",
+                        "North Hall text",
+                        "Detailed north hall text",
+                        true,
+                        LookViewOutput.RefreshReason.MOVE_REFRESH,
+                        List.of(),
+                        List.of()))));
 
-    assertThat(rendered).isEqualTo("OK LOOK\nNorth Hall text\n\n");
+    assertThat(rendered)
+        .isEqualTo(
+            "OK LOOK\n"
+                + "Room: North Hall (ID: R-205)\n"
+                + "Short: North Hall text\n"
+                + "Exits: \n"
+                + "Entities:\n\n");
   }
 
   @Test

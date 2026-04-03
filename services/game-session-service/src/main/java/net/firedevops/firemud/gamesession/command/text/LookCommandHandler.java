@@ -83,7 +83,7 @@ public final class LookCommandHandler {
       String tenantTag = Long.toString(context.tenantId());
       meterRegistry.counter(INVOCATIONS_METRIC, "tenantId", tenantTag).increment();
       if (devIsolatedProperties.isDevIsolated()) {
-        return PlayerOutput.view(LookCommandConstants.ROOM_DESCRIPTION);
+        return PlayerOutput.message(LookCommandConstants.ROOM_DESCRIPTION);
       }
       try {
         LookResult lookResult = resolveLook(context);
