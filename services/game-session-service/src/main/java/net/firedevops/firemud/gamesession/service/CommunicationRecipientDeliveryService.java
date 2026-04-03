@@ -8,6 +8,11 @@ import net.firedevops.firemud.gamelogic.v1.CommunicationRecipientRole;
 import net.firedevops.firemud.gamelogic.v1.CommunicationRecipientView;
 import net.firedevops.firemud.gamelogic.v1.SendCommunicationResponse;
 import net.firedevops.firemud.gamesession.command.text.GameplayLoggingContext;
+import net.firedevops.firemud.gamesession.config.EffectiveSettingsResolver;
+import net.firedevops.firemud.gamesession.config.PresentationProperties;
+import net.firedevops.firemud.gamesession.presentation.CommunicationOutputMapper;
+import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
+import net.firedevops.firemud.gamesession.presentation.TextPlayerOutputRenderer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -24,16 +29,25 @@ public final class CommunicationRecipientDeliveryService {
   private final SessionContextService sessionContextService;
   private final ActiveTransportSessionRegistry activeTransportSessionRegistry;
   private final ScreenBufferService screenBufferService;
+  private final TextPlayerOutputRenderer outputRenderer;
+  private final CommunicationOutputMapper communicationOutputMapper;
+  private final EffectiveSettingsResolver settingsResolver;
   private final MeterRegistry meterRegistry;
 
   public CommunicationRecipientDeliveryService(
       SessionContextService sessionContextService,
       ActiveTransportSessionRegistry activeTransportSessionRegistry,
       ScreenBufferService screenBufferService,
+      TextPlayerOutputRenderer outputRenderer,
+      CommunicationOutputMapper communicationOutputMapper,
+      EffectiveSettingsResolver settingsResolver,
       MeterRegistry meterRegistry) {
     this.sessionContextService = sessionContextService;
     this.activeTransportSessionRegistry = activeTransportSessionRegistry;
     this.screenBufferService = screenBufferService;
+    this.outputRenderer = outputRenderer;
+    this.communicationOutputMapper = communicationOutputMapper;
+    this.settingsResolver = settingsResolver;
     this.meterRegistry = meterRegistry;
   }
 
@@ -41,13 +55,13 @@ public final class CommunicationRecipientDeliveryService {
     response.getRecipientViewsList().stream()
         .filter(
             view -> view.getRole() != CommunicationRecipientRole.COMMUNICATION_RECIPIENT_ROLE_ACTOR)
-        .forEach(view -> deliverView(actorContext, view));
+        .forEach(view -> deliverView(actorContext, response, view));
   }
 
-  private void deliverView(SessionContext actorContext, CommunicationRecipientView view) {
-    if (!StringUtils.hasText(view.getRenderedText())) {
-      return;
-    }
+  private void deliverView(
+      SessionContext actorContext,
+      SendCommunicationResponse response,
+      CommunicationRecipientView view) {
     try (GameplayLoggingContext actorLoggingContext = GameplayLoggingContext.from(actorContext)) {
       Optional<SessionContext> maybeRecipient = resolveRecipient(actorContext, view);
       if (maybeRecipient.isEmpty()) {
@@ -64,17 +78,21 @@ public final class CommunicationRecipientDeliveryService {
 
       try (GameplayLoggingContext recipientLoggingContext =
           GameplayLoggingContext.from(recipient)) {
+        String rendered = renderRecipientOutput(recipient, actorContext, response, view);
+        if (!StringUtils.hasText(rendered)) {
+          return;
+        }
         screenBufferService.append(
             recipient.tenantId(),
             recipient.gameInstanceId(),
             recipient.characterId(),
-            view.getRenderedText() + "\n");
+            rendered + "\n");
 
         activeTransportSessionRegistry
             .find(recipient.sessionId())
             .filter(WebSocketSession::isOpen)
             .ifPresentOrElse(
-                session -> push(session, recipient, view),
+                session -> push(session, recipient, view, rendered),
                 () ->
                     meterRegistry
                         .counter(
@@ -107,10 +125,13 @@ public final class CommunicationRecipientDeliveryService {
   }
 
   private void push(
-      WebSocketSession session, SessionContext recipient, CommunicationRecipientView view) {
+      WebSocketSession session,
+      SessionContext recipient,
+      CommunicationRecipientView view,
+      String rendered) {
     try (GameplayLoggingContext ignored = GameplayLoggingContext.from(recipient)) {
       try {
-        session.sendMessage(new TextMessage(view.getRenderedText()));
+        session.sendMessage(new TextMessage(rendered));
         meterRegistry
             .counter("gamesession.communication.delivery.pushed", "role", roleTag(view))
             .increment();
@@ -141,5 +162,20 @@ public final class CommunicationRecipientDeliveryService {
 
   private String roleTag(CommunicationRecipientView view) {
     return view.getRole().name().toLowerCase();
+  }
+
+  private String renderRecipientOutput(
+      SessionContext recipient,
+      SessionContext actorContext,
+      SendCommunicationResponse response,
+      CommunicationRecipientView view) {
+    PlayerOutput output =
+        communicationOutputMapper.recipientOutput(response.getType(), view, response.getMessage());
+    PresentationProperties effectivePresentation = settingsResolver.presentation(recipient);
+    String localeTag =
+        StringUtils.hasText(recipient.localeTag())
+            ? recipient.localeTag()
+            : actorContext.localeTag();
+    return outputRenderer.render(output, localeTag, effectivePresentation);
   }
 }

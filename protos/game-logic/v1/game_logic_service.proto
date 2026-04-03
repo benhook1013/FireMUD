@@ -75,7 +75,7 @@ message SendCommunicationResponse {
   bool success = 1;
   CommunicationType type = 2;
   string message = 3;
-  string actor_view = 4;
+  string speaker_name = 4;
   repeated string delivered_to = 5;
   repeated string npc_echoes = 6;
   shared.v1.ErrorDetail error = 7;
@@ -129,7 +129,8 @@ message CommunicationRecipientView {
   string recipient_name = 2;
   CommunicationRecipientRole role = 3;
   CommunicationPerception perception = 4;
-  string rendered_text = 5;
+  string speaker_name = 5;
+  string target_name = 6;
 }
 
 message LookExit {

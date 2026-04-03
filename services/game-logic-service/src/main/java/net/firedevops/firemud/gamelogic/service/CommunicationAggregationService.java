@@ -80,8 +80,8 @@ public class CommunicationAggregationService {
 
     builder.addAllDeliveredTo(audience.deliveredTo());
     builder.addAllNpcEchoes(audience.npcEchoes());
-    if (StringUtils.hasText(audience.actorView())) {
-      builder.setActorView(audience.actorView());
+    if (StringUtils.hasText(audience.speakerName())) {
+      builder.setSpeakerName(audience.speakerName());
     }
     builder.addAllRecipientViews(audience.recipientViews());
 
@@ -145,7 +145,6 @@ public class CommunicationAggregationService {
   private CommunicationAudience buildSayAudience(
       String speakerId, ListRoomEntitiesResponse roomEntities, String rawText) {
     String speakerName = findSpeakerName(speakerId, roomEntities);
-    String actorView = "You say, \"" + normalizeText(rawText) + "\"";
     TreeSet<String> attendees =
         roomEntities.getEntitiesList().stream()
             .map(RoomEntity::getDisplayName)
@@ -160,14 +159,15 @@ public class CommunicationAggregationService {
         delivered,
         buildNpcEchoes(roomEntities),
         Optional.empty(),
-        actorView,
+        speakerName,
         List.of(
             recipientView(
                 speakerId,
                 speakerName,
                 CommunicationRecipientRole.COMMUNICATION_RECIPIENT_ROLE_ACTOR,
                 CommunicationPerception.COMMUNICATION_PERCEPTION_FULL_CONTENT,
-                actorView)),
+                speakerName,
+                "")),
         null);
   }
 
@@ -191,11 +191,6 @@ public class CommunicationAggregationService {
     RoomEntity targetEntity = maybeTarget.orElseThrow();
     String resolvedTargetName = maybeTarget.get().getDisplayName().trim();
     String speakerName = findSpeakerName(request.getCharacterId(), roomEntities);
-    String actorView =
-        "You whisper to " + resolvedTargetName + ", \"" + normalizeText(request.getText()) + "\"";
-    String targetView =
-        speakerName + " whispers to you, \"" + normalizeText(request.getText()) + "\"";
-    String observerView = speakerName + " whispers something to " + resolvedTargetName + ".";
     List<CommunicationRecipientView> recipientViews = new ArrayList<>();
     recipientViews.add(
         recipientView(
@@ -203,26 +198,29 @@ public class CommunicationAggregationService {
             speakerName,
             CommunicationRecipientRole.COMMUNICATION_RECIPIENT_ROLE_ACTOR,
             CommunicationPerception.COMMUNICATION_PERCEPTION_FULL_CONTENT,
-            actorView));
+            speakerName,
+            resolvedTargetName));
     recipientViews.add(
         recipientView(
             targetEntity.getEntityId(),
             resolvedTargetName,
             CommunicationRecipientRole.COMMUNICATION_RECIPIENT_ROLE_TARGET,
             CommunicationPerception.COMMUNICATION_PERCEPTION_FULL_CONTENT,
-            targetView));
+            speakerName,
+            resolvedTargetName));
     recipientViews.addAll(
         resolveMetadataOnlyWhisperObservers(
             request.getCharacterId(),
             targetEntity.getEntityId(),
             roomEntities,
-            observerView,
+            speakerName,
+            resolvedTargetName,
             settingsResolver.communication()));
     return new CommunicationAudience(
         List.of(speakerName, resolvedTargetName),
         List.of(),
         Optional.of(targetEntity.getEntityId()),
-        actorView,
+        speakerName,
         recipientViews,
         null);
   }
@@ -238,26 +236,26 @@ public class CommunicationAggregationService {
             ? request.getSpeakerName().trim()
             : request.getCharacterId();
     String targetName = request.getTargetCharacterName().trim();
-    String actorView = "You tell " + targetName + ", \"" + normalizeText(request.getText()) + "\"";
-    String targetView = speakerName + " tells you, \"" + normalizeText(request.getText()) + "\"";
     return new CommunicationAudience(
         List.of(speakerName, targetName),
         List.of(),
         Optional.of(request.getTargetCharacterId()),
-        actorView,
+        speakerName,
         List.of(
             recipientView(
                 request.getCharacterId(),
                 speakerName,
                 CommunicationRecipientRole.COMMUNICATION_RECIPIENT_ROLE_ACTOR,
                 CommunicationPerception.COMMUNICATION_PERCEPTION_FULL_CONTENT,
-                actorView),
+                speakerName,
+                targetName),
             recipientView(
                 request.getTargetCharacterId(),
                 targetName,
                 CommunicationRecipientRole.COMMUNICATION_RECIPIENT_ROLE_TARGET,
                 CommunicationPerception.COMMUNICATION_PERCEPTION_FULL_CONTENT,
-                targetView)),
+                speakerName,
+                targetName)),
         null);
   }
 
@@ -265,7 +263,8 @@ public class CommunicationAggregationService {
       String speakerId,
       String targetId,
       ListRoomEntitiesResponse roomEntities,
-      String renderedText,
+      String speakerName,
+      String targetName,
       CommunicationProperties communicationProperties) {
     if (!communicationProperties.defaults().whisperObserverMetadataEnabled()) {
       return List.of();
@@ -283,7 +282,8 @@ public class CommunicationAggregationService {
                     entity.getDisplayName(),
                     CommunicationRecipientRole.COMMUNICATION_RECIPIENT_ROLE_OBSERVER,
                     CommunicationPerception.COMMUNICATION_PERCEPTION_METADATA_ONLY,
-                    renderedText))
+                    speakerName,
+                    targetName))
         .toList();
   }
 
@@ -292,13 +292,15 @@ public class CommunicationAggregationService {
       String recipientName,
       CommunicationRecipientRole role,
       CommunicationPerception perception,
-      String renderedText) {
+      String speakerName,
+      String targetName) {
     return CommunicationRecipientView.newBuilder()
         .setRecipientId(recipientId)
         .setRecipientName(recipientName)
         .setRole(role)
         .setPerception(perception)
-        .setRenderedText(renderedText)
+        .setSpeakerName(speakerName)
+        .setTargetName(targetName)
         .build();
   }
 
@@ -392,7 +394,7 @@ public class CommunicationAggregationService {
       List<String> deliveredTo,
       List<String> npcEchoes,
       Optional<String> recipientId,
-      String actorView,
+      String speakerName,
       List<CommunicationRecipientView> recipientViews,
       String errorMessage) {
 

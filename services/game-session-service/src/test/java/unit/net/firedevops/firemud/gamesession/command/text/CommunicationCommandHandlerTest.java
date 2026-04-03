@@ -12,6 +12,7 @@ import net.firedevops.firemud.gamelogic.v1.SendCommunicationResponse;
 import net.firedevops.firemud.gamesession.client.EntityManagementClient;
 import net.firedevops.firemud.gamesession.client.GameLogicClient;
 import net.firedevops.firemud.gamesession.config.GameLogicProperties;
+import net.firedevops.firemud.gamesession.presentation.CommunicationOutputMapper;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutputKind;
 import net.firedevops.firemud.gamesession.service.CommunicationRecipientDeliveryService;
@@ -46,6 +47,7 @@ class CommunicationCommandHandlerTest {
             gameLogicProperties,
             sessionContextService,
             recipientDeliveryService,
+            new CommunicationOutputMapper(),
             meterRegistry);
   }
 
@@ -55,7 +57,7 @@ class CommunicationCommandHandlerTest {
         SendCommunicationResponse.newBuilder()
             .setSuccess(true)
             .setMessage("Hello travelers")
-            .setActorView("You say, \"Hello travelers\"")
+            .setSpeakerName("Emberline")
             .addDeliveredTo("Emberline")
             .addDeliveredTo("Sora")
             .build();

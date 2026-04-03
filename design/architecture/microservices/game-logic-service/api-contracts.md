@@ -85,7 +85,7 @@ grpcurl -plaintext -d '{"tenant_id":"demo","session_id":"demo","command":"look"}
   - the communication type defines the baseline observability contract and what kinds of recipient views are even possible,
   - the target/scope determines which ordinary listeners and observer/interceptor candidates qualify in this location or social scope,
   - and recipient capabilities or effects determine whether that qualifying recipient receives full content, partial content, or only metadata such as “someone whispered here.”
-- The resulting delivery metadata (recipient list, NPC echoes, actor-view text) is returned to Game Session, while failures populate `shared.v1.ErrorDetail` so the text protocol can emit `ERROR COMMUNICATION_NOT_DELIVERED` or equivalent stable responses.
+- The resulting delivery metadata (recipient list, NPC echoes, speaker/target metadata, recipient roles, and perception classification) is returned to Game Session, while failures populate `shared.v1.ErrorDetail` so the text protocol can emit `ERROR COMMUNICATION_NOT_DELIVERED` or equivalent stable responses.
 - This pathway mirrors the `LOOK` guard: unauthenticated requests never reach `SendCommunication`, and Social & Groups outages surface as structured `PERMISSION_DENIED` or `UNAVAILABLE` errors so Game Session can keep stage-aware gating predictable.
 
 ### Current scope versus future communication semantics
@@ -109,6 +109,6 @@ grpcurl -plaintext -d '{"tenant_id":"demo","session_id":"demo","command":"look"}
 
 ### Chat Slice
 
-- Live: `SendCommunication` accepts authenticated `SAY`, `WHISPER`, and `TELL` payloads, validates length, resolves room-scoped or direct-target delivery metadata, and forwards the normalized message to the Social & Groups stub with explicit type and recipient information. The API returns actor-view delivery metadata, structured per-recipient view metadata, and `shared.v1.ErrorDetail` codes so Game Session can render the canonical transcript and later recipient-delivery slices can consume the same authoritative recipient-view model.
+- Live: `SendCommunication` accepts authenticated `SAY`, `WHISPER`, and `TELL` payloads, validates length, resolves room-scoped or direct-target delivery metadata, and forwards the normalized message to the Social & Groups stub with explicit type and recipient information. The API returns speaker/target delivery metadata, structured per-recipient view metadata, and `shared.v1.ErrorDetail` codes so Game Session can render the canonical transcript and later recipient-delivery slices can consume the same authoritative recipient-view model.
 - Stubbed: downstream delivery still uses the Social & Groups regression stub that records `SendMessage` calls and echoes success while cross-service WebSocket and Telnet tests assert the canonical actor transcript and explicit recipient metadata.
 - Deferred: first-party/MCP-aware recipient presentation, richer NPC replies, area/map/region propagation rules, channel filters, and profanity-escalation behavior will land in later slices once the foundational communication flow proves stable.
