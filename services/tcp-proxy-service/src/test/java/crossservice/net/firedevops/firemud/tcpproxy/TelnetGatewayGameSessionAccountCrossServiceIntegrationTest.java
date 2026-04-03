@@ -303,7 +303,11 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
       telnetMoveResponse = readBlockAfterContainsOrTimeout(reader, "OK LOOK");
 
       writer.println("LOOK");
-      telnetLookResponse = readBlockAfterContainsOrTimeout(reader, "OK LOOK");
+      telnetLookResponse =
+          readBlockMatchingOrTimeout(
+              reader,
+              "OK LOOK",
+              matchesCanonicalLookWithOptionalPrompt(LookTestFixtures.DESTINATION_ROOM_ID));
 
       writer.println("MOVE west");
       telnetInvalidMoveResponse = readLineAfterContains(reader, "ERROR INVALID_EXIT");
@@ -404,7 +408,11 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
           .contains("OK PLAY Entered world: demo");
       telnetReplayResponse = readBlockAfterContainsOrTimeout(reader, "OK LOOK");
       writer.println("LOOK");
-      telnetReconnectLookResponse = readBlockAfterContainsOrTimeout(reader, "OK LOOK");
+      telnetReconnectLookResponse =
+          readBlockMatchingOrTimeout(
+              reader,
+              "OK LOOK",
+              matchesCanonicalLookWithOptionalPrompt(LookTestFixtures.DESTINATION_ROOM_ID));
     }
 
     assertThat(telnetMoveResponse.trim())
@@ -468,7 +476,8 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
           .contains("OK PLAY Entered world: demo");
       telnetReplayResponse = readBlockAfterContainsOrTimeout(reader, "OK LOOK");
       writer.println("LOOK");
-      telnetReconnectLookResponse = readBlockAfterContainsOrTimeout(reader, "OK LOOK");
+      telnetReconnectLookResponse =
+          readBlockMatchingOrTimeout(reader, "OK LOOK", matchesCanonicalLookWithOptionalPrompt());
     }
 
     assertThat(telnetMoveResponse.trim())
@@ -964,6 +973,28 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
       if (!matched && line.contains(expectedSubstring)) {
         matched = true;
       } else if (matched && line.isEmpty()) {
+        return builder.toString();
+      }
+    }
+  }
+
+  private static String readBlockMatchingOrTimeout(
+      BufferedReader reader, String expectedSubstring, Predicate<String> matcher)
+      throws IOException {
+    StringBuilder builder = new StringBuilder();
+    while (true) {
+      String line;
+      try {
+        line = reader.readLine();
+      } catch (java.net.SocketTimeoutException ex) {
+        return builder.toString();
+      }
+      if (line == null) {
+        return builder.toString();
+      }
+      builder.append(line).append("\n");
+      String candidate = builder.toString().trim();
+      if (candidate.contains(expectedSubstring) && matcher.test(candidate)) {
         return builder.toString();
       }
     }
