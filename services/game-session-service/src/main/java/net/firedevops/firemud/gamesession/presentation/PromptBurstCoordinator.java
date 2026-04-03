@@ -4,7 +4,9 @@ import java.time.Clock;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import net.firedevops.firemud.gamesession.config.EffectiveSettingsResolver;
 import net.firedevops.firemud.gamesession.config.PresentationProperties;
+import net.firedevops.firemud.gamesession.service.SessionContext;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
@@ -12,25 +14,34 @@ import org.springframework.util.StringUtils;
 /** Applies narrow per-session prompt throttling without globally batching normal output traffic. */
 @Component
 public class PromptBurstCoordinator {
-  private final PresentationProperties presentationProperties;
+  private final EffectiveSettingsResolver settingsResolver;
   private final Clock clock;
   private final ConcurrentMap<String, Long> lastPromptEmissionBySession = new ConcurrentHashMap<>();
 
   @Autowired
-  public PromptBurstCoordinator(PresentationProperties presentationProperties) {
-    this(presentationProperties, Clock.systemUTC());
+  public PromptBurstCoordinator(EffectiveSettingsResolver settingsResolver) {
+    this(settingsResolver, Clock.systemUTC());
   }
 
-  PromptBurstCoordinator(PresentationProperties presentationProperties, Clock clock) {
-    this.presentationProperties = presentationProperties;
+  PromptBurstCoordinator(EffectiveSettingsResolver settingsResolver, Clock clock) {
+    this.settingsResolver = settingsResolver;
     this.clock = clock;
   }
 
   public List<PlayerOutput> applyPromptWindow(
       String sessionId, List<PlayerOutput> outputs, boolean forcePromptEmission) {
+    return applyPromptWindow(sessionId, null, outputs, forcePromptEmission);
+  }
+
+  public List<PlayerOutput> applyPromptWindow(
+      String sessionId,
+      SessionContext context,
+      List<PlayerOutput> outputs,
+      boolean forcePromptEmission) {
     if (!StringUtils.hasText(sessionId) || forcePromptEmission || !containsPrompt(outputs)) {
       return outputs;
     }
+    PresentationProperties presentationProperties = settingsResolver.presentation(context);
     long coalesceWindowMs = presentationProperties.prompt().coalesceWindowMs();
     if (coalesceWindowMs <= 0) {
       return outputs;

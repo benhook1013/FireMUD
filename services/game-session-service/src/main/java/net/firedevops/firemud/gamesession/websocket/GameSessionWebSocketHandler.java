@@ -13,6 +13,8 @@ import net.firedevops.firemud.gamesession.command.text.TextCommandInterpretation
 import net.firedevops.firemud.gamesession.command.text.TextCommandInterpreter;
 import net.firedevops.firemud.gamesession.command.text.TextCommandParser;
 import net.firedevops.firemud.gamesession.command.text.TextCommandType;
+import net.firedevops.firemud.gamesession.config.EffectiveSettingsResolver;
+import net.firedevops.firemud.gamesession.config.PresentationProperties;
 import net.firedevops.firemud.gamesession.presentation.ErrorOutput;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutputKind;
@@ -49,8 +51,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
   private final TextPlayerOutputRenderer outputRenderer;
   private final PromptBurstCoordinator promptBurstCoordinator;
   private final PromptComposer promptComposer;
-  private final net.firedevops.firemud.gamesession.config.PresentationProperties
-      presentationProperties;
+  private final EffectiveSettingsResolver settingsResolver;
   private final RuntimeIdentity runtimeIdentity;
   private final TextCommandParser parser = new TextCommandParser();
 
@@ -66,7 +67,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       TextPlayerOutputRenderer outputRenderer,
       PromptBurstCoordinator promptBurstCoordinator,
       PromptComposer promptComposer,
-      net.firedevops.firemud.gamesession.config.PresentationProperties presentationProperties,
+      EffectiveSettingsResolver settingsResolver,
       RuntimeIdentity runtimeIdentity) {
     this.interpreter = interpreter;
     this.lookHandler = lookHandler;
@@ -78,7 +79,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     this.outputRenderer = outputRenderer;
     this.promptBurstCoordinator = promptBurstCoordinator;
     this.promptComposer = promptComposer;
-    this.presentationProperties = presentationProperties;
+    this.settingsResolver = settingsResolver;
     this.runtimeIdentity = runtimeIdentity;
   }
 
@@ -124,13 +125,19 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       }
       TextCommandInterpretationResult interpretation =
           interpreter.interpret(sessionId, command, requiresSoloTick);
+      Optional<SessionContext> maybeContext =
+          parseNumericSessionId(sessionId).flatMap(sessionContextService::findBySessionId);
+      PresentationProperties effectivePresentation =
+          settingsResolver.presentation(maybeContext.orElse(null));
       java.util.List<PlayerOutput> outputs =
           promptBurstCoordinator.applyPromptWindow(
               sessionId,
+              maybeContext.orElse(null),
               interpretation.outputs(),
               shouldForcePromptEmission(command, interpretation));
       maybePersistLocaleTag(sessionId, resolveLocaleTag(session));
-      String response = formatResponse(command, interpretation, session, outputs);
+      String response =
+          formatResponse(command, interpretation, session, outputs, effectivePresentation);
       sendProtocolMessage(session, response);
       promptBurstCoordinator.recordPromptEmission(sessionId, outputs);
       maybeAppendToScreenBuffer(sessionId, command, interpretation, response);
@@ -195,12 +202,14 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       TextCommand command,
       TextCommandInterpretationResult interpretation,
       WebSocketSession session,
-      java.util.List<PlayerOutput> outputs) {
+      java.util.List<PlayerOutput> outputs,
+      PresentationProperties effectivePresentation) {
     return outputRenderer.renderAll(
         command,
         interpretation.commandResult(),
         outputs,
-        resolveLocaleTag(session, resolveTransportSessionId(session)));
+        resolveLocaleTag(session, resolveTransportSessionId(session)),
+        effectivePresentation);
   }
 
   private boolean shouldForcePromptEmission(
@@ -269,8 +278,10 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
                 if (StringUtils.hasText(look)) {
                   sendReplayChunk(session, look, "fresh LOOK");
                 }
-                if (presentationProperties.prompt().emitAfterReconnectRestore()) {
-                  renderPrompt(context, resolveLocaleTag(session, sessionId))
+                PresentationProperties effectivePresentation =
+                    settingsResolver.presentation(context);
+                if (effectivePresentation.prompt().emitAfterReconnectRestore()) {
+                  renderPrompt(context, resolveLocaleTag(session, sessionId), effectivePresentation)
                       .ifPresent(
                           prompt -> {
                             sendReplayChunk(session, prompt, "fresh prompt");
@@ -342,12 +353,13 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     }
   }
 
-  private Optional<String> renderPrompt(SessionContext context, String localeTag) {
+  private Optional<String> renderPrompt(
+      SessionContext context, String localeTag, PresentationProperties effectivePresentation) {
     String effectiveLocaleTag =
         StringUtils.hasText(context.localeTag()) ? context.localeTag() : localeTag;
     return promptComposer
         .compose(context)
-        .map(prompt -> outputRenderer.render(prompt, effectiveLocaleTag))
+        .map(prompt -> outputRenderer.render(prompt, effectiveLocaleTag, effectivePresentation))
         .filter(StringUtils::hasText);
   }
 
@@ -376,6 +388,10 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
   }
 
   private String renderReconnectLook(WebSocketSession session, String sessionId) {
+    Optional<SessionContext> maybeContext =
+        parseNumericSessionId(sessionId).flatMap(sessionContextService::findBySessionId);
+    PresentationProperties effectivePresentation =
+        settingsResolver.presentation(maybeContext.orElse(null));
     PlayerOutput lookOutput =
         lookHandler.describePlayerOutput(
             sessionId,
@@ -392,13 +408,15 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
           net.firedevops.firemud.gamesession.dto.CommandEnqueueResult.failure(
               errorOutput.code(), errorOutput.message()),
           List.of(lookOutput),
-          localeTag);
+          localeTag,
+          effectivePresentation);
     }
     return outputRenderer.renderAll(
         new TextCommand(TextCommandType.LOOK, List.of(), "LOOK"),
         net.firedevops.firemud.gamesession.dto.CommandEnqueueResult.success(),
         List.of(lookOutput),
-        localeTag);
+        localeTag,
+        effectivePresentation);
   }
 
   private void bootstrapGenericSessionContext(WebSocketSession session, long sessionId) {

@@ -79,5 +79,31 @@ The first surfaced platform settings domains in Game Session are now generation-
 - The service enforces multi-tenant isolation. All tables include a `tenant_id` column and Redis keys are prefixed with this value as outlined in [Multi-Tenancy](../../system-architecture-multi-tenancy.md).
 - Service discovery for downstream gRPC calls uses `ServiceEndpointsProperties` and mTLS identities issued through cert-manager.
 - `firemud.presentation`, `firemud.reconnection`, `firemud.movement`, and `firemud.world-topology` are still file/env-backed operator defaults today; the later tenant/game override model remains part of the broader platform settings work in `02.9` through `02.12`.
+- Game Session now also supports a first bounded file/env-backed effective-settings resolver for already-live domains via `firemud.settings-overrides.*`. These overrides are still operator-supplied, not DB-backed tenant/game state, but they prove the merge path and remove some remaining hardcoded default-only behavior.
+- `firemud.settings-overrides.*` currently applies in this precedence order inside Game Session:
+
+`firemud.presentation`, `firemud.movement`, and `firemud.world-topology` operator defaults; then tenant-scoped overrides under `firemud.settings-overrides.*-by-tenant`; then game-instance-scoped overrides under `firemud.settings-overrides.*-by-game-instance`.
+
+- Example scoped override shape:
+
+```yaml
+firemud:
+  settings-overrides:
+    presentation-by-game-instance:
+      "7":
+        default-color-mode: BASIC
+        brief-enabled-by-default: true
+        prompt:
+          enabled: true
+          coalesce-window-ms: 500
+    movement-by-game-instance:
+      "7":
+        post-move-look-enabled: false
+    world-topology-by-tenant:
+      "22":
+        scope-model: REGION_AREA_AND_MAP
+        regions-enabled: true
+```
+
 - Prompt exclusion from reconnect transcript replay remains part of the canonical reconnect/output policy; it is not yet surfaced as an operator-facing `firemud.presentation` setting.
 - The older internal reconnect-adjacent rendered-room snapshot helper is no longer part of the surfaced settings model and should not be treated as an authoritative `LOOK` cache.

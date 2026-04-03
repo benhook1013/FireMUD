@@ -11,8 +11,12 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import net.firedevops.firemud.gamelogic.v1.LookResult;
 import net.firedevops.firemud.gamelogic.v1.MoveResult;
 import net.firedevops.firemud.gamesession.client.GameLogicClient;
+import net.firedevops.firemud.gamesession.config.EffectiveSettingsResolver;
 import net.firedevops.firemud.gamesession.config.GameLogicProperties;
+import net.firedevops.firemud.gamesession.config.GameSessionSettingsOverridesProperties;
 import net.firedevops.firemud.gamesession.config.MovementProperties;
+import net.firedevops.firemud.gamesession.config.PresentationProperties;
+import net.firedevops.firemud.gamesession.config.WorldTopologyProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.service.SessionContext;
@@ -30,7 +34,18 @@ class MoveCommandHandlerTest {
       Mockito.mock(SessionContextService.class);
   private final LookCommandHandler lookCommandHandler = Mockito.mock(LookCommandHandler.class);
   private final GameLogicProperties gameLogicProperties = new GameLogicProperties();
-  private final MovementProperties movementProperties = new MovementProperties(true);
+  private final EffectiveSettingsResolver settingsResolver =
+      new EffectiveSettingsResolver(
+          new PresentationProperties(),
+          new MovementProperties(true),
+          new WorldTopologyProperties(),
+          new GameSessionSettingsOverridesProperties(
+              java.util.Map.of(),
+              java.util.Map.of(),
+              java.util.Map.of(),
+              java.util.Map.of(),
+              java.util.Map.of(),
+              java.util.Map.of()));
   private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
 
   private MoveCommandHandler handler;
@@ -44,7 +59,7 @@ class MoveCommandHandlerTest {
             sessionContextService,
             lookCommandHandler,
             gameLogicProperties,
-            movementProperties,
+            settingsResolver,
             meterRegistry);
     context =
         new SessionContext(
@@ -133,7 +148,17 @@ class MoveCommandHandlerTest {
             sessionContextService,
             lookCommandHandler,
             gameLogicProperties,
-            new MovementProperties(false),
+            new EffectiveSettingsResolver(
+                new PresentationProperties(),
+                new MovementProperties(false),
+                new WorldTopologyProperties(),
+                new GameSessionSettingsOverridesProperties(
+                    java.util.Map.of(),
+                    java.util.Map.of(),
+                    java.util.Map.of(),
+                    java.util.Map.of(),
+                    java.util.Map.of(),
+                    java.util.Map.of())),
             meterRegistry);
     LookResult destinationLook =
         LookResult.newBuilder()

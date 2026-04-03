@@ -27,11 +27,18 @@ public class TextPlayerOutputRenderer {
   }
 
   public String render(PlayerOutput output) {
-    return render(output, presentationProperties.defaultLocaleTag());
+    return render(output, presentationProperties.defaultLocaleTag(), presentationProperties);
   }
 
   public String render(PlayerOutput output, String localeTag) {
-    if (presentationProperties.briefEnabledByDefault()
+    return render(output, localeTag, presentationProperties);
+  }
+
+  public String render(
+      PlayerOutput output,
+      String localeTag,
+      PresentationProperties effectivePresentationProperties) {
+    if (effectivePresentationProperties.briefEnabledByDefault()
         && output.briefRenderPolicy() == BriefRenderPolicy.SUPPRESS_IN_BRIEF) {
       return "";
     }
@@ -39,19 +46,25 @@ public class TextPlayerOutputRenderer {
       case MESSAGE -> renderMessage((TextMessageOutput) output.payload(), localeTag);
       case VIEW ->
           output.payload() instanceof LookViewOutput lookView
-              ? renderLookView(lookView, localeTag)
+              ? renderLookView(lookView, localeTag, effectivePresentationProperties)
               : output.payload() instanceof WorldsViewOutput worldsView
                   ? renderWorldsView(worldsView)
                   : renderMessage((TextMessageOutput) output.payload(), localeTag);
-      case PROMPT -> renderPrompt((PromptOutput) output.payload());
+      case PROMPT -> renderPrompt((PromptOutput) output.payload(), effectivePresentationProperties);
       case ERROR -> renderError((ErrorOutput) output.payload(), localeTag);
-      case NOTICE -> renderNotice((NoticeOutput) output.payload(), localeTag);
+      case NOTICE ->
+          renderNotice((NoticeOutput) output.payload(), localeTag, effectivePresentationProperties);
     };
   }
 
   public String renderAll(
       TextCommand command, CommandEnqueueResult result, java.util.List<PlayerOutput> outputs) {
-    return renderAll(command, result, outputs, presentationProperties.defaultLocaleTag());
+    return renderAll(
+        command,
+        result,
+        outputs,
+        presentationProperties.defaultLocaleTag(),
+        presentationProperties);
   }
 
   public String renderAll(
@@ -59,12 +72,21 @@ public class TextPlayerOutputRenderer {
       CommandEnqueueResult result,
       java.util.List<PlayerOutput> outputs,
       String localeTag) {
+    return renderAll(command, result, outputs, localeTag, presentationProperties);
+  }
+
+  public String renderAll(
+      TextCommand command,
+      CommandEnqueueResult result,
+      java.util.List<PlayerOutput> outputs,
+      String localeTag,
+      PresentationProperties effectivePresentationProperties) {
     if (!result.accepted()) {
       String renderedError =
           outputs.stream()
               .filter(output -> output.kind() == PlayerOutputKind.ERROR)
               .reduce((first, second) -> second)
-              .map(output -> render(output, localeTag))
+              .map(output -> render(output, localeTag, effectivePresentationProperties))
               .orElse(null);
       if (StringUtils.hasText(renderedError)) {
         return renderedError;
@@ -72,7 +94,7 @@ public class TextPlayerOutputRenderer {
       String message = result.errorMessage() == null ? "" : result.errorMessage();
       return "ERROR " + result.errorCode() + " " + message;
     }
-    String prompt = renderTrailingPrompt(outputs);
+    String prompt = renderTrailingPrompt(outputs, effectivePresentationProperties, localeTag);
     java.util.List<PlayerOutput> nonPromptOutputs =
         outputs.stream().filter(output -> output.kind() != PlayerOutputKind.PROMPT).toList();
     if (nonPromptOutputs.isEmpty()) {
@@ -82,13 +104,15 @@ public class TextPlayerOutputRenderer {
       return "OK " + command.type().name();
     }
     if (nonPromptOutputs.size() == 1 && nonPromptOutputs.get(0).kind() == PlayerOutputKind.NOTICE) {
-      String rendered = renderNoticeWithCommand(command, nonPromptOutputs.get(0), localeTag);
+      String rendered =
+          renderNoticeWithCommand(
+              command, nonPromptOutputs.get(0), localeTag, effectivePresentationProperties);
       return appendPrompt(
           rendered, prompt, !rendered.contains("\n") && StringUtils.hasText(prompt));
     }
     String body =
         nonPromptOutputs.stream()
-            .map(output -> render(output, localeTag))
+            .map(output -> render(output, localeTag, effectivePresentationProperties))
             .filter(StringUtils::hasText)
             .collect(Collectors.joining("\n"));
     if (body.isBlank()) {
@@ -110,29 +134,45 @@ public class TextPlayerOutputRenderer {
     return appendPrompt("OK " + commandLabel + "\n" + body + "\n\n", prompt, false);
   }
 
-  private String renderLookView(LookViewOutput result, String localeTag) {
-    boolean brief = shouldUseBriefRendering(result);
+  private String renderLookView(
+      LookViewOutput result,
+      String localeTag,
+      PresentationProperties effectivePresentationProperties) {
+    boolean brief = shouldUseBriefRendering(result, effectivePresentationProperties);
     StringBuilder out = new StringBuilder();
-    out.append(colorizeLabel(localizedLabel("label.room", "Room: ", localeTag)))
-        .append(colorizeRoomName(result.roomName()))
+    out.append(
+            colorizeLabel(
+                localizedLabel("label.room", "Room: ", localeTag), effectivePresentationProperties))
+        .append(colorizeRoomName(result.roomName(), effectivePresentationProperties))
         .append(" (ID: ")
         .append(result.roomId())
         .append(")\n");
-    out.append(colorizeLabel(localizedLabel("label.short", "Short: ", localeTag)))
+    out.append(
+            colorizeLabel(
+                localizedLabel("label.short", "Short: ", localeTag),
+                effectivePresentationProperties))
         .append(result.shortDescription())
         .append("\n");
     if (!brief && result.includeLongDescription()) {
-      out.append(colorizeLabel(localizedLabel("label.long", "Long: ", localeTag)))
+      out.append(
+              colorizeLabel(
+                  localizedLabel("label.long", "Long: ", localeTag),
+                  effectivePresentationProperties))
           .append(result.longDescription())
           .append("\n");
     }
-    out.append(colorizeLabel(localizedLabel("label.exits", "Exits: ", localeTag)));
+    out.append(
+        colorizeLabel(
+            localizedLabel("label.exits", "Exits: ", localeTag), effectivePresentationProperties));
     out.append(
         result.exits().stream()
             .map(exit -> exit.label() + " (" + exit.description() + ")")
             .collect(Collectors.joining(", ")));
     out.append("\n")
-        .append(colorizeLabel(localizedLabel("label.entities", "Entities:", localeTag)))
+        .append(
+            colorizeLabel(
+                localizedLabel("label.entities", "Entities:", localeTag),
+                effectivePresentationProperties))
         .append("\n");
     for (LookViewEntity entity : result.entities()) {
       out.append("- ")
@@ -149,11 +189,13 @@ public class TextPlayerOutputRenderer {
     return out.toString().trim();
   }
 
-  private String renderPrompt(PromptOutput output) {
-    if (!presentationProperties.prompt().enabled() || !StringUtils.hasText(output.text())) {
+  private String renderPrompt(
+      PromptOutput output, PresentationProperties effectivePresentationProperties) {
+    if (!effectivePresentationProperties.prompt().enabled()
+        || !StringUtils.hasText(output.text())) {
       return "";
     }
-    return colorizePrompt(output.text());
+    return colorizePrompt(output.text(), effectivePresentationProperties);
   }
 
   private String renderWorldsView(WorldsViewOutput output) {
@@ -167,15 +209,22 @@ public class TextPlayerOutputRenderer {
         output.text(), output.messageKey(), output.arguments(), localeTag);
   }
 
-  private String renderNotice(NoticeOutput output, String localeTag) {
+  private String renderNotice(
+      NoticeOutput output,
+      String localeTag,
+      PresentationProperties effectivePresentationProperties) {
     return colorizeNotice(
         presentationMessageCatalog.render(
-            output.text(), output.messageKey(), output.arguments(), localeTag));
+            output.text(), output.messageKey(), output.arguments(), localeTag),
+        effectivePresentationProperties);
   }
 
   private String renderNoticeWithCommand(
-      TextCommand command, PlayerOutput output, String localeTag) {
-    String body = render(output, localeTag);
+      TextCommand command,
+      PlayerOutput output,
+      String localeTag,
+      PresentationProperties effectivePresentationProperties) {
+    String body = render(output, localeTag, effectivePresentationProperties);
     String commandLabel = responseCommandLabel(command, java.util.List.of(output));
     if (body.contains("\n")) {
       return "OK " + commandLabel + "\n" + body + "\n\n";
@@ -198,32 +247,36 @@ public class TextPlayerOutputRenderer {
         fallbackText, messageKey, java.util.Map.of(), localeTag);
   }
 
-  private String colorizeLabel(String text) {
-    return switch (presentationProperties.defaultColorMode()) {
+  private String colorizeLabel(
+      String text, PresentationProperties effectivePresentationProperties) {
+    return switch (effectivePresentationProperties.defaultColorMode()) {
       case NONE -> text;
       case BASIC -> ansi(text, "1;36");
       case RICH -> ansi(text, "38;5;81");
     };
   }
 
-  private String colorizeRoomName(String text) {
-    return switch (presentationProperties.defaultColorMode()) {
+  private String colorizeRoomName(
+      String text, PresentationProperties effectivePresentationProperties) {
+    return switch (effectivePresentationProperties.defaultColorMode()) {
       case NONE -> text;
       case BASIC -> ansi(text, "1;33");
       case RICH -> ansi(text, "38;5;229");
     };
   }
 
-  private String colorizePrompt(String text) {
-    return switch (presentationProperties.defaultColorMode()) {
+  private String colorizePrompt(
+      String text, PresentationProperties effectivePresentationProperties) {
+    return switch (effectivePresentationProperties.defaultColorMode()) {
       case NONE -> text;
       case BASIC -> ansi(text, "1;32");
       case RICH -> ansi(text, "38;5;119");
     };
   }
 
-  private String colorizeNotice(String text) {
-    return switch (presentationProperties.defaultColorMode()) {
+  private String colorizeNotice(
+      String text, PresentationProperties effectivePresentationProperties) {
+    return switch (effectivePresentationProperties.defaultColorMode()) {
       case NONE -> text;
       case BASIC -> ansi(text, "1;33");
       case RICH -> ansi(text, "38;5;221");
@@ -237,11 +290,14 @@ public class TextPlayerOutputRenderer {
     return "\u001B[" + code + "m" + text + "\u001B[0m";
   }
 
-  private String renderTrailingPrompt(java.util.List<PlayerOutput> outputs) {
+  private String renderTrailingPrompt(
+      java.util.List<PlayerOutput> outputs,
+      PresentationProperties effectivePresentationProperties,
+      String localeTag) {
     for (int i = outputs.size() - 1; i >= 0; i--) {
       PlayerOutput output = outputs.get(i);
       if (output.kind() == PlayerOutputKind.PROMPT) {
-        return render(output);
+        return render(output, localeTag, effectivePresentationProperties);
       }
     }
     return "";
@@ -273,11 +329,12 @@ public class TextPlayerOutputRenderer {
     return command.type().name();
   }
 
-  private boolean shouldUseBriefRendering(LookViewOutput result) {
+  private boolean shouldUseBriefRendering(
+      LookViewOutput result, PresentationProperties effectivePresentationProperties) {
     if (!result.includeLongDescription()) {
       return true;
     }
-    if (presentationProperties.briefEnabledByDefault()) {
+    if (effectivePresentationProperties.briefEnabledByDefault()) {
       return true;
     }
     return result.briefRenderingHint() == LookViewOutput.BriefRenderingHint.PREFER_BRIEF;

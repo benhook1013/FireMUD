@@ -451,4 +451,36 @@ class TextPlayerOutputRendererTest {
     assertThat(rendered)
         .isEqualTo("OK WORLDS\n1) Demo World (demo)\n2) Builder Sandbox (sandbox)\n\n");
   }
+
+  @Test
+  void explicitEffectivePresentationCanOverrideBaseBriefPolicy() {
+    TextPlayerOutputRenderer renderer =
+        new TextPlayerOutputRenderer(
+            new PresentationProperties(
+                "en-NZ",
+                PresentationProperties.ColorMode.NONE,
+                false,
+                new PresentationProperties.Prompt(false, true, 150L)));
+
+    String rendered =
+        renderer.render(
+            PlayerOutput.view(
+                new LookViewOutput(
+                    "R-909",
+                    "Observatory",
+                    "A cold dome opens above you.",
+                    "Star charts and brass lenses crowd the observation deck.",
+                    true,
+                    List.of(new LookViewExit("DOWN", "spiral stair")),
+                    List.of())),
+            "en-NZ",
+            new PresentationProperties(
+                "en-NZ",
+                PresentationProperties.ColorMode.NONE,
+                true,
+                new PresentationProperties.Prompt(false, true, 150L)));
+
+    assertThat(rendered).contains("Short: A cold dome opens above you.");
+    assertThat(rendered).doesNotContain("Long:");
+  }
 }

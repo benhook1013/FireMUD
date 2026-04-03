@@ -11,7 +11,9 @@ This document defines the canonical FireMUD settings model for operator/bootstra
   - `firemud.movement`
   - `firemud.world-topology`
 - Game Session and Game Logic now publish generation-ready configuration metadata and service-level configuration reference docs for the surfaced domains above.
-- The canonical layered ownership model is agreed and documented here, but the full tenant/game override persistence layer and shared effective-config resolver are still future work.
+- The canonical layered ownership model is agreed and documented here.
+- Game Session now also has a first bounded effective-settings resolver for `presentation`, `movement`, and `worldTopology`, merging operator defaults with scoped file/env overrides.
+- The full DB-backed tenant/game override persistence layer and shared cross-service settings authority are still future work.
 
 ## Canonical Decisions
 
@@ -88,7 +90,7 @@ Internal transport/framework constants should not be promoted into this model un
 
 ## Current Practical Scope Examples
 
-Today, all surfaced FireMUD settings are still operator-default file/env settings. The agreed target scope for the current domains is:
+Today, all surfaced FireMUD settings are still operator-controlled. Some Game Session domains now support bounded scoped file/env overrides in addition to operator defaults. The agreed target scope for the current domains is:
 
 - `reconnection.policy`
   - operator-only today
@@ -153,7 +155,8 @@ This does not need to become a full distributed config platform. A bounded autho
 Until the shared settings authority exists:
 
 - surfaced file/env-backed settings in Game Session and Game Logic are the operator-default layer;
+- Game Session may merge bounded scoped file/env overrides for already-live gameplay-facing domains where that merge logic is explicitly implemented and documented;
 - service docs and metadata should stay honest about what is operator-default today versus what is planned as tenant/game-configurable later;
 - new gameplay slices should attach their first settings seams to this model rather than adding fresh hardcoded constants and documenting them after the fact;
-- runtime services should read typed properties directly rather than inventing per-service mini merge layers;
+- runtime services should use the documented effective-settings resolver where one already exists, rather than inventing overlapping merge layers;
 - slice docs should record the intended future tenant/cap story for each surfaced domain even when the live implementation is still operator-only.

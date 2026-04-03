@@ -4,6 +4,7 @@ import net.firedevops.firemud.common.saga.persistence.EnableSagaEntityScan;
 import net.firedevops.firemud.gamesession.config.FirstPartyConnectContextProperties;
 import net.firedevops.firemud.gamesession.config.GameLogicProperties;
 import net.firedevops.firemud.gamesession.config.GameSessionProperties;
+import net.firedevops.firemud.gamesession.config.GameSessionSettingsOverridesProperties;
 import net.firedevops.firemud.gamesession.config.MovementProperties;
 import net.firedevops.firemud.gamesession.config.PresentationProperties;
 import net.firedevops.firemud.gamesession.config.WorldTopologyProperties;
@@ -19,6 +20,7 @@ import org.springframework.scheduling.annotation.EnableScheduling;
   GameSessionProperties.class,
   GameLogicProperties.class,
   FirstPartyConnectContextProperties.class,
+  GameSessionSettingsOverridesProperties.class,
   PresentationProperties.class,
   MovementProperties.class,
   WorldTopologyProperties.class

@@ -6,7 +6,11 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Map;
+import net.firedevops.firemud.gamesession.config.EffectiveSettingsResolver;
+import net.firedevops.firemud.gamesession.config.GameSessionSettingsOverridesProperties;
 import net.firedevops.firemud.gamesession.config.PresentationProperties;
+import net.firedevops.firemud.gamesession.service.SessionContext;
 import org.junit.jupiter.api.Test;
 
 class PromptBurstCoordinatorTest {
@@ -15,11 +19,7 @@ class PromptBurstCoordinatorTest {
   void suppressesPromptWithinCoalesceWindow() {
     PromptBurstCoordinator coordinator =
         new PromptBurstCoordinator(
-            new PresentationProperties(
-                "en-NZ",
-                PresentationProperties.ColorMode.NONE,
-                false,
-                new PresentationProperties.Prompt(true, true, 150L)),
+            resolverWithDefaultPromptWindow(150L),
             Clock.fixed(Instant.parse("2026-04-02T23:00:00Z"), ZoneOffset.UTC));
 
     List<PlayerOutput> outputs =
@@ -35,11 +35,7 @@ class PromptBurstCoordinatorTest {
   void keepsPromptWhenForced() {
     PromptBurstCoordinator coordinator =
         new PromptBurstCoordinator(
-            new PresentationProperties(
-                "en-NZ",
-                PresentationProperties.ColorMode.NONE,
-                false,
-                new PresentationProperties.Prompt(true, true, 150L)),
+            resolverWithDefaultPromptWindow(150L),
             Clock.fixed(Instant.parse("2026-04-02T23:00:00Z"), ZoneOffset.UTC));
 
     List<PlayerOutput> outputs =
@@ -54,11 +50,7 @@ class PromptBurstCoordinatorTest {
   void evictClearsPromptWindowState() {
     PromptBurstCoordinator coordinator =
         new PromptBurstCoordinator(
-            new PresentationProperties(
-                "en-NZ",
-                PresentationProperties.ColorMode.NONE,
-                false,
-                new PresentationProperties.Prompt(true, true, 150L)),
+            resolverWithDefaultPromptWindow(150L),
             Clock.fixed(Instant.parse("2026-04-02T23:00:00Z"), ZoneOffset.UTC));
 
     List<PlayerOutput> outputs = List.of(PlayerOutput.prompt("demo> "));
@@ -67,5 +59,57 @@ class PromptBurstCoordinatorTest {
     coordinator.evict("1");
 
     assertThat(coordinator.applyPromptWindow("1", outputs, false)).isEqualTo(outputs);
+  }
+
+  @Test
+  void scopedOverrideControlsPromptWindowWhenContextKnown() {
+    PromptBurstCoordinator coordinator =
+        new PromptBurstCoordinator(
+            new EffectiveSettingsResolver(
+                new PresentationProperties(
+                    "en-NZ",
+                    PresentationProperties.ColorMode.NONE,
+                    false,
+                    new PresentationProperties.Prompt(true, true, 150L)),
+                new net.firedevops.firemud.gamesession.config.MovementProperties(true),
+                new net.firedevops.firemud.gamesession.config.WorldTopologyProperties(),
+                new GameSessionSettingsOverridesProperties(
+                    Map.of(),
+                    Map.of(
+                        "7",
+                        new GameSessionSettingsOverridesProperties.PresentationOverride(
+                            null,
+                            null,
+                            null,
+                            new GameSessionSettingsOverridesProperties.PresentationOverride
+                                .PromptOverride(null, null, 500L))),
+                    Map.of(),
+                    Map.of(),
+                    Map.of(),
+                    Map.of())),
+            Clock.fixed(Instant.parse("2026-04-02T23:00:00Z"), ZoneOffset.UTC));
+
+    List<PlayerOutput> outputs =
+        List.of(PlayerOutput.message("You say, \"hello\""), PlayerOutput.prompt("demo> "));
+    SessionContext context =
+        new SessionContext(1L, 22L, 123L, "demo@example.com", 911L, "Sora", 7L, "R-1", null);
+
+    coordinator.recordPromptEmission("1", outputs);
+
+    assertThat(coordinator.applyPromptWindow("1", context, outputs, false))
+        .containsExactly(PlayerOutput.message("You say, \"hello\""));
+  }
+
+  private EffectiveSettingsResolver resolverWithDefaultPromptWindow(long coalesceWindowMs) {
+    return new EffectiveSettingsResolver(
+        new PresentationProperties(
+            "en-NZ",
+            PresentationProperties.ColorMode.NONE,
+            false,
+            new PresentationProperties.Prompt(true, true, coalesceWindowMs)),
+        new net.firedevops.firemud.gamesession.config.MovementProperties(true),
+        new net.firedevops.firemud.gamesession.config.WorldTopologyProperties(),
+        new GameSessionSettingsOverridesProperties(
+            Map.of(), Map.of(), Map.of(), Map.of(), Map.of(), Map.of()));
   }
 }
