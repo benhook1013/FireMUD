@@ -27,7 +27,7 @@ The first surfaced platform settings domains in Game Session are now generation-
 | --- | ------- | ------- |
 | `firemud.presentation.default-color-mode` | Default text-renderer color/emphasis mode when no per-player preference overrides it | `NONE` |
 | `firemud.presentation.brief-enabled-by-default` | Whether suppressible room-view and transcript segments default to BRIEF-style rendering | `false` |
-| `firemud.presentation.prompt.enabled` | Whether prompt output is enabled by default for text-session rendering | `false` |
+| `firemud.presentation.prompt.enabled` | Whether prompt output is enabled by default for text-session rendering | `true` |
 | `firemud.presentation.prompt.emit-after-reconnect-restore` | Whether reconnect restore appends a fresh prompt after replay and fresh `LOOK` | `true` |
 | `firemud.presentation.prompt.coalesce-window-ms` | Small prompt burst window used to reduce prompt spam while still retaining prompts for explicit boundary commands like `LOOK` | `150` |
 

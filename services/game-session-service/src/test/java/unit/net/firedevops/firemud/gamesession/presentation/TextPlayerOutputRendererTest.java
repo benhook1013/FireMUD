@@ -161,6 +161,6 @@ class TextPlayerOutputRendererTest {
             CommandEnqueueResult.success(),
             List.of(PlayerOutput.view("North Hall text"), PlayerOutput.prompt("demo> ")));
 
-    assertThat(rendered).isEqualTo("OK MOVE\nNorth Hall text\n\ndemo> ");
+    assertThat(rendered).isEqualTo("OK LOOK\nNorth Hall text\n\ndemo> ");
   }
 }

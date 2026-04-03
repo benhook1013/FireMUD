@@ -75,6 +75,7 @@ public class TextPlayerOutputRenderer {
       }
       return "OK " + command.type().name();
     }
+    String commandLabel = responseCommandLabel(command, nonPromptOutputs);
     boolean plainMessageOnly =
         nonPromptOutputs.stream()
             .allMatch(
@@ -86,7 +87,7 @@ public class TextPlayerOutputRenderer {
     if (plainMessageOnly && proseCommand) {
       return appendPrompt(body, prompt, true);
     }
-    return appendPrompt("OK " + command.type().name() + "\n" + body + "\n\n", prompt, false);
+    return appendPrompt("OK " + commandLabel + "\n" + body + "\n\n", prompt, false);
   }
 
   private String renderLookView(LookViewOutput result) {
@@ -200,5 +201,13 @@ public class TextPlayerOutputRenderer {
       return prompt;
     }
     return inline ? base + "\n" + prompt : base + prompt;
+  }
+
+  private String responseCommandLabel(TextCommand command, java.util.List<PlayerOutput> outputs) {
+    if (command.type() == net.firedevops.firemud.gamesession.command.text.TextCommandType.MOVE
+        && outputs.stream().allMatch(output -> output.kind() == PlayerOutputKind.VIEW)) {
+      return net.firedevops.firemud.gamesession.command.text.TextCommandType.LOOK.name();
+    }
+    return command.type().name();
   }
 }

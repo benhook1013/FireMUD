@@ -388,7 +388,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
     assertThat(payloads).hasSizeGreaterThanOrEqualTo(3);
     assertThat(payloads).anyMatch(payload -> payload.startsWith("OK LOGIN"));
     assertThat(payloads).anyMatch(payload -> payload.startsWith("OK PLAY"));
-    assertThat(payloads).anyMatch(payload -> payload.startsWith("OK MOVE"));
+    assertThat(payloads).anyMatch(payload -> payload.startsWith("OK LOOK"));
     assertThat(payloads).anyMatch(payload -> payload.contains("North Hall text"));
     assertThat(sessionContextService.findByTenantAndSessionId(22L, 42L))
         .hasValueSatisfying(context -> assertThat(context.roomInstanceId()).isEqualTo("2045"));

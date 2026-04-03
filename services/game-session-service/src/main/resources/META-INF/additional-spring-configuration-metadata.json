@@ -34,7 +34,7 @@
     {
       "name": "firemud.presentation.prompt.enabled",
       "type": "java.lang.Boolean",
-      "defaultValue": false,
+      "defaultValue": true,
       "description": "Whether prompt output is enabled by default for text-session rendering.",
       "sourceType": "net.firedevops.firemud.gamesession.config.PresentationProperties$Prompt"
     },

@@ -44,7 +44,7 @@ firemud:
     default-color-mode: NONE
     brief-enabled-by-default: false
     prompt:
-      enabled: false
+      enabled: true
       emit-after-reconnect-restore: true
       coalesce-window-ms: 150
   movement:
