@@ -42,7 +42,7 @@ Recommended GitHub Actions variables:
 
 - `PREVIEW_MAX_ACTIVE`
   - optional
-  - defaults to `2` when unset
+  - defaults to `1` when unset
   - enforced by `preview.yml` by counting namespaces labeled `firemud.dev/preview=true`
 
 ## Current limitation

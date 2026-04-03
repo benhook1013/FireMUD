@@ -36,6 +36,8 @@ spec:
           env:
             - name: SPRING_PROFILES_ACTIVE
               value: "prod"
+            - name: SPRING_FLYWAY_TABLE
+              value: {{ printf "flyway_%s_history" $service.name | replace "-" "_" | quote }}
             {{- if $service.mountGrpcTls }}
             - name: FIREMUD_GRPC_CERT_CHAIN_PATH
               value: /tls/client.crt
@@ -58,6 +60,8 @@ spec:
             - name: FIREMUD_GRPC_CA_CERT_PATH
               value: /tls/ca.crt
             {{- end }}
+            - name: SPRING_FLYWAY_TABLE
+              value: {{ printf "flyway_%s_history" $service.name | replace "-" "_" | quote }}
             {{- range $key, $value := $service.extraEnv }}
             - name: {{ $key }}
               value: {{ $value | quote }}
@@ -100,11 +104,11 @@ spec:
             periodSeconds: {{ default 10 $service.startupPeriodSeconds }}
           resources:
             requests:
-              cpu: "200m"
-              memory: "256Mi"
+              cpu: {{ default "50m" $.Values.previewStack.resources.app.requests.cpu | quote }}
+              memory: {{ default "256Mi" $.Values.previewStack.resources.app.requests.memory | quote }}
             limits:
-              cpu: "400m"
-              memory: "512Mi"
+              cpu: {{ default "750m" $.Values.previewStack.resources.app.limits.cpu | quote }}
+              memory: {{ default "512Mi" $.Values.previewStack.resources.app.limits.memory | quote }}
       {{- if $service.mountGrpcTls }}
       volumes:
         - name: grpc-tls

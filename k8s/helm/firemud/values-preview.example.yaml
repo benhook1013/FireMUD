@@ -59,6 +59,8 @@ previewStack:
     FIREMUD_POSTGRES_HOST: postgres
     FIREMUD_POSTGRES_PORT: "5432"
     FIREMUD_POSTGRES_DB: firemud
+    FIREMUD_REDIS_HOST: redis-cache
+    FIREMUD_REDIS_PORT: "6379"
     FIREMUD_REDIS_COORD_HOST: redis-coord
     FIREMUD_REDIS_COORD_PORT: "6379"
     FIREMUD_REDIS_CACHE_HOST: redis-cache
@@ -76,6 +78,15 @@ previewStack:
     FIREMUD_POSTGRES_USER: firemud
     FIREMUD_POSTGRES_PASSWORD: firemud
     FIREMUD_AUTH_JWT_SECRET: changeit-changeit-changeit-changeit
+
+  resources:
+    app:
+      requests:
+        cpu: "50m"
+        memory: "256Mi"
+      limits:
+        cpu: "750m"
+        memory: "512Mi"
 
   seedSql: |
     INSERT INTO region (id, name, tenant_id, shard_id)

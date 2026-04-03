@@ -144,7 +144,7 @@ jobs:
           hostname=${{ steps.derive.outputs.hostname }}
           image_tag=${{ steps.derive.outputs.image_tag }}
           head_sha=${{ steps.derive.outputs.head_sha }}
-          preview_max_active=${PREVIEW_MAX_ACTIVE:-2}
+          preview_max_active=${PREVIEW_MAX_ACTIVE:-1}
           EOF
 
   preview-deploy:
@@ -202,7 +202,7 @@ jobs:
         run: |
           bash ./dev-tools/preview/check-preview-capacity.sh \
             "${{ needs.preview-plan.outputs.namespace }}" \
-            "${PREVIEW_MAX_ACTIVE:-2}"
+            "${PREVIEW_MAX_ACTIVE:-1}"
 
       - name: Ensure preview namespace exists
         run: |
