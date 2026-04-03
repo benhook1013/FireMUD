@@ -204,6 +204,16 @@ In the current Game Session settings surface, prompt enablement and restore/coal
 - `firemud.presentation.prompt.emit-after-reconnect-restore`
 - `firemud.presentation.prompt.coalesce-window-ms`
 
+The reconnect/session-recovery and screen-buffer defaults themselves are exposed through:
+
+- `firemud.reconnection.policy.resume-window-ms`
+- `firemud.reconnection.policy.stale-resume-falls-through-to-fresh-entry`
+- `firemud.reconnection.buffer.ttl-ms`
+- `firemud.reconnection.buffer.min-messages`
+- `firemud.reconnection.buffer.min-lines`
+- `firemud.reconnection.buffer.soft-max-bytes`
+- `firemud.reconnection.buffer.hard-max-bytes`
+
 These remain operator/file-env defaults today, while prompt exclusion from reconnect transcript replay remains a canonical reconnect/output rule rather than a separately surfaced toggle.
 
 ### Abnormal WebSocket Transport Loss

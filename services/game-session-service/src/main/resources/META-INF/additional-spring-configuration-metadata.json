@@ -6,6 +6,11 @@
       "sourceType": "net.firedevops.firemud.gamesession.config.PresentationProperties"
     },
     {
+      "name": "firemud.reconnection",
+      "type": "net.firedevops.firemud.common.config.FiremudReconnectionProperties",
+      "sourceType": "net.firedevops.firemud.common.config.FiremudReconnectionProperties"
+    },
+    {
       "name": "firemud.movement",
       "type": "net.firedevops.firemud.gamesession.config.MovementProperties",
       "sourceType": "net.firedevops.firemud.gamesession.config.MovementProperties"
@@ -51,6 +56,62 @@
       "defaultValue": 150,
       "description": "Maximum prompt burst window, in milliseconds, used to suppress prompt spam while still retaining prompts for explicit boundary commands such as LOOK.",
       "sourceType": "net.firedevops.firemud.gamesession.config.PresentationProperties$Prompt"
+    },
+    {
+      "name": "firemud.reconnection.policy.resume-window-ms",
+      "type": "java.lang.Long",
+      "defaultValue": 180000,
+      "description": "Maximum resume window, in milliseconds, before a stale gameplay binding is treated as non-resumable.",
+      "sourceType": "net.firedevops.firemud.common.config.FiremudReconnectionProperties$Policy"
+    },
+    {
+      "name": "firemud.reconnection.policy.stale-resume-falls-through-to-fresh-entry",
+      "type": "java.lang.Boolean",
+      "defaultValue": true,
+      "description": "Whether a stale or invalid resumable binding should fall through to fresh entry when current admission still allows PLAY.",
+      "sourceType": "net.firedevops.firemud.common.config.FiremudReconnectionProperties$Policy"
+    },
+    {
+      "name": "firemud.reconnection.buffer.ttl-ms",
+      "type": "java.lang.Long",
+      "defaultValue": 1800000,
+      "description": "TTL, in milliseconds, for the bounded reconnect transcript screen buffer stored for each player binding.",
+      "sourceType": "net.firedevops.firemud.common.config.FiremudReconnectionProperties$Buffer"
+    },
+    {
+      "name": "firemud.reconnection.buffer.min-messages",
+      "type": "java.lang.Integer",
+      "defaultValue": 8,
+      "description": "Minimum message floor retained for reconnect transcript replay before byte ceilings are applied.",
+      "sourceType": "net.firedevops.firemud.common.config.FiremudReconnectionProperties$Buffer"
+    },
+    {
+      "name": "firemud.reconnection.buffer.min-lines",
+      "type": "java.lang.Integer",
+      "defaultValue": 24,
+      "description": "Minimum line floor retained for reconnect transcript replay before byte ceilings are applied.",
+      "sourceType": "net.firedevops.firemud.common.config.FiremudReconnectionProperties$Buffer"
+    },
+    {
+      "name": "firemud.reconnection.buffer.soft-max-bytes",
+      "type": "java.lang.Integer",
+      "defaultValue": 16384,
+      "description": "Soft byte ceiling for reconnect transcript retention before older entries are trimmed when message and line floors have been satisfied.",
+      "sourceType": "net.firedevops.firemud.common.config.FiremudReconnectionProperties$Buffer"
+    },
+    {
+      "name": "firemud.reconnection.buffer.hard-max-bytes",
+      "type": "java.lang.Integer",
+      "defaultValue": 65536,
+      "description": "Hard byte ceiling for reconnect transcript retention; the oldest entries are trimmed to stay within this bound even if floors would otherwise retain more text.",
+      "sourceType": "net.firedevops.firemud.common.config.FiremudReconnectionProperties$Buffer"
+    },
+    {
+      "name": "firemud.reconnection.view-cache.look-ttl-ms",
+      "type": "java.lang.Long",
+      "defaultValue": 600000,
+      "description": "TTL, in milliseconds, for the reconnect-adjacent room-view snapshot helper used by the current view-cache implementation.",
+      "sourceType": "net.firedevops.firemud.common.config.FiremudReconnectionProperties$ViewCache"
     },
     {
       "name": "firemud.movement.post-move-look-enabled",
