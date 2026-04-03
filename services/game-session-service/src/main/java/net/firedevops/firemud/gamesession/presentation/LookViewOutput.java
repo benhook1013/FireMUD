@@ -11,6 +11,7 @@ public record LookViewOutput(
     String roomName,
     String shortDescription,
     String longDescription,
+    boolean includeLongDescription,
     List<LookViewExit> exits,
     List<LookViewEntity> entities)
     implements PlayerOutputPayload {
@@ -24,12 +25,17 @@ public record LookViewOutput(
   }
 
   public static LookViewOutput from(LookResult result) {
+    return from(result, true);
+  }
+
+  public static LookViewOutput from(LookResult result, boolean includeLongDescription) {
     Objects.requireNonNull(result, "result must not be null");
     return new LookViewOutput(
         result.getRoomInstance().getRoomInstanceId(),
         result.getRoomName(),
         result.getShortDescription(),
         result.getLongDescription(),
+        includeLongDescription,
         result.getExitsList().stream()
             .map(exit -> new LookViewExit(exit.getLabel(), exit.getDescription()))
             .collect(Collectors.toList()),

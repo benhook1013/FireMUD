@@ -185,7 +185,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     if (!interpretation.commandResult().accepted()) {
       return false;
     }
-    if (command.type() == TextCommandType.LOOK) {
+    if (command.type() == TextCommandType.LOOK || command.type() == TextCommandType.QUICKLOOK) {
       return true;
     }
     if (command.type() == TextCommandType.PLAY && !interpretation.reconnectRedrawRecommended()) {

@@ -167,7 +167,7 @@ Messages are the main source for reconnect screen-buffer replay.
 Views are structured snapshots or redraws such as:
 
 - `LOOK`
-- later `QUICKLOOK`
+- `QUICKLOOK`
 - later inventory/equipment views
 
 Views may be cached in narrow built-in view caches and replayed or redrawn on reconnect, but they are not equivalent to ordinary transcript lines.

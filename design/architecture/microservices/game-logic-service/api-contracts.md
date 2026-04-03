@@ -63,7 +63,7 @@ grpcurl -plaintext -d '{"tenant_id":"demo","session_id":"demo","command":"look"}
 - Game Logic is the orchestration boundary for these gameplay reads; downstream services on the hot path should answer from owned state, caches, or caller-supplied references rather than recursively building additional steady-state fan-out trees.
 - Game Logic must not depend on reconnect-oriented rendered transcript state. Reconnect transcript restoration is a Game Session presentation concern. If FireMUD later needs a validated reusable room-view read cache for normal `LOOK` performance, that cache should sit near Game Logic orchestration and must be guarded by the same room/entity fence and version checks that protect fresh `ResolveLook` output.
 - `LOOK` should describe what is immediately visible in the current room. Visible bags, corpses, chests, or similar containers may appear as room-ground items, but nested container contents should not be expanded inline by default; later item/container commands can inspect those contents explicitly.
-- A future standard `QUICKLOOK` command should be treated as another built-in room-view rendering mode over the same structured result: it keeps occupants, room-ground items, exits, and later overlays, but omits the room-description prose for faster redraws.
+- The standard `QUICKLOOK` command should be treated as another built-in room-view rendering mode over the same structured result: it keeps occupants, room-ground items, exits, and later overlays, but omits the room-description prose for faster redraws.
 
 ## Communication Flow
 

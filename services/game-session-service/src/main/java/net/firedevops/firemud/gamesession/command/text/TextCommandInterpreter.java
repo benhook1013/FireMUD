@@ -164,24 +164,34 @@ public class TextCommandInterpreter {
     CommandEnqueueResult enqueueResult =
         commandService.enqueue(sessionId, command.rawLine(), requiresSoloTick);
     String response = null;
-    if (enqueueResult.accepted() && command.type() == TextCommandType.LOOK) {
-      String lookText = lookHandler.describe(sessionId);
-      if (isLookError(lookText)) {
-        return failureResultForLookError(lookText);
-      } else {
-        List<PlayerOutput> outputs =
-            lookText == null ? List.of() : List.of(PlayerOutput.view(lookText));
-        outputs = appendPrompt(maybeContext.orElseThrow(), outputs);
-        return new TextCommandInterpretationResult(enqueueResult, outputs);
+    if (enqueueResult.accepted() && isLookCommand(command.type())) {
+      PlayerOutput lookOutput =
+          lookHandler.describePlayerOutput(sessionId, command.type() != TextCommandType.QUICKLOOK);
+      if (lookOutput == null) {
+        return stageFailure(
+            GameplayStageCommandConstants.PLAY_REQUIRED_CODE,
+            GameplayStageCommandConstants.PLAY_REQUIRED_MESSAGE);
       }
+      if (lookOutput.kind()
+              == net.firedevops.firemud.gamesession.presentation.PlayerOutputKind.ERROR
+          && lookOutput.payload()
+              instanceof net.firedevops.firemud.gamesession.presentation.ErrorOutput errorOutput) {
+        return new TextCommandInterpretationResult(
+            CommandEnqueueResult.failure(errorOutput.code(), errorOutput.message()),
+            List.of(lookOutput));
+      }
+      List<PlayerOutput> outputs = appendPrompt(maybeContext.orElseThrow(), List.of(lookOutput));
+      return new TextCommandInterpretationResult(enqueueResult, outputs);
     }
     return new TextCommandInterpretationResult(enqueueResult);
   }
 
   private static boolean requiresGameplayAuthentication(TextCommandType type) {
-    return type == TextCommandType.LOOK
-        || isCommunicationCommand(type)
-        || type == TextCommandType.MOVE;
+    return isLookCommand(type) || isCommunicationCommand(type) || type == TextCommandType.MOVE;
+  }
+
+  private static boolean isLookCommand(TextCommandType type) {
+    return type == TextCommandType.LOOK || type == TextCommandType.QUICKLOOK;
   }
 
   private static boolean isCommunicationCommand(TextCommandType type) {
@@ -191,31 +201,6 @@ public class TextCommandInterpreter {
   }
 
   private TextCommandInterpretationResult stageFailure(String code, String message) {
-    return new TextCommandInterpretationResult(
-        CommandEnqueueResult.failure(code, message), List.of(PlayerOutput.error(code, message)));
-  }
-
-  private boolean isLookError(String text) {
-    return text != null && text.startsWith("ERROR ");
-  }
-
-  private TextCommandInterpretationResult failureResultForLookError(String errorText) {
-    String payload = errorText.substring("ERROR ".length());
-    String code;
-    String message = "";
-    int firstSpace = payload.indexOf(' ');
-    if (firstSpace >= 0) {
-      code = payload.substring(0, firstSpace);
-      message = payload.substring(firstSpace + 1).trim();
-    } else {
-      code = payload;
-    }
-    if (code.isBlank()) {
-      code = "LOOK_UNAVAILABLE";
-    }
-    if (message.isBlank()) {
-      message = "Look unavailable";
-    }
     return new TextCommandInterpretationResult(
         CommandEnqueueResult.failure(code, message), List.of(PlayerOutput.error(code, message)));
   }

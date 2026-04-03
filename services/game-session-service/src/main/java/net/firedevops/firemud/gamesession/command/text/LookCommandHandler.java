@@ -39,6 +39,10 @@ public final class LookCommandHandler {
   private final DevIsolatedProperties devIsolatedProperties;
 
   public String describe(String sessionId) {
+    return describe(sessionId, true);
+  }
+
+  public String describe(String sessionId, boolean includeLongDescription) {
     Optional<SessionContext> maybeContext =
         sessionAuthenticationService.resolveSessionContext(sessionId);
     if (maybeContext.isEmpty()) {
@@ -54,7 +58,7 @@ public final class LookCommandHandler {
       }
       try {
         LookResult lookResult = resolveLook(context);
-        String rendered = lookTextRenderer.render(lookResult);
+        String rendered = lookTextRenderer.render(lookResult, includeLongDescription);
         if (!devIsolatedProperties.isDevIsolated()) {
           cacheLook(context, lookResult, rendered);
         }
@@ -71,6 +75,10 @@ public final class LookCommandHandler {
   }
 
   public String describeProtocol(String sessionId) {
+    return describeProtocol(sessionId, true);
+  }
+
+  public String describeProtocol(String sessionId, boolean includeLongDescription) {
     Optional<SessionContext> maybeContext =
         sessionAuthenticationService.resolveSessionContext(sessionId);
     if (maybeContext.isEmpty()) {
@@ -78,11 +86,39 @@ public final class LookCommandHandler {
       return null;
     }
     SessionContext context = maybeContext.get();
-    String rendered = describe(sessionId);
+    String rendered = describe(sessionId, includeLongDescription);
     if (rendered == null || rendered.isBlank() || rendered.startsWith("ERROR ")) {
       return rendered;
     }
     return buildProtocolResponse(rendered);
+  }
+
+  public PlayerOutput describePlayerOutput(String sessionId, boolean includeLongDescription) {
+    Optional<SessionContext> maybeContext =
+        sessionAuthenticationService.resolveSessionContext(sessionId);
+    if (maybeContext.isEmpty()) {
+      meterRegistry.counter(INVOCATIONS_METRIC, "tenantId", "unknown").increment();
+      return null;
+    }
+    SessionContext context = maybeContext.get();
+    try (GameplayLoggingContext ignored = GameplayLoggingContext.from(context)) {
+      String tenantTag = Long.toString(context.tenantId());
+      meterRegistry.counter(INVOCATIONS_METRIC, "tenantId", tenantTag).increment();
+      if (devIsolatedProperties.isDevIsolated()) {
+        return PlayerOutput.view(LookCommandConstants.ROOM_DESCRIPTION);
+      }
+      try {
+        LookResult lookResult = resolveLook(context);
+        return toPlayerOutput(context, lookResult, includeLongDescription);
+      } catch (StatusRuntimeException ex) {
+        String errorCode = mapStatusToError(ex);
+        recordFailure(context, tenantTag, errorCode, ex);
+        return PlayerOutput.error(errorCode, errorMessage(ex.getStatus().getDescription()));
+      } catch (RuntimeException ex) {
+        recordFailure(context, tenantTag, "UNEXPECTED", ex);
+        return PlayerOutput.error("UNEXPECTED", "Internal LOOK failure");
+      }
+    }
   }
 
   String renderProtocol(SessionContext context, LookResult lookResult) {
@@ -94,9 +130,14 @@ public final class LookCommandHandler {
   }
 
   PlayerOutput toPlayerOutput(SessionContext context, LookResult lookResult) {
-    PlayerOutput output = lookTextRenderer.toPlayerOutput(lookResult);
+    return toPlayerOutput(context, lookResult, true);
+  }
+
+  PlayerOutput toPlayerOutput(
+      SessionContext context, LookResult lookResult, boolean includeLongDescription) {
+    PlayerOutput output = lookTextRenderer.toPlayerOutput(lookResult, includeLongDescription);
     if (!devIsolatedProperties.isDevIsolated()) {
-      cacheLook(context, lookResult, lookTextRenderer.render(lookResult));
+      cacheLook(context, lookResult, lookTextRenderer.render(lookResult, includeLongDescription));
     }
     return output;
   }
@@ -129,9 +170,12 @@ public final class LookCommandHandler {
   }
 
   private String formatErrorResponse(String code, String description) {
-    String message =
-        description != null && !description.isBlank() ? description : "Look unavailable";
+    String message = errorMessage(description);
     return "ERROR " + code + " " + message;
+  }
+
+  private String errorMessage(String description) {
+    return description != null && !description.isBlank() ? description : "Look unavailable";
   }
 
   private void recordFailure(

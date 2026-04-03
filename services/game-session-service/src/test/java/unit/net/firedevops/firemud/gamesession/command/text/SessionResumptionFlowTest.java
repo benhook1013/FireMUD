@@ -24,6 +24,9 @@ import net.firedevops.firemud.gamesession.config.GameLogicProperties;
 import net.firedevops.firemud.gamesession.config.GameSessionProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
+import net.firedevops.firemud.gamesession.presentation.LookViewOutput;
+import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
+import net.firedevops.firemud.gamesession.presentation.PlayerOutputKind;
 import net.firedevops.firemud.gamesession.presentation.PromptComposer;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.CommandService;
@@ -142,6 +145,11 @@ class SessionResumptionFlowTest {
     when(gameLogicClient.resolveLook(anyString(), anyString(), anyString(), anyString()))
         .thenReturn(lookResult);
     when(lookTextRenderer.render(lookResult)).thenReturn("OK LOOK text");
+    when(lookTextRenderer.toPlayerOutput(lookResult, true))
+        .thenReturn(
+            PlayerOutput.view(
+                new LookViewOutput(
+                    "1021", "Resume Hall", "Short text", "Long text", true, List.of(), List.of())));
     playHandler =
         new PlayCommandHandler(
             sessionAuthenticationService,
@@ -175,7 +183,10 @@ class SessionResumptionFlowTest {
 
     TextCommandInterpretationResult firstLook = interpreter.interpret("1", LOOK_PAYLOAD, false);
     assertTrue(firstLook.commandResult().accepted());
-    assertEquals("OK LOOK text\ndemo> ", firstLook.responseText());
+    assertEquals(
+        List.of(PlayerOutputKind.VIEW, PlayerOutputKind.PROMPT),
+        firstLook.outputs().stream().map(PlayerOutput::kind).toList());
+    assertTrue(((LookViewOutput) firstLook.outputs().get(0).payload()).includeLongDescription());
 
     TextCommandInterpretationResult secondLogin = interpreter.interpret("1", LOGIN_PAYLOAD, false);
     assertTrue(secondLogin.commandResult().accepted());
@@ -185,7 +196,10 @@ class SessionResumptionFlowTest {
 
     TextCommandInterpretationResult secondLook = interpreter.interpret("1", LOOK_PAYLOAD, false);
     assertTrue(secondLook.commandResult().accepted());
-    assertEquals("OK LOOK text\ndemo> ", secondLook.responseText());
+    assertEquals(
+        List.of(PlayerOutputKind.VIEW, PlayerOutputKind.PROMPT),
+        secondLook.outputs().stream().map(PlayerOutput::kind).toList());
+    assertTrue(((LookViewOutput) secondLook.outputs().get(0).payload()).includeLongDescription());
 
     assertEquals(1.0, meterRegistry.counter("gamesession.session.resume").count());
     assertEquals(0.0, meterRegistry.counter("gamesession.session.takeover").count());
@@ -206,7 +220,10 @@ class SessionResumptionFlowTest {
     assertTrue(secondPlay.commandResult().accepted());
     TextCommandInterpretationResult secondLook = interpreter.interpret("2", LOOK_PAYLOAD, false);
     assertTrue(secondLook.commandResult().accepted());
-    assertEquals("OK LOOK text\ndemo> ", secondLook.responseText());
+    assertEquals(
+        List.of(PlayerOutputKind.VIEW, PlayerOutputKind.PROMPT),
+        secondLook.outputs().stream().map(PlayerOutput::kind).toList());
+    assertTrue(((LookViewOutput) secondLook.outputs().get(0).payload()).includeLongDescription());
 
     TextCommandInterpretationResult firstLookAfterTakeover =
         interpreter.interpret("1", LOOK_PAYLOAD, false);

@@ -28,6 +28,7 @@ class TextPlayerOutputRendererTest {
                     "Candle-lit Antechamber",
                     "You stand in a basalt chamber warmed by the brazier near the western wall.",
                     "Stalactites drip along the northern wall while a faint draft carries the smell of damp earth from the lower tunnels.",
+                    true,
                     List.of(new LookViewExit("NORTH", "arched passage")),
                     List.of())));
 
@@ -99,6 +100,7 @@ class TextPlayerOutputRendererTest {
                     "Candle-lit Antechamber",
                     "You stand in a basalt chamber warmed by the brazier near the western wall.",
                     "Stalactites drip along the northern wall while a faint draft carries the smell of damp earth from the lower tunnels.",
+                    true,
                     List.of(new LookViewExit("NORTH", "arched passage")),
                     List.of())));
 
@@ -125,6 +127,33 @@ class TextPlayerOutputRendererTest {
                 PlayerOutput.prompt("new> ")));
 
     assertThat(rendered).isEqualTo("OK LOOK\nOK LOOK constructed\n\nnew> ");
+  }
+
+  @Test
+  void quickLookRenderingOmitsLongDescriptionWithoutGlobalBriefMode() {
+    TextPlayerOutputRenderer renderer =
+        new TextPlayerOutputRenderer(
+            new PresentationProperties(
+                PresentationProperties.ColorMode.NONE,
+                false,
+                new PresentationProperties.Prompt(false, true, 150L)));
+
+    String rendered =
+        renderer.render(
+            PlayerOutput.view(
+                new LookViewOutput(
+                    "R-2045",
+                    "Crafting Hall",
+                    "A broad workshop glows with banked coals.",
+                    "Hammer racks line the walls while a forge crackles beneath soot-black beams.",
+                    false,
+                    List.of(new LookViewExit("SOUTH", "stone arch")),
+                    List.of(new LookViewEntity("PLAYER", "Sora", "smith", List.of("busy"))))));
+
+    assertThat(rendered).contains("Short: A broad workshop glows with banked coals.");
+    assertThat(rendered).doesNotContain("Long:");
+    assertThat(rendered).contains("Exits: SOUTH (stone arch)");
+    assertThat(rendered).contains("PLAYER \"Sora\" (smith) [busy]");
   }
 
   @Test

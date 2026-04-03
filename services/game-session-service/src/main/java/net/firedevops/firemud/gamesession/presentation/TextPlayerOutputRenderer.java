@@ -105,7 +105,7 @@ public class TextPlayerOutputRenderer {
         .append(result.roomId())
         .append(")\n");
     out.append(colorizeLabel("Short: ")).append(result.shortDescription()).append("\n");
-    if (!brief) {
+    if (!brief && result.includeLongDescription()) {
       out.append(colorizeLabel("Long: ")).append(result.longDescription()).append("\n");
     }
     out.append(colorizeLabel("Exits: "));

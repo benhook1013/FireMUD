@@ -17,10 +17,18 @@ public class LookTextRenderer {
   }
 
   public PlayerOutput toPlayerOutput(LookResult result) {
-    return PlayerOutput.view(LookViewOutput.from(result));
+    return toPlayerOutput(result, true);
+  }
+
+  public PlayerOutput toPlayerOutput(LookResult result, boolean includeLongDescription) {
+    return PlayerOutput.view(LookViewOutput.from(result, includeLongDescription));
   }
 
   public String render(LookResult result) {
-    return renderer.render(toPlayerOutput(result));
+    return render(result, true);
+  }
+
+  public String render(LookResult result, boolean includeLongDescription) {
+    return renderer.render(toPlayerOutput(result, includeLongDescription));
   }
 }

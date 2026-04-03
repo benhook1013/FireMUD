@@ -184,6 +184,8 @@ class GameSessionWebSocketHandlerIntegrationTest {
         .thenReturn(CommandEnqueueResult.success());
     when(commandService.enqueue(eq("41"), eq("LOOK"), eq(false)))
         .thenReturn(CommandEnqueueResult.success());
+    when(commandService.enqueue(eq("41"), eq("QUICKLOOK"), eq(false)))
+        .thenReturn(CommandEnqueueResult.success());
     when(commandService.enqueue(eq("42"), eq("LOGIN demo@example.com swordfish"), eq(false)))
         .thenReturn(CommandEnqueueResult.success());
     when(commandService.enqueue(eq("42"), eq("LOOK"), eq(false)))
@@ -200,7 +202,14 @@ class GameSessionWebSocketHandlerIntegrationTest {
         .thenReturn(lookResult);
     when(gameLogicClient.resolveLook(eq("22"), eq("2"), eq("123"), eq("1021")))
         .thenReturn(lookResult);
-    when(lookTextRenderer.render(eq(lookResult))).thenReturn("Login Hall text");
+    when(lookTextRenderer.render(eq(lookResult), eq(true))).thenReturn("Login Hall text");
+    when(lookTextRenderer.toPlayerOutput(eq(lookResult), eq(true)))
+        .thenReturn(
+            net.firedevops.firemud.gamesession.presentation.PlayerOutput.view("Login Hall text"));
+    when(lookTextRenderer.toPlayerOutput(eq(lookResult), eq(false)))
+        .thenReturn(
+            net.firedevops.firemud.gamesession.presentation.PlayerOutput.view("Quick Hall text"));
+    when(lookTextRenderer.render(eq(lookResult), eq(false))).thenReturn("Quick Hall text");
     when(screenBufferService.get(
             org.mockito.ArgumentMatchers.anyLong(),
             org.mockito.ArgumentMatchers.anyLong(),
@@ -324,6 +333,42 @@ class GameSessionWebSocketHandlerIntegrationTest {
   }
 
   @Test
+  void websocketQuickLookUsesDistinctCommandLabelAndPrompt() throws Exception {
+    StandardWebSocketClient client = new StandardWebSocketClient();
+    WebSocketHttpHeaders headers = new WebSocketHttpHeaders();
+    headers.add("X-Game-Instance-Id", "41");
+    List<String> payloads = new java.util.concurrent.CopyOnWriteArrayList<>();
+    CountDownLatch latch = new CountDownLatch(3);
+
+    var future =
+        client.execute(
+            new TextWebSocketHandler() {
+              @Override
+              public void afterConnectionEstablished(WebSocketSession session) throws IOException {
+                session.sendMessage(new TextMessage("LOGIN demo@example.com swordfish"));
+                session.sendMessage(new TextMessage("PLAY demo"));
+                session.sendMessage(new TextMessage("QUICKLOOK"));
+              }
+
+              @Override
+              protected void handleTextMessage(WebSocketSession session, TextMessage message) {
+                payloads.add(message.getPayload());
+                latch.countDown();
+              }
+            },
+            headers,
+            URI.create("ws://localhost:" + port + "/ws/game"));
+
+    WebSocketSession session = future.get(5, TimeUnit.SECONDS);
+    assertThat(latch.await(5, TimeUnit.SECONDS)).isTrue();
+    session.close();
+
+    assertThat(payloads).hasSizeGreaterThanOrEqualTo(3);
+    assertThat(payloads.get(2)).startsWith("OK QUICKLOOK").endsWith("demo> ");
+    assertThat(payloads.get(2)).contains("Quick Hall text");
+  }
+
+  @Test
   void websocketMoveReturnsDestinationLookAndUpdatesSessionContext() throws Exception {
     LookResult destinationLook =
         LookResult.newBuilder()
@@ -338,10 +383,10 @@ class GameSessionWebSocketHandlerIntegrationTest {
                 .setSuccess(true)
                 .setDestinationLook(destinationLook)
                 .build());
-    when(lookTextRenderer.toPlayerOutput(eq(destinationLook)))
+    when(lookTextRenderer.toPlayerOutput(eq(destinationLook), eq(true)))
         .thenReturn(
             net.firedevops.firemud.gamesession.presentation.PlayerOutput.view("North Hall text"));
-    when(lookTextRenderer.render(eq(destinationLook))).thenReturn("North Hall text");
+    when(lookTextRenderer.render(eq(destinationLook), eq(true))).thenReturn("North Hall text");
 
     StandardWebSocketClient client = new StandardWebSocketClient();
     WebSocketHttpHeaders headers = new WebSocketHttpHeaders();

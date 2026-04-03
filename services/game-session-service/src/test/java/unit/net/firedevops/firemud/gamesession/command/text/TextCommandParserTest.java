@@ -57,6 +57,17 @@ class TextCommandParserTest {
   }
 
   @Test
+  void parsesQuickLookAliasAsViewRequest() {
+    TextCommand command = parser.parse("qlook");
+
+    assertEquals(TextCommandType.QUICKLOOK, command.type());
+    assertEquals("qlook", command.aliasUsed());
+    assertTrue(command.args().isEmpty());
+    assertEquals("qlook", command.rawLine());
+    assertTrue(command.payload() instanceof TextCommandPayload.ViewRequest);
+  }
+
+  @Test
   void parsesSayAndPreservesMessage() {
     TextCommand command = parser.parse("say   Hello there traveler");
 

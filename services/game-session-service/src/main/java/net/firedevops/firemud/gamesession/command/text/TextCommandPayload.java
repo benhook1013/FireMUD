@@ -38,7 +38,7 @@ public sealed interface TextCommandPayload
     List<String> safeArgs = args == null ? List.of() : List.copyOf(args);
     return switch (type) {
       case NOOP -> new None();
-      case WORLDS, LOOK -> new ViewRequest(type.name());
+      case WORLDS, LOOK, QUICKLOOK -> new ViewRequest(type.name());
       case LOGIN ->
           safeArgs.size() >= 2
               ? new Credentials(

@@ -11,6 +11,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
@@ -26,7 +27,9 @@ import net.firedevops.firemud.gamesession.config.GameLogicProperties;
 import net.firedevops.firemud.gamesession.config.GameSessionProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
+import net.firedevops.firemud.gamesession.presentation.LookViewOutput;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
+import net.firedevops.firemud.gamesession.presentation.PlayerOutputKind;
 import net.firedevops.firemud.gamesession.presentation.PromptComposer;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.CommandService;
@@ -153,6 +156,28 @@ class TextCommandInterpreterTest {
             .build();
     when(gameLogicClient.resolveLook("22", "1", "123", "1021")).thenReturn(lookResult);
     when(lookTextRenderer.render(lookResult)).thenReturn("OK LOOK constructed");
+    when(lookTextRenderer.toPlayerOutput(lookResult, true))
+        .thenReturn(
+            PlayerOutput.view(
+                new LookViewOutput(
+                    "1021",
+                    "Login Hall",
+                    "Short text",
+                    "Long text",
+                    true,
+                    java.util.List.of(),
+                    java.util.List.of())));
+    when(lookTextRenderer.toPlayerOutput(lookResult, false))
+        .thenReturn(
+            PlayerOutput.view(
+                new LookViewOutput(
+                    "1021",
+                    "Login Hall",
+                    "Short text",
+                    "Long text",
+                    false,
+                    java.util.List.of(),
+                    java.util.List.of())));
 
     interpreter =
         new TextCommandInterpreter(
@@ -240,7 +265,30 @@ class TextCommandInterpreterTest {
     TextCommandInterpretationResult look = interpreter.interpret("1", "LOOK", false);
 
     assertTrue(look.commandResult().accepted());
-    assertEquals("OK LOOK constructed\ndemo> ", look.responseText());
+    assertEquals(
+        List.of(PlayerOutputKind.VIEW, PlayerOutputKind.PROMPT),
+        look.outputs().stream().map(PlayerOutput::kind).toList());
+    LookViewOutput payload = (LookViewOutput) look.outputs().get(0).payload();
+    assertEquals("Login Hall", payload.roomName());
+    assertTrue(payload.includeLongDescription());
+    assertEquals("demo> ", look.outputs().get(1).text());
+  }
+
+  @Test
+  void quickLookAfterPlayUsesShortVariantAndAppendsPrompt() {
+    interpreter.interpret("1", "LOGIN demo@example.com swordfish", false);
+    interpreter.interpret("1", "PLAY demo", false);
+
+    TextCommandInterpretationResult quickLook = interpreter.interpret("1", "QUICKLOOK", false);
+
+    assertTrue(quickLook.commandResult().accepted());
+    assertEquals(
+        List.of(PlayerOutputKind.VIEW, PlayerOutputKind.PROMPT),
+        quickLook.outputs().stream().map(PlayerOutput::kind).toList());
+    LookViewOutput payload = (LookViewOutput) quickLook.outputs().get(0).payload();
+    assertEquals("Login Hall", payload.roomName());
+    assertFalse(payload.includeLongDescription());
+    assertEquals("demo> ", quickLook.outputs().get(1).text());
   }
 
   @Test
@@ -301,7 +349,10 @@ class TextCommandInterpreterTest {
     assertTrue(play.commandResult().accepted());
     assertEquals("Entered world: demo\ndemo> ", play.responseText());
     assertTrue(look.commandResult().accepted());
-    assertEquals("OK LOOK constructed\ndemo> ", look.responseText());
+    assertEquals(
+        List.of(PlayerOutputKind.VIEW, PlayerOutputKind.PROMPT),
+        look.outputs().stream().map(PlayerOutput::kind).toList());
+    assertTrue(((LookViewOutput) look.outputs().get(0).payload()).includeLongDescription());
     verify(commandService).enqueue("1", "LOGIN demo@example.com swordfish", false);
     verify(commandService).enqueue("1", "LOOK", false);
   }

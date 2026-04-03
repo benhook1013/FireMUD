@@ -12,7 +12,7 @@ Follow-up design direction agreed after the main slice landed:
 - Future built-in read/redraw commands may opt into the same subsystem explicitly, but transient action acknowledgements and game-specific scripted commands should not.
 - The target-state `LOOK` shape should stay explicitly sectioned: room/world snapshot data, exits, visible occupants, visible room-ground items, and later optional overlays such as hazards or combat state.
 - Visible room-ground items should come from the Entity Management containment model for the room-attached ground container, while nested container contents remain out of scope for base `LOOK` and should be inspected through later item/container commands.
-- A standard `QUICKLOOK` command should later reuse the same room-view structure as `LOOK` while omitting the room-description prose so players can get a fast redraw of occupants, items, exits, and prompt/status context.
+- The standard `QUICKLOOK` command reuses the same room-view structure as `LOOK` while omitting the room-description prose so players can get a fast redraw of occupants, items, exits, and prompt/status context.
 
 This checklist builds on the **Telnet to Gameplay** and **Login and Session** slices by replacing the hard-coded `LOOK` behavior in Game Session with a fully data-driven implementation that pulls room descriptions, exits, and visible entities from the World, Entity, and Game Logic services. Each task is intentionally scoped so it can be handed to Codex (or a developer) as a single, self-contained chunk of work.
 

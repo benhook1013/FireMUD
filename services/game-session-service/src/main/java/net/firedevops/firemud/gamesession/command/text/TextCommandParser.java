@@ -21,6 +21,8 @@ public class TextCommandParser {
           case WORLDS ->
               new ParsedCommandData(List.of(), new TextCommandPayload.ViewRequest("WORLDS"));
           case LOOK -> new ParsedCommandData(List.of(), new TextCommandPayload.ViewRequest("LOOK"));
+          case QUICKLOOK ->
+              new ParsedCommandData(List.of(), new TextCommandPayload.ViewRequest("QUICKLOOK"));
           case NOOP -> new ParsedCommandData(List.of(), new TextCommandPayload.None());
           case LOGIN -> parseLogin(tokens);
           case PLAY -> parsePlay(tokens);
