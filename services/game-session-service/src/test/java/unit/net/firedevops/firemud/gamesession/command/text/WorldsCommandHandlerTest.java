@@ -13,7 +13,7 @@ class WorldsCommandHandlerTest {
   void describeReturnsBrowseMenu() {
     String response = handler.describe();
 
-    assertThat(response).contains("OK WORLDS");
+    assertThat(response).doesNotContain("OK WORLDS");
     assertThat(response).contains("Demo World");
     assertThat(response).contains("Builder Sandbox");
   }

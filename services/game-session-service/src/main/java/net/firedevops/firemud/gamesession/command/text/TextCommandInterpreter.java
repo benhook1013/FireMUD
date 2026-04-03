@@ -93,7 +93,7 @@ public class TextCommandInterpreter {
     }
     if (command.type() == TextCommandType.WORLDS) {
       return new TextCommandInterpretationResult(
-          CommandEnqueueResult.success(), worldsHandler.describe(), true);
+          CommandEnqueueResult.success(), List.of(PlayerOutput.notice(worldsHandler.describe())));
     }
     if (command.type() == TextCommandType.LOGIN) {
       LoginCommandHandlingResult loginResult =
@@ -118,7 +118,7 @@ public class TextCommandInterpreter {
       List<PlayerOutput> outputs =
           playResult.responseText() == null
               ? List.of()
-              : List.of(PlayerOutput.notice(playResult.responseText(), true));
+              : List.of(PlayerOutput.notice(playResult.responseText()));
       if (playResult.commandResult().accepted() && !playResult.reconnectRedrawRecommended()) {
         outputs = appendPrompt(sessionId, outputs);
       }

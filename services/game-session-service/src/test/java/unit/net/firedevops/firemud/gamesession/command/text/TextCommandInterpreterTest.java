@@ -172,8 +172,9 @@ class TextCommandInterpreterTest {
     TextCommandInterpretationResult interpretation = interpreter.interpret("123", "WORLDS", false);
 
     assertTrue(interpretation.commandResult().accepted());
-    assertTrue(interpretation.protocolResponse());
-    assertTrue(interpretation.responseText().contains("OK WORLDS"));
+    assertFalse(interpretation.protocolResponse());
+    assertTrue(interpretation.responseText().startsWith("1) Demo World"));
+    assertTrue(interpretation.responseText().contains("Demo World"));
     verify(commandService, never()).enqueue(anyString(), anyString(), anyBoolean());
   }
 
@@ -298,7 +299,7 @@ class TextCommandInterpreterTest {
 
     assertTrue(login.commandResult().accepted());
     assertTrue(play.commandResult().accepted());
-    assertEquals("OK PLAY Entered world: demo\ndemo> ", play.responseText());
+    assertEquals("Entered world: demo\ndemo> ", play.responseText());
     assertTrue(look.commandResult().accepted());
     assertEquals("OK LOOK constructed\ndemo> ", look.responseText());
     verify(commandService).enqueue("1", "LOGIN demo@example.com swordfish", false);

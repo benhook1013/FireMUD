@@ -163,4 +163,41 @@ class TextPlayerOutputRendererTest {
 
     assertThat(rendered).isEqualTo("OK LOOK\nNorth Hall text\n\ndemo> ");
   }
+
+  @Test
+  void renderAllFormatsSingleLineNoticeAsInlineCommandSuccess() {
+    TextPlayerOutputRenderer renderer =
+        new TextPlayerOutputRenderer(
+            new PresentationProperties(
+                PresentationProperties.ColorMode.NONE,
+                false,
+                new PresentationProperties.Prompt(true, true, 150L)));
+
+    String rendered =
+        renderer.renderAll(
+            new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"),
+            CommandEnqueueResult.success(),
+            List.of(PlayerOutput.notice("Entered world: demo"), PlayerOutput.prompt("demo> ")));
+
+    assertThat(rendered).isEqualTo("OK PLAY Entered world: demo\ndemo> ");
+  }
+
+  @Test
+  void renderAllFormatsMultilineNoticeAsCommandBody() {
+    TextPlayerOutputRenderer renderer =
+        new TextPlayerOutputRenderer(
+            new PresentationProperties(
+                PresentationProperties.ColorMode.NONE,
+                false,
+                new PresentationProperties.Prompt(false, true, 150L)));
+
+    String rendered =
+        renderer.renderAll(
+            new TextCommand(TextCommandType.WORLDS, List.of(), "WORLDS"),
+            CommandEnqueueResult.success(),
+            List.of(PlayerOutput.notice("1) Demo World (demo)\n2) Builder Sandbox (sandbox)")));
+
+    assertThat(rendered)
+        .isEqualTo("OK WORLDS\n1) Demo World (demo)\n2) Builder Sandbox (sandbox)\n\n");
+  }
 }

@@ -17,7 +17,7 @@ public final class GameplayWorldCatalog {
   }
 
   public String describeWorlds() {
-    StringBuilder builder = new StringBuilder("OK WORLDS\n");
+    StringBuilder builder = new StringBuilder();
     List<GameSessionProperties.WorldOption> worlds = properties.getWorlds();
     for (int i = 0; i < worlds.size(); i++) {
       GameSessionProperties.WorldOption world = worlds.get(i);

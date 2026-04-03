@@ -336,7 +336,7 @@ public class PlayCommandHandler {
 
   private String formatSuccessResponse(String world, String character) {
     String suffix = StringUtils.hasText(character) ? " as " + character : "";
-    return "OK PLAY Entered world: " + world + suffix;
+    return "Entered world: " + world + suffix;
   }
 
   private String normalizeName(String value) {

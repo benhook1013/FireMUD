@@ -20,6 +20,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Predicate;
 import javax.sql.DataSource;
 import net.firedevops.firemud.account.v1.AccountServiceGrpc;
 import net.firedevops.firemud.account.v1.AuthenticateRequest;
@@ -223,7 +224,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
       telnetLookResponse = readBlockAfterContains(reader, "OK LOOK");
     }
 
-    assertThat(telnetLookResponse.trim()).isEqualTo(LookTestFixtures.canonicalLookText().trim());
+    assertThat(telnetLookResponse.trim()).matches(matchesCanonicalLookWithOptionalPrompt());
 
     assertThat(ACCOUNT_STUB.capturedRequests())
         .anyMatch(
@@ -310,8 +311,10 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
 
     String destinationLook =
         LookTestFixtures.canonicalLookText(LookTestFixtures.DESTINATION_ROOM_ID);
-    assertThat(telnetMoveResponse.trim()).isEqualTo(destinationLook.trim());
-    assertThat(telnetLookResponse.trim()).isEqualTo(destinationLook.trim());
+    assertThat(telnetMoveResponse.trim())
+        .matches(matchesCanonicalLookWithOptionalPrompt(LookTestFixtures.DESTINATION_ROOM_ID));
+    assertThat(telnetLookResponse.trim())
+        .matches(matchesCanonicalLookWithOptionalPrompt(LookTestFixtures.DESTINATION_ROOM_ID));
     assertThat(telnetInvalidMoveResponse).contains("ERROR INVALID_EXIT");
   }
 
@@ -405,8 +408,10 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
 
     String destinationLook =
         LookTestFixtures.canonicalLookText(LookTestFixtures.DESTINATION_ROOM_ID);
-    assertThat(telnetMoveResponse.trim()).isEqualTo(destinationLook.trim());
-    assertThat(telnetReconnectLookResponse.trim()).isEqualTo(destinationLook.trim());
+    assertThat(telnetMoveResponse.trim())
+        .matches(matchesCanonicalLookWithOptionalPrompt(LookTestFixtures.DESTINATION_ROOM_ID));
+    assertThat(telnetReconnectLookResponse.trim())
+        .matches(matchesCanonicalLookWithOptionalPrompt(LookTestFixtures.DESTINATION_ROOM_ID));
   }
 
   @Test
@@ -465,10 +470,12 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
 
     String destinationLook =
         LookTestFixtures.canonicalLookText(LookTestFixtures.DESTINATION_ROOM_ID);
-    assertThat(telnetMoveResponse.trim()).isEqualTo(destinationLook.trim());
-    assertThat(telnetReplayResponse.trim()).isEqualTo(destinationLook.trim());
+    assertThat(telnetMoveResponse.trim())
+        .matches(matchesCanonicalLookWithOptionalPrompt(LookTestFixtures.DESTINATION_ROOM_ID));
+    assertThat(telnetReplayResponse.trim())
+        .matches(matchesCanonicalLookWithOptionalPrompt(LookTestFixtures.DESTINATION_ROOM_ID));
     assertThat(telnetReconnectLookResponse.trim())
-        .isEqualTo(LookTestFixtures.canonicalLookText().trim());
+        .matches(matchesCanonicalLookWithOptionalPrompt());
   }
 
   @Test
@@ -503,7 +510,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
           .contains("OK PLAY Entered world: demo");
       firstWriter.println("LOOK");
       assertThat(readBlockAfterContainsOrTimeout(firstReader, "OK LOOK").trim())
-          .isEqualTo(LookTestFixtures.canonicalLookText().trim());
+          .matches(matchesCanonicalLookWithOptionalPrompt());
 
       secondWriter.println("LOGIN demo@example.com swordfish");
       assertThat(readBlockAfterContains(secondReader, "Logged in as demo@example.com"))
@@ -513,7 +520,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
           .contains("OK PLAY Entered world: demo");
       secondWriter.println("LOOK");
       assertThat(readBlockAfterContainsOrTimeout(secondReader, "OK LOOK").trim())
-          .isEqualTo(LookTestFixtures.canonicalLookText().trim());
+          .matches(matchesCanonicalLookWithOptionalPrompt());
 
       firstWriter.println("LOOK");
       assertThat(readLineAfterContains(firstReader, "ERROR LOGIN_REQUIRED"))
@@ -979,6 +986,22 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     String actual = maybeBuffer.map(ScreenBufferService.BufferedScreen::protocolText).orElse("");
     throw new AssertionError(
         "Expected buffered screen to contain '" + expectedSubstring + "', got '" + actual + "'");
+  }
+
+  private static Predicate<String> matchesCanonicalLookWithOptionalPrompt() {
+    return matchesCanonicalLookWithOptionalPrompt(LookTestFixtures.ROOM_ID);
+  }
+
+  private static Predicate<String> matchesCanonicalLookWithOptionalPrompt(String roomId) {
+    String canonical = LookTestFixtures.canonicalLookText(roomId).trim();
+    String leadingPrompt = "demo> \n" + canonical;
+    String trailingPrompt = canonical + "\n\ndemo>";
+    String wrappedPrompt = "demo> \n" + trailingPrompt;
+    return response ->
+        response.equals(canonical)
+            || response.equals(leadingPrompt)
+            || response.equals(trailingPrompt)
+            || response.equals(wrappedPrompt);
   }
 
   private static final class AccountServiceStub extends AccountServiceGrpc.AccountServiceImplBase {

@@ -78,7 +78,7 @@ class PlayCommandHandlerTest {
         handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
 
     assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
-    assertThat(result.responseText()).isEqualTo("OK PLAY Entered world: demo");
+    assertThat(result.responseText()).isEqualTo("Entered world: demo");
     Mockito.verify(sessionContextService)
         .save(
             new SessionContext(
@@ -273,7 +273,7 @@ class PlayCommandHandlerTest {
         handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
 
     assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
-    assertThat(result.responseText()).isEqualTo("OK PLAY Entered world: demo");
+    assertThat(result.responseText()).isEqualTo("Entered world: demo");
     Mockito.verify(sessionContextService)
         .save(
             new SessionContext(

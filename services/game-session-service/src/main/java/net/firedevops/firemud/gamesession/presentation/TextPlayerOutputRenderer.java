@@ -61,8 +61,14 @@ public class TextPlayerOutputRenderer {
       return "OK " + command.type().name();
     }
     if (nonPromptOutputs.size() == 1 && nonPromptOutputs.get(0).protocolBlock()) {
-      String rendered = render(nonPromptOutputs.get(0));
-      return appendPrompt(rendered, prompt, false);
+      String rendered = renderProtocolBlock(command, nonPromptOutputs.get(0));
+      return appendPrompt(
+          rendered, prompt, !rendered.contains("\n") && StringUtils.hasText(prompt));
+    }
+    if (nonPromptOutputs.size() == 1 && nonPromptOutputs.get(0).kind() == PlayerOutputKind.NOTICE) {
+      String rendered = renderNoticeWithCommand(command, nonPromptOutputs.get(0));
+      return appendPrompt(
+          rendered, prompt, !rendered.contains("\n") && StringUtils.hasText(prompt));
     }
     String body =
         nonPromptOutputs.stream()
@@ -136,6 +142,24 @@ public class TextPlayerOutputRenderer {
 
   private String renderNotice(NoticeOutput output) {
     return colorizeNotice(output.text());
+  }
+
+  private String renderProtocolBlock(TextCommand command, PlayerOutput output) {
+    String body = render(output);
+    String commandLabel = command.type().name();
+    if (body.contains("\n")) {
+      return "OK " + commandLabel + "\n" + body + "\n\n";
+    }
+    return "OK " + commandLabel + " " + body;
+  }
+
+  private String renderNoticeWithCommand(TextCommand command, PlayerOutput output) {
+    String body = render(output);
+    String commandLabel = responseCommandLabel(command, java.util.List.of(output));
+    if (body.contains("\n")) {
+      return "OK " + commandLabel + "\n" + body + "\n\n";
+    }
+    return "OK " + commandLabel + " " + body;
   }
 
   private String renderError(ErrorOutput output) {
