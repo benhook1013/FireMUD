@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ $# -ne 7 ]]; then
-  echo "usage: $0 <template> <output> <pr_number> <namespace> <release_name> <hostname> <image_tag>" >&2
+if [[ $# -ne 8 ]]; then
+  echo "usage: $0 <template> <output> <pr_number> <namespace> <release_name> <hostname> <image_tag> <telnet_port>" >&2
   exit 1
 fi
 
@@ -13,8 +13,9 @@ NAMESPACE="$4"
 RELEASE_NAME="$5"
 HOSTNAME="$6"
 IMAGE_TAG="$7"
+TELNET_PORT="$8"
 
-python3 - "$TEMPLATE_PATH" "$OUTPUT_PATH" "$PR_NUMBER" "$NAMESPACE" "$RELEASE_NAME" "$HOSTNAME" "$IMAGE_TAG" <<'PY'
+python3 - "$TEMPLATE_PATH" "$OUTPUT_PATH" "$PR_NUMBER" "$NAMESPACE" "$RELEASE_NAME" "$HOSTNAME" "$IMAGE_TAG" "$TELNET_PORT" <<'PY'
 from pathlib import Path
 import sys
 
@@ -25,12 +26,14 @@ namespace = sys.argv[4]
 release_name = sys.argv[5]
 hostname = sys.argv[6]
 image_tag = sys.argv[7]
+telnet_port = sys.argv[8]
 
 text = template_path.read_text()
 text = text.replace("prNumber: 123", f"prNumber: {pr_number}")
 text = text.replace("namespace: pr-123", f"namespace: {namespace}")
 text = text.replace("releaseName: pr-123", f"releaseName: {release_name}")
 text = text.replace("hostname: pr-123.preview.firedevops.net", f"hostname: {hostname}")
+text = text.replace("telnetPort: 31123", f"telnetPort: {telnet_port}")
 text = text.replace("defaultImageTag: pr-123-deadbeef", f"defaultImageTag: {image_tag}")
 text = text.replace(
     "tlsSecretName: pr-123-preview-firedevops-net-tls",
@@ -40,5 +43,6 @@ text = text.replace(
     "GATEWAY_WS_URL: wss://pr-123.preview.firedevops.net/ws/game",
     f"GATEWAY_WS_URL: wss://{hostname}/ws/game",
 )
+text = text.replace("nodePort: 31123", f"nodePort: {telnet_port}")
 output_path.write_text(text)
 PY

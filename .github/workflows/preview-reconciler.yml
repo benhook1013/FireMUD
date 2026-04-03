@@ -52,7 +52,7 @@ jobs:
             fi
 
             namespace="pr-${pr_number}"
-            desired_image_tag="pr-${pr_number}-$(printf '%s' "$head_sha" | cut -c1-8)"
+            desired_image_tag="${head_sha}"
             current_head_sha="$(kubectl get namespace "${namespace}" -o jsonpath='{.metadata.annotations.firemud\.dev/last-preview-head-sha}' 2>/dev/null || true)"
 
             if [[ "${current_head_sha}" == "${head_sha}" ]]; then

@@ -162,7 +162,6 @@ public class PlayCommandHandler {
               null,
               null);
         }
-
         long gameInstanceId = selectedWorld.getGameInstanceId();
         long characterId = resolveCharacterId(context, selectedWorld, character);
         String characterName = resolveCharacterName(context, characterId, character);

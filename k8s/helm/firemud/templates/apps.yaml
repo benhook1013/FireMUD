@@ -128,6 +128,9 @@ spec:
       name: {{ $portName }}
       targetPort: {{ $port.targetPort }}
       protocol: TCP
+      {{- if $port.nodePort }}
+      nodePort: {{ $port.nodePort }}
+      {{- end }}
     {{- end }}
   type: {{ default "ClusterIP" $service.serviceType }}
 {{- end }}

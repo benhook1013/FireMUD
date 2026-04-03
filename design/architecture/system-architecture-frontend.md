@@ -1,6 +1,6 @@
 # FireMUD System Architecture: Frontend Architecture
 
-This document describes the structure and tooling for FireMUD's browser-based user interfaces. The `web-client` module houses the player-facing React application built with **Vite** and **TypeScript**. Compiled assets are served by the Spring Cloud Gateway so all frontends share a common entry point. Additional React modules for the admin tools and Game Design interface are available.
+This document describes the structure and tooling for FireMUD's browser-based user interfaces. The `web-client` module houses the player-facing React application built with **Vite** and **TypeScript**. FireMUD's target architecture is a dedicated first-party web application service that owns browser asset hosting and first-party web bootstrap concerns rather than treating Spring Cloud Gateway as the long-term home for frontend assets or product-specific browser logic. The first practical version of that service may be a terminal-style browser client before richer web UX is added. Additional React modules for the admin tools and Game Design interface are available.
 
 Other UIs include a role-based admin interface and a game design editor. See [Role-Based Admin UI](./microservices/logging-admin-service/admin-ui.md) and [Web-Based Visual Design Interface](./microservices/game-design-service/web-visual-interface.md).
 
@@ -43,7 +43,9 @@ Application state is handled by **Redux Toolkit**, with **RTK Query** used for d
 Frontend flows are split between **player gameplay sessions** and **admin/creator tools** so that gameplay auth remains simple while control-plane operations use JWTs:
 
 - **Player UI (gameplay)**  
+  - First-party browser clients are expected to be hosted by the dedicated first-party web application service, even when the first version is only a terminal-style browser client. Spring Cloud Gateway remains the public gameplay/API edge, but it should not become the long-term host for the player web application itself.  
   - First-party clients must first call the dedicated player-bootstrap endpoint (`POST /auth/player-bootstrap` or equivalent) with player credentials to establish short-lived account identity for gameplay bootstrap only, then use bootstrap-authenticated HTTP discovery endpoints to choose a caller-visible world/realm/character target, then obtain a short-lived connect token (`POST /auth/connect-token`) using the discovery-provided `connectScopeId` before opening `/ws/game/**`, then complete gameplay authentication by issuing `LOGIN` over the WebSocket channel using the already-verified bootstrap/connect context rather than replaying username/password/OTP from the browser, as described in [Authentication & Authorization](./system-architecture-authentication.md#login-and-session-flow).  
+  - Browser transport constraints matter: a browser WebSocket cannot set arbitrary custom handshake headers the way Telnet smart clients, Mudlet integrations, or server-side clients can. The first-party web flow therefore must use a browser-compatible gameplay handshake carrier such as query parameters, cookies, or another gateway-approved browser-safe mechanism rather than assuming custom WebSocket headers are available from JavaScript.  
   - The React client does not store or expose control-plane Browser JWTs for gameplay. It may hold only the short-lived, memory-only `player-bootstrap` token described in the authentication design and use it solely for gameplay bootstrap surfaces such as bootstrap discovery and `POST /auth/connect-token`.  
   - Explicit player logout must clear any in-memory `player-bootstrap` token immediately in addition to closing gameplay sockets and clearing reconnect state.
   - Canonical player logout order is: stop reconnect attempts, close the gameplay socket, clear remembered world/character selection plus reconnect metadata, clear the in-memory `player-bootstrap` token, and render the logged-out player state.
@@ -102,7 +104,7 @@ Authorization: Bearer <bootstrapToken>
 { connectScopeId: "cs_demo_production_v17", requestId: "req-reconnect-1" }
 -> { connectToken, expiresAt, tenantId: "tenant-demo", realmSlug: "production", gameInstanceId: "production" }
 
-GET /ws/game/** with X-Firemud-Connect-Token: <connectToken>
+GET /ws/game/** with browser-compatible connect token carriage
 
 LOGIN
 OK LOGIN Logged in
@@ -116,7 +118,7 @@ Authorization: Bearer <bootstrapToken>
 { connectScopeId: "cs_demo_production_v17", requestId: "req-reconnect-2" }
 -> { connectToken, expiresAt, tenantId: "tenant-demo", realmSlug: "production", gameInstanceId: "production" }
 
-GET /ws/game/** with X-Firemud-Connect-Token: <connectToken>
+GET /ws/game/** with browser-compatible connect token carriage
 
 LOGIN
 OK LOGIN Logged in
@@ -138,6 +140,19 @@ RTK Query automatically handles:
 - Background polling and refetching
 
 WebSocket interactions for real-time gameplay are handled by `src/websocket.ts`, which manages the connection lifecycle and message routing. Integration with RTK Query updates cached data in response to socket events.
+
+## Hosting Direction
+
+FireMUD has two different priorities in this area:
+
+- The first reviewer-usable preview proof path should be **TCP/Telnet first**, because that is the lowest-friction manual proof path for core MUD play and does not require browser-bootstrap work before hosted validation is possible.
+- The long-term first-party browser direction should still be a **dedicated first-party web application service**, not product-specific frontend/helper logic embedded permanently in Spring Cloud Gateway.
+
+This means the intended sequence is:
+
+1. Hosted preview deployment supports manual `LOGIN -> PLAY -> LOOK` proof over the TCP Proxy Service.
+2. A dedicated first-party web application service is introduced after that preview proof path is working.
+3. The first UI hosted by that service may simply be a terminal-style browser client, with richer first-party UI following later.
 
 ## Build Tooling
 
@@ -192,4 +207,4 @@ The React client uses **react-i18next** to load translation JSON files at runtim
 
 ---
 
-This architecture keeps the web client modular and maintainable while aligning with the backend microservices. Additional frontend services or features can follow the same patterns for consistency.
+This architecture keeps the web client modular and maintainable while aligning with the backend microservices. Additional frontend services or features should follow the same separation of concerns: browser assets and first-party web bootstrap belong in the dedicated web application service, while Spring Cloud Gateway remains the public API/gameplay edge.

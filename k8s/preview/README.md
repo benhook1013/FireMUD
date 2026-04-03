@@ -56,4 +56,10 @@ These manifests prepare the preview cluster itself. The repository now also cont
 - render preview manifests
 - validate those manifests against the live cluster API with server-side dry-run
 
-The final Helm apply remains intentionally gated while the application/database bootstrap contract and frontend delivery path are still under implementation.
+The next hosted preview milestone is:
+
+- real Helm apply into `pr-*` namespaces
+- real reviewer-accessible preview traffic
+- manual `LOGIN -> PLAY -> LOOK` proof over the TCP/Telnet path first
+
+The dedicated first-party browser client remains a later concern. If a temporary preview-only browser helper is used during bring-up, it should not be treated as the long-term frontend hosting architecture; that role belongs to a dedicated first-party web application service.

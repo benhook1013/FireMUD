@@ -36,6 +36,8 @@ This zero-indexed overview sits at the top of the design/project-management/vert
 31. **Communication Observers & Interceptors** - The baseline observer/interceptor slice is now live for structured metadata-only `whisper` observer resolution in `04.4-task-list-communication-observers-and-interceptors-vertical-slice.md`.
 32. **Communication Recipient Delivery** - Target-side and metadata-only observer-side communication delivery are now baseline live for generic WebSocket and Telnet in `04.5-task-list-communication-recipient-delivery-vertical-slice.md`; first-party/MCP-aware delivery remains future work.
 33. **Basic Multiplayer Load Proof** - Add the first bounded real multiplayer/load validation with roughly 10 concurrent players performing `LOGIN` -> `PLAY` -> `LOOK` against the real service stack, using generated test data where practical (planned in `05.1-task-list-basic-multiplayer-load-proof-vertical-slice.md`).
+34. **Hosted Preview Manual Proof** - Turn PR preview into a real reviewer-usable hosted environment and make manual `LOGIN -> PLAY -> LOOK` over TCP/Telnet the first hosted proof milestone (planned in `02.15-task-list-hosted-preview-manual-proof-vertical-slice.md`).
+35. **Dedicated First-Party Web App Service** - Introduce the dedicated long-term home for browser assets and first-party web bootstrap, starting with a terminal-style browser client if needed (planned in `02.16-task-list-dedicated-first-party-web-app-service-vertical-slice.md`).
 
 ---
 

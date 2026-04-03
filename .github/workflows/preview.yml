@@ -109,7 +109,7 @@ jobs:
             HEAD_SHA="${GITHUB_SHA}"
           fi
           if [ -z "$IMAGE_TAG" ]; then
-            IMAGE_TAG="pr-${PR_NUMBER}-${HEAD_SHA:0:8}"
+            IMAGE_TAG="${HEAD_SHA}"
           fi
           {
             echo "action=${ACTION}"
@@ -120,35 +120,6 @@ jobs:
             echo "image_tag=${IMAGE_TAG}"
             echo "head_sha=${HEAD_SHA}"
           } >> "$GITHUB_OUTPUT"
-
-      - name: Explain current state
-        run: |
-          cat <<'EOF'
-          Hosted PR preview deployments are partially wired.
-
-          The preview cluster, DNS, and TLS path exist.
-          Main CI still covers stack startup, smoke, and cross-service verification.
-          Preview orchestration now runs on GitHub-hosted CI and talks to the
-          Hetzner preview cluster remotely through a kubeconfig secret.
-          The workflow prepares the target namespace, required secrets,
-          and validates the preview manifests against the live cluster API.
-          The final Helm apply is still gated because the application/database bootstrap
-          and frontend delivery path are still under active implementation.
-
-          Target preview contract:
-          1. Build and push PR-tagged images to private GHCR.
-          2. Authenticate a hosted single-node k3s preview cluster to pull those images.
-          3. Deploy or upgrade Helm release pr-<PR_NUMBER> in namespace pr-<PR_NUMBER>.
-          4. Seed PostgreSQL, MinIO, and other stateful preview components once on first create.
-          5. Expose https://pr-<PR_NUMBER>.preview.<DOMAIN> through Traefik with TLS.
-          6. Preserve mutable preview state for the life of the PR.
-          7. Tear the namespace down when the PR closes or merges.
-
-          Initial capacity target:
-          - One full-stack preview should fit reliably on the preview node.
-          - A second concurrent preview is best-effort and may fail if capacity is exhausted.
-          - Capacity policy is enforced in CI via PREVIEW_MAX_ACTIVE (default 2).
-          EOF
 
       - name: Explain preview skip
         if: ${{ steps.eligibility.outputs.eligible != 'true' }}
@@ -176,7 +147,7 @@ jobs:
           preview_max_active=${PREVIEW_MAX_ACTIVE:-2}
           EOF
 
-  preview-deploy-disabled:
+  preview-deploy:
     name: Deploy Preview Release
     runs-on: ubuntu-latest
     needs: preview-plan
@@ -223,29 +194,27 @@ jobs:
         run: |
           bash ./dev-tools/preview/prune-stale-preview-namespaces.sh --apply
 
-      - name: Explain preview capacity gate
+      - name: Enforce preview capacity
         env:
           PREVIEW_MAX_ACTIVE: ${{ vars.PREVIEW_MAX_ACTIVE }}
         run: |
-          cat <<EOF
-          Preview capacity enforcement is currently skipped in hosted CI because
-          this workflow still stops before the final Helm apply step.
-
-          The current preview job only prepares namespaces/secrets and validates
-          manifests against the live cluster API; it does not yet create a full
-          deployed preview release that should consume the PREVIEW_MAX_ACTIVE
-          budget (${PREVIEW_MAX_ACTIVE:-2}).
-
-          Namespace pruning still runs above so stale PR namespaces are cleaned
-          up, but hard preview-capacity admission should return once the final
-          apply gate is removed and previews become real running environments.
-          EOF
+          bash ./dev-tools/preview/check-preview-capacity.sh \
+            "${{ needs.preview-plan.outputs.namespace }}" \
+            "${PREVIEW_MAX_ACTIVE:-2}"
 
       - name: Ensure preview namespace exists
         run: |
           bash ./dev-tools/preview/ensure-preview-namespace.sh \
             "${{ needs.preview-plan.outputs.namespace }}" \
             "${{ needs.preview-plan.outputs.pr_number }}"
+
+      - name: Allocate preview telnet port
+        id: telnet-port
+        run: |
+          TELNET_PORT="$(bash ./dev-tools/preview/allocate-preview-telnet-port.sh \
+            "${{ needs.preview-plan.outputs.namespace }}" \
+            "${{ needs.preview-plan.outputs.pr_number }}")"
+          echo "telnet_port=${TELNET_PORT}" >> "$GITHUB_OUTPUT"
 
       - name: Ensure GHCR pull secret exists
         env:
@@ -273,7 +242,8 @@ jobs:
             "${{ needs.preview-plan.outputs.namespace }}" \
             "${{ needs.preview-plan.outputs.release_name }}" \
             "${{ needs.preview-plan.outputs.hostname }}" \
-            "${{ needs.preview-plan.outputs.image_tag }}"
+            "${{ needs.preview-plan.outputs.image_tag }}" \
+            "${{ steps.telnet-port.outputs.telnet_port }}"
 
       - name: Validate preview chart render
         run: |
@@ -298,27 +268,62 @@ jobs:
             "${{ needs.preview-plan.outputs.namespace }}" \
             "${{ needs.preview-plan.outputs.pr_number }}" \
             "${{ needs.preview-plan.outputs.head_sha }}" \
-            "${{ needs.preview-plan.outputs.image_tag }}"
+            "${{ needs.preview-plan.outputs.image_tag }}" \
+            "${{ steps.telnet-port.outputs.telnet_port }}"
 
-      - name: Explain deployment gate
+      - name: Deploy preview release
         run: |
-          cat <<'EOF'
-          Preview deployment is intentionally blocked at the final apply step.
+          helm upgrade --install "${{ needs.preview-plan.outputs.release_name }}" k8s/helm/firemud \
+            -f /tmp/preview-values.yaml \
+            --namespace "${{ needs.preview-plan.outputs.namespace }}" \
+            --wait \
+            --timeout 15m
 
-          The workflow now proves:
-          - cluster credentials work
-          - the target namespace exists
-          - the GHCR pull secret exists
-          - the preview gRPC TLS secret exists
-          - cluster access is performed from GitHub-hosted CI over secret-backed kubeconfig
-          - preview values can be generated from CI inputs
-          - the current preview chart renders successfully
-          - the rendered manifests pass server-side Kubernetes validation on the preview cluster
+      - name: Show deployed preview services
+        run: |
+          kubectl -n "${{ needs.preview-plan.outputs.namespace }}" get pods,svc,ingress
 
-          The actual Helm apply remains gated until:
-          - the preview frontend/runtime delivery path is ready
-          - first-create data/bootstrap behavior moves beyond the current stub
-          EOF
+      - name: Create preview smoke account
+        env:
+          PREVIEW_NAMESPACE: ${{ needs.preview-plan.outputs.namespace }}
+          PREVIEW_EMAIL: demo@example.com
+          PREVIEW_PASSWORD: swordfish
+        run: |
+          kubectl -n "${PREVIEW_NAMESPACE}" port-forward svc/account-service 18081:8080 >/tmp/preview-account-port-forward.log 2>&1 &
+          PF_PID=$!
+          trap 'kill ${PF_PID} >/dev/null 2>&1 || true' EXIT
+          for _ in $(seq 1 30); do
+            if curl --silent --fail http://127.0.0.1:18081/actuator/health/readiness >/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          curl --silent --show-error \
+            --header 'Content-Type: application/json' \
+            --data "{\"username\":\"demo\",\"email\":\"${PREVIEW_EMAIL}\",\"password\":\"${PREVIEW_PASSWORD}\"}" \
+            http://127.0.0.1:18081/accounts >/tmp/preview-account-create.json \
+            || true
+          cat /tmp/preview-account-create.json || true
+
+      - name: Smoke hosted preview over TCP
+        env:
+          PREVIEW_BASE_URL: https://${{ needs.preview-plan.outputs.hostname }}
+          SMOKE_TELNET_HOST: ${{ needs.preview-plan.outputs.hostname }}
+          TCP_PORT: ${{ steps.telnet-port.outputs.telnet_port }}
+          SMOKE_USERNAME: demo@example.com
+          SMOKE_PASSWORD: swordfish
+        run: |
+          bash ./dev-tools/preview/preview-login-look-smoke.sh
+
+      - name: Summarize preview access
+        run: |
+          {
+            echo "## Preview Ready"
+            echo ""
+            echo "- Web: https://${{ needs.preview-plan.outputs.hostname }}"
+            echo "- TCP: telnet ${{ needs.preview-plan.outputs.hostname }} ${{ steps.telnet-port.outputs.telnet_port }}"
+            echo "- Demo login: demo@example.com / swordfish"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   preview-destroy:
     name: Destroy Preview Release

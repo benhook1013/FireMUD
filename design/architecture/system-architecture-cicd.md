@@ -219,10 +219,17 @@ FireMUD's preview workflow is reserved for real reviewer-accessible PR environme
 - Build and push PR-tagged container images to private GHCR.
 - Deploy or upgrade Helm release `pr-<PR_NUMBER>` into namespace `pr-<PR_NUMBER>`.
 - Expose the environment at `https://pr-<PR_NUMBER>.preview.<DOMAIN>` using cluster ingress/TLS.
+- Expose a reviewer-usable TCP/Telnet entry path for the preview stack so manual gameplay proof can happen through the normal MUD client surface.
 - Seed preview state once on first namespace creation and preserve mutable preview state for the lifetime of the PR.
 - Tear the preview down when the PR closes or merges.
 
 Main CI remains responsible for stack startup, smoke, and cross-service verification. Preview deployment is intentionally a separate concern focused on reviewer-accessible environments.
+
+Initial hosted preview proof target:
+
+- The first reviewer-usable proof milestone is not a rich browser UI.
+- The first milestone is manual `LOGIN -> PLAY -> LOOK` over the hosted TCP/Telnet path using a terminal client or Mudlet-style client.
+- Browser-first preview UX is a later step and should not block making the hosted preview environment real.
 
 ---
 
