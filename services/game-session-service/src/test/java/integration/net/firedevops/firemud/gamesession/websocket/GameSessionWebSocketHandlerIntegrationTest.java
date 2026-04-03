@@ -218,7 +218,9 @@ class GameSessionWebSocketHandlerIntegrationTest {
             any(net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason.class),
             any(
                 net.firedevops.firemud.gamesession.presentation.LookViewOutput.BriefRenderingHint
-                    .class)))
+                    .class),
+            any(),
+            any()))
         .thenReturn("Login Hall text");
     when(lookTextRenderer.toPlayerOutput(
             eq(lookResult),
@@ -251,7 +253,9 @@ class GameSessionWebSocketHandlerIntegrationTest {
             any(net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason.class),
             any(
                 net.firedevops.firemud.gamesession.presentation.LookViewOutput.BriefRenderingHint
-                    .class)))
+                    .class),
+            any(),
+            any()))
         .thenReturn("Quick Hall text");
     when(screenBufferService.get(
             org.mockito.ArgumentMatchers.anyLong(),
@@ -546,7 +550,9 @@ class GameSessionWebSocketHandlerIntegrationTest {
                     .MOVE_REFRESH),
             eq(
                 net.firedevops.firemud.gamesession.presentation.LookViewOutput.BriefRenderingHint
-                    .PREFER_BRIEF)))
+                    .PREFER_BRIEF),
+            any(),
+            any()))
         .thenReturn("North Hall text");
 
     StandardWebSocketClient client = new StandardWebSocketClient();

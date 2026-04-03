@@ -29,4 +29,16 @@ class GameLogicApplicationIntegrationTest {
     String body = HttpTestSupport.getBodyUnchecked("http://localhost:" + port + "/ping");
     assertThat(body).contains("pong");
   }
+
+  @Test
+  void effectiveCommunicationSettingsEndpointExposesCurrentDefaults() {
+    String body =
+        HttpTestSupport.getBodyUnchecked(
+            "http://localhost:" + port + "/actuator/settings/effective/communication");
+
+    assertThat(body).contains("\"maxMessageLength\":512");
+    assertThat(body).contains("\"whisperEnabled\":true");
+    assertThat(body).contains("\"whisperObserverMetadataEnabled\":true");
+    assertThat(body).contains("\"sources\":[\"operatorDefaults\"]");
+  }
 }

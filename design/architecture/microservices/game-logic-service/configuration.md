@@ -28,6 +28,8 @@ The communication settings domain is now generation-ready through typed configur
 
 These settings are currently file/env-backed operator configuration. The settings metadata lives alongside the code so generated reference docs can track the same canonical defaults.
 
+The current effective communication defaults are also exposed for operator/debug inspection at `/actuator/settings/effective/communication`. This is still a bounded operator-default read surface, not a DB-backed tenant/game settings authority.
+
 ## Dependent-Service Variables
 
 | Variable | Purpose | Default |

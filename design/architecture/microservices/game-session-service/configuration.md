@@ -80,6 +80,7 @@ The first surfaced platform settings domains in Game Session are now generation-
 - Service discovery for downstream gRPC calls uses `ServiceEndpointsProperties` and mTLS identities issued through cert-manager.
 - `firemud.presentation`, `firemud.reconnection`, `firemud.movement`, and `firemud.world-topology` are still file/env-backed operator defaults today; the later tenant/game override model remains part of the broader platform settings work in `02.9` through `02.12`.
 - Game Session now also supports a first bounded file/env-backed effective-settings resolver for already-live domains via `firemud.settings-overrides.*`. These overrides are still operator-supplied, not DB-backed tenant/game state, but they prove the merge path and remove some remaining hardcoded default-only behavior.
+- The current resolved result of that bounded read surface is available for operator/debug inspection at `/actuator/settings/effective`. With a persisted `sessionId` it resolves settings against the stored session scope; without one it can synthesize scope from query parameters such as `tenantId`, `gameInstanceId`, and `bootstrapGameInstanceId`.
 - `firemud.settings-overrides.*` currently applies in this precedence order inside Game Session:
 
 `firemud.presentation`, `firemud.movement`, and `firemud.world-topology` operator defaults; then tenant-scoped overrides under `firemud.settings-overrides.*-by-tenant`; then game-instance-scoped overrides under `firemud.settings-overrides.*-by-game-instance`.

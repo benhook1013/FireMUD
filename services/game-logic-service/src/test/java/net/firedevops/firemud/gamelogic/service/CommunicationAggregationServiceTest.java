@@ -11,6 +11,7 @@ import net.firedevops.firemud.entitymanagement.v1.EntityType;
 import net.firedevops.firemud.entitymanagement.v1.ListRoomEntitiesResponse;
 import net.firedevops.firemud.entitymanagement.v1.RoomEntity;
 import net.firedevops.firemud.gamelogic.config.CommunicationProperties;
+import net.firedevops.firemud.gamelogic.config.EffectiveCommunicationSettingsResolver;
 import net.firedevops.firemud.gamelogic.v1.CommunicationPerception;
 import net.firedevops.firemud.gamelogic.v1.CommunicationRecipientRole;
 import net.firedevops.firemud.gamelogic.v1.CommunicationType;
@@ -46,7 +47,10 @@ class CommunicationAggregationServiceTest {
     meterRegistry = new SimpleMeterRegistry();
     service =
         new CommunicationAggregationService(
-            socialStub, entityStub, new CommunicationProperties(512), meterRegistry);
+            socialStub,
+            entityStub,
+            new EffectiveCommunicationSettingsResolver(new CommunicationProperties(512)),
+            meterRegistry);
   }
 
   @Test
@@ -55,8 +59,9 @@ class CommunicationAggregationServiceTest {
         new CommunicationAggregationService(
             socialStub,
             entityStub,
-            new CommunicationProperties(
-                512, new CommunicationProperties.Defaults(false, true, true, true)),
+            new EffectiveCommunicationSettingsResolver(
+                new CommunicationProperties(
+                    512, new CommunicationProperties.Defaults(false, true, true, true))),
             meterRegistry);
 
     SendCommunicationResponse resp =
@@ -242,8 +247,9 @@ class CommunicationAggregationServiceTest {
         new CommunicationAggregationService(
             socialStub,
             entityStub,
-            new CommunicationProperties(
-                512, new CommunicationProperties.Defaults(true, true, true, false)),
+            new EffectiveCommunicationSettingsResolver(
+                new CommunicationProperties(
+                    512, new CommunicationProperties.Defaults(true, true, true, false))),
             meterRegistry);
     ListRoomEntitiesResponse roomEntities =
         ListRoomEntitiesResponse.newBuilder()

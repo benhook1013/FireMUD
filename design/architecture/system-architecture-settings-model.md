@@ -12,7 +12,10 @@ This document defines the canonical FireMUD settings model for operator/bootstra
   - `firemud.world-topology`
 - Game Session and Game Logic now publish generation-ready configuration metadata and service-level configuration reference docs for the surfaced domains above.
 - The canonical layered ownership model is agreed and documented here.
-- Game Session now also has a first bounded effective-settings resolver for `presentation`, `movement`, and `worldTopology`, merging operator defaults with scoped file/env overrides.
+- Game Session now also has the first bounded effective-settings read surface for `presentation`, `movement`, and `worldTopology`, merging operator defaults with scoped file/env overrides.
+- Game Session now exposes that bounded read surface at `/actuator/settings/effective`, including the current `reconnection` defaults alongside the resolved Game Session-owned domains for operator/debug inspection.
+- Game Logic now exposes the current effective `communication` defaults at `/actuator/settings/effective/communication`.
+- `communication` and `reconnection` still resolve directly from their typed property classes rather than a shared cross-service settings authority.
 - The full DB-backed tenant/game override persistence layer and shared cross-service settings authority are still future work.
 
 ## Canonical Decisions
@@ -155,8 +158,10 @@ This does not need to become a full distributed config platform. A bounded autho
 Until the shared settings authority exists:
 
 - surfaced file/env-backed settings in Game Session and Game Logic are the operator-default layer;
-- Game Session may merge bounded scoped file/env overrides for already-live gameplay-facing domains where that merge logic is explicitly implemented and documented;
+- Game Session may merge bounded scoped file/env overrides for the first live gameplay-facing domains already inside the bounded read surface, namely `presentation`, `movement`, and `worldTopology`;
+- Game Session exposes the resolved result of that bounded read surface through `/actuator/settings/effective`, while Game Logic exposes current `communication` defaults through `/actuator/settings/effective/communication`;
+- `communication` and `reconnection` remain direct property-driven operator-default config for now;
 - service docs and metadata should stay honest about what is operator-default today versus what is planned as tenant/game-configurable later;
 - new gameplay slices should attach their first settings seams to this model rather than adding fresh hardcoded constants and documenting them after the fact;
-- runtime services should use the documented effective-settings resolver where one already exists, rather than inventing overlapping merge layers;
+- runtime services should use the documented effective-settings read surface where one already exists, rather than inventing overlapping merge layers;
 - slice docs should record the intended future tenant/cap story for each surfaced domain even when the live implementation is still operator-only.

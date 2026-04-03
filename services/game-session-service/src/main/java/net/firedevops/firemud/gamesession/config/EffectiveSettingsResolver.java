@@ -1,5 +1,7 @@
 package net.firedevops.firemud.gamesession.config;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Objects;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import org.springframework.stereotype.Component;
@@ -28,34 +30,84 @@ public class EffectiveSettingsResolver {
   }
 
   public PresentationProperties presentation(SessionContext context) {
+    return resolvedPresentation(context).effective();
+  }
+
+  public ResolvedValue<PresentationProperties> resolvedPresentation(SessionContext context) {
     PresentationProperties effective = presentationDefaults;
-    effective =
-        merge(effective, lookup(overrides.presentationByTenant(), resolveTenantKey(context)));
-    effective =
-        merge(
-            effective,
-            lookup(overrides.presentationByGameInstance(), resolveGameInstanceKey(context)));
-    return effective;
+    List<String> sources = new ArrayList<>();
+    sources.add("operatorDefaults");
+    String tenantKey = resolveTenantKey(context);
+    GameSessionSettingsOverridesProperties.PresentationOverride tenantOverride =
+        lookup(overrides.presentationByTenant(), tenantKey);
+    if (tenantOverride != null) {
+      effective = merge(effective, tenantOverride);
+      sources.add("tenantOverride:" + tenantKey);
+    }
+    String gameInstanceKey = resolveGameInstanceKey(context);
+    GameSessionSettingsOverridesProperties.PresentationOverride gameInstanceOverride =
+        lookup(overrides.presentationByGameInstance(), gameInstanceKey);
+    if (gameInstanceOverride != null) {
+      effective = merge(effective, gameInstanceOverride);
+      sources.add("gameInstanceOverride:" + gameInstanceKey);
+    }
+    return new ResolvedValue<>(effective, List.copyOf(sources));
   }
 
   public MovementProperties movement(SessionContext context) {
+    return resolvedMovement(context).effective();
+  }
+
+  public ResolvedValue<MovementProperties> resolvedMovement(SessionContext context) {
     MovementProperties effective = movementDefaults;
-    effective = merge(effective, lookup(overrides.movementByTenant(), resolveTenantKey(context)));
-    effective =
-        merge(
-            effective, lookup(overrides.movementByGameInstance(), resolveGameInstanceKey(context)));
-    return effective;
+    List<String> sources = new ArrayList<>();
+    sources.add("operatorDefaults");
+    String tenantKey = resolveTenantKey(context);
+    GameSessionSettingsOverridesProperties.MovementOverride tenantOverride =
+        lookup(overrides.movementByTenant(), tenantKey);
+    if (tenantOverride != null) {
+      effective = merge(effective, tenantOverride);
+      sources.add("tenantOverride:" + tenantKey);
+    }
+    String gameInstanceKey = resolveGameInstanceKey(context);
+    GameSessionSettingsOverridesProperties.MovementOverride gameInstanceOverride =
+        lookup(overrides.movementByGameInstance(), gameInstanceKey);
+    if (gameInstanceOverride != null) {
+      effective = merge(effective, gameInstanceOverride);
+      sources.add("gameInstanceOverride:" + gameInstanceKey);
+    }
+    return new ResolvedValue<>(effective, List.copyOf(sources));
   }
 
   public WorldTopologyProperties worldTopology(SessionContext context) {
+    return resolvedWorldTopology(context).effective();
+  }
+
+  public ResolvedValue<WorldTopologyProperties> resolvedWorldTopology(SessionContext context) {
     WorldTopologyProperties effective = worldTopologyDefaults;
-    effective =
-        merge(effective, lookup(overrides.worldTopologyByTenant(), resolveTenantKey(context)));
-    effective =
-        merge(
-            effective,
-            lookup(overrides.worldTopologyByGameInstance(), resolveGameInstanceKey(context)));
-    return effective;
+    List<String> sources = new ArrayList<>();
+    sources.add("operatorDefaults");
+    String tenantKey = resolveTenantKey(context);
+    GameSessionSettingsOverridesProperties.WorldTopologyOverride tenantOverride =
+        lookup(overrides.worldTopologyByTenant(), tenantKey);
+    if (tenantOverride != null) {
+      effective = merge(effective, tenantOverride);
+      sources.add("tenantOverride:" + tenantKey);
+    }
+    String gameInstanceKey = resolveGameInstanceKey(context);
+    GameSessionSettingsOverridesProperties.WorldTopologyOverride gameInstanceOverride =
+        lookup(overrides.worldTopologyByGameInstance(), gameInstanceKey);
+    if (gameInstanceOverride != null) {
+      effective = merge(effective, gameInstanceOverride);
+      sources.add("gameInstanceOverride:" + gameInstanceKey);
+    }
+    return new ResolvedValue<>(effective, List.copyOf(sources));
+  }
+
+  public record ResolvedValue<T>(T effective, List<String> sources) {
+    public ResolvedValue {
+      sources = sources == null ? List.of() : List.copyOf(sources);
+    }
   }
 
   private static <T> T lookup(java.util.Map<String, T> source, String key) {

@@ -20,8 +20,13 @@ import net.firedevops.firemud.gamelogic.v1.LookResult;
 import net.firedevops.firemud.gamesession.client.AccountClient;
 import net.firedevops.firemud.gamesession.client.GameLogicClient;
 import net.firedevops.firemud.gamesession.config.DevIsolatedProperties;
+import net.firedevops.firemud.gamesession.config.EffectiveSettingsResolver;
 import net.firedevops.firemud.gamesession.config.GameLogicProperties;
 import net.firedevops.firemud.gamesession.config.GameSessionProperties;
+import net.firedevops.firemud.gamesession.config.GameSessionSettingsOverridesProperties;
+import net.firedevops.firemud.gamesession.config.MovementProperties;
+import net.firedevops.firemud.gamesession.config.PresentationProperties;
+import net.firedevops.firemud.gamesession.config.WorldTopologyProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.presentation.LookViewOutput;
@@ -135,6 +140,11 @@ class SessionResumptionFlowTest {
             lookTextRenderer,
             sessionAuthenticationService,
             gameLogicProperties,
+            new EffectiveSettingsResolver(
+                new PresentationProperties(),
+                new MovementProperties(),
+                new WorldTopologyProperties(),
+                new GameSessionSettingsOverridesProperties(null, null, null, null, null, null)),
             meterRegistry,
             lookCacheService,
             devIsolatedProperties);
@@ -159,7 +169,9 @@ class SessionResumptionFlowTest {
                 net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason.class),
             Mockito.any(
                 net.firedevops.firemud.gamesession.presentation.LookViewOutput.BriefRenderingHint
-                    .class)))
+                    .class),
+            Mockito.any(),
+            Mockito.any()))
         .thenReturn("OK LOOK text");
     when(lookTextRenderer.toPlayerOutput(
             Mockito.eq(lookResult),

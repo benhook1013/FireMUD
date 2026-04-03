@@ -11,6 +11,7 @@ import net.firedevops.firemud.command.text.LookCommandConstants;
 import net.firedevops.firemud.gamelogic.v1.LookResult;
 import net.firedevops.firemud.gamesession.client.GameLogicClient;
 import net.firedevops.firemud.gamesession.config.DevIsolatedProperties;
+import net.firedevops.firemud.gamesession.config.EffectiveSettingsResolver;
 import net.firedevops.firemud.gamesession.config.GameLogicProperties;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
@@ -34,6 +35,7 @@ public final class LookCommandHandler {
   private final LookTextRenderer lookTextRenderer;
   private final SessionAuthenticationService sessionAuthenticationService;
   private final GameLogicProperties gameLogicProperties;
+  private final EffectiveSettingsResolver settingsResolver;
   private final MeterRegistry meterRegistry;
   private final LookCacheService lookCacheService;
   private final DevIsolatedProperties devIsolatedProperties;
@@ -76,7 +78,14 @@ public final class LookCommandHandler {
       try {
         LookResult lookResult = resolveLook(context);
         String rendered =
-            lookTextRenderer.render(lookResult, includeLongDescription, refreshReason);
+            lookTextRenderer.render(
+                lookResult,
+                includeLongDescription,
+                refreshReason,
+                net.firedevops.firemud.gamesession.presentation.LookViewOutput
+                    .defaultBriefRenderingHint(refreshReason, includeLongDescription),
+                context.localeTag(),
+                settingsResolver.presentation(context));
         if (!devIsolatedProperties.isDevIsolated()) {
           cacheLook(context, lookResult, rendered);
         }
@@ -186,7 +195,19 @@ public final class LookCommandHandler {
   }
 
   String renderProtocol(SessionContext context, LookResult lookResult) {
-    String rendered = lookTextRenderer.render(lookResult);
+    String rendered =
+        lookTextRenderer.render(
+            lookResult,
+            true,
+            net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
+                .EXPLICIT_LOOK,
+            net.firedevops.firemud.gamesession.presentation.LookViewOutput
+                .defaultBriefRenderingHint(
+                    net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
+                        .EXPLICIT_LOOK,
+                    true),
+            context.localeTag(),
+            settingsResolver.presentation(context));
     if (!devIsolatedProperties.isDevIsolated()) {
       cacheLook(context, lookResult, rendered);
     }
@@ -239,11 +260,17 @@ public final class LookCommandHandler {
         lookTextRenderer.toPlayerOutput(
             lookResult, includeLongDescription, refreshReason, briefRenderingHint);
     if (!devIsolatedProperties.isDevIsolated()) {
+      String localeTag = StringUtils.hasText(context.localeTag()) ? context.localeTag() : null;
       cacheLook(
           context,
           lookResult,
           lookTextRenderer.render(
-              lookResult, includeLongDescription, refreshReason, briefRenderingHint));
+              lookResult,
+              includeLongDescription,
+              refreshReason,
+              briefRenderingHint,
+              localeTag,
+              settingsResolver.presentation(context)));
     }
     return output;
   }

@@ -15,6 +15,7 @@ import net.firedevops.firemud.entitymanagement.v1.ListRoomEntitiesRequest;
 import net.firedevops.firemud.entitymanagement.v1.ListRoomEntitiesResponse;
 import net.firedevops.firemud.entitymanagement.v1.RoomEntity;
 import net.firedevops.firemud.gamelogic.config.CommunicationProperties;
+import net.firedevops.firemud.gamelogic.config.EffectiveCommunicationSettingsResolver;
 import net.firedevops.firemud.gamelogic.v1.CommunicationPerception;
 import net.firedevops.firemud.gamelogic.v1.CommunicationRecipientRole;
 import net.firedevops.firemud.gamelogic.v1.CommunicationRecipientView;
@@ -40,10 +41,11 @@ public class CommunicationAggregationService {
 
   private final SocialGroupsServiceGrpc.SocialGroupsServiceBlockingStub socialStub;
   private final EntityManagementServiceGrpc.EntityManagementServiceBlockingStub entityStub;
-  private final CommunicationProperties communicationProperties;
+  private final EffectiveCommunicationSettingsResolver settingsResolver;
   private final MeterRegistry meterRegistry;
 
   public SendCommunicationResponse send(SendCommunicationRequest request) {
+    CommunicationProperties communicationProperties = settingsResolver.communication();
     String normalizedText = normalizeText(request.getText());
     SendCommunicationResponse.Builder builder =
         SendCommunicationResponse.newBuilder()
@@ -211,7 +213,11 @@ public class CommunicationAggregationService {
             targetView));
     recipientViews.addAll(
         resolveMetadataOnlyWhisperObservers(
-            request.getCharacterId(), targetEntity.getEntityId(), roomEntities, observerView));
+            request.getCharacterId(),
+            targetEntity.getEntityId(),
+            roomEntities,
+            observerView,
+            settingsResolver.communication()));
     return new CommunicationAudience(
         List.of(speakerName, resolvedTargetName),
         List.of(),
@@ -259,7 +265,8 @@ public class CommunicationAggregationService {
       String speakerId,
       String targetId,
       ListRoomEntitiesResponse roomEntities,
-      String renderedText) {
+      String renderedText,
+      CommunicationProperties communicationProperties) {
     if (!communicationProperties.defaults().whisperObserverMetadataEnabled()) {
       return List.of();
     }

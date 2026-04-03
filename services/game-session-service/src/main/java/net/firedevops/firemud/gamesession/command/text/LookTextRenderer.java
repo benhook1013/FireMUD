@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamesession.command.text;
 
 import net.firedevops.firemud.gamelogic.v1.LookResult;
+import net.firedevops.firemud.gamesession.config.PresentationProperties;
 import net.firedevops.firemud.gamesession.presentation.LookViewOutput;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.presentation.TextPlayerOutputRenderer;
@@ -78,7 +79,24 @@ public class LookTextRenderer {
       boolean includeLongDescription,
       LookViewOutput.RefreshReason refreshReason,
       LookViewOutput.BriefRenderingHint briefRenderingHint) {
+    return render(result, includeLongDescription, refreshReason, briefRenderingHint, null, null);
+  }
+
+  public String render(
+      LookResult result,
+      boolean includeLongDescription,
+      LookViewOutput.RefreshReason refreshReason,
+      LookViewOutput.BriefRenderingHint briefRenderingHint,
+      String localeTag,
+      PresentationProperties effectivePresentationProperties) {
+    if (effectivePresentationProperties == null) {
+      return renderer.render(
+          toPlayerOutput(result, includeLongDescription, refreshReason, briefRenderingHint),
+          localeTag);
+    }
     return renderer.render(
-        toPlayerOutput(result, includeLongDescription, refreshReason, briefRenderingHint));
+        toPlayerOutput(result, includeLongDescription, refreshReason, briefRenderingHint),
+        localeTag,
+        effectivePresentationProperties);
   }
 }

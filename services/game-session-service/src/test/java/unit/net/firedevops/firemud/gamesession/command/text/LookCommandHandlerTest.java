@@ -17,7 +17,12 @@ import net.firedevops.firemud.command.text.LookCommandConstants;
 import net.firedevops.firemud.gamelogic.v1.LookResult;
 import net.firedevops.firemud.gamesession.client.GameLogicClient;
 import net.firedevops.firemud.gamesession.config.DevIsolatedProperties;
+import net.firedevops.firemud.gamesession.config.EffectiveSettingsResolver;
 import net.firedevops.firemud.gamesession.config.GameLogicProperties;
+import net.firedevops.firemud.gamesession.config.GameSessionSettingsOverridesProperties;
+import net.firedevops.firemud.gamesession.config.MovementProperties;
+import net.firedevops.firemud.gamesession.config.PresentationProperties;
+import net.firedevops.firemud.gamesession.config.WorldTopologyProperties;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
@@ -35,12 +40,14 @@ class LookCommandHandlerTest {
   private final GameLogicProperties gameLogicProperties = new GameLogicProperties();
   private final DevIsolatedProperties devIsolatedProperties = new DevIsolatedProperties(false);
   private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+  private final EffectiveSettingsResolver settingsResolver = defaultSettingsResolver();
   private final LookCommandHandler handler =
       new LookCommandHandler(
           gameLogicClient,
           lookTextRenderer,
           sessionAuthenticationService,
           gameLogicProperties,
+          settingsResolver,
           meterRegistry,
           lookCacheService,
           devIsolatedProperties);
@@ -72,7 +79,9 @@ class LookCommandHandlerTest {
             any(net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason.class),
             any(
                 net.firedevops.firemud.gamesession.presentation.LookViewOutput.BriefRenderingHint
-                    .class)))
+                    .class),
+            any(),
+            any()))
         .thenReturn("OK LOOK text");
     when(lookTextRenderer.render(
             eq(lookResult),
@@ -87,7 +96,9 @@ class LookCommandHandlerTest {
             any(net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason.class),
             any(
                 net.firedevops.firemud.gamesession.presentation.LookViewOutput.BriefRenderingHint
-                    .class)))
+                    .class),
+            any(),
+            any()))
         .thenReturn("OK QUICKLOOK text");
     when(lookTextRenderer.toPlayerOutput(
             eq(lookResult),
@@ -187,7 +198,14 @@ class LookCommandHandlerTest {
             lookResult,
             true,
             net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
-                .EXPLICIT_LOOK))
+                .EXPLICIT_LOOK,
+            net.firedevops.firemud.gamesession.presentation.LookViewOutput
+                .defaultBriefRenderingHint(
+                    net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
+                        .EXPLICIT_LOOK,
+                    true),
+            sessionContext.localeTag(),
+            settingsResolver.presentation(sessionContext)))
         .thenReturn("fresh text");
     assertEquals("fresh text", handler.describe("123"));
     verify(gameLogicClient).resolveLook("22", "1", "911", "room-42", "");
@@ -201,11 +219,20 @@ class LookCommandHandlerTest {
             lookTextRenderer,
             sessionAuthenticationService,
             gameLogicProperties,
+            settingsResolver,
             new SimpleMeterRegistry(),
             lookCacheService,
             new DevIsolatedProperties(true));
     String response = devHandler.describe("123");
     assertEquals(LookCommandConstants.ROOM_DESCRIPTION, response);
     Mockito.verifyNoInteractions(gameLogicClient, lookCacheService);
+  }
+
+  private static EffectiveSettingsResolver defaultSettingsResolver() {
+    return new EffectiveSettingsResolver(
+        new PresentationProperties(),
+        new MovementProperties(),
+        new WorldTopologyProperties(),
+        new GameSessionSettingsOverridesProperties(null, null, null, null, null, null));
   }
 }
