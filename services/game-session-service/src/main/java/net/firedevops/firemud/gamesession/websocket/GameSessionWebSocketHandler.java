@@ -49,6 +49,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
   private final FirstPartyConnectContextRegistry firstPartyConnectContextRegistry;
   private final ScreenBufferService screenBufferService;
   private final TextPlayerOutputRenderer outputRenderer;
+  private final WebSocketOutputProjector outputProjector;
   private final PromptBurstCoordinator promptBurstCoordinator;
   private final PromptComposer promptComposer;
   private final EffectiveSettingsResolver settingsResolver;
@@ -65,6 +66,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       FirstPartyConnectContextRegistry firstPartyConnectContextRegistry,
       ScreenBufferService screenBufferService,
       TextPlayerOutputRenderer outputRenderer,
+      WebSocketOutputProjector outputProjector,
       PromptBurstCoordinator promptBurstCoordinator,
       PromptComposer promptComposer,
       EffectiveSettingsResolver settingsResolver,
@@ -77,6 +79,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     this.firstPartyConnectContextRegistry = firstPartyConnectContextRegistry;
     this.screenBufferService = screenBufferService;
     this.outputRenderer = outputRenderer;
+    this.outputProjector = outputProjector;
     this.promptBurstCoordinator = promptBurstCoordinator;
     this.promptComposer = promptComposer;
     this.settingsResolver = settingsResolver;
@@ -204,9 +207,10 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       WebSocketSession session,
       java.util.List<PlayerOutput> outputs,
       PresentationProperties effectivePresentation) {
-    return outputRenderer.renderAll(
+    return outputProjector.projectCommandResponse(
+        session,
         command,
-        interpretation.commandResult(),
+        interpretation,
         outputs,
         resolveLocaleTag(session, resolveTransportSessionId(session)),
         effectivePresentation);

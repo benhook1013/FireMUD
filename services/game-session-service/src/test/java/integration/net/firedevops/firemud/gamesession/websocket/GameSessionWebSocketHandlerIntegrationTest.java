@@ -6,6 +6,8 @@ import static org.mockito.Mockito.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
 import java.net.URI;
 import java.util.List;
@@ -72,6 +74,8 @@ import org.springframework.web.socket.handler.TextWebSocketHandler;
 @ActiveProfiles("test")
 @Import({NoGrpcServerTestConfiguration.class, InMemorySessionContextTestConfiguration.class})
 class GameSessionWebSocketHandlerIntegrationTest {
+
+  private static final ObjectMapper JSON = new ObjectMapper();
 
   @DynamicPropertySource
   static void registerProperties(DynamicPropertyRegistry registry) {
@@ -309,7 +313,8 @@ class GameSessionWebSocketHandlerIntegrationTest {
         .anyMatch(
             payload ->
                 payload.startsWith("OK LOOK")
-                    && payload.contains("Login Hall text")
+                    && payload.contains("Room: Login Hall")
+                    && payload.contains("Long: A narrow testing hall used for login verification.")
                     && payload.endsWith("> "));
     assertThat(sessionContextService.findByTenantAndSessionId(22L, 41L))
         .hasValueSatisfying(
@@ -324,7 +329,22 @@ class GameSessionWebSocketHandlerIntegrationTest {
     verify(gameLogicClient).resolveLook("22", "41", "123", "1021", "");
     verify(lookCacheService)
         .cache(
-            eq(22L), eq(1L), eq("1021"), eq("Login Hall text"), eq("OK LOOK\nLogin Hall text\n\n"));
+            eq(22L),
+            eq(1L),
+            eq("1021"),
+            eq(
+                "Room: Login Hall (ID: 1021)\n"
+                    + "Short: A narrow testing hall\n"
+                    + "Long: A narrow testing hall used for login verification.\n"
+                    + "Exits: \n"
+                    + "Entities:"),
+            eq(
+                "OK LOOK\n"
+                    + "Room: Login Hall (ID: 1021)\n"
+                    + "Short: A narrow testing hall\n"
+                    + "Long: A narrow testing hall used for login verification.\n"
+                    + "Exits: \n"
+                    + "Entities:\n\n"));
   }
 
   @Test
@@ -403,7 +423,8 @@ class GameSessionWebSocketHandlerIntegrationTest {
             payload ->
                 payload.startsWith("OK QUICKLOOK")
                     && payload.endsWith("> ")
-                    && payload.contains("Quick Hall text"));
+                    && payload.contains("Room: Login Hall")
+                    && !payload.contains("Long:"));
   }
 
   @Test
@@ -576,7 +597,12 @@ class GameSessionWebSocketHandlerIntegrationTest {
     verify(gameLogicClient).resolveMove("22", "42", "123", "1021", "north", "");
     verify(lookCacheService)
         .cache(
-            eq(22L), eq(1L), eq("2045"), eq("North Hall text"), eq("OK LOOK\nNorth Hall text\n\n"));
+            eq(22L),
+            eq(1L),
+            eq("2045"),
+            eq("Room: North Hall (ID: 2045)\nShort: A northern hall\nExits: \nEntities:"),
+            eq(
+                "OK LOOK\nRoom: North Hall (ID: 2045)\nShort: A northern hall\nExits: \nEntities:\n\n"));
   }
 
   @Test
@@ -612,7 +638,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
               @Override
               protected void handleTextMessage(WebSocketSession session, TextMessage message) {
                 payloads.add(message.getPayload());
-                if (message.getPayload().startsWith("OK LOGIN")) {
+                if (json(message.getPayload()).path("commandType").asText().equals("LOGIN")) {
                   loginAck.countDown();
                 }
                 latch.countDown();
@@ -627,8 +653,17 @@ class GameSessionWebSocketHandlerIntegrationTest {
     assertThat(latch.await(5, TimeUnit.SECONDS)).isTrue();
     session.close();
 
-    assertThat(payloads.get(0)).startsWith("OK LOGIN");
-    assertThat(payloads).anyMatch(payload -> payload.startsWith("OK PLAY"));
+    assertThat(json(payloads.get(0)).path("commandType").asText()).isEqualTo("LOGIN");
+    assertThat(json(payloads.get(0)).path("accepted").asBoolean()).isTrue();
+    assertThat(payloads)
+        .anyMatch(
+            payload ->
+                json(payload).path("commandType").asText().equals("PLAY")
+                    && json(payload).path("accepted").asBoolean());
+    assertThat(payloads)
+        .anyMatch(
+            payload ->
+                json(payload).path("outputs").isArray() && containsKind(json(payload), "PROMPT"));
     verify(accountClient)
         .getTenantMembershipForRuntime(
             eq("123"), eq("22"), org.mockito.ArgumentMatchers.anyString());
@@ -675,7 +710,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
               @Override
               protected void handleTextMessage(WebSocketSession session, TextMessage message) {
                 payloads.add(message.getPayload());
-                if (message.getPayload().startsWith("OK LOGIN")) {
+                if (isStructuredCommand(message.getPayload(), "LOGIN")) {
                   loginAck.countDown();
                 }
                 latch.countDown();
@@ -690,8 +725,8 @@ class GameSessionWebSocketHandlerIntegrationTest {
     assertThat(latch.await(5, TimeUnit.SECONDS)).isTrue();
     session.close();
 
-    assertThat(payloads.get(0)).startsWith("OK LOGIN");
-    assertThat(payloads).anyMatch(payload -> payload.startsWith("OK PLAY"));
+    assertThat(isStructuredCommand(payloads.get(0), "LOGIN")).isTrue();
+    assertThat(payloads).anyMatch(payload -> isStructuredCommand(payload, "PLAY"));
     assertThat(payloads).anyMatch(payload -> payload.contains("Recent combat line"));
     assertThat(payloads).anyMatch(payload -> payload.startsWith("OK LOOK"));
   }
@@ -761,7 +796,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
               @Override
               protected void handleTextMessage(WebSocketSession session, TextMessage message) {
                 payloads.add(message.getPayload());
-                if (message.getPayload().startsWith("OK LOGIN")) {
+                if (isStructuredCommand(message.getPayload(), "LOGIN")) {
                   loginAck.countDown();
                 }
                 latch.countDown();
@@ -776,7 +811,39 @@ class GameSessionWebSocketHandlerIntegrationTest {
     assertThat(latch.await(5, TimeUnit.SECONDS)).isTrue();
     session.close();
 
-    assertThat(payloads.get(0)).startsWith("OK LOGIN");
-    assertThat(payloads.get(1)).startsWith("ERROR CONNECT_SCOPE_MISMATCH");
+    assertThat(isStructuredCommand(payloads.get(0), "LOGIN")).isTrue();
+    JsonNode playFailure = json(payloads.get(1));
+    assertThat(playFailure.path("eventType").asText()).isEqualTo("command_result");
+    assertThat(playFailure.path("commandType").asText()).isEqualTo("PLAY");
+    assertThat(playFailure.path("accepted").asBoolean()).isFalse();
+    assertThat(playFailure.path("errorCode").asText()).isEqualTo("CONNECT_SCOPE_MISMATCH");
+    assertThat(playFailure.path("outputs").isArray()).isTrue();
+  }
+
+  private static JsonNode json(String payload) {
+    try {
+      return JSON.readTree(payload);
+    } catch (IOException ex) {
+      throw new AssertionError("Expected JSON payload but got: " + payload, ex);
+    }
+  }
+
+  private static boolean isStructuredCommand(String payload, String commandType) {
+    try {
+      JsonNode json = JSON.readTree(payload);
+      return "command_result".equals(json.path("eventType").asText())
+          && commandType.equals(json.path("commandType").asText());
+    } catch (IOException ex) {
+      return false;
+    }
+  }
+
+  private static boolean containsKind(JsonNode envelope, String kind) {
+    for (JsonNode output : envelope.path("outputs")) {
+      if (kind.equals(output.path("kind").asText())) {
+        return true;
+      }
+    }
+    return false;
   }
 }

@@ -13,6 +13,7 @@ import net.firedevops.firemud.gamesession.config.PresentationProperties;
 import net.firedevops.firemud.gamesession.presentation.CommunicationOutputMapper;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.presentation.TextPlayerOutputRenderer;
+import net.firedevops.firemud.gamesession.websocket.WebSocketOutputProjector;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -32,6 +33,7 @@ public final class CommunicationRecipientDeliveryService {
   private final TextPlayerOutputRenderer outputRenderer;
   private final CommunicationOutputMapper communicationOutputMapper;
   private final EffectiveSettingsResolver settingsResolver;
+  private final WebSocketOutputProjector outputProjector;
   private final MeterRegistry meterRegistry;
 
   public CommunicationRecipientDeliveryService(
@@ -41,6 +43,7 @@ public final class CommunicationRecipientDeliveryService {
       TextPlayerOutputRenderer outputRenderer,
       CommunicationOutputMapper communicationOutputMapper,
       EffectiveSettingsResolver settingsResolver,
+      WebSocketOutputProjector outputProjector,
       MeterRegistry meterRegistry) {
     this.sessionContextService = sessionContextService;
     this.activeTransportSessionRegistry = activeTransportSessionRegistry;
@@ -48,6 +51,7 @@ public final class CommunicationRecipientDeliveryService {
     this.outputRenderer = outputRenderer;
     this.communicationOutputMapper = communicationOutputMapper;
     this.settingsResolver = settingsResolver;
+    this.outputProjector = outputProjector;
     this.meterRegistry = meterRegistry;
   }
 
@@ -78,7 +82,12 @@ public final class CommunicationRecipientDeliveryService {
 
       try (GameplayLoggingContext recipientLoggingContext =
           GameplayLoggingContext.from(recipient)) {
-        String rendered = renderRecipientOutput(recipient, actorContext, response, view);
+        PlayerOutput output =
+            communicationOutputMapper.recipientOutput(
+                response.getType(), view, response.getMessage());
+        String localeTag = resolveLocaleTag(recipient, actorContext);
+        PresentationProperties effectivePresentation = settingsResolver.presentation(recipient);
+        String rendered = outputRenderer.render(output, localeTag, effectivePresentation);
         if (!StringUtils.hasText(rendered)) {
           return;
         }
@@ -92,7 +101,7 @@ public final class CommunicationRecipientDeliveryService {
             .find(recipient.sessionId())
             .filter(WebSocketSession::isOpen)
             .ifPresentOrElse(
-                session -> push(session, recipient, view, rendered),
+                session -> push(session, recipient, view, output, localeTag, effectivePresentation),
                 () ->
                     meterRegistry
                         .counter(
@@ -128,10 +137,17 @@ public final class CommunicationRecipientDeliveryService {
       WebSocketSession session,
       SessionContext recipient,
       CommunicationRecipientView view,
-      String rendered) {
+      PlayerOutput output,
+      String localeTag,
+      PresentationProperties effectivePresentation) {
     try (GameplayLoggingContext ignored = GameplayLoggingContext.from(recipient)) {
       try {
-        session.sendMessage(new TextMessage(rendered));
+        String projected =
+            outputProjector.projectPlayerOutput(session, output, localeTag, effectivePresentation);
+        if (!StringUtils.hasText(projected)) {
+          return;
+        }
+        session.sendMessage(new TextMessage(projected));
         meterRegistry
             .counter("gamesession.communication.delivery.pushed", "role", roleTag(view))
             .increment();
@@ -164,18 +180,9 @@ public final class CommunicationRecipientDeliveryService {
     return view.getRole().name().toLowerCase();
   }
 
-  private String renderRecipientOutput(
-      SessionContext recipient,
-      SessionContext actorContext,
-      SendCommunicationResponse response,
-      CommunicationRecipientView view) {
-    PlayerOutput output =
-        communicationOutputMapper.recipientOutput(response.getType(), view, response.getMessage());
-    PresentationProperties effectivePresentation = settingsResolver.presentation(recipient);
-    String localeTag =
-        StringUtils.hasText(recipient.localeTag())
-            ? recipient.localeTag()
-            : actorContext.localeTag();
-    return outputRenderer.render(output, localeTag, effectivePresentation);
+  private String resolveLocaleTag(SessionContext recipient, SessionContext actorContext) {
+    return StringUtils.hasText(recipient.localeTag())
+        ? recipient.localeTag()
+        : actorContext.localeTag();
   }
 }
