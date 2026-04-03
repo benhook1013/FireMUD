@@ -70,11 +70,11 @@ The `02.14` shared logging baseline is now canonical for the main request-handli
 - Shared reactive HTTP logging should carry the same baseline field set.
 - Shared gRPC server logging should carry the same baseline field set.
 - Custom WebSocket edge handlers that bypass the shared HTTP filters should normalize their local logs through the shared runtime logging context so runtime identity and stable connection-correlation fields are still present.
+- Telnet edge handlers in `tcp-proxy-service` should do the same so the main player-facing edge protocols share one runtime identity and connection-correlation contract.
 
 This baseline is intentionally bounded:
 
 - Full reactive-request MDC propagation outside the shared filters is not required for the canonical contract as long as the shared request logs and major handler logs carry the standard field set.
-- Telnet-edge logging in `tcp-proxy-service` does not yet normalize every local handler log through the same runtime logging context helper and remains a documented follow-up area rather than hidden incomplete scope.
 - These bounded exceptions do not change the rule that runtime identity and request correlation must be present on the canonical HTTP, gRPC, and WebSocket request paths.
 
 ### Runtime Identity Exposure

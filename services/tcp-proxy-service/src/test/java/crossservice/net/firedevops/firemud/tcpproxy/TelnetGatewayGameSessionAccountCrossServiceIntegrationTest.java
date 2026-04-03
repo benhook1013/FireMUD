@@ -309,10 +309,9 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
       telnetInvalidMoveResponse = readLineAfterContains(reader, "ERROR INVALID_EXIT");
     }
 
-    String destinationLook =
-        LookTestFixtures.canonicalLookText(LookTestFixtures.DESTINATION_ROOM_ID);
     assertThat(telnetMoveResponse.trim())
-        .matches(matchesCanonicalLookWithOptionalPrompt(LookTestFixtures.DESTINATION_ROOM_ID));
+        .matches(
+            matchesCanonicalMoveRefreshWithOptionalPrompt(LookTestFixtures.DESTINATION_ROOM_ID));
     assertThat(telnetLookResponse.trim())
         .matches(matchesCanonicalLookWithOptionalPrompt(LookTestFixtures.DESTINATION_ROOM_ID));
     assertThat(telnetInvalidMoveResponse).contains("ERROR INVALID_EXIT");
@@ -366,6 +365,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
   void telnetReconnectAfterMoveKeepsDestinationRoomContext() throws Exception {
     ensureTestServicesStarted();
     String telnetMoveResponse;
+    String telnetReplayResponse;
     String telnetReconnectLookResponse;
 
     try (Socket socket = new Socket("localhost", telnetServer.getPort());
@@ -402,14 +402,17 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
       writer.println("PLAY demo");
       assertThat(readLineAfterContains(reader, "OK PLAY Entered world: demo"))
           .contains("OK PLAY Entered world: demo");
+      telnetReplayResponse = readBlockAfterContainsOrTimeout(reader, "OK LOOK");
       writer.println("LOOK");
       telnetReconnectLookResponse = readBlockAfterContainsOrTimeout(reader, "OK LOOK");
     }
 
-    String destinationLook =
-        LookTestFixtures.canonicalLookText(LookTestFixtures.DESTINATION_ROOM_ID);
     assertThat(telnetMoveResponse.trim())
-        .matches(matchesCanonicalLookWithOptionalPrompt(LookTestFixtures.DESTINATION_ROOM_ID));
+        .matches(
+            matchesCanonicalMoveRefreshWithOptionalPrompt(LookTestFixtures.DESTINATION_ROOM_ID));
+    assertThat(telnetReplayResponse.trim())
+        .matches(
+            matchesCanonicalMoveRefreshWithOptionalPrompt(LookTestFixtures.DESTINATION_ROOM_ID));
     assertThat(telnetReconnectLookResponse.trim())
         .matches(matchesCanonicalLookWithOptionalPrompt(LookTestFixtures.DESTINATION_ROOM_ID));
   }
@@ -468,12 +471,12 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
       telnetReconnectLookResponse = readBlockAfterContainsOrTimeout(reader, "OK LOOK");
     }
 
-    String destinationLook =
-        LookTestFixtures.canonicalLookText(LookTestFixtures.DESTINATION_ROOM_ID);
     assertThat(telnetMoveResponse.trim())
-        .matches(matchesCanonicalLookWithOptionalPrompt(LookTestFixtures.DESTINATION_ROOM_ID));
+        .matches(
+            matchesCanonicalMoveRefreshWithOptionalPrompt(LookTestFixtures.DESTINATION_ROOM_ID));
     assertThat(telnetReplayResponse.trim())
-        .matches(matchesCanonicalLookWithOptionalPrompt(LookTestFixtures.DESTINATION_ROOM_ID));
+        .matches(
+            matchesCanonicalMoveRefreshWithOptionalPrompt(LookTestFixtures.DESTINATION_ROOM_ID));
     assertThat(telnetReconnectLookResponse.trim())
         .matches(matchesCanonicalLookWithOptionalPrompt());
   }
@@ -994,6 +997,19 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
 
   private static Predicate<String> matchesCanonicalLookWithOptionalPrompt(String roomId) {
     String canonical = LookTestFixtures.canonicalLookText(roomId).trim();
+    String leadingPrompt = "demo> \n" + canonical;
+    String trailingPrompt = canonical + "\n\ndemo>";
+    String wrappedPrompt = "demo> \n" + trailingPrompt;
+    return response ->
+        response.equals(canonical)
+            || response.equals(leadingPrompt)
+            || response.equals(trailingPrompt)
+            || response.equals(wrappedPrompt);
+  }
+
+  private static Predicate<String> matchesCanonicalMoveRefreshWithOptionalPrompt(String roomId) {
+    String canonical =
+        LookTestFixtures.canonicalLookText(roomId).replaceFirst("\\nLong: .*\\n", "\n").trim();
     String leadingPrompt = "demo> \n" + canonical;
     String trailingPrompt = canonical + "\n\ndemo>";
     String wrappedPrompt = "demo> \n" + trailingPrompt;
