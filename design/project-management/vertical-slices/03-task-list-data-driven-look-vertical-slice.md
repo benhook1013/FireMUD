@@ -7,12 +7,17 @@ Goal: replace the original hard-coded `LOOK` path with a data-driven flow that u
 Follow-up design direction agreed after the main slice landed:
 
 - Game Logic remains the owner of the authoritative structured `LookResult`.
-- Game Session owns the rendered `LOOK` transcript and the short-lived reconnect/UI redraw cache derived from that result.
-- The rendered cache is part of a narrow built-in gameplay view cache subsystem for canonical platform read commands, not a generic cache for arbitrary command responses.
-- Future built-in read/redraw commands may opt into the same subsystem explicitly, but transient action acknowledgements and game-specific scripted commands should not.
+- Game Session owns transcript replay and final client rendering, but a fresh `LOOK` remains authoritative rather than being served from a stale rendered room cache.
+- Reconnect redraw remains: bounded transcript context, then fresh `LOOK`, then fresh prompt.
 - The target-state `LOOK` shape should stay explicitly sectioned: room/world snapshot data, exits, visible occupants, visible room-ground items, and later optional overlays such as hazards or combat state.
 - Visible room-ground items should come from the Entity Management containment model for the room-attached ground container, while nested container contents remain out of scope for base `LOOK` and should be inspected through later item/container commands.
 - The standard `QUICKLOOK` command reuses the same room-view structure as `LOOK` while omitting the room-description prose so players can get a fast redraw of occupants, items, exits, and prompt/status context.
+- The current operator-default renderer policy for `LOOK`/`QUICKLOOK` and prompts is surfaced through:
+  - `firemud.presentation.default-color-mode`
+  - `firemud.presentation.brief-enabled-by-default`
+  - `firemud.presentation.prompt.enabled`
+  - `firemud.presentation.prompt.emit-after-reconnect-restore`
+  - `firemud.presentation.prompt.coalesce-window-ms`
 
 This checklist builds on the **Telnet to Gameplay** and **Login and Session** slices by replacing the hard-coded `LOOK` behavior in Game Session with a fully data-driven implementation that pulls room descriptions, exits, and visible entities from the World, Entity, and Game Logic services. Each task is intentionally scoped so it can be handed to Codex (or a developer) as a single, self-contained chunk of work.
 
@@ -21,7 +26,7 @@ This checklist builds on the **Telnet to Gameplay** and **Login and Session** sl
 - [x] Re-read the [Minimal Text Command Protocol](../../architecture/microservices/game-session-service/README.md#minimal-text-command-protocol), [Game Session Service](../../architecture/microservices/game-session-service/README.md), [World Management Service](../../architecture/microservices/world-management-service/README.md), and [Entity Management Service](../../architecture/microservices/entity-management-service/README.md) docs to confirm the intended sources of truth for room layout, entities, and gameplay state.
 - [x] Decide and document the canonical `LOOK` output shape for this slice. The target-state text renderer should emit the room name/title, then one composed descriptive block that combines room prose with visible characters and room-ground items, followed by exits; player health/status remains part of the prompt rather than the `LOOK` body.
 - [x] Update the `Minimal Text Command Protocol` section so `LOOK` is explicitly documented as a data-driven command, including at least one Telnet and one WebSocket transcript that show a realistic room with exits and a couple of entities (players and/or NPCs).
-- [x] Add a short subsection to the Game Session Service design doc describing how `LOOK` requests flow through Game Session → Game Logic → World/Entity, and where caching or projection layers (if any) sit in that pipeline.
+- [x] Add a short subsection to the Game Session Service design doc describing how `LOOK` requests flow through Game Session → Game Logic → World/Entity, and where rendering or reconnect transcript policy sits in that pipeline.
 - [x] Ensure the design docs clearly state that `LOOK` requires an authenticated session (reusing the login/session guard from the previous slice) and that unauthenticated clients still receive `ERROR NOT_AUTHENTICATED` when attempting `LOOK`.
 
 ## 2. World Management Service: Minimal Room Data for the Slice
@@ -91,11 +96,10 @@ Implementation notes for wiring the stubbed World/Entity/Account services, captu
 
 ## 8. Optional Follow-up: Reconnection Experience
 
-- [x] (If time permits) Cache the most recent `LOOK` response in Redis (or the existing session context) and replay it automatically to reconnecting clients before buffered commands, so bridges can redraw the room even when the original `LOOK` happened pre-reconnect.
-- [x] Design a cache/store for serialized `LOOK` payloads keyed by `tenantId`/`sessionId` (plus TTL) and add a service that exposes `getCachedLook`/`cacheLook`.
-- [x] Wire the cache into `LookCommandHandler` so every successful `LOOK` pushes the rendered text and optional metadata into Redis immediately after rendering.
-- [x] On reconnect (WebSocket `GameSessionWebSocketHandler`, TCP Proxy `TelnetServerHandler`, etc.) deliver the cached `LOOK` text before processing buffered commands, defaulting to fetching from Redis when the cache is stale or missing.
-- [x] Add focused regression tests that replay a `LOOK`, simulate a reconnect, and assert the cached text is emitted instantly while the downstream `LOOK` path still works when the cache misses.
+- [x] (If time permits) Keep reconnect redraw user-friendly by replaying bounded transcript context and then issuing a fresh authoritative `LOOK` before the trailing prompt.
+- [x] Keep the reconnect-support store bounded to transcript/context restoration rather than treating a rendered `LOOK` snapshot as authoritative room state.
+- [x] On reconnect (WebSocket `GameSessionWebSocketHandler`, TCP Proxy `TelnetServerHandler`, etc.) deliver the bounded transcript replay first, then a fresh `LOOK`, then one fresh prompt.
+- [x] Add focused regression tests that cover reconnect replay and fresh-room redraw behavior without treating a stale rendered `LOOK` snapshot as the canonical answer to a new `LOOK`.
 
 ---
 
