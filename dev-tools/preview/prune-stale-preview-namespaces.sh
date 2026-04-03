@@ -59,6 +59,6 @@ for row in "${namespace_rows[@]}"; do
 
   echo "Pruning ${namespace}: PR #${pr_number} state is ${pr_state}"
   if [[ "$apply" == true ]]; then
-    "$(dirname "$0")/delete-preview-namespace.sh" "$namespace" "$release_name"
+    bash "$(dirname "$0")/delete-preview-namespace.sh" "$namespace" "$release_name"
   fi
 done
