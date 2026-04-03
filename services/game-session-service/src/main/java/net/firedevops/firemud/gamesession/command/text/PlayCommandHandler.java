@@ -3,7 +3,6 @@ package net.firedevops.firemud.gamesession.command.text;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
-import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
@@ -94,16 +93,8 @@ public class PlayCommandHandler {
           null);
     }
 
-    List<String> args =
-        command
-            .selectionPayload()
-            .map(
-                selection ->
-                    StringUtils.hasText(selection.secondary())
-                        ? List.of(selection.primary(), selection.secondary())
-                        : List.of(selection.primary()))
-            .orElse(command.args());
-    if (args.isEmpty()) {
+    Optional<TextCommandPayload.Selection> maybeSelection = command.selectionPayload();
+    if (maybeSelection.isEmpty()) {
       return failure(
           GameplayStageCommandConstants.PLAY_INVALID_ARGUMENT_CODE,
           GameplayStageCommandConstants.PLAY_INVALID_ARGUMENT_MESSAGE,
@@ -112,11 +103,12 @@ public class PlayCommandHandler {
           null,
           null);
     }
+    TextCommandPayload.Selection selection = maybeSelection.orElseThrow();
 
     SessionContext context = maybeContext.get();
     try (GameplayLoggingContext baseContext =
         GameplayLoggingContext.open(Long.toString(context.tenantId()), null, null, null)) {
-      String worldSelector = args.get(0);
+      String worldSelector = selection.primary();
       Optional<GameSessionProperties.WorldOption> maybeWorld =
           gameplayWorldCatalog.resolve(worldSelector);
       if (maybeWorld.isEmpty()) {
@@ -142,13 +134,12 @@ public class PlayCommandHandler {
           return connectScopeFailure.get();
         }
         Optional<PlayCommandHandlingResult> authorityFailure =
-            validateRuntimeAdmission(
-                context, selectedWorld, tenantTag, args.size() > 1 ? args.get(1) : null);
+            validateRuntimeAdmission(context, selectedWorld, tenantTag, selection.secondary());
         if (authorityFailure.isPresent()) {
           return authorityFailure.get();
         }
 
-        String character = args.size() > 1 ? args.get(1) : null;
+        String character = selection.secondary();
         if (selectedWorld.isRequiresCharacterSelection() && !StringUtils.hasText(character)) {
           return failure(
               "PLAY_SELECTION_REQUIRED",

@@ -2,7 +2,6 @@ package net.firedevops.firemud.gamesession.command.text;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.instrument.MeterRegistry;
-import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
@@ -123,11 +122,7 @@ public class CommunicationCommandHandler {
   }
 
   private ParsedCommunication parseSay(TextCommand command) {
-    String message =
-        command
-            .messagePayload()
-            .map(TextCommandPayload.Message::text)
-            .orElseGet(() -> command.args().isEmpty() ? null : command.args().get(0));
+    String message = command.messagePayload().map(TextCommandPayload.Message::text).orElse(null);
     if (!StringUtils.hasText(message)) {
       return new ParsedCommunication(
           false, null, Optional.empty(), Optional.empty(), "SAY command requires a message");
@@ -136,9 +131,8 @@ public class CommunicationCommandHandler {
   }
 
   private ParsedCommunication parseWhisper(TextCommand command) {
-    List<String> args = command.args();
     Optional<TextCommandPayload.TargetedMessage> payload = command.targetedMessagePayload();
-    if (payload.isPresent()) {
+    if (payload.isPresent() && StringUtils.hasText(payload.get().target())) {
       return new ParsedCommunication(
           true,
           payload.get().message(),
@@ -146,25 +140,17 @@ public class CommunicationCommandHandler {
           Optional.of(payload.get().target()),
           null);
     }
-    if (args.size() < 2) {
-      return new ParsedCommunication(
-          false,
-          null,
-          Optional.empty(),
-          Optional.empty(),
-          "WHISPER command requires a target and a message");
-    }
     return new ParsedCommunication(
-        true, args.get(1), Optional.empty(), Optional.of(args.get(0)), null);
+        false,
+        null,
+        Optional.empty(),
+        Optional.empty(),
+        "WHISPER command requires a target and a message");
   }
 
   private ParsedCommunication parseTell(SessionContext context, TextCommand command) {
-    List<String> args =
-        command
-            .targetedMessagePayload()
-            .map(payload -> List.of(payload.target(), payload.message()))
-            .orElse(command.args());
-    if (args.size() < 2) {
+    Optional<TextCommandPayload.TargetedMessage> payload = command.targetedMessagePayload();
+    if (payload.isEmpty()) {
       return new ParsedCommunication(
           false,
           null,
@@ -172,7 +158,7 @@ public class CommunicationCommandHandler {
           Optional.empty(),
           "TELL command requires a target and a message");
     }
-    String targetName = args.get(0);
+    String targetName = payload.orElseThrow().target();
     Optional<net.firedevops.firemud.entitymanagement.v1.Character> maybeTargetCharacter =
         entityManagementClient.findCharacterByName(Long.toString(context.tenantId()), targetName);
     if (maybeTargetCharacter.isEmpty()) {
@@ -201,7 +187,7 @@ public class CommunicationCommandHandler {
 
     return new ParsedCommunication(
         true,
-        args.get(1),
+        payload.orElseThrow().message(),
         Optional.of(targetCharacter.getId()),
         Optional.of(targetCharacter.getName()),
         null);
@@ -213,10 +199,24 @@ public class CommunicationCommandHandler {
     }
     String fallback =
         switch (command.type()) {
-          case SAY -> "You say, \"" + command.args().get(0) + "\"";
+          case SAY ->
+              command
+                  .messagePayload()
+                  .map(payload -> "You say, \"" + payload.text() + "\"")
+                  .orElse("Message sent.");
           case WHISPER ->
-              "You whisper to " + command.args().get(0) + ", \"" + command.args().get(1) + "\"";
-          case TELL -> "You tell " + command.args().get(0) + ", \"" + command.args().get(1) + "\"";
+              command
+                  .targetedMessagePayload()
+                  .map(
+                      payload ->
+                          "You whisper to " + payload.target() + ", \"" + payload.message() + "\"")
+                  .orElse("Message sent.");
+          case TELL ->
+              command
+                  .targetedMessagePayload()
+                  .map(
+                      payload -> "You tell " + payload.target() + ", \"" + payload.message() + "\"")
+                  .orElse("Message sent.");
           default -> "Message sent.";
         };
     return playerOutputRenderer.render(PlayerOutput.message(fallback));

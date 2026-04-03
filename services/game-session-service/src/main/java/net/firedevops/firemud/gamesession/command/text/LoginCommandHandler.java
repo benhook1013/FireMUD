@@ -1,7 +1,6 @@
 package net.firedevops.firemud.gamesession.command.text;
 
 import io.micrometer.core.instrument.MeterRegistry;
-import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -65,21 +64,11 @@ public final class LoginCommandHandler {
 
   public LoginCommandHandlingResult handle(
       String sessionId, TextCommand command, boolean requiresSoloTick) {
-    List<String> args =
-        command
-            .credentialsPayload()
-            .map(
-                credentials -> {
-                  if (StringUtils.hasText(credentials.otp())) {
-                    return List.of(
-                        credentials.loginName(), credentials.password(), credentials.otp());
-                  }
-                  return List.of(credentials.loginName(), credentials.password());
-                })
-            .orElse(command.args());
-    if (args.size() < 2) {
+    Optional<TextCommandPayload.Credentials> maybeCredentials = command.credentialsPayload();
+    if (maybeCredentials.isEmpty()) {
       return handleVerifiedFirstPartyLogin(sessionId, command, requiresSoloTick);
     }
+    TextCommandPayload.Credentials credentials = maybeCredentials.orElseThrow();
 
     Long numericSessionId = parseSessionId(sessionId);
     if (numericSessionId == null) {
@@ -100,10 +89,13 @@ public final class LoginCommandHandler {
     }
     GameInstance instance = maybeInstance.get();
 
-    String otp = args.size() > 2 ? args.get(2) : "";
+    String otp = StringUtils.hasText(credentials.otp()) ? credentials.otp() : "";
     AuthenticateResponse authResponse =
         accountClient.authenticate(
-            String.valueOf(instance.getTenantId()), args.get(0), args.get(1), otp);
+            String.valueOf(instance.getTenantId()),
+            credentials.loginName(),
+            credentials.password(),
+            otp);
     var error = authResponse.getError();
     if (error != null
         && (!Optional.ofNullable(error.getCode()).orElse("").isBlank()
@@ -133,10 +125,10 @@ public final class LoginCommandHandler {
         numericSessionId,
         instance.getTenantId(),
         authenticatedAccountId,
-        args.get(0),
+        credentials.loginName(),
         authResponse.getAuthToken(),
         bootstrapGameInstanceId);
-    String responseText = "Logged in as " + args.get(0);
+    String responseText = "Logged in as " + credentials.loginName();
     return new LoginCommandHandlingResult(enqueueResult, responseText);
   }
 

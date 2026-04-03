@@ -2,7 +2,6 @@ package net.firedevops.firemud.gamesession.command.text;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.instrument.MeterRegistry;
-import java.util.List;
 import java.util.Objects;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.gamelogic.v1.MoveResult;
@@ -111,18 +110,8 @@ public class MoveCommandHandler {
     }
   }
 
-  private String extractDirection(List<String> args) {
-    if (args == null || args.isEmpty()) {
-      return "";
-    }
-    return args.get(0);
-  }
-
   private String extractDirection(TextCommand command) {
-    return command
-        .directionalPayload()
-        .map(TextCommandPayload.Directional::direction)
-        .orElseGet(() -> extractDirection(command.args()));
+    return command.directionalPayload().map(TextCommandPayload.Directional::direction).orElse("");
   }
 
   private SessionContext updatedContext(SessionContext current, MoveResult response) {

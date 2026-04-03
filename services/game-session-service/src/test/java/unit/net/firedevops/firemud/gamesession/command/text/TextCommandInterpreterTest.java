@@ -261,6 +261,35 @@ class TextCommandInterpreterTest {
   }
 
   @Test
+  void directionalAliasBeforeLoginStillHitsInterpreterStageGate() {
+    TextCommandInterpretationResult interpretation = interpreter.interpret("321", "north", false);
+
+    assertFalse(interpretation.commandResult().accepted());
+    assertEquals("LOGIN_REQUIRED", interpretation.commandResult().errorCode());
+    verify(moveHandler, never())
+        .handle(
+            Mockito.any(net.firedevops.firemud.gamesession.service.SessionContext.class),
+            Mockito.any(TextCommand.class));
+  }
+
+  @Test
+  void directionalAliasAfterPlayDelegatesToMoveHandler() {
+    interpreter.interpret("1", "LOGIN demo@example.com swordfish", false);
+    interpreter.interpret("1", "PLAY demo", false);
+
+    SessionContext played = sessionAuthenticationService.resolveSessionContext("1").orElseThrow();
+    when(moveHandler.handle(Mockito.eq(played), Mockito.any(TextCommand.class)))
+        .thenReturn(
+            new MoveCommandHandlingResult(
+                CommandEnqueueResult.success(), PlayerOutput.view("North Hall text")));
+
+    TextCommandInterpretationResult interpretation = interpreter.interpret("1", "north", false);
+
+    assertTrue(interpretation.commandResult().accepted());
+    verify(moveHandler).handle(Mockito.eq(played), Mockito.any(TextCommand.class));
+  }
+
+  @Test
   void loginPlayAndLookFlowWorks() {
     TextCommandInterpretationResult login =
         interpreter.interpret("1", "LOGIN demo@example.com swordfish", false);
