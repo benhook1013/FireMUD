@@ -63,6 +63,13 @@ public final class WebSocketOutputProjector {
             "player_output", null, null, null, null, null, List.of(toEnvelope(output))));
   }
 
+  public String projectTranscriptChunk(WebSocketSession session, String label, String text) {
+    if (!isFirstPartyWeb(session)) {
+      return text;
+    }
+    return toJson(new TranscriptChunkEnvelope("transcript_chunk", label, text));
+  }
+
   boolean isFirstPartyWeb(WebSocketSession session) {
     Object mode =
         session.getAttributes().get(GameSessionWebSocketHandshakeInterceptor.CONNECTION_MODE_ATTR);
@@ -90,7 +97,7 @@ public final class WebSocketOutputProjector {
     };
   }
 
-  private String toJson(FirstPartyEnvelope envelope) {
+  private String toJson(Object envelope) {
     try {
       return objectMapper.writeValueAsString(envelope);
     } catch (JsonProcessingException ex) {
@@ -113,4 +120,6 @@ public final class WebSocketOutputProjector {
       String briefRenderPolicy,
       String payloadType,
       Object payload) {}
+
+  private record TranscriptChunkEnvelope(String eventType, String label, String text) {}
 }

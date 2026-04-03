@@ -99,4 +99,21 @@ class WebSocketOutputProjectorTest {
     assertThat(json.path("outputs").get(0).path("payload").path("messageKey").asText())
         .isEqualTo("communication.whisper.actor");
   }
+
+  @Test
+  void firstPartyWebWrapsTranscriptChunksDuringReconnectReplay() throws Exception {
+    WebSocketSession session = mock(WebSocketSession.class);
+    when(session.getAttributes())
+        .thenReturn(
+            Map.of(
+                GameSessionWebSocketHandshakeInterceptor.CONNECTION_MODE_ATTR, "first_party_web"));
+
+    String payload =
+        projector.projectTranscriptChunk(session, "screen buffer", "Recent combat line\n");
+
+    JsonNode json = objectMapper.readTree(payload);
+    assertThat(json.path("eventType").asText()).isEqualTo("transcript_chunk");
+    assertThat(json.path("label").asText()).isEqualTo("screen buffer");
+    assertThat(json.path("text").asText()).isEqualTo("Recent combat line\n");
+  }
 }

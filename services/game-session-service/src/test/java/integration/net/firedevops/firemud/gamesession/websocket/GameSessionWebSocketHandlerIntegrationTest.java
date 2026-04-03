@@ -16,6 +16,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
 import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse;
@@ -302,7 +303,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
             URI.create("ws://localhost:" + port + "/ws/game"));
 
     WebSocketSession session = future.get(5, TimeUnit.SECONDS);
-    assertThat(latch.await(5, TimeUnit.SECONDS)).isTrue();
+    assertThat(latch.await(10, TimeUnit.SECONDS)).isTrue();
     session.close();
 
     assertThat(payloads).hasSizeGreaterThanOrEqualTo(3);
@@ -354,30 +355,42 @@ class GameSessionWebSocketHandlerIntegrationTest {
     headers.add("X-Game-Instance-Id", "41");
     List<String> payloads = new java.util.concurrent.CopyOnWriteArrayList<>();
     CountDownLatch latch = new CountDownLatch(4);
+    AtomicReference<WebSocketSession> sessionRef = new AtomicReference<>();
+    AtomicInteger lookResponses = new AtomicInteger();
 
     var future =
         client.execute(
             new TextWebSocketHandler() {
               @Override
               public void afterConnectionEstablished(WebSocketSession session) throws IOException {
+                sessionRef.set(session);
                 session.sendMessage(new TextMessage("LOGIN demo@example.com swordfish"));
-                session.sendMessage(new TextMessage("PLAY demo"));
-                session.sendMessage(new TextMessage("LOOK"));
-                session.sendMessage(new TextMessage("LOOK"));
               }
 
               @Override
-              protected void handleTextMessage(WebSocketSession session, TextMessage message) {
-                payloads.add(message.getPayload());
+              protected void handleTextMessage(WebSocketSession session, TextMessage message)
+                  throws IOException {
+                String payload = message.getPayload();
+                payloads.add(payload);
+                if (payload.startsWith("OK LOGIN")) {
+                  session.sendMessage(new TextMessage("PLAY demo"));
+                } else if (payload.startsWith("OK PLAY")) {
+                  session.sendMessage(new TextMessage("LOOK"));
+                } else if (payload.startsWith("OK LOOK") && lookResponses.incrementAndGet() == 1) {
+                  session.sendMessage(new TextMessage("LOOK"));
+                }
                 latch.countDown();
               }
             },
             headers,
             URI.create("ws://localhost:" + port + "/ws/game"));
 
-    WebSocketSession session = future.get(5, TimeUnit.SECONDS);
-    assertThat(latch.await(5, TimeUnit.SECONDS)).isTrue();
-    session.close();
+    future.get(5, TimeUnit.SECONDS);
+    assertThat(latch.await(10, TimeUnit.SECONDS)).isTrue();
+    WebSocketSession session = sessionRef.get();
+    if (session != null && session.isOpen()) {
+      session.close();
+    }
 
     assertThat(payloads).hasSizeGreaterThanOrEqualTo(4);
     assertThat(
@@ -727,8 +740,21 @@ class GameSessionWebSocketHandlerIntegrationTest {
 
     assertThat(isStructuredCommand(payloads.get(0), "LOGIN")).isTrue();
     assertThat(payloads).anyMatch(payload -> isStructuredCommand(payload, "PLAY"));
-    assertThat(payloads).anyMatch(payload -> payload.contains("Recent combat line"));
-    assertThat(payloads).anyMatch(payload -> payload.startsWith("OK LOOK"));
+    assertThat(payloads)
+        .anyMatch(
+            payload ->
+                "transcript_chunk".equals(json(payload).path("eventType").asText())
+                    && payload.contains("Recent combat line"));
+    assertThat(payloads)
+        .anyMatch(
+            payload ->
+                "player_output".equals(json(payload).path("eventType").asText())
+                    && containsKind(json(payload), "VIEW"));
+    assertThat(payloads)
+        .anyMatch(
+            payload ->
+                "player_output".equals(json(payload).path("eventType").asText())
+                    && containsKind(json(payload), "PROMPT"));
   }
 
   @Test

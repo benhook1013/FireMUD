@@ -1,7 +1,6 @@
 package net.firedevops.firemud.gamesession.websocket;
 
 import java.io.IOException;
-import java.util.List;
 import java.util.Optional;
 import net.firedevops.firemud.cache.ScreenBufferService;
 import net.firedevops.firemud.common.runtime.RuntimeIdentity;
@@ -15,7 +14,6 @@ import net.firedevops.firemud.gamesession.command.text.TextCommandParser;
 import net.firedevops.firemud.gamesession.command.text.TextCommandType;
 import net.firedevops.firemud.gamesession.config.EffectiveSettingsResolver;
 import net.firedevops.firemud.gamesession.config.PresentationProperties;
-import net.firedevops.firemud.gamesession.presentation.ErrorOutput;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutputKind;
 import net.firedevops.firemud.gamesession.presentation.PromptBurstCoordinator;
@@ -278,17 +276,20 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
                 }
                 maybeBuffer.ifPresent(
                     buffer -> sendReplayChunk(session, buffer.protocolText(), "screen buffer"));
-                String look = renderReconnectLook(session, sessionId);
-                if (StringUtils.hasText(look)) {
-                  sendReplayChunk(session, look, "fresh LOOK");
-                }
+                String localeTag = resolveLocaleTag(session, sessionId);
                 PresentationProperties effectivePresentation =
                     settingsResolver.presentation(context);
+                PlayerOutput look = renderReconnectLook(sessionId);
+                if (look != null) {
+                  sendProjectedOutput(
+                      session, look, localeTag, effectivePresentation, "fresh LOOK");
+                }
                 if (effectivePresentation.prompt().emitAfterReconnectRestore()) {
-                  renderPrompt(context, resolveLocaleTag(session, sessionId), effectivePresentation)
+                  composePrompt(context)
                       .ifPresent(
                           prompt -> {
-                            sendReplayChunk(session, prompt, "fresh prompt");
+                            sendProjectedOutput(
+                                session, prompt, localeTag, effectivePresentation, "fresh prompt");
                             promptBurstCoordinator.recordPromptEmission(sessionId);
                           });
                 }
@@ -299,7 +300,34 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
   private void sendReplayChunk(WebSocketSession session, String text, String label) {
     try (CombinedLoggingContext ignored = openLoggingContext(session)) {
       try {
-        sendProtocolMessage(session, text);
+        sendProtocolMessage(session, outputProjector.projectTranscriptChunk(session, label, text));
+      } catch (IOException ex) {
+        logger.warn("Failed to send reconnect {}", label, ex);
+      }
+    }
+  }
+
+  private void sendProjectedOutput(
+      WebSocketSession session,
+      PlayerOutput output,
+      String localeTag,
+      PresentationProperties effectivePresentation,
+      String label) {
+    try (CombinedLoggingContext ignored = openLoggingContext(session)) {
+      try {
+        if (!outputProjector.isFirstPartyWeb(session) && output.kind() == PlayerOutputKind.VIEW) {
+          sendProtocolMessage(
+              session,
+              outputRenderer.renderSuccessfulForCommandType(
+                  TextCommandType.LOOK,
+                  java.util.List.of(output),
+                  localeTag,
+                  effectivePresentation));
+          return;
+        }
+        sendProtocolMessage(
+            session,
+            outputProjector.projectPlayerOutput(session, output, localeTag, effectivePresentation));
       } catch (IOException ex) {
         logger.warn("Failed to send reconnect {}", label, ex);
       }
@@ -357,14 +385,8 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     }
   }
 
-  private Optional<String> renderPrompt(
-      SessionContext context, String localeTag, PresentationProperties effectivePresentation) {
-    String effectiveLocaleTag =
-        StringUtils.hasText(context.localeTag()) ? context.localeTag() : localeTag;
-    return promptComposer
-        .compose(context)
-        .map(prompt -> outputRenderer.render(prompt, effectiveLocaleTag, effectivePresentation))
-        .filter(StringUtils::hasText);
+  private Optional<PlayerOutput> composePrompt(SessionContext context) {
+    return promptComposer.compose(context);
   }
 
   private void maybePersistLocaleTag(String sessionId, String localeTag) {
@@ -391,36 +413,12 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
                         context.bootstrapGameInstanceId())));
   }
 
-  private String renderReconnectLook(WebSocketSession session, String sessionId) {
-    Optional<SessionContext> maybeContext =
-        parseNumericSessionId(sessionId).flatMap(sessionContextService::findBySessionId);
-    PresentationProperties effectivePresentation =
-        settingsResolver.presentation(maybeContext.orElse(null));
-    PlayerOutput lookOutput =
-        lookHandler.describePlayerOutput(
-            sessionId,
-            true,
-            net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
-                .RECONNECT_REFRESH);
-    if (lookOutput == null) {
-      return null;
-    }
-    String localeTag = resolveLocaleTag(session, sessionId);
-    if (lookOutput.payload() instanceof ErrorOutput errorOutput) {
-      return outputRenderer.renderAll(
-          new TextCommand(TextCommandType.LOOK, List.of(), "LOOK"),
-          net.firedevops.firemud.gamesession.dto.CommandEnqueueResult.failure(
-              errorOutput.code(), errorOutput.message()),
-          List.of(lookOutput),
-          localeTag,
-          effectivePresentation);
-    }
-    return outputRenderer.renderAll(
-        new TextCommand(TextCommandType.LOOK, List.of(), "LOOK"),
-        net.firedevops.firemud.gamesession.dto.CommandEnqueueResult.success(),
-        List.of(lookOutput),
-        localeTag,
-        effectivePresentation);
+  private PlayerOutput renderReconnectLook(String sessionId) {
+    return lookHandler.describePlayerOutput(
+        sessionId,
+        true,
+        net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
+            .RECONNECT_REFRESH);
   }
 
   private void bootstrapGenericSessionContext(WebSocketSession session, long sessionId) {

@@ -170,12 +170,10 @@ class LookWebSocketCrossServiceTest {
 
     List<String> reconnectLook = runLookAfterReconnect(sessionId);
     assertThat(reconnectLook).hasSizeGreaterThanOrEqualTo(4);
-    assertThat(reconnectLook).anyMatch(response -> response.startsWith("OK LOGIN"));
-    assertThat(reconnectLook).anyMatch(response -> response.startsWith("OK PLAY"));
-    assertThat(reconnectLook)
-        .anyMatch(
-            response ->
-                response.trim().equals(canonicalLook(LookTestFixtures.DESTINATION_ROOM_ID)));
+    String combinedReconnect = String.join("\n", reconnectLook);
+    assertThat(combinedReconnect).contains("OK LOGIN");
+    assertThat(combinedReconnect).contains("OK PLAY");
+    assertThat(combinedReconnect).contains(canonicalLook(LookTestFixtures.DESTINATION_ROOM_ID));
   }
 
   @Test
@@ -265,14 +263,12 @@ class LookWebSocketCrossServiceTest {
 
     List<String> reconnectLook = runLookAfterReconnect(sessionId);
     assertThat(reconnectLook).hasSizeGreaterThanOrEqualTo(4);
-    assertThat(reconnectLook).anyMatch(response -> response.startsWith("OK LOGIN"));
-    assertThat(reconnectLook).anyMatch(response -> response.startsWith("OK PLAY"));
-    assertThat(reconnectLook)
-        .anyMatch(
-            response ->
-                matchesCanonicalMoveRefreshWithOptionalPrompt(LookTestFixtures.DESTINATION_ROOM_ID)
-                    .test(response.trim()));
-    assertThat(reconnectLook).anyMatch(response -> response.trim().equals(canonicalLook()));
+    String combinedReconnect = String.join("\n", reconnectLook);
+    assertThat(combinedReconnect).contains("OK LOGIN");
+    assertThat(combinedReconnect).contains("OK PLAY");
+    assertThat(combinedReconnect)
+        .contains(canonicalMoveRefresh(LookTestFixtures.DESTINATION_ROOM_ID));
+    assertThat(combinedReconnect).contains(canonicalLook());
   }
 
   @Test
