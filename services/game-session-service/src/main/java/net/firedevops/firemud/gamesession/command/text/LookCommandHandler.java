@@ -12,6 +12,7 @@ import net.firedevops.firemud.gamelogic.v1.LookResult;
 import net.firedevops.firemud.gamesession.client.GameLogicClient;
 import net.firedevops.firemud.gamesession.config.DevIsolatedProperties;
 import net.firedevops.firemud.gamesession.config.GameLogicProperties;
+import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import org.slf4j.Logger;
@@ -90,6 +91,14 @@ public final class LookCommandHandler {
       cacheLook(context, lookResult, rendered);
     }
     return buildProtocolResponse(rendered);
+  }
+
+  PlayerOutput toPlayerOutput(SessionContext context, LookResult lookResult) {
+    PlayerOutput output = lookTextRenderer.toPlayerOutput(lookResult);
+    if (!devIsolatedProperties.isDevIsolated()) {
+      cacheLook(context, lookResult, lookTextRenderer.render(lookResult));
+    }
+    return output;
   }
 
   private LookResult resolveLook(SessionContext context) {

@@ -26,6 +26,7 @@ import net.firedevops.firemud.gamesession.config.GameLogicProperties;
 import net.firedevops.firemud.gamesession.config.GameSessionProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
+import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.presentation.PromptComposer;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.CommandService;
@@ -296,6 +297,30 @@ class TextCommandInterpreterTest {
     assertFalse(interpretation.protocolResponse());
     assertEquals("You say, \"Hello there\"\ndemo> ", interpretation.responseText());
     verify(communicationHandler).handle(Mockito.eq(played), Mockito.any(TextCommand.class));
+  }
+
+  @Test
+  void moveAfterPlayReturnsStructuredViewAndPrompt() {
+    interpreter.interpret("1", "LOGIN demo@example.com swordfish", false);
+    interpreter.interpret("1", "PLAY demo", false);
+
+    SessionContext played = sessionAuthenticationService.resolveSessionContext("1").orElseThrow();
+    when(moveHandler.handle(Mockito.eq(played), Mockito.any(TextCommand.class)))
+        .thenReturn(
+            new MoveCommandHandlingResult(
+                CommandEnqueueResult.success(), PlayerOutput.view("North Hall text")));
+
+    TextCommandInterpretationResult interpretation =
+        interpreter.interpret("1", "MOVE north", false);
+
+    assertTrue(interpretation.commandResult().accepted());
+    assertFalse(interpretation.protocolResponse());
+    assertEquals(2, interpretation.outputs().size());
+    assertEquals(net.firedevops.firemud.gamesession.presentation.PlayerOutputKind.VIEW, interpretation.outputs().get(0).kind());
+    assertEquals("North Hall text", interpretation.outputs().get(0).text());
+    assertEquals(net.firedevops.firemud.gamesession.presentation.PlayerOutputKind.PROMPT, interpretation.outputs().get(1).kind());
+    assertEquals("demo> ", interpretation.outputs().get(1).text());
+    verify(moveHandler).handle(Mockito.eq(played), Mockito.any(TextCommand.class));
   }
 
   private static final class InMemorySessionContextService implements SessionContextService {

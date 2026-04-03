@@ -145,4 +145,22 @@ class TextPlayerOutputRendererTest {
 
     assertThat(rendered).isEqualTo("ERROR LOGIN_REQUIRED You must LOGIN before gameplay commands.");
   }
+
+  @Test
+  void renderAllFormatsMoveViewThroughNormalRendererPath() {
+    TextPlayerOutputRenderer renderer =
+        new TextPlayerOutputRenderer(
+            new PresentationProperties(
+                PresentationProperties.ColorMode.NONE,
+                false,
+                new PresentationProperties.Prompt(true, false, true, 150L)));
+
+    String rendered =
+        renderer.renderAll(
+            new TextCommand(TextCommandType.MOVE, List.of("north"), "MOVE north"),
+            CommandEnqueueResult.success(),
+            List.of(PlayerOutput.view("North Hall text"), PlayerOutput.prompt("demo> ")));
+
+    assertThat(rendered).isEqualTo("OK MOVE\nNorth Hall text\n\ndemo> ");
+  }
 }

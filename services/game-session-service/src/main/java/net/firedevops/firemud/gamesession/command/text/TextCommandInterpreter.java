@@ -154,9 +154,7 @@ public class TextCommandInterpreter {
       MoveCommandHandlingResult moveResult =
           moveHandler.handle(maybeContext.orElseThrow(), command);
       List<PlayerOutput> outputs =
-          moveResult.responseText() == null
-              ? List.of()
-              : List.of(PlayerOutput.protocolView(moveResult.responseText()));
+          moveResult.responseOutput() == null ? List.of() : List.of(moveResult.responseOutput());
       if (moveResult.commandResult().accepted()) {
         outputs = appendPrompt(maybeContext.orElseThrow(), outputs);
       }

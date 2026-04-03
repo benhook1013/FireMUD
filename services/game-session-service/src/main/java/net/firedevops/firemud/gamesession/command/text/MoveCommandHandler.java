@@ -98,7 +98,7 @@ public class MoveCommandHandler {
         }
         return new MoveCommandHandlingResult(
             CommandEnqueueResult.success(),
-            lookCommandHandler.renderProtocol(updatedContext, response.getDestinationLook()));
+            lookCommandHandler.toPlayerOutput(updatedContext, response.getDestinationLook()));
       } catch (RuntimeException ex) {
         return failure(
             "MOVE_UNAVAILABLE",

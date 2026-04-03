@@ -13,6 +13,7 @@ import net.firedevops.firemud.gamesession.client.GameLogicClient;
 import net.firedevops.firemud.gamesession.config.GameLogicProperties;
 import net.firedevops.firemud.gamesession.config.MovementProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
+import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
@@ -50,7 +51,7 @@ class MoveCommandHandlerTest {
   }
 
   @Test
-  void moveSuccessUpdatesSessionAndReturnsDestinationLookProtocol() {
+  void moveSuccessUpdatesSessionAndReturnsStructuredDestinationLook() {
     LookResult destinationLook =
         LookResult.newBuilder()
             .setRoomInstance(
@@ -64,22 +65,23 @@ class MoveCommandHandlerTest {
     when(gameLogicClient.resolveMove("22", "42", "911", "R-1021", "north"))
         .thenReturn(
             MoveResult.newBuilder().setSuccess(true).setDestinationLook(destinationLook).build());
-    when(lookCommandHandler.renderProtocol(any(SessionContext.class), Mockito.eq(destinationLook)))
-        .thenReturn("OK LOOK\nCrafting Hall of Ember\n\n");
+    PlayerOutput destinationOutput = PlayerOutput.view("Crafting Hall of Ember");
+    when(lookCommandHandler.toPlayerOutput(any(SessionContext.class), Mockito.eq(destinationLook)))
+        .thenReturn(destinationOutput);
 
     MoveCommandHandlingResult result =
         handler.handle(
             context, new TextCommand(TextCommandType.MOVE, java.util.List.of("north"), "north"));
 
     assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
-    assertThat(result.responseText()).isEqualTo("OK LOOK\nCrafting Hall of Ember\n\n");
+    assertThat(result.responseOutput()).isEqualTo(destinationOutput);
 
     ArgumentCaptor<SessionContext> contextCaptor = ArgumentCaptor.forClass(SessionContext.class);
     verify(sessionContextService).save(contextCaptor.capture());
     assertThat(contextCaptor.getValue().roomInstanceId()).isEqualTo("R-2045");
     assertThat(contextCaptor.getValue().loginName()).isEqualTo("emberline@example.com");
     assertThat(contextCaptor.getValue().characterName()).isEqualTo("Emberline");
-    verify(lookCommandHandler).renderProtocol(contextCaptor.getValue(), destinationLook);
+    verify(lookCommandHandler).toPlayerOutput(contextCaptor.getValue(), destinationLook);
   }
 
   @Test
@@ -102,7 +104,7 @@ class MoveCommandHandlerTest {
     assertThat(result.commandResult().accepted()).isFalse();
     assertThat(result.commandResult().errorCode()).isEqualTo("INVALID_EXIT");
     verify(sessionContextService, never()).save(any());
-    verify(lookCommandHandler, never()).renderProtocol(any(), any());
+    verify(lookCommandHandler, never()).toPlayerOutput(any(), any());
   }
 
   @Test
@@ -134,8 +136,8 @@ class MoveCommandHandlerTest {
             context, new TextCommand(TextCommandType.MOVE, java.util.List.of("north"), "north"));
 
     assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
-    assertThat(result.responseText()).isNull();
+    assertThat(result.responseOutput()).isNull();
     verify(sessionContextService).save(any(SessionContext.class));
-    verify(lookCommandHandler, never()).renderProtocol(any(), any());
+    verify(lookCommandHandler, never()).toPlayerOutput(any(), any());
   }
 }
