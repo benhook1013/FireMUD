@@ -62,4 +62,10 @@ The next hosted preview milestone is:
 - real reviewer-accessible preview traffic
 - manual `LOGIN -> PLAY -> LOOK` proof over the TCP/Telnet path first
 
+Preview TCP contract:
+
+- preview TCP uses a small reserved external port range `32000-32015`
+- one port is allocated per live preview namespace
+- this is preview-only multiplexing on a shared host/IP, not the long-term production Telnet edge contract
+
 The dedicated first-party browser client remains a later concern. If a temporary preview-only browser helper is used during bring-up, it should not be treated as the long-term frontend hosting architecture; that role belongs to a dedicated first-party web application service.

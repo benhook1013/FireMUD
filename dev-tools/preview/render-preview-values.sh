@@ -33,7 +33,7 @@ text = text.replace("prNumber: 123", f"prNumber: {pr_number}")
 text = text.replace("namespace: pr-123", f"namespace: {namespace}")
 text = text.replace("releaseName: pr-123", f"releaseName: {release_name}")
 text = text.replace("hostname: pr-123.preview.firedevops.net", f"hostname: {hostname}")
-text = text.replace("telnetPort: 31123", f"telnetPort: {telnet_port}")
+text = text.replace("telnetPort: 32000", f"telnetPort: {telnet_port}")
 text = text.replace("defaultImageTag: pr-123-deadbeef", f"defaultImageTag: {image_tag}")
 text = text.replace(
     "tlsSecretName: pr-123-preview-firedevops-net-tls",
@@ -43,6 +43,6 @@ text = text.replace(
     "GATEWAY_WS_URL: wss://pr-123.preview.firedevops.net/ws/game",
     f"GATEWAY_WS_URL: wss://{hostname}/ws/game",
 )
-text = text.replace("nodePort: 31123", f"nodePort: {telnet_port}")
+text = text.replace("nodePort: 32000", f"nodePort: {telnet_port}")
 output_path.write_text(text)
 PY

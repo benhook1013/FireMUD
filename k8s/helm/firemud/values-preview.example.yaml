@@ -3,7 +3,7 @@ preview:
   namespace: pr-123
   releaseName: pr-123
   hostname: pr-123.preview.firedevops.net
-  telnetPort: 31123
+  telnetPort: 32000
   seedOnFirstDeploy: true
   maxConcurrentEnforced: false
 
@@ -234,7 +234,7 @@ previewStack:
         GATEWAY_WS_URL: wss://pr-123.preview.firedevops.net/ws/game
       ports:
         - port: 2323
-          nodePort: 31123
+          nodePort: 32000
           targetPort: 2323
     - name: world-management-service
       image:

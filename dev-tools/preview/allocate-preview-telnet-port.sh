@@ -8,8 +8,8 @@ fi
 
 namespace="$1"
 pr_number="$2"
-min_port=30000
-max_port=32767
+min_port=32000
+max_port=32015
 port_span=$((max_port - min_port + 1))
 
 existing_port="$(
