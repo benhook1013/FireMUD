@@ -226,29 +226,6 @@ public final class LookCommandHandler {
     }
   }
 
-  public Optional<String> cachedLook(String tenantIdHeader, String sessionIdHeader) {
-    if (devIsolatedProperties.isDevIsolated()) {
-      return Optional.empty();
-    }
-    if (!StringUtils.hasText(tenantIdHeader) || !StringUtils.hasText(sessionIdHeader)) {
-      return Optional.empty();
-    }
-    long tenantId;
-    long sessionId;
-    try {
-      tenantId = Long.parseLong(tenantIdHeader);
-      sessionId = Long.parseLong(sessionIdHeader);
-    } catch (NumberFormatException ex) {
-      LOG.debug(
-          "Invalid cached LOOK identifiers tenant={} session={}",
-          tenantIdHeader,
-          sessionIdHeader,
-          ex);
-      return Optional.empty();
-    }
-    return lookCacheService.get(tenantId, sessionId).map(LookCacheService.CachedLook::protocolText);
-  }
-
   private String lookRoomId(LookResult lookResult) {
     return lookResult.getRoomInstance().getRoomInstanceId();
   }

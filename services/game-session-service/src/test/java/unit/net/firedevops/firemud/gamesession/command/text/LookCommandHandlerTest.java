@@ -231,30 +231,6 @@ class LookCommandHandlerTest {
   }
 
   @Test
-  void cachedLookProxy() {
-    when(lookCacheService.get(22L, 1L))
-        .thenReturn(
-            Optional.of(new LookCacheService.CachedLook("R-1021", "text", "OK LOOK\ntext\n\n", 0)));
-    assertThat(handler.cachedLook("22", "1")).contains("OK LOOK\ntext\n\n");
-  }
-
-  @Test
-  void cachedLookReplaysThenFallbacksToFreshLookWhenMissing() {
-    when(lookCacheService.get(22L, 1L))
-        .thenReturn(
-            Optional.of(
-                new LookCacheService.CachedLook(
-                    "R-1021", "cached text", "OK LOOK\ncached text\n\n", 0)))
-        .thenReturn(Optional.empty());
-    assertThat(handler.cachedLook("22", "1")).contains("OK LOOK\ncached text\n\n");
-    Mockito.verifyNoInteractions(gameLogicClient);
-    Mockito.clearInvocations(gameLogicClient);
-    PlayerOutput output = handler.describePlayerOutput("123", true);
-    assertThat(output.payload()).isInstanceOf(LookViewOutput.class);
-    verify(gameLogicClient).resolveLook("22", "1", "911", "room-42", "");
-  }
-
-  @Test
   void devIsolatedReturnsLegacyDescription() {
     LookCommandHandler devHandler =
         new LookCommandHandler(
