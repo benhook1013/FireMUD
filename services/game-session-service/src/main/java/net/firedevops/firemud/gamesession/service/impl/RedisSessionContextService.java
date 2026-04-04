@@ -2,8 +2,12 @@ package net.firedevops.firemud.gamesession.service.impl;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
+import java.util.Set;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import org.springframework.beans.factory.annotation.Value;
@@ -20,6 +24,7 @@ import org.springframework.util.StringUtils;
     havingValue = "false",
     matchIfMissing = true)
 public final class RedisSessionContextService implements SessionContextService {
+  private static final int MAX_SAVE_RETRIES = 8;
   private final RedisTemplate<String, Object> redisTemplate;
   private final Duration sessionTtl;
 
@@ -40,41 +45,61 @@ public final class RedisSessionContextService implements SessionContextService {
 
   @Override
   public void save(SessionContext context) {
-    findByTenantAndSessionId(context.tenantId(), context.sessionId())
-        .filter(existing -> hasGameplayIdentity(existing))
-        .ifPresent(this::deleteNameIndex);
-    if (hasGameplayIdentity(context)) {
-      findByGameplayIdentity(context.tenantId(), context.gameInstanceId(), context.characterId())
-          .filter(existing -> existing.sessionId() != context.sessionId())
-          .ifPresent(existing -> deleteBySessionId(existing.tenantId(), existing.sessionId()));
-      findByGameplayName(context.tenantId(), context.gameInstanceId(), context.characterName())
-          .filter(existing -> existing.sessionId() != context.sessionId())
-          .ifPresent(existing -> deleteBySessionId(existing.tenantId(), existing.sessionId()));
+    for (int attempt = 0; attempt < MAX_SAVE_RETRIES; attempt++) {
+      Boolean committed =
+          redisTemplate.execute(
+              new SessionCallback<>() {
+                @Override
+                public Boolean execute(
+                    org.springframework.data.redis.core.RedisOperations operations) {
+                  LinkedHashSet<String> watchedKeys = new LinkedHashSet<>(watchKeys(context));
+                  while (true) {
+                    operations.watch(watchedKeys);
+                    SessionContext existingContext =
+                        readContext(
+                            operations, contextKey(context.tenantId(), context.sessionId()));
+                    SessionContext existingIdentityContext =
+                        hasGameplayIdentity(context)
+                            ? readContext(
+                                operations,
+                                identityKey(
+                                    context.tenantId(),
+                                    context.gameInstanceId(),
+                                    context.characterId()))
+                            : null;
+                    SessionContext existingNameContext =
+                        hasGameplayIdentity(context) && StringUtils.hasText(context.characterName())
+                            ? readContext(
+                                operations,
+                                nameKey(
+                                    context.tenantId(),
+                                    context.gameInstanceId(),
+                                    context.characterName()))
+                            : null;
+                    LinkedHashSet<String> additionalWatchKeys = new LinkedHashSet<>();
+                    addWatchKeys(additionalWatchKeys, existingContext);
+                    addWatchKeys(additionalWatchKeys, existingIdentityContext);
+                    addWatchKeys(additionalWatchKeys, existingNameContext);
+                    if (additionalWatchKeys.removeAll(watchedKeys)
+                        && !additionalWatchKeys.isEmpty()) {
+                      operations.unwatch();
+                      watchedKeys.addAll(additionalWatchKeys);
+                      continue;
+                    }
+                    operations.multi();
+                    deleteIndexes(operations, existingContext);
+                    deleteIndexes(operations, existingIdentityContext);
+                    deleteIndexes(operations, existingNameContext);
+                    writeContext(operations, context);
+                    return operations.exec() != null;
+                  }
+                }
+              });
+      if (Boolean.TRUE.equals(committed)) {
+        return;
+      }
     }
-    redisTemplate.execute(
-        new SessionCallback<>() {
-          @Override
-          public Object execute(org.springframework.data.redis.core.RedisOperations operations) {
-            operations.multi();
-            var ops = operations.opsForValue();
-            ops.set(contextKey(context.tenantId(), context.sessionId()), context, sessionTtl);
-            ops.set(sessionKey(context.sessionId()), context, sessionTtl);
-            if (hasGameplayIdentity(context)) {
-              ops.set(
-                  identityKey(context.tenantId(), context.gameInstanceId(), context.characterId()),
-                  context,
-                  sessionTtl);
-              if (StringUtils.hasText(context.characterName())) {
-                ops.set(
-                    nameKey(context.tenantId(), context.gameInstanceId(), context.characterName()),
-                    context,
-                    sessionTtl);
-              }
-            }
-            operations.exec();
-            return null;
-          }
-        });
+    throw new IllegalStateException("Failed to save session context after concurrent retries");
   }
 
   @Override
@@ -110,27 +135,39 @@ public final class RedisSessionContextService implements SessionContextService {
 
   @Override
   public void deleteBySessionId(long tenantId, long sessionId) {
-    Optional<SessionContext> existing = findByTenantAndSessionId(tenantId, sessionId);
-    redisTemplate.execute(
-        new SessionCallback<>() {
-          @Override
-          public Object execute(org.springframework.data.redis.core.RedisOperations operations) {
-            operations.multi();
-            operations.delete(contextKey(tenantId, sessionId));
-            operations.delete(sessionKey(sessionId));
-            existing.ifPresent(
-                context -> {
-                  if (hasGameplayIdentity(context)) {
-                    operations.delete(
-                        identityKey(
-                            context.tenantId(), context.gameInstanceId(), context.characterId()));
-                    deleteNameIndex(operations, context);
+    for (int attempt = 0; attempt < MAX_SAVE_RETRIES; attempt++) {
+      Boolean committed =
+          redisTemplate.execute(
+              new SessionCallback<>() {
+                @Override
+                public Boolean execute(
+                    org.springframework.data.redis.core.RedisOperations operations) {
+                  LinkedHashSet<String> watchedKeys =
+                      new LinkedHashSet<>(
+                          List.of(contextKey(tenantId, sessionId), sessionKey(sessionId)));
+                  while (true) {
+                    operations.watch(watchedKeys);
+                    SessionContext existing =
+                        readContext(operations, contextKey(tenantId, sessionId));
+                    LinkedHashSet<String> additionalWatchKeys = new LinkedHashSet<>();
+                    addWatchKeys(additionalWatchKeys, existing);
+                    if (additionalWatchKeys.removeAll(watchedKeys)
+                        && !additionalWatchKeys.isEmpty()) {
+                      operations.unwatch();
+                      watchedKeys.addAll(additionalWatchKeys);
+                      continue;
+                    }
+                    operations.multi();
+                    deleteIndexes(operations, existing);
+                    return operations.exec() != null;
                   }
-                });
-            operations.exec();
-            return null;
-          }
-        });
+                }
+              });
+      if (Boolean.TRUE.equals(committed)) {
+        return;
+      }
+    }
+    throw new IllegalStateException("Failed to delete session context after concurrent retries");
   }
 
   private String contextKey(long tenantId, long sessionId) {
@@ -149,24 +186,83 @@ public final class RedisSessionContextService implements SessionContextService {
     return String.format(NAME_KEY_TEMPLATE, tenantId, gameInstanceId, normalizeName(characterName));
   }
 
-  private void deleteNameIndex(SessionContext context) {
-    deleteNameIndex(redisTemplate, context);
-  }
-
-  private void deleteNameIndex(
-      org.springframework.data.redis.core.RedisOperations<String, Object> operations,
-      SessionContext context) {
-    if (StringUtils.hasText(context.characterName())) {
-      operations.delete(
-          nameKey(context.tenantId(), context.gameInstanceId(), context.characterName()));
-    }
-  }
-
   private boolean hasGameplayIdentity(SessionContext context) {
     return context.gameInstanceId() > 0 && context.characterId() > 0;
   }
 
   private String normalizeName(String value) {
     return value.trim().toLowerCase(Locale.ROOT);
+  }
+
+  private List<String> watchKeys(SessionContext context) {
+    List<String> keys = new ArrayList<>();
+    keys.add(contextKey(context.tenantId(), context.sessionId()));
+    keys.add(sessionKey(context.sessionId()));
+    if (hasGameplayIdentity(context)) {
+      keys.add(identityKey(context.tenantId(), context.gameInstanceId(), context.characterId()));
+      if (StringUtils.hasText(context.characterName())) {
+        keys.add(nameKey(context.tenantId(), context.gameInstanceId(), context.characterName()));
+      }
+    }
+    return keys;
+  }
+
+  private SessionContext readContext(
+      org.springframework.data.redis.core.RedisOperations<String, Object> operations, String key) {
+    return (SessionContext) operations.opsForValue().get(key);
+  }
+
+  private void addWatchKeys(Set<String> watchKeys, SessionContext context) {
+    if (context == null) {
+      return;
+    }
+    watchKeys.add(contextKey(context.tenantId(), context.sessionId()));
+    watchKeys.add(sessionKey(context.sessionId()));
+    if (hasGameplayIdentity(context)) {
+      watchKeys.add(
+          identityKey(context.tenantId(), context.gameInstanceId(), context.characterId()));
+      if (StringUtils.hasText(context.characterName())) {
+        watchKeys.add(
+            nameKey(context.tenantId(), context.gameInstanceId(), context.characterName()));
+      }
+    }
+  }
+
+  private void deleteIndexes(
+      org.springframework.data.redis.core.RedisOperations<String, Object> operations,
+      SessionContext context) {
+    if (context == null) {
+      return;
+    }
+    operations.delete(contextKey(context.tenantId(), context.sessionId()));
+    operations.delete(sessionKey(context.sessionId()));
+    if (hasGameplayIdentity(context)) {
+      operations.delete(
+          identityKey(context.tenantId(), context.gameInstanceId(), context.characterId()));
+      if (StringUtils.hasText(context.characterName())) {
+        operations.delete(
+            nameKey(context.tenantId(), context.gameInstanceId(), context.characterName()));
+      }
+    }
+  }
+
+  private void writeContext(
+      org.springframework.data.redis.core.RedisOperations<String, Object> operations,
+      SessionContext context) {
+    var ops = operations.opsForValue();
+    ops.set(contextKey(context.tenantId(), context.sessionId()), context, sessionTtl);
+    ops.set(sessionKey(context.sessionId()), context, sessionTtl);
+    if (hasGameplayIdentity(context)) {
+      ops.set(
+          identityKey(context.tenantId(), context.gameInstanceId(), context.characterId()),
+          context,
+          sessionTtl);
+      if (StringUtils.hasText(context.characterName())) {
+        ops.set(
+            nameKey(context.tenantId(), context.gameInstanceId(), context.characterName()),
+            context,
+            sessionTtl);
+      }
+    }
   }
 }

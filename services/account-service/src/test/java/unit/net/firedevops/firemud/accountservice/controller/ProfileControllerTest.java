@@ -15,6 +15,8 @@ import net.firedevops.firemud.accountservice.dto.UpdateProfileRequest;
 import net.firedevops.firemud.accountservice.security.JwtAuthInterceptor;
 import net.firedevops.firemud.accountservice.service.AccountService;
 import net.firedevops.firemud.common.security.JwtUtil;
+import net.firedevops.firemud.common.security.SessionContext;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
@@ -40,6 +42,11 @@ class ProfileControllerTest {
 
   @MockitoBean private AccountService accountService;
   @Autowired private JwtUtil jwtUtil;
+
+  @AfterEach
+  void clear() {
+    SessionContext.clear();
+  }
 
   @Test
   void getProfileReturnsDto() throws Exception {
@@ -73,5 +80,17 @@ class ProfileControllerTest {
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("SUCCESS"))
         .andExpect(jsonPath("$.data.displayName").value("demo"));
+  }
+
+  @Test
+  void getProfileRejectsCrossTenantScopedAdmin() throws Exception {
+    String token =
+        jwtUtil.generateToken("user", Map.of("scopedRoles", Map.of("8", List.of("admin"))));
+    mockMvc
+        .perform(
+            get("/profiles/2")
+                .param("tenantId", "1")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .andExpect(status().isForbidden());
   }
 }

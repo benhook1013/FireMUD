@@ -34,8 +34,9 @@ message QueryLogsResponse {
 message ApplyModerationActionRequest {
   string tenant_id = 1;
   string account_id = 2;
-  string action = 3;
-  string reason = 4;
+  string session_id = 3;
+  string action = 4;
+  string reason = 5;
 }
 
 message ApplyModerationActionResponse {

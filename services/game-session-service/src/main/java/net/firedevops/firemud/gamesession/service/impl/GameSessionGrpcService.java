@@ -4,11 +4,16 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
+import java.util.List;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
+import net.firedevops.firemud.common.security.AuthTokenInterceptor;
+import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.gamesession.command.text.TextCommandInterpretationResult;
 import net.firedevops.firemud.gamesession.command.text.TextCommandInterpreter;
 import net.firedevops.firemud.gamesession.dto.GameInstanceDto;
 import net.firedevops.firemud.gamesession.dto.StartSessionRequest;
+import net.firedevops.firemud.gamesession.entity.GameInstance;
+import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.FeatureFlagService;
 import net.firedevops.firemud.gamesession.service.GameInstanceService;
 import net.firedevops.firemud.gamesession.service.IpConnectionLimiter;
@@ -38,7 +43,7 @@ import net.firedevops.firemud.gamesession.v1.ToggleFeatureFlagResponse;
 import org.springframework.grpc.server.service.GrpcService;
 
 /** gRPC endpoints for the Game Session Service. */
-@GrpcService
+@GrpcService(interceptors = AuthTokenInterceptor.class)
 @SuppressFBWarnings(
     value = "EI_EXPOSE_REP2",
     justification = "Injected service collaborators are framework-managed and retained internally")
@@ -48,6 +53,7 @@ public final class GameSessionGrpcService
   private final GameInstanceService gameInstanceService;
   private final FeatureFlagService featureFlagService;
   private final TextCommandInterpreter textCommandInterpreter;
+  private final GameInstanceRepository gameInstanceRepository;
 
   @SuppressFBWarnings(
       value = "EI_EXPOSE_REP2",
@@ -66,6 +72,7 @@ public final class GameSessionGrpcService
       GameInstanceService gameInstanceService,
       FeatureFlagService featureFlagService,
       TextCommandInterpreter textCommandInterpreter,
+      GameInstanceRepository gameInstanceRepository,
       TickService tickService,
       MeterRegistry meterRegistry,
       IpConnectionLimiter ipConnectionLimiter) {
@@ -73,6 +80,7 @@ public final class GameSessionGrpcService
     this.gameInstanceService = gameInstanceService;
     this.featureFlagService = featureFlagService;
     this.textCommandInterpreter = textCommandInterpreter;
+    this.gameInstanceRepository = gameInstanceRepository;
     this.tickService = tickService;
     this.meterRegistry = meterRegistry;
     this.ipConnectionLimiter = ipConnectionLimiter;
@@ -95,12 +103,15 @@ public final class GameSessionGrpcService
       StreamObserver<StartSessionResponse> responseObserver) {
     try {
       String clientIp = request.getClientIp();
+      long tenantId = Long.parseLong(request.getTenantId());
+      long ownerAccountId = parseOwnerAccountId(request.getOwnerAccountId());
+      requireTenantAndOwnerAccess(tenantId, ownerAccountId);
       StartSessionRequest dto =
           new StartSessionRequest(
-              Long.valueOf(request.getTenantId()),
+              tenantId,
               request.getRuntimeVersion(),
               request.getScriptPatchVersion(),
-              parseOwnerAccountId(request.getOwnerAccountId()));
+              ownerAccountId);
       GameInstanceDto instance = gameInstanceService.startSession(dto);
       if (clientIp != null && !clientIp.isBlank()) {
         if (!ipConnectionLimiter.tryRegister(clientIp, instance.id())) {
@@ -127,6 +138,13 @@ public final class GameSessionGrpcService
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
+    } catch (AuthorizationException ex) {
+      StartSessionResponse response =
+          StartSessionResponse.newBuilder()
+              .setError(GrpcAppErrors.error(meterRegistry, "PERMISSION_DENIED", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
     }
   }
 
@@ -141,12 +159,21 @@ public final class GameSessionGrpcService
     return ownerAccountId;
   }
 
+  private void requireTenantAndOwnerAccess(long tenantId, long ownerAccountId) {
+    requireTenantAccess(tenantId);
+    if (isCurrentAccount(ownerAccountId)) {
+      return;
+    }
+    throw new AuthorizationException("Owner access required");
+  }
+
   @Override
   @Timed(value = "gamesessionGrpc.stopSession")
   public void stopSession(
       StopSessionRequest request, StreamObserver<StopSessionResponse> responseObserver) {
     try {
       long sessionId = Long.parseLong(request.getSessionId());
+      requireInstanceAccess(sessionId);
       gameInstanceService.stopSession(sessionId);
       ipConnectionLimiter.release(sessionId);
       StopSessionResponse response = StopSessionResponse.newBuilder().setSuccess(true).build();
@@ -160,6 +187,14 @@ public final class GameSessionGrpcService
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
+    } catch (AuthorizationException ex) {
+      StopSessionResponse response =
+          StopSessionResponse.newBuilder()
+              .setSuccess(false)
+              .setError(GrpcAppErrors.error(meterRegistry, "PERMISSION_DENIED", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
     }
   }
 
@@ -168,7 +203,9 @@ public final class GameSessionGrpcService
   public void restartSession(
       RestartSessionRequest request, StreamObserver<RestartSessionResponse> responseObserver) {
     try {
-      gameInstanceService.restartSession(Long.parseLong(request.getSessionId()));
+      long sessionId = Long.parseLong(request.getSessionId());
+      requireInstanceAccess(sessionId);
+      gameInstanceService.restartSession(sessionId);
       RestartSessionResponse response =
           RestartSessionResponse.newBuilder().setSuccess(true).build();
       responseObserver.onNext(response);
@@ -181,6 +218,14 @@ public final class GameSessionGrpcService
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
+    } catch (AuthorizationException ex) {
+      RestartSessionResponse response =
+          RestartSessionResponse.newBuilder()
+              .setSuccess(false)
+              .setError(GrpcAppErrors.error(meterRegistry, "PERMISSION_DENIED", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
     }
   }
 
@@ -188,19 +233,39 @@ public final class GameSessionGrpcService
   @Timed(value = "gamesessionGrpc.enqueueCommand")
   public void enqueueCommand(
       EnqueueCommandRequest request, StreamObserver<EnqueueCommandResponse> responseObserver) {
-    TextCommandInterpretationResult interpretation =
-        textCommandInterpreter.interpret(
-            request.getSessionId(), request.getCommand(), request.getRequiresSoloTick());
-    var commandResult = interpretation.commandResult();
-    EnqueueCommandResponse.Builder builder =
-        EnqueueCommandResponse.newBuilder().setAccepted(commandResult.accepted());
-    if (commandResult.hasError()) {
-      builder.setError(
-          GrpcAppErrors.error(
-              meterRegistry, commandResult.errorCode(), commandResult.errorMessage()));
+    try {
+      long sessionId = Long.parseLong(request.getSessionId());
+      requireInstanceAccess(sessionId);
+      TextCommandInterpretationResult interpretation =
+          textCommandInterpreter.interpret(
+              request.getSessionId(), request.getCommand(), request.getRequiresSoloTick());
+      var commandResult = interpretation.commandResult();
+      EnqueueCommandResponse.Builder builder =
+          EnqueueCommandResponse.newBuilder().setAccepted(commandResult.accepted());
+      if (commandResult.hasError()) {
+        builder.setError(
+            GrpcAppErrors.error(
+                meterRegistry, commandResult.errorCode(), commandResult.errorMessage()));
+      }
+      responseObserver.onNext(builder.build());
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      EnqueueCommandResponse response =
+          EnqueueCommandResponse.newBuilder()
+              .setAccepted(false)
+              .setError(GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (AuthorizationException ex) {
+      EnqueueCommandResponse response =
+          EnqueueCommandResponse.newBuilder()
+              .setAccepted(false)
+              .setError(GrpcAppErrors.error(meterRegistry, "PERMISSION_DENIED", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
     }
-    responseObserver.onNext(builder.build());
-    responseObserver.onCompleted();
   }
 
   @Override
@@ -208,7 +273,9 @@ public final class GameSessionGrpcService
   public void queryState(
       QueryStateRequest request, StreamObserver<QueryStateResponse> responseObserver) {
     try {
-      String state = tickService.queryState(Long.valueOf(request.getSessionId()));
+      long sessionId = Long.parseLong(request.getSessionId());
+      requireInstanceAccess(sessionId);
+      String state = tickService.queryState(sessionId);
       QueryStateResponse response = QueryStateResponse.newBuilder().setStateJson(state).build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -216,6 +283,13 @@ public final class GameSessionGrpcService
       QueryStateResponse response =
           QueryStateResponse.newBuilder()
               .setError(GrpcAppErrors.error(meterRegistry, "NOT_FOUND", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (AuthorizationException ex) {
+      QueryStateResponse response =
+          QueryStateResponse.newBuilder()
+              .setError(GrpcAppErrors.error(meterRegistry, "PERMISSION_DENIED", ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -228,6 +302,7 @@ public final class GameSessionGrpcService
       ToggleFeatureFlagRequest request,
       StreamObserver<ToggleFeatureFlagResponse> responseObserver) {
     try {
+      requireTenantAccess(Long.parseLong(request.getTenantId()));
       featureFlagService.toggleFlag(
           new net.firedevops.firemud.gamesession.dto.ToggleFeatureFlagRequest(
               Long.valueOf(request.getTenantId()), request.getName(), request.getEnabled()));
@@ -243,6 +318,14 @@ public final class GameSessionGrpcService
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
+    } catch (AuthorizationException ex) {
+      ToggleFeatureFlagResponse response =
+          ToggleFeatureFlagResponse.newBuilder()
+              .setSuccess(false)
+              .setError(GrpcAppErrors.error(meterRegistry, "PERMISSION_DENIED", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
     }
   }
 
@@ -250,20 +333,42 @@ public final class GameSessionGrpcService
   @Timed(value = "gamesessionGrpc.pauseTicks")
   public void pauseTicks(
       PauseTicksRequest request, StreamObserver<PauseTicksResponse> responseObserver) {
-    tickService.pauseTicks(request.getReason());
-    PauseTicksResponse response = PauseTicksResponse.newBuilder().setSuccess(true).build();
-    responseObserver.onNext(response);
-    responseObserver.onCompleted();
+    try {
+      requireGlobalPrivilegedRole();
+      tickService.pauseTicks(request.getReason());
+      PauseTicksResponse response = PauseTicksResponse.newBuilder().setSuccess(true).build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (AuthorizationException ex) {
+      PauseTicksResponse response =
+          PauseTicksResponse.newBuilder()
+              .setSuccess(false)
+              .setError(GrpcAppErrors.error(meterRegistry, "PERMISSION_DENIED", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    }
   }
 
   @Override
   @Timed(value = "gamesessionGrpc.resumeTicks")
   public void resumeTicks(
       ResumeTicksRequest request, StreamObserver<ResumeTicksResponse> responseObserver) {
-    tickService.resumeTicks(request.getReason());
-    ResumeTicksResponse response = ResumeTicksResponse.newBuilder().setSuccess(true).build();
-    responseObserver.onNext(response);
-    responseObserver.onCompleted();
+    try {
+      requireGlobalPrivilegedRole();
+      tickService.resumeTicks(request.getReason());
+      ResumeTicksResponse response = ResumeTicksResponse.newBuilder().setSuccess(true).build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (AuthorizationException ex) {
+      ResumeTicksResponse response =
+          ResumeTicksResponse.newBuilder()
+              .setSuccess(false)
+              .setError(GrpcAppErrors.error(meterRegistry, "PERMISSION_DENIED", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    }
   }
 
   @Override
@@ -274,5 +379,53 @@ public final class GameSessionGrpcService
     GetTickStatusResponse response = GetTickStatusResponse.newBuilder().setStatus(status).build();
     responseObserver.onNext(response);
     responseObserver.onCompleted();
+  }
+
+  private void requireTenantAccess(long tenantId) {
+    if (SessionContext.hasTenantAccess(tenantId)) {
+      return;
+    }
+    throw new AuthorizationException("Tenant access required");
+  }
+
+  private void requireInstanceAccess(long sessionId) {
+    GameInstance instance =
+        gameInstanceRepository
+            .findById(sessionId)
+            .orElseThrow(() -> new IllegalArgumentException("Session not found"));
+    if (SessionContext.hasTenantAccess(instance.getTenantId()) || isCurrentAccount(instance)) {
+      return;
+    }
+    throw new AuthorizationException("Session ownership required");
+  }
+
+  private void requireGlobalPrivilegedRole() {
+    List<String> roles = SessionContext.getGlobalRoles();
+    if (roles.contains("platformAdmin") || roles.contains("moderator")) {
+      return;
+    }
+    throw new AuthorizationException("Admin role required");
+  }
+
+  private boolean isCurrentAccount(GameInstance instance) {
+    return isCurrentAccount(instance.getOwnerAccountId());
+  }
+
+  private boolean isCurrentAccount(long ownerAccountId) {
+    String accountId = SessionContext.getAccountId();
+    if (accountId == null || accountId.isBlank()) {
+      return false;
+    }
+    try {
+      return Long.parseLong(accountId) == ownerAccountId;
+    } catch (NumberFormatException ex) {
+      return false;
+    }
+  }
+
+  private static final class AuthorizationException extends RuntimeException {
+    private AuthorizationException(String message) {
+      super(message);
+    }
   }
 }

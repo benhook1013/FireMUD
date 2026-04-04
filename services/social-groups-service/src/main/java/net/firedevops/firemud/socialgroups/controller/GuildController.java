@@ -3,6 +3,7 @@ package net.firedevops.firemud.socialgroups.controller;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import jakarta.validation.Valid;
 import net.firedevops.firemud.common.ApiResponse;
+import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.socialgroups.dto.AddGuildMemberRequest;
 import net.firedevops.firemud.socialgroups.dto.AddGuildStorageItemRequest;
 import net.firedevops.firemud.socialgroups.dto.CreateAllianceRequest;
@@ -34,6 +35,7 @@ public class GuildController {
   @PostMapping
   public ResponseEntity<ApiResponse<GuildDto>> createGuild(
       @Valid @RequestBody CreateGuildRequest request) {
+    SessionContext.requireTenantAccess(request.tenantId());
     GuildDto dto = guildService.createGuild(request);
     return ResponseEntity.ok(ApiResponse.success(dto));
   }
@@ -41,6 +43,7 @@ public class GuildController {
   @PostMapping("/storage")
   public ResponseEntity<ApiResponse<GuildStorageItemDto>> addItem(
       @Valid @RequestBody AddGuildStorageItemRequest request) {
+    SessionContext.requireTenantAccess(request.tenantId());
     GuildStorageItemDto dto = guildService.addStorageItem(request);
     return ResponseEntity.ok(ApiResponse.success(dto));
   }
@@ -48,6 +51,7 @@ public class GuildController {
   @PostMapping("/alliances")
   public ResponseEntity<ApiResponse<GuildAllianceDto>> createAlliance(
       @Valid @RequestBody CreateAllianceRequest request) {
+    SessionContext.requireTenantAccess(request.tenantId());
     GuildAllianceDto dto = guildService.createAlliance(request);
     return ResponseEntity.ok(ApiResponse.success(dto));
   }
@@ -55,6 +59,7 @@ public class GuildController {
   @PostMapping("/members")
   public ResponseEntity<ApiResponse<GuildMemberDto>> addMember(
       @Valid @RequestBody AddGuildMemberRequest request) {
+    SessionContext.requireTenantAccess(request.tenantId());
     GuildMemberDto dto = guildService.addMember(request);
     return ResponseEntity.ok(ApiResponse.success(dto));
   }
@@ -62,6 +67,7 @@ public class GuildController {
   @PostMapping("/members/role")
   public ResponseEntity<ApiResponse<GuildMemberDto>> updateMemberRole(
       @Valid @RequestBody UpdateGuildMemberRoleRequest request) {
+    SessionContext.requireTenantAccess(request.tenantId());
     GuildMemberDto dto = guildService.updateMemberRole(request);
     return ResponseEntity.ok(ApiResponse.success(dto));
   }
@@ -69,6 +75,7 @@ public class GuildController {
   @PostMapping("/members/remove")
   public ResponseEntity<ApiResponse<String>> removeMember(
       @Valid @RequestBody AddGuildMemberRequest request) {
+    SessionContext.requireTenantAccess(request.tenantId());
     guildService.removeMember(request.tenantId(), request.guildId(), request.accountId());
     return ResponseEntity.ok(ApiResponse.success("removed"));
   }

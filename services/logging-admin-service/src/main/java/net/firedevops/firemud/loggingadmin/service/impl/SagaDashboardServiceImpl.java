@@ -9,7 +9,6 @@ import net.firedevops.firemud.loggingadmin.mapper.SagaMapper;
 import net.firedevops.firemud.loggingadmin.repository.SagaInstanceRepository;
 import net.firedevops.firemud.loggingadmin.repository.SagaStepRepository;
 import net.firedevops.firemud.loggingadmin.service.SagaDashboardService;
-import net.firedevops.firemud.metrics.SagaMetrics;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -18,30 +17,24 @@ public class SagaDashboardServiceImpl implements SagaDashboardService {
   private final SagaInstanceRepository instanceRepository;
   private final SagaStepRepository stepRepository;
   private final SagaMapper mapper;
-  private final SagaMetrics metrics;
 
   @SuppressFBWarnings(
       value = "EI_EXPOSE_REP2",
-      justification = "Spring manages dependencies and metrics bean")
+      justification = "Spring manages injected repository and mapper dependencies")
   public SagaDashboardServiceImpl(
       SagaInstanceRepository instanceRepository,
       SagaStepRepository stepRepository,
-      SagaMapper mapper,
-      SagaMetrics metrics) {
+      SagaMapper mapper) {
     this.instanceRepository = instanceRepository;
     this.stepRepository = stepRepository;
     this.mapper = mapper;
-    this.metrics = metrics;
   }
 
   @Override
   @Transactional(readOnly = true)
   @Timed(value = "saga.listInstances")
   public List<SagaInstanceDto> listInstances() {
-    List<SagaInstanceDto> instances =
-        instanceRepository.findAll().stream().map(mapper::toDto).toList();
-    metrics.setActive(instances.size());
-    return instances;
+    return instanceRepository.findAll().stream().map(mapper::toDto).toList();
   }
 
   @Override

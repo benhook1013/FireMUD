@@ -9,6 +9,7 @@ import io.grpc.inprocess.InProcessServerBuilder;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.gamesession.command.text.TextCommandInterpreter;
+import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.FeatureFlagService;
 import net.firedevops.firemud.gamesession.service.GameInstanceService;
 import net.firedevops.firemud.gamesession.service.IpConnectionLimiter;
@@ -29,6 +30,7 @@ class GameSessionGrpcServicePingIntegrationTest {
     FeatureFlagService featureFlagService = Mockito.mock(FeatureFlagService.class);
     TickService tickService = Mockito.mock(TickService.class);
     IpConnectionLimiter ipLimiter = Mockito.mock(IpConnectionLimiter.class);
+    GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     TextCommandInterpreter textCommandInterpreter = Mockito.mock(TextCommandInterpreter.class);
 
@@ -38,6 +40,7 @@ class GameSessionGrpcServicePingIntegrationTest {
             gameInstanceService,
             featureFlagService,
             textCommandInterpreter,
+            gameInstanceRepository,
             tickService,
             meterRegistry,
             ipLimiter);

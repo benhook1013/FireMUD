@@ -5,7 +5,10 @@ import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Instant;
+import java.util.List;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
+import net.firedevops.firemud.common.security.AuthTokenInterceptor;
+import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.TickService;
@@ -24,7 +27,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.grpc.server.service.GrpcService;
 
-@GrpcService
+@GrpcService(interceptors = AuthTokenInterceptor.class)
 public final class GameSessionControlPlaneGrpcService
     extends GameSessionControlPlaneServiceGrpc.GameSessionControlPlaneServiceImplBase {
   private static final Logger logger =
@@ -74,11 +77,20 @@ public final class GameSessionControlPlaneGrpcService
         .orElseThrow(() -> new IllegalArgumentException("Game instance not found"));
   }
 
+  private void requireAdminRole() {
+    List<String> roles = SessionContext.getGlobalRoles();
+    if (!roles.contains("platformAdmin") && !roles.contains("moderator")) {
+      throw new io.grpc.StatusRuntimeException(
+          io.grpc.Status.PERMISSION_DENIED.withDescription("Admin role required"));
+    }
+  }
+
   @Override
   @Timed(value = "gamesessionGrpc.controlPlane.getPinnedScriptPatchVersion")
   public void getPinnedScriptPatchVersion(
       GetPinnedScriptPatchVersionRequest request,
       StreamObserver<GetPinnedScriptPatchVersionResponse> responseObserver) {
+    requireAdminRole();
     try {
       long tenantId = parseTenantId(request.getTenantId());
       long gameInstanceId = parseGameInstanceId(request.getGameInstanceId());
@@ -124,6 +136,7 @@ public final class GameSessionControlPlaneGrpcService
   public void setPinnedScriptPatchVersion(
       SetPinnedScriptPatchVersionRequest request,
       StreamObserver<SetPinnedScriptPatchVersionResponse> responseObserver) {
+    requireAdminRole();
     try {
       long tenantId = parseTenantId(request.getTenantId());
       long gameInstanceId = parseGameInstanceId(request.getGameInstanceId());
@@ -171,6 +184,7 @@ public final class GameSessionControlPlaneGrpcService
   public void rollbackScriptPatchVersion(
       RollbackScriptPatchVersionRequest request,
       StreamObserver<RollbackScriptPatchVersionResponse> responseObserver) {
+    requireAdminRole();
     try {
       long tenantId = parseTenantId(request.getTenantId());
       long gameInstanceId = parseGameInstanceId(request.getGameInstanceId());
@@ -218,6 +232,7 @@ public final class GameSessionControlPlaneGrpcService
   public void pauseTicksForScope(
       PauseTicksForScopeRequest request,
       StreamObserver<PauseTicksForScopeResponse> responseObserver) {
+    requireAdminRole();
     try {
       long tenantId = parseTenantId(request.getTenantId());
       if (!request.getRegionId().isBlank()) {
@@ -258,6 +273,7 @@ public final class GameSessionControlPlaneGrpcService
   public void resumeTicksForScope(
       ResumeTicksForScopeRequest request,
       StreamObserver<ResumeTicksForScopeResponse> responseObserver) {
+    requireAdminRole();
     try {
       long tenantId = parseTenantId(request.getTenantId());
       if (!request.getRegionId().isBlank()) {

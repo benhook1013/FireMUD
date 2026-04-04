@@ -1,0 +1,117 @@
+package net.firedevops.firemud.gamedesign.service.impl;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+import java.util.List;
+import java.util.Optional;
+import net.firedevops.firemud.common.saga.Saga;
+import net.firedevops.firemud.common.saga.SagaException;
+import net.firedevops.firemud.common.saga.SagaRunner;
+import net.firedevops.firemud.gamedesign.client.AutomationScriptingClient;
+import net.firedevops.firemud.gamedesign.dto.VersionDto;
+import net.firedevops.firemud.gamedesign.entity.Game;
+import net.firedevops.firemud.gamedesign.entity.Version;
+import net.firedevops.firemud.gamedesign.mapper.VersionMapper;
+import net.firedevops.firemud.gamedesign.repository.GameRepository;
+import net.firedevops.firemud.gamedesign.repository.VersionRepository;
+import net.firedevops.firemud.gamedesign.service.AssetExportService;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.mapstruct.factory.Mappers;
+import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
+
+class VersionServiceImplTest {
+  @Mock private VersionRepository versionRepository;
+  @Mock private GameRepository gameRepository;
+  @Mock private AutomationScriptingClient scriptingClient;
+  @Mock private SagaRunner sagaRunner;
+  @Mock private AssetExportService assetExportService;
+
+  private VersionServiceImpl service;
+
+  @BeforeEach
+  void setup() throws Exception {
+    MockitoAnnotations.openMocks(this);
+    VersionMapper mapper = Mappers.getMapper(VersionMapper.class);
+    doAnswer(
+            invocation -> {
+              Saga saga = invocation.getArgument(0);
+              try {
+                saga.run();
+              } catch (SagaException ex) {
+                throw new RuntimeException(ex);
+              }
+              return null;
+            })
+        .when(sagaRunner)
+        .run(any(Saga.class));
+    service =
+        new VersionServiceImpl(
+            versionRepository,
+            gameRepository,
+            mapper,
+            scriptingClient,
+            sagaRunner,
+            assetExportService);
+  }
+
+  @Test
+  void publishVersionUsesTenantScopedVersionSequence() throws Exception {
+    Game game = new Game();
+    game.setId(1L);
+    game.setTenantId("tenant-1");
+    when(gameRepository.findByTenantIdForUpdate("tenant-1")).thenReturn(game);
+
+    Version latest = new Version();
+    latest.setId(9L);
+    latest.setTenantId("tenant-1");
+    latest.setVersionNumber(7);
+    when(versionRepository.findTopByTenantIdOrderByVersionNumberDesc("tenant-1"))
+        .thenReturn(Optional.of(latest));
+
+    Version saved = new Version();
+    saved.setId(10L);
+    saved.setTenantId("tenant-1");
+    saved.setVersionNumber(8);
+    saved.setNotes("notes");
+    when(versionRepository.save(any(Version.class))).thenReturn(saved);
+
+    VersionDto dto = service.publishVersion("tenant-1", "notes");
+
+    assertEquals(8, dto.versionNumber());
+    verify(gameRepository).findByTenantIdForUpdate("tenant-1");
+    verify(versionRepository).findTopByTenantIdOrderByVersionNumberDesc("tenant-1");
+    verify(versionRepository).save(any(Version.class));
+  }
+
+  @Test
+  void listVersionsUsesTenantScopedOrdering() {
+    Game game = new Game();
+    game.setId(1L);
+    game.setTenantId("tenant-1");
+    when(gameRepository.findByTenantId("tenant-1")).thenReturn(game);
+
+    Version one = new Version();
+    one.setId(1L);
+    one.setTenantId("tenant-1");
+    one.setVersionNumber(1);
+    Version two = new Version();
+    two.setId(2L);
+    two.setTenantId("tenant-1");
+    two.setVersionNumber(2);
+    when(versionRepository.findAllByTenantIdOrderByVersionNumberAsc("tenant-1"))
+        .thenReturn(List.of(one, two));
+
+    List<VersionDto> versions = service.listVersions("tenant-1");
+
+    assertEquals(2, versions.size());
+    assertTrue(versions.get(0).versionNumber() < versions.get(1).versionNumber());
+    verify(versionRepository).findAllByTenantIdOrderByVersionNumberAsc("tenant-1");
+  }
+}

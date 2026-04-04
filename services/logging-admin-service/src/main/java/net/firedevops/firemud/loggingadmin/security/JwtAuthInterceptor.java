@@ -9,6 +9,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import net.firedevops.firemud.common.security.JwtUtil;
+import net.firedevops.firemud.common.security.SessionContext;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
@@ -65,10 +66,18 @@ public class JwtAuthInterceptor implements HandlerInterceptor {
         return false;
       }
 
+      SessionContext.setContext(payload.get("accountId", String.class), globalRoles, scopedRoles);
       return true;
     } catch (JwtException ex) {
       response.setStatus(HttpStatus.UNAUTHORIZED.value());
       return false;
     }
+  }
+
+  @Override
+  public void afterCompletion(
+      HttpServletRequest request, HttpServletResponse response, Object handler, Exception ex)
+      throws Exception {
+    SessionContext.clear();
   }
 }

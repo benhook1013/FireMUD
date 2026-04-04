@@ -8,7 +8,7 @@ import net.firedevops.firemud.accountservice.dto.CreateAccountRequest;
 import net.firedevops.firemud.accountservice.dto.LinkExternalAccountRequest;
 import net.firedevops.firemud.accountservice.service.AccountService;
 import net.firedevops.firemud.common.ApiResponse;
-import net.firedevops.firemud.common.security.RequireAdminRole;
+import net.firedevops.firemud.common.security.SessionContext;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -16,6 +16,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
@@ -39,15 +40,16 @@ public class AccountController {
 
   @GetMapping("/{accountId}/export")
   public ResponseEntity<ApiResponse<AccountDataExportDto>> exportAccount(
-      @PathVariable Long accountId, Long tenantId) {
+      @PathVariable Long accountId, @RequestParam Long tenantId) {
+    SessionContext.requireTenantAccess(tenantId);
     AccountDataExportDto data = accountService.exportAccountData(tenantId, accountId);
     return ResponseEntity.ok(ApiResponse.success(data));
   }
 
   @DeleteMapping("/{accountId}")
-  @RequireAdminRole
   public ResponseEntity<ApiResponse<Void>> deleteAccount(
-      @PathVariable Long accountId, Long tenantId) {
+      @PathVariable Long accountId, @RequestParam Long tenantId) {
+    SessionContext.requireTenantAccess(tenantId);
     accountService.deleteAccount(tenantId, accountId);
     return ResponseEntity.ok(ApiResponse.success(null));
   }
@@ -55,6 +57,7 @@ public class AccountController {
   @PostMapping("/{accountId}/external")
   public ResponseEntity<ApiResponse<Void>> linkExternalAccount(
       @PathVariable Long accountId, @Valid @RequestBody LinkExternalAccountRequest request) {
+    SessionContext.requireTenantAccess(request.tenantId());
     accountService.linkExternalAccount(
         new LinkExternalAccountRequest(
             request.tenantId(), accountId, request.provider(), request.externalId()));

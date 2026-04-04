@@ -38,6 +38,8 @@ spec:
               value: "prod"
             - name: SPRING_FLYWAY_TABLE
               value: {{ printf "flyway_%s_history" $service.name | replace "-" "_" | quote }}
+            - name: SERVICE_SCHEMA
+              value: {{ default (replace "-" "_" $service.name) $service.schema | quote }}
             {{- if $service.mountGrpcTls }}
             - name: FIREMUD_GRPC_CERT_CHAIN_PATH
               value: /tls/client.crt
@@ -62,6 +64,8 @@ spec:
             {{- end }}
             - name: SPRING_FLYWAY_TABLE
               value: {{ printf "flyway_%s_history" $service.name | replace "-" "_" | quote }}
+            - name: SERVICE_SCHEMA
+              value: {{ default (replace "-" "_" $service.name) $service.schema | quote }}
             {{- range $key, $value := $service.extraEnv }}
             - name: {{ $key }}
               value: {{ $value | quote }}

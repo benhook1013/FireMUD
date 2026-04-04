@@ -6,6 +6,7 @@ import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
+import net.firedevops.firemud.common.security.RequireAdminRole;
 import net.firedevops.firemud.common.settings.GameDesignSettingsProtoMapper;
 import net.firedevops.firemud.gamedesign.dto.RevisionDto;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
@@ -58,6 +59,7 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
 
   @Override
   @Timed(value = "gamedesignGrpc.saveRevision")
+  @RequireAdminRole
   public void saveRevision(
       SaveRevisionRequest request, StreamObserver<SaveRevisionResponse> responseObserver) {
     SaveRevisionResponse.Builder builder = SaveRevisionResponse.newBuilder();
@@ -80,6 +82,7 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
 
   @Override
   @Timed(value = "gamedesignGrpc.publishVersion")
+  @RequireAdminRole
   public void publishVersion(
       PublishVersionRequest request, StreamObserver<PublishVersionResponse> responseObserver) {
     PublishVersionResponse.Builder builder = PublishVersionResponse.newBuilder();
@@ -99,6 +102,7 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
 
   @Override
   @Timed(value = "gamedesignGrpc.publishScriptPatchVersion")
+  @RequireAdminRole
   public void publishScriptPatchVersion(
       PublishScriptPatchVersionRequest request,
       StreamObserver<PublishScriptPatchVersionResponse> responseObserver) {
@@ -130,6 +134,7 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
 
   @Override
   @Timed(value = "gamedesignGrpc.listVersions")
+  @RequireAdminRole
   public void listVersions(
       ListVersionsRequest request, StreamObserver<ListVersionsResponse> responseObserver) {
     ListVersionsResponse.Builder builder = ListVersionsResponse.newBuilder();
@@ -159,6 +164,7 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
 
   @Override
   @Timed(value = "gamedesignGrpc.getScopedSettingsOverrides")
+  @RequireAdminRole
   public void getScopedSettingsOverrides(
       GetScopedSettingsOverridesRequest request,
       StreamObserver<GetScopedSettingsOverridesResponse> responseObserver) {
@@ -195,6 +201,7 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
 
   @Override
   @Timed(value = "gamedesignGrpc.putSettingsDomainOverride")
+  @RequireAdminRole
   public void putSettingsDomainOverride(
       PutSettingsDomainOverrideRequest request,
       StreamObserver<PutSettingsDomainOverrideResponse> responseObserver) {
@@ -224,6 +231,7 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
 
   @Override
   @Timed(value = "gamedesignGrpc.deleteSettingsDomainOverride")
+  @RequireAdminRole
   public void deleteSettingsDomainOverride(
       DeleteSettingsDomainOverrideRequest request,
       StreamObserver<DeleteSettingsDomainOverrideResponse> responseObserver) {

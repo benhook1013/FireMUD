@@ -89,6 +89,17 @@ class ChatServiceImplTest {
   }
 
   @Test
+  void profanityReportsModerationAfterCommitPath() {
+    when(profanityFilter.filter("badword")).thenReturn("cleaned");
+    SendMessageRequestDto req =
+        new SendMessageRequestDto(1L, 2L, ChatType.SAY, null, 1L, null, null, "badword");
+
+    service.sendMessage(req);
+
+    verify(loggingAdminClient).reportChatViolation(1L, 2L, "Filtered profanity");
+  }
+
+  @Test
   void whisperCachesSeparatelyFromTell() {
     SendMessageRequestDto req =
         new SendMessageRequestDto(1L, 2L, ChatType.WHISPER, null, 7L, null, null, "quiet");

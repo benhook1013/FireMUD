@@ -3,8 +3,10 @@ package net.firedevops.firemud.socialgroups.service.impl;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
+import io.micrometer.core.instrument.MeterRegistry;
 import lombok.RequiredArgsConstructor;
-import net.firedevops.firemud.shared.v1.ErrorDetail;
+import net.firedevops.firemud.common.LoggingUtil;
+import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.socialgroups.dto.AddFriendRequest;
 import net.firedevops.firemud.socialgroups.dto.CreateGuildRequest;
 import net.firedevops.firemud.socialgroups.dto.SendMailRequest;
@@ -22,6 +24,7 @@ import net.firedevops.firemud.socialgroups.v1.SendMailResponse;
 import net.firedevops.firemud.socialgroups.v1.SendMessageRequest;
 import net.firedevops.firemud.socialgroups.v1.SendMessageResponse;
 import net.firedevops.firemud.socialgroups.v1.SocialGroupsServiceGrpc;
+import org.slf4j.Logger;
 import org.springframework.grpc.server.service.GrpcService;
 
 /** gRPC service implementation for the SocialGroupsService API. */
@@ -31,11 +34,17 @@ import org.springframework.grpc.server.service.GrpcService;
     value = "EI_EXPOSE_REP2",
     justification = "Injected services are managed by Spring")
 public class SocialGroupsGrpcService extends SocialGroupsServiceGrpc.SocialGroupsServiceImplBase {
+  private static final Logger logger = LoggingUtil.getLogger(SocialGroupsGrpcService.class);
   private final PingService pingService;
   private final ChatService chatService;
   private final GuildService guildService;
   private final FriendService friendService;
   private final MailService mailService;
+
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "MeterRegistry is thread-safe and only stored")
+  private final MeterRegistry meterRegistry;
 
   @Override
   @Timed(value = "socialGrpc.ping")
@@ -70,11 +79,7 @@ public class SocialGroupsGrpcService extends SocialGroupsServiceGrpc.SocialGroup
       SendMessageResponse response =
           SendMessageResponse.newBuilder()
               .setSuccess(false)
-              .setError(
-                  ErrorDetail.newBuilder()
-                      .setCode("INVALID_ARGUMENT")
-                      .setMessage(ex.getMessage())
-                      .build())
+              .setError(invalidArgument("SendMessage", ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -114,11 +119,7 @@ public class SocialGroupsGrpcService extends SocialGroupsServiceGrpc.SocialGroup
     } catch (IllegalArgumentException ex) {
       CreateGuildResponse response =
           CreateGuildResponse.newBuilder()
-              .setError(
-                  ErrorDetail.newBuilder()
-                      .setCode("INVALID_ARGUMENT")
-                      .setMessage(ex.getMessage())
-                      .build())
+              .setError(invalidArgument("CreateGuild", ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -145,11 +146,7 @@ public class SocialGroupsGrpcService extends SocialGroupsServiceGrpc.SocialGroup
       AddFriendResponse response =
           AddFriendResponse.newBuilder()
               .setSuccess(false)
-              .setError(
-                  ErrorDetail.newBuilder()
-                      .setCode("INVALID_ARGUMENT")
-                      .setMessage(ex.getMessage())
-                      .build())
+              .setError(invalidArgument("AddFriend", ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -177,14 +174,15 @@ public class SocialGroupsGrpcService extends SocialGroupsServiceGrpc.SocialGroup
       SendMailResponse response =
           SendMailResponse.newBuilder()
               .setSuccess(false)
-              .setError(
-                  ErrorDetail.newBuilder()
-                      .setCode("INVALID_ARGUMENT")
-                      .setMessage(ex.getMessage())
-                      .build())
+              .setError(invalidArgument("SendMail", ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     }
+  }
+
+  private net.firedevops.firemud.shared.v1.ErrorDetail invalidArgument(
+      String operation, String message) {
+    return GrpcAppErrors.error(meterRegistry, logger, operation, "INVALID_ARGUMENT", message);
   }
 }

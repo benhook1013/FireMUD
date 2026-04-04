@@ -35,13 +35,14 @@ public class InventoryServiceImpl implements InventoryService {
   @Transactional
   @Timed(value = "inventory.add")
   public InventoryEntryDto addItem(Long characterId, Long itemId, int quantity) {
+    Character character = characterRepository.findById(characterId).orElseThrow();
+    Item item = itemRepository.findById(itemId).orElseThrow();
+    requireSameTenant(character, item);
     InventoryKey key = new InventoryKey();
     key.setCharacterId(characterId);
     key.setItemId(itemId);
     InventoryEntry entry = repository.findById(key).orElse(null);
     if (entry == null) {
-      Character character = characterRepository.findById(characterId).orElseThrow();
-      Item item = itemRepository.findById(itemId).orElseThrow();
       entry = new InventoryEntry();
       entry.setId(key);
       entry.setCharacter(character);
@@ -58,9 +59,18 @@ public class InventoryServiceImpl implements InventoryService {
   @Transactional
   @Timed(value = "inventory.remove")
   public void removeItem(Long characterId, Long itemId) {
+    Character character = characterRepository.findById(characterId).orElseThrow();
+    Item item = itemRepository.findById(itemId).orElseThrow();
+    requireSameTenant(character, item);
     InventoryKey key = new InventoryKey();
     key.setCharacterId(characterId);
     key.setItemId(itemId);
     repository.deleteById(key);
+  }
+
+  private void requireSameTenant(Character character, Item item) {
+    if (!character.getTenantId().equals(item.getTenantId())) {
+      throw new IllegalArgumentException("Character and item must belong to the same tenant");
+    }
   }
 }

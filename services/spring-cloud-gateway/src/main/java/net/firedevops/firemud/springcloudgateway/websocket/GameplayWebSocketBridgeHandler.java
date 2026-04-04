@@ -7,6 +7,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.util.List;
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
 import net.firedevops.firemud.common.runtime.RuntimeIdentity;
 import net.firedevops.firemud.common.runtime.RuntimeLoggingContext;
@@ -57,7 +58,7 @@ public class GameplayWebSocketBridgeHandler implements WebSocketHandler {
 
   @Override
   public Mono<Void> handle(WebSocketSession downstream) {
-    BridgeState state = new BridgeState();
+    BridgeState state = new BridgeState(properties.bufferCapacity());
     HttpHeaders upstreamHeaders = buildUpstreamHeaders(downstream);
     URI upstreamUri = URI.create(properties.upstreamUrl());
 
@@ -274,11 +275,15 @@ public class GameplayWebSocketBridgeHandler implements WebSocketHandler {
   }
 
   private static final class BridgeState {
-    private final Sinks.Many<String> inboundToUpstream =
-        Sinks.many().multicast().onBackpressureBuffer();
-    private final Sinks.Many<String> outboundToClient =
-        Sinks.many().unicast().onBackpressureBuffer();
+    private final Sinks.Many<String> inboundToUpstream;
+    private final Sinks.Many<String> outboundToClient;
     private final AtomicBoolean upstreamConnected = new AtomicBoolean(false);
     private final AtomicBoolean downstreamClosed = new AtomicBoolean(false);
+
+    private BridgeState(int bufferCapacity) {
+      this.inboundToUpstream = Sinks.many().multicast().onBackpressureBuffer(bufferCapacity, false);
+      this.outboundToClient =
+          Sinks.many().unicast().onBackpressureBuffer(new ArrayBlockingQueue<>(bufferCapacity));
+    }
   }
 }

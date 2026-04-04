@@ -34,13 +34,14 @@ public class FriendServiceImpl implements FriendService {
   @Transactional
   @Timed(value = "friend.add")
   public CharacterFriendDto addFriend(Long characterId, Long friendId) {
+    Character character = characterRepository.findById(characterId).orElseThrow();
+    Character friend = characterRepository.findById(friendId).orElseThrow();
+    requireSameTenant(character, friend);
     CharacterFriendKey key = new CharacterFriendKey();
     key.setCharacterId(characterId);
     key.setFriendId(friendId);
     CharacterFriend entity = repository.findById(key).orElse(null);
     if (entity == null) {
-      Character character = characterRepository.findById(characterId).orElseThrow();
-      Character friend = characterRepository.findById(friendId).orElseThrow();
       entity = new CharacterFriend();
       entity.setId(key);
       entity.setCharacter(character);
@@ -56,9 +57,18 @@ public class FriendServiceImpl implements FriendService {
   @Transactional
   @Timed(value = "friend.remove")
   public void removeFriend(Long characterId, Long friendId) {
+    Character character = characterRepository.findById(characterId).orElseThrow();
+    Character friend = characterRepository.findById(friendId).orElseThrow();
+    requireSameTenant(character, friend);
     CharacterFriendKey key = new CharacterFriendKey();
     key.setCharacterId(characterId);
     key.setFriendId(friendId);
     repository.deleteById(key);
+  }
+
+  private void requireSameTenant(Character character, Character friend) {
+    if (!character.getTenantId().equals(friend.getTenantId())) {
+      throw new IllegalArgumentException("Characters must belong to the same tenant");
+    }
   }
 }

@@ -6,12 +6,14 @@ import net.firedevops.firemud.accountservice.dto.ProfileDto;
 import net.firedevops.firemud.accountservice.dto.UpdateProfileRequest;
 import net.firedevops.firemud.accountservice.service.AccountService;
 import net.firedevops.firemud.common.ApiResponse;
+import net.firedevops.firemud.common.security.SessionContext;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
@@ -28,7 +30,8 @@ public class ProfileController {
 
   @GetMapping("/{accountId}")
   public ResponseEntity<ApiResponse<ProfileDto>> getProfile(
-      @PathVariable Long accountId, Long tenantId) {
+      @PathVariable Long accountId, @RequestParam Long tenantId) {
+    SessionContext.requireTenantAccess(tenantId);
     ProfileDto dto = accountService.getProfile(tenantId, accountId);
     return ResponseEntity.ok(ApiResponse.success(dto));
   }
@@ -36,6 +39,7 @@ public class ProfileController {
   @PutMapping("/{accountId}")
   public ResponseEntity<ApiResponse<ProfileDto>> updateProfile(
       @PathVariable Long accountId, @Valid @RequestBody UpdateProfileRequest request) {
+    SessionContext.requireTenantAccess(request.tenantId());
     ProfileDto dto =
         accountService.updateProfile(
             new UpdateProfileRequest(

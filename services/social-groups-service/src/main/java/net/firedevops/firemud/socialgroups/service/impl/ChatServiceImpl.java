@@ -21,6 +21,8 @@ import org.slf4j.Logger;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 @Service
 @SuppressFBWarnings(
@@ -81,8 +83,10 @@ public class ChatServiceImpl implements ChatService {
     logger.info("Chat message from {}", request.senderAccountId());
     String filtered = profanityFilter.filter(request.content());
     if (!filtered.equals(request.content())) {
-      loggingAdminClient.reportChatViolation(
-          request.tenantId(), request.senderAccountId(), "Filtered profanity");
+      runAfterCommit(
+          () ->
+              safeReportModeration(
+                  request.tenantId(), request.senderAccountId(), "Filtered profanity"));
     }
 
     ChatMessage message = new ChatMessage();
@@ -108,6 +112,32 @@ public class ChatServiceImpl implements ChatService {
       logger.warn("Failed to publish chat message to Redis", e);
     }
     return mapper.toDto(saved);
+  }
+
+  private void safeReportModeration(long tenantId, long accountId, String description) {
+    try {
+      loggingAdminClient.reportChatViolation(tenantId, accountId, description);
+    } catch (RuntimeException e) {
+      logger.warn(
+          "Failed to report chat moderation event for tenant {} account {}",
+          tenantId,
+          accountId,
+          e);
+    }
+  }
+
+  private void runAfterCommit(Runnable action) {
+    if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+      action.run();
+      return;
+    }
+    TransactionSynchronizationManager.registerSynchronization(
+        new TransactionSynchronization() {
+          @Override
+          public void afterCommit() {
+            action.run();
+          }
+        });
   }
 
   @Override
