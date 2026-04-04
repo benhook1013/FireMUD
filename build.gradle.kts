@@ -186,6 +186,7 @@ subprojects {
         apply(plugin = "org.flywaydb.flyway")
 
         dependencies {
+            implementation(libs.findLibrary("spring.boot.flyway").get())
             implementation(libs.findLibrary("flyway-core").get())
             implementation(libs.findLibrary("flyway-database-postgresql").get())
             implementation(libs.findLibrary("postgresql").get())
