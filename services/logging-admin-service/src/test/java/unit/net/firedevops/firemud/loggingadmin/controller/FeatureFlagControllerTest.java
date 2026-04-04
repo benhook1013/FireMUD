@@ -5,11 +5,15 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import java.util.List;
+import java.util.Map;
 import net.firedevops.firemud.common.security.JwtUtil;
+import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.loggingadmin.config.AuthConfig;
 import net.firedevops.firemud.loggingadmin.dto.FeatureFlagDto;
 import net.firedevops.firemud.loggingadmin.dto.ToggleFeatureFlagRequest;
 import net.firedevops.firemud.loggingadmin.service.FeatureFlagService;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
@@ -34,29 +38,45 @@ class FeatureFlagControllerTest {
 
   @Autowired private MockMvc mockMvc;
   private final ObjectMapper objectMapper = new ObjectMapper();
-  private final JwtUtil jwtUtil = new JwtUtil("testsecretkeytestsecretkeytest1234", 3600000);
 
   @MockitoBean private FeatureFlagService service;
+  @Autowired private JwtUtil jwtUtil;
+
+  @AfterEach
+  void clear() {
+    SessionContext.clear();
+  }
 
   @Test
   void toggleReturnsDto() throws Exception {
     ToggleFeatureFlagRequest request = new ToggleFeatureFlagRequest(1L, "demo", true);
     FeatureFlagDto dto = new FeatureFlagDto(1L, 1L, "demo", true);
     when(service.toggleFlag(request)).thenReturn(dto);
+    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(
             post("/feature-flags/toggle")
-                .header(
-                    HttpHeaders.AUTHORIZATION,
-                    "Bearer "
-                        + jwtUtil.generateToken(
-                            "user",
-                            java.util.Map.of("globalRoles", java.util.List.of("platformAdmin"))))
                 .contentType(MediaType.APPLICATION_JSON)
-                .content(objectMapper.writeValueAsString(request)))
+                .content(objectMapper.writeValueAsString(request))
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("SUCCESS"))
         .andExpect(jsonPath("$.data.enabled").value(true));
+  }
+
+  @Test
+  void toggleRejectsCrossTenantScopedAdmin() throws Exception {
+    ToggleFeatureFlagRequest request = new ToggleFeatureFlagRequest(1L, "demo", true);
+    String token =
+        jwtUtil.generateToken("user", Map.of("scopedRoles", Map.of("8", List.of("admin"))));
+
+    mockMvc
+        .perform(
+            post("/feature-flags/toggle")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request))
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .andExpect(status().isForbidden());
   }
 }

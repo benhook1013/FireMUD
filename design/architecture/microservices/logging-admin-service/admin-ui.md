@@ -23,7 +23,7 @@ and permissions are enforced using the `globalRoles` claim. The
 These capabilities map to REST endpoints exposed by the service. Routes include:
 
 ```text
-GET  /logs
+POST /logs/query
 POST /reports
 POST /moderation/actions
 POST /feature-flags/toggle

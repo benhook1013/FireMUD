@@ -7,5 +7,6 @@ import jakarta.validation.constraints.Size;
 public record ApplyModerationActionRequest(
     @NotNull Long tenantId,
     @NotNull Long accountId,
+    @NotNull Long sessionId,
     @NotBlank @Size(max = 20) String action,
     @Size(max = 255) String reason) {}

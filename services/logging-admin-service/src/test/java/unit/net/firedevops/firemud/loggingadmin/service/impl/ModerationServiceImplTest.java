@@ -37,7 +37,7 @@ class ModerationServiceImplTest {
 
   @Test
   void applyActionSavesEntity() throws Exception {
-    ApplyModerationActionRequest req = new ApplyModerationActionRequest(1L, 2L, "ban", "test");
+    ApplyModerationActionRequest req = new ApplyModerationActionRequest(1L, 2L, 9L, "ban", "test");
     ModerationAction saved = new ModerationAction();
     saved.setId(1L);
     saved.setCreatedAt(Instant.now());
@@ -57,5 +57,6 @@ class ModerationServiceImplTest {
 
     assertEquals(dto, result);
     verify(repository).save(any(ModerationAction.class));
+    verify(gameSessionClient).stopSession(9L);
   }
 }

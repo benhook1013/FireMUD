@@ -9,7 +9,6 @@ import net.firedevops.firemud.loggingadmin.dto.SagaInstanceDto;
 import net.firedevops.firemud.loggingadmin.mapper.SagaMapper;
 import net.firedevops.firemud.loggingadmin.repository.SagaInstanceRepository;
 import net.firedevops.firemud.loggingadmin.repository.SagaStepRepository;
-import net.firedevops.firemud.metrics.SagaMetrics;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.InjectMocks;
@@ -20,7 +19,6 @@ class SagaDashboardServiceImplTest {
   @Mock SagaInstanceRepository instanceRepository;
   @Mock SagaStepRepository stepRepository;
   @Mock SagaMapper mapper;
-  @Mock SagaMetrics metrics;
 
   @InjectMocks SagaDashboardServiceImpl service;
 

@@ -66,7 +66,7 @@ public class ModerationServiceImpl implements ModerationService {
         .step(
             "deleteAccount",
             () -> accountClient.deleteAccount(request.tenantId(), request.accountId()))
-        .step("stopSession", () -> gameSessionClient.stopSession(request.accountId()));
+        .step("stopSession", () -> gameSessionClient.stopSession(request.sessionId()));
 
     try {
       var saga = builder.build();

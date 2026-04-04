@@ -7,7 +7,7 @@ This document defines the Logging & Admin Service REST and gRPC surfaces, authen
 - `GET /ping` – basic health check returning `"pong"`.
 - `POST /reports` – submit an abuse or bug report.
 - `POST /feature-flags/toggle` – enable or disable runtime flags.
-- `GET /logs` – search stored logs.
+- `POST /logs/query` – search stored logs.
 - `POST /moderation/actions` – apply a moderation action.
 - `GET /sagas` – list saga instances.
 - `GET /sagas/{id}/steps` – inspect steps for a saga instance.
@@ -39,7 +39,7 @@ grpcurl -plaintext -d '{"tenant_id":1,"reporter_account_id":1,"target_account_id
 | Surface | Examples | Required auth path | Notes |
 | --- | --- | --- | --- |
 | Public/infra health | `GET /ping`, `Ping` | Internal network + platform health policy | Not a user-authenticated business operation. |
-| Admin/operator APIs (HTTP) | `/logs`, `/moderation/actions`, `/feature-flags/toggle`, `/reports`, `/sagas*`, `/admin/tick-remediation/*` | JWT middleware (`AuthTokenInterceptor` + route classification) | External tools must enter via Gateway allowlisted routes. |
+| Admin/operator APIs (HTTP) | `/logs/query`, `/moderation/actions`, `/feature-flags/toggle`, `/reports`, `/sagas*`, `/admin/tick-remediation/*` | JWT middleware (`AuthTokenInterceptor` + route classification) | External tools must enter via Gateway allowlisted routes. |
 | Service-to-service control/ingest (gRPC internal) | Internal lifecycle/event ingestion and trusted backend calls | mTLS caller identity + explicit service authorization checks | Never exposed at public ingress; role claims are required only for user-scoped actions. |
 
 ## Availability Classes by Endpoint Family
@@ -47,4 +47,4 @@ grpcurl -plaintext -d '{"tenant_id":1,"reporter_account_id":1,"target_account_id
 | Endpoint family | Availability class | Required behavior during observability outage |
 | --- | --- | --- |
 | `/moderation/actions`, `/feature-flags/toggle`, `/reports`, `/sagas*`, tick-remediation APIs | Core operator control plane | Remain available; may use local/PostgreSQL-backed audit state and downstream domain-service APIs only |
-| `/logs`, embedded Kibana/Grafana/Jaeger/Alertmanager views | Observability-backed | May degrade, return explicit unavailable/read-only states, or be hidden behind degraded-state messaging |
+| `/logs/query`, embedded Kibana/Grafana/Jaeger/Alertmanager views | Observability-backed | May degrade, return explicit unavailable/read-only states, or be hidden behind degraded-state messaging |

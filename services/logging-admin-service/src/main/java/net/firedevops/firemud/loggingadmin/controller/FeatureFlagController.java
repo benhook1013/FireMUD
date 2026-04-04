@@ -3,6 +3,7 @@ package net.firedevops.firemud.loggingadmin.controller;
 import io.micrometer.core.annotation.Timed;
 import jakarta.validation.Valid;
 import net.firedevops.firemud.common.ApiResponse;
+import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.loggingadmin.dto.FeatureFlagDto;
 import net.firedevops.firemud.loggingadmin.dto.ToggleFeatureFlagRequest;
 import net.firedevops.firemud.loggingadmin.service.FeatureFlagService;
@@ -25,6 +26,7 @@ public class FeatureFlagController {
   @Timed(value = "featureFlagToggle", description = "Toggle a runtime feature flag")
   public ResponseEntity<ApiResponse<FeatureFlagDto>> toggle(
       @Valid @RequestBody ToggleFeatureFlagRequest request) {
+    SessionContext.requireTenantAccess(request.tenantId());
     FeatureFlagDto dto = service.toggleFlag(request);
     return ResponseEntity.ok(ApiResponse.success(dto));
   }

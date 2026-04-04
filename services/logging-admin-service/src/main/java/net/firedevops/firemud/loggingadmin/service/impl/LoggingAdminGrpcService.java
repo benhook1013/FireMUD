@@ -6,6 +6,7 @@ import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.util.List;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
+import net.firedevops.firemud.common.security.RequireAdminRole;
 import net.firedevops.firemud.loggingadmin.service.FeatureFlagService;
 import net.firedevops.firemud.loggingadmin.service.LogQueryService;
 import net.firedevops.firemud.loggingadmin.service.ModerationService;
@@ -48,6 +49,7 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
 
   @Override
   @Timed(value = "loggingadminGrpc.toggleFeatureFlag")
+  @RequireAdminRole
   public void toggleFeatureFlag(
       ToggleFeatureFlagRequest request,
       StreamObserver<ToggleFeatureFlagResponse> responseObserver) {
@@ -86,6 +88,7 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
 
   @Override
   @Timed(value = "loggingadminGrpc.queryLogs")
+  @RequireAdminRole
   public void queryLogs(
       QueryLogsRequest request, StreamObserver<QueryLogsResponse> responseObserver) {
     try {
@@ -117,6 +120,7 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
 
   @Override
   @Timed(value = "loggingadminGrpc.applyModerationAction")
+  @RequireAdminRole
   public void applyModerationAction(
       ApplyModerationActionRequest request,
       StreamObserver<ApplyModerationActionResponse> responseObserver) {
@@ -125,6 +129,7 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
           new net.firedevops.firemud.loggingadmin.dto.ApplyModerationActionRequest(
               Long.valueOf(request.getTenantId()),
               Long.valueOf(request.getAccountId()),
+              Long.valueOf(request.getSessionId()),
               request.getAction(),
               request.getReason()));
       ApplyModerationActionResponse response =
