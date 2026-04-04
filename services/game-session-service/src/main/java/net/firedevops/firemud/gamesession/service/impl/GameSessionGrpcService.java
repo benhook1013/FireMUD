@@ -105,7 +105,7 @@ public final class GameSessionGrpcService
       String clientIp = request.getClientIp();
       long tenantId = Long.parseLong(request.getTenantId());
       long ownerAccountId = parseOwnerAccountId(request.getOwnerAccountId());
-      requireTenantOrOwnerAccess(tenantId, ownerAccountId);
+      requireTenantAndOwnerAccess(tenantId, ownerAccountId);
       StartSessionRequest dto =
           new StartSessionRequest(
               tenantId,
@@ -159,11 +159,12 @@ public final class GameSessionGrpcService
     return ownerAccountId;
   }
 
-  private void requireTenantOrOwnerAccess(long tenantId, long ownerAccountId) {
-    if (SessionContext.hasTenantAccess(tenantId) || isCurrentAccount(ownerAccountId)) {
+  private void requireTenantAndOwnerAccess(long tenantId, long ownerAccountId) {
+    requireTenantAccess(tenantId);
+    if (isCurrentAccount(ownerAccountId)) {
       return;
     }
-    throw new AuthorizationException("Tenant access or owner access required");
+    throw new AuthorizationException("Owner access required");
   }
 
   @Override
