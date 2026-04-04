@@ -139,7 +139,7 @@ previewStack:
         - port: 8080
           targetPort: 8080
         - port: 6565
-          targetPort: 6565
+          targetPort: 9090
     - name: automation-scripting-service
       schema: automation_scripting_service
       image:
@@ -152,7 +152,7 @@ previewStack:
         - port: 8080
           targetPort: 8080
         - port: 6565
-          targetPort: 6565
+          targetPort: 9090
     - name: entity-management-service
       schema: entity_management_service
       image:
@@ -165,7 +165,7 @@ previewStack:
         - port: 8080
           targetPort: 8080
         - port: 6565
-          targetPort: 6565
+          targetPort: 9090
     - name: game-design-service
       schema: game_design_service
       image:
@@ -178,7 +178,7 @@ previewStack:
         - port: 8080
           targetPort: 8080
         - port: 6565
-          targetPort: 6565
+          targetPort: 9090
     - name: game-logic-service
       schema: game_logic_service
       image:
@@ -191,7 +191,7 @@ previewStack:
         - port: 8080
           targetPort: 8080
         - port: 6565
-          targetPort: 6565
+          targetPort: 9090
     - name: game-session-service
       schema: game_session_service
       image:
@@ -204,7 +204,7 @@ previewStack:
         - port: 8080
           targetPort: 8080
         - port: 6565
-          targetPort: 6565
+          targetPort: 9090
     - name: logging-admin-service
       schema: logging_admin_service
       image:
@@ -217,7 +217,7 @@ previewStack:
         - port: 8080
           targetPort: 8080
         - port: 6565
-          targetPort: 6565
+          targetPort: 9090
     - name: social-groups-service
       schema: social_groups_service
       image:
@@ -230,7 +230,7 @@ previewStack:
         - port: 8080
           targetPort: 8080
         - port: 6565
-          targetPort: 6565
+          targetPort: 9090
     - name: spring-cloud-gateway
       schema: gateway
       image:
@@ -243,7 +243,7 @@ previewStack:
         - port: 80
           targetPort: 8080
         - port: 6565
-          targetPort: 6565
+          targetPort: 9090
     - name: tcp-proxy-service
       schema: tcp_proxy_service
       image:
@@ -271,4 +271,4 @@ previewStack:
         - port: 8080
           targetPort: 8080
         - port: 6565
-          targetPort: 6565
+          targetPort: 9090
