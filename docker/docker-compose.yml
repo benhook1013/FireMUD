@@ -50,6 +50,8 @@ services:
     <<: *service-resources
     environment:
       <<: *service-env
+      SERVICE_SCHEMA: account_service
+      SPRING_JPA_PROPERTIES_HIBERNATE_DEFAULT_SCHEMA: account_service
       SPRING_FLYWAY_TABLE: flyway_schema_history_account_service
     env_file: *service-env-file
     volumes: *service-vols
@@ -72,6 +74,8 @@ services:
     <<: *service-resources
     environment:
       <<: *service-env
+      SERVICE_SCHEMA: gateway
+      SPRING_JPA_PROPERTIES_HIBERNATE_DEFAULT_SCHEMA: gateway
       SPRING_FLYWAY_TABLE: flyway_schema_history_gateway
     env_file: *service-env-file
     volumes: *service-vols
@@ -94,6 +98,8 @@ services:
     <<: *service-resources
     environment:
       <<: *service-env
+      SERVICE_SCHEMA: automation_scripting_service
+      SPRING_JPA_PROPERTIES_HIBERNATE_DEFAULT_SCHEMA: automation_scripting_service
       SPRING_FLYWAY_TABLE: flyway_schema_history_automation_scripting_service
     env_file: *service-env-file
     volumes: *service-vols
@@ -116,6 +122,8 @@ services:
     <<: *service-resources
     environment:
       <<: *service-env
+      SERVICE_SCHEMA: entity_management_service
+      SPRING_JPA_PROPERTIES_HIBERNATE_DEFAULT_SCHEMA: entity_management_service
       SPRING_FLYWAY_TABLE: flyway_schema_history_entity_management_service
     env_file: *service-env-file
     volumes: *service-vols
@@ -138,6 +146,8 @@ services:
     <<: *service-resources
     environment:
       <<: *service-env
+      SERVICE_SCHEMA: game_design_service
+      SPRING_JPA_PROPERTIES_HIBERNATE_DEFAULT_SCHEMA: game_design_service
       SPRING_FLYWAY_TABLE: flyway_schema_history_game_design_service
     env_file: *service-env-file
     volumes: *service-vols
@@ -160,6 +170,8 @@ services:
     <<: *service-resources
     environment:
       <<: *service-env
+      SERVICE_SCHEMA: game_logic_service
+      SPRING_JPA_PROPERTIES_HIBERNATE_DEFAULT_SCHEMA: game_logic_service
       SPRING_FLYWAY_TABLE: flyway_schema_history_game_logic_service
     env_file: *service-env-file
     volumes: *service-vols
@@ -182,6 +194,8 @@ services:
     <<: *service-resources
     environment:
       <<: *service-env
+      SERVICE_SCHEMA: game_session_service
+      SPRING_JPA_PROPERTIES_HIBERNATE_DEFAULT_SCHEMA: game_session_service
       SPRING_FLYWAY_TABLE: flyway_schema_history_game_session_service
       FIREMUD_DATABASE_ENABLED: "true"
       GAME_SESSION_DEV_ISOLATED: "false"
@@ -211,6 +225,8 @@ services:
     <<: *service-resources
     environment:
       <<: *service-env
+      SERVICE_SCHEMA: logging_admin_service
+      SPRING_JPA_PROPERTIES_HIBERNATE_DEFAULT_SCHEMA: logging_admin_service
       SPRING_FLYWAY_TABLE: flyway_schema_history_logging_admin_service
     env_file: *service-env-file
     volumes: *service-vols
@@ -233,6 +249,8 @@ services:
     <<: *service-resources
     environment:
       <<: *service-env
+      SERVICE_SCHEMA: social_groups_service
+      SPRING_JPA_PROPERTIES_HIBERNATE_DEFAULT_SCHEMA: social_groups_service
       SPRING_FLYWAY_TABLE: flyway_schema_history_social_groups_service
     env_file: *service-env-file
     volumes: *service-vols
@@ -256,6 +274,8 @@ services:
     <<: *service-resources
     environment:
       <<: *service-env
+      SERVICE_SCHEMA: tcp_proxy_service
+      SPRING_JPA_PROPERTIES_HIBERNATE_DEFAULT_SCHEMA: tcp_proxy_service
       SPRING_FLYWAY_TABLE: flyway_schema_history_tcp_proxy_service
     env_file: *service-env-file
     volumes: *service-vols
@@ -278,6 +298,8 @@ services:
     <<: *service-resources
     environment:
       <<: *service-env
+      SERVICE_SCHEMA: world_management_service
+      SPRING_JPA_PROPERTIES_HIBERNATE_DEFAULT_SCHEMA: world_management_service
       SPRING_FLYWAY_TABLE: flyway_schema_history_world_management_service
     env_file: *service-env-file
     volumes: *service-vols

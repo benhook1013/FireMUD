@@ -82,12 +82,11 @@ class GameSessionWebSocketHandlerIntegrationTest {
   static void registerProperties(DynamicPropertyRegistry registry) {
     registry.add(
         "spring.datasource.url",
-        () ->
-            "jdbc:h2:mem:game-session-test;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;INIT=CREATE SCHEMA IF NOT EXISTS saga\\;SET SCHEMA saga");
+        () -> "jdbc:h2:mem:game-session-test;MODE=PostgreSQL;DB_CLOSE_DELAY=-1");
     registry.add("spring.datasource.driver-class-name", () -> "org.h2.Driver");
     registry.add("spring.datasource.username", () -> "sa");
     registry.add("spring.datasource.password", () -> "");
-    registry.add("spring.jpa.properties.hibernate.default_schema", () -> "saga");
+    registry.add("spring.jpa.properties.hibernate.default_schema", () -> "public");
   }
 
   @LocalServerPort private int port;
