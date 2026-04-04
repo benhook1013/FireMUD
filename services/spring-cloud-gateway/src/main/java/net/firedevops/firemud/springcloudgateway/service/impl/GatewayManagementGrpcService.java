@@ -48,80 +48,69 @@ public class GatewayManagementGrpcService
   @Timed(value = "gatewayGrpc.upsertRoute")
   public void upsertRoute(
       UpsertRouteRequest request, StreamObserver<UpsertRouteResponse> responseObserver) {
-    UpsertRouteResponse.Builder builder = UpsertRouteResponse.newBuilder();
-    if (request.getRouteId().isBlank() || request.getUri().isBlank()) {
-      builder.setSuccess(false);
-      builder.setError(
-          GrpcAppErrors.error(
-              meterRegistry,
-              logger,
-              "UpsertRoute",
-              "INVALID_ARGUMENT",
-              "routeId and uri are required"));
-      responseObserver.onNext(builder.build());
-      responseObserver.onCompleted();
-      return;
-    }
-    try {
-      GatewayRoute route =
-          new GatewayRoute(
-              request.getRouteId(),
-              request.getUri(),
-              request.getPredicatesList(),
-              request.getFiltersList());
-      routeService
-          .upsert(route)
-          .map(
-              ignored -> {
-                builder.setSuccess(true);
-                return builder.build();
-              })
-          .onErrorResume(
-              IllegalArgumentException.class,
-              ex ->
-                  Mono.just(
-                      builder
-                          .setSuccess(false)
-                          .setError(
-                              GrpcAppErrors.error(
-                                  meterRegistry,
-                                  logger,
-                                  "UpsertRoute",
-                                  "INVALID_ARGUMENT",
-                                  ex.getMessage()))
-                          .build()))
-          .onErrorResume(
-              Exception.class,
-              ex ->
-                  Mono.just(
-                      builder
-                          .setSuccess(false)
-                          .setError(
-                              GrpcAppErrors.internal(meterRegistry, logger, "UpsertRoute", ex))
-                          .build()))
-          .subscribe(
-              response -> {
-                responseObserver.onNext(response);
-                responseObserver.onCompleted();
-              },
-              responseObserver::onError);
-    } catch (IllegalArgumentException ex) {
-      responseObserver.onNext(
-          builder
-              .setSuccess(false)
-              .setError(
-                  GrpcAppErrors.error(
-                      meterRegistry, logger, "UpsertRoute", "INVALID_ARGUMENT", ex.getMessage()))
-              .build());
-      responseObserver.onCompleted();
-    }
+    respond(buildUpsertRouteResponse(request), responseObserver);
   }
 
   @Override
   @Timed(value = "gatewayGrpc.removeRoute")
   public void removeRoute(
       RemoveRouteRequest request, StreamObserver<RemoveRouteResponse> responseObserver) {
-    routeService
+    respond(buildRemoveRouteResponse(request), responseObserver);
+  }
+
+  private Mono<UpsertRouteResponse> buildUpsertRouteResponse(UpsertRouteRequest request) {
+    return Mono.defer(
+        () -> {
+          if (request.getRouteId().isBlank() || request.getUri().isBlank()) {
+            return Mono.just(
+                UpsertRouteResponse.newBuilder()
+                    .setSuccess(false)
+                    .setError(
+                        GrpcAppErrors.error(
+                            meterRegistry,
+                            logger,
+                            "UpsertRoute",
+                            "INVALID_ARGUMENT",
+                            "routeId and uri are required"))
+                    .build());
+          }
+          GatewayRoute route =
+              new GatewayRoute(
+                  request.getRouteId(),
+                  request.getUri(),
+                  request.getPredicatesList(),
+                  request.getFiltersList());
+          return routeService
+              .upsert(route)
+              .map(ignored -> UpsertRouteResponse.newBuilder().setSuccess(true).build())
+              .onErrorResume(
+                  IllegalArgumentException.class,
+                  ex ->
+                      Mono.just(
+                          UpsertRouteResponse.newBuilder()
+                              .setSuccess(false)
+                              .setError(
+                                  GrpcAppErrors.error(
+                                      meterRegistry,
+                                      logger,
+                                      "UpsertRoute",
+                                      "INVALID_ARGUMENT",
+                                      ex.getMessage()))
+                              .build()))
+              .onErrorResume(
+                  Exception.class,
+                  ex ->
+                      Mono.just(
+                          UpsertRouteResponse.newBuilder()
+                              .setSuccess(false)
+                              .setError(
+                                  GrpcAppErrors.internal(meterRegistry, logger, "UpsertRoute", ex))
+                              .build()));
+        });
+  }
+
+  private Mono<RemoveRouteResponse> buildRemoveRouteResponse(RemoveRouteRequest request) {
+    return routeService
         .remove(request.getRouteId())
         .map(
             removed ->
@@ -138,18 +127,35 @@ public class GatewayManagementGrpcService
                                 "route not found"))
                         .build())
         .onErrorResume(
+            IllegalArgumentException.class,
+            ex ->
+                Mono.just(
+                    RemoveRouteResponse.newBuilder()
+                        .setSuccess(false)
+                        .setError(
+                            GrpcAppErrors.error(
+                                meterRegistry,
+                                logger,
+                                "RemoveRoute",
+                                "INVALID_ARGUMENT",
+                                ex.getMessage()))
+                        .build()))
+        .onErrorResume(
             Exception.class,
             ex ->
                 Mono.just(
                     RemoveRouteResponse.newBuilder()
                         .setSuccess(false)
                         .setError(GrpcAppErrors.internal(meterRegistry, logger, "RemoveRoute", ex))
-                        .build()))
-        .subscribe(
-            response -> {
-              responseObserver.onNext(response);
-              responseObserver.onCompleted();
-            },
-            responseObserver::onError);
+                        .build()));
+  }
+
+  private <T> void respond(Mono<T> responseMono, StreamObserver<T> responseObserver) {
+    responseMono.subscribe(
+        response -> {
+          responseObserver.onNext(response);
+          responseObserver.onCompleted();
+        },
+        responseObserver::onError);
   }
 }
