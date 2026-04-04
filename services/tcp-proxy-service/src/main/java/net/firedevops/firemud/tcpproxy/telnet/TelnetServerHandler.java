@@ -498,10 +498,6 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
 
         if (!sessionContext.isReady()) {
           bootstrapDefaultSessionIfConfigured();
-          if (!sessionContext.isReady()) {
-            logger.warn("Ignoring Telnet input before session bootstrap: {}", sanitized);
-            return;
-          }
         }
 
         ensureGatewayConnected();

@@ -1,6 +1,7 @@
 package net.firedevops.firemud.tcpproxy.telnet;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
@@ -545,6 +546,43 @@ class TelnetServerHandlerTest {
 
     assertEquals("1", connector.getSessionId());
     assertEquals("1", connector.getTenantId());
+    executor.shutdownGracefully();
+  }
+
+  @Test
+  void preLoginCommandsFlowWithoutDefaultBootstrapMetadata() {
+    SimpleMeterRegistry registry = new SimpleMeterRegistry();
+    RecordingConnector connector = new RecordingConnector();
+    TelnetServerHandler handler =
+        new TelnetServerHandler(
+            "ws://localhost/ws",
+            false,
+            () -> {},
+            () -> {},
+            registry.counter("test"),
+            registry.counter("discarded"),
+            false,
+            registry,
+            () -> true,
+            connector,
+            Mockito.mock(TcpProxyEventService.class),
+            new AtomicInteger(),
+            null,
+            null,
+            lookCacheService);
+    ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
+    Channel channel = mock(Channel.class);
+    DefaultEventExecutor executor = new DefaultEventExecutor();
+    when(ctx.channel()).thenReturn(channel);
+    when(ctx.executor()).thenReturn(executor);
+    when(channel.remoteAddress()).thenReturn(new InetSocketAddress("127.0.0.1", 0));
+
+    handler.channelActive(ctx);
+    handler.channelRead0(ctx, "WORLDS");
+
+    assertEquals("WORLDS", connector.current.sentTexts.get(0));
+    assertNull(connector.getSessionId());
+    assertNull(connector.getTenantId());
     executor.shutdownGracefully();
   }
 
