@@ -24,6 +24,8 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /** Default implementation of {@link GameInstanceService}. */
 @SuppressFBWarnings(
@@ -143,21 +145,24 @@ public class GameInstanceServiceImpl implements GameInstanceService {
         && worldManagementClient != null
         && entityManagementClient != null
         && sagaRunner != null) {
-      var saga =
-          new SagaBuilder("startSession")
-              .step("checkWorldService", () -> worldManagementClient.ping())
-              .step("checkEntityService", () -> entityManagementClient.ping())
-              .step("notifyGameLogic", () -> gameLogicClient.ping())
-              .build();
-      try {
-        sagaRunner.run(saga);
-      } catch (SagaException e) {
-        logger.error("Saga failed during session start", e);
-        throw new IllegalStateException("Failed to start session", e);
-      }
+      runAfterCommitOrNow(
+          () -> {
+            var saga =
+                new SagaBuilder("startSession")
+                    .step("checkWorldService", () -> worldManagementClient.ping())
+                    .step("checkEntityService", () -> entityManagementClient.ping())
+                    .step("notifyGameLogic", () -> gameLogicClient.ping())
+                    .build();
+            try {
+              sagaRunner.run(saga);
+            } catch (SagaException e) {
+              logger.error("Saga failed during session start", e);
+              throw new IllegalStateException("Failed to start session", e);
+            }
+          });
     }
 
-    sessionStateService.saveState(dto);
+    runAfterCommitOrNow(() -> sessionStateService.saveState(dto));
     return dto;
   }
 
@@ -176,24 +181,28 @@ public class GameInstanceServiceImpl implements GameInstanceService {
             .orElseThrow(() -> new IllegalArgumentException("Session not found"));
     instance.setStatus("STOPPED");
     GameInstance saved = repository.save(instance);
-    sessionStateService.deleteState(instance.getTenantId(), instance.getId());
+    runAfterCommitOrNow(
+        () -> sessionStateService.deleteState(instance.getTenantId(), instance.getId()));
 
     if (gameLogicClient != null
         && worldManagementClient != null
         && entityManagementClient != null
         && sagaRunner != null) {
-      var saga =
-          new SagaBuilder("stopSession")
-              .step("notifyGameLogic", () -> gameLogicClient.ping())
-              .step("flushWorldService", () -> worldManagementClient.ping())
-              .step("flushEntityService", () -> entityManagementClient.ping())
-              .build();
-      try {
-        sagaRunner.run(saga);
-      } catch (SagaException e) {
-        logger.error("Saga failed during session stop", e);
-        throw new IllegalStateException("Failed to stop session", e);
-      }
+      runAfterCommitOrNow(
+          () -> {
+            var saga =
+                new SagaBuilder("stopSession")
+                    .step("notifyGameLogic", () -> gameLogicClient.ping())
+                    .step("flushWorldService", () -> worldManagementClient.ping())
+                    .step("flushEntityService", () -> entityManagementClient.ping())
+                    .build();
+            try {
+              sagaRunner.run(saga);
+            } catch (SagaException e) {
+              logger.error("Saga failed during session stop", e);
+              throw new IllegalStateException("Failed to stop session", e);
+            }
+          });
     }
 
     return mapper.toDto(saved);
@@ -215,7 +224,21 @@ public class GameInstanceServiceImpl implements GameInstanceService {
     instance.setStatus("RUNNING");
     GameInstance saved = repository.save(instance);
     GameInstanceDto dto = mapper.toDto(saved);
-    sessionStateService.saveState(dto);
+    runAfterCommitOrNow(() -> sessionStateService.saveState(dto));
     return dto;
+  }
+
+  private void runAfterCommitOrNow(Runnable action) {
+    if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+      action.run();
+      return;
+    }
+    TransactionSynchronizationManager.registerSynchronization(
+        new TransactionSynchronization() {
+          @Override
+          public void afterCommit() {
+            action.run();
+          }
+        });
   }
 }

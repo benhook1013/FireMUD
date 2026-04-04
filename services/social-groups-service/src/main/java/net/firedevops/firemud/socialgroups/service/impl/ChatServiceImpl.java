@@ -97,27 +97,8 @@ public class ChatServiceImpl implements ChatService {
     ChatMessage saved = repository.save(message);
     publishCounter.increment();
     try {
-      String key;
-      ChatProperties.ChatCacheSettings settings;
-      if (request.type() == ChatType.SAY) {
-        key = String.format("say:%d:%d", request.tenantId(), request.recipientAccountId());
-        settings = chatProperties.getSays();
-      } else if (request.type() == ChatType.WHISPER) {
-        key = String.format("whisper:%d:%d", request.tenantId(), request.recipientAccountId());
-        settings = chatProperties.getWhispers();
-      } else if (request.type() == ChatType.TELL) {
-        key = String.format("tell:%d:%d", request.tenantId(), request.recipientAccountId());
-        settings = chatProperties.getTells();
-      } else if (request.type() == ChatType.GUILD) {
-        key = String.format("guild:%d:%d", request.tenantId(), request.guildId());
-        settings = chatProperties.getGuild();
-      } else if (request.type() == ChatType.CITY) {
-        key = String.format("city:%d:%d", request.tenantId(), request.cityId());
-        settings = chatProperties.getCity();
-      } else {
-        key = String.format("account:%d:%d", request.tenantId(), request.recipientAccountId());
-        settings = chatProperties.getAccount();
-      }
+      String key = historyKey(request);
+      ChatProperties.ChatCacheSettings settings = settingsFor(request);
 
       redisTemplate.opsForList().leftPush(key, saved.getContent());
       redisTemplate.expire(key, java.time.Duration.ofSeconds(settings.historyTtlSeconds()));
@@ -142,5 +123,43 @@ public class ChatServiceImpl implements ChatService {
       logger.warn("Failed to fetch tell history", e);
       return java.util.Collections.emptyList();
     }
+  }
+
+  private String historyKey(SendMessageRequestDto request) {
+    if (request.type() == ChatType.SAY) {
+      return String.format("say:%d:%d", request.tenantId(), request.senderAccountId());
+    }
+    if (request.type() == ChatType.WHISPER) {
+      return String.format("whisper:%d:%d", request.tenantId(), request.recipientAccountId());
+    }
+    if (request.type() == ChatType.TELL) {
+      return String.format("tell:%d:%d", request.tenantId(), request.recipientAccountId());
+    }
+    if (request.type() == ChatType.GUILD) {
+      return String.format("guild:%d:%d", request.tenantId(), request.guildId());
+    }
+    if (request.type() == ChatType.CITY) {
+      return String.format("city:%d:%d", request.tenantId(), request.cityId());
+    }
+    return String.format("account:%d:%d", request.tenantId(), request.recipientAccountId());
+  }
+
+  private ChatProperties.ChatCacheSettings settingsFor(SendMessageRequestDto request) {
+    if (request.type() == ChatType.SAY) {
+      return chatProperties.getSays();
+    }
+    if (request.type() == ChatType.WHISPER) {
+      return chatProperties.getWhispers();
+    }
+    if (request.type() == ChatType.TELL) {
+      return chatProperties.getTells();
+    }
+    if (request.type() == ChatType.GUILD) {
+      return chatProperties.getGuild();
+    }
+    if (request.type() == ChatType.CITY) {
+      return chatProperties.getCity();
+    }
+    return chatProperties.getAccount();
   }
 }

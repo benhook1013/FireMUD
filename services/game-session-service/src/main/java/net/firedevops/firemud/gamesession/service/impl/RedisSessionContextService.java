@@ -9,6 +9,7 @@ import net.firedevops.firemud.gamesession.service.SessionContextService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.SessionCallback;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
@@ -39,7 +40,6 @@ public final class RedisSessionContextService implements SessionContextService {
 
   @Override
   public void save(SessionContext context) {
-    var ops = redisTemplate.opsForValue();
     findByTenantAndSessionId(context.tenantId(), context.sessionId())
         .filter(existing -> hasGameplayIdentity(existing))
         .ifPresent(this::deleteNameIndex);
@@ -51,20 +51,30 @@ public final class RedisSessionContextService implements SessionContextService {
           .filter(existing -> existing.sessionId() != context.sessionId())
           .ifPresent(existing -> deleteBySessionId(existing.tenantId(), existing.sessionId()));
     }
-    ops.set(contextKey(context.tenantId(), context.sessionId()), context, sessionTtl);
-    ops.set(sessionKey(context.sessionId()), context, sessionTtl);
-    if (hasGameplayIdentity(context)) {
-      ops.set(
-          identityKey(context.tenantId(), context.gameInstanceId(), context.characterId()),
-          context,
-          sessionTtl);
-      if (StringUtils.hasText(context.characterName())) {
-        ops.set(
-            nameKey(context.tenantId(), context.gameInstanceId(), context.characterName()),
-            context,
-            sessionTtl);
-      }
-    }
+    redisTemplate.execute(
+        new SessionCallback<>() {
+          @Override
+          public Object execute(org.springframework.data.redis.core.RedisOperations operations) {
+            operations.multi();
+            var ops = operations.opsForValue();
+            ops.set(contextKey(context.tenantId(), context.sessionId()), context, sessionTtl);
+            ops.set(sessionKey(context.sessionId()), context, sessionTtl);
+            if (hasGameplayIdentity(context)) {
+              ops.set(
+                  identityKey(context.tenantId(), context.gameInstanceId(), context.characterId()),
+                  context,
+                  sessionTtl);
+              if (StringUtils.hasText(context.characterName())) {
+                ops.set(
+                    nameKey(context.tenantId(), context.gameInstanceId(), context.characterName()),
+                    context,
+                    sessionTtl);
+              }
+            }
+            operations.exec();
+            return null;
+          }
+        });
   }
 
   @Override
@@ -101,14 +111,24 @@ public final class RedisSessionContextService implements SessionContextService {
   @Override
   public void deleteBySessionId(long tenantId, long sessionId) {
     Optional<SessionContext> existing = findByTenantAndSessionId(tenantId, sessionId);
-    redisTemplate.delete(contextKey(tenantId, sessionId));
-    redisTemplate.delete(sessionKey(sessionId));
-    existing.ifPresent(
-        context -> {
-          if (hasGameplayIdentity(context)) {
-            redisTemplate.delete(
-                identityKey(context.tenantId(), context.gameInstanceId(), context.characterId()));
-            deleteNameIndex(context);
+    redisTemplate.execute(
+        new SessionCallback<>() {
+          @Override
+          public Object execute(org.springframework.data.redis.core.RedisOperations operations) {
+            operations.multi();
+            operations.delete(contextKey(tenantId, sessionId));
+            operations.delete(sessionKey(sessionId));
+            existing.ifPresent(
+                context -> {
+                  if (hasGameplayIdentity(context)) {
+                    operations.delete(
+                        identityKey(
+                            context.tenantId(), context.gameInstanceId(), context.characterId()));
+                    deleteNameIndex(operations, context);
+                  }
+                });
+            operations.exec();
+            return null;
           }
         });
   }
@@ -130,8 +150,14 @@ public final class RedisSessionContextService implements SessionContextService {
   }
 
   private void deleteNameIndex(SessionContext context) {
+    deleteNameIndex(redisTemplate, context);
+  }
+
+  private void deleteNameIndex(
+      org.springframework.data.redis.core.RedisOperations<String, Object> operations,
+      SessionContext context) {
     if (StringUtils.hasText(context.characterName())) {
-      redisTemplate.delete(
+      operations.delete(
           nameKey(context.tenantId(), context.gameInstanceId(), context.characterName()));
     }
   }

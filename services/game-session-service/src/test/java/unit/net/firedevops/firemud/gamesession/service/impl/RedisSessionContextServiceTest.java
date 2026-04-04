@@ -10,7 +10,9 @@ import net.firedevops.firemud.gamesession.service.SessionContext;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
+import org.springframework.data.redis.core.RedisOperations;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.SessionCallback;
 import org.springframework.data.redis.core.ValueOperations;
 
 @SuppressWarnings("unchecked")
@@ -25,6 +27,12 @@ class RedisSessionContextServiceTest {
   @BeforeEach
   void setUp() {
     when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+    when(redisTemplate.execute(Mockito.any(SessionCallback.class)))
+        .thenAnswer(
+            invocation -> {
+              SessionCallback<?> callback = invocation.getArgument(0);
+              return callback.execute((RedisOperations<String, Object>) redisTemplate);
+            });
     service = new RedisSessionContextService(redisTemplate, TTL.toMillis());
   }
 
@@ -34,6 +42,8 @@ class RedisSessionContextServiceTest {
 
     service.save(context);
 
+    verify(redisTemplate).multi();
+    verify(redisTemplate).exec();
     verify(valueOperations).set("sessionctx:10:1:context", context, TTL);
     verify(valueOperations).set("sessionctx:10:identity:40:30:context", context, TTL);
   }
@@ -78,6 +88,8 @@ class RedisSessionContextServiceTest {
 
     service.deleteBySessionId(10L, 1L);
 
+    verify(redisTemplate).multi();
+    verify(redisTemplate).exec();
     verify(redisTemplate).delete("sessionctx:10:1:context");
     verify(redisTemplate).delete("sessionctx:10:identity:40:30:context");
   }

@@ -159,13 +159,9 @@ public class GuildServiceImpl implements GuildService {
         request.guildId(),
         request.role());
     GuildMember member =
-        guildMemberRepository.findAll().stream()
-            .filter(
-                m ->
-                    m.getTenantId().equals(request.tenantId())
-                        && m.getGuildId().equals(request.guildId())
-                        && m.getAccountId().equals(request.accountId()))
-            .findFirst()
+        guildMemberRepository
+            .findFirstByTenantIdAndGuildIdAndAccountId(
+                request.tenantId(), request.guildId(), request.accountId())
             .orElseThrow();
     String originalRole = member.getRole();
     var saga =
@@ -204,13 +200,8 @@ public class GuildServiceImpl implements GuildService {
   public void removeMember(long tenantId, long guildId, long accountId) {
     logger.info("Removing member {} from guild {}", accountId, guildId);
     GuildMember member =
-        guildMemberRepository.findAll().stream()
-            .filter(
-                m ->
-                    m.getTenantId().equals(tenantId)
-                        && m.getGuildId().equals(guildId)
-                        && m.getAccountId().equals(accountId))
-            .findFirst()
+        guildMemberRepository
+            .findFirstByTenantIdAndGuildIdAndAccountId(tenantId, guildId, accountId)
             .orElse(null);
     if (member == null) {
       return;
