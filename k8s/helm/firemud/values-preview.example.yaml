@@ -68,6 +68,7 @@ previewStack:
     OTEL_ENDPOINT: http://otel-collector:4317
     FLUENT_ELASTICSEARCH_HOST: elasticsearch
     FLUENT_ELASTICSEARCH_PORT: "9200"
+    FIREMUD_GRPC_PLAINTEXT: "true"
     ASSET_STORE_ENDPOINT: http://minio:9000
     ASSET_STORE_BUCKET: firemud-assets
     ASSET_STORE_REGION: ap-southeast-2
