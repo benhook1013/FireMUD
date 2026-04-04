@@ -67,6 +67,7 @@ startup_wait_seconds = int(os.environ.get("SMOKE_STARTUP_WAIT_SECONDS", "90"))
 def ensure_smoke_account():
     payload = json.dumps(
         {
+            "tenantId": int(tenant_id),
             "username": username.split("@", 1)[0],
             "email": username,
             "password": password,
@@ -101,7 +102,7 @@ def ensure_smoke_account():
 
 def wait_for_account_schema():
     deadline = time.time() + startup_wait_seconds
-    query = "select to_regclass('public.accounts');"
+    query = "select to_regclass('account_service.accounts');"
     while time.time() < deadline:
         try:
             table_name = subprocess.check_output(
@@ -120,7 +121,7 @@ def wait_for_account_schema():
                 text=True,
                 timeout=timeout_seconds,
             ).strip()
-            if table_name == "accounts":
+            if table_name == "account_service.accounts":
                 print("Confirmed account schema is ready.")
                 return
         except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
@@ -168,7 +169,7 @@ def recv_text(ws, label, timeout):
 
 def sync_session_owner_account():
     query = (
-        "select id from accounts "
+        "select id from account_service.accounts "
         f"where email = '{username}' "
         "order by id desc limit 1;"
     )
@@ -193,7 +194,7 @@ def sync_session_owner_account():
             print("Session-owner sync skipped: no smoke account found in postgres")
             return
         update = (
-            "update game_instances "
+            "update game_session_service.game_instances "
             f"set owner_account_id = {account_id}, tenant_id = {tenant_id} "
             f"where id = {session_id};"
         )
