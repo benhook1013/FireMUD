@@ -4,7 +4,7 @@ This file tracks post-pre-`06` audit findings that still appear live in the curr
 
 ## Fix Now
 
-- [ ] Add a real gRPC auth/authorization layer for mutable `game-session-service` RPCs, including `startSession`, `stopSession`, `restartSession`, command enqueue, tick pause/resume, and script-pinning control-plane methods.
+- [x] Add a real gRPC auth/authorization layer for mutable `game-session-service` RPCs, including `startSession`, `stopSession`, `restartSession`, command enqueue, tick pause/resume, and script-pinning control-plane methods.
 - [x] Protect gateway route-management surfaces properly:
   - REST `/routes`
   - gRPC `GatewayManagementGrpcService`
