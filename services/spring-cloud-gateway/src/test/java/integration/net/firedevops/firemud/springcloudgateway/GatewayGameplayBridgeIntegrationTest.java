@@ -361,7 +361,7 @@ class GatewayGameplayBridgeIntegrationTest {
     @Bean
     @Primary
     GameplayWebSocketBridgeProperties gameplayWebSocketBridgeProperties() {
-      return new GameplayWebSocketBridgeProperties(TEST_UPSTREAM_URL.get(), 40, 250L);
+      return new GameplayWebSocketBridgeProperties(TEST_UPSTREAM_URL.get(), 40, 250L, 256);
     }
   }
 

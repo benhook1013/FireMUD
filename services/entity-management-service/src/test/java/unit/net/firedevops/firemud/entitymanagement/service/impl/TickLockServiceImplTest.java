@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -34,17 +35,20 @@ class TickLockServiceImplTest {
 
   @Test
   void acquireAndReleaseLock() {
-    when(valueOps.setIfAbsent(eq("tick:lock:1:2"), eq("1"), any(Duration.class))).thenReturn(true);
+    when(valueOps.setIfAbsent(eq("tick:lock:1:2"), any(String.class), any(Duration.class)))
+        .thenReturn(true);
 
     assertTrue(service.acquireLock(1L, 2L));
     service.releaseLock(1L, 2L);
 
-    verify(redisTemplate).delete("tick:lock:1:2");
+    verify(redisTemplate).execute(any(), eq(java.util.List.of("tick:lock:1:2")), any());
+    verify(redisTemplate, never()).delete("tick:lock:1:2");
   }
 
   @Test
   void lockContentionIncrementsMetric() {
-    when(valueOps.setIfAbsent(eq("tick:lock:1:2"), eq("1"), any(Duration.class))).thenReturn(false);
+    when(valueOps.setIfAbsent(eq("tick:lock:1:2"), any(String.class), any(Duration.class)))
+        .thenReturn(false);
 
     service.acquireLock(1L, 2L);
 

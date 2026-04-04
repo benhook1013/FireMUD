@@ -10,6 +10,9 @@ import jakarta.annotation.PostConstruct;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.automationscripting.service.tick.ScriptTickService;
 import net.firedevops.firemud.common.LoggingUtil;
@@ -31,12 +34,21 @@ import org.springframework.stereotype.Service;
     justification = "Injected dependencies are not exposed externally")
 public class ScriptTickServiceImpl implements ScriptTickService {
   private static final Logger logger = LoggingUtil.getLogger(ScriptTickServiceImpl.class);
+  private static final RedisScript<Long> RELEASE_LOCK_SCRIPT =
+      redisScript(
+          """
+          if redis.call('GET', KEYS[1]) == ARGV[1] then
+            return redis.call('DEL', KEYS[1])
+          end
+          return 0
+          """);
 
   private final RedisTemplate<String, Object> redisTemplate;
   private final MeterRegistry meterRegistry;
   private final net.firedevops.firemud.automationscripting.service.quota.ScriptQuotaService
       quotaService;
   private final ConflictTracker conflictTracker;
+  private final ConcurrentMap<String, String> acquiredLockTokens = new ConcurrentHashMap<>();
 
   @Value("${automation.tick-duration-ms:1000}")
   private long tickDurationMs;
@@ -136,16 +148,18 @@ public class ScriptTickServiceImpl implements ScriptTickService {
   public void processTick(Long tenantId, Long scriptId) {
     long start = System.nanoTime();
     String lockKey = lockKey(tenantId, scriptId);
+    String lockToken = lockToken(tenantId, scriptId);
     Boolean acquired =
         redisTemplate
             .opsForValue()
-            .setIfAbsent(lockKey, "1", Duration.ofMillis(computeLockTtlMs()));
+            .setIfAbsent(lockKey, lockToken, Duration.ofMillis(computeLockTtlMs()));
     if (Boolean.FALSE.equals(acquired)) {
       lockContentionCounter.increment();
       conflictTracker.recordConflict("script:" + tenantId + ":" + scriptId);
       logger.debug("Could not acquire tick lock {}", lockKey);
       return;
     }
+    acquiredLockTokens.put(lockKey, lockToken);
     try {
       Long pending = redisTemplate.opsForList().size(pendingKey(tenantId, scriptId));
       retryQueueDepth.set(pending != null ? pending.intValue() : 0);
@@ -195,7 +209,10 @@ public class ScriptTickServiceImpl implements ScriptTickService {
         budgetExceededCounter.increment();
         logger.debug("Tick budget exceeded: {} ms (budget {} ms)", elapsed, budgetMs);
       }
-      redisTemplate.delete(lockKey);
+      String token = acquiredLockTokens.remove(lockKey);
+      if (token != null) {
+        redisTemplate.execute(RELEASE_LOCK_SCRIPT, List.of(lockKey), token);
+      }
     }
   }
 
@@ -220,5 +237,17 @@ public class ScriptTickServiceImpl implements ScriptTickService {
 
   private String pendingKey(Long tenantId, Long scriptId) {
     return "tick:pending:" + tenantId + ":" + scriptId;
+  }
+
+  private String lockToken(Long tenantId, Long scriptId) {
+    return tenantId + ":" + scriptId + ":" + UUID.randomUUID();
+  }
+
+  private static RedisScript<Long> redisScript(String scriptText) {
+    org.springframework.data.redis.core.script.DefaultRedisScript<Long> script =
+        new org.springframework.data.redis.core.script.DefaultRedisScript<>();
+    script.setScriptText(scriptText);
+    script.setResultType(Long.class);
+    return script;
   }
 }

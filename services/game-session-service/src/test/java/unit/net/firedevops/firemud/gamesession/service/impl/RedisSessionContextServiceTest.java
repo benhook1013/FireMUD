@@ -5,6 +5,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.time.Duration;
+import java.util.List;
 import java.util.Optional;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import org.junit.jupiter.api.BeforeEach;
@@ -33,6 +34,7 @@ class RedisSessionContextServiceTest {
               SessionCallback<?> callback = invocation.getArgument(0);
               return callback.execute((RedisOperations<String, Object>) redisTemplate);
             });
+    when(redisTemplate.exec()).thenReturn(List.of(1L));
     service = new RedisSessionContextService(redisTemplate, TTL.toMillis());
   }
 

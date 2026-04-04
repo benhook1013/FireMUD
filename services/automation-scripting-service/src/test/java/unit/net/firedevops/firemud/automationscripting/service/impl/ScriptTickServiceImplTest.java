@@ -2,6 +2,7 @@ package net.firedevops.firemud.automationscripting.service.impl;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -64,6 +65,7 @@ class ScriptTickServiceImplTest {
     ArgumentCaptor<RedisScript<?>> scriptCaptor = redisScriptCaptor();
     verify(redisTemplate, org.mockito.Mockito.atLeastOnce())
         .execute(scriptCaptor.capture(), org.mockito.ArgumentMatchers.<String>anyList());
+    verify(redisTemplate, never()).delete(any(String.class));
   }
 
   @Test

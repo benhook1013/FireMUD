@@ -4,7 +4,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 
 @ConfigurationProperties(prefix = "firemud.gateway.gameplay.bridge")
 public record GameplayWebSocketBridgeProperties(
-    String upstreamUrl, int reconnectAttempts, long reconnectDelayMs) {
+    String upstreamUrl, int reconnectAttempts, long reconnectDelayMs, int bufferCapacity) {
 
   public GameplayWebSocketBridgeProperties {
     upstreamUrl =
@@ -13,5 +13,6 @@ public record GameplayWebSocketBridgeProperties(
             : upstreamUrl;
     reconnectAttempts = reconnectAttempts <= 0 ? 40 : reconnectAttempts;
     reconnectDelayMs = reconnectDelayMs <= 0 ? 250L : reconnectDelayMs;
+    bufferCapacity = bufferCapacity <= 0 ? 256 : bufferCapacity;
   }
 }

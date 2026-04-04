@@ -27,7 +27,8 @@ class GameplayWebSocketBridgeHandlerTest {
     GameplayWebSocketBridgeHandler handler =
         new GameplayWebSocketBridgeHandler(
             mock(ReactorNettyWebSocketClient.class),
-            new GameplayWebSocketBridgeProperties("ws://game-session-service:8080/ws/game", 2, 50L),
+            new GameplayWebSocketBridgeProperties(
+                "ws://game-session-service:8080/ws/game", 2, 50L, 128),
             new RuntimeIdentity(
                 "spring-cloud-gateway", "gateway-test", null, Instant.EPOCH, null, null, null));
     WebSocketSession session = mock(WebSocketSession.class);

@@ -117,7 +117,7 @@ jobs:
 
       - name: ⚙️ Build project for CodeQL
         if: matrix.language == 'java'
-        run: ./gradlew codeqlClasses
+        run: ./gradlew clean codeqlClasses --rerun-tasks
 
       - name: 📊 Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v4
