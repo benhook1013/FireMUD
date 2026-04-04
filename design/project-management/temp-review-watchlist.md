@@ -4,7 +4,7 @@ Use this file as the temporary tracker for review-driven cleanup discovered whil
 
 ## Fix Now
 
-- [ ] Account gameplay admission is effectively cross-tenant open because `getTenantMembershipForRuntime(...)` returns `gameplayAdmissionAllowed=true` for any existing account, and account/profile tenancy is still inconsistent with tenant-scoped profile/export/delete/email-verification/link flows.
+- [x] Account gameplay admission is now tenant-local: `getTenantMembershipForRuntime(...)` only allows membership when the account tenant matches the requested tenant, and authentication no longer falls back to global tenant `0` accounts.
   - Relevant files:
     - `services/account-service/src/main/java/net/firedevops/firemud/accountservice/service/impl/AccountServiceImpl.java`
 - [x] Game session lifecycle commits `RUNNING` / `STOPPED` rows before required Redis/session-state propagation and downstream coordination complete.
@@ -21,7 +21,7 @@ Use this file as the temporary tracker for review-driven cleanup discovered whil
     - `services/game-session-service/src/main/java/net/firedevops/firemud/gamesession/service/impl/SessionRateLimiterImpl.java`
     - `services/game-session-service/src/main/java/net/firedevops/firemud/gamesession/service/impl/IpConnectionLimiterImpl.java`
     - `services/automation-scripting-service/src/main/java/net/firedevops/firemud/automationscripting/service/quota/ScriptQuotaServiceImpl.java`
-- [ ] World creation saga still reports success when the design fetch fails because `copyDesignData(...)` swallows Game Design client failures and creates a starter region anyway.
+- [x] World creation saga no longer reports success when the design fetch fails because `copyDesignData(...)` now lets Game Design client failures fail the saga instead of silently creating a starter region.
   - Relevant files:
     - `services/world-management-service/src/main/java/net/firedevops/firemud/worldmanagement/service/impl/WorldCreationServiceImpl.java`
 - [x] Shared Redis autoconfiguration now supports production Redis settings such as password, TLS, and database index.
@@ -31,7 +31,7 @@ Use this file as the temporary tracker for review-driven cleanup discovered whil
 
 ## Refactor And Hygiene
 
-- [ ] Account/payment flows still make external Stripe, email, and notification calls inside `@Transactional` methods.
+- [x] Account/payment flows now keep external Stripe, email, and notification calls out of the open DB transaction boundary.
   - Relevant files:
     - `services/account-service/src/main/java/net/firedevops/firemud/accountservice/service/impl/PaymentServiceImpl.java`
     - `services/account-service/src/main/java/net/firedevops/firemud/accountservice/service/impl/AccountServiceImpl.java`

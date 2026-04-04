@@ -1,6 +1,7 @@
 package net.firedevops.firemud.worldmanagement.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.*;
 
 import io.micrometer.core.instrument.Counter;
@@ -47,5 +48,18 @@ class WorldCreationServiceImplTest {
     when(regionRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
     assertDoesNotThrow(() -> service.createWorld(1L, 1L));
     verify(regionRepository).save(argThat(r -> r.getShardId() == 0));
+  }
+
+  @Test
+  void createWorldFailsWhenDesignLookupFails() {
+    when(gameDesignClient.listVersions(1L))
+        .thenThrow(new RuntimeException("game design unavailable"));
+
+    RuntimeException failure =
+        assertThrows(RuntimeException.class, () -> service.createWorld(1L, 1L));
+    org.junit.jupiter.api.Assertions.assertInstanceOf(
+        net.firedevops.firemud.common.saga.SagaException.class, failure.getCause());
+    verify(regionRepository, never()).save(any());
+    verify(regionRepository).deleteByTenantId(1L);
   }
 }
