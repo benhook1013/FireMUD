@@ -4,6 +4,8 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.server.ResponseStatusException;
 
 /** Thread-local storage for JWT claims extracted by {@link AuthTokenInterceptor}. */
 public final class SessionContext {
@@ -47,6 +49,36 @@ public final class SessionContext {
       return List.of();
     }
     return data.scopedRoles.getOrDefault(tenantId, Collections.emptyList());
+  }
+
+  /** Returns whether the current caller can act on the provided tenant. */
+  public static boolean hasTenantAccess(Long tenantId) {
+    if (tenantId == null) {
+      return false;
+    }
+    if (hasGlobalTenantAccess()) {
+      return true;
+    }
+    List<String> roles = getScopedRoles(String.valueOf(tenantId));
+    return roles.contains("admin") || roles.contains("moderator");
+  }
+
+  /** Throws 403 when the current caller cannot act on the provided tenant. */
+  public static void requireTenantAccess(Long tenantId) {
+    if (tenantId == null) {
+      throw new IllegalArgumentException("tenantId is required");
+    }
+    if (!hasTenantAccess(tenantId)) {
+      throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Tenant access required");
+    }
+  }
+
+  private static boolean hasGlobalTenantAccess() {
+    ClaimsData data = HOLDER.get();
+    if (data == null || data.globalRoles == null) {
+      return false;
+    }
+    return data.globalRoles.contains("platformAdmin") || data.globalRoles.contains("moderator");
   }
 
   private record ClaimsData(

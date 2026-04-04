@@ -6,6 +6,7 @@ import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.util.concurrent.CompletionException;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
+import net.firedevops.firemud.common.security.RequireAdminRole;
 import net.firedevops.firemud.gateway.v1.GatewayManagementServiceGrpc;
 import net.firedevops.firemud.gateway.v1.PingRequest;
 import net.firedevops.firemud.gateway.v1.PingResponse;
@@ -47,6 +48,7 @@ public class GatewayManagementGrpcService
 
   @Override
   @Timed(value = "gatewayGrpc.upsertRoute")
+  @RequireAdminRole
   public void upsertRoute(
       UpsertRouteRequest request, StreamObserver<UpsertRouteResponse> responseObserver) {
     respond(buildUpsertRouteResponse(request), responseObserver);
@@ -54,6 +56,7 @@ public class GatewayManagementGrpcService
 
   @Override
   @Timed(value = "gatewayGrpc.removeRoute")
+  @RequireAdminRole
   public void removeRoute(
       RemoveRouteRequest request, StreamObserver<RemoveRouteResponse> responseObserver) {
     respond(buildRemoveRouteResponse(request), responseObserver);

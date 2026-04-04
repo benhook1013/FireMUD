@@ -91,21 +91,21 @@ previewStack:
         memory: "512Mi"
 
   seedSql: |
-    INSERT INTO region (id, name, tenant_id, shard_id)
+    INSERT INTO world_management_service.region (id, name, tenant_id, shard_id)
     VALUES (201, 'Preview Coast', 1, 0)
     ON CONFLICT (id) DO UPDATE SET
       name = EXCLUDED.name,
       tenant_id = EXCLUDED.tenant_id,
       shard_id = EXCLUDED.shard_id;
 
-    INSERT INTO zone (id, region_id, name, tenant_id)
+    INSERT INTO world_management_service.zone (id, region_id, name, tenant_id)
     VALUES (301, 201, 'Lantern District', 1)
     ON CONFLICT (id) DO UPDATE SET
       region_id = EXCLUDED.region_id,
       name = EXCLUDED.name,
       tenant_id = EXCLUDED.tenant_id;
 
-    INSERT INTO room (id, zone_id, name, description, tenant_id)
+    INSERT INTO world_management_service.room (id, zone_id, name, description, tenant_id)
     VALUES
       (1021, 301, 'Cinder Court', 'Bronze lanterns sway above a wind-scuffed courtyard where every footprint seems to point deeper into the preview build.', 1),
       (1022, 301, 'North Arcade', 'A narrow arcade of red stone carries the echo of distant voices and the smell of rain coming off the coast.', 1)
@@ -115,7 +115,7 @@ previewStack:
       description = EXCLUDED.description,
       tenant_id = EXCLUDED.tenant_id;
 
-    INSERT INTO room_exit (id, tenant_id, from_room_id, to_room_id, cost, direction)
+    INSERT INTO world_management_service.room_exit (id, tenant_id, from_room_id, to_room_id, cost, direction)
     VALUES
       (4001, 1, 1021, 1022, 1, 'NORTH'),
       (4002, 1, 1022, 1021, 1, 'SOUTH')
@@ -128,6 +128,7 @@ previewStack:
 
   services:
     - name: account-service
+      schema: account_service
       image:
         repository: ghcr.io/benhook1013/account-service
       springProfile: true
@@ -140,6 +141,7 @@ previewStack:
         - port: 6565
           targetPort: 6565
     - name: automation-scripting-service
+      schema: automation_scripting_service
       image:
         repository: ghcr.io/benhook1013/automation-scripting-service
       springProfile: true
@@ -152,6 +154,7 @@ previewStack:
         - port: 6565
           targetPort: 6565
     - name: entity-management-service
+      schema: entity_management_service
       image:
         repository: ghcr.io/benhook1013/entity-management-service
       springProfile: true
@@ -164,6 +167,7 @@ previewStack:
         - port: 6565
           targetPort: 6565
     - name: game-design-service
+      schema: game_design_service
       image:
         repository: ghcr.io/benhook1013/game-design-service
       springProfile: true
@@ -176,6 +180,7 @@ previewStack:
         - port: 6565
           targetPort: 6565
     - name: game-logic-service
+      schema: game_logic_service
       image:
         repository: ghcr.io/benhook1013/game-logic-service
       springProfile: true
@@ -188,6 +193,7 @@ previewStack:
         - port: 6565
           targetPort: 6565
     - name: game-session-service
+      schema: game_session_service
       image:
         repository: ghcr.io/benhook1013/game-session-service
       springProfile: true
@@ -200,6 +206,7 @@ previewStack:
         - port: 6565
           targetPort: 6565
     - name: logging-admin-service
+      schema: logging_admin_service
       image:
         repository: ghcr.io/benhook1013/logging-admin-service
       springProfile: true
@@ -212,6 +219,7 @@ previewStack:
         - port: 6565
           targetPort: 6565
     - name: social-groups-service
+      schema: social_groups_service
       image:
         repository: ghcr.io/benhook1013/social-groups-service
       springProfile: true
@@ -224,6 +232,7 @@ previewStack:
         - port: 6565
           targetPort: 6565
     - name: spring-cloud-gateway
+      schema: gateway
       image:
         repository: ghcr.io/benhook1013/spring-cloud-gateway
       springProfile: true
@@ -236,6 +245,7 @@ previewStack:
         - port: 6565
           targetPort: 6565
     - name: tcp-proxy-service
+      schema: tcp_proxy_service
       image:
         repository: ghcr.io/benhook1013/tcp-proxy-service
       serviceType: NodePort
@@ -250,6 +260,7 @@ previewStack:
           nodePort: 32000
           targetPort: 2323
     - name: world-management-service
+      schema: world_management_service
       image:
         repository: ghcr.io/benhook1013/world-management-service
       springProfile: true

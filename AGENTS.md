@@ -73,6 +73,12 @@ FireMUD is in initial development. Optimize for direct convergence to a clean ca
 ## Tooling and PR Metadata
 
 - `gh` CLI and `python3` are available and may be used when requested.
+- Prefer standard CLI tools directly for routine archive, JSON, YAML, SQL, and text inspection.
+- If a common utility is missing (`unzip`, `jq`, `psql`, etc.) and installing it is straightforward, prefer installing it once rather than repeatedly replacing it with Python or other ad hoc workarounds.
+- Use Python for repo tasks when it is the natural tool for the job or when a simple CLI install is not practical.
+- Avoid repeated expensive fallback patterns caused by missing basic utilities.
+- If the same missing utility blocks work more than once, treat that as a signal to install or fix the tool instead of continuing to work around it.
+- If a missing tool would require a nontrivial or risky system change, ask before installing it.
 - Do not create, merge, or close PRs unless explicitly asked.
 - If a feature branch has an open PR and the task updates behavior, keep the PR summary accurate.
 - If `pr-summary.md` exists and the user asks to refresh the PR description, prefer `gh pr edit --body-file pr-summary.md`.

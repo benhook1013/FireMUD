@@ -1,4 +1,4 @@
-package net.firedevops.firemud.socialgroups.security;
+package net.firedevops.firemud.gamedesign.security;
 
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jws;
@@ -15,7 +15,6 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.HandlerInterceptor;
 
-/** Intercepts requests to validate JWTs and roles. */
 @Component
 public class JwtAuthInterceptor implements HandlerInterceptor {
   private final JwtUtil jwtUtil;
@@ -27,15 +26,21 @@ public class JwtAuthInterceptor implements HandlerInterceptor {
   @Override
   public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler)
       throws Exception {
+    if (isPublicPath(request.getRequestURI())) {
+      return true;
+    }
     String authHeader = request.getHeader(HttpHeaders.AUTHORIZATION);
     if (authHeader == null || !authHeader.startsWith("Bearer ")) {
       response.setStatus(HttpStatus.UNAUTHORIZED.value());
       return false;
     }
-    String token = authHeader.substring(7);
     try {
-      Jws<Claims> claims = jwtUtil.parseToken(token);
+      Jws<Claims> claims = jwtUtil.parseToken(authHeader.substring(7));
       Claims payload = claims.getPayload();
+      if (!hasAdminRole(payload)) {
+        response.setStatus(HttpStatus.FORBIDDEN.value());
+        return false;
+      }
       List<?> rawGlobalRoles = payload.get("globalRoles", List.class);
       List<String> globalRoles =
           rawGlobalRoles == null
@@ -51,22 +56,6 @@ public class JwtAuthInterceptor implements HandlerInterceptor {
           }
         }
       }
-
-      boolean allowed = false;
-      allowed = globalRoles.contains("platformAdmin") || globalRoles.contains("moderator");
-      if (!allowed) {
-        for (List<String> roles : scopedRoles.values()) {
-          if (roles.contains("admin") || roles.contains("moderator")) {
-            allowed = true;
-            break;
-          }
-        }
-      }
-
-      if (!allowed) {
-        response.setStatus(HttpStatus.FORBIDDEN.value());
-        return false;
-      }
       SessionContext.setContext(payload.get("accountId", String.class), globalRoles, scopedRoles);
       return true;
     } catch (JwtException ex) {
@@ -80,5 +69,42 @@ public class JwtAuthInterceptor implements HandlerInterceptor {
       HttpServletRequest request, HttpServletResponse response, Object handler, Exception ex)
       throws Exception {
     SessionContext.clear();
+  }
+
+  private boolean isPublicPath(String requestUri) {
+    return "/ping".equals(requestUri) || "/ping/".equals(requestUri);
+  }
+
+  private boolean hasAdminRole(Claims payload) {
+    List<?> rawGlobalRoles = payload.get("globalRoles", List.class);
+    if (rawGlobalRoles != null) {
+      for (Object role : rawGlobalRoles) {
+        if (isAdminRole(String.valueOf(role))) {
+          return true;
+        }
+      }
+    }
+    Map<?, ?> rawScopedRoles = payload.get("scopedRoles", Map.class);
+    Map<String, List<String>> scopedRoles = new HashMap<>();
+    if (rawScopedRoles != null) {
+      for (Map.Entry<?, ?> entry : rawScopedRoles.entrySet()) {
+        if (entry.getValue() instanceof List<?> rolesList) {
+          scopedRoles.put(
+              String.valueOf(entry.getKey()), rolesList.stream().map(String::valueOf).toList());
+        }
+      }
+    }
+    for (List<String> roles : scopedRoles.values()) {
+      for (String role : roles) {
+        if (isAdminRole(role)) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  private boolean isAdminRole(String role) {
+    return "platformAdmin".equals(role) || "moderator".equals(role) || "admin".equals(role);
   }
 }

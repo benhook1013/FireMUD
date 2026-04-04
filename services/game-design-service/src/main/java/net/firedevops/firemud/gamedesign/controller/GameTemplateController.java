@@ -3,6 +3,7 @@ package net.firedevops.firemud.gamedesign.controller;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.ApiResponse;
+import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.gamedesign.dto.GameTemplateDto;
 import net.firedevops.firemud.gamedesign.service.GameTemplateService;
 import org.springframework.data.domain.Page;
@@ -24,6 +25,7 @@ public class GameTemplateController {
   @PostMapping
   public ResponseEntity<ApiResponse<GameTemplateDto>> create(
       @Valid @RequestBody GameTemplateDto dto) {
+    SessionContext.requireTenantAccess(Long.valueOf(dto.tenantId()));
     GameTemplateDto created = templateService.createTemplate(dto);
     return ResponseEntity.ok(ApiResponse.success(created));
   }
@@ -31,6 +33,7 @@ public class GameTemplateController {
   @GetMapping
   public ResponseEntity<ApiResponse<Page<GameTemplateDto>>> list(
       @RequestParam String tenantId, Pageable pageable) {
+    SessionContext.requireTenantAccess(Long.valueOf(tenantId));
     Page<GameTemplateDto> templates = templateService.listTemplates(tenantId, pageable);
     return ResponseEntity.ok(ApiResponse.success(templates));
   }

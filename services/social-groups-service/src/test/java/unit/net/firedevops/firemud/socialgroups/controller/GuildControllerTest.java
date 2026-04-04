@@ -1,24 +1,25 @@
-package net.firedevops.firemud.accountservice.controller;
+package net.firedevops.firemud.socialgroups.controller;
 
 import static org.mockito.Mockito.when;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
-import net.firedevops.firemud.accountservice.config.AuthConfig;
-import net.firedevops.firemud.accountservice.config.WebConfig;
-import net.firedevops.firemud.accountservice.dto.ProfileDto;
-import net.firedevops.firemud.accountservice.dto.UpdateProfileRequest;
-import net.firedevops.firemud.accountservice.security.JwtAuthInterceptor;
-import net.firedevops.firemud.accountservice.service.AccountService;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.common.security.SessionContext;
+import net.firedevops.firemud.socialgroups.config.AuthConfig;
+import net.firedevops.firemud.socialgroups.config.WebConfig;
+import net.firedevops.firemud.socialgroups.dto.CreateGuildRequest;
+import net.firedevops.firemud.socialgroups.dto.GuildDto;
+import net.firedevops.firemud.socialgroups.security.JwtAuthInterceptor;
+import net.firedevops.firemud.socialgroups.service.GuildService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpHeaders;
@@ -28,19 +29,20 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import tools.jackson.databind.ObjectMapper;
 
-@WebMvcTest(ProfileController.class)
+@WebMvcTest(GuildController.class)
+@AutoConfigureMockMvc(addFilters = false)
 @Import({AuthConfig.class, WebConfig.class, JwtAuthInterceptor.class})
 @TestPropertySource(
     properties = {
       "firemud.auth.jwt-secret=testsecretkeytestsecretkeytest1234",
       "firemud.auth.jwt-expiration-ms=3600000"
     })
-class ProfileControllerTest {
+class GuildControllerTest {
 
   @Autowired private MockMvc mockMvc;
   private final ObjectMapper objectMapper = new ObjectMapper();
 
-  @MockitoBean private AccountService accountService;
+  @MockitoBean private GuildService guildService;
   @Autowired private JwtUtil jwtUtil;
 
   @AfterEach
@@ -49,47 +51,34 @@ class ProfileControllerTest {
   }
 
   @Test
-  void getProfileReturnsDto() throws Exception {
-    ProfileDto dto = new ProfileDto(1L, 1L, 2L, "demo", "bio");
-    when(accountService.getProfile(1L, 2L)).thenReturn(dto);
-
+  void createGuildAllowsScopedTenantAdmin() throws Exception {
+    CreateGuildRequest request = new CreateGuildRequest(1L, 2L, "guild");
+    when(guildService.createGuild(request))
+        .thenReturn(new GuildDto(1L, 1L, "guild", 2L, Instant.now()));
     String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+
     mockMvc
         .perform(
-            get("/profiles/2")
-                .param("tenantId", "1")
-                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
-        .andExpect(status().isOk())
-        .andExpect(jsonPath("$.status").value("SUCCESS"))
-        .andExpect(jsonPath("$.data.displayName").value("demo"));
-  }
-
-  @Test
-  void updateProfileReturnsDto() throws Exception {
-    UpdateProfileRequest req = new UpdateProfileRequest(1L, 2L, "demo", "bio");
-    ProfileDto dto = new ProfileDto(1L, 1L, 2L, "demo", "bio");
-    when(accountService.updateProfile(req)).thenReturn(dto);
-
-    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
-    mockMvc
-        .perform(
-            put("/profiles/2")
+            post("/guilds")
                 .contentType(MediaType.APPLICATION_JSON)
-                .content(objectMapper.writeValueAsString(req))
+                .content(objectMapper.writeValueAsString(request))
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("SUCCESS"))
-        .andExpect(jsonPath("$.data.displayName").value("demo"));
+        .andExpect(jsonPath("$.data.name").value("guild"));
   }
 
   @Test
-  void getProfileRejectsCrossTenantScopedAdmin() throws Exception {
+  void createGuildRejectsCrossTenantScopedAdmin() throws Exception {
+    CreateGuildRequest request = new CreateGuildRequest(1L, 2L, "guild");
     String token =
         jwtUtil.generateToken("user", Map.of("scopedRoles", Map.of("8", List.of("admin"))));
+
     mockMvc
         .perform(
-            get("/profiles/2")
-                .param("tenantId", "1")
+            post("/guilds")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request))
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isForbidden());
   }
