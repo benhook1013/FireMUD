@@ -50,6 +50,7 @@ services:
     <<: *service-resources
     environment:
       <<: *service-env
+      SPRING_FLYWAY_TABLE: flyway_schema_history_account_service
     env_file: *service-env-file
     volumes: *service-vols
     restart: unless-stopped
@@ -71,6 +72,7 @@ services:
     <<: *service-resources
     environment:
       <<: *service-env
+      SPRING_FLYWAY_TABLE: flyway_schema_history_gateway
     env_file: *service-env-file
     volumes: *service-vols
     restart: unless-stopped
@@ -92,6 +94,7 @@ services:
     <<: *service-resources
     environment:
       <<: *service-env
+      SPRING_FLYWAY_TABLE: flyway_schema_history_automation_scripting_service
     env_file: *service-env-file
     volumes: *service-vols
     restart: unless-stopped
@@ -113,6 +116,7 @@ services:
     <<: *service-resources
     environment:
       <<: *service-env
+      SPRING_FLYWAY_TABLE: flyway_schema_history_entity_management_service
     env_file: *service-env-file
     volumes: *service-vols
     restart: unless-stopped
@@ -134,6 +138,7 @@ services:
     <<: *service-resources
     environment:
       <<: *service-env
+      SPRING_FLYWAY_TABLE: flyway_schema_history_game_design_service
     env_file: *service-env-file
     volumes: *service-vols
     restart: unless-stopped
@@ -155,6 +160,7 @@ services:
     <<: *service-resources
     environment:
       <<: *service-env
+      SPRING_FLYWAY_TABLE: flyway_schema_history_game_logic_service
     env_file: *service-env-file
     volumes: *service-vols
     restart: unless-stopped
@@ -176,6 +182,7 @@ services:
     <<: *service-resources
     environment:
       <<: *service-env
+      SPRING_FLYWAY_TABLE: flyway_schema_history_game_session_service
       FIREMUD_DATABASE_ENABLED: "true"
       GAME_SESSION_DEV_ISOLATED: "false"
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/firemud
@@ -204,6 +211,7 @@ services:
     <<: *service-resources
     environment:
       <<: *service-env
+      SPRING_FLYWAY_TABLE: flyway_schema_history_logging_admin_service
     env_file: *service-env-file
     volumes: *service-vols
     restart: unless-stopped
@@ -225,6 +233,7 @@ services:
     <<: *service-resources
     environment:
       <<: *service-env
+      SPRING_FLYWAY_TABLE: flyway_schema_history_social_groups_service
     env_file: *service-env-file
     volumes: *service-vols
     restart: unless-stopped
@@ -247,6 +256,7 @@ services:
     <<: *service-resources
     environment:
       <<: *service-env
+      SPRING_FLYWAY_TABLE: flyway_schema_history_tcp_proxy_service
     env_file: *service-env-file
     volumes: *service-vols
     restart: unless-stopped
@@ -268,6 +278,7 @@ services:
     <<: *service-resources
     environment:
       <<: *service-env
+      SPRING_FLYWAY_TABLE: flyway_schema_history_world_management_service
     env_file: *service-env-file
     volumes: *service-vols
     restart: unless-stopped
