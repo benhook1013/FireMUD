@@ -21,7 +21,7 @@ x-service-environment: &service-env
   ASSET_STORE_SECRET_KEY: ${ASSET_STORE_SECRET_KEY:-minio123}
   SPRING_FLYWAY_ENABLED: "true"
   SPRING_GRPC_SERVER_PORT: "6565"
-  SPRING_JPA_HIBERNATE_DDL_AUTO: update
+  SPRING_JPA_HIBERNATE_DDL_AUTO: none
 
 x-service-healthcheck: &service-health
   test: ["CMD-SHELL", "curl -fsS http://localhost:8080/actuator/health/readiness >/dev/null"]
