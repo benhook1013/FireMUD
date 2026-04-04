@@ -210,38 +210,27 @@ class AccountServiceImplTest {
   }
 
   @Test
-  void authenticateFallsBackToGlobalAccountLookup() {
-    Account account = new Account();
-    account.setId(1L);
-    account.setTenantId(0L);
-    account.setUsername("demo");
-    account.setEmail("demo@example.com");
-    account.setPasswordHash(hash("password"));
+  void authenticateThrowsWhenInvalid() {
+    when(accountRepository.findByTenantIdAndUsername(1L, "demo")).thenReturn(Optional.empty());
+    when(accountRepository.findByTenantIdAndEmail(1L, "demo")).thenReturn(Optional.empty());
+    AuthenticationException exception =
+        assertThrows(
+            AuthenticationException.class, () -> service.authenticate(1L, "demo", "bad", null));
+    assertEquals(AuthenticationErrorCodes.INVALID_CREDENTIALS, exception.getCode());
+  }
+
+  @Test
+  void authenticateDoesNotUseGlobalAccountFallback() {
     when(accountRepository.findByTenantIdAndUsername(1L, "demo@example.com"))
         .thenReturn(Optional.empty());
     when(accountRepository.findByTenantIdAndEmail(1L, "demo@example.com"))
         .thenReturn(Optional.empty());
-    when(accountRepository.findByTenantIdAndUsername(0L, "demo@example.com"))
-        .thenReturn(Optional.empty());
-    when(accountRepository.findByTenantIdAndEmail(0L, "demo@example.com"))
-        .thenReturn(Optional.of(account));
 
-    AuthenticationResult result = service.authenticate(1L, "demo@example.com", "password", null);
-
-    assertNotNull(result.authToken());
-    assertEquals(1L, result.accountId());
-    org.mockito.Mockito.verify(sessionService).storeSession(1L, 1L, result.authToken());
-  }
-
-  @Test
-  void authenticateThrowsWhenInvalid() {
-    when(accountRepository.findByTenantIdAndUsername(1L, "demo")).thenReturn(Optional.empty());
-    when(accountRepository.findByTenantIdAndEmail(1L, "demo")).thenReturn(Optional.empty());
-    when(accountRepository.findByTenantIdAndUsername(0L, "demo")).thenReturn(Optional.empty());
-    when(accountRepository.findByTenantIdAndEmail(0L, "demo")).thenReturn(Optional.empty());
     AuthenticationException exception =
         assertThrows(
-            AuthenticationException.class, () -> service.authenticate(1L, "demo", "bad", null));
+            AuthenticationException.class,
+            () -> service.authenticate(1L, "demo@example.com", "password", null));
+
     assertEquals(AuthenticationErrorCodes.INVALID_CREDENTIALS, exception.getCode());
   }
 

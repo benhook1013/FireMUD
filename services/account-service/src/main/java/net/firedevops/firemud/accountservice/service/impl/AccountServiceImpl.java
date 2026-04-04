@@ -58,6 +58,8 @@ import net.firedevops.firemud.common.security.JwtUtil;
 import org.slf4j.Logger;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 @Service
 public class AccountServiceImpl implements AccountService {
@@ -136,20 +138,18 @@ public class AccountServiceImpl implements AccountService {
     profile.setTenantId(request.tenantId());
 
     SagaBuilder builder = new SagaBuilder("accountCreation");
-    builder
-        .step(
-            "persistAccount",
-            () -> {
-              Account saved = accountRepository.save(account);
-              account.setId(saved.getId());
-              profile.setAccount(saved);
-              profileRepository.save(profile);
-            },
-            () -> {
-              profileRepository.delete(profile);
-              accountRepository.delete(account);
-            })
-        .step("logCreation", () -> safeLogAccountCreation(request.tenantId(), account.getId()));
+    builder.step(
+        "persistAccount",
+        () -> {
+          Account saved = accountRepository.save(account);
+          account.setId(saved.getId());
+          profile.setAccount(saved);
+          profileRepository.save(profile);
+        },
+        () -> {
+          profileRepository.delete(profile);
+          accountRepository.delete(account);
+        });
     var saga = builder.build();
     try {
       sagaRunner.run(saga);
@@ -157,6 +157,7 @@ public class AccountServiceImpl implements AccountService {
       logger.warn("Account creation saga failed", e);
       throw new IllegalStateException("Account creation failed", e);
     }
+    runAfterCommit(() -> safeLogAccountCreation(request.tenantId(), account.getId()));
 
     return accountMapper.toDto(account);
   }
@@ -362,14 +363,7 @@ public class AccountServiceImpl implements AccountService {
     if (tenantEmailMatch.isPresent()) {
       return tenantEmailMatch;
     }
-
-    Optional<Account> globalUsernameMatch =
-        accountRepository.findByTenantIdAndUsername(0L, usernameOrEmail);
-    if (globalUsernameMatch.isPresent()) {
-      return globalUsernameMatch;
-    }
-
-    return accountRepository.findByTenantIdAndEmail(0L, usernameOrEmail);
+    return Optional.empty();
   }
 
   private String mintToken(String subject, long expirationMs, Map<String, Object> claims) {
@@ -459,8 +453,10 @@ public class AccountServiceImpl implements AccountService {
     profile.setDisplayName(request.displayName());
     profile.setBio(request.bio());
     profile = profileRepository.save(profile);
-    notificationService.sendNotification(
-        request.tenantId(), request.accountId(), "Profile updated");
+    runAfterCommit(
+        () ->
+            notificationService.sendNotification(
+                request.tenantId(), request.accountId(), "Profile updated"));
     return profileMapper.toDto(profile);
   }
 
@@ -512,12 +508,16 @@ public class AccountServiceImpl implements AccountService {
     token.setExpiresAt(java.time.LocalDateTime.now().plusHours(1));
     passwordResetTokenRepository.save(token);
     String url = String.format(mailProperties.getResetUrl(), token.getToken());
-    emailService.sendEmail(
-        account.getEmail(),
-        "Password Reset",
-        String.format(readTemplate("password-reset.txt"), url));
-    notificationService.sendNotification(
-        request.tenantId(), account.getId(), "Password reset requested");
+    runAfterCommit(
+        () ->
+            emailService.sendEmail(
+                account.getEmail(),
+                "Password Reset",
+                String.format(readTemplate("password-reset.txt"), url)));
+    runAfterCommit(
+        () ->
+            notificationService.sendNotification(
+                request.tenantId(), account.getId(), "Password reset requested"));
   }
 
   @Override
@@ -553,11 +553,16 @@ public class AccountServiceImpl implements AccountService {
     token.setExpiresAt(java.time.LocalDateTime.now().plusHours(24));
     emailVerificationTokenRepository.save(token);
     String url = String.format(mailProperties.getVerificationUrl(), token.getToken());
-    emailService.sendEmail(
-        account.getEmail(),
-        "Email Verification",
-        String.format(readTemplate("email-verification.txt"), url));
-    notificationService.sendNotification(tenantId, accountId, "Email verification requested");
+    runAfterCommit(
+        () ->
+            emailService.sendEmail(
+                account.getEmail(),
+                "Email Verification",
+                String.format(readTemplate("email-verification.txt"), url)));
+    runAfterCommit(
+        () ->
+            notificationService.sendNotification(
+                tenantId, accountId, "Email verification requested"));
   }
 
   @Override
@@ -610,12 +615,16 @@ public class AccountServiceImpl implements AccountService {
         accountRepository
             .findByTenantIdAndEmail(request.tenantId(), request.email())
             .orElseThrow(() -> new IllegalArgumentException("Account not found"));
-    emailService.sendEmail(
-        account.getEmail(),
-        "Username Reminder",
-        String.format(readTemplate("username-reminder.txt"), account.getUsername()));
-    notificationService.sendNotification(
-        request.tenantId(), account.getId(), "Username reminder requested");
+    runAfterCommit(
+        () ->
+            emailService.sendEmail(
+                account.getEmail(),
+                "Username Reminder",
+                String.format(readTemplate("username-reminder.txt"), account.getUsername())));
+    runAfterCommit(
+        () ->
+            notificationService.sendNotification(
+                request.tenantId(), account.getId(), "Username reminder requested"));
   }
 
   private String hashPassword(String password) {
@@ -647,5 +656,19 @@ public class AccountServiceImpl implements AccountService {
     } catch (java.io.IOException e) {
       throw new IllegalStateException("Failed to read template", e);
     }
+  }
+
+  private void runAfterCommit(Runnable action) {
+    if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+      action.run();
+      return;
+    }
+    TransactionSynchronizationManager.registerSynchronization(
+        new TransactionSynchronization() {
+          @Override
+          public void afterCommit() {
+            action.run();
+          }
+        });
   }
 }
