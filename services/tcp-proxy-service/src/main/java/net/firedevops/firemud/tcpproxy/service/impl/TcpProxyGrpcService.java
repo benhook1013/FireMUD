@@ -1,5 +1,6 @@
 package net.firedevops.firemud.tcpproxy.service.impl;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -19,6 +20,9 @@ import org.springframework.util.StringUtils;
 
 /** gRPC endpoints for the TCP Proxy Service. */
 @GrpcService
+@SuppressFBWarnings(
+    value = "EI_EXPOSE_REP2",
+    justification = "Injected services and registry are Spring-managed collaborators.")
 public class TcpProxyGrpcService extends TcpProxyServiceGrpc.TcpProxyServiceImplBase {
   private static final Logger logger = LoggerFactory.getLogger(TcpProxyGrpcService.class);
   private final PingService pingService;

@@ -82,6 +82,7 @@ import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
+import reactor.core.publisher.Mono;
 
 @Testcontainers(disabledWithoutDocker = true)
 @SuppressWarnings("resource")
@@ -1280,13 +1281,13 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     GatewayRouteService gatewayRouteService() {
       return new GatewayRouteService() {
         @Override
-        public GatewayRoute upsert(GatewayRoute route) {
-          return route;
+        public Mono<GatewayRoute> upsert(GatewayRoute route) {
+          return Mono.just(route);
         }
 
         @Override
-        public boolean remove(String routeId) {
-          return true;
+        public Mono<Boolean> remove(String routeId) {
+          return Mono.just(true);
         }
       };
     }
