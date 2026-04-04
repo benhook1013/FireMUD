@@ -16,6 +16,7 @@ import net.firedevops.firemud.common.saga.persistence.SagaInstanceRepository;
 import net.firedevops.firemud.common.saga.persistence.SagaStep;
 import net.firedevops.firemud.common.saga.persistence.SagaStepRepository;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
+import org.springframework.boot.autoconfigure.AutoConfigureBefore;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
@@ -37,6 +38,13 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.orm.jpa.SharedEntityManagerCreator;
 
 @AutoConfiguration
+@AutoConfigureBefore(
+    name = {
+      "org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration",
+      "org.springframework.boot.hibernate.autoconfigure.HibernateJpaAutoConfiguration",
+      "org.springframework.boot.flyway.autoconfigure.FlywayAutoConfiguration",
+      "org.springframework.boot.sql.autoconfigure.flyway.FlywayAutoConfiguration"
+    })
 @EnableConfigurationProperties({PostgresProperties.class, RedisProperties.class})
 @SuppressFBWarnings(
     value = "EI_EXPOSE_REP2",
