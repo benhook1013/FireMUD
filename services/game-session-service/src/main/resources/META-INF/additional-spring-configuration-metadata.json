@@ -1,0 +1,174 @@
+{
+  "groups": [
+    {
+      "name": "firemud.presentation",
+      "type": "net.firedevops.firemud.gamesession.config.PresentationProperties",
+      "sourceType": "net.firedevops.firemud.gamesession.config.PresentationProperties"
+    },
+    {
+      "name": "firemud.reconnection",
+      "type": "net.firedevops.firemud.common.config.FiremudReconnectionProperties",
+      "sourceType": "net.firedevops.firemud.common.config.FiremudReconnectionProperties"
+    },
+    {
+      "name": "firemud.movement",
+      "type": "net.firedevops.firemud.gamesession.config.MovementProperties",
+      "sourceType": "net.firedevops.firemud.gamesession.config.MovementProperties"
+    },
+    {
+      "name": "firemud.world-topology",
+      "type": "net.firedevops.firemud.gamesession.config.WorldTopologyProperties",
+      "sourceType": "net.firedevops.firemud.gamesession.config.WorldTopologyProperties"
+    }
+  ],
+  "properties": [
+    {
+      "name": "firemud.presentation.default-locale-tag",
+      "type": "java.lang.String",
+      "defaultValue": "en-NZ",
+      "description": "Default renderer locale tag used for built-in localized notice, error, and other platform text when no per-player preference overrides it.",
+      "sourceType": "net.firedevops.firemud.gamesession.config.PresentationProperties"
+    },
+    {
+      "name": "firemud.presentation.default-color-mode",
+      "type": "net.firedevops.firemud.gamesession.config.PresentationProperties$ColorMode",
+      "defaultValue": "NONE",
+      "description": "Default color/emphasis mode for the text renderer when no per-player presentation preference overrides it.",
+      "sourceType": "net.firedevops.firemud.gamesession.config.PresentationProperties"
+    },
+    {
+      "name": "firemud.presentation.brief-enabled-by-default",
+      "type": "java.lang.Boolean",
+      "defaultValue": false,
+      "description": "Whether room-view rendering defaults to BRIEF-style suppression for movement-triggered and other suppressible output segments.",
+      "sourceType": "net.firedevops.firemud.gamesession.config.PresentationProperties"
+    },
+    {
+      "name": "firemud.presentation.prompt.enabled",
+      "type": "java.lang.Boolean",
+      "defaultValue": true,
+      "description": "Whether prompt output is enabled by default for text-session rendering.",
+      "sourceType": "net.firedevops.firemud.gamesession.config.PresentationProperties$Prompt"
+    },
+    {
+      "name": "firemud.presentation.prompt.emit-after-reconnect-restore",
+      "type": "java.lang.Boolean",
+      "defaultValue": true,
+      "description": "Whether reconnect restore appends a fresh prompt after replaying recent transcript context and rendering a fresh LOOK.",
+      "sourceType": "net.firedevops.firemud.gamesession.config.PresentationProperties$Prompt"
+    },
+    {
+      "name": "firemud.presentation.prompt.coalesce-window-ms",
+      "type": "java.lang.Long",
+      "defaultValue": 150,
+      "description": "Maximum prompt burst window, in milliseconds, used to suppress prompt spam while still retaining prompts for explicit boundary commands such as LOOK.",
+      "sourceType": "net.firedevops.firemud.gamesession.config.PresentationProperties$Prompt"
+    },
+    {
+      "name": "firemud.reconnection.policy.resume-window-ms",
+      "type": "java.lang.Long",
+      "defaultValue": 180000,
+      "description": "Maximum resume window, in milliseconds, before a stale gameplay binding is treated as non-resumable.",
+      "sourceType": "net.firedevops.firemud.common.config.FiremudReconnectionProperties$Policy"
+    },
+    {
+      "name": "firemud.reconnection.policy.stale-resume-falls-through-to-fresh-entry",
+      "type": "java.lang.Boolean",
+      "defaultValue": true,
+      "description": "Whether a stale or invalid resumable binding should fall through to fresh entry when current admission still allows PLAY.",
+      "sourceType": "net.firedevops.firemud.common.config.FiremudReconnectionProperties$Policy"
+    },
+    {
+      "name": "firemud.reconnection.buffer.ttl-ms",
+      "type": "java.lang.Long",
+      "defaultValue": 1800000,
+      "description": "TTL, in milliseconds, for the bounded reconnect transcript screen buffer stored for each player binding.",
+      "sourceType": "net.firedevops.firemud.common.config.FiremudReconnectionProperties$Buffer"
+    },
+    {
+      "name": "firemud.reconnection.buffer.min-messages",
+      "type": "java.lang.Integer",
+      "defaultValue": 8,
+      "description": "Minimum message floor retained for reconnect transcript replay before byte ceilings are applied.",
+      "sourceType": "net.firedevops.firemud.common.config.FiremudReconnectionProperties$Buffer"
+    },
+    {
+      "name": "firemud.reconnection.buffer.min-lines",
+      "type": "java.lang.Integer",
+      "defaultValue": 24,
+      "description": "Minimum line floor retained for reconnect transcript replay before byte ceilings are applied.",
+      "sourceType": "net.firedevops.firemud.common.config.FiremudReconnectionProperties$Buffer"
+    },
+    {
+      "name": "firemud.reconnection.buffer.soft-max-bytes",
+      "type": "java.lang.Integer",
+      "defaultValue": 16384,
+      "description": "Soft byte ceiling for reconnect transcript retention before older entries are trimmed when message and line floors have been satisfied.",
+      "sourceType": "net.firedevops.firemud.common.config.FiremudReconnectionProperties$Buffer"
+    },
+    {
+      "name": "firemud.reconnection.buffer.hard-max-bytes",
+      "type": "java.lang.Integer",
+      "defaultValue": 65536,
+      "description": "Hard byte ceiling for reconnect transcript retention; the oldest entries are trimmed to stay within this bound even if floors would otherwise retain more text.",
+      "sourceType": "net.firedevops.firemud.common.config.FiremudReconnectionProperties$Buffer"
+    },
+    {
+      "name": "firemud.movement.post-move-look-enabled",
+      "type": "java.lang.Boolean",
+      "defaultValue": true,
+      "description": "Whether a successful MOVE automatically renders the destination room view instead of returning only command acknowledgement.",
+      "sourceType": "net.firedevops.firemud.gamesession.config.MovementProperties"
+    },
+    {
+      "name": "firemud.world-topology.scope-model",
+      "type": "net.firedevops.firemud.gamesession.config.WorldTopologyProperties$ScopeModel",
+      "defaultValue": "MAP_ONLY",
+      "description": "The highest topology model the current game/runtime expresses for future scope-sensitive communication and world behaviors.",
+      "sourceType": "net.firedevops.firemud.gamesession.config.WorldTopologyProperties"
+    },
+    {
+      "name": "firemud.world-topology.regions-enabled",
+      "type": "java.lang.Boolean",
+      "defaultValue": false,
+      "description": "Whether explicit world regions are enabled in the current topology model.",
+      "sourceType": "net.firedevops.firemud.gamesession.config.WorldTopologyProperties"
+    }
+  ],
+  "hints": [
+    {
+      "name": "firemud.presentation.default-color-mode",
+      "values": [
+        {
+          "value": "NONE",
+          "description": "Render plain text without ANSI color or emphasis."
+        },
+        {
+          "value": "BASIC",
+          "description": "Render basic ANSI color/emphasis where supported."
+        },
+        {
+          "value": "RICH",
+          "description": "Render richer emphasis/color variants for capable clients."
+        }
+      ]
+    },
+    {
+      "name": "firemud.world-topology.scope-model",
+      "values": [
+        {
+          "value": "MAP_ONLY",
+          "description": "World layout only distinguishes map-level scope."
+        },
+        {
+          "value": "AREA_AND_MAP",
+          "description": "World layout distinguishes areas within a map."
+        },
+        {
+          "value": "REGION_AREA_AND_MAP",
+          "description": "World layout distinguishes regions above areas and maps."
+        }
+      ]
+    }
+  ]
+}

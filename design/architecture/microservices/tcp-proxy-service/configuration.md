@@ -52,7 +52,6 @@ The full variable list is the canonical source of defaults and behavior for `TCP
 | `TCP_PROXY_MAX_CONNECTIONS_PER_IP` | Maximum concurrent Telnet connections per client IP | `0` |
 | `TCP_PROXY_MAX_LINE_BYTES` | Maximum accepted Telnet/MCP line in bytes | `4096` |
 | `TCP_PROXY_MAX_OVERSIZE_LINES` | Maximum oversized lines per connection before hard close | `10` |
-| `TCP_PROXY_MAX_MALFORMED_ENVELOPES` | Maximum malformed `SESSION` envelopes per connection before hard close | `5` |
 | `TCP_PROXY_NOTIFY_DISCONNECT_MAX_RETRY_MS` | Maximum total retry time for failed `NotifyDisconnect` calls | `5000` |
 | `TCP_PROXY_GATEWAY_RECONNECT_WINDOW_MS` | Initial-admission bridge-establishment window | `5000` |
 | `TCP_PROXY_GATEWAY_CIRCUIT_OPEN_MS` | Circuit-breaker open threshold for upstream gameplay unreachability | `5000` |
@@ -100,16 +99,15 @@ Because the TCP Proxy Service sits in the network DMZ, it enforces hard resource
 - A per-client-IP cap guards against a single address consuming the entire connection budget, but this cap is only as accurate as the observed client IP.
 - In NAT-heavy environments it is acceptable to keep the per-IP cap relatively high or unset, but only when Spring Cloud Gateway rate limiting and Game Session per-IP/per-session quotas are enabled and monitored; do not run with both proxy per-IP limits and higher-layer quotas effectively disabled.
 - Read idle timeouts and maximum connection lifetimes close connections that send no data or linger indefinitely.
-- Maximum line and envelope length constraints reject oversized lines without forwarding partial input.
-- Malformed `SESSION` envelopes increment a dedicated counter and eventually hard-close the connection once the budget is exhausted.
+- Maximum line-length constraints reject oversized lines without forwarding partial input.
 
 The proxy’s connection caps, idle timeouts, and buffer depth limits are hard ceilings at the network edge. Gateway rate limiting and Game Session quotas remain higher-layer policy controls.
 
 ## Tuning TCP Proxy for Different Environments
 
-The connection and envelope limits exposed via `TCP_PROXY_MAX_CONNECTIONS`, `TCP_PROXY_MAX_CONNECTIONS_PER_IP`, and `TCP_PROXY_MAX_MALFORMED_ENVELOPES` are intended to be tuned per environment.
+The connection limits exposed via `TCP_PROXY_MAX_CONNECTIONS` and `TCP_PROXY_MAX_CONNECTIONS_PER_IP` are intended to be tuned per environment.
 
-MCP-specific budgets are intentionally softer than the hard-close Telnet and malformed-`SESSION` limits: exceeding `TCP_PROXY_MCP_*` limits discards MCP control lines as `reason="mcp_budget"` while generally keeping the underlying Telnet connection open, unless the separate MCP negotiation-failure threshold is crossed.
+MCP-specific budgets are intentionally softer than the hard-close Telnet safety limits: exceeding `TCP_PROXY_MCP_*` limits discards MCP control lines as `reason="mcp_budget"` while generally keeping the underlying Telnet connection open, unless the separate MCP negotiation-failure threshold is crossed.
 
 The initial Proxy -> Gateway WebSocket bridge retry budget and input buffer depth (`TCP_PROXY_GATEWAY_RECONNECT_WINDOW_MS` and `TCP_PROXY_GATEWAY_MAX_BUFFERED_LINES`) should be sized to match expected gateway availability characteristics and typical player command rates.
 
@@ -132,7 +130,6 @@ Startup must fail fast when `TCP_PROXY_GATEWAY_RECONNECT_WINDOW_MS <= 0`, `TCP_P
 
 - `TCP_PROXY_MAX_CONNECTIONS=50`
 - `TCP_PROXY_MAX_CONNECTIONS_PER_IP=10`
-- `TCP_PROXY_MAX_MALFORMED_ENVELOPES=10`
 - `ws://` targets for `GATEWAY_WS_URL` are acceptable in local or Docker Compose setups
 
 ### Minimum Viable Prod Hardening
@@ -140,7 +137,6 @@ Startup must fail fast when `TCP_PROXY_GATEWAY_RECONNECT_WINDOW_MS <= 0`, `TCP_P
 - Size `TCP_PROXY_MAX_CONNECTIONS` to expected concurrent players plus safety margin.
 - Set `TCP_PROXY_MAX_CONNECTIONS_PER_IP=3` to `5` so individual IPs cannot exhaust the connection pool while still allowing multiple windows per player.
 - In NAT-heavy or carrier-grade-NAT environments, prefer a higher per-IP cap or even no hard per-IP cap only when Gateway and Game Session quotas remain enabled and monitored.
-- Use `TCP_PROXY_MAX_MALFORMED_ENVELOPES=5`.
 - Require `wss://` with mutual TLS for `GATEWAY_WS_URL`.
 
 ### Heavier Deployments

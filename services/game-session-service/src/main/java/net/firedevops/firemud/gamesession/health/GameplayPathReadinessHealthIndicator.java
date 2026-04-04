@@ -24,12 +24,12 @@ import org.springframework.stereotype.Component;
 public class GameplayPathReadinessHealthIndicator implements HealthIndicator {
   private static final String COMPONENT = "game-session-service";
   private static final String CONTRACT = "LOGIN->LOOK";
-  private static final String PROBE_TENANT_ID = "__readiness__";
+  private static final String PROBE_TENANT_ID = "1";
   private static final String PROBE_USERNAME = "readiness-probe@example.invalid";
   private static final String PROBE_PASSWORD = "invalid";
-  private static final String PROBE_SESSION_ID = "__readiness_session__";
-  private static final String PROBE_PLAYER_ID = "__readiness_player__";
-  private static final String PROBE_ROOM_ID = "__readiness_room__";
+  private static final String PROBE_SESSION_ID = "1";
+  private static final String PROBE_PLAYER_ID = "1";
+  private static final String PROBE_ROOM_ID = "1";
 
   private final AccountClient accountClient;
   private final GameLogicClient gameLogicClient;

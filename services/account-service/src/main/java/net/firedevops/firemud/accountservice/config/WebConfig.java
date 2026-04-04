@@ -22,6 +22,8 @@ public class WebConfig implements WebMvcConfigurer {
         .addInterceptor(jwtAuthInterceptor)
         .excludePathPatterns(
             "/auth/login",
+            "/auth/player-bootstrap",
+            "/auth/connect-token",
             "/auth/request-password-reset",
             "/auth/complete-password-reset",
             "/auth/request-email-verification",

@@ -8,8 +8,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import net.firedevops.firemud.gamelogic.config.GameLogicGrpcClientConfig;
 import net.firedevops.firemud.gamelogic.logic.dto.CommandResult;
 import net.firedevops.firemud.gamelogic.logic.service.CommandService;
+import net.firedevops.firemud.gamelogic.service.CommunicationAggregationService;
 import net.firedevops.firemud.gamelogic.service.LookAggregationService;
-import net.firedevops.firemud.gamelogic.service.SayAggregationService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
@@ -27,7 +27,7 @@ class CommandControllerTest {
   @MockitoBean private GrpcServerLifecycle grpcServerLifecycle;
   @MockitoBean private CommandService commandService;
   @MockitoBean private LookAggregationService lookAggregationService;
-  @MockitoBean private SayAggregationService sayAggregationService;
+  @MockitoBean private CommunicationAggregationService communicationAggregationService;
 
   @Test
   void executeReturnsResult() throws Exception {

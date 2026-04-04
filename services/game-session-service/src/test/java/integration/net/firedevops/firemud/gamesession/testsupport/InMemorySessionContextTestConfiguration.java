@@ -21,11 +21,24 @@ public class InMemorySessionContextTestConfiguration {
   private static final class InMemorySessionContextService implements SessionContextService {
     private final Map<Long, SessionContext> sessionMap = new ConcurrentHashMap<>();
     private final Map<String, SessionContext> identityMap = new ConcurrentHashMap<>();
+    private final Map<String, SessionContext> nameMap = new ConcurrentHashMap<>();
 
     @Override
     public void save(SessionContext context) {
       sessionMap.put(context.sessionId(), context);
-      identityMap.put(identityKey(context), context);
+      if (hasGameplayIdentity(context)) {
+        identityMap.put(identityKey(context), context);
+        if (context.characterName() != null && !context.characterName().isBlank()) {
+          nameMap.put(
+              nameKey(context.tenantId(), context.gameInstanceId(), context.characterName()),
+              context);
+        }
+      }
+    }
+
+    @Override
+    public Optional<SessionContext> findBySessionId(long sessionId) {
+      return Optional.ofNullable(sessionMap.get(sessionId));
     }
 
     @Override
@@ -38,25 +51,44 @@ public class InMemorySessionContextTestConfiguration {
     }
 
     @Override
-    public Optional<SessionContext> findByAccountAndCharacter(
-        long tenantId, long accountId, long characterId) {
-      return Optional.ofNullable(identityMap.get(identityKey(tenantId, accountId, characterId)));
+    public Optional<SessionContext> findByGameplayIdentity(
+        long tenantId, long gameInstanceId, long characterId) {
+      return Optional.ofNullable(
+          identityMap.get(identityKey(tenantId, gameInstanceId, characterId)));
+    }
+
+    @Override
+    public Optional<SessionContext> findByGameplayName(
+        long tenantId, long gameInstanceId, String characterName) {
+      return Optional.ofNullable(nameMap.get(nameKey(tenantId, gameInstanceId, characterName)));
     }
 
     @Override
     public void deleteBySessionId(long tenantId, long sessionId) {
       SessionContext removed = sessionMap.remove(sessionId);
-      if (removed != null) {
+      if (removed != null && hasGameplayIdentity(removed)) {
         identityMap.remove(identityKey(removed));
+        if (removed.characterName() != null && !removed.characterName().isBlank()) {
+          nameMap.remove(
+              nameKey(removed.tenantId(), removed.gameInstanceId(), removed.characterName()));
+        }
       }
     }
 
     private String identityKey(SessionContext context) {
-      return identityKey(context.tenantId(), context.accountId(), context.characterId());
+      return identityKey(context.tenantId(), context.gameInstanceId(), context.characterId());
     }
 
-    private String identityKey(long tenantId, long accountId, long characterId) {
-      return tenantId + ":" + accountId + ":" + characterId;
+    private String identityKey(long tenantId, long gameInstanceId, long characterId) {
+      return tenantId + ":" + gameInstanceId + ":" + characterId;
+    }
+
+    private String nameKey(long tenantId, long gameInstanceId, String characterName) {
+      return tenantId + ":" + gameInstanceId + ":" + characterName.trim().toLowerCase();
+    }
+
+    private boolean hasGameplayIdentity(SessionContext context) {
+      return context.gameInstanceId() > 0 && context.characterId() > 0;
     }
   }
 }

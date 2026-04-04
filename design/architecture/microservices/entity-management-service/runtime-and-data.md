@@ -8,6 +8,7 @@ This document defines Entity Management’s runtime model, persistence ownership
 - Exposes gRPC endpoints for other microservices.
 - Caches frequently accessed character data in Redis for quick lookups.
 - Applies optimistic locking to avoid conflicting updates on the same entity.
+- Entity Management instances are intended to be replaceable workers over authoritative persistent state and documented caches. Item, inventory, containment, and character data that must survive instance loss belongs in the service-owned database rows and cache invalidation model, not as the sole authoritative copy in one process.
 - Database writes are deferred and batched for ordinary entity updates, not triggered on every gameplay action. The Game Session Service coordinates real-time updates using Redis; the database is normally updated when ticks complete.
 - Spatial containment mutations that participate in cross-service effects are the exception: before Entity Management acknowledges a spatial `EffectId` back to Game Session, it must durably flush the effect’s idempotency guard plus the affected containment/container rows for that effect within the same local transaction. A participant acknowledgement must never be emitted for Redis-only staged state.
 - This design reduces write frequency and contention, making optimistic locking a natural fit because most entities are updated by only one process at a time and conflicts are rare.
@@ -21,6 +22,8 @@ This document defines Entity Management’s runtime model, persistence ownership
   - Design APIs must reject any attempt to write templates for Published/Active/Failed versions.
 - Utilizes the [Shared Libraries](../../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
 - Service methods are annotated with `@Timed` so inventory and character operations emit Prometheus metrics.
+
+This means another Entity Management instance of the same type should be able to serve the same runtime data after restart without requiring gameplay clients to reconnect just because one non-edge worker disappeared. Any such visible restart remains implementation debt, not target behavior.
 
 ## Data Model and Versioning
 
@@ -163,6 +166,69 @@ See [Versioning & Runtime Configuration](../../system-architecture-versioning-ru
 - Many-to-many tables define inventory and equipment relationships, including container contents and room/ground inventory. Room/ground inventory is modeled as items whose container references a synthetic room-ground container entity keyed by `(tenantId, gameInstanceId, roomInstanceId)` so limits such as max items on the ground or special container rules can be enforced consistently without cross-instance collisions.
 - Character location and instance membership are stored by the World Management Service rather than this service, but all item instances and inventories remain owned and persisted here.
 - Entity graphs cache inventory relationships for fast lookups.
+
+### Containment and Equipment Model
+
+Entity Management's target-state containment model is container-first:
+
+- Every item instance lives in a container or is attached through a first-class equipment binding.
+- Character and NPC inventories are hidden containers owned by that entity.
+- Bags, chests, corpses, banks, vendor stock, and similar holders are containers using the same core containment rules.
+- Room-ground inventory is also a container, not a special world-owned list. World Management remains authoritative for the room identity and occupancy, while Entity Management owns the attached room-ground container and its contents.
+
+Room-ground containers must feel attached to a room instance rather than like an unrelated global mapping:
+
+- The room identity comes from World Management via `RoomInstanceRef`.
+- Entity Management persists the attached ground container and its contents using a deterministic runtime identity derived from `(tenantId, gameInstanceId, roomInstanceId)`.
+- Implementations may store the attached container as a synthetic entity or equivalent runtime record, but the conceptual contract is "this room instance has a ground container."
+
+Equipment is intentionally not modeled as "just another bag position":
+
+- Equipped items remain owned by the same runtime entity but are represented through a first-class equipment relation.
+- Equipment slot definitions are game-configured design data, not fixed platform-wide enums.
+- Body layouts or equivalent runtime configuration determine which slots are available to a particular character/NPC/species.
+- Item definitions declare compatibility through configurable slot groups, attachment rules, or equivalent game-defined constraints rather than through a hardcoded universal slot set.
+
+This keeps the platform compatible with games that need unusual body plans or attachment models such as horns instead of hands, asymmetric limbs, species-specific slot topologies, or non-humanoid wearable layouts.
+
+### Inventory Queries and Type Filtering
+
+The current minimal `QueryInventory -> item_ids[]` shape is only sufficient for the earliest bootstrap slices. The target-state inventory contract should support richer gameplay and UI queries:
+
+- Query by containment scope such as inventory container, room-ground container, nested container, bank, vendor stock, or corpse.
+- Query by equipped state and slot binding.
+- Query by structural properties such as stackability, quantity, visibility, accessibility, and ownership.
+- Query by game-defined item types, tags, or category taxonomies so gameplay commands and GUIs can filter for concepts such as quest items, reagents, weapons, salvage, consumables, rarity classes, or other design-defined groupings.
+
+This richer query model is required both for player actions and for future clients with multiple inventory panes, filtered item grids, equipment screens, contextual loot UIs, or admin/operator tooling.
+
+### Inventory Transfer Audit
+
+Inventory and equipment mutations must be auditable. This is a deliberate design requirement because item duplication bugs or invalid transfers can be difficult to investigate after the fact.
+
+Every transfer-like mutation should emit an audit record using one canonical movement model:
+
+- item instance id
+- item definition/template id
+- quantity or stack delta
+- source container id or equipped binding
+- destination container id or equipped binding
+- actor entity/account/session when applicable
+- action reason such as `pickup`, `drop`, `loot`, `put`, `take`, `equip`, `unequip`, `split_stack`, `merge_stack`, `create`, `destroy`, or `admin_grant`
+- tenant id, game instance id, and room context when applicable
+- timestamp plus correlation id / command id / effect id
+
+Because everything is modeled as container movement plus equipment bindings, the audit format can stay uniform across player inventories, room-ground transfers, nested containers, equipment changes, scripted rewards, and administrative interventions.
+
+Where possible, the audit write must participate in the same local transactional boundary as the authoritative containment mutation so the system does not record state changes without an audit trail or emit audit rows for rolled-back state.
+
+Operators and later fraud/dupe-detection tooling should also be able to derive lightweight invariants from these records, for example:
+
+- the same item instance appearing in multiple locations
+- negative or impossible stack counts
+- transfer retries reusing the same correlation id unexpectedly
+- suspicious create/destroy imbalances
+- source or destination containers inconsistent with room/entity ownership rules
 
 ### Instance Termination Cleanup Contract
 

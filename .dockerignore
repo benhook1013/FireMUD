@@ -1,0 +1,11 @@
+.git
+.github
+.gradle
+.idea
+.vscode
+**/.DS_Store
+**/node_modules
+**/build/reports
+**/build/test-results
+**/build/tmp
+**/out

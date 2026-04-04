@@ -11,6 +11,8 @@ service AccountService {
   rpc Ping(PingRequest) returns (PingResponse);
   rpc CreateAccount(CreateAccountRequest) returns (CreateAccountResponse);
   rpc Authenticate(AuthenticateRequest) returns (AuthenticateResponse);
+  rpc GetTenantMembershipForRuntime(GetTenantMembershipForRuntimeRequest) returns (GetTenantMembershipForRuntimeResponse);
+  rpc GetTenantEntitlementsForRuntime(GetTenantEntitlementsForRuntimeRequest) returns (GetTenantEntitlementsForRuntimeResponse);
   rpc GetProfile(GetProfileRequest) returns (GetProfileResponse);
   rpc UpdateProfile(UpdateProfileRequest) returns (UpdateProfileResponse);
   rpc ExportAccount(ExportAccountRequest) returns (ExportAccountResponse);
@@ -35,12 +37,14 @@ message PingResponse {
 
 // Parameters required to register a new account.
 message CreateAccountRequest {
+  // Tenant that owns the new account.
+  string tenant_id = 1;
   // Desired username for login and display.
-  string username = 1;
+  string username = 2;
   // Email address used for notifications and password recovery.
-  string email = 2;
+  string email = 3;
   // Raw password that the server hashes before storage.
-  string password = 3;
+  string password = 4;
 }
 
 // Result of a CreateAccount call.
@@ -62,6 +66,35 @@ message AuthenticateResponse {
   string auth_token = 1;
   string account_id = 2;
   shared.v1.ErrorDetail error = 3;
+}
+
+message GetTenantMembershipForRuntimeRequest {
+  string account_id = 1;
+  string tenant_id = 2;
+  string request_id = 3;
+}
+
+message GetTenantMembershipForRuntimeResponse {
+  string account_id = 1;
+  string tenant_id = 2;
+  bool gameplay_admission_allowed = 3;
+  uint64 membership_version = 4;
+  string evaluated_at = 5;
+  shared.v1.ErrorDetail error = 6;
+}
+
+message GetTenantEntitlementsForRuntimeRequest {
+  string tenant_id = 1;
+  string request_id = 2;
+}
+
+message GetTenantEntitlementsForRuntimeResponse {
+  string tenant_id = 1;
+  bool gameplay_available = 2;
+  uint64 entitlement_version = 3;
+  uint64 tenant_billing_sequence = 4;
+  string evaluated_at = 5;
+  shared.v1.ErrorDetail error = 6;
 }
 
 message GetProfileRequest {

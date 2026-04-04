@@ -18,7 +18,6 @@ public final class WorldManagementStubServer implements AutoCloseable {
   private final AtomicReference<StatusRuntimeException> nextFailure = new AtomicReference<>();
 
   public WorldManagementStubServer(int port) throws IOException {
-    this.port = port;
     this.server =
         ServerBuilder.forPort(port)
             .addService(
@@ -48,6 +47,7 @@ public final class WorldManagementStubServer implements AutoCloseable {
                 })
             .build()
             .start();
+    this.port = server.getPort();
   }
 
   public void triggerNotFound(String description) {

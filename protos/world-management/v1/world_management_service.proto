@@ -30,6 +30,7 @@ message GetRoomResponse {
 message GetRoomSnapshotRequest {
   string tenant_id = 1;
   shared.v1.RoomInstanceRef room_instance = 2;
+  string preferred_locale = 3;
 }
 
 message GetRoomSnapshotResponse {

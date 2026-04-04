@@ -4,6 +4,8 @@
 
 Executes the core gameplay rules and command parsing. It processes player actions and determines outcomes, while Game Session owns queueing, tick context, and final client delivery.
 
+Game Logic is intentionally a replaceable same-type worker rather than a keeper of authoritative process-local gameplay state. If one Game Logic instance disappears, another instance should be able to continue serving requests from shared authoritative inputs and durable effect/idempotency records without making that restart itself a player-visible event.
+
 ### Responsibilities
 
 - Parse player commands and resolve actions
@@ -38,14 +40,14 @@ Executes the core gameplay rules and command parsing. It processes player action
 
 Implementation notes:
 
-- Live: the data-driven `LOOK` path is wired into the command pipeline via `ResolveLook`, and `BroadcastSay` forwards normalized room chat payloads to the Social & Groups stub.
+- Live: the data-driven `LOOK` path is wired into the command pipeline via `ResolveLook`, and `SendCommunication` forwards normalized `say`/`whisper`/`tell` payloads to the Social & Groups stub.
 - Stubbed: room and entity context still comes from the deterministic LOOK fixtures, and chat delivery still uses the regression Social & Groups stub so canonical transcripts remain deterministic.
 - Deferred: richer LOOK prose, combat and effect annotations, NPC reply behavior, localized listening areas, and profanity-escalation flows remain future slices.
 
 ## Document Map
 
 - [API Contracts](./api-contracts.md)
-  - gameplay-facing REST/gRPC surfaces, `LOOK` and `BroadcastSay` contract ownership, and source-of-truth pointers.
+  - gameplay-facing REST/gRPC surfaces, `LOOK` and `SendCommunication` contract ownership, and source-of-truth pointers.
 - [Runtime and Data](./runtime-and-data.md)
   - runtime rule ownership, Redis-role boundaries, publish-gating/digest rules, and gameplay-state invariants.
 - [Operations](./operations.md)

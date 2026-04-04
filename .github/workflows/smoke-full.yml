@@ -55,6 +55,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
+      COMPOSE_PROJECT_NAME: smoke-full-${{ github.run_id }}-${{ github.run_attempt }}
       SMOKE_TIMEOUT_SECONDS: 20
       SMOKE_IMAGE_TAG: ${{ inputs.image_tag }}
     steps:
@@ -75,6 +76,16 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 🧹 Reset Smoke Stack State
+        run: |
+          docker compose \
+            -f docker/docker-compose.yml \
+            -f docker/docker-compose.override.yml \
+            -f docker/docker-compose.smoke-images.override.yml \
+            down \
+            -v \
+            --remove-orphans || true
 
       - name: 🚀 Start Smoke Stack
         run: |
@@ -128,7 +139,9 @@ jobs:
             -f docker/docker-compose.yml \
             -f docker/docker-compose.override.yml \
             -f docker/docker-compose.smoke-images.override.yml \
-            down
+            down \
+            -v \
+            --remove-orphans
 
   smoke-summary:
     name: Smoke Summary

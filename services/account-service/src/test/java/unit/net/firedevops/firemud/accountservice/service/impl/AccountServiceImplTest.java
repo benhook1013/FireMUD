@@ -13,14 +13,19 @@ import io.grpc.StatusRuntimeException;
 import java.util.Optional;
 import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.accountservice.client.LoggingAdminClient;
+import net.firedevops.firemud.accountservice.config.AuthProperties;
 import net.firedevops.firemud.accountservice.config.MailProperties;
 import net.firedevops.firemud.accountservice.dto.AccountDto;
 import net.firedevops.firemud.accountservice.dto.AuthenticationResult;
+import net.firedevops.firemud.accountservice.dto.ConnectTokenRequest;
+import net.firedevops.firemud.accountservice.dto.ConnectTokenResult;
 import net.firedevops.firemud.accountservice.dto.CreateAccountRequest;
 import net.firedevops.firemud.accountservice.dto.PasswordResetRequest;
+import net.firedevops.firemud.accountservice.dto.PlayerBootstrapResult;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.entity.EmailVerificationToken;
 import net.firedevops.firemud.accountservice.entity.Profile;
+import net.firedevops.firemud.accountservice.entity.Subscription;
 import net.firedevops.firemud.accountservice.mapper.AccountMapper;
 import net.firedevops.firemud.accountservice.mapper.ProfileMapper;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
@@ -48,6 +53,7 @@ class AccountServiceImplTest {
   @Mock private NotificationService notificationService;
   @Mock private EmailService emailService;
   @Mock private MailProperties mailProperties;
+  private final AuthProperties authProperties = new AuthProperties();
   @Mock private LoggingAdminClient loggingAdminClient;
   @Mock private SessionService sessionService;
   @Mock private SagaRunner sagaRunner;
@@ -68,6 +74,10 @@ class AccountServiceImplTest {
     MockitoAnnotations.openMocks(this);
     AccountMapper mapper = Mappers.getMapper(AccountMapper.class);
     JwtUtil jwtUtil = new JwtUtil("mysecretkey123456789012345678901", 3600000L);
+    authProperties.setJwtSecret("mysecretkey123456789012345678901");
+    authProperties.setPlayerBootstrapExpirationMs(300000L);
+    authProperties.setConnectTokenExpirationMs(30000L);
+    authProperties.setSessionExpirationMs(3600000L);
     when(mailProperties.getResetUrl()).thenReturn("http://reset/%s");
     when(mailProperties.getVerificationUrl()).thenReturn("http://verify/%s");
     service =
@@ -84,6 +94,7 @@ class AccountServiceImplTest {
             notificationService,
             emailService,
             mailProperties,
+            authProperties,
             loggingAdminClient,
             jwtUtil,
             sessionService,
@@ -99,7 +110,8 @@ class AccountServiceImplTest {
 
   @Test
   void createAccountPersistsEntity() throws net.firedevops.firemud.common.saga.SagaException {
-    CreateAccountRequest request = new CreateAccountRequest("demo", "demo@example.com", "password");
+    CreateAccountRequest request =
+        new CreateAccountRequest(7L, "demo", "demo@example.com", "password");
     Account saved = new Account();
     saved.setId(1L);
     when(accountRepository.save(org.mockito.ArgumentMatchers.any(Account.class))).thenReturn(saved);
@@ -107,23 +119,26 @@ class AccountServiceImplTest {
     AccountDto dto = service.createAccount(request);
 
     assertEquals(1L, dto.id());
+    assertEquals(7L, dto.tenantId());
     org.mockito.Mockito.verify(sagaRunner).run(org.mockito.ArgumentMatchers.any());
   }
 
   @Test
   void createAccountContinuesWhenAuditLoggingFails()
       throws net.firedevops.firemud.common.saga.SagaException {
-    CreateAccountRequest request = new CreateAccountRequest("demo", "demo@example.com", "password");
+    CreateAccountRequest request =
+        new CreateAccountRequest(7L, "demo", "demo@example.com", "password");
     Account saved = new Account();
     saved.setId(1L);
     when(accountRepository.save(org.mockito.ArgumentMatchers.any(Account.class))).thenReturn(saved);
     org.mockito.Mockito.doThrow(new StatusRuntimeException(Status.UNAVAILABLE))
         .when(loggingAdminClient)
-        .logAccountCreation(0L, 1L);
+        .logAccountCreation(7L, 1L);
 
     AccountDto dto = service.createAccount(request);
 
     assertEquals(1L, dto.id());
+    assertEquals(7L, dto.tenantId());
     org.mockito.Mockito.verify(sagaRunner).run(org.mockito.ArgumentMatchers.any());
   }
 
@@ -141,6 +156,37 @@ class AccountServiceImplTest {
     assertNotNull(result.authToken());
     assertEquals(1L, result.accountId());
     org.mockito.Mockito.verify(sessionService).storeSession(1L, 1L, result.authToken());
+  }
+
+  @Test
+  void issuePlayerBootstrapReturnsShortLivedToken() {
+    Account account = new Account();
+    account.setId(7L);
+    account.setTenantId(1L);
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findByTenantIdAndUsername(1L, "demo")).thenReturn(Optional.of(account));
+
+    PlayerBootstrapResult result = service.issuePlayerBootstrap(1L, "demo", "password", null);
+
+    assertEquals(7L, result.accountId());
+    assertNotNull(result.bootstrapToken());
+    assertNotNull(result.issuedAt());
+    assertNotNull(result.expiresAt());
+    org.mockito.Mockito.verify(sessionService)
+        .storeSession(
+            org.mockito.ArgumentMatchers.eq(1L),
+            org.mockito.ArgumentMatchers.eq(7L),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.eq(300000L));
+    assertEquals(
+        "player-bootstrap",
+        new JwtUtil("mysecretkey123456789012345678901", 300000L)
+            .parseToken(result.bootstrapToken())
+            .getPayload()
+            .getAudience()
+            .iterator()
+            .next());
   }
 
   @Test
@@ -164,39 +210,138 @@ class AccountServiceImplTest {
   }
 
   @Test
-  void authenticateFallsBackToGlobalAccountLookup() {
-    Account account = new Account();
-    account.setId(1L);
-    account.setTenantId(0L);
-    account.setUsername("demo");
-    account.setEmail("demo@example.com");
-    account.setPasswordHash(hash("password"));
-    when(accountRepository.findByTenantIdAndUsername(1L, "demo@example.com"))
-        .thenReturn(Optional.empty());
-    when(accountRepository.findByTenantIdAndEmail(1L, "demo@example.com"))
-        .thenReturn(Optional.empty());
-    when(accountRepository.findByTenantIdAndUsername(0L, "demo@example.com"))
-        .thenReturn(Optional.empty());
-    when(accountRepository.findByTenantIdAndEmail(0L, "demo@example.com"))
-        .thenReturn(Optional.of(account));
-
-    AuthenticationResult result = service.authenticate(1L, "demo@example.com", "password", null);
-
-    assertNotNull(result.authToken());
-    assertEquals(1L, result.accountId());
-    org.mockito.Mockito.verify(sessionService).storeSession(1L, 1L, result.authToken());
-  }
-
-  @Test
   void authenticateThrowsWhenInvalid() {
     when(accountRepository.findByTenantIdAndUsername(1L, "demo")).thenReturn(Optional.empty());
     when(accountRepository.findByTenantIdAndEmail(1L, "demo")).thenReturn(Optional.empty());
-    when(accountRepository.findByTenantIdAndUsername(0L, "demo")).thenReturn(Optional.empty());
-    when(accountRepository.findByTenantIdAndEmail(0L, "demo")).thenReturn(Optional.empty());
     AuthenticationException exception =
         assertThrows(
             AuthenticationException.class, () -> service.authenticate(1L, "demo", "bad", null));
     assertEquals(AuthenticationErrorCodes.INVALID_CREDENTIALS, exception.getCode());
+  }
+
+  @Test
+  void authenticateDoesNotUseGlobalAccountFallback() {
+    when(accountRepository.findByTenantIdAndUsername(1L, "demo@example.com"))
+        .thenReturn(Optional.empty());
+    when(accountRepository.findByTenantIdAndEmail(1L, "demo@example.com"))
+        .thenReturn(Optional.empty());
+
+    AuthenticationException exception =
+        assertThrows(
+            AuthenticationException.class,
+            () -> service.authenticate(1L, "demo@example.com", "password", null));
+
+    assertEquals(AuthenticationErrorCodes.INVALID_CREDENTIALS, exception.getCode());
+  }
+
+  @Test
+  void getTenantMembershipForRuntimeReturnsAdmissionAllowedForExistingAccount() {
+    Account account = new Account();
+    account.setId(11L);
+    account.setTenantId(7L);
+    account.setUsername("demo");
+    account.setEmail("demo@example.com");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+
+    var dto = service.getTenantMembershipForRuntime(11L, 7L, "req-1");
+
+    assertEquals(11L, dto.accountId());
+    assertEquals(7L, dto.tenantId());
+    assertTrue(dto.gameplayAdmissionAllowed());
+    assertEquals(11L, dto.membershipVersion());
+    assertNotNull(dto.evaluatedAt());
+  }
+
+  @Test
+  void getTenantMembershipForRuntimeRejectsMissingAccount() {
+    when(accountRepository.findById(11L)).thenReturn(Optional.empty());
+
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> service.getTenantMembershipForRuntime(11L, 7L, "req-1"));
+  }
+
+  @Test
+  void getTenantMembershipForRuntimeRejectsCrossTenantAccount() {
+    Account account = new Account();
+    account.setId(11L);
+    account.setTenantId(3L);
+    account.setUsername("demo");
+    account.setEmail("demo@example.com");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+
+    var dto = service.getTenantMembershipForRuntime(11L, 7L, "req-1");
+
+    assertEquals(11L, dto.accountId());
+    assertEquals(7L, dto.tenantId());
+    assertTrue(!dto.gameplayAdmissionAllowed());
+  }
+
+  @Test
+  void getTenantEntitlementsForRuntimeUsesCurrentSubscriptions() {
+    Subscription active = new Subscription();
+    active.setId(31L);
+    active.setTenantId(7L);
+    active.setStatus("active");
+    when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of(active));
+
+    var dto = service.getTenantEntitlementsForRuntime(7L, "req-2");
+
+    assertEquals(7L, dto.tenantId());
+    assertTrue(dto.gameplayAvailable());
+    assertEquals(31L, dto.entitlementVersion());
+    assertEquals(31L, dto.tenantBillingSequence());
+    assertNotNull(dto.evaluatedAt());
+  }
+
+  @Test
+  void issueConnectTokenReturnsShortLivedConnectToken() {
+    Account account = new Account();
+    account.setId(11L);
+    account.setTenantId(7L);
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findByTenantIdAndUsername(7L, "demo")).thenReturn(Optional.of(account));
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    when(accountRepository.findById(7L)).thenReturn(Optional.of(account));
+    Subscription active = new Subscription();
+    active.setId(22L);
+    active.setTenantId(7L);
+    active.setStatus("active");
+    when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of(active));
+
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap(7L, "demo", "password", null);
+    when(sessionService.getAccountId(7L, bootstrap.bootstrapToken())).thenReturn(11L);
+
+    ConnectTokenResult result =
+        service.issueConnectToken(
+            bootstrap.bootstrapToken(),
+            new ConnectTokenRequest("scope-1", 7L, 44L, "production", "req-3"));
+
+    assertEquals(11L, result.accountId());
+    assertEquals(7L, result.tenantId());
+    assertEquals(44L, result.gameInstanceId());
+    assertEquals("scope-1", result.connectScopeId());
+    assertNotNull(result.connectToken());
+    assertNotNull(result.jti());
+    assertNotNull(result.issuedAt());
+    assertNotNull(result.expiresAt());
+    assertEquals(
+        "gameplay-connect",
+        new JwtUtil("mysecretkey123456789012345678901", 30000L)
+            .parseToken(result.connectToken())
+            .getPayload()
+            .getAudience()
+            .iterator()
+            .next());
+    org.mockito.Mockito.verify(sessionService)
+        .storeSession(
+            org.mockito.ArgumentMatchers.eq(7L),
+            org.mockito.ArgumentMatchers.eq(11L),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.eq(30000L));
   }
 
   @Test

@@ -104,7 +104,7 @@ public class WorldManagementGrpcService
           GetRoomResponse.newBuilder()
               .setError(
                   GrpcAppErrors.error(
-                      meterRegistry, logger, "GetRoom", "NOT_FOUND", ex.getMessage()))
+                      meterRegistry, logger, "GetRoom", errorCodeFor(ex), ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -125,7 +125,8 @@ public class WorldManagementGrpcService
     try {
       Long roomId = Long.valueOf(resolveRoomId(request));
       Long tenantId = Long.valueOf(resolveTenantId(request));
-      RoomSnapshotDto snapshot = roomService.getRoomSnapshot(tenantId, roomId);
+      RoomSnapshotDto snapshot =
+          roomService.getRoomSnapshot(tenantId, roomId, request.getPreferredLocale());
       GetRoomSnapshotResponse response =
           GetRoomSnapshotResponse.newBuilder().setSnapshot(toProto(snapshot)).build();
       responseObserver.onNext(response);
@@ -144,7 +145,7 @@ public class WorldManagementGrpcService
           GetRoomSnapshotResponse.newBuilder()
               .setError(
                   GrpcAppErrors.error(
-                      meterRegistry, logger, "GetRoomSnapshot", "NOT_FOUND", ex.getMessage()))
+                      meterRegistry, logger, "GetRoomSnapshot", errorCodeFor(ex), ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -237,5 +238,9 @@ public class WorldManagementGrpcService
       throw new IllegalArgumentException("room_instance.room_instance_id is required");
     }
     return request.getRoomInstance().getRoomInstanceId();
+  }
+
+  private String errorCodeFor(IllegalArgumentException ex) {
+    return "Room not found".equals(ex.getMessage()) ? "NOT_FOUND" : "INVALID_ARGUMENT";
   }
 }

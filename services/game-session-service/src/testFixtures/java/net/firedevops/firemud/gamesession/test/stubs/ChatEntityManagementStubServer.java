@@ -5,6 +5,8 @@ import io.grpc.ServerBuilder;
 import io.grpc.stub.StreamObserver;
 import java.io.IOException;
 import net.firedevops.firemud.entitymanagement.v1.EntityManagementServiceGrpc;
+import net.firedevops.firemud.entitymanagement.v1.FindCharacterByNameRequest;
+import net.firedevops.firemud.entitymanagement.v1.FindCharacterByNameResponse;
 import net.firedevops.firemud.entitymanagement.v1.ListRoomEntitiesRequest;
 import net.firedevops.firemud.entitymanagement.v1.ListRoomEntitiesResponse;
 import net.firedevops.firemud.gamesession.test.ChatTestFixtures;
@@ -24,6 +26,20 @@ public final class ChatEntityManagementStubServer implements AutoCloseable {
                       ListRoomEntitiesRequest request,
                       StreamObserver<ListRoomEntitiesResponse> responseObserver) {
                     responseObserver.onNext(ChatTestFixtures.sampleEntities());
+                    responseObserver.onCompleted();
+                  }
+
+                  @Override
+                  public void findCharacterByName(
+                      FindCharacterByNameRequest request,
+                      StreamObserver<FindCharacterByNameResponse> responseObserver) {
+                    FindCharacterByNameResponse.Builder builder =
+                        FindCharacterByNameResponse.newBuilder();
+                    var character = ChatTestFixtures.characterByName(request.getName());
+                    if (!character.equals(character.getDefaultInstanceForType())) {
+                      builder.setCharacter(character);
+                    }
+                    responseObserver.onNext(builder.build());
                     responseObserver.onCompleted();
                   }
                 })

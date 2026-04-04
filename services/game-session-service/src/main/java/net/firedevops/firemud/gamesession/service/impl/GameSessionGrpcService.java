@@ -39,6 +39,9 @@ import org.springframework.grpc.server.service.GrpcService;
 
 /** gRPC endpoints for the Game Session Service. */
 @GrpcService
+@SuppressFBWarnings(
+    value = "EI_EXPOSE_REP2",
+    justification = "Injected service collaborators are framework-managed and retained internally")
 public final class GameSessionGrpcService
     extends GameSessionServiceGrpc.GameSessionServiceImplBase {
   private final PingService pingService;
@@ -92,26 +95,26 @@ public final class GameSessionGrpcService
       StreamObserver<StartSessionResponse> responseObserver) {
     try {
       String clientIp = request.getClientIp();
-      if (clientIp != null && !clientIp.isBlank() && !ipConnectionLimiter.canAccept(clientIp)) {
-        StartSessionResponse response =
-            StartSessionResponse.newBuilder()
-                .setError(
-                    GrpcAppErrors.error(
-                        meterRegistry, "CONNECTION_LIMIT", "Too many connections from IP"))
-                .build();
-        responseObserver.onNext(response);
-        responseObserver.onCompleted();
-        return;
-      }
       StartSessionRequest dto =
           new StartSessionRequest(
               Long.valueOf(request.getTenantId()),
               request.getRuntimeVersion(),
               request.getScriptPatchVersion(),
-              0L);
+              parseOwnerAccountId(request.getOwnerAccountId()));
       GameInstanceDto instance = gameInstanceService.startSession(dto);
       if (clientIp != null && !clientIp.isBlank()) {
-        ipConnectionLimiter.register(clientIp, instance.id());
+        if (!ipConnectionLimiter.tryRegister(clientIp, instance.id())) {
+          gameInstanceService.stopSession(instance.id());
+          StartSessionResponse response =
+              StartSessionResponse.newBuilder()
+                  .setError(
+                      GrpcAppErrors.error(
+                          meterRegistry, "CONNECTION_LIMIT", "Too many connections from IP"))
+                  .build();
+          responseObserver.onNext(response);
+          responseObserver.onCompleted();
+          return;
+        }
       }
       StartSessionResponse response =
           StartSessionResponse.newBuilder().setSessionId(instance.id().toString()).build();
@@ -125,6 +128,17 @@ public final class GameSessionGrpcService
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     }
+  }
+
+  private long parseOwnerAccountId(String ownerAccountIdText) {
+    if (ownerAccountIdText == null || ownerAccountIdText.isBlank()) {
+      throw new IllegalArgumentException("ownerAccountId is required");
+    }
+    long ownerAccountId = Long.parseLong(ownerAccountIdText);
+    if (ownerAccountId <= 0) {
+      throw new IllegalArgumentException("ownerAccountId must be positive");
+    }
+    return ownerAccountId;
   }
 
   @Override

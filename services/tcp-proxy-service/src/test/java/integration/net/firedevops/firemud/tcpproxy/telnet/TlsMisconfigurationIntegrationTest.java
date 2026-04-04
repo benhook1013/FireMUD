@@ -86,7 +86,6 @@ class TlsMisconfigurationIntegrationTest {
           0,
           0,
           4096,
-          5,
           meterRegistry,
           tcpProxyEventService,
           gatewayGameplayReadinessProbe,

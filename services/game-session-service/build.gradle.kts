@@ -44,7 +44,17 @@ tasks.named("generateTestFixturesProto") {
 }
 
 dependencies {
+    annotationProcessor(libs.spring.boot.configuration.processor)
+    implementation("com.fasterxml.jackson.core:jackson-databind")
     implementation(libs.spring.boot.starter.websocket)
+    implementation(project(":common-security"))
+    implementation(libs.jjwt.api)
+    runtimeOnly(libs.jjwt.impl)
+    runtimeOnly(libs.jjwt.jackson)
+    testFixturesApi(project(":entity-management-service"))
+    testFixturesApi(project(":game-logic-service"))
+    testFixturesApi(project(":social-groups-service"))
+    testFixturesApi(project(":world-management-service"))
     testFixturesImplementation("io.grpc:grpc-netty-shaded:${libs.versions.grpc.get()}")
     testFixturesImplementation("io.grpc:grpc-protobuf:${libs.versions.grpc.get()}")
     testFixturesImplementation("io.grpc:grpc-stub:${libs.versions.grpc.get()}")

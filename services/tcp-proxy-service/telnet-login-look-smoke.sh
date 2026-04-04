@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Telnet → Gateway → Game Session smoke test: LOGIN + LOOK over TCP Proxy.
+# Telnet → Gateway → Game Session smoke test: WORLDS + LOGIN + PLAY + LOOK over TCP Proxy.
 set -euo pipefail
 
 TCP_PORT=${TCP_PROXY_PORT:-2323}
@@ -13,7 +13,9 @@ SMOKE_GAME_LOGIC_API_BASE=${SMOKE_GAME_LOGIC_API_BASE:-http://localhost:8085}
 SMOKE_GAME_SESSION_API_BASE=${SMOKE_GAME_SESSION_API_BASE:-http://localhost:8086}
 SMOKE_GATEWAY_API_BASE=${SMOKE_GATEWAY_API_BASE:-http://localhost:8080}
 SMOKE_TCP_PROXY_API_BASE=${SMOKE_TCP_PROXY_API_BASE:-http://localhost:8089}
+SMOKE_WORLDS_EXPECT=${SMOKE_WORLDS_EXPECT:-"OK WORLDS"}
 SMOKE_LOGIN_EXPECT=${SMOKE_LOGIN_EXPECT:-"OK LOGIN"}
+SMOKE_PLAY_EXPECT=${SMOKE_PLAY_EXPECT:-"OK PLAY"}
 SMOKE_LOOK_EXPECT=${SMOKE_LOOK_EXPECT:-"OK LOOK"}
 SMOKE_STARTUP_EXPECT=${SMOKE_STARTUP_EXPECT:-"DISCONNECT startup_unavailable"}
 SMOKE_TIMEOUT_SECONDS=${SMOKE_TIMEOUT_SECONDS:-10}
@@ -27,7 +29,7 @@ else
   exit 1
 fi
 
-echo "Running Telnet LOGIN + LOOK smoke test against ${SMOKE_HOST}:${TCP_PORT}"
+echo "Running Telnet WORLDS + LOGIN + PLAY + LOOK smoke test against ${SMOKE_HOST}:${TCP_PORT}"
 echo "Using username='${SMOKE_USERNAME}' (password redacted)"
 echo "Using session='${SMOKE_SESSION_ID}' tenant='${SMOKE_TENANT_ID}'"
 echo "Using account API base '${SMOKE_ACCOUNT_API_BASE}' for smoke bootstrap"
@@ -53,11 +55,15 @@ game_logic_api_base = os.environ.get("SMOKE_GAME_LOGIC_API_BASE", "http://localh
 game_session_api_base = os.environ.get("SMOKE_GAME_SESSION_API_BASE", "http://localhost:8086")
 gateway_api_base = os.environ.get("SMOKE_GATEWAY_API_BASE", "http://localhost:8080")
 tcp_proxy_api_base = os.environ.get("SMOKE_TCP_PROXY_API_BASE", "http://localhost:8089")
+worlds_expect = os.environ.get("SMOKE_WORLDS_EXPECT", "OK WORLDS")
 login_expect = os.environ.get("SMOKE_LOGIN_EXPECT", "OK LOGIN")
+play_expect = os.environ.get("SMOKE_PLAY_EXPECT", "OK PLAY")
 look_expect = os.environ.get("SMOKE_LOOK_EXPECT", "OK LOOK")
 startup_expect = os.environ.get("SMOKE_STARTUP_EXPECT", "DISCONNECT startup_unavailable")
 timeout_seconds = int(os.environ.get("SMOKE_TIMEOUT_SECONDS", "10"))
 startup_wait_seconds = int(os.environ.get("SMOKE_STARTUP_WAIT_SECONDS", "90"))
+compose_project_name = os.environ.get("COMPOSE_PROJECT_NAME", "docker")
+postgres_container = f"{compose_project_name}-postgres-1"
 
 def recv_until(sock, expected_substring, timeout):
     deadline = time.time() + timeout
@@ -80,6 +86,7 @@ def recv_until(sock, expected_substring, timeout):
 def ensure_smoke_account():
     payload = json.dumps(
         {
+            "tenantId": int(tenant_id),
             "username": username.split("@", 1)[0],
             "email": username,
             "password": password,
@@ -114,14 +121,14 @@ def ensure_smoke_account():
 
 def wait_for_account_schema():
     deadline = time.time() + startup_wait_seconds
-    query = "select to_regclass('public.accounts');"
+    query = "select to_regclass('account_service.accounts');"
     while time.time() < deadline:
         try:
             table_name = subprocess.check_output(
                 [
                     "docker",
                     "exec",
-                    "docker-postgres-1",
+                    postgres_container,
                     "psql",
                     "-U",
                     "firemud",
@@ -133,7 +140,7 @@ def wait_for_account_schema():
                 text=True,
                 timeout=timeout_seconds,
             ).strip()
-            if table_name == "accounts":
+            if table_name == "account_service.accounts":
                 print("Confirmed account schema is ready.")
                 return
         except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
@@ -194,7 +201,7 @@ def verify_pre_readiness_telnet_admission():
 
 def sync_session_owner_account():
     query = (
-        "select id from accounts "
+        "select id from account_service.accounts "
         f"where email = '{username}' "
         "order by id desc limit 1;"
     )
@@ -203,7 +210,7 @@ def sync_session_owner_account():
             [
                 "docker",
                 "exec",
-                "docker-postgres-1",
+                postgres_container,
                 "psql",
                 "-U",
                 "firemud",
@@ -219,7 +226,7 @@ def sync_session_owner_account():
             print("Session-owner sync skipped: no smoke account found in postgres")
             return
         update = (
-            "update game_instances "
+            "update game_session_service.game_instances "
             f"set owner_account_id = {account_id}, tenant_id = {tenant_id} "
             f"where id = {session_id};"
         )
@@ -227,7 +234,7 @@ def sync_session_owner_account():
             [
                 "docker",
                 "exec",
-                "docker-postgres-1",
+                postgres_container,
                 "psql",
                 "-U",
                 "firemud",
@@ -253,8 +260,16 @@ try:
     ensure_smoke_account()
     sync_session_owner_account()
     with socket.create_connection((host, port), timeout=timeout_seconds) as sock:
-        session_envelope = f"SESSION {session_id} {tenant_id}\r\n"
-        sock.sendall(session_envelope.encode("iso-8859-1"))
+        # WORLDS
+        sock.sendall("WORLDS\r\n".encode("iso-8859-1"))
+        worlds_resp = recv_until(sock, worlds_expect, timeout_seconds)
+        print("=== WORLDS response ===")
+        print(worlds_resp.strip() or "<no data>")
+        if worlds_expect not in worlds_resp:
+            sys.stderr.write(
+                f"Expected substring '{worlds_expect}' in WORLDS response but did not find it.\n"
+            )
+            sys.exit(1)
 
         # LOGIN
         login_line = f"LOGIN {username} {password}\r\n"
@@ -265,6 +280,17 @@ try:
         if login_expect not in login_resp:
             sys.stderr.write(
                 f"Expected substring '{login_expect}' in LOGIN response but did not find it.\n"
+            )
+            sys.exit(1)
+
+        # PLAY
+        sock.sendall("PLAY demo\r\n".encode("iso-8859-1"))
+        play_resp = recv_until(sock, play_expect, timeout_seconds)
+        print("=== PLAY response ===")
+        print(play_resp.strip() or "<no data>")
+        if play_expect not in play_resp:
+            sys.stderr.write(
+                f"Expected substring '{play_expect}' in PLAY response but did not find it.\n"
             )
             sys.exit(1)
 
@@ -283,5 +309,5 @@ except OSError as exc:
     sys.stderr.write(f"Failed to connect to {host}:{port}: {exc}\n")
     sys.exit(1)
 
-print("Telnet LOGIN + LOOK smoke test passed.")
+print("Telnet WORLDS + LOGIN + PLAY + LOOK smoke test passed.")
 PYTHON

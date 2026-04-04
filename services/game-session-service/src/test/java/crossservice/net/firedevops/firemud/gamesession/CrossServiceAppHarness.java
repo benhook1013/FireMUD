@@ -2,9 +2,12 @@ package net.firedevops.firemud.gamesession;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 import java.util.stream.Stream;
 import net.firedevops.firemud.cache.LookCacheService;
+import net.firedevops.firemud.cache.ScreenBufferService;
 import net.firedevops.firemud.common.conflict.ConflictTracker;
 import net.firedevops.firemud.gamesession.dto.GameInstanceDto;
 import net.firedevops.firemud.gamesession.dto.StartSessionRequest;
@@ -17,6 +20,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
 import org.springframework.grpc.server.lifecycle.GrpcServerLifecycle;
 import org.springframework.grpc.server.service.GrpcServiceDiscoverer;
+import org.springframework.test.util.TestSocketUtils;
 
 /** Shared bootstrap helpers for nested cross-service Spring application contexts in tests. */
 public final class CrossServiceAppHarness {
@@ -24,11 +28,17 @@ public final class CrossServiceAppHarness {
 
   public static GameLogicHolder startGameLogic(
       String worldEndpoint, String entityEndpoint, String socialEndpoint) {
+    return startGameLogic(
+        TestSocketUtils.findAvailableTcpPort(), worldEndpoint, entityEndpoint, socialEndpoint);
+  }
+
+  public static GameLogicHolder startGameLogic(
+      int grpcPort, String worldEndpoint, String entityEndpoint, String socialEndpoint) {
     Map<String, Object> props = new LinkedHashMap<>();
     props.put("spring.profiles.active", "test");
     props.put("spring.application.name", "game-logic-service");
     props.put("server.port", "0");
-    props.put("spring.grpc.server.port", "0");
+    props.put("spring.grpc.server.port", String.valueOf(grpcPort));
     props.put("firemud.grpc.plaintext", "true");
     props.put("firemud.database.enabled", "false");
     props.put("otel.endpoint", "disabled");
@@ -42,8 +52,9 @@ public final class CrossServiceAppHarness {
         new SpringApplicationBuilder(
                 net.firedevops.firemud.gamelogic.GameLogicServiceApplication.class)
             .run(toCommandLineArgs(props));
-    int grpcPort = context.getBean(GrpcServerLifecycle.class).getPort();
-    return new GameLogicHolder(context, grpcPort);
+    int boundGrpcPort = context.getBean(GrpcServerLifecycle.class).getPort();
+    return new GameLogicHolder(
+        context, boundGrpcPort, worldEndpoint, entityEndpoint, socialEndpoint);
   }
 
   public static GameSessionHolder startGameSession(
@@ -113,6 +124,51 @@ public final class CrossServiceAppHarness {
       };
     }
 
+    @Bean
+    @Primary
+    ScreenBufferService screenBufferService() {
+      return new ScreenBufferService() {
+        private final Map<String, BufferedScreen> buffers = new ConcurrentHashMap<>();
+
+        @Override
+        public void append(
+            long tenantId,
+            long gameInstanceId,
+            long characterId,
+            java.util.List<BufferedEntry> entries) {
+          java.util.List<BufferedEntry> filtered =
+              entries == null
+                  ? java.util.List.of()
+                  : entries.stream().filter(entry -> !entry.text().isBlank()).toList();
+          if (filtered.isEmpty()) {
+            return;
+          }
+          String key = tenantId + ":" + gameInstanceId + ":" + characterId;
+          BufferedScreen previous = buffers.get(key);
+          java.util.List<BufferedEntry> combined = new java.util.ArrayList<>();
+          if (previous != null) {
+            combined.addAll(previous.entries());
+          }
+          combined.addAll(filtered);
+          int messages = combined.size();
+          int lines = combined.stream().mapToInt(BufferedEntry::lineCount).sum();
+          buffers.put(
+              key, new BufferedScreen(combined, messages, lines, System.currentTimeMillis()));
+        }
+
+        @Override
+        public Optional<BufferedScreen> get(long tenantId, long gameInstanceId, long characterId) {
+          return Optional.ofNullable(
+              buffers.get(tenantId + ":" + gameInstanceId + ":" + characterId));
+        }
+
+        @Override
+        public void clear(long tenantId, long gameInstanceId, long characterId) {
+          buffers.remove(tenantId + ":" + gameInstanceId + ":" + characterId);
+        }
+      };
+    }
+
     @Bean(name = "gameInstanceServiceImpl")
     @Primary
     GameInstanceService gameInstanceService() {
@@ -144,14 +200,30 @@ public final class CrossServiceAppHarness {
   public static final class GameLogicHolder {
     private final ConfigurableApplicationContext context;
     private final int grpcPort;
+    private final String worldEndpoint;
+    private final String entityEndpoint;
+    private final String socialEndpoint;
 
-    GameLogicHolder(ConfigurableApplicationContext context, int grpcPort) {
+    GameLogicHolder(
+        ConfigurableApplicationContext context,
+        int grpcPort,
+        String worldEndpoint,
+        String entityEndpoint,
+        String socialEndpoint) {
       this.context = context;
       this.grpcPort = grpcPort;
+      this.worldEndpoint = worldEndpoint;
+      this.entityEndpoint = entityEndpoint;
+      this.socialEndpoint = socialEndpoint;
     }
 
     public int grpcPort() {
       return grpcPort;
+    }
+
+    public GameLogicHolder restart() {
+      context.close();
+      return startGameLogic(grpcPort, worldEndpoint, entityEndpoint, socialEndpoint);
     }
 
     public void close() {

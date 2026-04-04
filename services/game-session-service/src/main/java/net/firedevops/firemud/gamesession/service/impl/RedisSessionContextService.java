@@ -2,13 +2,16 @@ package net.firedevops.firemud.gamesession.service.impl;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Duration;
+import java.util.Locale;
 import java.util.Optional;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.SessionCallback;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
 
 /** Persists session context metadata in Redis keys scoped by tenant/session. */
 @Service
@@ -21,7 +24,9 @@ public final class RedisSessionContextService implements SessionContextService {
   private final Duration sessionTtl;
 
   private static final String CONTEXT_KEY_TEMPLATE = "sessionctx:%d:%d:context";
+  private static final String SESSION_KEY_TEMPLATE = "sessionctx:session:%d:context";
   private static final String IDENTITY_KEY_TEMPLATE = "sessionctx:%d:identity:%d:%d:context";
+  private static final String NAME_KEY_TEMPLATE = "sessionctx:%d:identity:%d:name:%s:context";
 
   @SuppressFBWarnings(
       value = "EI_EXPOSE_REP2",
@@ -35,12 +40,47 @@ public final class RedisSessionContextService implements SessionContextService {
 
   @Override
   public void save(SessionContext context) {
-    var ops = redisTemplate.opsForValue();
-    ops.set(contextKey(context.tenantId(), context.sessionId()), context, sessionTtl);
-    ops.set(
-        identityKey(context.tenantId(), context.accountId(), context.characterId()),
-        context,
-        sessionTtl);
+    findByTenantAndSessionId(context.tenantId(), context.sessionId())
+        .filter(existing -> hasGameplayIdentity(existing))
+        .ifPresent(this::deleteNameIndex);
+    if (hasGameplayIdentity(context)) {
+      findByGameplayIdentity(context.tenantId(), context.gameInstanceId(), context.characterId())
+          .filter(existing -> existing.sessionId() != context.sessionId())
+          .ifPresent(existing -> deleteBySessionId(existing.tenantId(), existing.sessionId()));
+      findByGameplayName(context.tenantId(), context.gameInstanceId(), context.characterName())
+          .filter(existing -> existing.sessionId() != context.sessionId())
+          .ifPresent(existing -> deleteBySessionId(existing.tenantId(), existing.sessionId()));
+    }
+    redisTemplate.execute(
+        new SessionCallback<>() {
+          @Override
+          public Object execute(org.springframework.data.redis.core.RedisOperations operations) {
+            operations.multi();
+            var ops = operations.opsForValue();
+            ops.set(contextKey(context.tenantId(), context.sessionId()), context, sessionTtl);
+            ops.set(sessionKey(context.sessionId()), context, sessionTtl);
+            if (hasGameplayIdentity(context)) {
+              ops.set(
+                  identityKey(context.tenantId(), context.gameInstanceId(), context.characterId()),
+                  context,
+                  sessionTtl);
+              if (StringUtils.hasText(context.characterName())) {
+                ops.set(
+                    nameKey(context.tenantId(), context.gameInstanceId(), context.characterName()),
+                    context,
+                    sessionTtl);
+              }
+            }
+            operations.exec();
+            return null;
+          }
+        });
+  }
+
+  @Override
+  public Optional<SessionContext> findBySessionId(long sessionId) {
+    return Optional.ofNullable(
+        (SessionContext) redisTemplate.opsForValue().get(sessionKey(sessionId)));
   }
 
   @Override
@@ -50,28 +90,83 @@ public final class RedisSessionContextService implements SessionContextService {
   }
 
   @Override
-  public Optional<SessionContext> findByAccountAndCharacter(
-      long tenantId, long accountId, long characterId) {
+  public Optional<SessionContext> findByGameplayIdentity(
+      long tenantId, long gameInstanceId, long characterId) {
     return Optional.ofNullable(
         (SessionContext)
-            redisTemplate.opsForValue().get(identityKey(tenantId, accountId, characterId)));
+            redisTemplate.opsForValue().get(identityKey(tenantId, gameInstanceId, characterId)));
+  }
+
+  @Override
+  public Optional<SessionContext> findByGameplayName(
+      long tenantId, long gameInstanceId, String characterName) {
+    if (!StringUtils.hasText(characterName)) {
+      return Optional.empty();
+    }
+    return Optional.ofNullable(
+        (SessionContext)
+            redisTemplate.opsForValue().get(nameKey(tenantId, gameInstanceId, characterName)));
   }
 
   @Override
   public void deleteBySessionId(long tenantId, long sessionId) {
     Optional<SessionContext> existing = findByTenantAndSessionId(tenantId, sessionId);
-    redisTemplate.delete(contextKey(tenantId, sessionId));
-    existing.ifPresent(
-        context ->
-            redisTemplate.delete(
-                identityKey(context.tenantId(), context.accountId(), context.characterId())));
+    redisTemplate.execute(
+        new SessionCallback<>() {
+          @Override
+          public Object execute(org.springframework.data.redis.core.RedisOperations operations) {
+            operations.multi();
+            operations.delete(contextKey(tenantId, sessionId));
+            operations.delete(sessionKey(sessionId));
+            existing.ifPresent(
+                context -> {
+                  if (hasGameplayIdentity(context)) {
+                    operations.delete(
+                        identityKey(
+                            context.tenantId(), context.gameInstanceId(), context.characterId()));
+                    deleteNameIndex(operations, context);
+                  }
+                });
+            operations.exec();
+            return null;
+          }
+        });
   }
 
   private String contextKey(long tenantId, long sessionId) {
     return String.format(CONTEXT_KEY_TEMPLATE, tenantId, sessionId);
   }
 
-  private String identityKey(long tenantId, long accountId, long characterId) {
-    return String.format(IDENTITY_KEY_TEMPLATE, tenantId, accountId, characterId);
+  private String sessionKey(long sessionId) {
+    return String.format(SESSION_KEY_TEMPLATE, sessionId);
+  }
+
+  private String identityKey(long tenantId, long gameInstanceId, long characterId) {
+    return String.format(IDENTITY_KEY_TEMPLATE, tenantId, gameInstanceId, characterId);
+  }
+
+  private String nameKey(long tenantId, long gameInstanceId, String characterName) {
+    return String.format(NAME_KEY_TEMPLATE, tenantId, gameInstanceId, normalizeName(characterName));
+  }
+
+  private void deleteNameIndex(SessionContext context) {
+    deleteNameIndex(redisTemplate, context);
+  }
+
+  private void deleteNameIndex(
+      org.springframework.data.redis.core.RedisOperations<String, Object> operations,
+      SessionContext context) {
+    if (StringUtils.hasText(context.characterName())) {
+      operations.delete(
+          nameKey(context.tenantId(), context.gameInstanceId(), context.characterName()));
+    }
+  }
+
+  private boolean hasGameplayIdentity(SessionContext context) {
+    return context.gameInstanceId() > 0 && context.characterId() > 0;
+  }
+
+  private String normalizeName(String value) {
+    return value.trim().toLowerCase(Locale.ROOT);
   }
 }

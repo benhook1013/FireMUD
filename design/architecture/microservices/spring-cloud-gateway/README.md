@@ -30,6 +30,7 @@ This document describes the behaviour of Spring Cloud Gateway in its target arch
 
 - Enforce the presence of an `Authorization` header for protected admin routes while leaving JWT parsing and validation to downstream services.
 - Upgrade WebSocket connections and forward them to backend services.
+- Keep the edge connection stable while rebinding upstream gameplay traffic to healthy same-type backend instances whenever shared state and backend contracts allow it; a non-edge service restart should not by itself become a forced client-visible reconnect in the target architecture.
 - Apply rate limits and basic abuse protections at the gateway boundary.
 - Relay gameplay and admin traffic to the correct backend services.
 - Expose internal-only gRPC management endpoints such as `Ping` on port `6565` over mTLS-authenticated internal network surfaces.

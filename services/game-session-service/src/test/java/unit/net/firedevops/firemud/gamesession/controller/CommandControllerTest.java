@@ -21,8 +21,7 @@ class CommandControllerTest {
   void enqueueCommand_usesInterpreterAndReturnsResult() {
     EnqueueCommandRequest request = new EnqueueCommandRequest("LOOK", false);
     CommandEnqueueResult expected = CommandEnqueueResult.success();
-    TextCommandInterpretationResult interpretation =
-        new TextCommandInterpretationResult(expected, null);
+    TextCommandInterpretationResult interpretation = new TextCommandInterpretationResult(expected);
     when(interpreter.interpret("42", "LOOK", false)).thenReturn(interpretation);
 
     ResponseEntity<ApiResponse<CommandEnqueueResult>> response =

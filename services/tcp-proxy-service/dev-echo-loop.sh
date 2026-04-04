@@ -4,9 +4,7 @@ set -euo pipefail
 
 TCP_PORT=${TCP_PROXY_PORT:-2323}
 DEV_MESSAGE=${DEV_ECHO_MESSAGE:-firemud-dev-echo-test}
-DEV_SESSION_ID=${DEV_SESSION_ID:-dev-test}
-DEV_TENANT_ID=${DEV_TENANT_ID:-dev-tenant}
-export TCP_PORT DEV_MESSAGE DEV_SESSION_ID DEV_TENANT_ID
+export TCP_PORT DEV_MESSAGE
 
 if command -v python3 >/dev/null 2>&1; then
   PYTHON=python3
@@ -25,13 +23,7 @@ import socket
 
 port = int(os.environ["TCP_PORT"])
 message = os.environ["DEV_MESSAGE"]
-session_id = os.environ["DEV_SESSION_ID"]
-tenant_id = os.environ["DEV_TENANT_ID"]
-
 with socket.create_connection(("localhost", port), timeout=5) as sock:
-    session_envelope = f"SESSION {session_id} {tenant_id}"
-    # TelnetServerHandler waits for the session envelope before forwarding any other input.
-    sock.sendall((session_envelope + "\r\n").encode("iso-8859-1"))
     sock.sendall((message + "\r\n").encode("iso-8859-1"))
     response = sock.recv(1024).decode("iso-8859-1", errors="ignore")
 

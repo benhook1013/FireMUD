@@ -1,0 +1,491 @@
+{
+  "schemaVersion": "1",
+  "description": "Canonical publication metadata for the surfaced pre-06 FireMUD platform settings domains. Spring metadata remains the source for key names, descriptions, defaults, and enum hints; this file adds publication-specific ownership and UX fields so one generated JSON schema and Markdown reference can serve operator/admin consumers.",
+  "generatorTask": "updatePlatformSettingsDocs",
+  "checkedInSchemaPath": "design/architecture/generated/platform-settings-schema.json",
+  "checkedInReferencePath": "design/architecture/generated/platform-settings-reference.md",
+  "sources": {
+    "springMetadataFiles": [
+      "services/game-session-service/src/main/resources/META-INF/additional-spring-configuration-metadata.json",
+      "services/game-logic-service/src/main/resources/META-INF/additional-spring-configuration-metadata.json"
+    ],
+    "publicationSpec": "config/settings/platform-settings-publication.json"
+  },
+  "domains": [
+    {
+      "name": "communication",
+      "keyPrefix": "firemud.communication",
+      "service": "game-logic-service",
+      "owner": "game-logic-service operator defaults",
+      "description": "Built-in communication safety and availability defaults surfaced by Game Logic.",
+      "referenceDoc": "design/architecture/microservices/game-logic-service/configuration.md",
+      "runtimeSurface": "/actuator/settings/effective/communication",
+      "properties": [
+        {
+          "name": "firemud.communication.max-message-length",
+          "type": "java.lang.Integer",
+          "sourceType": "net.firedevops.firemud.gamelogic.config.CommunicationProperties",
+          "description": "Maximum number of characters accepted for a single communication message before the service rejects it.",
+          "defaultValue": 512,
+          "domain": "communication",
+          "group": "communication.defaults",
+          "scope": "operator-only",
+          "futureScope": "tenant/game-configurable within operator-enforced caps",
+          "hotReloadable": false,
+          "advanced": false,
+          "exampleValue": 512,
+          "allowedValues": [],
+          "constraints": "integer >= 1"
+        },
+        {
+          "name": "firemud.communication.defaults.say-enabled",
+          "type": "java.lang.Boolean",
+          "sourceType": "net.firedevops.firemud.gamelogic.config.CommunicationProperties$Defaults",
+          "description": "Whether the built-in SAY communication mode is enabled in the shared communication pipeline.",
+          "defaultValue": true,
+          "domain": "communication",
+          "group": "communication.defaults",
+          "scope": "operator-only",
+          "futureScope": "tenant/game-configurable within operator-enforced caps",
+          "hotReloadable": false,
+          "advanced": false,
+          "exampleValue": true,
+          "allowedValues": [
+            {
+              "value": "true"
+            },
+            {
+              "value": "false"
+            }
+          ]
+        },
+        {
+          "name": "firemud.communication.defaults.whisper-enabled",
+          "type": "java.lang.Boolean",
+          "sourceType": "net.firedevops.firemud.gamelogic.config.CommunicationProperties$Defaults",
+          "description": "Whether the built-in WHISPER communication mode is enabled in the shared communication pipeline.",
+          "defaultValue": true,
+          "domain": "communication",
+          "group": "communication.defaults",
+          "scope": "operator-only",
+          "futureScope": "tenant/game-configurable within operator-enforced caps",
+          "hotReloadable": false,
+          "advanced": false,
+          "exampleValue": true,
+          "allowedValues": [
+            {
+              "value": "true"
+            },
+            {
+              "value": "false"
+            }
+          ]
+        },
+        {
+          "name": "firemud.communication.defaults.tell-enabled",
+          "type": "java.lang.Boolean",
+          "sourceType": "net.firedevops.firemud.gamelogic.config.CommunicationProperties$Defaults",
+          "description": "Whether the built-in TELL communication mode is enabled in the shared communication pipeline.",
+          "defaultValue": true,
+          "domain": "communication",
+          "group": "communication.defaults",
+          "scope": "operator-only",
+          "futureScope": "tenant/game-configurable within operator-enforced caps",
+          "hotReloadable": false,
+          "advanced": false,
+          "exampleValue": true,
+          "allowedValues": [
+            {
+              "value": "true"
+            },
+            {
+              "value": "false"
+            }
+          ]
+        },
+        {
+          "name": "firemud.communication.defaults.whisper-observer-metadata-enabled",
+          "type": "java.lang.Boolean",
+          "sourceType": "net.firedevops.firemud.gamelogic.config.CommunicationProperties$Defaults",
+          "description": "Whether flagged whisper observers receive metadata-only bystander views by default.",
+          "defaultValue": true,
+          "domain": "communication",
+          "group": "communication.defaults",
+          "scope": "operator-only",
+          "futureScope": "tenant/game-configurable within operator-enforced caps",
+          "hotReloadable": false,
+          "advanced": true,
+          "exampleValue": true,
+          "allowedValues": [
+            {
+              "value": "true"
+            },
+            {
+              "value": "false"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "presentation",
+      "keyPrefix": "firemud.presentation",
+      "service": "game-session-service",
+      "owner": "game-session-service operator defaults",
+      "description": "Player-facing text presentation defaults surfaced by Game Session.",
+      "referenceDoc": "design/architecture/microservices/game-session-service/configuration.md",
+      "runtimeSurface": "/actuator/settings/effective",
+      "properties": [
+        {
+          "name": "firemud.presentation.default-locale-tag",
+          "type": "java.lang.String",
+          "sourceType": "net.firedevops.firemud.gamesession.config.PresentationProperties",
+          "description": "Default renderer locale tag used for built-in localized notice, error, and other platform text when no per-player preference overrides it.",
+          "defaultValue": "en-NZ",
+          "domain": "presentation",
+          "group": "transcript.rendering",
+          "scope": "operator-only",
+          "futureScope": "tenant/game-configurable",
+          "hotReloadable": false,
+          "advanced": false,
+          "exampleValue": "en-NZ",
+          "allowedValues": [],
+          "constraints": "Non-blank IETF BCP 47 locale tag"
+        },
+        {
+          "name": "firemud.presentation.default-color-mode",
+          "type": "net.firedevops.firemud.gamesession.config.PresentationProperties$ColorMode",
+          "sourceType": "net.firedevops.firemud.gamesession.config.PresentationProperties",
+          "description": "Default color/emphasis mode for the text renderer when no per-player presentation preference overrides it.",
+          "defaultValue": "NONE",
+          "domain": "presentation",
+          "group": "transcript.rendering",
+          "scope": "operator-only",
+          "futureScope": "tenant/game-configurable",
+          "hotReloadable": false,
+          "advanced": false,
+          "exampleValue": "NONE",
+          "allowedValues": [
+            {
+              "value": "NONE",
+              "description": "Render plain text without ANSI color or emphasis."
+            },
+            {
+              "value": "BASIC",
+              "description": "Render basic ANSI color/emphasis where supported."
+            },
+            {
+              "value": "RICH",
+              "description": "Render richer emphasis/color variants for capable clients."
+            }
+          ]
+        },
+        {
+          "name": "firemud.presentation.brief-enabled-by-default",
+          "type": "java.lang.Boolean",
+          "sourceType": "net.firedevops.firemud.gamesession.config.PresentationProperties",
+          "description": "Whether room-view rendering defaults to BRIEF-style suppression for movement-triggered and other suppressible output segments.",
+          "defaultValue": false,
+          "domain": "presentation",
+          "group": "transcript.rendering",
+          "scope": "operator-only",
+          "futureScope": "tenant/game-configurable",
+          "hotReloadable": false,
+          "advanced": false,
+          "exampleValue": false,
+          "allowedValues": [
+            {
+              "value": "true"
+            },
+            {
+              "value": "false"
+            }
+          ]
+        },
+        {
+          "name": "firemud.presentation.prompt.enabled",
+          "type": "java.lang.Boolean",
+          "sourceType": "net.firedevops.firemud.gamesession.config.PresentationProperties$Prompt",
+          "description": "Whether prompt output is enabled by default for text-session rendering.",
+          "defaultValue": true,
+          "domain": "presentation",
+          "group": "prompts.transportPresentation",
+          "scope": "operator-only",
+          "futureScope": "tenant/game-configurable",
+          "hotReloadable": false,
+          "advanced": false,
+          "exampleValue": true,
+          "allowedValues": [
+            {
+              "value": "true"
+            },
+            {
+              "value": "false"
+            }
+          ]
+        },
+        {
+          "name": "firemud.presentation.prompt.emit-after-reconnect-restore",
+          "type": "java.lang.Boolean",
+          "sourceType": "net.firedevops.firemud.gamesession.config.PresentationProperties$Prompt",
+          "description": "Whether reconnect restore appends a fresh prompt after replaying recent transcript context and rendering a fresh LOOK.",
+          "defaultValue": true,
+          "domain": "presentation",
+          "group": "prompts.transportPresentation",
+          "scope": "operator-only",
+          "futureScope": "tenant/game-configurable",
+          "hotReloadable": false,
+          "advanced": false,
+          "exampleValue": true,
+          "allowedValues": [
+            {
+              "value": "true"
+            },
+            {
+              "value": "false"
+            }
+          ]
+        },
+        {
+          "name": "firemud.presentation.prompt.coalesce-window-ms",
+          "type": "java.lang.Long",
+          "sourceType": "net.firedevops.firemud.gamesession.config.PresentationProperties$Prompt",
+          "description": "Maximum prompt burst window, in milliseconds, used to suppress prompt spam while still retaining prompts for explicit boundary commands such as LOOK.",
+          "defaultValue": 150,
+          "domain": "presentation",
+          "group": "prompts.coalescing",
+          "scope": "operator-only",
+          "futureScope": "tenant/game-configurable",
+          "hotReloadable": false,
+          "advanced": true,
+          "exampleValue": 150,
+          "allowedValues": [],
+          "constraints": "integer >= 1 ms"
+        }
+      ]
+    },
+    {
+      "name": "reconnection",
+      "keyPrefix": "firemud.reconnection",
+      "service": "game-session-service",
+      "owner": "game-session-service operator defaults",
+      "description": "Reconnect/session recovery and bounded transcript replay defaults surfaced by Game Session.",
+      "referenceDoc": "design/architecture/microservices/game-session-service/configuration.md",
+      "runtimeSurface": "/actuator/settings/effective",
+      "properties": [
+        {
+          "name": "firemud.reconnection.policy.resume-window-ms",
+          "type": "java.lang.Long",
+          "sourceType": "net.firedevops.firemud.common.config.FiremudReconnectionProperties$Policy",
+          "description": "Maximum resume window, in milliseconds, before a stale gameplay binding is treated as non-resumable.",
+          "defaultValue": 180000,
+          "domain": "reconnection",
+          "group": "reconnection.policy",
+          "scope": "operator-only",
+          "futureScope": "tenant/game-configurable within operator-enforced caps",
+          "hotReloadable": false,
+          "advanced": false,
+          "exampleValue": 180000,
+          "allowedValues": [],
+          "constraints": "integer >= 1 ms"
+        },
+        {
+          "name": "firemud.reconnection.policy.stale-resume-falls-through-to-fresh-entry",
+          "type": "java.lang.Boolean",
+          "sourceType": "net.firedevops.firemud.common.config.FiremudReconnectionProperties$Policy",
+          "description": "Whether a stale or invalid resumable binding should fall through to fresh entry when current admission still allows PLAY.",
+          "defaultValue": true,
+          "domain": "reconnection",
+          "group": "reconnection.policy",
+          "scope": "operator-only",
+          "futureScope": "tenant/game-configurable within operator-enforced caps",
+          "hotReloadable": false,
+          "advanced": false,
+          "exampleValue": true,
+          "allowedValues": [
+            {
+              "value": "true"
+            },
+            {
+              "value": "false"
+            }
+          ]
+        },
+        {
+          "name": "firemud.reconnection.buffer.ttl-ms",
+          "type": "java.lang.Long",
+          "sourceType": "net.firedevops.firemud.common.config.FiremudReconnectionProperties$Buffer",
+          "description": "TTL, in milliseconds, for the bounded reconnect transcript screen buffer stored for each player binding.",
+          "defaultValue": 1800000,
+          "domain": "reconnection",
+          "group": "reconnection.buffer",
+          "scope": "operator-only",
+          "futureScope": "tenant/game-configurable within operator-enforced caps",
+          "hotReloadable": false,
+          "advanced": true,
+          "exampleValue": 1800000,
+          "allowedValues": [],
+          "constraints": "integer >= 1 ms"
+        },
+        {
+          "name": "firemud.reconnection.buffer.min-messages",
+          "type": "java.lang.Integer",
+          "sourceType": "net.firedevops.firemud.common.config.FiremudReconnectionProperties$Buffer",
+          "description": "Minimum message floor retained for reconnect transcript replay before byte ceilings are applied.",
+          "defaultValue": 8,
+          "domain": "reconnection",
+          "group": "reconnection.buffer",
+          "scope": "operator-only",
+          "futureScope": "tenant/game-configurable within operator-enforced caps",
+          "hotReloadable": false,
+          "advanced": true,
+          "exampleValue": 8,
+          "allowedValues": [],
+          "constraints": "integer >= 1"
+        },
+        {
+          "name": "firemud.reconnection.buffer.min-lines",
+          "type": "java.lang.Integer",
+          "sourceType": "net.firedevops.firemud.common.config.FiremudReconnectionProperties$Buffer",
+          "description": "Minimum line floor retained for reconnect transcript replay before byte ceilings are applied.",
+          "defaultValue": 24,
+          "domain": "reconnection",
+          "group": "reconnection.buffer",
+          "scope": "operator-only",
+          "futureScope": "tenant/game-configurable within operator-enforced caps",
+          "hotReloadable": false,
+          "advanced": true,
+          "exampleValue": 24,
+          "allowedValues": [],
+          "constraints": "integer >= 1"
+        },
+        {
+          "name": "firemud.reconnection.buffer.soft-max-bytes",
+          "type": "java.lang.Integer",
+          "sourceType": "net.firedevops.firemud.common.config.FiremudReconnectionProperties$Buffer",
+          "description": "Soft byte ceiling for reconnect transcript retention before older entries are trimmed when message and line floors have been satisfied.",
+          "defaultValue": 16384,
+          "domain": "reconnection",
+          "group": "reconnection.buffer",
+          "scope": "operator-only",
+          "futureScope": "tenant/game-configurable within operator-enforced caps",
+          "hotReloadable": false,
+          "advanced": true,
+          "exampleValue": 16384,
+          "allowedValues": [],
+          "constraints": "integer >= 1 bytes"
+        },
+        {
+          "name": "firemud.reconnection.buffer.hard-max-bytes",
+          "type": "java.lang.Integer",
+          "sourceType": "net.firedevops.firemud.common.config.FiremudReconnectionProperties$Buffer",
+          "description": "Hard byte ceiling for reconnect transcript retention; the oldest entries are trimmed to stay within this bound even if floors would otherwise retain more text.",
+          "defaultValue": 65536,
+          "domain": "reconnection",
+          "group": "reconnection.buffer",
+          "scope": "operator-only",
+          "futureScope": "tenant/game-configurable within operator-enforced caps",
+          "hotReloadable": false,
+          "advanced": true,
+          "exampleValue": 65536,
+          "allowedValues": [],
+          "constraints": "integer >= 1 bytes"
+        }
+      ]
+    },
+    {
+      "name": "movement",
+      "keyPrefix": "firemud.movement",
+      "service": "game-session-service",
+      "owner": "game-session-service operator defaults",
+      "description": "Movement presentation defaults surfaced by Game Session.",
+      "referenceDoc": "design/architecture/microservices/game-session-service/configuration.md",
+      "runtimeSurface": "/actuator/settings/effective",
+      "properties": [
+        {
+          "name": "firemud.movement.post-move-look-enabled",
+          "type": "java.lang.Boolean",
+          "sourceType": "net.firedevops.firemud.gamesession.config.MovementProperties",
+          "description": "Whether a successful MOVE automatically renders the destination room view instead of returning only command acknowledgement.",
+          "defaultValue": true,
+          "domain": "movement",
+          "group": "movement.postMoveView",
+          "scope": "operator-only",
+          "futureScope": "tenant/game-configurable within operator-enforced caps",
+          "hotReloadable": false,
+          "advanced": false,
+          "exampleValue": true,
+          "allowedValues": [
+            {
+              "value": "true"
+            },
+            {
+              "value": "false"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "worldTopology",
+      "keyPrefix": "firemud.world-topology",
+      "service": "game-session-service",
+      "owner": "game-session-service operator defaults",
+      "description": "Topology behavior defaults surfaced by Game Session for later scope-sensitive world behavior.",
+      "referenceDoc": "design/architecture/microservices/game-session-service/configuration.md",
+      "runtimeSurface": "/actuator/settings/effective",
+      "properties": [
+        {
+          "name": "firemud.world-topology.scope-model",
+          "type": "net.firedevops.firemud.gamesession.config.WorldTopologyProperties$ScopeModel",
+          "sourceType": "net.firedevops.firemud.gamesession.config.WorldTopologyProperties",
+          "description": "The highest topology model the current game/runtime expresses for future scope-sensitive communication and world behaviors.",
+          "defaultValue": "MAP_ONLY",
+          "domain": "worldTopology",
+          "group": "worldTopology.scopeModel",
+          "scope": "operator-only",
+          "futureScope": "tenant/game-configurable",
+          "hotReloadable": false,
+          "advanced": false,
+          "exampleValue": "MAP_ONLY",
+          "allowedValues": [
+            {
+              "value": "MAP_ONLY",
+              "description": "World layout only distinguishes map-level scope."
+            },
+            {
+              "value": "AREA_AND_MAP",
+              "description": "World layout distinguishes areas within a map."
+            },
+            {
+              "value": "REGION_AREA_AND_MAP",
+              "description": "World layout distinguishes regions above areas and maps."
+            }
+          ]
+        },
+        {
+          "name": "firemud.world-topology.regions-enabled",
+          "type": "java.lang.Boolean",
+          "sourceType": "net.firedevops.firemud.gamesession.config.WorldTopologyProperties",
+          "description": "Whether explicit world regions are enabled in the current topology model.",
+          "defaultValue": false,
+          "domain": "worldTopology",
+          "group": "worldTopology.regionBehavior",
+          "scope": "operator-only",
+          "futureScope": "tenant/game-configurable",
+          "hotReloadable": false,
+          "advanced": true,
+          "exampleValue": false,
+          "allowedValues": [
+            {
+              "value": "true"
+            },
+            {
+              "value": "false"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

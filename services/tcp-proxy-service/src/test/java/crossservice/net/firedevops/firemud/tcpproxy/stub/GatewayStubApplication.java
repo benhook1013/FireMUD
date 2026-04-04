@@ -12,6 +12,7 @@ import org.springframework.boot.health.contributor.HealthIndicator;
 import org.springframework.context.annotation.Bean;
 import org.springframework.http.HttpHeaders;
 import org.springframework.web.reactive.handler.SimpleUrlHandlerMapping;
+import org.springframework.web.reactive.socket.CloseStatus;
 import org.springframework.web.reactive.socket.WebSocketHandler;
 import org.springframework.web.reactive.socket.WebSocketMessage;
 import org.springframework.web.reactive.socket.WebSocketSession;
@@ -72,7 +73,14 @@ public class GatewayStubApplication {
   }
 
   private static final List<String> FORWARDED_HEADER_NAMES =
-      List.of("X-Game-Instance-Id", "X-Tenant-Id", "X-Client-IP");
+      List.of(
+          "X-Game-Instance-Id",
+          "X-Tenant-Id",
+          "X-Client-IP",
+          "X-Proxy-Connection-Id",
+          "X-Proxy-Game-Instance-Id",
+          "X-Proxy-Tenant-Id",
+          "X-Proxy-Client-IP");
 
   private static final class ProxyingWebSocketHandler implements WebSocketHandler {
     private final WebSocketClient client;
@@ -106,7 +114,7 @@ public class GatewayStubApplication {
                             .receive()
                             .map(WebSocketMessage::getPayloadAsText)
                             .map(outbound::textMessage))
-                    .doFinally(signalType -> outbound.close());
+                    .then(propagateClose(inbound, outbound));
 
             Mono<Void> targetToInbound =
                 inbound
@@ -115,10 +123,14 @@ public class GatewayStubApplication {
                             .receive()
                             .map(WebSocketMessage::getPayloadAsText)
                             .map(inbound::textMessage))
-                    .doFinally(signalType -> inbound.close());
+                    .then(propagateClose(outbound, inbound));
 
             return Mono.when(inboundToTarget, targetToInbound);
           });
+    }
+
+    private Mono<Void> propagateClose(WebSocketSession from, WebSocketSession to) {
+      return from.closeStatus().defaultIfEmpty(CloseStatus.NORMAL).flatMap(to::close);
     }
   }
 }

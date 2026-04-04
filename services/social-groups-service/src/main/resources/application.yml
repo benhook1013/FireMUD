@@ -1,19 +1,28 @@
 spring:
-  profiles:
-    active: dev
   application:
     name: social-groups-service
   flyway:
     enabled: true
-    schemas: ${SERVICE_SCHEMA:public},saga
+    schemas: ${SERVICE_SCHEMA:public}
     locations: classpath:db/migration,classpath:db/migration/saga
     defaultSchema: ${SERVICE_SCHEMA:public}
+    placeholders:
+      serviceSchema: ${SERVICE_SCHEMA:public}
+  jpa:
+    properties:
+      hibernate:
+        default_schema: ${SERVICE_SCHEMA:public}
 
 management:
   endpoints:
+    access:
+      default: read-only
     web:
       exposure:
-        include: health,prometheus
+        include:
+          - health
+          - prometheus
+          - info
   endpoint:
     health:
       probes:
@@ -37,6 +46,9 @@ firemud:
     token-expiration-ms: 300000
   chat:
     says:
+      history-ttl-seconds: 7200
+      max-messages: 50
+    whispers:
       history-ttl-seconds: 7200
       max-messages: 50
     tells:

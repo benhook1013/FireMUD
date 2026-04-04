@@ -15,7 +15,7 @@ Guild creation and membership changes participate in Saga workflows so other ser
 
 ## Chat Slice Status
 
-- **Live:** `SendMessage` already writes chat messages to Redis history and persists them for moderation; the SAY slice now exercises this endpoint via the Game Logic `BroadcastSay` path so regression tests assert delivery metadata (recipient list, NPC echoes) before the payload reaches clients
+- **Live:** `SendMessage` already writes chat messages to Redis history and persists them for moderation; the communication slices now exercise this endpoint via Game Logic's `SendCommunication` path so regression tests assert explicit type and recipient metadata before the payload reaches clients
 - **Stubbed:** The regression fixtures wire a lightweight Social & Groups stub that records `SendMessageRequest` payloads, returns success, and lets the Game Session/TCP proxy cross-service tests verify canonical transcripts without targeting the full production moderation pipeline
 - **Deferred:** Future work will layer in contextual features such as profanity enforcement heuristics, targeted NPC echoes, and channel-routing rules once the core SAY delivery path is stabilized by the automated regression suites
 

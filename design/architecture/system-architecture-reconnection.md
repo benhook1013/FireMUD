@@ -1,6 +1,6 @@
 # FireMUD System Architecture: Reconnection Strategy
 
-FireMUD targets seamless gameplay recovery across network interruptions, client reconnects, and backend service restarts using a **layered reconnection model** and **Redis-backed session state**. The platform does not require fully transport-transparent restarts: the canonical recovery contract remains explicit and protocol-visible so third-party MUD clients can recover reliably, while first-party clients may automate that same recovery path to reduce user-visible friction.
+FireMUD targets seamless gameplay recovery across network interruptions, client reconnects, and backend service restarts using a **layered reconnection model** and **Redis-backed session state**. The canonical recovery contract remains explicit and protocol-visible at the edge so third-party MUD clients can recover reliably, while first-party clients may automate that same recovery path to reduce user-visible friction. At the same time, FireMUD should prefer **non-edge restart invisibility** wherever shared state and durable coordination make that feasible: restarts of Game Session, Game Logic, or other non-edge gameplay services should ideally cause at most a short stall rather than a forced user-visible re-login/re-`PLAY` cycle.
 
 ---
 
@@ -8,7 +8,8 @@ FireMUD targets seamless gameplay recovery across network interruptions, client 
 
 - **Session takeover and resume** – Game Session emits `gamesession.session.takeover` and `gamesession.session.resume` counters and rebinds Redis tick/command queues on reconnect/takeover. The active uniqueness key is `{tenantId, gameInstanceId, characterId}`.
 - **Telnet and WebSocket parity** – Both transports share the same gameplay authentication and lobby-binding contract (`LOGIN` then `PLAY`) after reconnect. First-party WebSocket clients must obtain a fresh connect token before opening `/ws/game/**`.
-- **Remaining work** – Admin-driven forced session transfers remain planned future steps. FireMUD does not attempt to replay or reconstruct lost gameplay commands after long outages or coordination resets; command queues are volatile coordination buffers and commands may be lost outside the bounded tail-loss envelope.
+- **Runtime authority checks** – `PLAY` now performs a first-pass runtime membership and tenant-entitlement check before fresh entry or resume/takeover. This closes the earlier gap where reconnect semantics relied only on Redis gameplay identity plus a fresh `LOGIN`.
+- **Remaining work** – Admin-driven forced session transfers remain planned future steps. FireMUD does not attempt to replay or reconstruct lost gameplay commands after long outages or coordination resets; command queues are volatile coordination buffers and commands may be lost outside the bounded tail-loss envelope. The design still needs stronger durable coordination so non-edge restarts become operationally invisible in the common case instead of visibly dropping clients. The broader admission target still needs follow-up work for admission pointers, public-production first-join membership creation, and any future prompt/output scheduling refinements beyond the current screen-buffer-plus-fresh-redraw contract.
 
 ## Reconnection Layers
 
@@ -20,8 +21,8 @@ FireMUD targets seamless gameplay recovery across network interruptions, client 
 
 Each layer handles fault tolerance independently.
 Reauthentication is required when a client disconnects, or when server-side auth state expires or is revoked.
-Game Session Service restarts are **visible to clients** on the WebSocket path because Spring Cloud Gateway is a WebSocket proxy: when Game Session restarts and drops upstream gameplay WebSockets, Gateway closes the corresponding gameplay client WebSockets (`/ws/game/**`), and clients reconnect, request a fresh connect token, re-`LOGIN`, and re-`PLAY`. Any in-flight gameplay commands at the moment of the restart may be lost, consistent with the at-most-once edge delivery semantics in [Protocol Bridging](./system-architecture-protocol-bridging.md#ordering--delivery-invariants).
-When Spring Cloud Gateway pods restart, Web clients are disconnected; they must request a fresh connect token, open a new WebSocket, and issue `LOGIN` again. Once reconnected, the gateway resumes routing and Game Session uses Redis-backed session state to decide whether to resume or start fresh after the client re-selects gameplay scope with `PLAY`. Telnet clients are also disconnected. Restart classification remains canonical: planned Gateway drain is surfaced by the TCP Proxy as `logout` with `gateway_restart` context when the bridge-drain signal is delivered, while abrupt or unattributed bridge loss is surfaced immediately as `backend_unavailable`.
+Edge disconnects remain the canonical explicit recovery boundary. Non-edge service restarts should ideally be absorbed behind shared Redis-backed gameplay state and durable coordination so they do not force a visible reconnect. Where the current implementation still makes Game Session or other non-edge restarts visible on the WebSocket or Telnet path, treat that as an implementation gap rather than target behavior. Any in-flight gameplay commands at the moment of a hard failure may still be lost, consistent with the at-most-once edge delivery semantics in [Protocol Bridging](./system-architecture-protocol-bridging.md#ordering--delivery-invariants).
+Spring Cloud Gateway should fail over cleanly at the fleet level: unaffected sockets on other healthy Gateway instances remain up, and new gameplay handshakes should continue against healthy instances. Clients whose live WebSocket or Telnet bridge was terminated on the specific Gateway process that restarted or crashed still see a visible retryable edge failure because that edge-owned socket was lost. This is an accepted current platform limitation, not a hidden bug: FireMUD intentionally prioritizes non-edge restart invisibility and fast reconnect over explicit cross-Gateway live socket handoff. Future work could revisit true edge connection handoff, but it is not a current design goal. Those affected Web clients must request a fresh connect token, open a new WebSocket, and issue `LOGIN` again. Once reconnected, the gateway resumes routing and Game Session uses Redis-backed session state to decide whether to resume or start fresh after the client re-selects gameplay scope with `PLAY`. Restart classification remains canonical: planned Gateway drain is surfaced by the TCP Proxy as `logout` with `gateway_restart` context when the bridge-drain signal is delivered, while abrupt or unattributed loss of the specific Gateway bridge/socket serving a client is surfaced immediately as `backend_unavailable` on Telnet and `internal_error` retry class when WebSocket close metadata is missing.
 TCP Proxy restarts drop Telnet clients, who must reconnect manually.
 If the Gateway link is unavailable (for example during gateway deploys or outages), the TCP Proxy applies the bridge-availability contract from Gateway/Protocol Bridging, closes with `backend_unavailable` when gameplay admission is unavailable, and clients reconnect using backoff, then reauthenticate with `LOGIN` and re-enter gameplay scope via `PLAY`.
 
@@ -69,16 +70,52 @@ Clients must send a `LOGIN` command **after any disconnect**, such as:
 - WebSocket loss (Web clients)
 - If two-factor authentication is enabled, include the one-time `otp` value with the `LOGIN` command. See [Account Service – Two-Factor Authentication](./microservices/account-service/README.md#two-factor-authentication).
 
-After `LOGIN` succeeds, clients must re-establish gameplay scope by selecting a world and character via the lobby commands (`WORLDS` / `CHARS` / `PLAY`) as defined in [Tenant Selection for Gameplay](./system-architecture-authentication.md#tenant-selection-for-gameplay-lobby-selection). This `LOGIN` → `PLAY` sequence is mandatory for both Telnet and WebSocket reconnect flows in this multi-tenant platform; first-party WebSocket reconnects must also acquire a fresh connect token before the `/ws/game/**` handshake. Gameplay commands are not admitted before `PLAY` except in explicitly documented dev/test bypass modes. Advanced Telnet tools that use a `SESSION <gameInstanceId> <tenantId>` envelope must resend that envelope on the new TCP connection before `LOGIN` if they want those hints applied, but selection still uses `PLAY` and never bypasses authorization/entitlement checks.
+After `LOGIN` succeeds, clients must re-establish gameplay scope by selecting a world and character via the lobby commands (`WORLDS` / `CHARS` / `PLAY`) as defined in [Tenant Selection for Gameplay](./system-architecture-authentication.md#tenant-selection-for-gameplay-lobby-selection). This `LOGIN` → `PLAY` sequence is mandatory for both Telnet and WebSocket reconnect flows in this multi-tenant platform; first-party WebSocket reconnects must also acquire a fresh connect token before the `/ws/game/**` handshake. Gameplay commands are not admitted before `PLAY` except in explicitly documented dev/test bypass modes. If Telnet smart-client attach hints return later, they should ride hidden MCP metadata on the new TCP connection and remain advisory only.
 
 Redis-backed session state allows resumable recovery when still valid, or a fresh login when it is not.
 Session entries in Redis expire after a derived `session_expiration_ms` window (`FIREMUD_AUTH_JWT_EXPIRATION_MS + FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS`) as documented in [Environment and Secrets](./infrastructure/environment-and-secrets.md#authentication).
 
 Resume is authorized from current identity and current membership/entitlement authority, not from the previous backend token alone. After a fresh successful `LOGIN`, Game Session must rebind any resumed gameplay session to a fresh backend token and reject resume if current membership authority for the tenant has been removed.
 
+If the prior resumable gameplay state is stale or partially missing, Game Session should prefer invisible fresh entry whenever current `PLAY` admission is still valid. Missing room or game-instance resume context is not a player-facing failure by itself; the normal outcome is a successful fresh `PLAY` that rebinds the session to canonical entry state.
+
 > 🧭 For full details on `LOGIN` behavior, argument formats, and session flow, see [Authentication & Authorization](./system-architecture-authentication.md#login-and-session-flow)
 
 Gameplay command idempotency for reconnects is intentionally simple from the client’s perspective: Telnet and WebSocket clients treat commands as fire-and-forget. They do not attach idempotency keys or effect identifiers to individual commands in the text protocol; idempotency is handled internally by Game Session and domain services as described in [Protocol Bridging](./system-architecture-protocol-bridging.md#gameplay-command-idempotency-client-view) and [Transactions & Idempotency](./system-architecture-transactions.md).
+
+### Example Recovery Outcomes
+
+Player-visible recovery output should stay helpful and protocol-shaped rather than surfacing backend jargon.
+
+Successful reconnect after a normal disconnect:
+
+```text
+OK LOGIN Logged in as demo@example.com
+OK PLAY Entered world: demo
+<fresh LOOK or prompt output follows>
+```
+
+Stale or expired resumable state where a fresh `PLAY` can still be admitted should not force the player to type the same command twice. The normal outcome is still a successful fresh entry:
+
+```text
+OK LOGIN Logged in as demo@example.com
+OK PLAY Entered world: demo
+<fresh LOOK or prompt output follows>
+```
+
+Only failures that genuinely require player or client action should surface as errors, for example access revocation, missing entitlements, or backend unavailability.
+
+Reconstructed session state after resume or fresh-entry fallback is intentionally bounded:
+
+- current authenticated gameplay binding;
+- current room/view state via fresh `LOOK`-style redraw or rerun;
+- current tick/region participation and timers that still exist in shared authoritative state.
+
+What is intentionally not replayed:
+
+- pre-disconnect transport bytes or frames;
+- partially delivered prompt/output text;
+- volatile in-memory command buffering that did not survive the disconnect or restart.
 
 ---
 
@@ -104,11 +141,11 @@ The active gameplay identity is `characterId`. When a new client successfully is
 | --- | --- |
 | Client disconnect (TCP/WebSocket) | Requires new `LOGIN` and `PLAY`; may resume via Redis |
 | TCP Proxy Service restart | Telnet clients disconnected; new `LOGIN` and `PLAY` required |
-| Spring Cloud Gateway restart | Web clients are disconnected; planned drains should emit `1000/logout` (`subreason=gateway_restart`) and graceful unplanned failures may emit `1011/internal_error`, while hard crashes may drop transport without a close frame. Clients treat missing close metadata as `internal_error` retry class and must fetch a fresh connect token before reopening `/ws/game/**`. Telnet clients follow two paths: planned Gateway drains must be surfaced by the proxy as `logout` (with `gateway_restart` context when available), while abrupt or unattributed bridge loss is surfaced immediately as `backend_unavailable`. |
+| Spring Cloud Gateway restart | Fleet-level behavior should stay largely invisible: unaffected sockets on other healthy Gateway instances remain up and new handshakes continue. Connections bound to the specific Gateway instance being drained or crashing are visible failures. Planned drains should emit `1000/logout` (`subreason=gateway_restart`) for affected WebSocket sessions. Graceful unplanned failures may emit `1011/internal_error`, while hard crashes may drop transport without a close frame; clients treat missing close metadata as the `internal_error` retry class and must fetch a fresh connect token before reopening `/ws/game/**`. Telnet clients follow the same scope split: unaffected sessions bridged through other healthy Gateway instances continue normally, while planned drains on the serving bridge are surfaced by the proxy as `logout` (with `gateway_restart` context when available) and abrupt loss of the serving bridge is surfaced immediately as `backend_unavailable`. |
 | Lease move / gameplay shard handoff | Ordinary in-cluster lease rebalancing remains internal to the Game Session layer and is not a distinct edge-visible event in the current contract; session front-end pods may continue serving the socket while forwarding region-owned work to the new lease owner. Forwarded requests use lease/epoch fencing. If fencing fails before gameplay side effects begin, the command is rejected visibly; if safe retry is possible, it is retried only behind effect/idempotency guards after ownership refresh; if ownership remains ambiguous, the session falls back to the existing structured command-failure or reconnect behavior rather than silently dropping or partially applying the command. If a future design introduces client-visible handoff semantics, the signal and reconnection/backoff policy must be defined explicitly in the Gateway and Protocol Bridging contracts. |
 | Gateway ↔ Game Session link degraded (short window) | WebSocket connections may stay open when the upstream hop remains established and Game Session is reachable but returning explicit, per-command errors; clients do not reconnect solely due to transient command failures. If the upstream gameplay WebSocket closes, clients reconnect and re-`LOGIN`, then re-`PLAY`. |
 | Gateway ↔ Game Session link degraded (`unreachable` sustained) | Gameplay becomes impossible; WebSocket sessions are closed with `1013` (`backend_unavailable`) and clients should reconnect with backoff as described below. Telnet clients are closed by the TCP Proxy with `backend_unavailable` when the gateway closes the upstream gameplay WebSocket or when the proxy cannot establish or maintain its bridge; clients reconnect and re-`LOGIN`, then re-`PLAY`. |
-| Game Session Service restart | Visible: Gateway closes gameplay WebSocket clients and they reconnect, fetch a fresh connect token, and re-`LOGIN` (subject to at-most-once loss of in-flight commands), then re-`PLAY`. Telnet clients are disconnected because the upstream gameplay WebSocket closes; the proxy closes the Telnet socket and clients reconnect and re-`LOGIN`, then re-`PLAY`. |
+| Game Session Service restart | **Target state:** usually invisible to clients, with gameplay continuity recovered from shared state after a short stall. **Current implementation may still be visible in some paths** if the upstream gameplay WebSocket is dropped; treat that as implementation debt to remove rather than canonical behavior. |
 | Manual re-`LOGIN` from same character | Treated as reconnect; resumes if Redis intact |
 | Redis session expired/missing | Treated as fresh login; gameplay starts anew |
 | New client logs in as same character | Old session terminated; new one resumes control |
@@ -122,6 +159,7 @@ The active gameplay identity is `characterId`. When a new client successfully is
   - Queued commands and tick state
   - Timers, cooldowns, and retry info
 - Game Session Service governs all reconnection, deduplication, and rebinding
+- Non-edge gameplay services should remain replaceable/stateless workers against shared state; if restarting one of them visibly disconnects clients, the system should treat that as a gap in durable coordination rather than an accepted steady-state behavior
 - The canonical recovery path remains explicit and protocol-visible for all clients
 - Third-party MUD clients must be able to recover cleanly using the documented reconnect flow alone
 - First-party clients may automate reconnect, reauthentication, and gameplay re-entry, but they must not depend on a private recovery model unavailable to other clients
@@ -141,12 +179,42 @@ FireMUD treats reconnection as an explicit **client-visible recovery flow**: aft
     - `policy_violation_non_retriable` (for example sustained abuse/malformed protocol outcomes) – stop auto-retry or switch to very long backoff and surface corrective action to the user.
     - `policy_violation_edge_backpressure_retriable` – if wire-visible disconnect metadata explicitly indicates edge backpressure (for example WebSocket close `1008/policy_violation` with `subreason=edge_backpressure`, or the Telnet disconnect token `policy_violation;subreason=edge_backpressure`), treat as retriable with backend-unavailable backoff. If that metadata is absent, keep the default non-retriable policy for `policy_violation`.
 - **Scope of reconnection**
-  - Telnet clients reconnect by establishing a new TCP connection to the TCP Proxy Service, issuing `LOGIN` (and any optional `SESSION`/MCP negotiation), and then issuing `PLAY` before gameplay commands.
-- Web clients reconnect by first obtaining a fresh connect token, opening a new WebSocket to `/ws/game/**`, issuing `LOGIN`, and then issuing `PLAY`; they must not assume that any prior MCP or `SESSION` state has survived, as described in [Mud Client Protocol (MCP) Support](./system-architecture-mud-client-protocol.md#reconnection--session-recovery).
+  - Telnet clients reconnect by establishing a new TCP connection to the TCP Proxy Service, issuing `LOGIN`, and then issuing `PLAY` before gameplay commands. If smart-client attach hints return later, they should be re-sent as hidden MCP metadata on the new connection.
+- Web clients reconnect by first obtaining a fresh connect token, opening a new WebSocket to `/ws/game/**`, issuing `LOGIN`, and then issuing `PLAY`; they must not assume that any prior MCP or hidden smart-client attach metadata has survived, as described in [Mud Client Protocol (MCP) Support](./system-architecture-mud-client-protocol.md#reconnection--session-recovery).
 
 For clarity, Telnet clients never receive a hidden transport-preserving recovery on an already-established session. Even if the proxy-wide admission circuit later returns to closed after an outage, any Telnet session whose established gameplay bridge was lost must reconnect on a fresh TCP socket and repeat `LOGIN`/`PLAY`.
 
-Clients must also treat pre-disconnect output as non-resumable transport state. After reconnect, any room description, prompt, status panel feed, or similar output should be treated as newly generated post-resume state, not as replay of bytes or frames that were in flight before the disconnect.
+Clients must also treat pre-disconnect output as non-resumable transport state. FireMUD does not replay raw transport bytes, prior WebSocket frames, or unsent Telnet output onto a newly opened connection. Instead, reconnect restores player-visible context in two distinct ways:
+
+- a bounded per-player screen buffer keyed to gameplay identity may replay the most recent narrative/system transcript lines for that player after successful `LOGIN` + `PLAY`;
+- then FireMUD emits fresh state-derived reconstruction output such as `LOOK` and prompt/status information.
+
+This screen buffer is context restoration, not a transport delivery guarantee. It exists to help players understand what just happened around a disconnect; it does not promise exact delivery of every missed output line.
+
+Prompt/status output is a separate output class from transcript lines:
+
+- prompts are coalesced UI/state summaries, not ordinary scrollback messages;
+- prompts are not part of the reconnect screen buffer by default;
+- reconnect should restore transcript context first, then emit a fresh `LOOK`, then emit one fresh current prompt;
+- first-party web and MCP-aware clients may consume prompt/status as structured data instead of rendering it into the main text transcript.
+
+In the current Game Session settings surface, prompt enablement and restore/coalescing defaults are exposed through:
+
+- `firemud.presentation.prompt.enabled`
+- `firemud.presentation.prompt.emit-after-reconnect-restore`
+- `firemud.presentation.prompt.coalesce-window-ms`
+
+The reconnect/session-recovery and screen-buffer defaults themselves are exposed through:
+
+- `firemud.reconnection.policy.resume-window-ms`
+- `firemud.reconnection.policy.stale-resume-falls-through-to-fresh-entry`
+- `firemud.reconnection.buffer.ttl-ms`
+- `firemud.reconnection.buffer.min-messages`
+- `firemud.reconnection.buffer.min-lines`
+- `firemud.reconnection.buffer.soft-max-bytes`
+- `firemud.reconnection.buffer.hard-max-bytes`
+
+These remain operator/file-env defaults today, while prompt exclusion from reconnect transcript replay remains a canonical reconnect/output rule rather than a separately surfaced toggle.
 
 ### Abnormal WebSocket Transport Loss
 

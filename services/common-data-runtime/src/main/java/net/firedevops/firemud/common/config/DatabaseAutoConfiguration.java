@@ -1,6 +1,7 @@
 package net.firedevops.firemud.common.config;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import io.lettuce.core.SslVerifyMode;
 import io.lettuce.core.metrics.MicrometerCommandLatencyRecorder;
 import io.lettuce.core.metrics.MicrometerOptions;
 import io.lettuce.core.resource.ClientResources;
@@ -16,6 +17,7 @@ import net.firedevops.firemud.common.saga.persistence.SagaInstanceRepository;
 import net.firedevops.firemud.common.saga.persistence.SagaStep;
 import net.firedevops.firemud.common.saga.persistence.SagaStepRepository;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
+import org.springframework.boot.autoconfigure.AutoConfigureBefore;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
@@ -29,6 +31,7 @@ import org.springframework.context.annotation.Conditional;
 import org.springframework.core.type.AnnotatedTypeMetadata;
 import org.springframework.data.jpa.repository.support.JpaRepositoryFactory;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
+import org.springframework.data.redis.connection.RedisPassword;
 import org.springframework.data.redis.connection.RedisStandaloneConfiguration;
 import org.springframework.data.redis.connection.lettuce.LettuceClientConfiguration;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
@@ -37,6 +40,13 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.orm.jpa.SharedEntityManagerCreator;
 
 @AutoConfiguration
+@AutoConfigureBefore(
+    name = {
+      "org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration",
+      "org.springframework.boot.hibernate.autoconfigure.HibernateJpaAutoConfiguration",
+      "org.springframework.boot.flyway.autoconfigure.FlywayAutoConfiguration",
+      "org.springframework.boot.sql.autoconfigure.flyway.FlywayAutoConfiguration"
+    })
 @EnableConfigurationProperties({PostgresProperties.class, RedisProperties.class})
 @SuppressFBWarnings(
     value = "EI_EXPOSE_REP2",
@@ -91,11 +101,40 @@ public class DatabaseAutoConfiguration {
       matchIfMissing = true)
   @ConditionalOnMissingBean(RedisConnectionFactory.class)
   public RedisConnectionFactory redisConnectionFactory(ClientResources resources) {
+    RedisStandaloneConfiguration standalone = redisStandaloneConfiguration();
+    LettuceClientConfiguration clientConfiguration = lettuceClientConfiguration(resources);
+    return new LettuceConnectionFactory(standalone, clientConfiguration);
+  }
+
+  RedisStandaloneConfiguration redisStandaloneConfiguration() {
     RedisStandaloneConfiguration standalone =
         new RedisStandaloneConfiguration(redis.getHost(), redis.getPort());
-    LettuceClientConfiguration clientConfiguration =
-        LettuceClientConfiguration.builder().clientResources(resources).build();
-    return new LettuceConnectionFactory(standalone, clientConfiguration);
+    standalone.setDatabase(Math.max(0, redis.getDatabase()));
+    if (redis.getUsername() != null && !redis.getUsername().isBlank()) {
+      standalone.setUsername(redis.getUsername());
+    }
+    if (redis.getPassword() != null && !redis.getPassword().isBlank()) {
+      standalone.setPassword(RedisPassword.of(redis.getPassword()));
+    }
+    return standalone;
+  }
+
+  LettuceClientConfiguration lettuceClientConfiguration(ClientResources resources) {
+    LettuceClientConfiguration.LettuceClientConfigurationBuilder builder =
+        LettuceClientConfiguration.builder().clientResources(resources);
+    if (redis.isUseSsl() || redis.isStartTls()) {
+      LettuceClientConfiguration.LettuceSslClientConfigurationBuilder sslBuilder = builder.useSsl();
+      if (redis.isStartTls()) {
+        sslBuilder.startTls();
+      }
+      if (!redis.isVerifyPeer()) {
+        sslBuilder.disablePeerVerification();
+      } else {
+        sslBuilder.verifyPeer(SslVerifyMode.FULL);
+      }
+      builder = sslBuilder.and();
+    }
+    return builder.build();
   }
 
   @Bean

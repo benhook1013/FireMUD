@@ -17,19 +17,17 @@ Use this file as the canonical AI instruction source for this repository.
 
 - Use subagents for bounded, parallelizable work that can proceed without blocking the immediate next local step.
 - Prefer the smallest capable subagent model first; escalate model size only when the task genuinely needs it.
-- Delegate more aggressively when token cost or main-thread context churn is becoming expensive.
 - Pass enough repo and task context in the subagent prompt that the worker can act without repeating broad discovery work.
 - Keep immediate blocker discovery and tightly coupled critical-path work local when waiting on delegation would stall progress.
 
 ## Subagent Ownership
 
 - Use subagents to reduce token cost and main-thread context load, not to duplicate work.
-- One write owner per file or file set at a time.
 - Spawning a subagent and then redoing the same write task locally is a failure mode, not a speedup.
 - When a subagent is assigned a write scope, treat that scope as owned by the subagent until it returns or is explicitly cancelled.
 - While a write task is delegated, use the main thread only for non-overlapping inspection, review preparation, validation planning, or genuinely separate work.
-- After a delegated write task returns, integrate or refine that result instead of redoing the same work from scratch unless the user explicitly asks for a different approach.
-- If a delegated worker stalls or fails, either reuse its partial work carefully or replace it cleanly, but do not silently duplicate the same write scope in parallel.
+- After a delegated write task returns, integrate or refine that result.
+- If a delegated worker stalls or fails, either reuse its partial work carefully or replace it cleanly.
 
 ## Working Tree Safety
 

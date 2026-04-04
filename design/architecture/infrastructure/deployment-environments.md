@@ -255,9 +255,12 @@ PRs that modify `k8s/` are checked by [`.github/workflows/validate-kustomize-ove
 FireMUD's preview environment is a hosted single-node k3s cluster intended for reviewer-accessible pull-request validation, not a CI-only Docker Compose smoke stack.
 
 - Same-repo pull requests may deploy one Helm release into namespace `pr-<PR_NUMBER>` with matching hostname `https://pr-<PR_NUMBER>.preview.<DOMAIN>`.
-- The preview deployment uses the full application stack, including the frontend, gateway, backend microservices, and stateful supporting services required for normal gameplay flows.
+- The preview deployment uses the full application stack, including the gateway, TCP proxy, backend microservices, and stateful supporting services required for normal gameplay flows.
 - GitHub Actions builds PR-tagged images, pushes them to private GHCR, and deploys or upgrades the preview release via Helm. The cluster authenticates to GHCR using image pull credentials.
 - Each preview namespace must use PR-unique JWT signing material and JWKS data, even when that material is stored as low-sensitivity test-only ConfigMap or Secret content. Preview auth tokens must not validate across PR namespaces.
+- The first reviewer-usable proof target for preview is manual `LOGIN -> PLAY -> LOOK` over the TCP/Telnet path. A browser-first preview experience is useful later, but it is not the first hosted proof milestone.
+- Long-term first-party browser hosting should live in a dedicated first-party web application service, not in Spring Cloud Gateway. If temporary preview-only browser helpers exist before that service lands, they must not redefine the long-term architecture.
+- Preview TCP exposure uses a small reserved preview-only external port range, with one TCP port per live preview namespace on the shared preview host/IP. This is a preview multiplexing concern, not the long-term player-facing Telnet architecture.
 - Preview state is seeded once when the namespace is first created. PostgreSQL, MinIO/object storage, and any other stateful preview components persist across pod restarts, Helm upgrades, and normal VM reboot for the lifetime of the PR.
 - Preview state is not backed up and is not durable beyond the single preview node. If the node or its attached storage is lost, preview state is lost.
 - The initial Hetzner/k3s sizing target is one reliably usable full-stack preview on an 8 GB shared-CPU x86 VM. A second concurrent preview is best-effort only and may fail to deploy if capacity is exhausted.

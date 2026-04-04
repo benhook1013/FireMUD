@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import reactor.core.publisher.Mono;
 
 /** REST API for dynamic route management. */
 @RestController
@@ -27,18 +28,19 @@ public class GatewayController {
 
   /** Add or update a gateway route. */
   @PostMapping
-  public ResponseEntity<ApiResponse<GatewayRoute>> upsert(@RequestBody GatewayRoute route) {
-    GatewayRoute saved = routeService.upsert(route);
-    return ResponseEntity.ok(ApiResponse.success(saved));
+  public Mono<ResponseEntity<ApiResponse<GatewayRoute>>> upsert(@RequestBody GatewayRoute route) {
+    return routeService.upsert(route).map(saved -> ResponseEntity.ok(ApiResponse.success(saved)));
   }
 
   /** Remove a gateway route by ID. */
   @DeleteMapping("/{routeId}")
-  public ResponseEntity<ApiResponse<String>> remove(@PathVariable String routeId) {
-    boolean removed = routeService.remove(routeId);
-    if (removed) {
-      return ResponseEntity.ok(ApiResponse.success("removed"));
-    }
-    return ResponseEntity.ok(ApiResponse.success("notFound"));
+  public Mono<ResponseEntity<ApiResponse<String>>> remove(@PathVariable String routeId) {
+    return routeService
+        .remove(routeId)
+        .map(
+            removed ->
+                removed
+                    ? ResponseEntity.ok(ApiResponse.success("removed"))
+                    : ResponseEntity.ok(ApiResponse.success("notFound")));
   }
 }

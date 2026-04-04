@@ -16,6 +16,8 @@ import net.firedevops.firemud.entitymanagement.v1.Character;
 import net.firedevops.firemud.entitymanagement.v1.CreateCharacterRequest;
 import net.firedevops.firemud.entitymanagement.v1.CreateCharacterResponse;
 import net.firedevops.firemud.entitymanagement.v1.EntityManagementServiceGrpc;
+import net.firedevops.firemud.entitymanagement.v1.FindCharacterByNameRequest;
+import net.firedevops.firemud.entitymanagement.v1.FindCharacterByNameResponse;
 import net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountRequest;
 import net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse;
 import net.firedevops.firemud.entitymanagement.v1.ListRoomEntitiesRequest;
@@ -138,6 +140,56 @@ public class EntityManagementGrpcService
           ListCharactersByAccountResponse.newBuilder()
               .setError(
                   GrpcAppErrors.internal(meterRegistry, logger, "ListCharactersByAccount", ex))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    }
+  }
+
+  @Override
+  @Timed(value = "entityGrpc.findCharacterByName")
+  public void findCharacterByName(
+      FindCharacterByNameRequest request,
+      StreamObserver<FindCharacterByNameResponse> responseObserver) {
+    try {
+      long tenantId = Long.parseLong(request.getTenantId());
+      FindCharacterByNameResponse.Builder builder = FindCharacterByNameResponse.newBuilder();
+      characterService
+          .findByTenantAndName(tenantId, request.getName())
+          .map(this::toProto)
+          .ifPresent(builder::setCharacter);
+      responseObserver.onNext(builder.build());
+      responseObserver.onCompleted();
+    } catch (NumberFormatException ex) {
+      FindCharacterByNameResponse response =
+          FindCharacterByNameResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry,
+                      logger,
+                      "FindCharacterByName",
+                      "INVALID_ARGUMENT",
+                      ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      FindCharacterByNameResponse response =
+          FindCharacterByNameResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry,
+                      logger,
+                      "FindCharacterByName",
+                      "INVALID_ARGUMENT",
+                      ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      FindCharacterByNameResponse response =
+          FindCharacterByNameResponse.newBuilder()
+              .setError(GrpcAppErrors.internal(meterRegistry, logger, "FindCharacterByName", ex))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();

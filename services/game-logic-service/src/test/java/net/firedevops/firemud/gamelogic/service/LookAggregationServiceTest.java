@@ -23,11 +23,13 @@ import net.firedevops.firemud.worldmanagement.v1.WorldManagementServiceGrpc;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.slf4j.MDC;
 
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -78,6 +80,7 @@ class LookAggregationServiceTest {
             .setTenantId("tenant-1")
             .setSessionId("session-1")
             .setCharacterId("player-1")
+            .setPreferredLocale("fr")
             .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("1021").build())
             .build();
   }
@@ -94,6 +97,29 @@ class LookAggregationServiceTest {
     assertThat(result.getEntitiesList()).hasSize(1);
     assertThat(result.getEntitiesList().get(0).getDisplayName()).isEqualTo("Kobold");
     assertThat(result.getAmbientState().getWeather()).isEqualTo("dim");
+    ArgumentCaptor<net.firedevops.firemud.worldmanagement.v1.GetRoomSnapshotRequest> captor =
+        ArgumentCaptor.forClass(
+            net.firedevops.firemud.worldmanagement.v1.GetRoomSnapshotRequest.class);
+    org.mockito.Mockito.verify(worldStub).getRoomSnapshot(captor.capture());
+    assertThat(captor.getValue().getPreferredLocale()).isEqualTo("fr");
+  }
+
+  @Test
+  void resolveAddsGameplayLoggingContext() {
+    when(worldStub.getRoomSnapshot(any()))
+        .thenAnswer(
+            ignored -> {
+              assertThat(MDC.get("tenantId")).isEqualTo("tenant-1");
+              assertThat(MDC.get("characterId")).isEqualTo("player-1");
+              assertThat(MDC.get("gameInstanceId")).isNull();
+              return GetRoomSnapshotResponse.newBuilder().setSnapshot(snapshot).build();
+            });
+
+    service.resolve(request);
+
+    assertThat(MDC.get("tenantId")).isNull();
+    assertThat(MDC.get("characterId")).isNull();
+    assertThat(MDC.get("gameInstanceId")).isNull();
   }
 
   @Test

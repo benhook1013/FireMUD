@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamesession.service.impl;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -10,10 +11,12 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.lang.reflect.Field;
 import java.time.Duration;
 import net.firedevops.firemud.gamesession.config.DevIsolatedProperties;
+import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.gamesession.service.TickService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.slf4j.MDC;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
 
@@ -24,6 +27,7 @@ class TickServiceImplTest {
   private SimpleMeterRegistry meterRegistry;
   private net.firedevops.firemud.common.conflict.ConflictTracker conflictTracker;
   private net.firedevops.firemud.gamesession.repository.GameInstanceRepository repository;
+  private SessionContextService sessionContextService;
   private TickService service;
 
   @BeforeEach
@@ -37,13 +41,15 @@ class TickServiceImplTest {
     meterRegistry = new SimpleMeterRegistry();
     conflictTracker = mock(net.firedevops.firemud.common.conflict.ConflictTracker.class);
     repository = mock(net.firedevops.firemud.gamesession.repository.GameInstanceRepository.class);
+    sessionContextService = mock(SessionContextService.class);
     service =
         new TickServiceImpl(
             redisTemplate,
             meterRegistry,
             conflictTracker,
             repository,
-            new DevIsolatedProperties(false));
+            new DevIsolatedProperties(false),
+            sessionContextService);
     ((TickServiceImpl) service).init();
     var instance = new net.firedevops.firemud.gamesession.entity.GameInstance();
     instance.setTenantId(1L);
@@ -52,15 +58,33 @@ class TickServiceImplTest {
 
   @Test
   void enqueueCommandPushesToQueue() {
-    service.enqueueCommand(2L, "look", false);
-    verify(listOps).rightPush(any(String.class), any(Object.class));
+    service.enqueueCommand(1L, 2L, "look", false);
+    verify(listOps).rightPush(eq("tick:queue:1:2"), any(Object.class));
+  }
+
+  @Test
+  void enqueueCommandAddsGameplayLoggingContextWhenSessionIsBound() {
+    when(listOps.rightPush(any(String.class), any(Object.class)))
+        .thenAnswer(
+            ignored -> {
+              org.junit.jupiter.api.Assertions.assertEquals("9", MDC.get("tenantId"));
+              org.junit.jupiter.api.Assertions.assertNull(MDC.get("gameInstanceId"));
+              org.junit.jupiter.api.Assertions.assertNull(MDC.get("characterId"));
+              return 1L;
+            });
+
+    service.enqueueCommand(9L, 2L, "look", false);
+
+    org.junit.jupiter.api.Assertions.assertNull(MDC.get("tenantId"));
+    org.junit.jupiter.api.Assertions.assertNull(MDC.get("gameInstanceId"));
+    org.junit.jupiter.api.Assertions.assertNull(MDC.get("characterId"));
   }
 
   @Test
   void processTickAttemptsLockAndExecutesScript() {
     when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
         .thenReturn(true);
-    service.processTick(2L);
+    service.processTick(1L, 2L);
     ArgumentCaptor<RedisScript<?>> scriptCaptor = redisScriptCaptor();
     verify(redisTemplate, org.mockito.Mockito.atLeastOnce())
         .execute(scriptCaptor.capture(), org.mockito.ArgumentMatchers.<String>anyList());
@@ -71,7 +95,7 @@ class TickServiceImplTest {
     when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
         .thenReturn(false);
 
-    service.processTick(2L);
+    service.processTick(1L, 2L);
 
     org.junit.jupiter.api.Assertions.assertEquals(
         1.0, meterRegistry.get("game_session_lock_contention_total").counter().count(), 0.001);
@@ -90,7 +114,7 @@ class TickServiceImplTest {
 
     setField(service, "tickBudgetMs", 0L);
 
-    service.processTick(2L);
+    service.processTick(1L, 2L);
 
     org.junit.jupiter.api.Assertions.assertEquals(
         1.0, meterRegistry.get("game_session_tick_budget_exceeded_total").counter().count(), 0.001);
@@ -105,7 +129,7 @@ class TickServiceImplTest {
     instance.setId(2L);
     instance.setTenantId(10L);
     when(repository.findById(2L)).thenReturn(java.util.Optional.of(instance));
-    service.processTick(2L);
+    service.processTick(10L, 2L);
     org.junit.jupiter.api.Assertions.assertEquals(
         3.0,
         meterRegistry

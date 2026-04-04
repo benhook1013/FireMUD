@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamesession.test;
 
+import net.firedevops.firemud.entitymanagement.v1.Character;
 import net.firedevops.firemud.entitymanagement.v1.EntityType;
 import net.firedevops.firemud.entitymanagement.v1.ListRoomEntitiesResponse;
 import net.firedevops.firemud.entitymanagement.v1.RoomEntity;
@@ -9,6 +10,7 @@ public final class ChatTestFixtures {
   public static final String TENANT = "demo";
   public static final String PLAYER_EMBERLINE = "7";
   public static final String PLAYER_SORA = "8";
+  public static final String PLAYER_NYX = "9";
 
   private ChatTestFixtures() {}
 
@@ -27,6 +29,14 @@ public final class ChatTestFixtures {
             .setEntityType(EntityType.PLAYER)
             .setRole("listener")
             .build();
+    RoomEntity nyx =
+        RoomEntity.newBuilder()
+            .setEntityId(PLAYER_NYX)
+            .setDisplayName("Nyx")
+            .setEntityType(EntityType.PLAYER)
+            .setRole("observer")
+            .addStateFlags("observer_metadata_only")
+            .build();
     RoomEntity kobold =
         RoomEntity.newBuilder()
             .setEntityId("NPC-001")
@@ -37,16 +47,60 @@ public final class ChatTestFixtures {
     return ListRoomEntitiesResponse.newBuilder()
         .addEntities(emberline)
         .addEntities(sora)
+        .addEntities(nyx)
         .addEntities(kobold)
         .build();
   }
 
+  public static Character characterByName(String name) {
+    if ("Emberline".equalsIgnoreCase(name)) {
+      return Character.newBuilder()
+          .setId(PLAYER_EMBERLINE)
+          .setTenantId("1")
+          .setAccountId("7")
+          .setName("Emberline")
+          .build();
+    }
+    if ("Sora".equalsIgnoreCase(name)) {
+      return Character.newBuilder()
+          .setId(PLAYER_SORA)
+          .setTenantId("1")
+          .setAccountId("8")
+          .setName("Sora")
+          .build();
+    }
+    if ("Nyx".equalsIgnoreCase(name)) {
+      return Character.newBuilder()
+          .setId(PLAYER_NYX)
+          .setTenantId("1")
+          .setAccountId("9")
+          .setName("Nyx")
+          .build();
+    }
+    return Character.getDefaultInstance();
+  }
+
   public static String canonicalSayText() {
-    return String.join(
-        "\n",
-        "OK SAY",
-        "Speaker: Emberline",
-        "Delivered-To: Emberline, Kobold Scout, Sora",
-        "Message: Hello travelers");
+    return "You say, \"Hello travelers\"";
+  }
+
+  public static String canonicalWhisperText() {
+    return "You whisper to Sora, \"Keep quiet\"";
+  }
+
+  public static String canonicalWhisperTargetText() {
+    return "Emberline whispers to you, \"Keep quiet\"";
+  }
+
+  public static String canonicalWhisperObserverMetadataText() {
+    return "Emberline whispers something to Sora.";
+  }
+
+  public static String canonicalTellText() {
+    return "You tell Sora, \"Meet me at the forge\"";
+  }
+
+  public static String canonicalTellTargetText() {
+    return "Emberline tells you, \"Meet me at the forge\"";
   }
 }

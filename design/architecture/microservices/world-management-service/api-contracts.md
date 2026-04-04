@@ -111,7 +111,7 @@ Illustrative responses:
 
 Room snapshots deliberately exclude live entities, items, and inventory contents. Those are fetched from Entity Management using room- and instance-scoped queries.
 
-Game Logic may cache snapshots for the duration of a tick but must refresh them after movement. World Management publishes room-mutation change events so downstream LOOK caches stay coherent and `worldSnapshotId` invalidation remains explicit rather than time-based guesswork.
+Game Logic may memoize snapshots for the duration of a tick but must refresh them after movement. World Management publishes room-mutation change events so any future validated room-view read model can use explicit `worldSnapshotId` invalidation rather than time-based guesswork. FireMUD must not treat stale rendered `LOOK` output as authoritative room truth.
 
 Cross-service LOOK read consistency is fence-based:
 

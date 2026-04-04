@@ -4,12 +4,19 @@
 
 Game Session coordinates with Redis to store volatile session state and command queues and with PostgreSQL to persist durable game-instance control-plane metadata. It provides a single point of truth for current tick and world time while exposing gameplay-session state to the protocol front door.
 
+The service runtime model assumes replaceable workers, not authoritative in-process state:
+
+- Redis and PostgreSQL hold the meaningful gameplay-session, tick-coordination, and control-plane state needed for takeover.
+- A Game Session instance may cache or buffer transient transport-local details while it is healthy, but those details must never be the sole source of truth for reconnect, tick ownership, or gameplay admission.
+- Ordinary non-edge Game Session restarts should therefore degrade to a short stall or upstream rebinding event, not a mandatory player-visible re-`LOGIN` / re-`PLAY` cycle.
+
 - PostgreSQL stores `game_instances`, `game_manifest`, pinned runtime-version/script-patch selections, active runtime feature-flag overrides, and audit-relevant disconnect/remediation metadata.
 - Redis stores gameplay session bindings, tick queues, timers, retries, and region leases.
 - Game Session uses PostgreSQL for durable control-plane metadata and Redis as the coordination plane for gameplay-session bindings, tick queues, timers, retries, and region leases.
 - Session objects are created as soon as a client connects. They remain unauthenticated until Account Service verifies credentials and issues a token.
 - Game Session relies on the shared libraries for DTO definitions, logging interceptors, Micrometer metrics, and shared saga helpers rather than reimplementing those surfaces locally.
 - Brute-force defense remains delegated to Account Service, which owns login-attempt monitoring, per-IP/account throttling, blacklisting, and notification behavior. Game Session consumes the resulting auth outcomes when binding gameplay sessions but does not implement separate credential-abuse logic.
+- No single Game Session process may become the hidden source of truth for reconnectable gameplay state. If the service needs a value to survive non-edge restart or permit same-type takeover, that value must live in Redis or PostgreSQL-backed coordination rather than only in process memory.
 
 ## Redis Ownership and Coordination Rules
 
@@ -18,6 +25,8 @@ Game Session uses the gameplay layer’s session front-end plus lease-owner exec
 - Connected sockets bind to a stable session front-end pod, while region-scoped tick execution remains fenced to the current `<tenantId, regionId>` lease owner.
 - Session front-ends may forward work to lease owners over internal gRPC, but only lease owners may mutate region-scoped coordination state.
 - Tick-related multi-key operations, including locks, pending state, queues, timers, and retry metadata, are performed exclusively via the shared Lua scripts described in [Redis Architecture](../../system-architecture-redis.md#atomicity-and-concurrency-control). Ad-hoc multi-key sequences against tick keys are not allowed outside these scripts.
+- Because session bindings, leases, queues, timers, and retry markers are externalized, another Game Session instance of the same type must be able to assume session-front-end or lease-owner responsibility after failure. If a non-edge Game Session restart still forces a visible reconnect in practice, treat that as an implementation gap rather than an accepted contract.
+- Lease ownership and session front-end routing are deliberately takeover-ready. Another same-type Game Session instance must be able to acquire the relevant lease or front-end responsibility from shared state after restart; visible reconnect is acceptable only when the edge transport itself was lost.
 
 Game Session treats Redis Coordination and Cache/Rate-Limit roles as separate concerns:
 
@@ -75,6 +84,7 @@ Game Session acts as the authoritative tick executor for each `<tenantId, region
 - It participates in region leadership using the Redis lease key `tick-executor-lease:{tenantRegionTag}` described in [Redis Architecture](../../system-architecture-redis.md#region-leadership-and-tick-executor-lease).
 - While it holds the lease for a region, it is the only instance allowed to consume commands from that region’s queues and timers, drive `tick:{tenantRegionTag}:pending`, and issue tick-scoped gRPC calls on behalf of that region’s commands.
 - On crash or deliberate handoff, another instance acquires the lease and resumes tick processing from Redis using the epoch-scoped `(regionEpoch, tickId)` timeline and EffectId/effect-guard rules from the tick-system design.
+- Tick execution correctness must not depend on process-local executor memory surviving restart. Lease acquisition, staged tick state, retry metadata, and resumable session bindings are all externalized specifically so another Game Session instance can continue work from shared state.
 - The executor monitors `tick_execution_time_ms_p99` and `tick_lock_ttl_ms` for each region. If a region repeatedly produces over-TTL ticks according to the thresholds described in the Redis and Tick architecture docs, it marks that region as degraded, automatically reduces tick fan-out, emits explicit degraded-region metrics, and may halt new ticks and reject new commands for that region until operators intervene.
 - Changing `tick_interval_ms` is not part of this in-place degradation path. Any live cadence change that alters timer ordering must run as an epoch-bumped maintenance operation with pause, timer re-derivation, and resume on the new `regionEpoch`, as defined in the tick and scaling docs.
 - The staging Lua script only moves a bounded number of commands each tick, governed by `GAME_TICK_MAX_COMMANDS`, so one player cannot starve others. Commands marked `requiresSoloTick: true` are dequeued into isolated ticks so expensive operations such as runtime procedural generation do not share time with normal actions.
@@ -93,7 +103,7 @@ Session shutdown therefore cleans up session keys but does not implicitly delete
 
 Game Session restores player sessions after disconnects and enforces single-session control as outlined in the [Reconnection Strategy](../../system-architecture-reconnection.md). For Telnet clients, it also consumes best-effort, at-least-once `NotifyDisconnect` events emitted by the TCP Proxy Service over an internal gRPC link and treats them as idempotent hints keyed by `<proxyConnectionId, disconnectSequence>` rather than a guaranteed source of truth.
 
-Game Session persists the latest processed `disconnectSequence` per `<proxyConnectionId>` and ignores older or duplicate events so retry behavior at the proxy can remain simple while consumption stays idempotent. When the Telnet client supplies a `SESSION <gameInstanceId> <tenantId>` envelope, that `<tenantId, gameInstanceId>` pair is advisory context that may be used for logging and audit, but it is not trusted as an authorization claim or binding directive. Game Session still validates any game-instance ownership claims against Redis and its authenticated session state before rebinding the transport.
+Game Session persists the latest processed `disconnectSequence` per `<proxyConnectionId>` and ignores older or duplicate events so retry behavior at the proxy can remain simple while consumption stays idempotent. Any `{tenantId, gameInstanceId}` values coming from proxy-owned bootstrap metadata or future hidden MCP-carried smart-client hints remain advisory context that may be used for logging and audit, but they are not trusted as authorization claims or binding directives. Game Session still validates any game-instance ownership claims against Redis and its authenticated session state before rebinding the transport.
 
 ## Runtime Feature Flags
 

@@ -16,7 +16,7 @@ public class GlobalExceptionHandler {
 
   @ExceptionHandler(Exception.class)
   public ResponseEntity<ApiResponse<ErrorDetail>> handleException(Exception ex) {
-    ErrorDetail detail = new ErrorDetail("INTERNAL_ERROR", ex.getMessage());
+    ErrorDetail detail = new ErrorDetail("INTERNAL_ERROR", "Internal server error");
     return new ResponseEntity<>(ApiResponse.error(detail), HttpStatus.INTERNAL_SERVER_ERROR);
   }
 }

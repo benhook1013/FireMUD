@@ -10,7 +10,9 @@ import net.firedevops.firemud.gamesession.service.SessionContext;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
+import org.springframework.data.redis.core.RedisOperations;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.SessionCallback;
 import org.springframework.data.redis.core.ValueOperations;
 
 @SuppressWarnings("unchecked")
@@ -25,6 +27,12 @@ class RedisSessionContextServiceTest {
   @BeforeEach
   void setUp() {
     when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+    when(redisTemplate.execute(Mockito.any(SessionCallback.class)))
+        .thenAnswer(
+            invocation -> {
+              SessionCallback<?> callback = invocation.getArgument(0);
+              return callback.execute((RedisOperations<String, Object>) redisTemplate);
+            });
     service = new RedisSessionContextService(redisTemplate, TTL.toMillis());
   }
 
@@ -34,8 +42,23 @@ class RedisSessionContextServiceTest {
 
     service.save(context);
 
+    verify(redisTemplate).multi();
+    verify(redisTemplate).exec();
     verify(valueOperations).set("sessionctx:10:1:context", context, TTL);
-    verify(valueOperations).set("sessionctx:10:identity:20:30:context", context, TTL);
+    verify(valueOperations).set("sessionctx:10:identity:40:30:context", context, TTL);
+  }
+
+  @Test
+  void saveRemovesStaleSessionKeyBeforeWritingNewIdentityBinding() {
+    SessionContext existing = new SessionContext(1L, 10L, 20L, 30L, 40L, "old-jwt");
+    SessionContext replacement = new SessionContext(2L, 10L, 20L, 30L, 40L, "new-jwt");
+    when(valueOperations.get("sessionctx:10:identity:40:30:context")).thenReturn(existing);
+
+    service.save(replacement);
+
+    verify(redisTemplate).delete("sessionctx:10:1:context");
+    verify(valueOperations).set("sessionctx:10:2:context", replacement, TTL);
+    verify(valueOperations).set("sessionctx:10:identity:40:30:context", replacement, TTL);
   }
 
   @Test
@@ -49,11 +72,11 @@ class RedisSessionContextServiceTest {
   }
 
   @Test
-  void findByAccountAndCharacterReturnsPersistedContext() {
+  void findByGameplayIdentityReturnsPersistedContext() {
     SessionContext context = new SessionContext(1L, 10L, 20L, 30L, 40L, "jwt");
-    when(valueOperations.get("sessionctx:10:identity:20:30:context")).thenReturn(context);
+    when(valueOperations.get("sessionctx:10:identity:40:30:context")).thenReturn(context);
 
-    Optional<SessionContext> result = service.findByAccountAndCharacter(10L, 20L, 30L);
+    Optional<SessionContext> result = service.findByGameplayIdentity(10L, 40L, 30L);
 
     assertEquals(Optional.of(context), result);
   }
@@ -65,7 +88,20 @@ class RedisSessionContextServiceTest {
 
     service.deleteBySessionId(10L, 1L);
 
+    verify(redisTemplate).multi();
+    verify(redisTemplate).exec();
     verify(redisTemplate).delete("sessionctx:10:1:context");
-    verify(redisTemplate).delete("sessionctx:10:identity:20:30:context");
+    verify(redisTemplate).delete("sessionctx:10:identity:40:30:context");
+  }
+
+  @Test
+  void savePreservesLocaleTagInStoredContext() {
+    SessionContext context =
+        new SessionContext(1L, 10L, 20L, null, 30L, null, 40L, "room-1", "jwt", "fr", 40L);
+
+    service.save(context);
+
+    verify(valueOperations).set("sessionctx:10:1:context", context, TTL);
+    assertEquals("fr", context.localeTag());
   }
 }

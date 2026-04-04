@@ -1,0 +1,169 @@
+package net.firedevops.firemud.gamedesign.service.impl;
+
+import io.micrometer.core.annotation.Timed;
+import java.time.Instant;
+import java.util.List;
+import lombok.RequiredArgsConstructor;
+import net.firedevops.firemud.common.settings.ScopedSettingsOverrides;
+import net.firedevops.firemud.common.settings.ScopedSettingsSnapshot;
+import net.firedevops.firemud.gamedesign.entity.GameSettingsOverride;
+import net.firedevops.firemud.gamedesign.repository.GameSettingsOverrideRepository;
+import net.firedevops.firemud.gamedesign.service.SettingsAuthorityService;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.StringUtils;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.ObjectMapper;
+
+@Service
+@RequiredArgsConstructor
+public class SettingsAuthorityServiceImpl implements SettingsAuthorityService {
+  private final GameSettingsOverrideRepository repository;
+  private final ObjectMapper objectMapper;
+
+  @Override
+  @Transactional(readOnly = true)
+  @Timed(value = "gamedesign.settings.getScopedOverrides")
+  public ScopedSettingsSnapshot getScopedOverrides(String tenantId, Long gameInstanceId) {
+    String normalizedTenantId = normalizeTenantId(tenantId);
+    Long normalizedGameInstanceId = normalizeGameInstanceId(gameInstanceId);
+    List<GameSettingsOverride> tenantRows =
+        repository.findByTenantIdAndGameInstanceIdIsNull(normalizedTenantId);
+    List<GameSettingsOverride> gameInstanceRows =
+        normalizedGameInstanceId == null
+            ? List.of()
+            : repository.findByTenantIdAndGameInstanceId(
+                normalizedTenantId, normalizedGameInstanceId);
+    return new ScopedSettingsSnapshot(toOverrides(tenantRows), toOverrides(gameInstanceRows));
+  }
+
+  @Override
+  @Transactional
+  @Timed(value = "gamedesign.settings.putDomainOverride")
+  public void putDomainOverride(
+      String tenantId,
+      Long gameInstanceId,
+      ScopedSettingsOverrides.SettingsDomain domain,
+      ScopedSettingsOverrides overrides) {
+    String normalizedTenantId = normalizeTenantId(tenantId);
+    Long normalizedGameInstanceId = normalizeGameInstanceId(gameInstanceId);
+    Object payload = extractDomainPayload(domain, overrides);
+
+    GameSettingsOverride entity =
+        normalizedGameInstanceId == null
+            ? repository
+                .findByTenantIdAndGameInstanceIdIsNullAndDomain(normalizedTenantId, domain.name())
+                .orElseGet(GameSettingsOverride::new)
+            : repository
+                .findByTenantIdAndGameInstanceIdAndDomain(
+                    normalizedTenantId, normalizedGameInstanceId, domain.name())
+                .orElseGet(GameSettingsOverride::new);
+
+    entity.setTenantId(normalizedTenantId);
+    entity.setGameInstanceId(normalizedGameInstanceId);
+    entity.setDomain(domain.name());
+    entity.setPayload(serialize(payload));
+    entity.setUpdatedAt(Instant.now());
+    repository.save(entity);
+  }
+
+  @Override
+  @Transactional
+  @Timed(value = "gamedesign.settings.deleteDomainOverride")
+  public void deleteDomainOverride(
+      String tenantId, Long gameInstanceId, ScopedSettingsOverrides.SettingsDomain domain) {
+    String normalizedTenantId = normalizeTenantId(tenantId);
+    Long normalizedGameInstanceId = normalizeGameInstanceId(gameInstanceId);
+    if (normalizedGameInstanceId == null) {
+      repository
+          .findByTenantIdAndGameInstanceIdIsNullAndDomain(normalizedTenantId, domain.name())
+          .ifPresent(repository::delete);
+      return;
+    }
+    repository
+        .findByTenantIdAndGameInstanceIdAndDomain(
+            normalizedTenantId, normalizedGameInstanceId, domain.name())
+        .ifPresent(repository::delete);
+  }
+
+  private ScopedSettingsOverrides toOverrides(List<GameSettingsOverride> rows) {
+    ScopedSettingsOverrides.ReconnectionOverride reconnection = null;
+    ScopedSettingsOverrides.CommunicationOverride communication = null;
+    ScopedSettingsOverrides.PresentationOverride presentation = null;
+    ScopedSettingsOverrides.MovementOverride movement = null;
+    ScopedSettingsOverrides.WorldTopologyOverride worldTopology = null;
+
+    for (GameSettingsOverride row : rows) {
+      ScopedSettingsOverrides.SettingsDomain domain =
+          ScopedSettingsOverrides.SettingsDomain.valueOf(row.getDomain());
+      switch (domain) {
+        case RECONNECTION ->
+            reconnection =
+                deserialize(row.getPayload(), ScopedSettingsOverrides.ReconnectionOverride.class);
+        case COMMUNICATION ->
+            communication =
+                deserialize(row.getPayload(), ScopedSettingsOverrides.CommunicationOverride.class);
+        case PRESENTATION ->
+            presentation =
+                deserialize(row.getPayload(), ScopedSettingsOverrides.PresentationOverride.class);
+        case MOVEMENT ->
+            movement =
+                deserialize(row.getPayload(), ScopedSettingsOverrides.MovementOverride.class);
+        case WORLD_TOPOLOGY ->
+            worldTopology =
+                deserialize(row.getPayload(), ScopedSettingsOverrides.WorldTopologyOverride.class);
+      }
+    }
+    return new ScopedSettingsOverrides(
+        reconnection, communication, presentation, movement, worldTopology);
+  }
+
+  private Object extractDomainPayload(
+      ScopedSettingsOverrides.SettingsDomain domain, ScopedSettingsOverrides overrides) {
+    if (overrides == null || overrides.isEmpty()) {
+      throw new IllegalArgumentException("Overrides payload must include the selected domain");
+    }
+    Object payload =
+        switch (domain) {
+          case RECONNECTION -> overrides.reconnection();
+          case COMMUNICATION -> overrides.communication();
+          case PRESENTATION -> overrides.presentation();
+          case MOVEMENT -> overrides.movement();
+          case WORLD_TOPOLOGY -> overrides.worldTopology();
+        };
+    if (payload == null) {
+      throw new IllegalArgumentException("Overrides payload must include the selected domain");
+    }
+    return payload;
+  }
+
+  private String normalizeTenantId(String tenantId) {
+    if (!StringUtils.hasText(tenantId)) {
+      throw new IllegalArgumentException("tenantId is required");
+    }
+    return tenantId.trim();
+  }
+
+  private Long normalizeGameInstanceId(Long gameInstanceId) {
+    if (gameInstanceId == null || gameInstanceId <= 0L) {
+      return null;
+    }
+    return gameInstanceId;
+  }
+
+  private String serialize(Object payload) {
+    try {
+      return objectMapper.writeValueAsString(payload);
+    } catch (JacksonException ex) {
+      throw new IllegalStateException("Failed to serialize settings override payload", ex);
+    }
+  }
+
+  private <T> T deserialize(String payload, Class<T> targetType) {
+    try {
+      return objectMapper.readValue(payload, targetType);
+    } catch (JacksonException ex) {
+      throw new IllegalStateException("Failed to deserialize settings override payload", ex);
+    }
+  }
+}

@@ -14,7 +14,9 @@ public class DevIsolatedIpConnectionLimiter implements IpConnectionLimiter {
   }
 
   @Override
-  public void register(String ip, long sessionId) {}
+  public boolean tryRegister(String ip, long sessionId) {
+    return true;
+  }
 
   @Override
   public void release(long sessionId) {}

@@ -31,15 +31,22 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BooleanSupplier;
 import net.firedevops.firemud.cache.LookCacheService;
+import net.firedevops.firemud.common.runtime.RuntimeIdentity;
+import net.firedevops.firemud.common.runtime.RuntimeLoggingContext;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.tcpproxy.service.TcpProxyEventService;
 import net.firedevops.firemud.tcpproxy.v1.NotifyDisconnectResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
+import org.springframework.util.StringUtils;
 
 /** Handler that forwards Telnet lines to the gateway via WebSocket. */
 public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   private static final Logger logger = LoggerFactory.getLogger(TelnetServerHandler.class);
+  private static final RuntimeIdentity DEFAULT_RUNTIME_IDENTITY =
+      new RuntimeIdentity(
+          "tcp-proxy-service", "tcp-proxy-test", null, java.time.Instant.EPOCH, null, null, null);
   private static final Duration HEARTBEAT_INTERVAL = Duration.ofSeconds(30);
   private static final Duration IDLE_TIMEOUT = Duration.ofMinutes(5);
   private static final int MAX_BUFFER_DEPTH = 512;
@@ -64,6 +71,9 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   private final AtomicInteger bufferDepth;
   private final WebSocketConnector webSocketConnector;
   private final TcpProxyEventService eventService;
+  private final String defaultGameInstanceId;
+  private final String defaultTenantId;
+  private final RuntimeIdentity runtimeIdentity;
   private final TelnetSessionContext sessionContext = new TelnetSessionContext();
   private final String proxyConnectionId = UUID.randomUUID().toString();
   private final AtomicLong disconnectSequence = new AtomicLong();
@@ -84,10 +94,6 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   private String clientIp;
   private boolean connectEventRecorded;
   private final LookCacheService lookCacheService;
-  private volatile boolean loginAcknowledged;
-  private volatile boolean cachedLookDelivered;
-  private final int maxMalformedSessionEnvelopes;
-  private int malformedSessionEnvelopes;
 
   public TelnetServerHandler(
       String gatewayWsUrl,
@@ -115,7 +121,9 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
         eventService,
         bufferDepth,
         null,
-        0);
+        null,
+        null,
+        DEFAULT_RUNTIME_IDENTITY);
   }
 
   TelnetServerHandler(
@@ -145,7 +153,9 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
         eventService,
         bufferDepth,
         null,
-        0);
+        null,
+        null,
+        DEFAULT_RUNTIME_IDENTITY);
   }
 
   TelnetServerHandler(
@@ -161,8 +171,78 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
       WebSocketConnector webSocketConnector,
       TcpProxyEventService eventService,
       AtomicInteger bufferDepth,
+      LookCacheService lookCacheService) {
+    this(
+        gatewayWsUrl,
+        devIsolated,
+        onConnect,
+        onDisconnect,
+        connectionCounter,
+        discardedCommandCounter,
+        advertiseMcp,
+        meterRegistry,
+        gameplayTrafficReady,
+        webSocketConnector,
+        eventService,
+        bufferDepth,
+        null,
+        null,
+        lookCacheService,
+        DEFAULT_RUNTIME_IDENTITY);
+  }
+
+  TelnetServerHandler(
+      String gatewayWsUrl,
+      boolean devIsolated,
+      Runnable onConnect,
+      Runnable onDisconnect,
+      io.micrometer.core.instrument.Counter connectionCounter,
+      io.micrometer.core.instrument.Counter discardedCommandCounter,
+      boolean advertiseMcp,
+      MeterRegistry meterRegistry,
+      BooleanSupplier gameplayTrafficReady,
+      WebSocketConnector webSocketConnector,
+      TcpProxyEventService eventService,
+      AtomicInteger bufferDepth,
+      String defaultGameInstanceId,
+      String defaultTenantId,
+      LookCacheService lookCacheService) {
+    this(
+        gatewayWsUrl,
+        devIsolated,
+        onConnect,
+        onDisconnect,
+        connectionCounter,
+        discardedCommandCounter,
+        advertiseMcp,
+        meterRegistry,
+        gameplayTrafficReady,
+        webSocketConnector,
+        eventService,
+        bufferDepth,
+        defaultGameInstanceId,
+        defaultTenantId,
+        lookCacheService,
+        DEFAULT_RUNTIME_IDENTITY);
+  }
+
+  TelnetServerHandler(
+      String gatewayWsUrl,
+      boolean devIsolated,
+      Runnable onConnect,
+      Runnable onDisconnect,
+      io.micrometer.core.instrument.Counter connectionCounter,
+      io.micrometer.core.instrument.Counter discardedCommandCounter,
+      boolean advertiseMcp,
+      MeterRegistry meterRegistry,
+      BooleanSupplier gameplayTrafficReady,
+      WebSocketConnector webSocketConnector,
+      TcpProxyEventService eventService,
+      AtomicInteger bufferDepth,
+      String defaultGameInstanceId,
+      String defaultTenantId,
       LookCacheService lookCacheService,
-      int maxMalformedSessionEnvelopes) {
+      RuntimeIdentity runtimeIdentity) {
     this.gatewayWsUrl = gatewayWsUrl;
     this.devIsolated = devIsolated;
     this.onConnect = onConnect;
@@ -175,6 +255,9 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     this.webSocketConnector = webSocketConnector;
     this.eventService = eventService;
     this.bufferDepth = bufferDepth;
+    this.defaultGameInstanceId = defaultGameInstanceId;
+    this.defaultTenantId = defaultTenantId;
+    this.runtimeIdentity = runtimeIdentity;
     this.commandTimer = meterRegistry.timer("tcpproxy.command");
     this.heartbeatTimer = meterRegistry.timer("tcpproxy.heartbeat");
     this.idleCloseTimer = meterRegistry.timer("tcpproxy.idleClose");
@@ -182,7 +265,6 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     this.reconnectCounter.increment(0.0);
     updateBufferDepthGauge();
     this.lookCacheService = lookCacheService;
-    this.maxMalformedSessionEnvelopes = maxMalformedSessionEnvelopes;
   }
 
   @FunctionalInterface
@@ -231,8 +313,6 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     reconnecting = false;
     startHeartbeat();
     touchActivity();
-    loginAcknowledged = false;
-    cachedLookDelivered = false;
     if (reconnected) {
       // On gateway reconnect, simply drain the existing buffer over the WebSocket
       // bridge; no side-channel gRPC replay is used.
@@ -287,21 +367,23 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   }
 
   private void closeIfIdle() {
-    if (closing) {
-      return;
-    }
-    long idleNanos = System.nanoTime() - lastActivityNanos;
-    if (idleNanos < IDLE_TIMEOUT.toNanos()) {
-      scheduleIdleCheck();
-      return;
-    }
-    logger.warn(
-        "Closing Telnet session for {} after {} ms of inactivity",
-        gatewayWsUrl,
-        Duration.ofNanos(idleNanos).toMillis());
-    idleCloseTimer.record(Duration.ofNanos(idleNanos));
-    if (context != null) {
-      context.close();
+    try (CombinedLoggingContext ignored = openLoggingContext()) {
+      if (closing) {
+        return;
+      }
+      long idleNanos = System.nanoTime() - lastActivityNanos;
+      if (idleNanos < IDLE_TIMEOUT.toNanos()) {
+        scheduleIdleCheck();
+        return;
+      }
+      logger.warn(
+          "Closing Telnet session for {} after {} ms of inactivity",
+          gatewayWsUrl,
+          Duration.ofNanos(idleNanos).toMillis());
+      idleCloseTimer.record(Duration.ofNanos(idleNanos));
+      if (context != null) {
+        context.close();
+      }
     }
   }
 
@@ -316,11 +398,13 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     outstandingSends.add(pingFuture);
     pingFuture.whenComplete(
         (ws, error) -> {
-          outstandingSends.remove(pingFuture);
-          sample.stop(heartbeatTimer);
-          if (error != null) {
-            logger.warn("Gateway heartbeat failed; triggering reconnect", error);
-            handleGatewayDisconnect();
+          try (CombinedLoggingContext ignored = openLoggingContext()) {
+            outstandingSends.remove(pingFuture);
+            sample.stop(heartbeatTimer);
+            if (error != null) {
+              logger.warn("Gateway heartbeat failed; triggering reconnect", error);
+              handleGatewayDisconnect();
+            }
           }
         });
   }
@@ -338,42 +422,48 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     outstandingSends.add(sendFuture);
     sendFuture.whenComplete(
         (ws, error) -> {
-          outstandingSends.remove(sendFuture);
-          inFlightSend = null;
-          if (error == null) {
-            buffer.poll();
-            touchActivity();
-          } else {
-            logger.warn("Gateway send failed; scheduling reconnect", error);
-            handleGatewayDisconnect();
+          try (CombinedLoggingContext ignored = openLoggingContext()) {
+            outstandingSends.remove(sendFuture);
+            inFlightSend = null;
+            if (error == null) {
+              buffer.poll();
+              touchActivity();
+            } else {
+              logger.warn("Gateway send failed; scheduling reconnect", error);
+              handleGatewayDisconnect();
+            }
+            updateBufferDepthGauge();
+            drainBuffer();
           }
-          updateBufferDepthGauge();
-          drainBuffer();
         });
   }
 
   @Override
   public void channelActive(ChannelHandlerContext ctx) {
     context = ctx;
-    touchActivity();
-    var remote = ctx.channel() != null ? ctx.channel().remoteAddress() : null;
-    clientIp = extractIp(remote);
-    connectionStartNanos = System.nanoTime();
-    connectionCounter.increment();
-    updateBufferDepthGauge();
-    onConnect.run();
-    logger.info(
-        "Telnet client connected from {} targeting {}",
-        clientIp != null ? clientIp : remote,
-        gatewayWsUrl);
-    if (!devIsolated && !gameplayTrafficReady.getAsBoolean()) {
-      closing = true;
-      discardedCommandCounter.increment();
-      ctx.writeAndFlush(STARTUP_UNAVAILABLE_MESSAGE).addListener(ChannelFutureListener.CLOSE);
-      return;
-    }
-    if (devIsolated) {
-      logger.info("Dev-isolated mode enabled; using internal Telnet echo handler");
+    try (CombinedLoggingContext ignored = openLoggingContext()) {
+      touchActivity();
+      var remote = ctx.channel() != null ? ctx.channel().remoteAddress() : null;
+      clientIp = extractIp(remote);
+      connectionStartNanos = System.nanoTime();
+      connectionCounter.increment();
+      updateBufferDepthGauge();
+      onConnect.run();
+      logger.info(
+          "Telnet client connected from {} targeting {}",
+          clientIp != null ? clientIp : remote,
+          gatewayWsUrl);
+      if (!devIsolated && !gameplayTrafficReady.getAsBoolean()) {
+        closing = true;
+        discardedCommandCounter.increment();
+        ctx.writeAndFlush(STARTUP_UNAVAILABLE_MESSAGE).addListener(ChannelFutureListener.CLOSE);
+        return;
+      }
+      if (devIsolated) {
+        logger.info("Dev-isolated mode enabled; using internal Telnet echo handler");
+      } else {
+        bootstrapDefaultSessionIfConfigured();
+      }
     }
   }
 
@@ -381,75 +471,73 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   @Timed(value = "tcpproxy.command")
   protected void channelRead0(ChannelHandlerContext ctx, String msg) {
     Timer.Sample sample = Timer.start(meterRegistry);
-    try {
-      if (closing) {
-        return;
-      }
-      String sanitized = sanitize(ctx, msg);
-      if (sanitized == null) {
-        return;
-      }
+    try (CombinedLoggingContext ignored = openLoggingContext()) {
+      try {
+        if (closing) {
+          return;
+        }
+        String sanitized = sanitize(ctx, msg);
+        if (sanitized == null) {
+          return;
+        }
 
-      logTelnetInput(sanitized);
-      touchActivity();
+        logTelnetInput(sanitized);
+        touchActivity();
 
-      if (devIsolated) {
-        // In dev-isolated mode, keep SESSION envelope semantics but echo
-        // subsequent commands directly back to the Telnet client without
-        // opening a WebSocket to the gateway.
-        if (!sessionContext.isReady()) {
-          if (!captureSessionContext(sanitized)) {
-            logger.warn("Ignoring Telnet input before session envelope: {}", sanitized);
+        if (devIsolated) {
+          if (!sessionContext.isReady()) {
+            bootstrapDefaultSessionIfConfigured();
+          }
+          if (sessionContext.isReady() && context != null) {
+            context.writeAndFlush(sanitized + "\n");
+          } else {
+            logger.warn("Ignoring Telnet input before session bootstrap: {}", sanitized);
           }
           return;
         }
-        if (context != null) {
-          context.writeAndFlush(sanitized + "\n");
-        }
-        return;
-      }
 
-      if (!sessionContext.isReady()) {
-        if (!captureSessionContext(sanitized)) {
-          logger.warn("Ignoring Telnet input before session envelope: {}", sanitized);
+        if (!sessionContext.isReady()) {
+          bootstrapDefaultSessionIfConfigured();
+          if (!sessionContext.isReady()) {
+            logger.warn("Ignoring Telnet input before session bootstrap: {}", sanitized);
+            return;
+          }
+        }
+
+        ensureGatewayConnected();
+
+        if (!canBufferMore()) {
           return;
         }
-        notifyConnectIfReady();
-        ensureGatewayConnected();
-        return;
+
+        buffer.add(sanitized);
+        updateBufferDepthGauge();
+        drainBuffer();
+      } finally {
+        sample.stop(commandTimer);
       }
-
-      ensureGatewayConnected();
-
-      if (!canBufferMore()) {
-        return;
-      }
-
-      buffer.add(sanitized);
-      updateBufferDepthGauge();
-      drainBuffer();
-    } finally {
-      sample.stop(commandTimer);
     }
   }
 
   @Override
   public void channelInactive(ChannelHandlerContext ctx) {
-    closing = true;
-    stopHeartbeat();
-    cancelIdleCheck();
-    closeGatewayWebSocket();
-    onDisconnect.run();
-    Duration connectionDuration = null;
-    if (connectionStartNanos > 0) {
-      connectionDuration = Duration.ofNanos(System.nanoTime() - connectionStartNanos);
+    try (CombinedLoggingContext ignored = openLoggingContext()) {
+      closing = true;
+      stopHeartbeat();
+      cancelIdleCheck();
+      closeGatewayWebSocket();
+      onDisconnect.run();
+      Duration connectionDuration = null;
+      if (connectionStartNanos > 0) {
+        connectionDuration = Duration.ofNanos(System.nanoTime() - connectionStartNanos);
+      }
+      eventService.recordDisconnectEvent(
+          sessionContext.gameInstanceId(), sessionContext.tenantId(), clientIp, connectionDuration);
+      notifyDisconnectAsync();
+      buffer.clear();
+      cancelOutstandingSends();
+      updateBufferDepthGauge();
     }
-    eventService.recordDisconnectEvent(
-        sessionContext.gameInstanceId(), sessionContext.tenantId(), clientIp, connectionDuration);
-    notifyDisconnectAsync();
-    buffer.clear();
-    cancelOutstandingSends();
-    updateBufferDepthGauge();
   }
 
   private boolean canBufferMore() {
@@ -472,27 +560,16 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     return true;
   }
 
-  private boolean captureSessionContext(String sanitized) {
-    boolean captured = sessionContext.captureFromEnvelope(sanitized);
-    if (captured) {
-      notifyConnectIfReady();
-      return true;
+  private void bootstrapDefaultSessionIfConfigured() {
+    if (sessionContext.isReady()) {
+      return;
     }
-    if (maxMalformedSessionEnvelopes > 0 && looksLikeSessionEnvelope(sanitized)) {
-      malformedSessionEnvelopes++;
-      if (malformedSessionEnvelopes >= maxMalformedSessionEnvelopes && !closing) {
-        logger.warn(
-            "Closing Telnet session after {} malformed SESSION envelopes (limit={})",
-            malformedSessionEnvelopes,
-            maxMalformedSessionEnvelopes);
-        discardedCommandCounter.increment();
-        if (context != null) {
-          closing = true;
-          context.close();
-        }
-      }
+    if (!StringUtils.hasText(defaultGameInstanceId) || !StringUtils.hasText(defaultTenantId)) {
+      return;
     }
-    return false;
+    sessionContext.bootstrap(defaultGameInstanceId, defaultTenantId);
+    notifyConnectIfReady();
+    ensureGatewayConnected();
   }
 
   private void cancelIdleCheck() {
@@ -537,8 +614,10 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
         .whenComplete(
             (socket, error) -> {
               if (error != null) {
-                logger.error("WebSocket connection to {} failed", gatewayWsUrl, error);
-                failCloseBackendUnavailable("Gateway link unavailable; please reconnect");
+                try (CombinedLoggingContext ignored = openLoggingContext()) {
+                  logger.error("WebSocket connection to {} failed", gatewayWsUrl, error);
+                  failCloseBackendUnavailable("Gateway link unavailable; please reconnect");
+                }
               }
             });
   }
@@ -550,10 +629,27 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     cancelOutstandingSends();
     closeGatewayWebSocket();
     stopHeartbeat();
+    recordBridgeShutdown("unattributed_failure");
     failCloseBackendUnavailable("Gateway link dropped; please reconnect");
   }
 
+  private void handleGatewayClose(int statusCode, String reason) {
+    if (closing) {
+      return;
+    }
+    cancelOutstandingSends();
+    closeGatewayWebSocket();
+    stopHeartbeat();
+    GatewayCloseClassification classification = classifyGatewayClose(statusCode, reason);
+    recordBridgeShutdown(classification.shutdownClass());
+    failClose(classification.reasonToken(), classification.message());
+  }
+
   private void failCloseBackendUnavailable(String message) {
+    failClose("backend_unavailable", message);
+  }
+
+  private void failClose(String reasonToken, String message) {
     if (closing) {
       return;
     }
@@ -561,9 +657,46 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     reconnecting = false;
     if (context != null) {
       context
-          .writeAndFlush("DISCONNECT backend_unavailable " + message + "\n")
+          .writeAndFlush("DISCONNECT " + reasonToken + " " + message + "\n")
           .addListener(ChannelFutureListener.CLOSE);
     }
+  }
+
+  private GatewayCloseClassification classifyGatewayClose(int statusCode, String reason) {
+    String trimmedReason = reason == null ? "" : reason.trim();
+    if (statusCode == 1000 && trimmedReason.startsWith("logout")) {
+      return new GatewayCloseClassification(
+          trimmedReason,
+          "Gameplay session ended; please reconnect",
+          shutdownClassForLogout(trimmedReason));
+    }
+    if (statusCode == 1001 && "idle_timeout".equals(trimmedReason)) {
+      return new GatewayCloseClassification(
+          "idle_timeout", "Gameplay session timed out; please reconnect", "unattributed_failure");
+    }
+    if (statusCode == 1008 && trimmedReason.startsWith("policy_violation")) {
+      return new GatewayCloseClassification(
+          trimmedReason,
+          "Gameplay connection closed due to policy violation",
+          "unattributed_failure");
+    }
+    if (statusCode == 1011 && "internal_error".equals(trimmedReason)) {
+      return new GatewayCloseClassification(
+          "internal_error", "Gameplay connection failed; please reconnect", "unattributed_failure");
+    }
+    return new GatewayCloseClassification(
+        "backend_unavailable", "Gateway link dropped; please reconnect", "unattributed_failure");
+  }
+
+  private String shutdownClassForLogout(String reasonToken) {
+    if ("logout;subreason=gateway_restart".equalsIgnoreCase(reasonToken)) {
+      return "planned_drain";
+    }
+    return "upstream_logout";
+  }
+
+  private void recordBridgeShutdown(String shutdownClass) {
+    meterRegistry.counter("tcpproxy.bridge.shutdown", "class", shutdownClass).increment();
   }
 
   private void cancelOutstandingSends() {
@@ -590,34 +723,6 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     connectEventRecorded = true;
   }
 
-  private void sendCachedLookIfPresent() {
-    if (lookCacheService == null
-        || context == null
-        || !sessionContext.isReady()
-        || !loginAcknowledged
-        || cachedLookDelivered) {
-      return;
-    }
-    String sessionId = sessionContext.gameInstanceId();
-    String tenantId = sessionContext.tenantId();
-    try {
-      long tenant = Long.parseLong(tenantId);
-      long session = Long.parseLong(sessionId);
-      lookCacheService
-          .get(tenant, session)
-          .map(LookCacheService.CachedLook::protocolText)
-          .ifPresent(
-              text -> {
-                context.writeAndFlush(text);
-                cachedLookDelivered = true;
-              });
-    } catch (NumberFormatException ex) {
-      logger.debug("Invalid cached LOOK identifiers tenant={} session={}", tenantId, sessionId, ex);
-    } catch (RuntimeException ex) {
-      logger.debug("Unable to read cached LOOK for session {}", sessionId, ex);
-    }
-  }
-
   private void notifyDisconnectAsync() {
     if (devIsolated || !sessionContext.isReady()) {
       return;
@@ -636,44 +741,49 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
                     response, sessionContext.gameInstanceId(), sessionContext.tenantId()))
         .exceptionally(
             failure -> {
-              logger.warn(
-                  "Failed to notify Game Session Service about disconnect for session {} tenant {}",
-                  sessionContext.gameInstanceId(),
-                  sessionContext.tenantId(),
-                  failure);
-              Status.Code status = Status.fromThrowable(failure).getCode();
-              meterRegistry
-                  .counter("tcpproxy.disconnect.notify.transport_failure", "status", status.name())
-                  .increment();
+              try (CombinedLoggingContext ignored = openLoggingContext()) {
+                logger.warn(
+                    "Failed to notify Game Session Service about disconnect for session {} tenant {}",
+                    sessionContext.gameInstanceId(),
+                    sessionContext.tenantId(),
+                    failure);
+                Status.Code status = Status.fromThrowable(failure).getCode();
+                meterRegistry
+                    .counter(
+                        "tcpproxy.disconnect.notify.transport_failure", "status", status.name())
+                    .increment();
+              }
               return null;
             });
   }
 
   private void handleDisconnectResponse(
       NotifyDisconnectResponse response, String sessionId, String tenantId) {
-    if (response == null) {
+    try (CombinedLoggingContext ignored = openLoggingContext()) {
+      if (response == null) {
+        logger.warn(
+            "Disconnect notification returned no response for session {} tenant {}",
+            sessionId,
+            tenantId);
+        meterRegistry
+            .counter("tcpproxy.disconnect.notify.transport_failure", "status", "UNKNOWN")
+            .increment();
+        return;
+      }
+      ErrorDetail detail = response.hasError() ? response.getError() : null;
+      if (detail == null || OK.equals(detail.getCode())) {
+        return;
+      }
       logger.warn(
-          "Disconnect notification returned no response for session {} tenant {}",
+          "Disconnect notification rejected for session {} tenant {}: {} {}",
           sessionId,
-          tenantId);
+          tenantId,
+          detail.getCode(),
+          detail.getMessage());
       meterRegistry
-          .counter("tcpproxy.disconnect.notify.transport_failure", "status", "UNKNOWN")
+          .counter("tcpproxy.disconnect.notify.app_error", "code", detail.getCode())
           .increment();
-      return;
     }
-    ErrorDetail detail = response.hasError() ? response.getError() : null;
-    if (detail == null || OK.equals(detail.getCode())) {
-      return;
-    }
-    logger.warn(
-        "Disconnect notification rejected for session {} tenant {}: {} {}",
-        sessionId,
-        tenantId,
-        detail.getCode(),
-        detail.getMessage());
-    meterRegistry
-        .counter("tcpproxy.disconnect.notify.app_error", "code", detail.getCode())
-        .increment();
   }
 
   private void logTelnetInput(String sanitized) {
@@ -721,29 +831,28 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     return new Listener() {
       @Override
       public void onOpen(WebSocket webSocket) {
-        boolean wasConnected = connectedOnce;
-        connectedOnce = true;
-        setWebSocket(webSocket, wasConnected);
-        webSocket.request(1);
-        reconnectAttempts.set(0);
-        logger.info("WebSocket connected to {}", gatewayWsUrl);
+        try (CombinedLoggingContext ignored = openLoggingContext()) {
+          boolean wasConnected = connectedOnce;
+          connectedOnce = true;
+          setWebSocket(webSocket, wasConnected);
+          webSocket.request(1);
+          reconnectAttempts.set(0);
+          logger.info("WebSocket connected to {}", gatewayWsUrl);
+        }
       }
 
       @Override
       public CompletionStage<?> onText(WebSocket webSocket, CharSequence data, boolean last) {
-        touchActivity();
-        if (logger.isDebugEnabled()) {
-          logger.debug("Gateway response: {}", data);
+        try (CombinedLoggingContext ignored = openLoggingContext()) {
+          touchActivity();
+          if (logger.isDebugEnabled()) {
+            logger.debug("Gateway response: {}", data);
+          }
+          if (context != null) {
+            context.writeAndFlush(data.toString() + "\n");
+          }
+          webSocket.request(1);
         }
-        if (context != null) {
-          context.writeAndFlush(data.toString() + "\n");
-        }
-        String payload = data.toString().trim();
-        if (payload.startsWith("OK LOGIN")) {
-          loginAcknowledged = true;
-          sendCachedLookIfPresent();
-        }
-        webSocket.request(1);
         return null;
       }
 
@@ -764,27 +873,71 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
 
       @Override
       public CompletionStage<?> onClose(WebSocket webSocket, int statusCode, String reason) {
-        logger.warn(
-            "Gateway WebSocket closed for {} with status {} and reason {}",
-            gatewayWsUrl,
-            statusCode,
-            reason);
-        handleGatewayDisconnect();
+        try (CombinedLoggingContext ignored = openLoggingContext()) {
+          logger.warn(
+              "Gateway WebSocket closed for {} with status {} and reason {}",
+              gatewayWsUrl,
+              statusCode,
+              reason);
+          handleGatewayClose(statusCode, reason);
+        }
         return Listener.super.onClose(webSocket, statusCode, reason);
       }
 
       @Override
       public void onError(WebSocket webSocket, Throwable error) {
-        logger.error("WebSocket error for {}", gatewayWsUrl, error);
-        handleGatewayDisconnect();
+        try (CombinedLoggingContext ignored = openLoggingContext()) {
+          logger.error("WebSocket error for {}", gatewayWsUrl, error);
+          handleGatewayDisconnect();
+        }
       }
     };
   }
 
   @Override
   public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
-    logger.error("Telnet handler error", cause);
-    ctx.close();
+    try (CombinedLoggingContext ignored = openLoggingContext()) {
+      logger.error("Telnet handler error", cause);
+      ctx.close();
+    }
+  }
+
+  private CombinedLoggingContext openLoggingContext() {
+    RuntimeLoggingContext runtimeContext =
+        RuntimeLoggingContext.open(runtimeIdentity, proxyConnectionId);
+    AutoCloseable tenantContext =
+        StringUtils.hasText(sessionContext.tenantId())
+            ? MDC.putCloseable("tenantId", sessionContext.tenantId())
+            : null;
+    AutoCloseable gameInstanceContext =
+        StringUtils.hasText(sessionContext.gameInstanceId())
+            ? MDC.putCloseable("gameInstanceId", sessionContext.gameInstanceId())
+            : null;
+    return new CombinedLoggingContext(runtimeContext, gameInstanceContext, tenantContext);
+  }
+
+  private record CombinedLoggingContext(
+      RuntimeLoggingContext runtimeContext,
+      AutoCloseable gameInstanceContext,
+      AutoCloseable tenantContext)
+      implements AutoCloseable {
+    @Override
+    public void close() {
+      closeQuietly(gameInstanceContext);
+      closeQuietly(tenantContext);
+      runtimeContext.close();
+    }
+
+    private static void closeQuietly(AutoCloseable closeable) {
+      if (closeable == null) {
+        return;
+      }
+      try {
+        closeable.close();
+      } catch (Exception ignored) {
+        // MDC cleanup should never affect runtime flow.
+      }
+    }
   }
 
   private static final byte IAC = (byte) 255;
@@ -802,6 +955,9 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
 
   private static final Set<Byte> SUPPORTED_OPTIONS = Set.of((byte) 1, (byte) 3);
   private static final HttpClient SHARED_HTTP_CLIENT = HttpClient.newBuilder().build();
+
+  private record GatewayCloseClassification(
+      String reasonToken, String message, String shutdownClass) {}
 
   boolean isMcpNegotiated() {
     return mcpNegotiated;
@@ -925,16 +1081,5 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
     responseBuf.writeByte(response);
     responseBuf.writeByte(option);
     ctx.writeAndFlush(responseBuf);
-  }
-
-  private boolean looksLikeSessionEnvelope(String sanitized) {
-    if (sanitized == null) {
-      return false;
-    }
-    String trimmed = sanitized.trim();
-    if (trimmed.isEmpty()) {
-      return false;
-    }
-    return trimmed.toUpperCase(Locale.ROOT).startsWith("SESSION ");
   }
 }

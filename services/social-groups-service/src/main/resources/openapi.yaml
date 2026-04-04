@@ -96,7 +96,7 @@ components:
           type: integer
         type:
           type: string
-          enum: [SAY, TELL, GUILD, CITY, ACCOUNT]
+          enum: [SAY, WHISPER, TELL, GUILD, CITY, ACCOUNT]
         channelId:
           type: string
         recipientAccountId:

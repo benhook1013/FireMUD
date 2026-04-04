@@ -4,6 +4,17 @@
 
 Handles player characters, NPCs, items, and all inventory/containment. Provides CRUD operations for entities and exposes them to other services. This includes player inventories and equipment, container contents (chests, corpses, banks, bags), and items on the ground in rooms (room/ground inventory) modeled as items inside dedicated room-ground container entities keyed by `(tenantId, gameInstanceId, roomInstanceId)` (a `RoomInstanceRef`) rather than being stored in the World Management Service.
 
+The target-state model is container-first:
+
+- character and NPC inventories are hidden containers owned by that runtime entity;
+- room-ground inventory is a room-attached container persisted by Entity Management but identified from the authoritative World room instance;
+- equipment is not just another bag position and instead uses first-class equipment bindings;
+- slot definitions and body layouts are game-configured rather than hardcoded to a fixed humanoid equipment schema;
+- future inventory queries must support structural filtering plus game-defined item types/tags for both gameplay commands and richer GUIs;
+- `LOOK` and similar room-view commands should expose visible room-ground items from that room-attached container as a distinct room-view section, but should not automatically expand nested container contents inline.
+
+Inventory and equipment mutations are also intended to be auditable through a canonical transfer log so item duplication or invalid movement bugs can be investigated later.
+
 Character ownership is tenant-scoped, but Entity Management must support both tenant-shared and instance-local playable state depending on the resolved realm policy. In practice this means a character may remain owned by the same `{accountId, tenantId}` while some associated gameplay state, such as copied fork-local progression, seeded/sample-state inventory, or fresh standalone realm-local records, is isolated to a specific `gameInstanceId`.
 
 ### Responsibilities
@@ -11,6 +22,7 @@ Character ownership is tenant-scoped, but Entity Management must support both te
 - Persist characters, NPCs, and items with optimistic locking
 - Provide CRUD and query APIs for other services
 - Own and manage all inventories and item containment; character location and instance metadata live in the World Management Service
+- Own room-attached ground containers, hidden inventory containers, equipment bindings, and the audit trail for item/container movement
 - Coordinate deferred writes through Game Session Service
 
 World Management is therefore the sole owner of authoritative character and NPC location tables (`character_location`, `npc_location`) for each game instance. Entity Management reads location via World Management gRPC APIs or shared projections but must not persist its own competing location fields or treat cached location as authoritative.

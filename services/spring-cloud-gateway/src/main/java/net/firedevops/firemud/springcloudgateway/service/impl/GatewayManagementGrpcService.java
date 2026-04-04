@@ -4,6 +4,7 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
+import java.util.concurrent.CompletionException;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.gateway.v1.GatewayManagementServiceGrpc;
 import net.firedevops.firemud.gateway.v1.PingRequest;
@@ -17,6 +18,7 @@ import net.firedevops.firemud.springcloudgateway.service.GatewayRouteService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.grpc.server.service.GrpcService;
+import reactor.core.publisher.Mono;
 
 /** gRPC implementation for remote gateway management. */
 @GrpcService
@@ -47,61 +49,127 @@ public class GatewayManagementGrpcService
   @Timed(value = "gatewayGrpc.upsertRoute")
   public void upsertRoute(
       UpsertRouteRequest request, StreamObserver<UpsertRouteResponse> responseObserver) {
-    UpsertRouteResponse.Builder builder = UpsertRouteResponse.newBuilder();
-    if (request.getRouteId().isBlank() || request.getUri().isBlank()) {
-      builder.setSuccess(false);
-      builder.setError(
-          GrpcAppErrors.error(
-              meterRegistry,
-              logger,
-              "UpsertRoute",
-              "INVALID_ARGUMENT",
-              "routeId and uri are required"));
-      responseObserver.onNext(builder.build());
-      responseObserver.onCompleted();
-      return;
-    }
-    try {
-      GatewayRoute route =
-          new GatewayRoute(
-              request.getRouteId(),
-              request.getUri(),
-              request.getPredicatesList(),
-              request.getFiltersList());
-      routeService.upsert(route);
-      builder.setSuccess(true);
-    } catch (IllegalArgumentException ex) {
-      builder.setSuccess(false);
-      builder.setError(
-          GrpcAppErrors.error(
-              meterRegistry, logger, "UpsertRoute", "INVALID_ARGUMENT", ex.getMessage()));
-    } catch (Exception ex) {
-      builder.setSuccess(false);
-      builder.setError(GrpcAppErrors.internal(meterRegistry, logger, "UpsertRoute", ex));
-    }
-    responseObserver.onNext(builder.build());
-    responseObserver.onCompleted();
+    respond(buildUpsertRouteResponse(request), responseObserver);
   }
 
   @Override
   @Timed(value = "gatewayGrpc.removeRoute")
   public void removeRoute(
       RemoveRouteRequest request, StreamObserver<RemoveRouteResponse> responseObserver) {
-    boolean removed = routeService.remove(request.getRouteId());
-    if (removed) {
-      RemoveRouteResponse response = RemoveRouteResponse.newBuilder().setSuccess(true).build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
-    } else {
-      RemoveRouteResponse response =
-          RemoveRouteResponse.newBuilder()
-              .setSuccess(false)
-              .setError(
-                  GrpcAppErrors.error(
-                      meterRegistry, logger, "RemoveRoute", "NOT_FOUND", "route not found"))
-              .build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
+    respond(buildRemoveRouteResponse(request), responseObserver);
+  }
+
+  private Mono<UpsertRouteResponse> buildUpsertRouteResponse(UpsertRouteRequest request) {
+    return Mono.defer(
+        () -> {
+          if (request.getRouteId().isBlank() || request.getUri().isBlank()) {
+            return Mono.just(
+                UpsertRouteResponse.newBuilder()
+                    .setSuccess(false)
+                    .setError(
+                        GrpcAppErrors.error(
+                            meterRegistry,
+                            logger,
+                            "UpsertRoute",
+                            "INVALID_ARGUMENT",
+                            "routeId and uri are required"))
+                    .build());
+          }
+          GatewayRoute route =
+              new GatewayRoute(
+                  request.getRouteId(),
+                  request.getUri(),
+                  request.getPredicatesList(),
+                  request.getFiltersList());
+          return routeService
+              .upsert(route)
+              .map(ignored -> UpsertRouteResponse.newBuilder().setSuccess(true).build())
+              .onErrorResume(
+                  IllegalArgumentException.class,
+                  ex ->
+                      Mono.just(
+                          UpsertRouteResponse.newBuilder()
+                              .setSuccess(false)
+                              .setError(
+                                  GrpcAppErrors.error(
+                                      meterRegistry,
+                                      logger,
+                                      "UpsertRoute",
+                                      "INVALID_ARGUMENT",
+                                      ex.getMessage()))
+                              .build()))
+              .onErrorResume(
+                  Exception.class,
+                  ex ->
+                      Mono.just(
+                          UpsertRouteResponse.newBuilder()
+                              .setSuccess(false)
+                              .setError(
+                                  GrpcAppErrors.internal(meterRegistry, logger, "UpsertRoute", ex))
+                              .build()));
+        });
+  }
+
+  private Mono<RemoveRouteResponse> buildRemoveRouteResponse(RemoveRouteRequest request) {
+    return routeService
+        .remove(request.getRouteId())
+        .map(
+            removed ->
+                removed
+                    ? RemoveRouteResponse.newBuilder().setSuccess(true).build()
+                    : RemoveRouteResponse.newBuilder()
+                        .setSuccess(false)
+                        .setError(
+                            GrpcAppErrors.error(
+                                meterRegistry,
+                                logger,
+                                "RemoveRoute",
+                                "NOT_FOUND",
+                                "route not found"))
+                        .build())
+        .onErrorResume(
+            IllegalArgumentException.class,
+            ex ->
+                Mono.just(
+                    RemoveRouteResponse.newBuilder()
+                        .setSuccess(false)
+                        .setError(
+                            GrpcAppErrors.error(
+                                meterRegistry,
+                                logger,
+                                "RemoveRoute",
+                                "INVALID_ARGUMENT",
+                                ex.getMessage()))
+                        .build()))
+        .onErrorResume(
+            Exception.class,
+            ex ->
+                Mono.just(
+                    RemoveRouteResponse.newBuilder()
+                        .setSuccess(false)
+                        .setError(GrpcAppErrors.internal(meterRegistry, logger, "RemoveRoute", ex))
+                        .build()));
+  }
+
+  private <T> void respond(Mono<T> responseMono, StreamObserver<T> responseObserver) {
+    responseMono
+        .toFuture()
+        .whenComplete(
+            (response, error) -> {
+              if (error != null) {
+                responseObserver.onError(unwrapCompletionException(error));
+                return;
+              }
+              responseObserver.onNext(response);
+              responseObserver.onCompleted();
+            });
+  }
+
+  private Throwable unwrapCompletionException(Throwable error) {
+    if (error instanceof CompletionException completionException
+        && completionException.getCause() != null) {
+      return completionException.getCause();
     }
+    return error;
   }
 }

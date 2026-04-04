@@ -89,11 +89,7 @@ public class WorldCreationServiceImpl implements WorldCreationService {
 
   private void copyDesignData(Long tenantId, Long versionId) {
     // Fetch the published version to verify connectivity with the Game Design Service.
-    try {
-      gameDesignClient.listVersions(tenantId);
-    } catch (Exception ex) {
-      logger.debug("Failed to fetch design data: {}", ex.getMessage());
-    }
+    gameDesignClient.listVersions(tenantId);
     Region region = new Region();
     region.setTenantId(tenantId);
     // Newly created worlds start on the local shard. Admin tooling

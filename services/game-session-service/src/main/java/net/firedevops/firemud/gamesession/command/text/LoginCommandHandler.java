@@ -1,6 +1,5 @@
 package net.firedevops.firemud.gamesession.command.text;
 
-import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.util.List;
 import java.util.Map;
@@ -10,21 +9,22 @@ import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
 import net.firedevops.firemud.gamesession.client.AccountClient;
 import net.firedevops.firemud.gamesession.config.DevIsolatedProperties;
-import net.firedevops.firemud.gamesession.config.GameLogicProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
+import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.CommandService;
+import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.gamesession.service.devisolated.DevIsolatedGameInstanceRegistry;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.slf4j.MDC;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
+import org.springframework.util.StringUtils;
 
 /** Handles LOGIN/LOGON commands and generates immediate responses when possible. */
 @Component
@@ -35,12 +35,9 @@ public final class LoginCommandHandler {
   private final SessionContextService sessionContextService;
   private final AccountClient accountClient;
   private final CommandService commandService;
+  private final FirstPartyConnectContextRegistry firstPartyConnectContextRegistry;
   private final DevIsolatedProperties devIsolatedProperties;
-  private final GameLogicProperties gameLogicProperties;
   private final DevIsolatedGameInstanceRegistry devIsolatedGameInstanceRegistry;
-  private final MeterRegistry meterRegistry;
-  private final Counter takeoverCounter;
-  private final Counter resumeCounter;
 
   @Autowired
   public LoginCommandHandler(
@@ -48,8 +45,8 @@ public final class LoginCommandHandler {
       SessionContextService sessionContextService,
       AccountClient accountClient,
       CommandService commandService,
+      FirstPartyConnectContextRegistry firstPartyConnectContextRegistry,
       DevIsolatedProperties devIsolatedProperties,
-      GameLogicProperties gameLogicProperties,
       ObjectProvider<DevIsolatedGameInstanceRegistry> devIsolatedGameInstanceRegistryProvider,
       MeterRegistry meterRegistry) {
     this.gameInstanceRepository =
@@ -58,55 +55,52 @@ public final class LoginCommandHandler {
         Objects.requireNonNull(sessionContextService, "sessionContextService must not be null");
     this.accountClient = Objects.requireNonNull(accountClient, "accountClient must not be null");
     this.commandService = Objects.requireNonNull(commandService, "commandService must not be null");
+    this.firstPartyConnectContextRegistry =
+        Objects.requireNonNull(
+            firstPartyConnectContextRegistry, "firstPartyConnectContextRegistry must not be null");
     this.devIsolatedProperties =
         Objects.requireNonNull(devIsolatedProperties, "devIsolatedProperties must not be null");
-    this.gameLogicProperties =
-        Objects.requireNonNull(gameLogicProperties, "gameLogicProperties must not be null");
     this.devIsolatedGameInstanceRegistry = devIsolatedGameInstanceRegistryProvider.getIfAvailable();
-    this.meterRegistry = Objects.requireNonNull(meterRegistry, "meterRegistry must not be null");
-    this.takeoverCounter = this.meterRegistry.counter("gamesession.session.takeover");
-    this.resumeCounter = this.meterRegistry.counter("gamesession.session.resume");
+    Objects.requireNonNull(meterRegistry, "meterRegistry must not be null");
   }
 
   public LoginCommandHandlingResult handle(
       String sessionId, TextCommand command, boolean requiresSoloTick) {
-    List<String> args = command.args();
-    if (args.size() < 2) {
-      CommandEnqueueResult failure =
-          CommandEnqueueResult.failure(
-              LoginCommandConstants.PROMPT_MODE_UNSUPPORTED_CODE,
-              LoginCommandConstants.PROMPT_MODE_UNSUPPORTED_MESSAGE);
-      return new LoginCommandHandlingResult(failure, null);
+    Optional<TextCommandPayload.Credentials> maybeCredentials = command.credentialsPayload();
+    if (maybeCredentials.isEmpty()) {
+      return handleVerifiedFirstPartyLogin(sessionId, command, requiresSoloTick);
     }
+    TextCommandPayload.Credentials credentials = maybeCredentials.orElseThrow();
 
     Long numericSessionId = parseSessionId(sessionId);
     if (numericSessionId == null) {
       return invalidSessionFailure();
     }
 
-    Optional<GameInstance> maybeInstance = gameInstanceRepository.findById(numericSessionId);
+    long bootstrapGameInstanceId = resolveBootstrapGameInstanceId(numericSessionId);
+    Optional<GameInstance> maybeInstance = gameInstanceRepository.findById(bootstrapGameInstanceId);
     if (maybeInstance.isEmpty()
         && devIsolatedProperties.isDevIsolated()
         && devIsolatedGameInstanceRegistry != null) {
-      maybeInstance = devIsolatedGameInstanceRegistry.findById(numericSessionId);
+      maybeInstance = devIsolatedGameInstanceRegistry.findById(bootstrapGameInstanceId);
     }
     if (maybeInstance.isEmpty()) {
-      CommandEnqueueResult failure =
-          CommandEnqueueResult.failure("SESSION_NOT_FOUND", "Session not found");
-      return new LoginCommandHandlingResult(failure, null);
+      return failure("SESSION_NOT_FOUND", "Session not found");
     }
     GameInstance instance = maybeInstance.get();
 
-    String otp = args.size() > 2 ? args.get(2) : "";
+    String otp = StringUtils.hasText(credentials.otp()) ? credentials.otp() : "";
     AuthenticateResponse authResponse =
         accountClient.authenticate(
-            String.valueOf(instance.getTenantId()), args.get(0), args.get(1), otp);
+            String.valueOf(instance.getTenantId()),
+            credentials.loginName(),
+            credentials.password(),
+            otp);
     var error = authResponse.getError();
     if (error != null
         && (!Optional.ofNullable(error.getCode()).orElse("").isBlank()
             || !Optional.ofNullable(error.getMessage()).orElse("").isBlank())) {
-      return new LoginCommandHandlingResult(
-          CommandEnqueueResult.failure(mapErrorCode(error), error.getMessage()), null);
+      return failure(mapErrorCode(error), error.getMessage());
     }
 
     Long authenticatedAccountId = parseAccountId(authResponse.getAccountId());
@@ -121,102 +115,137 @@ public final class LoginCommandHandler {
       return accountMismatchFailure();
     }
 
-    Optional<LoginResult> loginResult =
-        buildLoginResult(instance, authenticatedAccountId, authResponse.getAuthToken());
+    CommandEnqueueResult enqueueResult =
+        commandService.enqueue(sessionId, command.rawLine(), requiresSoloTick);
+    if (!enqueueResult.accepted()) {
+      return fromCommandResult(enqueueResult);
+    }
+    persistSessionContext(
+        numericSessionId,
+        instance.getTenantId(),
+        authenticatedAccountId,
+        credentials.loginName(),
+        authResponse.getAuthToken(),
+        bootstrapGameInstanceId);
+    return new LoginCommandHandlingResult(
+        enqueueResult,
+        List.of(
+            PlayerOutput.message(
+                "Logged in as " + credentials.loginName(),
+                "message.login.success",
+                Map.of("loginName", credentials.loginName()))));
+  }
+
+  private LoginCommandHandlingResult handleVerifiedFirstPartyLogin(
+      String sessionId, TextCommand command, boolean requiresSoloTick) {
+    Long numericSessionId = parseSessionId(sessionId);
+    if (numericSessionId == null) {
+      return invalidSessionFailure();
+    }
+    Optional<net.firedevops.firemud.gamesession.service.FirstPartyConnectContext> maybeContext =
+        firstPartyConnectContextRegistry.find(numericSessionId);
+    if (maybeContext.isEmpty()) {
+      return failure(
+          LoginCommandConstants.PROMPT_MODE_UNSUPPORTED_CODE,
+          LoginCommandConstants.PROMPT_MODE_UNSUPPORTED_MESSAGE);
+    }
+
+    var verifiedContext = maybeContext.get();
+    Optional<GameInstance> maybeInstance =
+        gameInstanceRepository.findById(verifiedContext.gameInstanceId());
+    if (maybeInstance.isEmpty()) {
+      return failure("SESSION_NOT_FOUND", "Session not found");
+    }
+    GameInstance instance = maybeInstance.get();
+    if (instance.getTenantId() != verifiedContext.tenantId()) {
+      return failure("CONNECT_SCOPE_INVALID", "Connect scope invalid");
+    }
+    if (!Objects.equals(instance.getOwnerAccountId(), verifiedContext.accountId())) {
+      return accountMismatchFailure();
+    }
 
     CommandEnqueueResult enqueueResult =
         commandService.enqueue(sessionId, command.rawLine(), requiresSoloTick);
     if (!enqueueResult.accepted()) {
-      return new LoginCommandHandlingResult(enqueueResult, null);
+      return fromCommandResult(enqueueResult);
     }
-    loginResult.ifPresent(result -> persistSessionContext(numericSessionId, result));
-    String responseText = "Logged in as " + args.get(0);
-    return new LoginCommandHandlingResult(enqueueResult, responseText);
+    persistSessionContext(
+        numericSessionId,
+        verifiedContext.tenantId(),
+        verifiedContext.accountId(),
+        "first-party:" + verifiedContext.accountId(),
+        null,
+        verifiedContext.gameInstanceId());
+    return new LoginCommandHandlingResult(
+        enqueueResult,
+        List.of(
+            PlayerOutput.message(
+                "Logged in as first-party account " + verifiedContext.accountId(),
+                "message.login.first-party-success",
+                Map.of("accountId", Long.toString(verifiedContext.accountId())))));
   }
 
-  private void persistSessionContext(long sessionId, LoginResult result) {
-    if (sessionContextService == null || result == null) {
-      return;
-    }
-
-    long tenantId = result.tenantId();
-    long accountId = result.accountId();
-    long characterId = result.characterId();
-
-    sessionContextService
-        .findByAccountAndCharacter(tenantId, accountId, characterId)
-        .ifPresent(
-            existing ->
-                handleExistingSession(sessionId, tenantId, accountId, characterId, existing));
-
-    SessionContext context =
-        new SessionContext(
-            sessionId,
-            tenantId,
-            accountId,
-            characterId,
-            result.gameInstanceId(),
-            result.roomInstanceId(),
-            result.jwt());
-    sessionContextService.save(context);
-    logger.debug(
-        "Updated session context for tenant {} session {} account {} character {}",
-        context.tenantId(),
-        context.sessionId(),
-        context.accountId(),
-        context.characterId());
-  }
-
-  private void handleExistingSession(
-      long incomingSessionId,
+  private void persistSessionContext(
+      long sessionId,
       long tenantId,
       long accountId,
-      long characterId,
-      SessionContext existing) {
-    try (MDC.MDCCloseable tenant = MDC.putCloseable("tenantId", String.valueOf(tenantId));
-        MDC.MDCCloseable account = MDC.putCloseable("accountId", String.valueOf(accountId));
-        MDC.MDCCloseable character = MDC.putCloseable("characterId", String.valueOf(characterId))) {
-      if (existing.sessionId() == incomingSessionId) {
-        resumeCounter.increment();
-        recordTenantMetric("gamesession.session.resume", tenantId);
-        logger.debug(
-            "Session resumed for tenant {} account {} character {} session {}",
-            tenantId,
-            accountId,
-            characterId,
-            incomingSessionId);
-      } else {
-        takeoverCounter.increment();
-        recordTenantMetric("gamesession.session.takeover", tenantId);
-        logger.info(
-            "Taking over session {} for tenant {} account {} character {}; new session {}",
-            existing.sessionId(),
-            tenantId,
-            accountId,
-            characterId,
-            incomingSessionId);
-        sessionContextService.deleteBySessionId(existing.tenantId(), existing.sessionId());
-      }
+      String loginName,
+      String jwt,
+      long bootstrapGameInstanceId) {
+    if (sessionContextService == null) {
+      return;
     }
+    SessionContext existing =
+        sessionContextService.findByTenantAndSessionId(tenantId, sessionId).orElse(null);
+    // LOGIN authenticates account identity. If this session already has gameplay scope, preserve it
+    // so reconnect on the same transport session can continue through PLAY without losing room
+    // state.
+    SessionContext context =
+        existing == null
+            ? new SessionContext(
+                sessionId,
+                tenantId,
+                accountId,
+                loginName,
+                0L,
+                null,
+                0L,
+                null,
+                jwt,
+                null,
+                bootstrapGameInstanceId)
+            : new SessionContext(
+                sessionId,
+                tenantId,
+                accountId,
+                loginName,
+                existing.characterId(),
+                existing.characterName(),
+                existing.gameInstanceId(),
+                existing.roomInstanceId(),
+                jwt,
+                existing.localeTag(),
+                existing.bootstrapGameInstanceId() > 0
+                    ? existing.bootstrapGameInstanceId()
+                    : bootstrapGameInstanceId);
+    sessionContextService.save(context);
+    logger.debug(
+        "Updated login context for tenant {} session {} account {}",
+        context.tenantId(),
+        context.sessionId(),
+        context.accountId());
   }
 
-  private void recordTenantMetric(String name, long tenantId) {
-    meterRegistry.counter(name, "tenantId", String.valueOf(tenantId)).increment();
-  }
-
-  private Optional<LoginResult> buildLoginResult(
-      GameInstance instance, long accountId, String jwt) {
-    if (instance == null) {
-      return Optional.empty();
-    }
-    return Optional.of(
-        new LoginResult(
-            accountId,
-            instance.getTenantId(),
-            accountId,
-            instance.getId(),
-            gameLogicProperties.getDefaultRoomId(),
-            jwt));
+  private long resolveBootstrapGameInstanceId(long sessionId) {
+    return sessionContextService
+        .findBySessionId(sessionId)
+        .map(
+            context ->
+                context.bootstrapGameInstanceId() > 0
+                    ? context.bootstrapGameInstanceId()
+                    : context.gameInstanceId())
+        .filter(candidate -> candidate > 0)
+        .orElse(sessionId);
   }
 
   private static final Map<String, String> CANONICAL_ERROR_MAP =
@@ -271,23 +300,53 @@ public final class LoginCommandHandler {
   }
 
   private LoginCommandHandlingResult invalidSessionFailure() {
-    return new LoginCommandHandlingResult(
-        CommandEnqueueResult.failure("INVALID_ARGUMENT", "sessionId must be numeric"), null);
+    return failure("INVALID_ARGUMENT", "sessionId must be numeric");
   }
 
   private LoginCommandHandlingResult invalidAccountFailure() {
-    return new LoginCommandHandlingResult(
-        CommandEnqueueResult.failure(
-            LoginCommandConstants.INVALID_ACCOUNT_CODE,
-            LoginCommandConstants.INVALID_ACCOUNT_MESSAGE),
-        null);
+    return failure(
+        LoginCommandConstants.INVALID_ACCOUNT_CODE, LoginCommandConstants.INVALID_ACCOUNT_MESSAGE);
   }
 
   private LoginCommandHandlingResult accountMismatchFailure() {
+    return failure(
+        LoginCommandConstants.ACCOUNT_MISMATCH_CODE,
+        LoginCommandConstants.ACCOUNT_MISMATCH_MESSAGE);
+  }
+
+  private LoginCommandHandlingResult failure(String code, String message) {
+    return failure(code, message, loginErrorMessageKey(code), Map.of());
+  }
+
+  private LoginCommandHandlingResult failure(
+      String code, String message, String messageKey, Map<String, String> arguments) {
     return new LoginCommandHandlingResult(
-        CommandEnqueueResult.failure(
-            LoginCommandConstants.ACCOUNT_MISMATCH_CODE,
-            LoginCommandConstants.ACCOUNT_MISMATCH_MESSAGE),
-        null);
+        CommandEnqueueResult.failure(code, message),
+        List.of(PlayerOutput.error(code, message, messageKey, arguments)));
+  }
+
+  private LoginCommandHandlingResult fromCommandResult(CommandEnqueueResult result) {
+    if (result.accepted()) {
+      return new LoginCommandHandlingResult(result, List.of());
+    }
+    return failure(result.errorCode(), result.errorMessage());
+  }
+
+  private String loginErrorMessageKey(String code) {
+    if (code == null) {
+      return null;
+    }
+    return switch (code) {
+      case "SESSION_NOT_FOUND" -> "error.login.session-not-found";
+      case "INVALID_ARGUMENT" -> "error.login.invalid-session-id";
+      case LoginCommandConstants.PROMPT_MODE_UNSUPPORTED_CODE -> "error.login.prompt-unsupported";
+      case LoginCommandConstants.ACCOUNT_MISMATCH_CODE -> "error.login.account-mismatch";
+      case LoginCommandConstants.INVALID_ACCOUNT_CODE -> "error.login.invalid-account";
+      case "INVALID_CREDENTIALS" -> "error.login.invalid-credentials";
+      case "OTP_REQUIRED" -> "error.login.otp-required";
+      case "ACCOUNT_LOCKED" -> "error.login.account-locked";
+      case "UPSTREAM_FAILURE" -> "error.login.upstream-failure";
+      default -> null;
+    };
   }
 }

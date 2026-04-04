@@ -12,6 +12,17 @@ This service follows the conventions in [Environment Variables & Secrets Managem
 - The gRPC server listens on port `6565` by default as configured in `application.yml`.
 - The OpenTelemetry collector endpoint can be overridden via `OTEL_ENDPOINT`.
 
+## FireMUD Settings Domains
+
+The canonical per-key reference for the surfaced pre-`06` platform settings now lives in the generated artifacts below rather than being hand-maintained in this service doc:
+
+- [Platform Settings Reference](../../generated/platform-settings-reference.md)
+- [Platform Settings Schema](../../generated/platform-settings-schema.json)
+
+Game Logic currently owns the operator-default `firemud.communication` layer. The generated reference carries the current defaults, descriptions, valid values or ranges, scope/owner metadata, hot-reloadability, advanced flags, and example values for those keys.
+
+The current effective communication result is also exposed for operator/debug inspection at `/actuator/settings/effective/communication`. It resolves service-local operator defaults plus shared persisted tenant and optional game-instance overrides from the Game Design settings authority. The shared persisted layer is merged in `common-platform-core`; this is still a bounded read model with local TTL/refresh/evict cache semantics rather than a distributed config platform.
+
 ## Dependent-Service Variables
 
 | Variable | Purpose | Default |

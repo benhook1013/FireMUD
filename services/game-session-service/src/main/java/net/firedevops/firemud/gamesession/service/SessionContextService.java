@@ -6,10 +6,15 @@ import java.util.Optional;
 public interface SessionContextService {
   void save(SessionContext context);
 
+  Optional<SessionContext> findBySessionId(long sessionId);
+
   Optional<SessionContext> findByTenantAndSessionId(long tenantId, long sessionId);
 
-  Optional<SessionContext> findByAccountAndCharacter(
-      long tenantId, long accountId, long characterId);
+  Optional<SessionContext> findByGameplayIdentity(
+      long tenantId, long gameInstanceId, long characterId);
+
+  Optional<SessionContext> findByGameplayName(
+      long tenantId, long gameInstanceId, String characterName);
 
   void deleteBySessionId(long tenantId, long sessionId);
 }

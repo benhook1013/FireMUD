@@ -17,6 +17,8 @@ public class GrpcConfig {
         jwtUtil,
         Set.of(
             AccountServiceGrpc.getAuthenticateMethod().getFullMethodName(),
-            AccountServiceGrpc.getPingMethod().getFullMethodName()));
+            AccountServiceGrpc.getPingMethod().getFullMethodName(),
+            AccountServiceGrpc.getGetTenantMembershipForRuntimeMethod().getFullMethodName(),
+            AccountServiceGrpc.getGetTenantEntitlementsForRuntimeMethod().getFullMethodName()));
   }
 }

@@ -1,21 +1,30 @@
 spring:
-  profiles:
-    active: dev
   application:
     name: game-session-service
   flyway:
     enabled: true
-    schemas: ${SERVICE_SCHEMA:public},saga
+    schemas: ${SERVICE_SCHEMA:public}
     locations: classpath:db/migration,classpath:db/migration/saga
     defaultSchema: ${SERVICE_SCHEMA:public}
+    placeholders:
+      serviceSchema: ${SERVICE_SCHEMA:public}
+  jpa:
+    properties:
+      hibernate:
+        default_schema: ${SERVICE_SCHEMA:public}
 game-session:
   dev-isolated: false
 
 management:
   endpoints:
+    access:
+      default: read-only
     web:
       exposure:
-        include: health,prometheus
+        include:
+          - health
+          - prometheus
+          - info
   endpoint:
     health:
       probes:
@@ -35,6 +44,29 @@ firemud:
     game-logic-service: game-logic-service:6565
   conflict:
     ttlSeconds: 300
+  presentation:
+    default-locale-tag: en-NZ
+    default-color-mode: NONE
+    brief-enabled-by-default: false
+    prompt:
+      enabled: true
+      emit-after-reconnect-restore: true
+      coalesce-window-ms: 150
+  reconnection:
+    policy:
+      resume-window-ms: 180000
+      stale-resume-falls-through-to-fresh-entry: true
+    buffer:
+      ttl-ms: 1800000
+      min-messages: 8
+      min-lines: 24
+      soft-max-bytes: 16384
+      hard-max-bytes: 65536
+  movement:
+    post-move-look-enabled: true
+  world-topology:
+    scope-model: MAP_ONLY
+    regions-enabled: false
   grpc:
     cert-chain: ${FIREMUD_GRPC_CERT_CHAIN_PATH:certs/client.crt}
     private-key: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:certs/client.key}

@@ -4,6 +4,7 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.micrometer.core.instrument.MeterRegistry;
+import java.util.Map;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.cache.LookCacheService;
@@ -11,9 +12,14 @@ import net.firedevops.firemud.command.text.LookCommandConstants;
 import net.firedevops.firemud.gamelogic.v1.LookResult;
 import net.firedevops.firemud.gamesession.client.GameLogicClient;
 import net.firedevops.firemud.gamesession.config.DevIsolatedProperties;
+import net.firedevops.firemud.gamesession.config.EffectiveSettingsResolver;
 import net.firedevops.firemud.gamesession.config.GameLogicProperties;
+import net.firedevops.firemud.gamesession.config.PresentationProperties;
+import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
+import net.firedevops.firemud.gamesession.presentation.TextPlayerOutputRenderer;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
+import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -33,11 +39,41 @@ public final class LookCommandHandler {
   private final LookTextRenderer lookTextRenderer;
   private final SessionAuthenticationService sessionAuthenticationService;
   private final GameLogicProperties gameLogicProperties;
+  private final EffectiveSettingsResolver settingsResolver;
   private final MeterRegistry meterRegistry;
   private final LookCacheService lookCacheService;
   private final DevIsolatedProperties devIsolatedProperties;
+  private final TextPlayerOutputRenderer outputRenderer;
 
-  public String describe(String sessionId) {
+  public PlayerOutput describePlayerOutput(String sessionId, boolean includeLongDescription) {
+    return describePlayerOutput(
+        sessionId,
+        includeLongDescription,
+        includeLongDescription
+            ? net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
+                .EXPLICIT_LOOK
+            : net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
+                .QUICKLOOK);
+  }
+
+  public PlayerOutput describePlayerOutput(
+      String sessionId,
+      boolean includeLongDescription,
+      net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason refreshReason) {
+    return describePlayerOutput(
+        sessionId,
+        includeLongDescription,
+        refreshReason,
+        net.firedevops.firemud.gamesession.presentation.LookViewOutput.defaultBriefRenderingHint(
+            refreshReason, includeLongDescription));
+  }
+
+  public PlayerOutput describePlayerOutput(
+      String sessionId,
+      boolean includeLongDescription,
+      net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason refreshReason,
+      net.firedevops.firemud.gamesession.presentation.LookViewOutput.BriefRenderingHint
+          briefRenderingHint) {
     Optional<SessionContext> maybeContext =
         sessionAuthenticationService.resolveSessionContext(sessionId);
     if (maybeContext.isEmpty()) {
@@ -45,49 +81,93 @@ public final class LookCommandHandler {
       return null;
     }
     SessionContext context = maybeContext.get();
-    String tenantTag = Long.toString(context.tenantId());
-    meterRegistry.counter(INVOCATIONS_METRIC, "tenantId", tenantTag).increment();
-    if (devIsolatedProperties.isDevIsolated()) {
-      return LookCommandConstants.ROOM_DESCRIPTION;
-    }
-    try {
-      LookResult lookResult = resolveLook(context);
-      String rendered = lookTextRenderer.render(lookResult);
-      if (!devIsolatedProperties.isDevIsolated()) {
-        cacheLook(context, lookResult, rendered);
+    try (GameplayLoggingContext ignored = GameplayLoggingContext.from(context)) {
+      String tenantTag = Long.toString(context.tenantId());
+      meterRegistry.counter(INVOCATIONS_METRIC, "tenantId", tenantTag).increment();
+      if (devIsolatedProperties.isDevIsolated()) {
+        return PlayerOutput.message(LookCommandConstants.ROOM_DESCRIPTION);
       }
-      return rendered;
-    } catch (StatusRuntimeException ex) {
-      String errorCode = mapStatusToError(ex);
-      recordFailure(tenantTag, errorCode, ex);
-      return formatErrorResponse(errorCode, ex.getStatus().getDescription());
-    } catch (RuntimeException ex) {
-      recordFailure(tenantTag, "UNEXPECTED", ex);
-      return formatErrorResponse("UNEXPECTED", "Internal LOOK failure");
+      try {
+        LookResult lookResult = resolveLook(context);
+        if (lookResult.hasError()) {
+          ErrorDetail error = lookResult.getError();
+          String errorCode =
+              StringUtils.hasText(error.getCode()) ? error.getCode() : "LOOK_UNAVAILABLE";
+          recordFailure(
+              context, tenantTag, errorCode, new IllegalStateException(error.getMessage()));
+          return PlayerOutput.error(
+              errorCode,
+              errorMessage(error.getMessage()),
+              lookErrorMessageKey(errorCode),
+              Map.of());
+        }
+        return toPlayerOutput(
+            context, lookResult, includeLongDescription, refreshReason, briefRenderingHint);
+      } catch (StatusRuntimeException ex) {
+        String errorCode = mapStatusToError(ex);
+        recordFailure(context, tenantTag, errorCode, ex);
+        return PlayerOutput.error(
+            errorCode,
+            errorMessage(ex.getStatus().getDescription()),
+            lookErrorMessageKey(errorCode),
+            Map.of());
+      } catch (RuntimeException ex) {
+        recordFailure(context, tenantTag, "UNEXPECTED", ex);
+        return PlayerOutput.error(
+            "UNEXPECTED", "Internal LOOK failure", "error.look.internal-failure", Map.of());
+      }
     }
   }
 
-  public String describeProtocol(String sessionId) {
-    Optional<SessionContext> maybeContext =
-        sessionAuthenticationService.resolveSessionContext(sessionId);
-    if (maybeContext.isEmpty()) {
-      meterRegistry.counter(INVOCATIONS_METRIC, "tenantId", "unknown").increment();
-      return null;
-    }
-    SessionContext context = maybeContext.get();
-    String rendered = describe(sessionId);
-    if (rendered == null || rendered.isBlank() || rendered.startsWith("ERROR ")) {
-      return rendered;
-    }
-    return buildProtocolResponse(rendered);
+  PlayerOutput toPlayerOutput(SessionContext context, LookResult lookResult) {
+    return toPlayerOutput(
+        context,
+        lookResult,
+        true,
+        net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason.EXPLICIT_LOOK);
   }
 
-  String renderProtocol(SessionContext context, LookResult lookResult) {
-    String rendered = lookTextRenderer.render(lookResult);
+  PlayerOutput toPlayerOutput(
+      SessionContext context, LookResult lookResult, boolean includeLongDescription) {
+    return toPlayerOutput(
+        context,
+        lookResult,
+        includeLongDescription,
+        includeLongDescription
+            ? net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
+                .EXPLICIT_LOOK
+            : net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
+                .QUICKLOOK);
+  }
+
+  PlayerOutput toPlayerOutput(
+      SessionContext context,
+      LookResult lookResult,
+      boolean includeLongDescription,
+      net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason refreshReason) {
+    return toPlayerOutput(
+        context,
+        lookResult,
+        includeLongDescription,
+        refreshReason,
+        net.firedevops.firemud.gamesession.presentation.LookViewOutput.defaultBriefRenderingHint(
+            refreshReason, includeLongDescription));
+  }
+
+  PlayerOutput toPlayerOutput(
+      SessionContext context,
+      LookResult lookResult,
+      boolean includeLongDescription,
+      net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason refreshReason,
+      net.firedevops.firemud.gamesession.presentation.LookViewOutput.BriefRenderingHint
+          briefRenderingHint) {
+    PlayerOutput output =
+        lookTextRenderer.toPlayerOutput(
+            lookResult, includeLongDescription, refreshReason, briefRenderingHint);
     if (!devIsolatedProperties.isDevIsolated()) {
-      cacheLook(context, lookResult, rendered);
+      cacheLook(context, lookResult, output);
     }
-    return buildProtocolResponse(rendered);
+    return output;
   }
 
   private LookResult resolveLook(SessionContext context) {
@@ -99,7 +179,8 @@ public final class LookCommandHandler {
         Long.toString(context.tenantId()),
         Long.toString(context.sessionId()),
         Long.toString(context.characterId()),
-        roomId);
+        roomId,
+        StringUtils.hasText(context.localeTag()) ? context.localeTag() : "");
   }
 
   private String mapStatusToError(StatusRuntimeException ex) {
@@ -117,68 +198,66 @@ public final class LookCommandHandler {
     };
   }
 
-  private String formatErrorResponse(String code, String description) {
-    String message =
-        description != null && !description.isBlank() ? description : "Look unavailable";
-    return "ERROR " + code + " " + message;
+  private String errorMessage(String description) {
+    return description != null && !description.isBlank() ? description : "Look unavailable";
   }
 
-  private void recordFailure(String tenantTag, String errorTag, RuntimeException ex) {
+  private void recordFailure(
+      SessionContext context, String tenantTag, String errorTag, RuntimeException ex) {
     meterRegistry.counter(FAILURES_METRIC, "tenantId", tenantTag, "error", errorTag).increment();
     LOG.warn(
-        "LOOK failed for tenantId={}, error={}, sessionId={}",
+        "LOOK failed tenantId={} gameInstanceId={} characterId={} error={} reason={}",
         tenantTag,
+        context.gameInstanceId(),
+        context.characterId(),
         errorTag,
         ex.getMessage(),
         ex);
   }
 
-  private void cacheLook(SessionContext context, LookResult lookResult, String rendered) {
+  private void cacheLook(SessionContext context, LookResult lookResult, PlayerOutput output) {
+    long cacheKey = effectiveLookCacheKey(context);
     try {
+      PresentationProperties effectivePresentation = settingsResolver.presentation(context);
+      String localeTag = StringUtils.hasText(context.localeTag()) ? context.localeTag() : null;
+      String rendered = outputRenderer.render(output, localeTag, effectivePresentation);
       lookCacheService.cache(
           context.tenantId(),
-          context.sessionId(),
+          cacheKey,
           lookRoomId(lookResult),
           rendered,
-          buildProtocolResponse(rendered));
+          outputRenderer.renderSuccessfulForCommandType(
+              TextCommandType.LOOK, java.util.List.of(output), localeTag, effectivePresentation));
     } catch (RuntimeException ex) {
-      LOG.warn("Failed to cache LOOK for session {}", context.sessionId(), ex);
-    }
-  }
-
-  public Optional<String> cachedLook(String tenantIdHeader, String sessionIdHeader) {
-    if (devIsolatedProperties.isDevIsolated()) {
-      return Optional.empty();
-    }
-    if (!StringUtils.hasText(tenantIdHeader) || !StringUtils.hasText(sessionIdHeader)) {
-      return Optional.empty();
-    }
-    long tenantId;
-    long sessionId;
-    try {
-      tenantId = Long.parseLong(tenantIdHeader);
-      sessionId = Long.parseLong(sessionIdHeader);
-    } catch (NumberFormatException ex) {
-      LOG.debug(
-          "Invalid cached LOOK identifiers tenant={} session={}",
-          tenantIdHeader,
-          sessionIdHeader,
+      LOG.warn(
+          "Failed to cache LOOK tenantId={} gameInstanceId={} characterId={} cacheKey={}",
+          context.tenantId(),
+          context.gameInstanceId(),
+          context.characterId(),
+          cacheKey,
           ex);
-      return Optional.empty();
     }
-    Optional<SessionContext> maybeContext =
-        sessionAuthenticationService.resolveSessionContext(sessionIdHeader);
-    if (maybeContext.isEmpty() || maybeContext.get().tenantId() != tenantId) {
-      return Optional.empty();
-    }
-    return lookCacheService.get(tenantId, sessionId).map(LookCacheService.CachedLook::protocolText);
-  }
-
-  String buildProtocolResponse(String rendered) {
-    return "OK LOOK\n" + rendered + "\n\n";
   }
 
   private String lookRoomId(LookResult lookResult) {
     return lookResult.getRoomInstance().getRoomInstanceId();
+  }
+
+  private long effectiveLookCacheKey(SessionContext context) {
+    return context.gameInstanceId() > 0 ? context.gameInstanceId() : context.sessionId();
+  }
+
+  private String lookErrorMessageKey(String errorCode) {
+    if (errorCode == null) {
+      return null;
+    }
+    return switch (errorCode) {
+      case "ROOM_NOT_FOUND" -> "error.look.room-not-found";
+      case "WORLD_UNAVAILABLE" -> "error.look.world-unavailable";
+      case "ENTITY_UNAVAILABLE" -> "error.look.entity-unavailable";
+      case "NOT_AUTHORIZED" -> "error.look.not-authorized";
+      case "LOOK_UNAVAILABLE" -> "error.look.unavailable";
+      default -> null;
+    };
   }
 }

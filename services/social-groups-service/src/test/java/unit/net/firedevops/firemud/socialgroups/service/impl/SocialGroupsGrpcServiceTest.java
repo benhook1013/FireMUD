@@ -2,9 +2,12 @@ package net.firedevops.firemud.socialgroups.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.mockito.Mockito.verify;
 
 import io.grpc.stub.StreamObserver;
 import java.util.concurrent.atomic.AtomicReference;
+import net.firedevops.firemud.socialgroups.dto.SendMessageRequestDto;
+import net.firedevops.firemud.socialgroups.enums.ChatType;
 import net.firedevops.firemud.socialgroups.service.ChatService;
 import net.firedevops.firemud.socialgroups.service.FriendService;
 import net.firedevops.firemud.socialgroups.service.GuildService;
@@ -13,6 +16,7 @@ import net.firedevops.firemud.socialgroups.service.PingService;
 import net.firedevops.firemud.socialgroups.v1.CreateGuildResponse;
 import net.firedevops.firemud.socialgroups.v1.PingRequest;
 import net.firedevops.firemud.socialgroups.v1.PingResponse;
+import net.firedevops.firemud.socialgroups.v1.SendMessageResponse;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
@@ -78,5 +82,43 @@ class SocialGroupsGrpcServiceTest {
 
     assertNotNull(ref.get());
     assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+  }
+
+  @Test
+  void sendMessageMapsWhisperProtoToDomainEnum() {
+    PingService ping = Mockito.mock(PingService.class);
+    ChatService chat = Mockito.mock(ChatService.class);
+    GuildService guild = Mockito.mock(GuildService.class);
+    FriendService friend = Mockito.mock(FriendService.class);
+    MailService mail = Mockito.mock(MailService.class);
+    SocialGroupsGrpcService service = new SocialGroupsGrpcService(ping, chat, guild, friend, mail);
+
+    AtomicReference<SendMessageResponse> ref = new AtomicReference<>();
+    service.sendMessage(
+        net.firedevops.firemud.socialgroups.v1.SendMessageRequest.newBuilder()
+            .setTenantId("1")
+            .setSenderId("2")
+            .setType(net.firedevops.firemud.socialgroups.v1.ChatType.CHAT_TYPE_WHISPER)
+            .setRecipientId("7")
+            .setContent("quiet")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(SendMessageResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    verify(chat)
+        .sendMessage(
+            new SendMessageRequestDto(1L, 2L, ChatType.WHISPER, "", 7L, null, null, "quiet"));
+    assertNotNull(ref.get());
+    assertEquals(true, ref.get().getSuccess());
   }
 }

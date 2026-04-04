@@ -32,7 +32,7 @@ Expected response:
 
 - `Ping(PingRequest) returns (PingResponse)` is the basic connectivity check defined in [`game_logic_service.proto`](../../../../protos/game-logic/v1/game_logic_service.proto).
 - `ExecuteCommand(ExecuteCommandRequest) returns (ExecuteCommandResponse)` evaluates a parsed gameplay command and returns the outcome.
-- `BroadcastSay` accepts `tenant_id`, `session_id`, `character_id`, and a `RoomInstanceRef` (`tenant_id`, `game_instance_id`, `room_instance_id`), plus normalized `text` and an alias indicator (`SAY` / `YELL` / `WHISPER`). The handler validates length, enforces room chat controls, and returns delivery metadata (recipient identifiers, NPC echoes, optional acknowledgements) along with structured status codes so Game Session can render the canonical response.
+- `SendCommunication` accepts `tenant_id`, `session_id`, `character_id`, speaker metadata, normalized `text`, and explicit target/scope metadata. It is the shared gameplay communication contract for the current built-in modes and should evolve toward richer communication-intent handling rather than splintering into one bespoke API per verb.
 - All application-level failures are returned via `shared.v1.ErrorDetail` while the gRPC status remains `OK`; `grpc.app_error` must be recorded with the error code.
 
 ```bash
@@ -57,27 +57,47 @@ grpcurl -plaintext -d '{"tenant_id":"demo","session_id":"demo","command":"look"}
 ## LOOK Aggregation and Formatting
 
 - `ResolveLook` orchestrates World Management and Entity Management: World provides room topology, ambient state, and the authoritative occupant set for the target room or instance, while Entity enriches those caller-supplied occupant references with live entity and ground-item display data to build a deterministic `LookResult` that Game Session renders for clients.
-- A dedicated `LookResultRenderer` keeps the canonical textual output aligned with the documented room-name, description, exit, and entity transcripts while the DTO stays structured.
+- The target-state `LookResult` should stay explicitly sectioned rather than collapsing everything into one mixed list. At minimum it should preserve distinct sections for room/world snapshot data, exits, visible occupants, visible room-ground items from the room-attached container, and later optional overlays such as combat, hazards, or ambient scripted notices.
+- A dedicated `LookResultRenderer` remains useful for local development, diagnostics, and test fixtures, but the canonical player-facing transcript is owned by Game Session. Game Logic's durable contract is the structured `LookResult`, not a rendered text payload. The default text renderer should flatten room prose, visible occupants, and visible room-ground items into one classic descriptive block beneath the room title rather than rendering a sparse line-by-line inventory of sections.
 - Downstream errors from World or Entity services are labeled (`WorldManagement`, `EntityManagement`) so they surface as precise error codes such as `ROOM_NOT_FOUND`, `WORLD_UNAVAILABLE`, and `ENTITY_UNAVAILABLE` when Game Session formats Telnet and WebSocket replies.
 - Game Logic is the orchestration boundary for these gameplay reads; downstream services on the hot path should answer from owned state, caches, or caller-supplied references rather than recursively building additional steady-state fan-out trees.
+- Game Logic must not depend on reconnect-oriented rendered transcript state. Reconnect transcript restoration is a Game Session presentation concern. If FireMUD later needs a validated reusable room-view read cache for normal `LOOK` performance, that cache should sit near Game Logic orchestration and must be guarded by the same room/entity fence and version checks that protect fresh `ResolveLook` output.
+- `LOOK` should describe what is immediately visible in the current room. Visible bags, corpses, chests, or similar containers may appear as room-ground items, but nested container contents should not be expanded inline by default; later item/container commands can inspect those contents explicitly.
+- The standard `QUICKLOOK` command should be treated as another built-in room-view rendering mode over the same structured result: it keeps occupants, room-ground items, exits, and later overlays, but omits the room-description prose for faster redraws.
 
-## SAY Broadcast Flow
+## Communication Flow
 
-- Game Session channels authenticated commands through `BroadcastSay`, supplying the same `RoomInstanceRef` context (`tenantId`, `gameInstanceId`, `roomInstanceId`) that guards `LOOK`.
-- The command parser normalizes `SAY`, `YELL`, and `WHISPER` aliases before forwarding trimmed text so downstream services can enforce one validation contract.
-- Game Logic validates message length and room-chat rules, determines the occupied room, and delegates delivery to Social & Groups rather than rendering chat locally.
-- The resulting delivery metadata (recipient list, NPC echoes) is returned to Game Session, while failures populate `shared.v1.ErrorDetail` so the text protocol can emit `ERROR SAY_NOT_DELIVERED` or equivalent stable responses.
-- This pathway mirrors the `LOOK` guard: unauthenticated requests never reach `BroadcastSay`, and Social & Groups outages surface as structured `PERMISSION_DENIED` or `UNAVAILABLE` errors so Game Session can keep `ERROR NOT_AUTHENTICATED` gating predictable.
+- Game Session channels authenticated communication commands through Game Logic, supplying the same gameplay identity and world context that guard `LOOK`.
+- `SendCommunication` is the current shared communication action rather than a permanent `say`-only API surface.
+- Game Logic validates message length and communication rules, resolves the communication target/scope, applies gameplay interception/perception rules, and dispatches to Social & Groups rather than rendering chat locally.
+- The longer-term communication model should generalize this flow from a `BroadcastSay`-style API to a communication-intent pathway with:
+  - a game-configured communication type definition,
+  - explicit target/scope objects such as room, area, region, group, or direct target,
+  - recipient resolution owned by those targets/scopes,
+  - and per-recipient presentation metadata.
+- In-world communication should therefore target the room/area/etc. itself rather than precomputing a final flat recipient list in the sender path. That allows target-owned resolution to include ordinary listeners plus observers/interceptors such as eavesdroppers, spies, magical listeners, or other game-specific mechanics.
+- The first standard built-ins should be:
+  - `say` targeting the current room,
+  - `whisper` targeting one character in the current room,
+  - `tell` targeting one character directly outside room scope by default.
+- `shout` should remain a future built-in and should not be implemented until the game-settings model can describe topology-dependent scope such as region-wide versus map-wide propagation.
+- Observer perception should be determined by layered rules rather than by one owner alone:
+  - the communication type defines the baseline observability contract and what kinds of recipient views are even possible,
+  - the target/scope determines which ordinary listeners and observer/interceptor candidates qualify in this location or social scope,
+  - and recipient capabilities or effects determine whether that qualifying recipient receives full content, partial content, or only metadata such as “someone whispered here.”
+- The resulting delivery metadata (recipient list, NPC echoes, speaker/target metadata, recipient roles, and perception classification) is returned to Game Session, while failures populate `shared.v1.ErrorDetail` so the text protocol can emit `ERROR COMMUNICATION_NOT_DELIVERED` or equivalent stable responses.
+- This pathway mirrors the `LOOK` guard: unauthenticated requests never reach `SendCommunication`, and Social & Groups outages surface as structured `PERMISSION_DENIED` or `UNAVAILABLE` errors so Game Session can keep stage-aware gating predictable.
 
-### Current scope versus future speech semantics
+### Current scope versus future communication semantics
 
-- The current `BroadcastSay` contract is intentionally scoped to room-local speech and preserves only a lightweight alias distinction (`SAY`, `YELL`, `WHISPER`) so the first chat slice can prove the end-to-end gameplay path.
-- This contract should not be treated as the final abstraction for all communication types. Future speech work should separate:
+- The live communication contract is now `SendCommunication`, which carries a communication type plus target metadata through one shared gameplay path.
+- This contract should not be treated as the final completed abstraction for all communication types. Future work should continue to separate:
   - the communication act (`say`, `whisper`, `shout`, `tell`, guild/channel/system message, emote-like narration),
-  - the audience scope (same room, directed target, nearby area, map/region, continent/world, account/group/channel),
+  - the audience scope or target object (same room, directed target, nearby area, map/region, continent/world, account/group/channel),
+  - the recipient-resolution rules owned by that scope, including observer/interceptor resolution,
   - and presentation/rendering style (for example, `Alice whispers to Bob...` versus a generic room broadcast).
-- In particular, future `WHISPER` and `TELL` behavior must preserve target-directed delivery semantics rather than collapsing into generic room chat, and future `SHOUT`-style behavior may depend on world-topology concepts such as area, map, or region propagation.
-- When those later slices land, prefer evolving this pathway toward a more generic communication envelope plus explicit audience/propagation metadata rather than adding one bespoke pipeline per verb.
+- In particular, `whisper` and `tell` preserve target-directed delivery semantics rather than collapsing into generic room chat, and future `shout` behavior may depend on world-topology concepts such as area, map, or region propagation.
+- When later slices land, prefer evolving this pathway with richer target/scope resolution and presentation metadata rather than adding one bespoke pipeline per verb.
 
 ## Implementation Status
 
@@ -89,6 +109,6 @@ grpcurl -plaintext -d '{"tenant_id":"demo","session_id":"demo","command":"look"}
 
 ### Chat Slice
 
-- Live: `BroadcastSay` accepts authenticated `SAY` / `YELL` / `WHISPER` payloads, validates length, aggregates recipient and NPC metadata, and forwards the normalized message to the Social & Groups stub. The API returns delivery metadata and `shared.v1.ErrorDetail` codes so Game Session can render the canonical transcript and surface `gamesession.command.say.*` instrumentation.
-- Stubbed: delivery currently uses the Social & Groups regression stub that records `SendMessage` calls and echoes success while cross-service WebSocket and Telnet tests assert the structured response before adding a richer narrative layer.
-- Deferred: richer NPC replies, directed/private delivery semantics, localized listening areas, area/map/region propagation rules, channel filters, and profanity-escalation behavior will land in later slices once the foundational flow proves stable.
+- Live: `SendCommunication` accepts authenticated `SAY`, `WHISPER`, and `TELL` payloads, validates length, resolves room-scoped or direct-target delivery metadata, and forwards the normalized message to the Social & Groups stub with explicit type and recipient information. The API returns speaker/target delivery metadata, structured per-recipient view metadata, and `shared.v1.ErrorDetail` codes so Game Session can render the canonical transcript and later recipient-delivery slices can consume the same authoritative recipient-view model.
+- Stubbed: downstream delivery still uses the Social & Groups regression stub that records `SendMessage` calls and echoes success while cross-service WebSocket and Telnet tests assert the canonical actor transcript and explicit recipient metadata.
+- Deferred: first-party/MCP-aware recipient presentation, richer NPC replies, area/map/region propagation rules, channel filters, and profanity-escalation behavior will land in later slices once the foundational communication flow proves stable.

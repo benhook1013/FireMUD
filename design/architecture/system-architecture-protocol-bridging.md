@@ -26,7 +26,7 @@ Despite their differences, both protocols are normalized into the same internal 
 - Routed through the [Spring Cloud Gateway](./microservices/spring-cloud-gateway/README.md), which supports WebSocket proxying.
 - Canonical player-facing endpoint is `/ws/game/**` (token-enforced for non-proxy clients; trusted TCP Proxy bridge is authenticated by mTLS identity).
 - Forwarded to the [Game Session Service](./microservices/game-session-service/README.md), which maintains the gameplay session.
-- When Spring Cloud Gateway or Game Session pods restart, **clients reconnect their WebSocket connections**, acquire a fresh connect token for `/ws/game/**`, then re-run `LOGIN`/`PLAY`. Game Session uses Redis-backed session state to resume gameplay where possible as described in [Reconnection Strategy](./system-architecture-reconnection.md). The gateway does not maintain hidden, long‑lived WebSocket tunnels across its own restarts; it simply resumes routing once clients re‑establish connections.
+- Game Session restart should ideally be absorbed behind the established edge connection using shared state and backend rebind, as described in [Reconnection Strategy](./system-architecture-reconnection.md). Spring Cloud Gateway remains the edge socket owner, so a client whose live WebSocket was terminated on the specific Gateway process that restarted or crashed still reconnects, acquires a fresh connect token for `/ws/game/**`, and re-runs `LOGIN`/`PLAY`. Unaffected sockets on other healthy Gateway instances should remain up, and the gateway fleet should continue accepting new handshakes through those healthy instances.
 
 ### WebSocket Flow Benefits
 
@@ -44,30 +44,16 @@ Despite their differences, both protocols are normalized into the same internal 
 
 ## Telnet / TCP Client Flow (Legacy Clients)
 
-> Note: This section intentionally summarizes the Telnet flow at a high level for system context. The canonical, detailed semantics for the Telnet `SESSION` envelope, header propagation, and related metrics live in the TCP Proxy Service design’s **Telnet Session Envelope & Event Metrics** section; treat that document as the source of truth when protocol details and edge cases matter.
-
 - Used by traditional MUD clients (e.g., MUDlet, TinTin++, GMud).
 - Clients connect using raw TCP (typically Telnet-compatible) and are handled by a dedicated **TCP Proxy Service**.
 - The TCP Proxy Service listens on port `2323` by default so Telnet clients can simply connect without additional configuration. This and the Spring Cloud Gateway WebSocket URL can be adjusted with the `TCP_PROXY_PORT` and `GATEWAY_WS_URL` environment variables described in the [TCP Proxy Service design](./microservices/tcp-proxy-service/README.md#environment-variables). The proxy’s `dev` profile may fall back to `ws://spring-cloud-gateway:8080/ws/game` when `GATEWAY_WS_URL` is unset, but shared and player-facing environments must set `GATEWAY_WS_URL` explicitly. See [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md) for general configuration guidance.
-- Normal Telnet clients never need to send a `SESSION` envelope. They connect, issue `LOGIN`, then complete lobby binding with `PLAY` before gameplay commands; `SESSION` is an **optional optimization** for advanced tools. This document intentionally does not redefine envelope or header rules; for the canonical `SESSION` envelope behaviour (including malformed/partial handling and header propagation), see the TCP Proxy design’s **Telnet Session Envelope & Event Metrics** section. `SESSION` envelopes are scoped to a single TCP connection: advanced clients that reconnect must resend `SESSION` if they want those hints/headers applied on the new connection, even when the underlying gameplay session resumes from Redis. The wire form uses canonical server-issued opaque identifiers for `gameInstanceId` and `tenantId`; gameplay aliases such as `primary` are resolved later by Game Session and are not valid `SESSION` envelope values.
+- Normal Telnet clients connect, optionally browse `WORLDS`, then issue `LOGIN` and `PLAY` before gameplay commands. Typed `SESSION` lines are no longer part of the Telnet contract. If smart-client attach hints return later, they should travel as hidden MCP metadata and remain advisory transport context only.
 
 The proxy establishes the Proxy → Gateway gameplay WebSocket lazily for each Telnet connection:
 
-- The proxy may read and validate an optional initial `SESSION <gameInstanceId> <tenantId>` envelope before opening the WebSocket bridge so those values can be promoted into the initial authenticated handshake headers.
-- The bridge must be opened before the first non-`SESSION` line is forwarded upstream. That first forwarded line may be `LOGIN`, an MCP control line, or any other gameplay text.
-- Once the first non-`SESSION` line has been forwarded, the attach-hint phase is over. Later `SESSION` text is treated only as ordinary forwarded input and must not retroactively alter handshake headers or session binding.
-
-Example:
-
-- Client sends `SESSION <gameInstanceId> <tenantId>`.
-- TCP Proxy validates and captures the envelope, opens the authenticated Proxy → Gateway WebSocket, and includes `X-Proxy-Game-Instance-Id`, `X-Proxy-Tenant-Id`, and `X-Proxy-Connection-Id` in that initial handshake as applicable.
-- The next line, such as `LOGIN ...`, is the first forwarded gameplay line on the already-established bridge.
-
-Pre-admission trust/policy rejection example:
-
-- Client connects and sends `SESSION <gameInstanceId> <tenantId>`.
-- TCP Proxy attempts to open the authenticated Proxy → Gateway bridge, but the handshake fails due to trust/policy checks such as certificate validation or policy deny.
-- Because gameplay admission never succeeded, the proxy fail-closes the Telnet socket with `policy_violation`, not `backend_unavailable`.
+- The bridge is opened before the first forwarded gameplay or MCP line.
+- The proxy may include server-owned advisory bootstrap metadata on the authenticated Proxy → Gateway handshake when local defaults or future hidden MCP-carried smart-client hints are available.
+- Those hints must never bypass `LOGIN` + `PLAY` or retroactively alter an already-established gameplay binding.
 
 Planned Gateway drain example:
 
@@ -80,13 +66,13 @@ Clean upstream logout example:
 - Game Session or Gateway closes the authenticated internal bridge with `1000/logout` and a supported bounded subreason such as `takeover`, `user_logout`, `admin_termination`, or `none`.
 - TCP Proxy preserves that clean upstream session-end signal as the Telnet-side `logout` category with the same bounded subreason instead of translating it into `backend_unavailable`.
 
-Unattributed bridge-loss example:
+Unattributed bridge-loss example affecting one established Telnet bridge:
 
 - The authenticated internal bridge drops without a machine-parseable planned-drain close (for example abrupt transport reset or crash).
 - TCP Proxy classifies the loss as `bridge_shutdown_class=unattributed_failure`.
-- For an already-established Telnet session, the proxy closes the client connection immediately with `backend_unavailable`; it does not hold the TCP socket open for hidden bridge recovery.
+- For that already-established Telnet session, the proxy closes the client connection immediately with `backend_unavailable`; it does not hold the TCP socket open for hidden bridge recovery. Other Telnet sessions whose bridges terminate on healthy Gateway instances should remain unaffected.
 
-MCP negotiation and cord state are also scoped to a single TCP connection. When a Telnet client reconnects after any disconnect (including Gateway outages, TCP Proxy restarts, or client-side network loss), it must re-run MCP negotiation and re-open any required cords. Redis-backed gameplay session state (account/player identity, tick queues, cooldowns) is distinct from MCP/SESSION state and governs whether gameplay resumes or starts fresh. See [Mud Client Protocol (MCP) Support](./system-architecture-mud-client-protocol.md#reconnection--session-recovery) for details.
+MCP negotiation and cord state are also scoped to a single TCP connection. When a Telnet client reconnects after any disconnect (including Gateway outages, TCP Proxy restarts, or client-side network loss), it must re-run MCP negotiation and re-open any required cords. Redis-backed gameplay session state (account/player identity, tick queues, cooldowns) is distinct from MCP metadata and governs whether gameplay resumes or starts fresh. See [Mud Client Protocol (MCP) Support](./system-architecture-mud-client-protocol.md#reconnection--session-recovery) for details.
 
 ---
 
@@ -101,9 +87,9 @@ The combined TCP Proxy → Spring Cloud Gateway → Game Session path preserves 
 - **Explicit drop conditions (edge layers)** – Commands or lines may be dropped under clearly defined conditions, including:
   - TCP Proxy upstream-bridge failures: if the TCP Proxy cannot establish the Proxy → Gateway WebSocket bridge within its bounded retry budget because upstream gameplay is unavailable, it closes the Telnet connection with `backend_unavailable`. If handshake trust checks fail (for example mTLS certificate validation or policy deny), it closes with `policy_violation` instead. For established sessions where the bridge drops, the proxy closes the Telnet connection immediately according to the canonical disconnect taxonomy: clean authenticated `1000/logout` closes preserve `logout` with the corresponding bounded subreason, while unattributed established-session bridge loss maps to `backend_unavailable`. If upstream backpressure causes the proxy’s Telnet → Gateway input buffer ceiling to be exceeded while upstream remains reachable, it closes the connection with `policy_violation` and records `edge_backpressure` context in logs/metrics rather than silently discarding gameplay commands.
   - MCP-specific budgets (for example control-line rate and `_data-tag` continuation limits) that discard excess MCP control lines while keeping the connection open, as described in [Mud Client Protocol (MCP) Support](./system-architecture-mud-client-protocol.md);
-  - Abuse and safety limits in the TCP Proxy Service (oversize lines, malformed envelopes) where the proxy either discards input or closes the connection;
+  - Abuse and safety limits in the TCP Proxy Service (oversize lines, malformed Telnet or MCP traffic) where the proxy either discards input or closes the connection;
   - Client-side disconnects or network loss (TCP/WebSocket) where the edge cannot reliably determine whether the last few bytes were delivered to the client.
-- **No implicit replay on reconnect** – Neither Spring Cloud Gateway nor the TCP Proxy Service replays gameplay commands or MCP messages across reconnects. After any disconnect, clients must resend `LOGIN`, re-establish gameplay scope with `PLAY`, and include any optional `SESSION`/MCP negotiation needed for that new connection. Non-proxy WebSocket clients must also present a fresh connect token when opening `/ws/game/**`. Clients then rely on Game Session and Redis to resume or start fresh according to [Reconnection Strategy](./system-architecture-reconnection.md). Game Session and downstream domain services may use internal effect identifiers and transactional idempotency to protect tick processing and side effects, but these mechanisms are not exposed directly in the Telnet and WebSocket text protocol.
+- **No implicit replay on reconnect** – Neither Spring Cloud Gateway nor the TCP Proxy Service replays gameplay commands or MCP messages across reconnects. After any disconnect, clients must resend `LOGIN`, re-establish gameplay scope with `PLAY`, and re-run MCP negotiation for that new connection if they use MCP. Non-proxy WebSocket clients must also present a fresh connect token when opening `/ws/game/**`. Clients then rely on Game Session and Redis to resume or start fresh according to [Reconnection Strategy](./system-architecture-reconnection.md). Game Session and downstream domain services may use internal effect identifiers and transactional idempotency to protect tick processing and side effects, but these mechanisms are not exposed directly in the Telnet and WebSocket text protocol.
 
 Edge behaviour distinguishes between **gameplay command lines** and **MCP/control lines**:
 
@@ -245,9 +231,10 @@ When PROXY protocol is enabled, the TCP Proxy Service derives the real client IP
 Resume affects gameplay identity and session binding, not transport continuity:
 
 - Neither the TCP Proxy nor Gateway replays prior outbound text or MCP traffic onto a newly reconnected client transport.
-- After a successful reconnect and `PLAY`, Game Session may emit fresh state reconstruction output derived from current authoritative state (for example room description, prompt, status snapshot, or newly generated MCP state) for the new transport.
+- After a successful reconnect and `PLAY`, Game Session may emit a bounded per-player transcript window followed by fresh state reconstruction output derived from current authoritative state (for example room description, prompt, status snapshot, or newly generated MCP state) for the new transport.
 - Allowed reconstruction output must be re-derived from current state at resume time; it must not be a byte-for-byte replay of previously queued outbound payloads from the old transport.
 - If previously delivered content and newly derived reconstruction happen to look similar to a human reader, that is acceptable only because the content was regenerated from current state, not because the transport backlog was replayed.
+- Prompt/status output remains a special output class rather than ordinary transcript text. Prompt lines should be coalesced after bursts of gameplay output and regenerated fresh for the new transport rather than copied into the reconnect transcript buffer. Current operator-default prompt behavior is surfaced in Game Session through `firemud.presentation.prompt.enabled`, `firemud.presentation.prompt.emit-after-reconnect-restore`, and `firemud.presentation.prompt.coalesce-window-ms`.
 - MCP cords and negotiation remain per TCP connection as defined in [Mud Client Protocol (MCP) Support](./system-architecture-mud-client-protocol.md#reconnection--session-recovery); resumed gameplay state must not assume that prior MCP channels still exist.
 
 ### WebSocket Bridge Configuration

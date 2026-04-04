@@ -19,6 +19,7 @@ import net.firedevops.firemud.socialgroups.v1.CreateGuildResponse;
 import net.firedevops.firemud.socialgroups.v1.PingRequest;
 import net.firedevops.firemud.socialgroups.v1.PingResponse;
 import net.firedevops.firemud.socialgroups.v1.SendMailResponse;
+import net.firedevops.firemud.socialgroups.v1.SendMessageRequest;
 import net.firedevops.firemud.socialgroups.v1.SendMessageResponse;
 import net.firedevops.firemud.socialgroups.v1.SocialGroupsServiceGrpc;
 import org.springframework.grpc.server.service.GrpcService;
@@ -55,7 +56,7 @@ public class SocialGroupsGrpcService extends SocialGroupsServiceGrpc.SocialGroup
           new SendMessageRequestDto(
               Long.valueOf(request.getTenantId()),
               Long.valueOf(request.getSenderId()),
-              net.firedevops.firemud.socialgroups.enums.ChatType.valueOf(request.getType().name()),
+              mapChatType(request),
               request.getChannelId(),
               request.getRecipientId().isEmpty() ? null : Long.valueOf(request.getRecipientId()),
               request.getGuildId().isEmpty() ? null : Long.valueOf(request.getGuildId()),
@@ -78,6 +79,20 @@ public class SocialGroupsGrpcService extends SocialGroupsServiceGrpc.SocialGroup
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     }
+  }
+
+  private net.firedevops.firemud.socialgroups.enums.ChatType mapChatType(
+      SendMessageRequest request) {
+    return switch (request.getType()) {
+      case CHAT_TYPE_SAY -> net.firedevops.firemud.socialgroups.enums.ChatType.SAY;
+      case CHAT_TYPE_TELL -> net.firedevops.firemud.socialgroups.enums.ChatType.TELL;
+      case CHAT_TYPE_WHISPER -> net.firedevops.firemud.socialgroups.enums.ChatType.WHISPER;
+      case CHAT_TYPE_GUILD -> net.firedevops.firemud.socialgroups.enums.ChatType.GUILD;
+      case CHAT_TYPE_CITY -> net.firedevops.firemud.socialgroups.enums.ChatType.CITY;
+      case CHAT_TYPE_ACCOUNT -> net.firedevops.firemud.socialgroups.enums.ChatType.ACCOUNT;
+      case UNRECOGNIZED, CHAT_TYPE_UNSPECIFIED ->
+          throw new IllegalArgumentException("Unsupported chat type: " + request.getType());
+    };
   }
 
   @Override

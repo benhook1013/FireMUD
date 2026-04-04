@@ -26,6 +26,7 @@
 - To scale out, operators add more Game Session pods and allow the scheduler to assign regions to new instances; each instance acquires leases for its assigned regions.
 - To rebalance load, an instance can stop renewing the lease for selected regions and drain in-flight work to a safe point; other instances then acquire those leases and continue tick processing from the existing Redis state.
 - Combined with region sizing, splitting hot regions and merging cold ones, this lease-based ownership model allows FireMUD to scale horizontally without global downtime.
+- The same externalized-state model is the target for ordinary non-edge restart recovery. If a Game Session pod restart still causes client-visible reconnect while Gateway/TCP Proxy stayed healthy, treat that as a gap in takeover implementation or coordination design, not as the intended operating model.
 
 ## Dev-Isolated Mode
 
@@ -43,9 +44,9 @@ See [System Architecture Testing](../../system-architecture-testing.md) for the 
 
 ### Chat slice status
 
-- **Live:** `SAY`/`YELL`/`WHISPER` commands route through `SayCommandHandler`, which enforces the shared session guard, forwards normalized payloads to Game Logic's `BroadcastSay`, and renders the canonical `OK SAY` transcript while emitting the `gamesession.command.say.*` meters documented in [`look-instrumentation.md`](../../../project-management/slice-support/look-instrumentation.md).
-- **Stubbed:** Delivery relies on the Social & Groups Service stub used by the regression suites, which currently records webhook contexts and returns success so both Telnet and WebSocket regression runs observe deterministic `Delivered-To` lists.
-- **Deferred:** Future slices will enrich the Social backend with NPC roleplay responses, listening-area heuristics, and localized channel filters once the core `BroadcastSay` path proves stable and well instrumented.
+- **Live:** `SAY`, `WHISPER`, and `TELL` route through `CommunicationCommandHandler`, which enforces the shared session guard, forwards normalized payloads and target metadata to Game Logic's `SendCommunication`, and renders the canonical actor transcript while emitting `gamesession.command.say.*`, `gamesession.command.whisper.*`, and `gamesession.command.tell.*` meters documented in [`look-instrumentation.md`](../../../project-management/slice-support/look-instrumentation.md).
+- **Stubbed:** Delivery still relies on the Social & Groups Service regression stub used by the suites, which records `SendMessage` calls and returns success so WebSocket and Telnet regression runs observe deterministic sender-side transcripts and explicit recipient metadata.
+- **Deferred:** First-party/MCP-aware recipient presentation, richer NPC roleplay responses, listening-area heuristics, and localized channel filters remain future slices once the shared communication path proves stable and well instrumented.
 
 ### LOOK slice status
 

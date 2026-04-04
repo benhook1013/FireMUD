@@ -12,7 +12,7 @@ service GameLogicService {
   rpc Ping(PingRequest) returns (PingResponse);
   rpc ExecuteCommand(ExecuteCommandRequest) returns (ExecuteCommandResponse);
   rpc ResolveLook(LookRequest) returns (LookResult);
-  rpc BroadcastSay(BroadcastSayRequest) returns (BroadcastSayResponse);
+  rpc SendCommunication(SendCommunicationRequest) returns (SendCommunicationResponse);
   rpc ResolveMove(MoveRequest) returns (MoveResult);
 }
 
@@ -39,6 +39,7 @@ message LookRequest {
   string session_id = 2;
   string character_id = 3;
   shared.v1.RoomInstanceRef room_instance = 4;
+  string preferred_locale = 5;
 }
 
 message LookResult {
@@ -53,23 +54,33 @@ message LookResult {
   string entity_snapshot_id = 9;
   string look_snapshot_id = 10;
   RoomAmbientState ambient_state = 11;
+  shared.v1.ErrorDetail error = 12;
 }
 
-message BroadcastSayRequest {
+message SendCommunicationRequest {
   string tenant_id = 1;
   string session_id = 2;
   string character_id = 3;
-  ChatAlias alias = 4;
-  string text = 5;
-  shared.v1.RoomInstanceRef room_instance = 6;
+  string account_id = 4;
+  CommunicationType type = 5;
+  string text = 6;
+  shared.v1.RoomInstanceRef room_instance = 7;
+  CommunicationTargetKind target_kind = 8;
+  string target_character_id = 9;
+  string target_character_name = 10;
+  string game_instance_id = 11;
+  string speaker_name = 12;
 }
 
-message BroadcastSayResponse {
+message SendCommunicationResponse {
   bool success = 1;
-  string message = 2;
-  repeated string delivered_to = 3;
-  repeated string npc_echoes = 4;
-  shared.v1.ErrorDetail error = 5;
+  CommunicationType type = 2;
+  string message = 3;
+  string speaker_name = 4;
+  repeated string delivered_to = 5;
+  repeated string npc_echoes = 6;
+  shared.v1.ErrorDetail error = 7;
+  repeated CommunicationRecipientView recipient_views = 8;
 }
 
 message MoveRequest {
@@ -78,6 +89,7 @@ message MoveRequest {
   string character_id = 3;
   shared.v1.RoomInstanceRef room_instance = 4;
   string direction = 5;
+  string preferred_locale = 6;
 }
 
 message MoveResult {
@@ -86,11 +98,40 @@ message MoveResult {
   shared.v1.ErrorDetail error = 3;
 }
 
-enum ChatAlias {
-  CHAT_ALIAS_UNSPECIFIED = 0;
+enum CommunicationType {
+  COMMUNICATION_TYPE_UNSPECIFIED = 0;
   SAY = 1;
-  YELL = 2;
-  WHISPER = 3;
+  WHISPER = 2;
+  TELL = 3;
+}
+
+enum CommunicationTargetKind {
+  COMMUNICATION_TARGET_KIND_UNSPECIFIED = 0;
+  COMMUNICATION_TARGET_KIND_ROOM = 1;
+  COMMUNICATION_TARGET_KIND_DIRECT_CHARACTER_IN_ROOM = 2;
+  COMMUNICATION_TARGET_KIND_DIRECT_CHARACTER = 3;
+}
+
+enum CommunicationRecipientRole {
+  COMMUNICATION_RECIPIENT_ROLE_UNSPECIFIED = 0;
+  COMMUNICATION_RECIPIENT_ROLE_ACTOR = 1;
+  COMMUNICATION_RECIPIENT_ROLE_TARGET = 2;
+  COMMUNICATION_RECIPIENT_ROLE_OBSERVER = 3;
+}
+
+enum CommunicationPerception {
+  COMMUNICATION_PERCEPTION_UNSPECIFIED = 0;
+  COMMUNICATION_PERCEPTION_FULL_CONTENT = 1;
+  COMMUNICATION_PERCEPTION_METADATA_ONLY = 2;
+}
+
+message CommunicationRecipientView {
+  string recipient_id = 1;
+  string recipient_name = 2;
+  CommunicationRecipientRole role = 3;
+  CommunicationPerception perception = 4;
+  string speaker_name = 5;
+  string target_name = 6;
 }
 
 message LookExit {

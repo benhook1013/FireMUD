@@ -5,8 +5,8 @@ public interface IpConnectionLimiter {
   /** Returns whether another connection from the IP can be accepted. */
   boolean canAccept(String ip);
 
-  /** Register a session for the IP after acceptance. */
-  void register(String ip, long sessionId);
+  /** Atomically reserve a connection slot for the IP and session. */
+  boolean tryRegister(String ip, long sessionId);
 
   /** Release resources when a session ends. */
   void release(long sessionId);

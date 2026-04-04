@@ -38,9 +38,7 @@ public class GatewayRouteServiceImpl implements GatewayRouteService {
 
   @Override
   @Timed(value = "gateway.route.upsert")
-  public GatewayRoute upsert(GatewayRoute route) {
-    routes.put(route.routeId(), route);
-
+  public Mono<GatewayRoute> upsert(GatewayRoute route) {
     RouteDefinition definition = new RouteDefinition();
     definition.setId(route.routeId());
     definition.setUri(URI.create(route.uri()));
@@ -51,25 +49,35 @@ public class GatewayRouteServiceImpl implements GatewayRouteService {
       definition.setFilters(route.filters().stream().map(FilterDefinition::new).toList());
     }
 
-    writer.save(Mono.just(definition)).block();
-    publisher.publishEvent(new RefreshRoutesEvent(this));
-
-    logger.info("Upserted route {} -> {}", route.routeId(), route.uri());
-    return route;
+    return writer
+        .save(Mono.just(definition))
+        .doOnSuccess(ignored -> publisher.publishEvent(new RefreshRoutesEvent(this)))
+        .then(
+            Mono.fromSupplier(
+                () -> {
+                  routes.put(route.routeId(), route);
+                  logger.info("Upserted route {} -> {}", route.routeId(), route.uri());
+                  return route;
+                }));
   }
 
   @Override
   @Timed(value = "gateway.route.remove")
-  public boolean remove(String routeId) {
-    boolean existed = routes.remove(routeId) != null;
-    writer.delete(Mono.just(routeId)).onErrorResume(e -> Mono.empty()).block();
-    publisher.publishEvent(new RefreshRoutesEvent(this));
-
-    if (existed) {
-      logger.info("Removed route {}", routeId);
-    } else {
-      logger.info("Route {} not found", routeId);
-    }
-    return existed;
+  public Mono<Boolean> remove(String routeId) {
+    return writer
+        .delete(Mono.just(routeId))
+        .onErrorResume(e -> Mono.empty())
+        .doOnSuccess(ignored -> publisher.publishEvent(new RefreshRoutesEvent(this)))
+        .then(
+            Mono.fromSupplier(
+                () -> {
+                  boolean existed = routes.remove(routeId) != null;
+                  if (existed) {
+                    logger.info("Removed route {}", routeId);
+                  } else {
+                    logger.info("Route {} not found", routeId);
+                  }
+                  return existed;
+                }));
   }
 }

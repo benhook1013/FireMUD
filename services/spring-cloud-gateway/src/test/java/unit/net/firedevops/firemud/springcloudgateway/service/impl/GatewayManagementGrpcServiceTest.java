@@ -15,6 +15,7 @@ import net.firedevops.firemud.gateway.v1.UpsertRouteResponse;
 import net.firedevops.firemud.springcloudgateway.service.GatewayRoute;
 import net.firedevops.firemud.springcloudgateway.service.GatewayRouteService;
 import org.junit.jupiter.api.Test;
+import reactor.core.publisher.Mono;
 
 class GatewayManagementGrpcServiceTest {
 
@@ -46,7 +47,8 @@ class GatewayManagementGrpcServiceTest {
   @Test
   void upsertRouteValidCallsService() {
     GatewayRouteService routeService = mock(GatewayRouteService.class);
-    when(routeService.upsert(any())).thenReturn(new GatewayRoute("id", "http://u", null, null));
+    when(routeService.upsert(any()))
+        .thenReturn(Mono.just(new GatewayRoute("id", "http://u", null, null)));
     GatewayManagementGrpcService service =
         new GatewayManagementGrpcService(routeService, new SimpleMeterRegistry());
 
@@ -103,9 +105,41 @@ class GatewayManagementGrpcServiceTest {
   }
 
   @Test
+  void upsertRouteServiceFailureReturnsInternalErrorDetail() {
+    GatewayRouteService routeService = mock(GatewayRouteService.class);
+    when(routeService.upsert(any())).thenReturn(Mono.error(new IllegalStateException("boom")));
+    GatewayManagementGrpcService service =
+        new GatewayManagementGrpcService(routeService, new SimpleMeterRegistry());
+
+    UpsertRouteRequest req =
+        UpsertRouteRequest.newBuilder().setRouteId("id").setUri("http://u").build();
+    AtomicReference<UpsertRouteResponse> ref = new AtomicReference<>();
+    service.upsertRoute(
+        req,
+        new StreamObserver<>() {
+          @Override
+          public void onNext(UpsertRouteResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {
+            fail(t);
+          }
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(ref.get());
+    assertFalse(ref.get().getSuccess());
+    assertEquals("INTERNAL", ref.get().getError().getCode());
+  }
+
+  @Test
   void removeRouteNotFoundReturnsErrorDetail() {
     GatewayRouteService routeService = mock(GatewayRouteService.class);
-    when(routeService.remove("missing")).thenReturn(false);
+    when(routeService.remove("missing")).thenReturn(Mono.just(false));
     GatewayManagementGrpcService service =
         new GatewayManagementGrpcService(routeService, new SimpleMeterRegistry());
 
@@ -130,5 +164,36 @@ class GatewayManagementGrpcServiceTest {
 
     assertFalse(ref.get().getSuccess());
     assertEquals("NOT_FOUND", ref.get().getError().getCode());
+  }
+
+  @Test
+  void removeRouteServiceFailureReturnsInternalErrorDetail() {
+    GatewayRouteService routeService = mock(GatewayRouteService.class);
+    when(routeService.remove("missing")).thenReturn(Mono.error(new IllegalStateException("boom")));
+    GatewayManagementGrpcService service =
+        new GatewayManagementGrpcService(routeService, new SimpleMeterRegistry());
+
+    RemoveRouteRequest req = RemoveRouteRequest.newBuilder().setRouteId("missing").build();
+    AtomicReference<RemoveRouteResponse> ref = new AtomicReference<>();
+    service.removeRoute(
+        req,
+        new StreamObserver<>() {
+          @Override
+          public void onNext(RemoveRouteResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {
+            fail(t);
+          }
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(ref.get());
+    assertFalse(ref.get().getSuccess());
+    assertEquals("INTERNAL", ref.get().getError().getCode());
   }
 }

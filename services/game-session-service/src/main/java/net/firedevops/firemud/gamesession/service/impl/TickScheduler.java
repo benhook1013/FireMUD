@@ -34,7 +34,7 @@ public final class TickScheduler {
     }
     List<GameInstance> running = repository.findByStatus("RUNNING");
     for (GameInstance instance : running) {
-      tickService.processTick(instance.getId());
+      tickService.processTick(instance.getTenantId(), instance.getId());
     }
   }
 }

@@ -11,6 +11,7 @@ import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import io.opentelemetry.sdk.trace.export.BatchSpanProcessor;
 import java.util.Locale;
 import java.util.Objects;
+import net.firedevops.firemud.common.runtime.RuntimeIdentity;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -22,17 +23,13 @@ public class TracingConfig {
   @Value("${otel.endpoint:http://otel-collector:4317}")
   private String otelEndpoint;
 
-  @Value("${spring.application.name}")
-  private String serviceName;
-
   @Bean
   @SuppressWarnings("null")
-  public OpenTelemetry openTelemetry() {
+  public OpenTelemetry openTelemetry(RuntimeIdentity runtimeIdentity) {
     String endpoint = Objects.requireNonNullElse(otelEndpoint, "");
     if (isDisabledEndpoint(endpoint)) {
       return OpenTelemetry.noop();
     }
-    String applicationName = Objects.requireNonNullElse(serviceName, "unknown-service");
 
     OtlpGrpcSpanExporter exporter =
         Objects.requireNonNull(OtlpGrpcSpanExporter.builder().setEndpoint(endpoint).build());
@@ -40,7 +37,12 @@ public class TracingConfig {
         Objects.requireNonNull(BatchSpanProcessor.builder(exporter).build());
     Attributes resourceAttributes =
         Objects.requireNonNull(
-            Attributes.of(AttributeKey.stringKey("service.name"), applicationName));
+            Attributes.builder()
+                .put(AttributeKey.stringKey("service.name"), runtimeIdentity.service())
+                .put(
+                    AttributeKey.stringKey("service.instance.id"),
+                    runtimeIdentity.serviceInstanceId())
+                .build());
     Resource resource = Objects.requireNonNull(Resource.create(resourceAttributes));
 
     SdkTracerProvider tracerProvider =
@@ -55,8 +57,8 @@ public class TracingConfig {
 
   @Bean
   @SuppressWarnings("null")
-  public Tracer tracer(OpenTelemetry openTelemetry) {
-    return openTelemetry.getTracer(Objects.requireNonNullElse(serviceName, "unknown-service"));
+  public Tracer tracer(OpenTelemetry openTelemetry, RuntimeIdentity runtimeIdentity) {
+    return openTelemetry.getTracer(runtimeIdentity.service());
   }
 
   private static boolean isDisabledEndpoint(String endpoint) {

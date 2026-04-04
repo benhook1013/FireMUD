@@ -68,6 +68,25 @@ This section catalogs the primary categories of objects that services cache in (
   - Inventories and containers (player inventory, equipment, banks, room-ground containers) where reads are common and writes are scoped to a single aggregate root.
   - Per-entity views (for example, “effective stats” after applying all modifiers) that are expensive to recompute but naturally tied to a single character or NPC.
 
+### Built-In Gameplay View Cache Subsystem
+
+Some derived caches are better understood as a small built-in gameplay view cache subsystem rather than as one-off command optimizations.
+
+- Scope:
+  - canonical platform-provided read/redraw commands only;
+  - examples include `LOOK` today and may later include inventory, equipment, status/score, or map-style redraw views when those become stable built-in platform surfaces.
+- Non-scope:
+  - arbitrary game-scripted commands;
+  - transient action acknowledgements such as speech, combat, item transfer confirmations, or admin mutation responses.
+- Ownership:
+  - Game Logic (or another authoritative gameplay orchestrator) owns the structured result for the underlying read;
+  - Game Session owns any client-facing rendered transcript cache used for reconnect replay, UI restoration, or short-lived repeated reads.
+- Safety rules:
+  - cached view payloads are derived and disposable, never authoritative;
+  - they may improve latency or reconnect redraw experience, but they must not change gameplay semantics;
+  - each cached built-in view must opt in explicitly with a documented key shape, TTL, invalidation source, and replay/use rules rather than inheriting from a generic “all commands are cacheable” framework;
+  - cached room-view payloads should preserve the same top-level structure as the authoritative view contract (for example room prose, exits, occupants, room-ground items, and optional overlays) so reconnect/UI redraw does not invent a second ad hoc shape.
+
 ## Version-Based Cache Validation
 
 Some dynamic aggregates will be easier to cache if the authoritative store exposes a version or `lastModified` field per aggregate root. Others are naturally best-effort and can tolerate occasional stale reads under simple TTL-based eviction. To keep designs consistent and reviewable, caches are grouped into two classes:

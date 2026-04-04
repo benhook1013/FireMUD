@@ -102,4 +102,16 @@ public class CharacterServiceImpl implements CharacterService {
   public Page<CharacterDto> listForAccount(Long accountId, Pageable pageable) {
     return characterRepository.findByAccountId(accountId, pageable).map(characterMapper::toDto);
   }
+
+  @Override
+  @Transactional(readOnly = true)
+  @Timed(value = "character.findByTenantAndName")
+  public java.util.Optional<CharacterDto> findByTenantAndName(Long tenantId, String name) {
+    if (name == null || name.isBlank()) {
+      return java.util.Optional.empty();
+    }
+    return characterRepository
+        .findByTenantIdAndNameIgnoreCase(tenantId, name.trim())
+        .map(characterMapper::toDto);
+  }
 }

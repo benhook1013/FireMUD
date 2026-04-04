@@ -3,6 +3,7 @@ preview:
   namespace: pr-123
   releaseName: pr-123
   hostname: pr-123.preview.firedevops.net
+  telnetPort: 32000
   seedOnFirstDeploy: true
   maxConcurrentEnforced: false
 
@@ -18,7 +19,7 @@ previewStack:
     tlsSecretName: pr-123-preview-firedevops-net-tls
 
   seed:
-    enabled: false
+    enabled: true
     image: postgres:16
 
   grpcTls:
@@ -58,6 +59,8 @@ previewStack:
     FIREMUD_POSTGRES_HOST: postgres
     FIREMUD_POSTGRES_PORT: "5432"
     FIREMUD_POSTGRES_DB: firemud
+    FIREMUD_REDIS_HOST: redis-cache
+    FIREMUD_REDIS_PORT: "6379"
     FIREMUD_REDIS_COORD_HOST: redis-coord
     FIREMUD_REDIS_COORD_PORT: "6379"
     FIREMUD_REDIS_CACHE_HOST: redis-cache
@@ -66,20 +69,62 @@ previewStack:
     FLUENT_ELASTICSEARCH_HOST: elasticsearch
     FLUENT_ELASTICSEARCH_PORT: "9200"
     ASSET_STORE_ENDPOINT: http://minio:9000
+    ASSET_STORE_BUCKET: firemud-assets
+    ASSET_STORE_REGION: ap-southeast-2
     ASSET_STORE_ACCESS_KEY: minio
     ASSET_STORE_SECRET_KEY: minio123
+    FIREMUD_SERVICES_GAME_LOGIC_SERVICE: game-logic-service:6565
+    FIREMUD_SERVICES_LOGGING_ADMIN_SERVICE: logging-admin-service:6565
 
   sharedSecret:
     FIREMUD_POSTGRES_USER: firemud
     FIREMUD_POSTGRES_PASSWORD: firemud
     FIREMUD_AUTH_JWT_SECRET: changeit-changeit-changeit-changeit
 
+  resources:
+    app:
+      requests:
+        cpu: "50m"
+        memory: "256Mi"
+      limits:
+        cpu: "750m"
+        memory: "512Mi"
+
   seedSql: |
-    -- Preview seed SQL is intentionally stubbed for now.
-    -- The preview workflow and chart reserve a seed hook path, but the
-    -- application schema/content is still under active implementation.
-    -- Replace this stub with canonical preview bootstrap data once the
-    -- runtime data model and seed contract stabilize.
+    INSERT INTO region (id, name, tenant_id, shard_id)
+    VALUES (201, 'Preview Coast', 1, 0)
+    ON CONFLICT (id) DO UPDATE SET
+      name = EXCLUDED.name,
+      tenant_id = EXCLUDED.tenant_id,
+      shard_id = EXCLUDED.shard_id;
+
+    INSERT INTO zone (id, region_id, name, tenant_id)
+    VALUES (301, 201, 'Lantern District', 1)
+    ON CONFLICT (id) DO UPDATE SET
+      region_id = EXCLUDED.region_id,
+      name = EXCLUDED.name,
+      tenant_id = EXCLUDED.tenant_id;
+
+    INSERT INTO room (id, zone_id, name, description, tenant_id)
+    VALUES
+      (1021, 301, 'Cinder Court', 'Bronze lanterns sway above a wind-scuffed courtyard where every footprint seems to point deeper into the preview build.', 1),
+      (1022, 301, 'North Arcade', 'A narrow arcade of red stone carries the echo of distant voices and the smell of rain coming off the coast.', 1)
+    ON CONFLICT (id) DO UPDATE SET
+      zone_id = EXCLUDED.zone_id,
+      name = EXCLUDED.name,
+      description = EXCLUDED.description,
+      tenant_id = EXCLUDED.tenant_id;
+
+    INSERT INTO room_exit (id, tenant_id, from_room_id, to_room_id, cost, direction)
+    VALUES
+      (4001, 1, 1021, 1022, 1, 'NORTH'),
+      (4002, 1, 1022, 1021, 1, 'SOUTH')
+    ON CONFLICT (id) DO UPDATE SET
+      tenant_id = EXCLUDED.tenant_id,
+      from_room_id = EXCLUDED.from_room_id,
+      to_room_id = EXCLUDED.to_room_id,
+      cost = EXCLUDED.cost,
+      direction = EXCLUDED.direction;
 
   services:
     - name: account-service
@@ -182,7 +227,7 @@ previewStack:
       image:
         repository: ghcr.io/benhook1013/spring-cloud-gateway
       springProfile: true
-      envFromShared: false
+      envFromShared: true
       mountGrpcTls: true
       healthPort: 8080
       ports:
@@ -193,6 +238,7 @@ previewStack:
     - name: tcp-proxy-service
       image:
         repository: ghcr.io/benhook1013/tcp-proxy-service
+      serviceType: NodePort
       springProfile: false
       envFromShared: false
       mountGrpcTls: true
@@ -201,6 +247,7 @@ previewStack:
         GATEWAY_WS_URL: wss://pr-123.preview.firedevops.net/ws/game
       ports:
         - port: 2323
+          nodePort: 32000
           targetPort: 2323
     - name: world-management-service
       image:

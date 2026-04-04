@@ -1,6 +1,6 @@
 # FireMUD System Architecture: Frontend Architecture
 
-This document describes the structure and tooling for FireMUD's browser-based user interfaces. The `web-client` module houses the player-facing React application built with **Vite** and **TypeScript**. Compiled assets are served by the Spring Cloud Gateway so all frontends share a common entry point. Additional React modules for the admin tools and Game Design interface are available.
+This document describes the structure and tooling for FireMUD's browser-based user interfaces. The `web-client` module houses the player-facing React application built with **Vite** and **TypeScript**. FireMUD's target architecture is a dedicated first-party web application service that owns browser asset hosting and first-party web bootstrap concerns rather than treating Spring Cloud Gateway as the long-term home for frontend assets or product-specific browser logic. The first practical version of that service may be a terminal-style browser client before richer web UX is added. Additional React modules for the admin tools and Game Design interface are available.
 
 Other UIs include a role-based admin interface and a game design editor. See [Role-Based Admin UI](./microservices/logging-admin-service/admin-ui.md) and [Web-Based Visual Design Interface](./microservices/game-design-service/web-visual-interface.md).
 
@@ -43,13 +43,15 @@ Application state is handled by **Redux Toolkit**, with **RTK Query** used for d
 Frontend flows are split between **player gameplay sessions** and **admin/creator tools** so that gameplay auth remains simple while control-plane operations use JWTs:
 
 - **Player UI (gameplay)**  
+  - First-party browser clients are expected to be hosted by the dedicated first-party web application service, even when the first version is only a terminal-style browser client. Spring Cloud Gateway remains the public gameplay/API edge, but it should not become the long-term host for the player web application itself.  
   - First-party clients must first call the dedicated player-bootstrap endpoint (`POST /auth/player-bootstrap` or equivalent) with player credentials to establish short-lived account identity for gameplay bootstrap only, then use bootstrap-authenticated HTTP discovery endpoints to choose a caller-visible world/realm/character target, then obtain a short-lived connect token (`POST /auth/connect-token`) using the discovery-provided `connectScopeId` before opening `/ws/game/**`, then complete gameplay authentication by issuing `LOGIN` over the WebSocket channel using the already-verified bootstrap/connect context rather than replaying username/password/OTP from the browser, as described in [Authentication & Authorization](./system-architecture-authentication.md#login-and-session-flow).  
+  - Browser transport constraints matter: a browser WebSocket cannot set arbitrary custom handshake headers the way Telnet smart clients, Mudlet integrations, or server-side clients can. The first-party web flow therefore must use a browser-compatible gameplay handshake carrier such as query parameters, cookies, or another gateway-approved browser-safe mechanism rather than assuming custom WebSocket headers are available from JavaScript.  
   - The React client does not store or expose control-plane Browser JWTs for gameplay. It may hold only the short-lived, memory-only `player-bootstrap` token described in the authentication design and use it solely for gameplay bootstrap surfaces such as bootstrap discovery and `POST /auth/connect-token`.  
   - Explicit player logout must clear any in-memory `player-bootstrap` token immediately in addition to closing gameplay sockets and clearing reconnect state.
   - Canonical player logout order is: stop reconnect attempts, close the gameplay socket, clear remembered world/character selection plus reconnect metadata, clear the in-memory `player-bootstrap` token, and render the logged-out player state.
   - Tenant membership, non-public realm-access-grant checks, and runtime entitlement checks for first-party gameplay happen during bootstrap discovery and `POST /auth/connect-token`, not during `POST /auth/player-bootstrap`. The first implementation is realm-aware: the chosen target must come from the canonical discovery contract and may be the production realm or an explicitly authorized alternate realm such as a playtest fork.  
-  - After login, the client participates in an explicit **lobby world-selection** step by issuing `WORLDS` / `REALMS <world>` / `CHARS <world> [realm]` and then `PLAY <world> [realm] [character]` as described in [Tenant Selection for Gameplay](./system-architecture-authentication.md#tenant-selection-for-gameplay-lobby-selection). The Game Session Service resolves the selected world/realm/character into internal identifiers (`tenantId`, `gameInstanceId`, `characterId`), enforces tenant authorization, public-production admission, and entitlements, returns the resolved realm bundle metadata, and then binds the socket to a gameplay session in Redis. Brand-new authenticated accounts can discover the default public production realm during this flow, and the first successful `PLAY` creates membership atomically before gameplay binding is committed.  
-  - On page reload or connectivity loss, the client requests a fresh connect token, reconnects the WebSocket, then replays `LOGIN` and tenant-selection without prompting for credentials again; the Game Session Service uses Redis gameplay session bindings, current membership authority, and fresh backend token rebinding to restore gameplay state when allowed by server-side TTLs and revocation rules.
+  - After login, the client should be able to take the normal player happy path of `PLAY <world> [character]` directly, using `WORLDS`, `REALMS`, and `CHARS` only when discovery or ambiguity requires it. The Game Session Service resolves the selected world/realm/character into internal identifiers (`tenantId`, `gameInstanceId`, `characterId`), enforces tenant authorization, public-production admission, and entitlements, returns the resolved realm bundle metadata, and then binds the socket to a gameplay session in Redis. Brand-new authenticated accounts can discover the default public production realm during this flow, and the first successful `PLAY` creates membership atomically before gameplay binding is committed.  
+  - On page reload or connectivity loss, the client requests a fresh connect token, reconnects the WebSocket, then replays `LOGIN` and `PLAY` without prompting for credentials again; `WORLDS`, `REALMS`, and `CHARS` remain optional discovery helpers when the intended target is no longer unambiguous. Game Session uses Redis gameplay session bindings, current membership authority, and fresh backend token rebinding to restore gameplay state when allowed by server-side TTLs and revocation rules.
 
 - **Admin and creator UIs**  
   - Admin/creator interfaces authenticate through the Account Service (for example, via `/auth/login` exposed behind the Gateway). Successful login issues a short-lived JWT for control-plane APIs that represents a **control-plane browser session** for the current account.  
@@ -102,20 +104,11 @@ Authorization: Bearer <bootstrapToken>
 { connectScopeId: "cs_demo_production_v17", requestId: "req-reconnect-1" }
 -> { connectToken, expiresAt, tenantId: "tenant-demo", realmSlug: "production", gameInstanceId: "production" }
 
-GET /ws/game/** with X-Firemud-Connect-Token: <connectToken>
+GET /ws/game/** with browser-compatible connect token carriage
 
 LOGIN
 OK LOGIN Logged in
-WORLDS
-OK WORLDS
-1) Demo World (demo)
-REALMS demo
-OK REALMS
-1) Live Realm (production)
-CHARS demo production
-OK CHARS
-1) Mara
-PLAY demo production Mara
+PLAY demo Mara
 OK PLAY Entered world: Demo World / Live Realm as Mara
 
 ...socket drops...
@@ -125,24 +118,15 @@ Authorization: Bearer <bootstrapToken>
 { connectScopeId: "cs_demo_production_v17", requestId: "req-reconnect-2" }
 -> { connectToken, expiresAt, tenantId: "tenant-demo", realmSlug: "production", gameInstanceId: "production" }
 
-GET /ws/game/** with X-Firemud-Connect-Token: <connectToken>
+GET /ws/game/** with browser-compatible connect token carriage
 
 LOGIN
 OK LOGIN Logged in
-WORLDS
-OK WORLDS
-1) Demo World (demo)
-REALMS demo
-OK REALMS
-1) Live Realm (production)
-CHARS demo production
-OK CHARS
-1) Mara
-PLAY demo production Mara
+PLAY demo Mara
 OK PLAY Resumed session
 ```
 
-This reconnect flow assumes the player still holds a valid in-memory `player-bootstrap` token. If the bootstrap token has expired or the page was reloaded, the client must obtain a new bootstrap token first, then repeat bootstrap discovery as needed and request a fresh connect token. There is no separate silent refresh/bootstrap-restoration mechanism in the current architecture; reload behaves like bootstrap-token loss and restarts the first-party bootstrap flow. In all cases, first-party reconnects must not prompt the browser to replay username/password/OTP after bootstrap has been re-established. Clients may skip visible `WORLDS` / `REALMS` steps only when they already retain a valid world/realm choice and still drive the same canonical `PLAY <world> [realm] [character]` selection on reconnect.
+This reconnect flow assumes the player still holds a valid in-memory `player-bootstrap` token. If the bootstrap token has expired or the page was reloaded, the client must obtain a new bootstrap token first, then repeat bootstrap discovery as needed and request a fresh connect token. There is no separate silent refresh/bootstrap-restoration mechanism in the current architecture; reload behaves like bootstrap-token loss and restarts the first-party bootstrap flow. In all cases, first-party reconnects must not prompt the browser to replay username/password/OTP after bootstrap has been re-established. Clients may skip visible `WORLDS` / `REALMS` / `CHARS` steps when they already retain a valid world/realm/character choice and still drive the same canonical `PLAY <world> [realm] [character]` selection on reconnect.
 
 ## API Usage Patterns
 
@@ -156,6 +140,19 @@ RTK Query automatically handles:
 - Background polling and refetching
 
 WebSocket interactions for real-time gameplay are handled by `src/websocket.ts`, which manages the connection lifecycle and message routing. Integration with RTK Query updates cached data in response to socket events.
+
+## Hosting Direction
+
+FireMUD has two different priorities in this area:
+
+- The first reviewer-usable preview proof path should be **TCP/Telnet first**, because that is the lowest-friction manual proof path for core MUD play and does not require browser-bootstrap work before hosted validation is possible.
+- The long-term first-party browser direction should still be a **dedicated first-party web application service**, not product-specific frontend/helper logic embedded permanently in Spring Cloud Gateway.
+
+This means the intended sequence is:
+
+1. Hosted preview deployment supports manual `LOGIN -> PLAY -> LOOK` proof over the TCP Proxy Service.
+2. A dedicated first-party web application service is introduced after that preview proof path is working.
+3. The first UI hosted by that service may simply be a terminal-style browser client, with richer first-party UI following later.
 
 ## Build Tooling
 
@@ -210,4 +207,4 @@ The React client uses **react-i18next** to load translation JSON files at runtim
 
 ---
 
-This architecture keeps the web client modular and maintainable while aligning with the backend microservices. Additional frontend services or features can follow the same patterns for consistency.
+This architecture keeps the web client modular and maintainable while aligning with the backend microservices. Additional frontend services or features should follow the same separation of concerns: browser assets and first-party web bootstrap belong in the dedicated web application service, while Spring Cloud Gateway remains the public API/gameplay edge.

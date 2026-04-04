@@ -111,12 +111,14 @@ public class GameInstanceServiceImpl implements GameInstanceService {
         request.runtimeVersion(),
         request.scriptPatchVersion());
     repository
-        .findFirstByOwnerAccountIdAndStatus(request.ownerAccountId(), "RUNNING")
+        .findFirstByTenantIdAndOwnerAccountIdAndStatus(
+            request.tenantId(), request.ownerAccountId(), "RUNNING")
         .ifPresent(
             existing -> {
               logger.info(
-                  "Stopping existing session {} for owner {}",
+                  "Stopping existing session {} for tenant {} owner {}",
                   existing.getId(),
+                  existing.getTenantId(),
                   existing.getOwnerAccountId());
               existing.setStatus("STOPPED");
               repository.save(existing);
@@ -130,13 +132,6 @@ public class GameInstanceServiceImpl implements GameInstanceService {
     instance.setStatus("RUNNING");
     instance = repository.save(instance);
     GameInstanceDto dto = mapper.toDto(instance);
-    meterRegistry
-        .counter(
-            "game_sessions_started_total",
-            "script_patch_version",
-            request.scriptPatchVersion() == null ? "none" : request.scriptPatchVersion())
-        .increment();
-
     if (gameLogicClient != null
         && worldManagementClient != null
         && entityManagementClient != null
@@ -156,6 +151,12 @@ public class GameInstanceServiceImpl implements GameInstanceService {
     }
 
     sessionStateService.saveState(dto);
+    meterRegistry
+        .counter(
+            "game_sessions_started_total",
+            "script_patch_version",
+            request.scriptPatchVersion() == null ? "none" : request.scriptPatchVersion())
+        .increment();
     return dto;
   }
 
@@ -174,8 +175,6 @@ public class GameInstanceServiceImpl implements GameInstanceService {
             .orElseThrow(() -> new IllegalArgumentException("Session not found"));
     instance.setStatus("STOPPED");
     GameInstance saved = repository.save(instance);
-    sessionStateService.deleteState(instance.getTenantId(), instance.getId());
-
     if (gameLogicClient != null
         && worldManagementClient != null
         && entityManagementClient != null
@@ -193,7 +192,7 @@ public class GameInstanceServiceImpl implements GameInstanceService {
         throw new IllegalStateException("Failed to stop session", e);
       }
     }
-
+    sessionStateService.deleteState(instance.getTenantId(), instance.getId());
     return mapper.toDto(saved);
   }
 

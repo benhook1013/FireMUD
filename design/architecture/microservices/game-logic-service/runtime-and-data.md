@@ -5,6 +5,8 @@ This document defines the Game Logic Service runtime model, dependency ownership
 ## Runtime Notes
 
 - Stateless service accessed over gRPC by other microservices.
+- No authoritative gameplay state may exist only in Game Logic process memory. Any state that must survive instance loss belongs in authoritative domain services, durable ledgers, or Game Session-owned coordination, so another Game Logic instance can take over immediately.
+- Same-type Game Logic instances must be freely replaceable behind the current caller connection. Meaningful gameplay state needed after a non-edge restart must be reconstructed from authoritative service APIs and Game Session-provided tick/session context rather than preserved only in local memory.
 - Uses a modular command parser for extensibility. The text protocol's system commands such as `LOGIN`, `LOGON`, and `PING` are interpreted and completed by Game Session; this service focuses on gameplay commands only, as described in the [Game Session Service](../game-session-service/protocols.md#minimal-text-command-protocol).
 - Deterministic rule execution is required; random seeds come from Game Session.
 - Fetches contextual world and entity data on demand via gRPC.
@@ -64,3 +66,7 @@ Command flow:
 1. Commands are queued in Redis by Game Session.
 2. The lease-owning Game Session executor invokes this service over gRPC with the queued command plus tick and session context, and this service loads the required world and entity context to resolve the action.
 3. The gRPC response returns the structured result to Game Session for commit and delivery to players.
+
+This execution shape is deliberate for failover: Game Logic computes from supplied tick/session context plus authoritative service reads, then returns a structured result. Because meaningful state is not anchored to one process, same-type Game Logic instances can take over behind an existing edge connection and visible non-edge restart remains implementation debt rather than target behavior.
+
+This means Game Logic restart should normally be a short stall behind the caller connection, not a client-visible reconnect event. If restart currently forces visible recovery while the edge connection stayed healthy, that is an implementation gap in replay/rebind behavior rather than a target-state contract.

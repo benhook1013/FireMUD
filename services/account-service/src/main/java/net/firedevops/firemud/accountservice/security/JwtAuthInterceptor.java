@@ -87,6 +87,8 @@ public class JwtAuthInterceptor implements HandlerInterceptor {
     return "/accounts".equals(requestUri)
         || "/accounts/".equals(requestUri)
         || "/auth/login".equals(requestUri)
+        || "/auth/player-bootstrap".equals(requestUri)
+        || "/auth/connect-token".equals(requestUri)
         || "/auth/request-password-reset".equals(requestUri)
         || "/auth/complete-password-reset".equals(requestUri)
         || "/auth/request-email-verification".equals(requestUri)

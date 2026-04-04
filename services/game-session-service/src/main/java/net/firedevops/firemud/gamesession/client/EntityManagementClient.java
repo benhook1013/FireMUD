@@ -1,12 +1,17 @@
 package net.firedevops.firemud.gamesession.client;
 
 import jakarta.annotation.PostConstruct;
+import java.util.Optional;
+import java.util.concurrent.TimeUnit;
 import javax.net.ssl.SSLException;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.AbstractBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
+import net.firedevops.firemud.entitymanagement.v1.Character;
 import net.firedevops.firemud.entitymanagement.v1.EntityManagementServiceGrpc;
+import net.firedevops.firemud.entitymanagement.v1.FindCharacterByNameRequest;
+import net.firedevops.firemud.entitymanagement.v1.FindCharacterByNameResponse;
 import net.firedevops.firemud.entitymanagement.v1.PingRequest;
 import net.firedevops.firemud.entitymanagement.v1.PingResponse;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -21,6 +26,7 @@ import org.springframework.stereotype.Component;
 public final class EntityManagementClient
     extends AbstractBlockingGrpcClient<
         EntityManagementServiceGrpc.EntityManagementServiceBlockingStub> {
+  private static final long CALL_DEADLINE_SECONDS = 5L;
 
   public EntityManagementClient(
       ServiceEndpointsProperties endpoints,
@@ -52,6 +58,24 @@ public final class EntityManagementClient
 
   /** Simple ping to verify connectivity. */
   public PingResponse ping() {
-    return stub().ping(PingRequest.newBuilder().build());
+    return callStub().ping(PingRequest.newBuilder().build());
+  }
+
+  public Optional<Character> findCharacterByName(String tenantId, String name) {
+    FindCharacterByNameResponse response =
+        callStub()
+            .findCharacterByName(
+                FindCharacterByNameRequest.newBuilder()
+                    .setTenantId(tenantId)
+                    .setName(name)
+                    .build());
+    if (response.hasError() || !response.hasCharacter()) {
+      return Optional.empty();
+    }
+    return Optional.of(response.getCharacter());
+  }
+
+  private EntityManagementServiceGrpc.EntityManagementServiceBlockingStub callStub() {
+    return stub().withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS);
   }
 }

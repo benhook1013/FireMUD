@@ -49,6 +49,6 @@ class GatewayRoutesConfigurationProdTest {
             .map(predicate -> predicate.getArgs())
             .orElseThrow(() -> new AssertionError("Session route should have a Path predicate"));
 
-    assertThat(pathArgs.values()).containsExactlyInAnyOrder("/api/session/**", "/ws/game/**");
+    assertThat(pathArgs.values()).containsExactly("/api/session/**");
   }
 }

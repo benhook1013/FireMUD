@@ -1,0 +1,118 @@
+package net.firedevops.firemud.gamesession.cache;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+import java.time.Duration;
+import java.util.List;
+import java.util.Optional;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
+import net.firedevops.firemud.cache.RedisScreenBufferService;
+import net.firedevops.firemud.cache.ScreenBufferService;
+import net.firedevops.firemud.common.config.FiremudReconnectionProperties;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
+import org.springframework.data.redis.core.RedisOperations;
+import org.springframework.data.redis.core.SessionCallback;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.ValueOperations;
+import tools.jackson.databind.ObjectMapper;
+
+@SuppressWarnings("unchecked")
+class RedisScreenBufferServiceTest {
+  private static final String REDIS_KEY = "screenbuffer:22:1:123";
+
+  private final StringRedisTemplate redisTemplate = mock(StringRedisTemplate.class);
+  private final RedisOperations<String, Object> redisOperations = mock(RedisOperations.class);
+  private final ValueOperations<String, Object> valueOperations = mock(ValueOperations.class);
+  private final AtomicReference<String> storedPayload = new AtomicReference<>();
+  private final AtomicReference<String> pendingPayload = new AtomicReference<>();
+  private final AtomicInteger execAttempts = new AtomicInteger();
+
+  private RedisScreenBufferService cacheService;
+
+  @BeforeEach
+  void setUp() {
+    when(redisTemplate.opsForValue()).thenReturn((ValueOperations) valueOperations);
+    when(redisTemplate.execute(any(SessionCallback.class)))
+        .thenAnswer(
+            invocation -> {
+              SessionCallback<?> callback = invocation.getArgument(0);
+              return callback.execute(redisOperations);
+            });
+    when(redisOperations.opsForValue()).thenReturn((ValueOperations) valueOperations);
+    doAnswer(
+            invocation -> {
+              pendingPayload.set((String) invocation.getArgument(1));
+              return null;
+            })
+        .when(valueOperations)
+        .set(eq(REDIS_KEY), any(String.class), any(Duration.class));
+    when(valueOperations.get(REDIS_KEY)).thenAnswer(invocation -> storedPayload.get());
+    doAnswer(
+            invocation -> {
+              execAttempts.incrementAndGet();
+              if (execAttempts.get() == 1) {
+                pendingPayload.set(null);
+                return null;
+              }
+              storedPayload.set(pendingPayload.get());
+              pendingPayload.set(null);
+              return List.of();
+            })
+        .when(redisOperations)
+        .exec();
+    doAnswer(
+            invocation -> {
+              pendingPayload.set(null);
+              return null;
+            })
+        .when(redisOperations)
+        .unwatch();
+
+    cacheService =
+        new RedisScreenBufferService(
+            redisTemplate,
+            new ObjectMapper(),
+            (tenantId, gameInstanceId) ->
+                new FiremudReconnectionProperties(
+                    null,
+                    new FiremudReconnectionProperties.Buffer(1_800_000L, 8, 24, 16_384, 65_536)));
+  }
+
+  @Test
+  void appendsBufferedTranscriptWithRetryPreservingExistingEntries() {
+    storedPayload.set(
+        """
+        {"entries":[{"protocolText":"FIRST\\n","lineCount":1,"byteSize":6,"appendedAtMs":1000}],"updatedAtMs":1000}
+        """
+            .trim());
+
+    cacheService.append(
+        22L, 1L, 123L, List.of(ScreenBufferService.BufferedEntry.fromText("SECOND\n")));
+
+    ArgumentCaptor<String> valueCaptor = ArgumentCaptor.forClass(String.class);
+    verify(valueOperations, times(2))
+        .set(eq(REDIS_KEY), valueCaptor.capture(), any(Duration.class));
+    verify(redisOperations, times(2)).watch(REDIS_KEY);
+    assertThat(execAttempts.get()).isEqualTo(2);
+
+    Optional<ScreenBufferService.BufferedScreen> result = cacheService.get(22L, 1L, 123L);
+
+    assertThat(result).isPresent();
+    assertThat(result.orElseThrow().messageCount()).isEqualTo(2);
+    assertThat(result.orElseThrow().lineCount()).isEqualTo(2);
+    assertThat(result.orElseThrow().protocolText()).contains("FIRST");
+    assertThat(result.orElseThrow().protocolText()).contains("SECOND");
+    assertThat(valueCaptor.getAllValues()).hasSize(2);
+    assertThat(valueCaptor.getAllValues().get(1)).contains("\"SECOND");
+  }
+}

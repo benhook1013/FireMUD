@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamesession.command.text;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -12,17 +13,34 @@ import static org.mockito.Mockito.when;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
+import net.firedevops.firemud.account.v1.AuthenticateResponse;
+import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse;
+import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
 import net.firedevops.firemud.cache.LookCacheService;
+import net.firedevops.firemud.common.settings.ScopedSettingsSnapshot;
 import net.firedevops.firemud.gamelogic.v1.LookResult;
 import net.firedevops.firemud.gamesession.client.AccountClient;
 import net.firedevops.firemud.gamesession.client.GameLogicClient;
 import net.firedevops.firemud.gamesession.config.DevIsolatedProperties;
+import net.firedevops.firemud.gamesession.config.EffectiveSettingsResolver;
 import net.firedevops.firemud.gamesession.config.GameLogicProperties;
+import net.firedevops.firemud.gamesession.config.GameSessionProperties;
+import net.firedevops.firemud.gamesession.config.MovementProperties;
+import net.firedevops.firemud.gamesession.config.PresentationProperties;
+import net.firedevops.firemud.gamesession.config.WorldTopologyProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
+import net.firedevops.firemud.gamesession.presentation.LookViewOutput;
+import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
+import net.firedevops.firemud.gamesession.presentation.PlayerOutputKind;
+import net.firedevops.firemud.gamesession.presentation.PromptComposer;
+import net.firedevops.firemud.gamesession.presentation.TextPlayerOutputRenderer;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.CommandService;
+import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
@@ -39,33 +57,30 @@ class TextCommandInterpreterTest {
   private final GameLogicClient gameLogicClient = Mockito.mock(GameLogicClient.class);
   private final LookTextRenderer lookTextRenderer = Mockito.mock(LookTextRenderer.class);
   private final GameLogicProperties gameLogicProperties = new GameLogicProperties();
+  private final GameSessionProperties gameSessionProperties = new GameSessionProperties();
   private final DevIsolatedProperties devIsolatedProperties = new DevIsolatedProperties(false);
   private final GameInstanceRepository gameInstanceRepository =
       Mockito.mock(GameInstanceRepository.class);
-  private final SessionContextService sessionContextService =
-      Mockito.mock(SessionContextService.class);
-  private final SessionAuthenticationService sessionAuthenticationService =
-      Mockito.mock(SessionAuthenticationService.class);
+  private final SessionContextService sessionContextService = new InMemorySessionContextService();
+  private SessionAuthenticationService sessionAuthenticationService;
   private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
   private final LookCacheService lookCacheService = Mockito.mock(LookCacheService.class);
-  private final LookCommandHandler lookHandler =
-      new LookCommandHandler(
-          gameLogicClient,
-          lookTextRenderer,
-          sessionAuthenticationService,
-          gameLogicProperties,
-          meterRegistry,
-          lookCacheService,
-          devIsolatedProperties);
   private final AccountClient accountClient = Mockito.mock(AccountClient.class);
   private final MoveCommandHandler moveHandler = Mockito.mock(MoveCommandHandler.class);
-  private final SayCommandHandler sayHandler = Mockito.mock(SayCommandHandler.class);
+  private final CommunicationCommandHandler communicationHandler =
+      Mockito.mock(CommunicationCommandHandler.class);
+  private final FirstPartyConnectContextRegistry firstPartyConnectContextRegistry =
+      Mockito.mock(FirstPartyConnectContextRegistry.class);
   private final ObjectProvider<DevIsolatedGameInstanceRegistry> devIsolatedRegistryProvider =
       Mockito.mock(ObjectProvider.class);
-  private LoginCommandHandler loginHandler;
+  private final TextPlayerOutputRenderer outputRenderer =
+      new TextPlayerOutputRenderer(
+          new PresentationProperties(
+              "en-NZ",
+              PresentationProperties.ColorMode.NONE,
+              false,
+              new PresentationProperties.Prompt(true, true, 150L)));
   private TextCommandInterpreter interpreter;
-  private final SessionContext sessionContext =
-      new SessionContext(1L, 22L, 123L, 911L, 0L, "room-42", "jwt-token");
 
   @BeforeEach
   void setUp() {
@@ -73,214 +88,484 @@ class TextCommandInterpreterTest {
     when(accountClient.authenticate(
             Mockito.anyString(), Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
-            net.firedevops.firemud.account.v1.AuthenticateResponse.newBuilder()
-                .setAuthToken("auth")
+            AuthenticateResponse.newBuilder()
+                .setAuthToken("auth-token")
                 .setAccountId("123")
+                .build());
+    when(accountClient.getTenantMembershipForRuntime(
+            Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(
+            GetTenantMembershipForRuntimeResponse.newBuilder()
+                .setAccountId("123")
+                .setTenantId("22")
+                .setGameplayAdmissionAllowed(true)
+                .setMembershipVersion(1L)
+                .setEvaluatedAt("2026-03-30T00:00:00Z")
+                .build());
+    when(accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(
+            GetTenantEntitlementsForRuntimeResponse.newBuilder()
+                .setTenantId("22")
+                .setGameplayAvailable(true)
+                .setEntitlementVersion(1L)
+                .setTenantBillingSequence(1L)
+                .setEvaluatedAt("2026-03-30T00:00:00Z")
                 .build());
     when(devIsolatedRegistryProvider.getIfAvailable()).thenReturn(null);
     when(commandService.enqueue(anyString(), anyString(), anyBoolean()))
         .thenReturn(CommandEnqueueResult.success());
-    loginHandler =
+    when(gameInstanceRepository.findById(Mockito.anyLong()))
+        .thenAnswer(
+            invocation -> {
+              long sessionId = invocation.getArgument(0);
+              GameInstance instance = new GameInstance();
+              instance.setId(sessionId);
+              instance.setTenantId(22L);
+              instance.setOwnerAccountId(123L);
+              return Optional.of(instance);
+            });
+
+    sessionAuthenticationService =
+        new SessionAuthenticationService(
+            sessionContextService,
+            gameSessionProperties,
+            gameInstanceRepository,
+            devIsolatedProperties,
+            devIsolatedRegistryProvider);
+
+    LoginCommandHandler loginHandler =
         new LoginCommandHandler(
             gameInstanceRepository,
             sessionContextService,
             accountClient,
             commandService,
+            firstPartyConnectContextRegistry,
             devIsolatedProperties,
-            gameLogicProperties,
             devIsolatedRegistryProvider,
             meterRegistry);
-    GameInstance demoInstance = new GameInstance();
-    demoInstance.setId(1L);
-    demoInstance.setTenantId(22L);
-    demoInstance.setOwnerAccountId(123L);
-    when(gameInstanceRepository.findById(Mockito.anyLong())).thenReturn(Optional.of(demoInstance));
-    when(sessionAuthenticationService.isAuthenticated(Mockito.anyString())).thenReturn(true);
-    when(sessionAuthenticationService.resolveSessionContext("123"))
-        .thenReturn(Optional.of(sessionContext));
+    GameplayWorldCatalog worldCatalog = new GameplayWorldCatalog(gameSessionProperties);
+    PlayCommandHandler playHandler =
+        new PlayCommandHandler(
+            sessionAuthenticationService,
+            sessionContextService,
+            worldCatalog,
+            gameLogicProperties,
+            accountClient,
+            firstPartyConnectContextRegistry,
+            meterRegistry);
+    LookCommandHandler lookHandler =
+        new LookCommandHandler(
+            gameLogicClient,
+            lookTextRenderer,
+            sessionAuthenticationService,
+            gameLogicProperties,
+            new EffectiveSettingsResolver(
+                new PresentationProperties(),
+                new MovementProperties(),
+                new WorldTopologyProperties(),
+                (tenantId, gameInstanceId) -> ScopedSettingsSnapshot.empty()),
+            meterRegistry,
+            lookCacheService,
+            devIsolatedProperties,
+            new TextPlayerOutputRenderer(new PresentationProperties()));
+    WorldsCommandHandler worldsHandler = new WorldsCommandHandler(worldCatalog);
+
+    LookResult lookResult =
+        LookResult.newBuilder()
+            .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("1021").build())
+            .build();
+    when(gameLogicClient.resolveLook(
+            Mockito.eq("22"),
+            Mockito.eq("1"),
+            Mockito.anyString(),
+            Mockito.eq("1021"),
+            Mockito.anyString()))
+        .thenReturn(lookResult);
+    when(lookTextRenderer.toPlayerOutput(
+            Mockito.eq(lookResult),
+            Mockito.eq(true),
+            Mockito.any(
+                net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason.class),
+            Mockito.any(
+                net.firedevops.firemud.gamesession.presentation.LookViewOutput.BriefRenderingHint
+                    .class)))
+        .thenReturn(
+            PlayerOutput.view(
+                new LookViewOutput(
+                    "1021",
+                    "Login Hall",
+                    "Short text",
+                    "Long text",
+                    true,
+                    java.util.List.of(),
+                    java.util.List.of())));
+    when(lookTextRenderer.toPlayerOutput(
+            Mockito.eq(lookResult),
+            Mockito.eq(false),
+            Mockito.any(
+                net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason.class),
+            Mockito.any(
+                net.firedevops.firemud.gamesession.presentation.LookViewOutput.BriefRenderingHint
+                    .class)))
+        .thenReturn(
+            PlayerOutput.view(
+                new LookViewOutput(
+                    "1021",
+                    "Login Hall",
+                    "Short text",
+                    "Long text",
+                    false,
+                    java.util.List.of(),
+                    java.util.List.of())));
+
     interpreter =
         new TextCommandInterpreter(
             commandService,
             lookHandler,
             loginHandler,
+            playHandler,
             moveHandler,
             sessionAuthenticationService,
-            sayHandler);
+            communicationHandler,
+            worldsHandler,
+            new PromptComposer());
   }
 
   @Test
-  void enqueuesKnownCommand() {
-    CommandEnqueueResult success = CommandEnqueueResult.success();
-    when(commandService.enqueue("123", "LOOK", false)).thenReturn(success);
-
-    TextCommandInterpretationResult interpretation = interpreter.interpret("123", "LOOK", false);
+  void worldsAreVisibleBeforeLogin() {
+    TextCommandInterpretationResult interpretation = interpreter.interpret("123", "WORLDS", false);
 
     assertTrue(interpretation.commandResult().accepted());
-    verify(commandService).enqueue("123", "LOOK", false);
-  }
-
-  @Test
-  void lookErrorReturnsFailure() {
-    LookCommandHandler mockLookHandler = Mockito.mock(LookCommandHandler.class);
-    TextCommandInterpreter interpreterWithMockLook =
-        new TextCommandInterpreter(
-            commandService,
-            mockLookHandler,
-            loginHandler,
-            moveHandler,
-            sessionAuthenticationService,
-            sayHandler);
-    when(commandService.enqueue("123", "LOOK", false)).thenReturn(CommandEnqueueResult.success());
-    when(mockLookHandler.describe("123")).thenReturn("ERROR ROOM_NOT_FOUND mysterious room");
-
-    TextCommandInterpretationResult interpretation =
-        interpreterWithMockLook.interpret("123", "LOOK", false);
-
-    assertFalse(interpretation.commandResult().accepted());
-    assertEquals("ROOM_NOT_FOUND", interpretation.commandResult().errorCode());
-    assertEquals("mysterious room", interpretation.commandResult().errorMessage());
-    assertNull(interpretation.responseText());
-  }
-
-  @Test
-  void enqueuesKnownTextCommand() {
-    CommandEnqueueResult success = CommandEnqueueResult.success();
-    when(commandService.enqueue("123", "LOOK", false)).thenReturn(success);
-
-    TextCommand command = new TextCommand(TextCommandType.LOOK, List.of(), "LOOK");
-    TextCommandInterpretationResult interpretation = interpreter.interpret("123", command, false);
-
-    assertTrue(interpretation.commandResult().accepted());
-    verify(commandService).enqueue("123", "LOOK", false);
-  }
-
-  @Test
-  void lookCommandReturnsDescription() {
-    CommandEnqueueResult success = CommandEnqueueResult.success();
-    when(commandService.enqueue("123", "LOOK", false)).thenReturn(success);
-
-    TextCommand command = new TextCommand(TextCommandType.LOOK, List.of(), "LOOK");
-    LookResult lookResult =
-        LookResult.newBuilder()
-            .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("1021").build())
-            .build();
-    when(gameLogicClient.resolveLook("22", "1", "911", "room-42")).thenReturn(lookResult);
-    when(lookTextRenderer.render(lookResult)).thenReturn("OK LOOK constructed");
-    TextCommandInterpretationResult interpretation = interpreter.interpret("123", command, false);
-
-    assertEquals("OK LOOK constructed", interpretation.responseText());
-  }
-
-  @Test
-  void sayCommandDelegatesToHandler() {
-    SayCommandHandlingResult sayResult =
-        new SayCommandHandlingResult(CommandEnqueueResult.success(), "OK SAY text");
-    when(sayHandler.handle(Mockito.anyString(), Mockito.any(TextCommand.class)))
-        .thenReturn(sayResult);
-
-    TextCommandInterpretationResult interpretation =
-        interpreter.interpret("123", "SAY Hello", false);
-
-    assertTrue(interpretation.commandResult().accepted());
-    assertEquals("OK SAY text", interpretation.responseText());
+    assertEquals(
+        List.of(PlayerOutputKind.VIEW),
+        interpretation.outputs().stream().map(PlayerOutput::kind).toList());
+    assertTrue(renderedResponse("WORLDS", interpretation).startsWith("OK WORLDS\n1) Demo World"));
+    assertTrue(renderedResponse("WORLDS", interpretation).contains("Demo World"));
     verify(commandService, never()).enqueue(anyString(), anyString(), anyBoolean());
   }
 
   @Test
-  void unknownCommandReturnsFailureAndDoesNotEnqueue() {
-    TextCommandInterpretationResult interpretation =
-        interpreter.interpret("123", "dance wildly", false);
-    CommandEnqueueResult result = interpretation.commandResult();
-
-    assertFalse(result.accepted());
-    assertEquals("UNKNOWN_COMMAND", result.errorCode());
-    verify(commandService, never()).enqueue(anyString(), anyString(), anyBoolean());
-  }
-
-  @Test
-  void blankCommandIsIgnored() {
-    TextCommand noOp = new TextCommand(TextCommandType.NOOP, List.of(), "   ");
-
-    TextCommandInterpretationResult interpretation = interpreter.interpret("123", noOp, false);
-
-    assertTrue(interpretation.commandResult().accepted());
-    verify(commandService, never()).enqueue(anyString(), anyString(), anyBoolean());
-  }
-
-  @Test
-  void loginWithCredentialsBypassesCommandQueue() {
-    TextCommandInterpretationResult interpretation =
-        interpreter.interpret("123", "LOGIN demo demo", false);
-
-    assertTrue(interpretation.commandResult().accepted());
-    assertEquals("Logged in as demo", interpretation.responseText());
-    verify(commandService).enqueue("123", "LOGIN demo demo", false);
-  }
-
-  @Test
-  void loginWithoutCredentialsPromptsError() {
-    TextCommandInterpretationResult interpretation = interpreter.interpret("123", "LOGIN", false);
-    CommandEnqueueResult result = interpretation.commandResult();
-
-    assertFalse(result.accepted());
-    assertEquals(LoginCommandConstants.PROMPT_MODE_UNSUPPORTED_CODE, result.errorCode());
-    assertEquals(LoginCommandConstants.PROMPT_MODE_UNSUPPORTED_MESSAGE, result.errorMessage());
-    verify(commandService, never()).enqueue(anyString(), anyString(), anyBoolean());
-  }
-
-  @Test
-  void gameplayCommandRequiresAuthentication() {
-    when(sessionAuthenticationService.isAuthenticated("321")).thenReturn(false);
-
+  void gameplayBeforeLoginReturnsLoginRequired() {
     TextCommandInterpretationResult interpretation = interpreter.interpret("321", "LOOK", false);
 
-    CommandEnqueueResult result = interpretation.commandResult();
-    assertFalse(result.accepted());
-    assertEquals("NOT_AUTHENTICATED", result.errorCode());
+    assertFalse(interpretation.commandResult().accepted());
+    assertEquals("LOGIN_REQUIRED", interpretation.commandResult().errorCode());
+    assertEquals(
+        "ERROR LOGIN_REQUIRED You must LOGIN before gameplay commands.",
+        renderedResponse("LOOK", interpretation));
     verify(commandService, never()).enqueue(anyString(), anyString(), anyBoolean());
   }
 
   @Test
-  void gameplayCommandAllowedWhenAuthenticated() {
-    when(sessionAuthenticationService.isAuthenticated("999")).thenReturn(true);
-    CommandEnqueueResult success = CommandEnqueueResult.success();
-    when(commandService.enqueue("999", "LOOK", false)).thenReturn(success);
+  void bootstrapContextWithoutAuthenticatedAccountStillRequiresLogin() {
+    ((InMemorySessionContextService) sessionContextService)
+        .save(new SessionContext(55L, 22L, 0L, null, 0L, null, 77L, null, null));
 
-    TextCommandInterpretationResult interpretation = interpreter.interpret("999", "LOOK", false);
+    TextCommandInterpretationResult interpretation = interpreter.interpret("55", "LOOK", false);
 
-    assertTrue(interpretation.commandResult().accepted());
-    verify(commandService).enqueue("999", "LOOK", false);
+    assertFalse(interpretation.commandResult().accepted());
+    assertEquals("LOGIN_REQUIRED", interpretation.commandResult().errorCode());
+    verify(commandService, never()).enqueue("55", "LOOK", false);
   }
 
   @Test
-  void movementCommandRequiresAuthentication() {
-    when(moveHandler.handle(Mockito.eq("321"), Mockito.any(TextCommand.class)))
-        .thenReturn(
-            new MoveCommandHandlingResult(
-                CommandEnqueueResult.failure("NOT_AUTHENTICATED", "Login required"), null));
+  void gameplayAfterLoginBeforePlayReturnsPlayRequired() {
+    TextCommandInterpretationResult login =
+        interpreter.interpret("1", "LOGIN demo@example.com swordfish", false);
+
+    assertTrue(login.commandResult().accepted());
+    assertEquals(
+        List.of(PlayerOutputKind.MESSAGE),
+        login.outputs().stream().map(PlayerOutput::kind).toList());
+    assertThat(renderedResponse("LOGIN demo@example.com swordfish", login))
+        .isEqualTo("OK LOGIN\nLogged in as demo@example.com\n\n");
+    SessionContext authenticated =
+        sessionAuthenticationService.resolveSessionContext("1").orElseThrow();
+    assertNull(authenticated.roomInstanceId());
+
+    TextCommandInterpretationResult interpretation = interpreter.interpret("1", "LOOK", false);
+
+    assertFalse(interpretation.commandResult().accepted());
+    assertEquals("PLAY_REQUIRED", interpretation.commandResult().errorCode());
+    assertEquals(
+        "ERROR PLAY_REQUIRED You must PLAY before in-world commands.",
+        renderedResponse("LOOK", interpretation));
+    verify(commandService, never()).enqueue("1", "LOOK", false);
+  }
+
+  @Test
+  void unknownCommandReturnsStructuredErrorOutput() {
+    TextCommandInterpretationResult interpretation = interpreter.interpret("1", "FROBULATE", false);
+
+    assertFalse(interpretation.commandResult().accepted());
+    assertEquals("UNKNOWN_COMMAND", interpretation.commandResult().errorCode());
+    assertEquals(
+        List.of(PlayerOutputKind.ERROR),
+        interpretation.outputs().stream().map(PlayerOutput::kind).toList());
+    assertEquals(
+        "ERROR UNKNOWN_COMMAND Unknown command", renderedResponse("FROBULATE", interpretation));
+  }
+
+  @Test
+  void lookAfterPlayAppendsPromptOutput() {
+    interpreter.interpret("1", "LOGIN demo@example.com swordfish", false);
+    interpreter.interpret("1", "PLAY demo", false);
+
+    TextCommandInterpretationResult look = interpreter.interpret("1", "LOOK", false);
+
+    assertTrue(look.commandResult().accepted());
+    assertEquals(
+        List.of(PlayerOutputKind.VIEW, PlayerOutputKind.PROMPT),
+        look.outputs().stream().map(PlayerOutput::kind).toList());
+    LookViewOutput payload = (LookViewOutput) look.outputs().get(0).payload();
+    assertEquals("Login Hall", payload.roomName());
+    assertTrue(payload.includeLongDescription());
+    assertEquals("demo> ", look.outputs().get(1).text());
+  }
+
+  @Test
+  void quickLookAfterPlayUsesShortVariantAndAppendsPrompt() {
+    interpreter.interpret("1", "LOGIN demo@example.com swordfish", false);
+    interpreter.interpret("1", "PLAY demo", false);
+
+    TextCommandInterpretationResult quickLook = interpreter.interpret("1", "QUICKLOOK", false);
+
+    assertTrue(quickLook.commandResult().accepted());
+    assertEquals(
+        List.of(PlayerOutputKind.VIEW, PlayerOutputKind.PROMPT),
+        quickLook.outputs().stream().map(PlayerOutput::kind).toList());
+    LookViewOutput payload = (LookViewOutput) quickLook.outputs().get(0).payload();
+    assertEquals("Login Hall", payload.roomName());
+    assertFalse(payload.includeLongDescription());
+    assertEquals("demo> ", quickLook.outputs().get(1).text());
+  }
+
+  @Test
+  void movementAfterLoginBeforePlayReturnsPlayRequired() {
+    TextCommandInterpretationResult login =
+        interpreter.interpret("1", "LOGIN demo@example.com swordfish", false);
+
+    assertTrue(login.commandResult().accepted());
 
     TextCommandInterpretationResult interpretation =
-        interpreter.interpret("321", "MOVE north", false);
+        interpreter.interpret("1", "MOVE north", false);
 
-    CommandEnqueueResult result = interpretation.commandResult();
-    assertFalse(result.accepted());
-    assertEquals("NOT_AUTHENTICATED", result.errorCode());
-    verify(commandService, never()).enqueue(anyString(), anyString(), anyBoolean());
+    assertFalse(interpretation.commandResult().accepted());
+    assertEquals("PLAY_REQUIRED", interpretation.commandResult().errorCode());
+    verify(moveHandler, never())
+        .handle(
+            Mockito.any(net.firedevops.firemud.gamesession.service.SessionContext.class),
+            Mockito.any(TextCommand.class));
   }
 
   @Test
-  void movementCommandIsEnqueuedWhenAuthenticated() {
-    MoveCommandHandlingResult moveResult =
-        new MoveCommandHandlingResult(CommandEnqueueResult.success(), "OK LOOK\nNorth room\n\n");
-    when(moveHandler.handle(Mockito.eq("999"), Mockito.any(TextCommand.class)))
-        .thenReturn(moveResult);
+  void directionalAliasBeforeLoginStillHitsInterpreterStageGate() {
+    TextCommandInterpretationResult interpretation = interpreter.interpret("321", "north", false);
 
-    TextCommandInterpretationResult interpretation = interpreter.interpret("999", "north", false);
+    assertFalse(interpretation.commandResult().accepted());
+    assertEquals("LOGIN_REQUIRED", interpretation.commandResult().errorCode());
+    verify(moveHandler, never())
+        .handle(
+            Mockito.any(net.firedevops.firemud.gamesession.service.SessionContext.class),
+            Mockito.any(TextCommand.class));
+  }
+
+  @Test
+  void directionalAliasAfterPlayDelegatesToMoveHandler() {
+    interpreter.interpret("1", "LOGIN demo@example.com swordfish", false);
+    interpreter.interpret("1", "PLAY demo", false);
+
+    SessionContext played = sessionAuthenticationService.resolveSessionContext("1").orElseThrow();
+    when(moveHandler.handle(Mockito.eq(played), Mockito.any(TextCommand.class)))
+        .thenReturn(
+            new MoveCommandHandlingResult(
+                CommandEnqueueResult.success(),
+                PlayerOutput.view(
+                    new LookViewOutput(
+                        "R-205",
+                        "North Hall",
+                        "North Hall text",
+                        "Detailed north hall text",
+                        true,
+                        LookViewOutput.RefreshReason.MOVE_REFRESH,
+                        java.util.List.of(),
+                        java.util.List.of()))));
+
+    TextCommandInterpretationResult interpretation = interpreter.interpret("1", "north", false);
 
     assertTrue(interpretation.commandResult().accepted());
-    assertEquals("OK LOOK\nNorth room\n\n", interpretation.responseText());
-    assertTrue(interpretation.protocolResponse());
-    verify(moveHandler).handle(Mockito.eq("999"), Mockito.any(TextCommand.class));
-    verify(commandService, never()).enqueue("999", "north", false);
+    verify(moveHandler).handle(Mockito.eq(played), Mockito.any(TextCommand.class));
+  }
+
+  @Test
+  void loginPlayAndLookFlowWorks() {
+    TextCommandInterpretationResult login =
+        interpreter.interpret("1", "LOGIN demo@example.com swordfish", false);
+    TextCommandInterpretationResult play = interpreter.interpret("1", "PLAY demo", false);
+    TextCommandInterpretationResult look = interpreter.interpret("1", "LOOK", false);
+
+    assertTrue(login.commandResult().accepted());
+    assertTrue(play.commandResult().accepted());
+    assertEquals("OK PLAY Entered world: demo\ndemo> ", renderedResponse("PLAY demo", play));
+    assertTrue(look.commandResult().accepted());
+    assertEquals(
+        List.of(PlayerOutputKind.VIEW, PlayerOutputKind.PROMPT),
+        look.outputs().stream().map(PlayerOutput::kind).toList());
+    assertTrue(((LookViewOutput) look.outputs().get(0).payload()).includeLongDescription());
+    verify(commandService).enqueue("1", "LOGIN demo@example.com swordfish", false);
+    verify(commandService).enqueue("1", "LOOK", false);
+  }
+
+  @Test
+  void sayAfterPlayDelegatesToHandler() {
+    TextCommandInterpretationResult login =
+        interpreter.interpret("1", "LOGIN demo@example.com swordfish", false);
+    TextCommandInterpretationResult play = interpreter.interpret("1", "PLAY demo", false);
+    assertTrue(login.commandResult().accepted());
+    assertTrue(play.commandResult().accepted());
+
+    SessionContext played = sessionAuthenticationService.resolveSessionContext("1").orElseThrow();
+    when(communicationHandler.handle(Mockito.eq(played), Mockito.any(TextCommand.class)))
+        .thenReturn(
+            new CommunicationCommandHandlingResult(
+                CommandEnqueueResult.success(),
+                List.of(PlayerOutput.message("You say, \"Hello there\""))));
+
+    TextCommandInterpretationResult interpretation =
+        interpreter.interpret("1", "SAY Hello there", false);
+
+    assertTrue(interpretation.commandResult().accepted());
+    assertEquals(
+        "You say, \"Hello there\"\ndemo> ", renderedResponse("SAY Hello there", interpretation));
+    verify(communicationHandler).handle(Mockito.eq(played), Mockito.any(TextCommand.class));
+  }
+
+  @Test
+  void moveAfterPlayReturnsStructuredViewAndPrompt() {
+    interpreter.interpret("1", "LOGIN demo@example.com swordfish", false);
+    interpreter.interpret("1", "PLAY demo", false);
+
+    SessionContext played = sessionAuthenticationService.resolveSessionContext("1").orElseThrow();
+    when(moveHandler.handle(Mockito.eq(played), Mockito.any(TextCommand.class)))
+        .thenReturn(
+            new MoveCommandHandlingResult(
+                CommandEnqueueResult.success(),
+                PlayerOutput.view(
+                    new LookViewOutput(
+                        "R-205",
+                        "North Hall",
+                        "North Hall text",
+                        "Detailed north hall text",
+                        true,
+                        LookViewOutput.RefreshReason.MOVE_REFRESH,
+                        java.util.List.of(),
+                        java.util.List.of()))));
+
+    TextCommandInterpretationResult interpretation =
+        interpreter.interpret("1", "MOVE north", false);
+
+    assertTrue(interpretation.commandResult().accepted());
+    assertEquals(2, interpretation.outputs().size());
+    assertEquals(
+        net.firedevops.firemud.gamesession.presentation.PlayerOutputKind.VIEW,
+        interpretation.outputs().get(0).kind());
+    assertEquals(
+        "North Hall text",
+        ((LookViewOutput) interpretation.outputs().get(0).payload()).shortDescription());
+    assertEquals(
+        net.firedevops.firemud.gamesession.presentation.PlayerOutputKind.PROMPT,
+        interpretation.outputs().get(1).kind());
+    assertEquals("demo> ", interpretation.outputs().get(1).text());
+    verify(moveHandler).handle(Mockito.eq(played), Mockito.any(TextCommand.class));
+  }
+
+  private String renderedResponse(
+      String rawCommand, TextCommandInterpretationResult interpretation) {
+    return outputRenderer.renderAll(
+        new TextCommandParser().parse(rawCommand),
+        interpretation.commandResult(),
+        interpretation.outputs());
+  }
+
+  private static final class InMemorySessionContextService implements SessionContextService {
+    private final Map<Long, SessionContext> sessionMap = new ConcurrentHashMap<>();
+    private final Map<String, SessionContext> identityMap = new ConcurrentHashMap<>();
+    private final Map<String, SessionContext> nameMap = new ConcurrentHashMap<>();
+
+    @Override
+    public void save(SessionContext context) {
+      SessionContext existing =
+          hasGameplayIdentity(context)
+              ? identityMap.get(
+                  identityKey(context.tenantId(), context.gameInstanceId(), context.characterId()))
+              : null;
+      if (existing != null && existing.sessionId() != context.sessionId()) {
+        sessionMap.remove(existing.sessionId());
+      }
+      sessionMap.put(context.sessionId(), context);
+      if (hasGameplayIdentity(context)) {
+        identityMap.put(identityKey(context), context);
+        if (context.characterName() != null && !context.characterName().isBlank()) {
+          nameMap.put(
+              nameKey(context.tenantId(), context.gameInstanceId(), context.characterName()),
+              context);
+        }
+      }
+    }
+
+    @Override
+    public Optional<SessionContext> findBySessionId(long sessionId) {
+      return Optional.ofNullable(sessionMap.get(sessionId));
+    }
+
+    @Override
+    public Optional<SessionContext> findByTenantAndSessionId(long tenantId, long sessionId) {
+      SessionContext context = sessionMap.get(sessionId);
+      if (context == null || context.tenantId() != tenantId) {
+        return Optional.empty();
+      }
+      return Optional.of(context);
+    }
+
+    @Override
+    public Optional<SessionContext> findByGameplayIdentity(
+        long tenantId, long gameInstanceId, long characterId) {
+      return Optional.ofNullable(
+          identityMap.get(identityKey(tenantId, gameInstanceId, characterId)));
+    }
+
+    @Override
+    public Optional<SessionContext> findByGameplayName(
+        long tenantId, long gameInstanceId, String characterName) {
+      return Optional.ofNullable(nameMap.get(nameKey(tenantId, gameInstanceId, characterName)));
+    }
+
+    @Override
+    public void deleteBySessionId(long tenantId, long sessionId) {
+      SessionContext removed = sessionMap.remove(sessionId);
+      if (removed != null && hasGameplayIdentity(removed)) {
+        identityMap.remove(identityKey(removed));
+        if (removed.characterName() != null && !removed.characterName().isBlank()) {
+          nameMap.remove(
+              nameKey(removed.tenantId(), removed.gameInstanceId(), removed.characterName()));
+        }
+      }
+    }
+
+    private String identityKey(SessionContext context) {
+      return identityKey(context.tenantId(), context.gameInstanceId(), context.characterId());
+    }
+
+    private String identityKey(long tenantId, long gameInstanceId, long characterId) {
+      return tenantId + ":" + gameInstanceId + ":" + characterId;
+    }
+
+    private String nameKey(long tenantId, long gameInstanceId, String characterName) {
+      return tenantId + ":" + gameInstanceId + ":" + characterName.trim().toLowerCase();
+    }
+
+    private boolean hasGameplayIdentity(SessionContext context) {
+      return context.gameInstanceId() > 0 && context.characterId() > 0;
+    }
   }
 }

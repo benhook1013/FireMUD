@@ -1,15 +1,13 @@
 package net.firedevops.firemud.gamesession.client;
 
 import jakarta.annotation.PostConstruct;
-import java.util.Locale;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.AbstractBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
-import net.firedevops.firemud.gamelogic.v1.BroadcastSayRequest;
-import net.firedevops.firemud.gamelogic.v1.BroadcastSayResponse;
-import net.firedevops.firemud.gamelogic.v1.ChatAlias;
+import net.firedevops.firemud.gamelogic.v1.CommunicationTargetKind;
+import net.firedevops.firemud.gamelogic.v1.CommunicationType;
 import net.firedevops.firemud.gamelogic.v1.GameLogicServiceGrpc;
 import net.firedevops.firemud.gamelogic.v1.LookRequest;
 import net.firedevops.firemud.gamelogic.v1.LookResult;
@@ -17,12 +15,15 @@ import net.firedevops.firemud.gamelogic.v1.MoveRequest;
 import net.firedevops.firemud.gamelogic.v1.MoveResult;
 import net.firedevops.firemud.gamelogic.v1.PingRequest;
 import net.firedevops.firemud.gamelogic.v1.PingResponse;
+import net.firedevops.firemud.gamelogic.v1.SendCommunicationRequest;
+import net.firedevops.firemud.gamelogic.v1.SendCommunicationResponse;
 import net.firedevops.firemud.shared.v1.RoomInstanceRef;
 import org.springframework.stereotype.Component;
 
 @Component
 public class GameLogicClient
     extends AbstractBlockingGrpcClient<GameLogicServiceGrpc.GameLogicServiceBlockingStub> {
+  private static final long CALL_DEADLINE_SECONDS = 5L;
   private static final long READINESS_DEADLINE_SECONDS = 2L;
 
   public GameLogicClient(
@@ -54,19 +55,20 @@ public class GameLogicClient
   }
 
   public LookResult resolveLook(
-      String tenantId, String sessionId, String characterId, String roomId) {
+      String tenantId, String sessionId, String characterId, String roomId, String localeTag) {
     LookRequest request =
         LookRequest.newBuilder()
             .setTenantId(tenantId)
             .setSessionId(sessionId)
             .setCharacterId(characterId)
+            .setPreferredLocale(localeTag == null ? "" : localeTag)
             .setRoomInstance(
                 RoomInstanceRef.newBuilder()
                     .setTenantId(tenantId)
                     .setRoomInstanceId(roomId)
                     .build())
             .build();
-    return stub().resolveLook(request);
+    return callStub().resolveLook(request);
   }
 
   public LookResult resolveLookForReadiness(
@@ -87,36 +89,53 @@ public class GameLogicClient
         .resolveLook(request);
   }
 
-  public BroadcastSayResponse broadcastSay(
+  public SendCommunicationResponse sendCommunication(
       String tenantId,
       String sessionId,
       String characterId,
+      String accountId,
+      String gameInstanceId,
+      String speakerName,
       String roomId,
-      String aliasToken,
-      String text) {
-    BroadcastSayRequest request =
-        BroadcastSayRequest.newBuilder()
+      CommunicationType type,
+      String text,
+      String targetCharacterId,
+      String targetCharacterName) {
+    SendCommunicationRequest request =
+        SendCommunicationRequest.newBuilder()
             .setTenantId(tenantId)
             .setSessionId(sessionId)
             .setCharacterId(characterId)
+            .setAccountId(accountId == null ? "" : accountId)
             .setRoomInstance(
                 RoomInstanceRef.newBuilder()
                     .setTenantId(tenantId)
                     .setRoomInstanceId(roomId)
                     .build())
-            .setAlias(mapAlias(aliasToken))
+            .setType(type)
             .setText(text)
+            .setTargetKind(targetKindFor(type))
+            .setTargetCharacterId(targetCharacterId == null ? "" : targetCharacterId)
+            .setTargetCharacterName(targetCharacterName == null ? "" : targetCharacterName)
+            .setGameInstanceId(gameInstanceId == null ? "" : gameInstanceId)
+            .setSpeakerName(speakerName == null ? "" : speakerName)
             .build();
-    return stub().broadcastSay(request);
+    return callStub().sendCommunication(request);
   }
 
   public MoveResult resolveMove(
-      String tenantId, String sessionId, String characterId, String roomId, String direction) {
+      String tenantId,
+      String sessionId,
+      String characterId,
+      String roomId,
+      String direction,
+      String localeTag) {
     MoveRequest request =
         MoveRequest.newBuilder()
             .setTenantId(tenantId)
             .setSessionId(sessionId)
             .setCharacterId(characterId)
+            .setPreferredLocale(localeTag == null ? "" : localeTag)
             .setRoomInstance(
                 RoomInstanceRef.newBuilder()
                     .setTenantId(tenantId)
@@ -124,21 +143,23 @@ public class GameLogicClient
                     .build())
             .setDirection(direction)
             .build();
-    return stub().resolveMove(request);
+    return callStub().resolveMove(request);
   }
 
   public PingResponse ping() {
-    return stub().ping(PingRequest.getDefaultInstance());
+    return callStub().ping(PingRequest.getDefaultInstance());
   }
 
-  private ChatAlias mapAlias(String token) {
-    if (token == null || token.isBlank()) {
-      return ChatAlias.SAY;
-    }
-    return switch (token.toUpperCase(Locale.ROOT)) {
-      case "YELL" -> ChatAlias.YELL;
-      case "WHISPER" -> ChatAlias.WHISPER;
-      default -> ChatAlias.SAY;
+  private GameLogicServiceGrpc.GameLogicServiceBlockingStub callStub() {
+    return stub().withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS);
+  }
+
+  private CommunicationTargetKind targetKindFor(CommunicationType type) {
+    return switch (type) {
+      case SAY -> CommunicationTargetKind.COMMUNICATION_TARGET_KIND_ROOM;
+      case WHISPER -> CommunicationTargetKind.COMMUNICATION_TARGET_KIND_DIRECT_CHARACTER_IN_ROOM;
+      case TELL -> CommunicationTargetKind.COMMUNICATION_TARGET_KIND_DIRECT_CHARACTER;
+      default -> CommunicationTargetKind.COMMUNICATION_TARGET_KIND_UNSPECIFIED;
     };
   }
 }

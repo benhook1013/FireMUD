@@ -42,7 +42,7 @@ Recommended GitHub Actions variables:
 
 - `PREVIEW_MAX_ACTIVE`
   - optional
-  - defaults to `2` when unset
+  - defaults to `1` when unset
   - enforced by `preview.yml` by counting namespaces labeled `firemud.dev/preview=true`
 
 ## Current limitation
@@ -56,4 +56,16 @@ These manifests prepare the preview cluster itself. The repository now also cont
 - render preview manifests
 - validate those manifests against the live cluster API with server-side dry-run
 
-The final Helm apply remains intentionally gated while the application/database bootstrap contract and frontend delivery path are still under implementation.
+The next hosted preview milestone is:
+
+- real Helm apply into `pr-*` namespaces
+- real reviewer-accessible preview traffic
+- manual `LOGIN -> PLAY -> LOOK` proof over the TCP/Telnet path first
+
+Preview TCP contract:
+
+- preview TCP uses a small reserved external port range `32000-32015`
+- one port is allocated per live preview namespace
+- this is preview-only multiplexing on a shared host/IP, not the long-term production Telnet edge contract
+
+The dedicated first-party browser client remains a later concern. If a temporary preview-only browser helper is used during bring-up, it should not be treated as the long-term frontend hosting architecture; that role belongs to a dedicated first-party web application service.

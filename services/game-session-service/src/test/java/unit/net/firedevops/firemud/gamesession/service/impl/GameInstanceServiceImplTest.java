@@ -58,6 +58,38 @@ class GameInstanceServiceImplTest {
 
     service.startSession(request);
 
+    verify(repository).findFirstByTenantIdAndOwnerAccountIdAndStatus(1L, 42L, "RUNNING");
+    verify(stateService).saveState(dto);
+  }
+
+  @Test
+  void startSessionStopsExistingRunningSessionOnlyWithinTenantAndOwner() {
+    StartSessionRequest request = new StartSessionRequest(2L, "v1", null, 42L);
+    GameInstance existing = new GameInstance();
+    existing.setId(7L);
+    existing.setTenantId(2L);
+    existing.setRuntimeVersion("v1");
+    existing.setOwnerAccountId(42L);
+    existing.setStatus("RUNNING");
+
+    when(repository.findFirstByTenantIdAndOwnerAccountIdAndStatus(2L, 42L, "RUNNING"))
+        .thenReturn(Optional.of(existing));
+    when(repository.save(org.mockito.ArgumentMatchers.any(GameInstance.class)))
+        .thenAnswer(
+            invocation -> {
+              GameInstance saved = invocation.getArgument(0);
+              if (saved.getId() == null) {
+                saved.setId(10L);
+              }
+              return saved;
+            });
+    GameInstanceDto dto = new GameInstanceDto(10L, 2L, "v1", null, 42L, "RUNNING");
+    when(mapper.toDto(org.mockito.ArgumentMatchers.any(GameInstance.class))).thenReturn(dto);
+
+    service.startSession(request);
+
+    verify(repository).findFirstByTenantIdAndOwnerAccountIdAndStatus(2L, 42L, "RUNNING");
+    verify(repository).save(existing);
     verify(stateService).saveState(dto);
   }
 

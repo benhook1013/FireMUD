@@ -16,7 +16,6 @@ import net.firedevops.firemud.accountservice.service.PaymentService;
 import net.firedevops.firemud.common.LoggingUtil;
 import org.slf4j.Logger;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class PaymentServiceImpl implements PaymentService {
@@ -42,7 +41,6 @@ public class PaymentServiceImpl implements PaymentService {
   }
 
   @Override
-  @Transactional
   @Timed(value = "payment.create_intent")
   public PaymentIntentDto createPaymentIntent(Long tenantId, Long accountId, Long amountCents) {
     logger.info("Create payment intent {} cents for account {}", amountCents, accountId);
@@ -84,7 +82,6 @@ public class PaymentServiceImpl implements PaymentService {
   }
 
   @Override
-  @Transactional
   @Timed(value = "payment.create_donation")
   public PaymentIntentDto createDonation(Long tenantId, Long accountId, Long amountCents) {
     logger.info("Create donation {} cents for account {}", amountCents, accountId);
@@ -125,8 +122,6 @@ public class PaymentServiceImpl implements PaymentService {
         true);
   }
 
-  @Override
-  @Transactional
   @Timed(value = "payment.create_subscription")
   public SubscriptionDto createSubscription(Long tenantId, Long accountId, String planId) {
     logger.info("Create subscription {} for account {}", planId, accountId);
@@ -153,7 +148,6 @@ public class PaymentServiceImpl implements PaymentService {
   }
 
   @Override
-  @Transactional
   @Timed(value = "payment.refund")
   public void refundPayment(Long tenantId, Long paymentId) {
     PaymentTransaction tx =

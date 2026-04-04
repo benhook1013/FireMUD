@@ -14,6 +14,10 @@ import net.firedevops.firemud.account.v1.ExportAccountRequest;
 import net.firedevops.firemud.account.v1.ExportAccountResponse;
 import net.firedevops.firemud.account.v1.GetProfileRequest;
 import net.firedevops.firemud.account.v1.GetProfileResponse;
+import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeRequest;
+import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse;
+import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeRequest;
+import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
 import net.firedevops.firemud.account.v1.PingRequest;
 import net.firedevops.firemud.account.v1.PingResponse;
 import net.firedevops.firemud.account.v1.UpdateProfileRequest;
@@ -57,7 +61,10 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
     try {
       net.firedevops.firemud.accountservice.dto.CreateAccountRequest dto =
           new net.firedevops.firemud.accountservice.dto.CreateAccountRequest(
-              request.getUsername(), request.getEmail(), request.getPassword());
+              Long.valueOf(request.getTenantId()),
+              request.getUsername(),
+              request.getEmail(),
+              request.getPassword());
       var account = accountService.createAccount(dto);
       CreateAccountResponse response =
           CreateAccountResponse.newBuilder().setAccountId(account.id().toString()).build();
@@ -111,6 +118,74 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
               .setError(
                   net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
                       .setCode("UNAUTHENTICATED")
+                      .setMessage(ex.getMessage())
+                      .build())
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    }
+  }
+
+  @Override
+  @Timed(value = "accountGrpc.getTenantMembershipForRuntime")
+  public void getTenantMembershipForRuntime(
+      GetTenantMembershipForRuntimeRequest request,
+      StreamObserver<GetTenantMembershipForRuntimeResponse> responseObserver) {
+    try {
+      var dto =
+          accountService.getTenantMembershipForRuntime(
+              Long.valueOf(request.getAccountId()),
+              Long.valueOf(request.getTenantId()),
+              request.getRequestId());
+      GetTenantMembershipForRuntimeResponse response =
+          GetTenantMembershipForRuntimeResponse.newBuilder()
+              .setAccountId(String.valueOf(dto.accountId()))
+              .setTenantId(String.valueOf(dto.tenantId()))
+              .setGameplayAdmissionAllowed(dto.gameplayAdmissionAllowed())
+              .setMembershipVersion(dto.membershipVersion())
+              .setEvaluatedAt(dto.evaluatedAt())
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      GetTenantMembershipForRuntimeResponse response =
+          GetTenantMembershipForRuntimeResponse.newBuilder()
+              .setError(
+                  net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
+                      .setCode("NOT_FOUND")
+                      .setMessage(ex.getMessage())
+                      .build())
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    }
+  }
+
+  @Override
+  @Timed(value = "accountGrpc.getTenantEntitlementsForRuntime")
+  public void getTenantEntitlementsForRuntime(
+      GetTenantEntitlementsForRuntimeRequest request,
+      StreamObserver<GetTenantEntitlementsForRuntimeResponse> responseObserver) {
+    try {
+      var dto =
+          accountService.getTenantEntitlementsForRuntime(
+              Long.valueOf(request.getTenantId()), request.getRequestId());
+      GetTenantEntitlementsForRuntimeResponse response =
+          GetTenantEntitlementsForRuntimeResponse.newBuilder()
+              .setTenantId(String.valueOf(dto.tenantId()))
+              .setGameplayAvailable(dto.gameplayAvailable())
+              .setEntitlementVersion(dto.entitlementVersion())
+              .setTenantBillingSequence(dto.tenantBillingSequence())
+              .setEvaluatedAt(dto.evaluatedAt())
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      GetTenantEntitlementsForRuntimeResponse response =
+          GetTenantEntitlementsForRuntimeResponse.newBuilder()
+              .setError(
+                  net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
+                      .setCode("NOT_FOUND")
                       .setMessage(ex.getMessage())
                       .build())
               .build();

@@ -1,19 +1,28 @@
 spring:
-  profiles:
-    active: dev
   application:
     name: game-logic-service
   flyway:
     enabled: true
-    schemas: ${SERVICE_SCHEMA:public},saga
+    schemas: ${SERVICE_SCHEMA:public}
     locations: classpath:db/migration,classpath:db/migration/saga
     defaultSchema: ${SERVICE_SCHEMA:public}
+    placeholders:
+      serviceSchema: ${SERVICE_SCHEMA:public}
+  jpa:
+    properties:
+      hibernate:
+        default_schema: ${SERVICE_SCHEMA:public}
 
 management:
   endpoints:
+    access:
+      default: read-only
     web:
       exposure:
-        include: health,prometheus
+        include:
+          - health
+          - prometheus
+          - info
   endpoint:
     health:
       probes:
@@ -45,6 +54,13 @@ firemud:
     world-management-service: world-management-service:6565
     entity-management-service: entity-management-service:6565
     social-groups-service: social-groups-service:6565
+  communication:
+    max-message-length: 512
+    defaults:
+      say-enabled: true
+      whisper-enabled: true
+      tell-enabled: true
+      whisper-observer-metadata-enabled: true
   grpc:
     cert-chain: ${FIREMUD_GRPC_CERT_CHAIN_PATH:certs/client.crt}
     private-key: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:certs/client.key}

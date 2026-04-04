@@ -51,7 +51,9 @@ public final class SessionAuthenticationService {
     if (maybeTenantId.isEmpty()) {
       return Optional.empty();
     }
-    return sessionContextService.findByTenantAndSessionId(maybeTenantId.get(), sessionId);
+    return sessionContextService
+        .findByTenantAndSessionId(maybeTenantId.get(), sessionId)
+        .filter(this::isAuthenticatedContext);
   }
 
   public boolean isAuthenticated(String sessionIdText) {
@@ -68,7 +70,14 @@ public final class SessionAuthenticationService {
       return false;
     }
     long tenantId = maybeTenantId.get();
-    return sessionContextService.findByTenantAndSessionId(tenantId, sessionId).isPresent();
+    return sessionContextService
+        .findByTenantAndSessionId(tenantId, sessionId)
+        .filter(this::isAuthenticatedContext)
+        .isPresent();
+  }
+
+  private boolean isAuthenticatedContext(SessionContext context) {
+    return context.accountId() > 0;
   }
 
   private Optional<Long> parseSessionId(String text) {
@@ -80,6 +89,11 @@ public final class SessionAuthenticationService {
   }
 
   private Optional<Long> findTenantId(long sessionId) {
+    Optional<Long> tenantFromContext =
+        sessionContextService.findBySessionId(sessionId).map(SessionContext::tenantId);
+    if (tenantFromContext.isPresent()) {
+      return tenantFromContext;
+    }
     Optional<Long> tenantFromRepository =
         gameInstanceRepository.findById(sessionId).map(GameInstance::getTenantId);
     if (tenantFromRepository.isPresent()) {

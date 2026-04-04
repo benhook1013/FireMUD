@@ -10,4 +10,6 @@ public class AuthProperties {
   private String jwtSecretPath;
   private long jwtExpirationMs;
   private long sessionExpirationMs = 3600000L;
+  private long playerBootstrapExpirationMs = 300000L;
+  private long connectTokenExpirationMs = 30000L;
 }

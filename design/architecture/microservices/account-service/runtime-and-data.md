@@ -95,6 +95,9 @@ Billing-safe mutation authority contract:
 
 Runtime caller contract:
 
+- Initial implementation note:
+  - The first executable runtime-admission pass only needs `GetTenantMembershipForRuntime(accountId, tenantId)` and `GetTenantEntitlementsForRuntime(tenantId)` so `PLAY` and reconnect/resume can fail closed on missing gameplay authority instead of relying on Redis session identity alone.
+  - This narrow first pass does not replace the broader target-state contract below. `GetAdmissionPointer`, public-production membership creation, and the fuller bootstrap/discovery surfaces remain part of the intended architecture and should be folded in by follow-up slices rather than forgotten.
 - `GetTenantMembershipForRuntime(accountId, tenantId)` is the authoritative internal membership surface for gameplay/runtime flows.
   - Minimum request fields: `accountId`, `tenantId`, `requestId`.
   - Minimum response fields: `accountId`, `tenantId`, `roles[]`, `gameplayAdmissionAllowed`, `membershipVersion`, `evaluatedAt`.

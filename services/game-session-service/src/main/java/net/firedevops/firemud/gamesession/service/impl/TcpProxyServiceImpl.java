@@ -7,10 +7,12 @@ import io.micrometer.core.instrument.MeterRegistry;
 import java.util.Optional;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
+import net.firedevops.firemud.gamesession.command.text.GameplayLoggingContext;
 import net.firedevops.firemud.gamesession.config.DevIsolatedProperties;
 import net.firedevops.firemud.gamesession.dto.GameInstanceDto;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
+import net.firedevops.firemud.gamesession.service.DisconnectDeduplicationService;
 import net.firedevops.firemud.gamesession.service.PingService;
 import net.firedevops.firemud.gamesession.service.SessionStateService;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
@@ -28,13 +30,17 @@ import org.springframework.util.StringUtils;
 public final class TcpProxyServiceImpl extends TcpProxyServiceGrpc.TcpProxyServiceImplBase {
   private static final Logger logger = LoggingUtil.getLogger(TcpProxyServiceImpl.class);
   private static final String SUSPENDED_STATUS = "SUSPENDED";
+  private static final String DUPLICATE_DISCONNECT_METRIC =
+      "gamesession.notifydisconnect.duplicate";
+  private static final String MISSING_CONTEXT_METRIC =
+      "gamesession.notifydisconnect.missing_context";
 
   private final GameInstanceRepository repository;
   private final SessionStateService sessionStateService;
   private final MeterRegistry meterRegistry;
   private final PingService pingService;
   private final DevIsolatedProperties devIsolatedProperties;
-  private final DisconnectDeduplicator disconnectDeduplicator = new DisconnectDeduplicator(50_000);
+  private final DisconnectDeduplicationService disconnectDeduplicationService;
 
   @SuppressFBWarnings(
       value = "EI_EXPOSE_REP2",
@@ -44,12 +50,14 @@ public final class TcpProxyServiceImpl extends TcpProxyServiceGrpc.TcpProxyServi
       SessionStateService sessionStateService,
       MeterRegistry meterRegistry,
       PingService pingService,
-      DevIsolatedProperties devIsolatedProperties) {
+      DevIsolatedProperties devIsolatedProperties,
+      DisconnectDeduplicationService disconnectDeduplicationService) {
     this.repository = repository;
     this.sessionStateService = sessionStateService;
     this.meterRegistry = meterRegistry;
     this.pingService = pingService;
     this.devIsolatedProperties = devIsolatedProperties;
+    this.disconnectDeduplicationService = disconnectDeduplicationService;
   }
 
   @Override
@@ -64,33 +72,39 @@ public final class TcpProxyServiceImpl extends TcpProxyServiceGrpc.TcpProxyServi
   @Timed("tcpProxyGrpc.notifyDisconnect")
   public void notifyDisconnect(
       NotifyDisconnectRequest request, StreamObserver<NotifyDisconnectResponse> responseObserver) {
-    logger.debug(
-        "NotifyDisconnect session={} gameInstanceId={} tenant={} proxyConnectionId={} disconnectSequence={}",
-        request.getSessionId(),
-        request.getGameInstanceId(),
-        request.getTenantId(),
-        request.getProxyConnectionId(),
-        request.getDisconnectSequence());
-    ErrorDetail error = handleNotifyDisconnect(request);
-    responseObserver.onNext(NotifyDisconnectResponse.newBuilder().setError(error).build());
-    responseObserver.onCompleted();
-  }
-
-  private ErrorDetail handleNotifyDisconnect(NotifyDisconnectRequest request) {
-    if (StringUtils.hasText(request.getProxyConnectionId())
-        && request.getDisconnectSequence() > 0) {
-      if (!disconnectDeduplicator.shouldProcess(
-          request.getProxyConnectionId(), request.getDisconnectSequence())) {
-        return GrpcAppErrors.ok("Duplicate disconnect ignored");
-      }
-    }
-
     String gameInstanceIdText =
         StringUtils.hasText(request.getGameInstanceId())
             ? request.getGameInstanceId()
             : request.getSessionId();
+    try (GameplayLoggingContext ignored =
+        GameplayLoggingContext.open(request.getTenantId(), gameInstanceIdText, null, null)) {
+      logger.debug(
+          "NotifyDisconnect session={} gameInstanceId={} tenant={} proxyConnectionId={} disconnectSequence={}",
+          request.getSessionId(),
+          request.getGameInstanceId(),
+          request.getTenantId(),
+          request.getProxyConnectionId(),
+          request.getDisconnectSequence());
+      ErrorDetail error = handleNotifyDisconnect(request, gameInstanceIdText);
+      responseObserver.onNext(NotifyDisconnectResponse.newBuilder().setError(error).build());
+      responseObserver.onCompleted();
+    }
+  }
+
+  private ErrorDetail handleNotifyDisconnect(
+      NotifyDisconnectRequest request, String gameInstanceIdText) {
+    if (StringUtils.hasText(request.getProxyConnectionId())
+        && request.getDisconnectSequence() > 0) {
+      if (!disconnectDeduplicationService.shouldProcess(
+          request.getProxyConnectionId(), request.getDisconnectSequence())) {
+        meterRegistry.counter(DUPLICATE_DISCONNECT_METRIC).increment();
+        return GrpcAppErrors.ok("Duplicate disconnect ignored");
+      }
+    }
+
     if (!StringUtils.hasText(gameInstanceIdText) || !StringUtils.hasText(request.getTenantId())) {
-      return GrpcAppErrors.ok("Disconnect recorded (no SESSION envelope)");
+      meterRegistry.counter(MISSING_CONTEXT_METRIC).increment();
+      return GrpcAppErrors.ok("Disconnect recorded (no proxy bootstrap metadata)");
     }
     SessionValidationResult validation = validateSession(gameInstanceIdText, request.getTenantId());
     if (validation.hasError()) {
@@ -109,7 +123,13 @@ public final class TcpProxyServiceImpl extends TcpProxyServiceGrpc.TcpProxyServi
       sessionStateService.saveState(suspendedState);
       return GrpcAppErrors.ok("Disconnect recorded");
     } catch (RuntimeException ex) {
-      logger.error("Failed to save suspended session state", ex);
+      logger.error(
+          "Failed to save suspended session state tenantId={} gameInstanceId={} proxyConnectionId={} disconnectSequence={}",
+          request.getTenantId(),
+          gameInstanceIdText,
+          request.getProxyConnectionId(),
+          request.getDisconnectSequence(),
+          ex);
       return GrpcAppErrors.error(meterRegistry, "INTERNAL", "Failed to update session state");
     }
   }
@@ -164,35 +184,6 @@ public final class TcpProxyServiceImpl extends TcpProxyServiceGrpc.TcpProxyServi
     instance.setOwnerAccountId(0L);
     instance.setStatus("RUNNING");
     return instance;
-  }
-
-  private static final class DisconnectDeduplicator {
-    private final int maxEntries;
-    private final java.util.LinkedHashMap<String, Long> lastSequenceByConnection =
-        new java.util.LinkedHashMap<>(128, 0.75f, true);
-
-    private DisconnectDeduplicator(int maxEntries) {
-      this.maxEntries = maxEntries;
-    }
-
-    boolean shouldProcess(String proxyConnectionId, long disconnectSequence) {
-      synchronized (lastSequenceByConnection) {
-        Long lastProcessed = lastSequenceByConnection.get(proxyConnectionId);
-        if (lastProcessed != null && disconnectSequence <= lastProcessed) {
-          return false;
-        }
-        lastSequenceByConnection.put(proxyConnectionId, disconnectSequence);
-        if (lastSequenceByConnection.size() > maxEntries) {
-          java.util.Iterator<java.util.Map.Entry<String, Long>> iterator =
-              lastSequenceByConnection.entrySet().iterator();
-          if (iterator.hasNext()) {
-            iterator.next();
-            iterator.remove();
-          }
-        }
-        return true;
-      }
-    }
   }
 
   private record SessionValidationResult(

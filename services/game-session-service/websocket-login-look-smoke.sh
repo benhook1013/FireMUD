@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Direct WebSocket -> Game Session smoke test: LOGIN + LOOK after readiness.
+# Direct WebSocket -> Game Session smoke test: WORLDS + LOGIN + PLAY + LOOK after readiness.
 set -euo pipefail
 
 SMOKE_GAME_SESSION_WS_URL=${SMOKE_GAME_SESSION_WS_URL:-ws://localhost:8086/ws/game}
@@ -10,7 +10,9 @@ SMOKE_TENANT_ID=${SMOKE_TENANT_ID:-1}
 SMOKE_ACCOUNT_API_BASE=${SMOKE_ACCOUNT_API_BASE:-http://localhost:8081}
 SMOKE_GAME_LOGIC_API_BASE=${SMOKE_GAME_LOGIC_API_BASE:-http://localhost:8085}
 SMOKE_GAME_SESSION_API_BASE=${SMOKE_GAME_SESSION_API_BASE:-http://localhost:8086}
+SMOKE_WORLDS_EXPECT=${SMOKE_WORLDS_EXPECT:-"OK WORLDS"}
 SMOKE_LOGIN_EXPECT=${SMOKE_LOGIN_EXPECT:-"OK LOGIN"}
+SMOKE_PLAY_EXPECT=${SMOKE_PLAY_EXPECT:-"OK PLAY"}
 SMOKE_LOOK_EXPECT=${SMOKE_LOOK_EXPECT:-"OK LOOK"}
 SMOKE_TIMEOUT_SECONDS=${SMOKE_TIMEOUT_SECONDS:-10}
 SMOKE_LOOK_TIMEOUT_SECONDS=${SMOKE_LOOK_TIMEOUT_SECONDS:-60}
@@ -24,7 +26,7 @@ else
   exit 1
 fi
 
-echo "Running direct WebSocket LOGIN + LOOK smoke test against ${SMOKE_GAME_SESSION_WS_URL}"
+echo "Running direct WebSocket WORLDS + LOGIN + PLAY + LOOK smoke test against ${SMOKE_GAME_SESSION_WS_URL}"
 echo "Using username='${SMOKE_USERNAME}' (password redacted)"
 echo "Using session='${SMOKE_SESSION_ID}' tenant='${SMOKE_TENANT_ID}'"
 
@@ -53,16 +55,21 @@ tenant_id = os.environ.get("SMOKE_TENANT_ID", "1")
 account_api_base = os.environ.get("SMOKE_ACCOUNT_API_BASE", "http://localhost:8081")
 game_logic_api_base = os.environ.get("SMOKE_GAME_LOGIC_API_BASE", "http://localhost:8085")
 game_session_api_base = os.environ.get("SMOKE_GAME_SESSION_API_BASE", "http://localhost:8086")
+worlds_expect = os.environ.get("SMOKE_WORLDS_EXPECT", "OK WORLDS")
 login_expect = os.environ.get("SMOKE_LOGIN_EXPECT", "OK LOGIN")
+play_expect = os.environ.get("SMOKE_PLAY_EXPECT", "OK PLAY")
 look_expect = os.environ.get("SMOKE_LOOK_EXPECT", "OK LOOK")
 timeout_seconds = int(os.environ.get("SMOKE_TIMEOUT_SECONDS", "10"))
 look_timeout_seconds = int(os.environ.get("SMOKE_LOOK_TIMEOUT_SECONDS", "60"))
 startup_wait_seconds = int(os.environ.get("SMOKE_STARTUP_WAIT_SECONDS", "90"))
+compose_project_name = os.environ.get("COMPOSE_PROJECT_NAME", "docker")
+postgres_container = f"{compose_project_name}-postgres-1"
 
 
 def ensure_smoke_account():
     payload = json.dumps(
         {
+            "tenantId": int(tenant_id),
             "username": username.split("@", 1)[0],
             "email": username,
             "password": password,
@@ -97,14 +104,14 @@ def ensure_smoke_account():
 
 def wait_for_account_schema():
     deadline = time.time() + startup_wait_seconds
-    query = "select to_regclass('public.accounts');"
+    query = "select to_regclass('account_service.accounts');"
     while time.time() < deadline:
         try:
             table_name = subprocess.check_output(
                 [
                     "docker",
                     "exec",
-                    "docker-postgres-1",
+                    postgres_container,
                     "psql",
                     "-U",
                     "firemud",
@@ -116,7 +123,7 @@ def wait_for_account_schema():
                 text=True,
                 timeout=timeout_seconds,
             ).strip()
-            if table_name == "accounts":
+            if table_name == "account_service.accounts":
                 print("Confirmed account schema is ready.")
                 return
         except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
@@ -164,7 +171,7 @@ def recv_text(ws, label, timeout):
 
 def sync_session_owner_account():
     query = (
-        "select id from accounts "
+        "select id from account_service.accounts "
         f"where email = '{username}' "
         "order by id desc limit 1;"
     )
@@ -173,7 +180,7 @@ def sync_session_owner_account():
             [
                 "docker",
                 "exec",
-                "docker-postgres-1",
+                postgres_container,
                 "psql",
                 "-U",
                 "firemud",
@@ -189,7 +196,7 @@ def sync_session_owner_account():
             print("Session-owner sync skipped: no smoke account found in postgres")
             return
         update = (
-            "update game_instances "
+            "update game_session_service.game_instances "
             f"set owner_account_id = {account_id}, tenant_id = {tenant_id} "
             f"where id = {session_id};"
         )
@@ -197,7 +204,7 @@ def sync_session_owner_account():
             [
                 "docker",
                 "exec",
-                "docker-postgres-1",
+                postgres_container,
                 "psql",
                 "-U",
                 "firemud",
@@ -223,6 +230,15 @@ def websocket_smoke():
         ],
     )
     try:
+        ws.send("WORLDS")
+        worlds_response = recv_text(ws, "WORLDS response", timeout_seconds)
+        print("=== WORLDS response ===")
+        print(worlds_response.strip() or "<empty>")
+        if worlds_expect not in worlds_response:
+            raise RuntimeError(
+                f"Expected WORLDS response containing '{worlds_expect}', got '{worlds_response}'"
+            )
+
         ws.send(f"LOGIN {username} {password}")
         login_response = recv_text(ws, "LOGIN response", timeout_seconds)
         print("=== LOGIN response ===")
@@ -232,8 +248,27 @@ def websocket_smoke():
                 f"Expected LOGIN response containing '{login_expect}', got '{login_response}'"
             )
 
+        ws.send("PLAY demo")
+        play_response = recv_text(ws, "PLAY response", timeout_seconds)
+        print("=== PLAY response ===")
+        print(play_response.strip() or "<empty>")
+        if play_expect not in play_response:
+            raise RuntimeError(
+                f"Expected PLAY response containing '{play_expect}', got '{play_response}'"
+            )
+
         ws.send("LOOK")
-        look_response = recv_text(ws, "LOOK response", look_timeout_seconds)
+        look_chunks = []
+        deadline = time.time() + look_timeout_seconds
+        while time.time() < deadline:
+            remaining = max(0.1, deadline - time.time())
+            look_chunks.append(recv_text(ws, "LOOK response chunk", min(remaining, timeout_seconds)))
+            combined = "\n".join(chunk.strip() for chunk in look_chunks if chunk.strip())
+            if look_expect in combined:
+                look_response = combined
+                break
+        else:
+            look_response = "\n".join(chunk.strip() for chunk in look_chunks if chunk.strip())
         print("=== LOOK response ===")
         print(look_response.strip() or "<empty>")
         if look_expect not in look_response:

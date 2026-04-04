@@ -21,7 +21,7 @@ import org.springframework.http.HttpHeaders;
     classes = LoggingAdminServiceApplication.class,
     properties = {
       "spring.profiles.active=test",
-      "spring.datasource.url=jdbc:h2:mem:${spring.application.name:firemud}-test;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE;INIT=CREATE SCHEMA IF NOT EXISTS saga",
+      "spring.datasource.url=jdbc:h2:mem:${spring.application.name:firemud}-test;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE",
       "firemud.database.enabled=false",
       "firemud.redis.enabled=false",
       "spring.grpc.server.port=0",

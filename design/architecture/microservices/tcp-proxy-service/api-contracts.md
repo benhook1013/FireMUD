@@ -8,6 +8,8 @@ The proxy does not expose a public client API. Instead it emits a gRPC event for
 
 These events let the Game Session Service resume suspended sessions and resume processing of any Redis-backed gameplay command queues it owns. They do not authorize replay of prior outbound transport bytes onto a new client socket. The TCP Proxy never replays Telnet input after a disconnect; connection-local buffers are cleared as soon as the TCP session closes. `NotifyDisconnect` is therefore a best-effort, at-least-once lifecycle signal keyed by `{proxyConnectionId, disconnectSequence}` rather than a request to re-run gameplay commands.
 
+The proxy is an edge component, not the owner of resumable gameplay state. Non-edge restart invisibility depends on Game Session and downstream gameplay services being able to rebind from shared state without needing the proxy to preserve authoritative in-memory transport context. If a non-edge restart still forces Telnet reconnect while the TCP socket remained healthy, that is a downstream takeover gap rather than an intended TCP Proxy contract.
+
 When a `NotifyDisconnect` call fails with a transport-level error, the proxy retries it with a short, bounded exponential backoff window:
 
 - `TCP_PROXY_NOTIFY_DISCONNECT_MAX_RETRY_MS` bounds the total retry window after Telnet socket close.
@@ -36,14 +38,9 @@ Additional codes may be introduced later, but they must remain few in number and
 
 The proxy generates `proxyConnectionId` when the Telnet socket is accepted and uses one stable identifier for the lifetime of that TCP connection. Every WebSocket bridge handshake attempt initiated while that same Telnet socket is still alive re-sends the same `proxyConnectionId` as `X-Proxy-Connection-Id`.
 
-The canonical `SESSION` envelope contract lives in [`protocols.md`](./protocols.md#telnet-session-envelope-and-event-metrics). In particular:
+The human-facing Telnet browse/login path is `WORLDS` (optional public browse), `LOGIN`, and then `PLAY`. Typed `SESSION` lines are no longer part of the Telnet contract.
 
-- the proxy captures at most one `SESSION` envelope before the first forwarded non-`SESSION` line;
-- Telnet negotiation and MCP control traffic participate in that attach-hint window as documented there;
-- malformed `SESSION` lines are advisory and budgeted, not immediate transport failures; and
-- `SESSION` values are client-provided claims, not trusted facts.
-
-When a valid `SESSION <gameInstanceId> <tenantId>` envelope is captured, the proxy also forwards `X-Proxy-Game-Instance-Id` and `X-Proxy-Tenant-Id`. Spring Cloud Gateway strips these from public ingress, emits `X-Firemud-Connection-Mode: trusted_tcp_proxy` on authenticated TCP Proxy bridge hops, and may forward canonical `X-Game-Instance-Id` / `X-Tenant-Id` headers only after authenticating the TCP Proxy identity.
+The proxy may still forward `X-Proxy-Game-Instance-Id` and `X-Proxy-Tenant-Id` when those values come from server-owned defaults or future hidden MCP-carried smart-client metadata. Spring Cloud Gateway strips these from public ingress, emits `X-Firemud-Connection-Mode: trusted_tcp_proxy` on authenticated TCP Proxy bridge hops, and may forward canonical `X-Game-Instance-Id` / `X-Tenant-Id` headers only after authenticating the TCP Proxy identity. These headers remain advisory only and must never bypass `LOGIN` + `PLAY`.
 
 Client-IP ownership follows the same pattern: the proxy recovers the real client IP via PROXY protocol on the internal-only listener, sets `X-Proxy-Client-IP` on the authenticated internal bridge, and Gateway canonicalizes that into `X-Client-IP` only after authenticating the proxy identity. Public ingress must never be allowed to set these proxy-owned headers directly.
 

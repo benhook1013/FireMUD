@@ -52,6 +52,12 @@ If you change Redis usage for this service, you must read and apply:
 
 - Messages are cached in Redis lists and delivered to WebSocket channels through the Spring Cloud Gateway
 - Guild and direct messages share a common persistence model for history
+- The long-term gameplay communication model should treat cached history and delivery metadata as outputs of a configurable communication system rather than as `SAY`-specific special cases. In-world communication should arrive with explicit target/scope and resolved-recipient metadata so persisted history can distinguish:
+  - the communication type,
+  - the target object or propagation scope,
+  - ordinary recipients,
+  - observer/interceptor recipients such as spies or eavesdroppers,
+  - and the presentation form each recipient saw when that matters for audit or replay.
 - Recent history is retained in Redis with type-specific TTLs and message caps:
   - Says: 2 hours or 50 messages per character
   - Tells: 48 hours or 50 messages per character

@@ -15,7 +15,7 @@
 The TCP Proxy Service treats each Telnet TCP connection as independent and keeps reconnection logic centralized in the Game Session Service:
 
 - Multiple Telnet connections using the same `{gameInstanceId, tenantId}` are allowed. The proxy simply forwards commands for each connection; Game Session enforces the “one session per character” behavior by applying takeover rules when a second client logs in as the same character.
-- The proxy does not emit a positive reconnect event. It only calls `NotifyDisconnect` when a Telnet socket closes, using a server-generated `proxyConnectionId` and a per-connection `disconnectSequence` counter for idempotency; Game Session interprets a subsequent `LOGIN` + `PLAY` flow (with or without a `SESSION` envelope) as either a fresh login or a resume/takeover based on Redis session state.
+- The proxy does not emit a positive reconnect event. It only calls `NotifyDisconnect` when a Telnet socket closes, using a server-generated `proxyConnectionId` and a per-connection `disconnectSequence` counter for idempotency; Game Session interprets a subsequent `LOGIN` + `PLAY` flow as either a fresh login or a resume or takeover based on Redis session state.
 - After `NotifyDisconnect`, session state remains eligible for reconnection until the configured `session_expiration_ms` window elapses; see the [Reconnection Strategy](../../system-architecture-reconnection.md) and [Environment & Secrets](../../infrastructure/environment-and-secrets.md#authentication) for details on how this window is derived.
 
 ## Data Model
@@ -38,7 +38,7 @@ These trust surfaces are related but not interchangeable. In very small local or
 
 The canonical bridge lifecycle and disconnect-behavior contract lives in [`protocols.md`](./protocols.md#data-flow) and [`protocols.md`](./protocols.md#bridge-state-machine-established-telnet-sessions). The minimum runtime invariants are:
 
-- the proxy must establish the Gateway bridge before forwarding the first non-`SESSION` line;
+- the proxy must establish the Gateway bridge before forwarding the first gameplay or MCP line;
 - pre-admission bridge failures distinguish `backend_unavailable` from `policy_violation`;
 - established-session bridge loss closes the Telnet socket immediately, with no hidden bridge reattach;
 - clean `1000/logout` closures preserve bounded logout semantics; and

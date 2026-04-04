@@ -4,14 +4,20 @@ spring:
     name: account-service
   flyway:
     enabled: true
-    schemas: ${SERVICE_SCHEMA:public},saga
+    schemas: ${SERVICE_SCHEMA:public}
     locations: classpath:db/migration,classpath:db/migration/saga
     defaultSchema: ${SERVICE_SCHEMA:public}
+    placeholders:
+      serviceSchema: ${SERVICE_SCHEMA:public}
+  jpa:
+    properties:
+      hibernate:
+        default_schema: ${SERVICE_SCHEMA:public}
   mail:
-    host: ${SMTP_HOST}
-    port: ${SMTP_PORT:587}
-    username: ${SMTP_USERNAME}
-    password: ${SMTP_PASSWORD}
+    host: ${SMTP_HOST:localhost}
+    port: ${SMTP_PORT:1025}
+    username: ${SMTP_USERNAME:}
+    password: ${SMTP_PASSWORD:}
 grpc:
   shutdownGrace: 30
   server:
@@ -44,6 +50,9 @@ firemud:
     reset-url: ${FIREMUD_MAIL_RESET_URL:https://firemud.com/reset-password?token=%s}
 
 management:
+  health:
+    mail:
+      enabled: false
   endpoints:
     web:
       exposure:
