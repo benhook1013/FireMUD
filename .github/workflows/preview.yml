@@ -218,6 +218,12 @@ jobs:
             "${{ needs.preview-plan.outputs.namespace }}" \
             "${PREVIEW_MAX_ACTIVE:-1}"
 
+      - name: Reset preview namespace for clean deploy
+        run: |
+          bash ./dev-tools/preview/delete-preview-namespace.sh \
+            "${{ needs.preview-plan.outputs.namespace }}" \
+            "${{ needs.preview-plan.outputs.release_name }}"
+
       - name: Ensure preview namespace exists
         run: |
           bash ./dev-tools/preview/ensure-preview-namespace.sh \
