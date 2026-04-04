@@ -62,6 +62,8 @@ look_expect = os.environ.get("SMOKE_LOOK_EXPECT", "OK LOOK")
 timeout_seconds = int(os.environ.get("SMOKE_TIMEOUT_SECONDS", "10"))
 look_timeout_seconds = int(os.environ.get("SMOKE_LOOK_TIMEOUT_SECONDS", "60"))
 startup_wait_seconds = int(os.environ.get("SMOKE_STARTUP_WAIT_SECONDS", "90"))
+compose_project_name = os.environ.get("COMPOSE_PROJECT_NAME", "docker")
+postgres_container = f"{compose_project_name}-postgres-1"
 
 
 def ensure_smoke_account():
@@ -109,7 +111,7 @@ def wait_for_account_schema():
                 [
                     "docker",
                     "exec",
-                    "docker-postgres-1",
+                    postgres_container,
                     "psql",
                     "-U",
                     "firemud",
@@ -178,7 +180,7 @@ def sync_session_owner_account():
             [
                 "docker",
                 "exec",
-                "docker-postgres-1",
+                postgres_container,
                 "psql",
                 "-U",
                 "firemud",
@@ -202,7 +204,7 @@ def sync_session_owner_account():
             [
                 "docker",
                 "exec",
-                "docker-postgres-1",
+                postgres_container,
                 "psql",
                 "-U",
                 "firemud",
@@ -256,7 +258,17 @@ def websocket_smoke():
             )
 
         ws.send("LOOK")
-        look_response = recv_text(ws, "LOOK response", look_timeout_seconds)
+        look_chunks = []
+        deadline = time.time() + look_timeout_seconds
+        while time.time() < deadline:
+            remaining = max(0.1, deadline - time.time())
+            look_chunks.append(recv_text(ws, "LOOK response chunk", min(remaining, timeout_seconds)))
+            combined = "\n".join(chunk.strip() for chunk in look_chunks if chunk.strip())
+            if look_expect in combined:
+                look_response = combined
+                break
+        else:
+            look_response = "\n".join(chunk.strip() for chunk in look_chunks if chunk.strip())
         print("=== LOOK response ===")
         print(look_response.strip() or "<empty>")
         if look_expect not in look_response:

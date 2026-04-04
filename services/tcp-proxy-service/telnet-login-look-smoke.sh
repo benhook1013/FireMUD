@@ -62,6 +62,8 @@ look_expect = os.environ.get("SMOKE_LOOK_EXPECT", "OK LOOK")
 startup_expect = os.environ.get("SMOKE_STARTUP_EXPECT", "DISCONNECT startup_unavailable")
 timeout_seconds = int(os.environ.get("SMOKE_TIMEOUT_SECONDS", "10"))
 startup_wait_seconds = int(os.environ.get("SMOKE_STARTUP_WAIT_SECONDS", "90"))
+compose_project_name = os.environ.get("COMPOSE_PROJECT_NAME", "docker")
+postgres_container = f"{compose_project_name}-postgres-1"
 
 def recv_until(sock, expected_substring, timeout):
     deadline = time.time() + timeout
@@ -126,7 +128,7 @@ def wait_for_account_schema():
                 [
                     "docker",
                     "exec",
-                    "docker-postgres-1",
+                    postgres_container,
                     "psql",
                     "-U",
                     "firemud",
@@ -208,7 +210,7 @@ def sync_session_owner_account():
             [
                 "docker",
                 "exec",
-                "docker-postgres-1",
+                postgres_container,
                 "psql",
                 "-U",
                 "firemud",
@@ -232,7 +234,7 @@ def sync_session_owner_account():
             [
                 "docker",
                 "exec",
-                "docker-postgres-1",
+                postgres_container,
                 "psql",
                 "-U",
                 "firemud",
