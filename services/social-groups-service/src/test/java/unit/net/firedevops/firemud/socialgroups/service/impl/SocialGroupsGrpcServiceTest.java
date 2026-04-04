@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.mockito.Mockito.verify;
 
 import io.grpc.stub.StreamObserver;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.socialgroups.dto.SendMessageRequestDto;
 import net.firedevops.firemud.socialgroups.enums.ChatType;
@@ -29,7 +30,8 @@ class SocialGroupsGrpcServiceTest {
     GuildService guild = Mockito.mock(GuildService.class);
     FriendService friend = Mockito.mock(FriendService.class);
     MailService mail = Mockito.mock(MailService.class);
-    SocialGroupsGrpcService service = new SocialGroupsGrpcService(ping, chat, guild, friend, mail);
+    SocialGroupsGrpcService service =
+        new SocialGroupsGrpcService(ping, chat, guild, friend, mail, new SimpleMeterRegistry());
 
     AtomicReference<PingResponse> ref = new AtomicReference<>();
     service.ping(
@@ -58,7 +60,8 @@ class SocialGroupsGrpcServiceTest {
     Mockito.when(guild.createGuild(Mockito.any())).thenThrow(new IllegalArgumentException("bad"));
     FriendService friend = Mockito.mock(FriendService.class);
     MailService mail = Mockito.mock(MailService.class);
-    SocialGroupsGrpcService service = new SocialGroupsGrpcService(ping, chat, guild, friend, mail);
+    SocialGroupsGrpcService service =
+        new SocialGroupsGrpcService(ping, chat, guild, friend, mail, new SimpleMeterRegistry());
 
     AtomicReference<CreateGuildResponse> ref = new AtomicReference<>();
     service.createGuild(
@@ -91,7 +94,8 @@ class SocialGroupsGrpcServiceTest {
     GuildService guild = Mockito.mock(GuildService.class);
     FriendService friend = Mockito.mock(FriendService.class);
     MailService mail = Mockito.mock(MailService.class);
-    SocialGroupsGrpcService service = new SocialGroupsGrpcService(ping, chat, guild, friend, mail);
+    SocialGroupsGrpcService service =
+        new SocialGroupsGrpcService(ping, chat, guild, friend, mail, new SimpleMeterRegistry());
 
     AtomicReference<SendMessageResponse> ref = new AtomicReference<>();
     service.sendMessage(

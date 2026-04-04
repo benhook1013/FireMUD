@@ -1,12 +1,10 @@
 package net.firedevops.firemud.socialgroups.service.impl;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.annotation.Timed;
 import java.time.Instant;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.LoggingUtil;
-import net.firedevops.firemud.common.saga.SagaBuilder;
-import net.firedevops.firemud.common.saga.SagaException;
-import net.firedevops.firemud.common.saga.SagaRunner;
 import net.firedevops.firemud.socialgroups.client.LoggingAdminClient;
 import net.firedevops.firemud.socialgroups.dto.AddGuildMemberRequest;
 import net.firedevops.firemud.socialgroups.dto.AddGuildStorageItemRequest;
@@ -33,6 +31,8 @@ import net.firedevops.firemud.socialgroups.service.GuildService;
 import org.slf4j.Logger;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 @Service
 @RequiredArgsConstructor
@@ -47,8 +47,11 @@ public class GuildServiceImpl implements GuildService {
   private final GuildMapper guildMapper;
   private final GuildMemberRepository guildMemberRepository;
   private final GuildMemberMapper guildMemberMapper;
+
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "Injected client is managed by Spring")
   private final LoggingAdminClient loggingAdminClient;
-  private final SagaRunner sagaRunner;
 
   @Override
   @Transactional
@@ -60,29 +63,12 @@ public class GuildServiceImpl implements GuildService {
     guild.setOwnerAccountId(request.ownerAccountId());
     guild.setName(request.name());
     guild.setCreatedAt(Instant.now());
-
-    var saga =
-        new SagaBuilder("createGuild")
-            .step(
-                "persistGuild",
-                () -> guildRepository.save(guild),
-                () -> guildRepository.delete(guild))
-            .step(
-                "logCreation",
-                () ->
-                    loggingAdminClient.reportChatViolation(
-                        request.tenantId(),
-                        request.ownerAccountId(),
-                        "Guild created: " + request.name()))
-            .build();
-    try {
-      sagaRunner.run(saga);
-    } catch (SagaException e) {
-      logger.warn("Guild creation saga failed", e);
-      throw new IllegalStateException("Guild creation failed", e);
-    }
-
-    return guildMapper.toDto(guild);
+    Guild saved = guildRepository.save(guild);
+    runAfterCommit(
+        () ->
+            safeReportModeration(
+                request.tenantId(), request.ownerAccountId(), "Guild created: " + request.name()));
+    return guildMapper.toDto(saved);
   }
 
   @Override
@@ -121,31 +107,12 @@ public class GuildServiceImpl implements GuildService {
     member.setGuildId(request.guildId());
     member.setAccountId(request.accountId());
     member.setRole(request.role());
-
-    var saga =
-        new SagaBuilder("addGuildMember")
-            .step(
-                "persistMember",
-                () -> {
-                  GuildMember saved = guildMemberRepository.save(member);
-                  member.setId(saved.getId());
-                },
-                () -> guildMemberRepository.delete(member))
-            .step(
-                "logAdd",
-                () ->
-                    loggingAdminClient.reportChatViolation(
-                        request.tenantId(),
-                        request.accountId(),
-                        "Joined guild " + request.guildId()))
-            .build();
-    try {
-      sagaRunner.run(saga);
-    } catch (SagaException e) {
-      logger.warn("Add member saga failed", e);
-      throw new IllegalStateException("Add member failed", e);
-    }
-
+    GuildMember saved = guildMemberRepository.save(member);
+    member.setId(saved.getId());
+    runAfterCommit(
+        () ->
+            safeReportModeration(
+                request.tenantId(), request.accountId(), "Joined guild " + request.guildId()));
     return guildMemberMapper.toDto(member);
   }
 
@@ -163,34 +130,14 @@ public class GuildServiceImpl implements GuildService {
             .findFirstByTenantIdAndGuildIdAndAccountId(
                 request.tenantId(), request.guildId(), request.accountId())
             .orElseThrow();
-    String originalRole = member.getRole();
-    var saga =
-        new SagaBuilder("updateGuildMemberRole")
-            .step(
-                "updateMember",
-                () -> {
-                  member.setRole(request.role());
-                  guildMemberRepository.save(member);
-                },
-                () -> {
-                  member.setRole(originalRole);
-                  guildMemberRepository.save(member);
-                })
-            .step(
-                "logUpdate",
-                () ->
-                    loggingAdminClient.reportChatViolation(
-                        request.tenantId(),
-                        request.accountId(),
-                        "Updated guild role to " + request.role()))
-            .build();
-    try {
-      sagaRunner.run(saga);
-    } catch (SagaException e) {
-      logger.warn("Update member role saga failed", e);
-      throw new IllegalStateException("Update member role failed", e);
-    }
-
+    member.setRole(request.role());
+    guildMemberRepository.save(member);
+    runAfterCommit(
+        () ->
+            safeReportModeration(
+                request.tenantId(),
+                request.accountId(),
+                "Updated guild role to " + request.role()));
     return guildMemberMapper.toDto(member);
   }
 
@@ -206,24 +153,33 @@ public class GuildServiceImpl implements GuildService {
     if (member == null) {
       return;
     }
+    guildMemberRepository.delete(member);
+    runAfterCommit(() -> safeReportModeration(tenantId, accountId, "Left guild " + guildId));
+  }
 
-    var saga =
-        new SagaBuilder("removeGuildMember")
-            .step(
-                "deleteMember",
-                () -> guildMemberRepository.delete(member),
-                () -> guildMemberRepository.save(member))
-            .step(
-                "logRemove",
-                () ->
-                    loggingAdminClient.reportChatViolation(
-                        tenantId, accountId, "Left guild " + guildId))
-            .build();
+  private void safeReportModeration(long tenantId, long accountId, String description) {
     try {
-      sagaRunner.run(saga);
-    } catch (SagaException e) {
-      logger.warn("Remove member saga failed", e);
-      throw new IllegalStateException("Remove member failed", e);
+      loggingAdminClient.reportChatViolation(tenantId, accountId, description);
+    } catch (RuntimeException ex) {
+      logger.warn(
+          "Failed to report guild moderation event for tenant {} account {}",
+          tenantId,
+          accountId,
+          ex);
     }
+  }
+
+  private void runAfterCommit(Runnable action) {
+    if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+      action.run();
+      return;
+    }
+    TransactionSynchronizationManager.registerSynchronization(
+        new TransactionSynchronization() {
+          @Override
+          public void afterCommit() {
+            action.run();
+          }
+        });
   }
 }

@@ -26,8 +26,8 @@ This file tracks post-pre-`06` audit findings that still appear live in the curr
 
 ## Refactor / Hygiene
 
-- [ ] Reconcile `@RequireAdminRole` semantics with MVC use; it currently fits gRPC/global-role behavior better than tenant-scoped MVC behavior.
-- [ ] Make `social-groups-service` use `GrpcAppErrors` consistently instead of hand-building `ErrorDetail`.
+- [x] Reconcile `@RequireAdminRole` semantics with MVC use; MVC controllers now use `SessionContext.requireTenantAccess` and `@RequireAdminRole` remains scoped to gRPC/global-role surfaces.
+- [x] Make `social-groups-service` use `GrpcAppErrors` consistently instead of hand-building `ErrorDetail`.
 - [x] Change `logging-admin` log query away from `GET` with request body.
 - [x] Stop mutating active-saga metrics from `SagaDashboardServiceImpl` read paths.
 
