@@ -25,7 +25,8 @@ class GameplayHandshakeFilterLoggingContextTest {
         new GameplayHandshakeFilter(
             new JwtUtil(SECRET, 30_000L),
             new RuntimeIdentity(
-                "spring-cloud-gateway", "gateway-test", null, Instant.EPOCH, null, null, null));
+                "spring-cloud-gateway", "gateway-test", null, Instant.EPOCH, null, null, null),
+            null);
     MockServerWebExchange exchange =
         MockServerWebExchange.from(
             MockServerHttpRequest.get("/ws/game/test")

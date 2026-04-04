@@ -20,16 +20,17 @@ This is not the canonical slice plan. It is a short-lived coordination list for 
 ## Fix Soon
 
 - [x] Gateway admin route mutation no longer blocks the reactive path. Dynamic route upsert and removal now stay reactive through [GatewayRouteServiceImpl](/home/ben/src/FireMUD-wsl-copy/services/spring-cloud-gateway/src/main/java/net/firedevops/firemud/springcloudgateway/service/impl/GatewayRouteServiceImpl.java), [GatewayController](/home/ben/src/FireMUD-wsl-copy/services/spring-cloud-gateway/src/main/java/net/firedevops/firemud/springcloudgateway/controller/GatewayController.java), and [GatewayManagementGrpcService](/home/ben/src/FireMUD-wsl-copy/services/spring-cloud-gateway/src/main/java/net/firedevops/firemud/springcloudgateway/service/impl/GatewayManagementGrpcService.java).
-- [ ] First-party connect-token replay protection is still process-local in [GameplayHandshakeFilter](/home/ben/src/FireMUD-wsl-copy/services/spring-cloud-gateway/src/main/java/net/firedevops/firemud/springcloudgateway/filter/GameplayHandshakeFilter.java).
+- [x] First-party connect-token replay protection now uses a Redis-backed gateway replay keyspace when Redis is available, with local fallback only for test/dev contexts that intentionally exclude Redis auto-config, in [GameplayHandshakeFilter](/home/ben/src/FireMUD-wsl-copy/services/spring-cloud-gateway/src/main/java/net/firedevops/firemud/springcloudgateway/filter/GameplayHandshakeFilter.java).
 - [x] The misleading `gateway.connections.*` filter is gone. Gateway now records explicit HTTP request metrics in [RequestMetricsFilter](/home/ben/src/FireMUD-wsl-copy/services/spring-cloud-gateway/src/main/java/net/firedevops/firemud/springcloudgateway/filter/RequestMetricsFilter.java) instead of claiming to measure active gameplay sockets.
 - [x] Hot-path blocking gRPC calls now carry bounded deadlines where the gameplay clients block on downstream gRPC calls.
+- [x] The Social & Groups `SAY` cache buffer now keys off the speaking character identity instead of a recipient-account placeholder, matching the documented `chat:say:<tenantId>:<characterId>` cache shape.
 
 ## Refactor And Hygiene
 
-- [ ] Session resume and takeover bookkeeping in Redis is still multi-key and non-atomic in [RedisSessionContextService](/home/ben/src/FireMUD-wsl-copy/services/game-session-service/src/main/java/net/firedevops/firemud/gamesession/service/impl/RedisSessionContextService.java).
-- [ ] `GameInstanceServiceImpl` still holds database transactions open across Redis and remote side effects.
-- [ ] `GuildServiceImpl` still uses `findAll().stream().filter(...)` instead of repository-level lookup methods for member updates and removal.
-- [ ] `SAY` history in [ChatServiceImpl](/home/ben/src/FireMUD-wsl-copy/services/social-groups-service/src/main/java/net/firedevops/firemud/socialgroups/service/impl/ChatServiceImpl.java) is still keyed by `recipientAccountId`, which is not the right shape for room speech history.
+- [x] Session-context key writes and deletions in [RedisSessionContextService](/home/ben/src/FireMUD-wsl-copy/services/game-session-service/src/main/java/net/firedevops/firemud/gamesession/service/impl/RedisSessionContextService.java) now execute as grouped Redis transactions instead of scattered multi-key mutations.
+- [x] [GameInstanceServiceImpl](/home/ben/src/FireMUD-wsl-copy/services/game-session-service/src/main/java/net/firedevops/firemud/gamesession/service/impl/GameInstanceServiceImpl.java) no longer performs Redis/session-state or saga/network side effects directly inside the open database transaction. Those side effects now run after commit, with immediate fallback when no transaction is active.
+- [x] `GuildServiceImpl` no longer uses `findAll().stream().filter(...)` for member updates and removal. Repository-level lookup methods now resolve the member directly.
+- [x] `SAY` history in [ChatServiceImpl](/home/ben/src/FireMUD-wsl-copy/services/social-groups-service/src/main/java/net/firedevops/firemud/socialgroups/service/impl/ChatServiceImpl.java) now keys off the speaking character identity rather than a recipient-account placeholder.
 
 ## No Longer Active Concerns
 

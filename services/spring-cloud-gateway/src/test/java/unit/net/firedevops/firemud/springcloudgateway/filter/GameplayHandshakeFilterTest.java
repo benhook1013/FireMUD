@@ -1,6 +1,10 @@
 package net.firedevops.firemud.springcloudgateway.filter;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import java.net.InetSocketAddress;
 import java.time.Instant;
@@ -9,6 +13,8 @@ import net.firedevops.firemud.common.runtime.RuntimeIdentity;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.springcloudgateway.config.GatewayHeaderTrustProperties;
 import org.junit.jupiter.api.Test;
+import org.springframework.data.redis.core.ReactiveStringRedisTemplate;
+import org.springframework.data.redis.core.ReactiveValueOperations;
 import org.springframework.http.HttpStatus;
 import org.springframework.mock.http.server.reactive.MockServerHttpRequest;
 import org.springframework.mock.web.server.MockServerWebExchange;
@@ -26,7 +32,7 @@ class GameplayHandshakeFilterTest {
   @Test
   void rejectsFirstPartyHandshakeWithoutConnectToken() {
     GameplayHandshakeFilter filter =
-        new GameplayHandshakeFilter(new JwtUtil(SECRET, 30_000L), TEST_RUNTIME_IDENTITY);
+        new GameplayHandshakeFilter(new JwtUtil(SECRET, 30_000L), TEST_RUNTIME_IDENTITY, null);
 
     MockServerWebExchange exchange =
         MockServerWebExchange.from(MockServerHttpRequest.get("/ws/game/test").build());
@@ -41,7 +47,7 @@ class GameplayHandshakeFilterTest {
   @Test
   void rejectsScopeMismatchWhenRequestHeadersDisagreeWithTokenClaims() {
     GameplayHandshakeFilter filter =
-        new GameplayHandshakeFilter(new JwtUtil(SECRET, 30_000L), TEST_RUNTIME_IDENTITY);
+        new GameplayHandshakeFilter(new JwtUtil(SECRET, 30_000L), TEST_RUNTIME_IDENTITY, null);
     String token =
         new JwtUtil(SECRET, 30_000L)
             .generateToken(
@@ -69,7 +75,7 @@ class GameplayHandshakeFilterTest {
   @Test
   void promotesFirstPartyHandshakeWithValidToken() {
     GameplayHandshakeFilter filter =
-        new GameplayHandshakeFilter(new JwtUtil(SECRET, 30_000L), TEST_RUNTIME_IDENTITY);
+        new GameplayHandshakeFilter(new JwtUtil(SECRET, 30_000L), TEST_RUNTIME_IDENTITY, null);
     String token =
         new JwtUtil(SECRET, 30_000L)
             .generateToken(
@@ -110,7 +116,7 @@ class GameplayHandshakeFilterTest {
     props.getTcpProxy().setInsecureTrustedCidrs(java.util.List.of("10.0.0.0/8"));
     HeaderTrustFilter headerTrustFilter = new HeaderTrustFilter(props);
     GameplayHandshakeFilter filter =
-        new GameplayHandshakeFilter(new JwtUtil(SECRET, 30_000L), TEST_RUNTIME_IDENTITY);
+        new GameplayHandshakeFilter(new JwtUtil(SECRET, 30_000L), TEST_RUNTIME_IDENTITY, null);
 
     MockServerHttpRequest request =
         MockServerHttpRequest.get("/ws/game/test")
@@ -132,7 +138,7 @@ class GameplayHandshakeFilterTest {
   @Test
   void rejectsExpiredConnectToken() {
     GameplayHandshakeFilter filter =
-        new GameplayHandshakeFilter(new JwtUtil(SECRET, 30_000L), TEST_RUNTIME_IDENTITY);
+        new GameplayHandshakeFilter(new JwtUtil(SECRET, 30_000L), TEST_RUNTIME_IDENTITY, null);
     JwtUtil expiredJwtUtil = new JwtUtil(SECRET, -1L);
     String token =
         expiredJwtUtil.generateToken(
@@ -158,8 +164,16 @@ class GameplayHandshakeFilterTest {
 
   @Test
   void rejectsReplayedConnectToken() {
+    ReactiveStringRedisTemplate redisTemplate = mock(ReactiveStringRedisTemplate.class);
+    @SuppressWarnings("unchecked")
+    ReactiveValueOperations<String, String> valueOps = mock(ReactiveValueOperations.class);
+    when(redisTemplate.opsForValue()).thenReturn(valueOps);
+    when(valueOps.setIfAbsent(
+            eq("gateway:connect-token:jti:jti-replay"), eq("1"), any(java.time.Duration.class)))
+        .thenReturn(Mono.just(true), Mono.just(false));
     GameplayHandshakeFilter filter =
-        new GameplayHandshakeFilter(new JwtUtil(SECRET, 30_000L), TEST_RUNTIME_IDENTITY);
+        new GameplayHandshakeFilter(
+            new JwtUtil(SECRET, 30_000L), TEST_RUNTIME_IDENTITY, redisTemplate);
     String token =
         new JwtUtil(SECRET, 30_000L)
             .generateToken(

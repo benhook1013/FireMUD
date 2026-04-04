@@ -39,6 +39,7 @@
 - Rate limiting behavior, including keying strategy and the division of responsibility with the TCP Proxy Service and Game Session Service, follows [Rate Limiting & Abuse Protection](../../system-architecture-gateway.md#rate-limiting--abuse-protection).
 - WebSocket upgrades are proxied using Spring Cloud Gateway’s built-in WebSocket support.
 - `RequestMetricsFilter` records HTTP request activity for observability, while the dev WebSocket echo handler records actual WebSocket connection counts separately.
+- First-party gameplay connect-token replay protection is gateway-owned. The gateway stores connect-token `jti` values under a bounded replay keyspace and rejects reuse across gateway instances when reactive Redis is available; test/dev contexts without Redis auto-config may fall back to local in-memory replay state.
 - Tracing for WebSocket sessions captures connection-level metadata such as route ID, tenant, session identifiers, and timing without logging full text payloads by default.
 - Full request and response payload tracing for WebSocket sessions is an opt-in diagnostic mode only and must be tightly scoped with sampling and redaction aligned to [Logging & Monitoring](../../system-architecture-logging-monitoring.md).
 

@@ -19,7 +19,9 @@ import net.firedevops.firemud.common.security.JwtUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.Ordered;
+import org.springframework.data.redis.core.ReactiveStringRedisTemplate;
 import org.springframework.http.HttpStatus;
+import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 import org.springframework.web.server.ServerWebExchange;
@@ -44,16 +46,22 @@ public class GameplayHandshakeFilter implements WebFilter, Ordered {
   static final String CONNECT_TOKEN_EXPIRED = "CONNECT_TOKEN_EXPIRED";
   static final String CONNECT_TOKEN_REPLAYED = "CONNECT_TOKEN_REPLAYED";
   static final String CONNECT_SCOPE_MISMATCH = "CONNECT_SCOPE_MISMATCH";
+  private static final String REPLAY_CACHE_KEY_PREFIX = "gateway:connect-token:jti:";
   private static final Duration REPLAY_SKEW = Duration.ofSeconds(5);
 
   private final JwtUtil jwtUtil;
   private final RuntimeIdentity runtimeIdentity;
+  @Nullable private final ReactiveStringRedisTemplate replayRedisTemplate;
   private final ConcurrentHashMap<String, Long> replayCache = new ConcurrentHashMap<>();
 
-  public GameplayHandshakeFilter(JwtUtil jwtUtil, RuntimeIdentity runtimeIdentity) {
+  public GameplayHandshakeFilter(
+      JwtUtil jwtUtil,
+      RuntimeIdentity runtimeIdentity,
+      @Nullable ReactiveStringRedisTemplate replayRedisTemplate) {
     this.jwtUtil = Objects.requireNonNull(jwtUtil, "jwtUtil must not be null");
     this.runtimeIdentity =
         Objects.requireNonNull(runtimeIdentity, "runtimeIdentity must not be null");
+    this.replayRedisTemplate = replayRedisTemplate;
   }
 
   @Override
@@ -86,43 +94,59 @@ public class GameplayHandshakeFilter implements WebFilter, Ordered {
       String tenantId = requiredClaim(payload, "tenantId");
       String gameInstanceId = requiredClaim(payload, "gameInstanceId");
       String jti = requiredClaim(payload, "jti");
-      recordReplayOrReject(jti, payload.getExpiration().getTime());
+      return recordReplayOrReject(jti, payload.getExpiration().getTime())
+          .then(
+              Mono.defer(
+                  () -> {
+                    if (mismatched(exchange, "X-Tenant-Id", tenantId)
+                        || mismatched(exchange, "X-Game-Instance-Id", gameInstanceId)) {
+                      return reject(exchange, CONNECT_SCOPE_MISMATCH, "connect scope mismatch");
+                    }
 
-      if (mismatched(exchange, "X-Tenant-Id", tenantId)
-          || mismatched(exchange, "X-Game-Instance-Id", gameInstanceId)) {
-        return reject(exchange, CONNECT_SCOPE_MISMATCH, "connect scope mismatch");
-      }
+                    Instant verifiedAt = Instant.now();
+                    String connectContext =
+                        jwtUtil.generateToken(
+                            accountId,
+                            Map.of(
+                                "accountId", accountId,
+                                "tenantId", tenantId,
+                                "gameInstanceId", gameInstanceId,
+                                "connectTokenJti", jti,
+                                "verifiedAt", verifiedAt.toEpochMilli(),
+                                "expiresAt", payload.getExpiration().getTime(),
+                                "gatewayRequestId", exchange.getRequest().getId()));
 
-      Instant verifiedAt = Instant.now();
-      String connectContext =
-          jwtUtil.generateToken(
-              accountId,
-              Map.of(
-                  "accountId", accountId,
-                  "tenantId", tenantId,
-                  "gameInstanceId", gameInstanceId,
-                  "connectTokenJti", jti,
-                  "verifiedAt", verifiedAt.toEpochMilli(),
-                  "expiresAt", payload.getExpiration().getTime(),
-                  "gatewayRequestId", exchange.getRequest().getId()));
-
-      return chain.filter(
-          mutate(
-              exchange,
-              headers -> {
-                headers.remove(CONNECT_TOKEN_HEADER);
-                headers.set(CONNECT_CONTEXT_HEADER, connectContext);
-                headers.set(CONNECTION_MODE_HEADER, CONNECTION_MODE_FIRST_PARTY_WEB);
-                headers.set(
-                    TRANSPORT_SESSION_HEADER,
-                    Long.toUnsignedString(stablePositiveLong(exchange.getRequest().getId())));
-                headers.set("X-Tenant-Id", tenantId);
-                headers.set("X-Game-Instance-Id", gameInstanceId);
-              }));
-    } catch (ReplayRejectedException ex) {
-      logRejectedHandshake(
-          exchange, "Rejected replayed first-party gameplay handshake: {}", ex.getMessage());
-      return reject(exchange, CONNECT_TOKEN_REPLAYED, "connect token replayed");
+                    return chain.filter(
+                        mutate(
+                            exchange,
+                            headers -> {
+                              headers.remove(CONNECT_TOKEN_HEADER);
+                              headers.set(CONNECT_CONTEXT_HEADER, connectContext);
+                              headers.set(CONNECTION_MODE_HEADER, CONNECTION_MODE_FIRST_PARTY_WEB);
+                              headers.set(
+                                  TRANSPORT_SESSION_HEADER,
+                                  Long.toUnsignedString(
+                                      stablePositiveLong(exchange.getRequest().getId())));
+                              headers.set("X-Tenant-Id", tenantId);
+                              headers.set("X-Game-Instance-Id", gameInstanceId);
+                            }));
+                  }))
+          .onErrorResume(
+              ReplayRejectedException.class,
+              ex -> {
+                logRejectedHandshake(
+                    exchange,
+                    "Rejected replayed first-party gameplay handshake: {}",
+                    ex.getMessage());
+                return reject(exchange, CONNECT_TOKEN_REPLAYED, "connect token replayed");
+              })
+          .onErrorResume(
+              RuntimeException.class,
+              ex -> {
+                logRejectedHandshake(
+                    exchange, "Rejected first-party gameplay handshake: {}", ex.getMessage());
+                return reject(exchange, CONNECT_TOKEN_REJECTED, "connect token rejected");
+              });
     } catch (ExpiredJwtException ex) {
       logRejectedHandshake(
           exchange, "Rejected expired first-party gameplay handshake: {}", ex.getMessage());
@@ -187,7 +211,26 @@ public class GameplayHandshakeFilter implements WebFilter, Ordered {
     return text;
   }
 
-  private void recordReplayOrReject(String jti, long expiryMillis) {
+  private Mono<Void> recordReplayOrReject(String jti, long expiryMillis) {
+    if (replayRedisTemplate != null) {
+      long now = System.currentTimeMillis();
+      long replayExpiry = expiryMillis + REPLAY_SKEW.toMillis();
+      Duration ttl = Duration.ofMillis(Math.max(1L, replayExpiry - now));
+      return replayRedisTemplate
+          .opsForValue()
+          .setIfAbsent(replayKey(jti), "1", ttl)
+          .flatMap(
+              accepted -> {
+                if (Boolean.TRUE.equals(accepted)) {
+                  return Mono.empty();
+                }
+                return Mono.error(new ReplayRejectedException("connect token replayed"));
+              });
+    }
+    return Mono.fromRunnable(() -> recordReplayLocally(jti, expiryMillis));
+  }
+
+  private void recordReplayLocally(String jti, long expiryMillis) {
     long now = System.currentTimeMillis();
     replayCache.entrySet().removeIf(entry -> entry.getValue() <= now);
     long replayExpiry = expiryMillis + REPLAY_SKEW.toMillis();
@@ -215,6 +258,10 @@ public class GameplayHandshakeFilter implements WebFilter, Ordered {
 
   private static String firstNonBlank(String primary, String fallback) {
     return StringUtils.hasText(primary) ? primary : fallback;
+  }
+
+  private String replayKey(String jti) {
+    return REPLAY_CACHE_KEY_PREFIX + jti;
   }
 
   private static final class ReplayRejectedException extends RuntimeException {
