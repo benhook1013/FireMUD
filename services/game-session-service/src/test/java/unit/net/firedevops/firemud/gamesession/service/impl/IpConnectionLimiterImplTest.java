@@ -2,15 +2,13 @@ package net.firedevops.firemud.gamesession.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
 
-import java.time.Duration;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.atomic.AtomicInteger;
 import net.firedevops.firemud.gamesession.config.DevIsolatedProperties;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -21,20 +19,21 @@ class IpConnectionLimiterImplTest {
   @Test
   void enforcesMaxConnectionsPerIp() {
     ConcurrentMap<String, String> store = new ConcurrentHashMap<>();
-    StringRedisTemplate redis = mock(StringRedisTemplate.class);
-    ValueOperations<String, String> ops = mock(ValueOperations.class);
-    when(redis.opsForValue()).thenReturn(ops);
-    when(ops.get(anyString())).thenAnswer(inv -> store.get(inv.getArgument(0, String.class)));
-    when(ops.increment(anyString()))
-        .thenAnswer(
-            inv -> {
-              String key = inv.getArgument(0);
-              long val = Long.parseLong(store.getOrDefault(key, "0"));
-              val++;
-              store.put(key, Long.toString(val));
-              return val;
+    AtomicInteger executeCalls = new AtomicInteger();
+    StringRedisTemplate redis =
+        mock(
+            StringRedisTemplate.class,
+            invocation -> {
+              if ("execute".equals(invocation.getMethod().getName())) {
+                return executeCalls.incrementAndGet() == 1 ? 1L : -1L;
+              }
+              return null;
             });
-    when(ops.decrement(anyString()))
+    ValueOperations<String, String> ops = mock(ValueOperations.class);
+    org.mockito.Mockito.when(redis.opsForValue()).thenReturn(ops);
+    org.mockito.Mockito.when(ops.get(anyString()))
+        .thenAnswer(inv -> store.get(inv.getArgument(0, String.class)));
+    org.mockito.Mockito.when(ops.decrement(anyString()))
         .thenAnswer(
             inv -> {
               String key = inv.getArgument(0);
@@ -48,7 +47,7 @@ class IpConnectionLimiterImplTest {
               return null;
             })
         .when(ops)
-        .set(anyString(), anyString(), any(Duration.class));
+        .set(anyString(), anyString(), org.mockito.ArgumentMatchers.any());
     doAnswer(
             inv -> {
               store.remove(inv.getArgument(0));
@@ -60,7 +59,11 @@ class IpConnectionLimiterImplTest {
     IpConnectionLimiterImpl limiter =
         new IpConnectionLimiterImpl(redis, 1, 60, new DevIsolatedProperties(false));
     assertTrue(limiter.canAccept("1.2.3.4"));
-    limiter.register("1.2.3.4", 1L);
+    assertTrue(limiter.tryRegister("1.2.3.4", 1L));
+    assertFalse(limiter.tryRegister("1.2.3.4", 2L));
+    store.put("ipconn:1.2.3.4", "1");
+    store.put("sessionip:1", "1.2.3.4");
+    store.put("sessionip:2", "1.2.3.4");
     assertFalse(limiter.canAccept("1.2.3.4"));
     limiter.release(1L);
     assertTrue(limiter.canAccept("1.2.3.4"));

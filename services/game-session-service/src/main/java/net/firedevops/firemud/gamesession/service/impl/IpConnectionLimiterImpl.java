@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamesession.service.impl;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Duration;
+import net.firedevops.firemud.common.redis.RedisAtomicOperations;
 import net.firedevops.firemud.gamesession.config.DevIsolatedProperties;
 import net.firedevops.firemud.gamesession.service.IpConnectionLimiter;
 import org.springframework.beans.factory.annotation.Value;
@@ -50,17 +51,13 @@ public class IpConnectionLimiterImpl implements IpConnectionLimiter {
   }
 
   @Override
-  public void register(String ip, long sessionId) {
+  public boolean tryRegister(String ip, long sessionId) {
     if (devIsolatedProperties.isDevIsolated()) {
-      return;
+      return true;
     }
 
-    String ipKey = ipKey(ip);
-    Long count = redisTemplate.opsForValue().increment(ipKey);
-    if (Long.valueOf(1L).equals(count)) {
-      redisTemplate.expire(ipKey, entryTtl);
-    }
-    redisTemplate.opsForValue().set(sessionKey(sessionId), ip, entryTtl);
+    return RedisAtomicOperations.reserveBoundedCounter(
+        redisTemplate, ipKey(ip), sessionKey(sessionId), maxConnectionsPerIp, entryTtl, ip);
   }
 
   @Override

@@ -37,12 +37,14 @@ message PingResponse {
 
 // Parameters required to register a new account.
 message CreateAccountRequest {
+  // Tenant that owns the new account.
+  string tenant_id = 1;
   // Desired username for login and display.
-  string username = 1;
+  string username = 2;
   // Email address used for notifications and password recovery.
-  string email = 2;
+  string email = 3;
   // Raw password that the server hashes before storage.
-  string password = 3;
+  string password = 4;
 }
 
 // Result of a CreateAccount call.

@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamesession.service.impl;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Duration;
+import net.firedevops.firemud.common.redis.RedisAtomicOperations;
 import net.firedevops.firemud.gamesession.config.DevIsolatedProperties;
 import net.firedevops.firemud.gamesession.service.SessionRateLimiter;
 import org.springframework.beans.factory.annotation.Value;
@@ -40,10 +41,7 @@ public class SessionRateLimiterImpl implements SessionRateLimiter {
     }
 
     String key = key(sessionId);
-    Long count = redisTemplate.opsForValue().increment(key);
-    if (Long.valueOf(1L).equals(count)) {
-      redisTemplate.expire(key, Duration.ofSeconds(1));
-    }
+    Long count = RedisAtomicOperations.incrementWithTtl(redisTemplate, key, Duration.ofSeconds(1));
     return count != null && count <= maxMessagesPerSecond;
   }
 

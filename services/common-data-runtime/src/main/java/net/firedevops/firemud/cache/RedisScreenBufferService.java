@@ -7,6 +7,8 @@ import java.util.List;
 import java.util.Optional;
 import net.firedevops.firemud.common.config.FiremudReconnectionProperties;
 import net.firedevops.firemud.common.config.ReconnectionSettingsResolver;
+import org.springframework.data.redis.core.RedisOperations;
+import org.springframework.data.redis.core.SessionCallback;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.util.StringUtils;
 import tools.jackson.core.JacksonException;
@@ -17,6 +19,7 @@ import tools.jackson.databind.ObjectMapper;
     justification = "Injected Redis/ObjectMapper dependencies are shared framework singletons")
 public class RedisScreenBufferService implements ScreenBufferService {
   private static final String KEY_TEMPLATE = "screenbuffer:%d:%d:%d";
+  private static final int MAX_APPEND_RETRIES = 8;
 
   private final StringRedisTemplate redisTemplate;
   private final ObjectMapper objectMapper;
@@ -41,12 +44,40 @@ public class RedisScreenBufferService implements ScreenBufferService {
     if (filtered.isEmpty()) {
       return;
     }
-    BufferedPayload payload =
-        readPayload(tenantId, gameInstanceId, characterId).orElseGet(BufferedPayload::new);
-    filtered.stream().map(EntryPayload::from).forEach(payload.entries::add);
-    payload.updatedAtMs = System.currentTimeMillis();
-    trimPayload(payload, tenantId, gameInstanceId);
-    writePayload(tenantId, gameInstanceId, characterId, payload);
+    FiremudReconnectionProperties properties = settingsResolver.resolve(tenantId, gameInstanceId);
+    Duration ttl = Duration.ofMillis(properties.buffer().ttlMs());
+    String redisKey = key(tenantId, gameInstanceId, characterId);
+    for (int attempt = 0; attempt < MAX_APPEND_RETRIES; attempt++) {
+      Boolean updated =
+          redisTemplate.execute(
+              new SessionCallback<>() {
+                @Override
+                public Boolean execute(RedisOperations operations) {
+                  operations.watch(redisKey);
+                  BufferedPayload payload =
+                      readPayload((RedisOperations<String, ?>) operations, redisKey)
+                          .orElseGet(BufferedPayload::new);
+                  filtered.stream().map(EntryPayload::from).forEach(payload.entries::add);
+                  payload.updatedAtMs = System.currentTimeMillis();
+                  trimPayload(payload, properties.buffer());
+                  try {
+                    operations.multi();
+                    operations
+                        .opsForValue()
+                        .set(redisKey, objectMapper.writeValueAsString(payload), ttl);
+                  } catch (JacksonException ex) {
+                    operations.unwatch();
+                    throw new IllegalStateException(
+                        "Failed to serialize screen buffer payload", ex);
+                  }
+                  return operations.exec() != null;
+                }
+              });
+      if (Boolean.TRUE.equals(updated)) {
+        return;
+      }
+    }
+    throw new IllegalStateException("Failed to append screen buffer after concurrent retries");
   }
 
   @Override
@@ -69,36 +100,25 @@ public class RedisScreenBufferService implements ScreenBufferService {
 
   private Optional<BufferedPayload> readPayload(
       long tenantId, long gameInstanceId, long characterId) {
-    String payload = redisTemplate.opsForValue().get(key(tenantId, gameInstanceId, characterId));
+    return readPayload(redisTemplate, key(tenantId, gameInstanceId, characterId));
+  }
+
+  private Optional<BufferedPayload> readPayload(
+      RedisOperations<String, ?> operations, String redisKey) {
+    String payload = (String) operations.opsForValue().get(redisKey);
     if (payload == null) {
       return Optional.empty();
     }
     try {
       return Optional.of(objectMapper.readValue(payload, BufferedPayload.class));
     } catch (JacksonException ex) {
-      redisTemplate.delete(key(tenantId, gameInstanceId, characterId));
+      operations.unwatch();
+      redisTemplate.delete(redisKey);
       return Optional.empty();
     }
   }
 
-  private void writePayload(
-      long tenantId, long gameInstanceId, long characterId, BufferedPayload payload) {
-    FiremudReconnectionProperties properties = settingsResolver.resolve(tenantId, gameInstanceId);
-    try {
-      redisTemplate
-          .opsForValue()
-          .set(
-              key(tenantId, gameInstanceId, characterId),
-              objectMapper.writeValueAsString(payload),
-              Duration.ofMillis(properties.buffer().ttlMs()));
-    } catch (JacksonException ex) {
-      throw new IllegalStateException("Failed to serialize screen buffer payload", ex);
-    }
-  }
-
-  private void trimPayload(BufferedPayload payload, long tenantId, long gameInstanceId) {
-    FiremudReconnectionProperties.Buffer buffer =
-        settingsResolver.resolve(tenantId, gameInstanceId).buffer();
+  private void trimPayload(BufferedPayload payload, FiremudReconnectionProperties.Buffer buffer) {
     while (payload.entries.size() > 1
         && totalBytes(payload.entries) > buffer.softMaxBytes()
         && payload.entries.size() > buffer.minMessages()

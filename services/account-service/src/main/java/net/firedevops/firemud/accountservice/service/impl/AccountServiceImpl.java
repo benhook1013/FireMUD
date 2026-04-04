@@ -13,6 +13,7 @@ import java.time.Instant;
 import java.util.Date;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.account.AuthenticationErrorCodes;
@@ -124,16 +125,15 @@ public class AccountServiceImpl implements AccountService {
   @Transactional
   @Timed(value = "account.create")
   public AccountDto createAccount(CreateAccountRequest request) {
-    logger.info("Creating account {}", request.username());
+    logger.info("Creating account {} for tenant {}", request.username(), request.tenantId());
     Account account = new Account();
-    account.setTenantId(0L);
+    account.setTenantId(request.tenantId());
     account.setUsername(request.username());
     account.setEmail(request.email());
     account.setPasswordHash(hashPassword(request.password()));
     account.setRole("player");
     Profile profile = new Profile();
-    profile.setTenantId(0L);
-    // Accounts are system-wide; tenant membership is assigned later.
+    profile.setTenantId(request.tenantId());
 
     SagaBuilder builder = new SagaBuilder("accountCreation");
     builder
@@ -149,7 +149,7 @@ public class AccountServiceImpl implements AccountService {
               profileRepository.delete(profile);
               accountRepository.delete(account);
             })
-        .step("logCreation", () -> safeLogAccountCreation(account.getId()));
+        .step("logCreation", () -> safeLogAccountCreation(request.tenantId(), account.getId()));
     var saga = builder.build();
     try {
       sagaRunner.run(saga);
@@ -325,7 +325,11 @@ public class AccountServiceImpl implements AccountService {
             .findById(accountId)
             .orElseThrow(() -> new IllegalArgumentException("Account not found"));
     return new RuntimeMembershipDto(
-        account.getId(), tenantId, true, Math.max(1L, account.getId()), Instant.now().toString());
+        account.getId(),
+        tenantId,
+        Objects.equals(account.getTenantId(), tenantId),
+        Math.max(1L, account.getId()),
+        Instant.now().toString());
   }
 
   @Override
@@ -425,9 +429,9 @@ public class AccountServiceImpl implements AccountService {
     };
   }
 
-  private void safeLogAccountCreation(Long accountId) {
+  private void safeLogAccountCreation(Long tenantId, Long accountId) {
     try {
-      loggingAdminClient.logAccountCreation(0L, accountId);
+      loggingAdminClient.logAccountCreation(tenantId, accountId);
     } catch (RuntimeException ex) {
       logger.warn("Account creation logging failed for account {}", accountId, ex);
     }

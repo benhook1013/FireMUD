@@ -1,0 +1,187 @@
+package net.firedevops.firemud.gamesession.service.impl;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.when;
+
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import net.firedevops.firemud.cache.LookCacheService;
+import net.firedevops.firemud.cache.ScreenBufferService;
+import net.firedevops.firemud.common.conflict.ConflictTracker;
+import net.firedevops.firemud.common.saga.SagaRunner;
+import net.firedevops.firemud.common.settings.SharedSettingsAuthorityReader;
+import net.firedevops.firemud.gamesession.GameSessionServiceApplication;
+import net.firedevops.firemud.gamesession.client.AccountClient;
+import net.firedevops.firemud.gamesession.client.EntityManagementClient;
+import net.firedevops.firemud.gamesession.client.GameLogicClient;
+import net.firedevops.firemud.gamesession.client.WorldManagementClient;
+import net.firedevops.firemud.gamesession.config.DevIsolatedProperties;
+import net.firedevops.firemud.gamesession.dto.GameInstanceDto;
+import net.firedevops.firemud.gamesession.dto.StartSessionRequest;
+import net.firedevops.firemud.gamesession.entity.GameInstance;
+import net.firedevops.firemud.gamesession.mapper.GameInstanceMapper;
+import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
+import net.firedevops.firemud.gamesession.service.CommandService;
+import net.firedevops.firemud.gamesession.service.SessionContextService;
+import net.firedevops.firemud.gamesession.service.SessionStateService;
+import net.firedevops.firemud.test.NoGrpcServerTestConfiguration;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Import;
+import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+
+@SpringBootTest(
+    classes = GameSessionServiceApplication.class,
+    webEnvironment = WebEnvironment.NONE,
+    properties = {
+      "spring.profiles.active=test",
+      "spring.application.name=game-session-service",
+      "spring.grpc.server.port=0",
+      "game-session.dev-isolated=false",
+      "firemud.database.enabled=false",
+      "firemud.redis.enabled=false",
+      "spring.data.redis.repositories.enabled=false"
+    })
+@ActiveProfiles("test")
+@Import({
+  NoGrpcServerTestConfiguration.class,
+  GameInstanceServiceLifecycleIntegrationTest.Config.class
+})
+class GameInstanceServiceLifecycleIntegrationTest {
+  @DynamicPropertySource
+  static void registerProperties(DynamicPropertyRegistry registry) {
+    registry.add(
+        "spring.datasource.url",
+        () -> "jdbc:h2:mem:game-session-lifecycle-test;MODE=PostgreSQL;DB_CLOSE_DELAY=-1");
+    registry.add("spring.datasource.driver-class-name", () -> "org.h2.Driver");
+    registry.add("spring.datasource.username", () -> "sa");
+    registry.add("spring.datasource.password", () -> "");
+    registry.add("spring.jpa.properties.hibernate.default_schema", () -> "public");
+  }
+
+  @Autowired private GameInstanceRepository repository;
+  @Autowired private GameInstanceServiceImpl service;
+
+  @MockitoBean private GameLogicClient gameLogicClient;
+  @MockitoBean private WorldManagementClient worldManagementClient;
+  @MockitoBean private EntityManagementClient entityManagementClient;
+  @MockitoBean private AccountClient accountClient;
+  @MockitoBean private SessionStateService sessionStateService;
+  @MockitoBean private SessionContextService sessionContextService;
+  @MockitoBean private CommandService commandService;
+  @MockitoBean private SagaRunner sagaRunner;
+  @MockitoBean private SharedSettingsAuthorityReader sharedSettingsAuthorityReader;
+  @MockitoBean private LookCacheService lookCacheService;
+  @MockitoBean private ScreenBufferService screenBufferService;
+  @MockitoBean private ConflictTracker conflictTracker;
+
+  @MockitoBean
+  private org.springframework.data.redis.core.RedisTemplate<String, Object> redisTemplate;
+
+  @MockitoBean private GameInstanceMapper gameInstanceMapper;
+
+  @MockitoBean
+  private org.springframework.grpc.server.lifecycle.GrpcServerLifecycle grpcServerLifecycle;
+
+  @BeforeEach
+  void setUp() throws Exception {
+    repository.deleteAll();
+    doNothing().when(sagaRunner).run(any());
+    when(gameInstanceMapper.toDto(any(GameInstance.class)))
+        .thenAnswer(
+            invocation -> {
+              GameInstance entity = invocation.getArgument(0);
+              return new GameInstanceDto(
+                  entity.getId(),
+                  entity.getTenantId(),
+                  entity.getRuntimeVersion(),
+                  entity.getScriptPatchVersion(),
+                  entity.getOwnerAccountId(),
+                  entity.getStatus());
+            });
+  }
+
+  @Test
+  void startSessionRollsBackWhenStatePropagationFails() {
+    doThrow(new IllegalStateException("state propagation failed"))
+        .when(sessionStateService)
+        .saveState(any());
+
+    assertThatThrownBy(
+            () -> service.startSession(new StartSessionRequest(42L, "1.0.0", "patch-1", 100L)))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("state propagation failed");
+
+    assertThat(repository.findAll()).isEmpty();
+  }
+
+  @Test
+  void stopSessionRollsBackWhenStatePropagationFails() {
+    GameInstance instance = new GameInstance();
+    instance.setTenantId(42L);
+    instance.setRuntimeVersion("1.0.0");
+    instance.setScriptPatchVersion("patch-1");
+    instance.setOwnerAccountId(100L);
+    instance.setStatus("RUNNING");
+    instance = repository.saveAndFlush(instance);
+    long instanceId = instance.getId();
+
+    doThrow(new IllegalStateException("state propagation failed"))
+        .when(sessionStateService)
+        .deleteState(42L, instanceId);
+
+    assertThatThrownBy(() -> service.stopSession(instanceId))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("state propagation failed");
+
+    assertThat(repository.findById(instanceId)).isPresent();
+    assertThat(repository.findById(instanceId).orElseThrow().getStatus()).isEqualTo("RUNNING");
+  }
+
+  @Test
+  void restartSessionRollsBackWhenStatePropagationFails() {
+    GameInstance instance = new GameInstance();
+    instance.setTenantId(42L);
+    instance.setRuntimeVersion("1.0.0");
+    instance.setScriptPatchVersion("patch-1");
+    instance.setOwnerAccountId(100L);
+    instance.setStatus("STOPPED");
+    instance = repository.saveAndFlush(instance);
+    long instanceId = instance.getId();
+
+    doThrow(new IllegalStateException("state propagation failed"))
+        .when(sessionStateService)
+        .saveState(any());
+
+    assertThatThrownBy(() -> service.restartSession(instanceId))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("state propagation failed");
+
+    assertThat(repository.findById(instanceId)).isPresent();
+    assertThat(repository.findById(instanceId).orElseThrow().getStatus()).isEqualTo("STOPPED");
+  }
+
+  @TestConfiguration
+  static class Config {
+    @Bean
+    SimpleMeterRegistry meterRegistry() {
+      return new SimpleMeterRegistry();
+    }
+
+    @Bean
+    DevIsolatedProperties devIsolatedProperties() {
+      return new DevIsolatedProperties(false);
+    }
+  }
+}

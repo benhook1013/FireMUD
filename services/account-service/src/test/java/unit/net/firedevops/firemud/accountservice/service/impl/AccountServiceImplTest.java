@@ -110,7 +110,8 @@ class AccountServiceImplTest {
 
   @Test
   void createAccountPersistsEntity() throws net.firedevops.firemud.common.saga.SagaException {
-    CreateAccountRequest request = new CreateAccountRequest("demo", "demo@example.com", "password");
+    CreateAccountRequest request =
+        new CreateAccountRequest(7L, "demo", "demo@example.com", "password");
     Account saved = new Account();
     saved.setId(1L);
     when(accountRepository.save(org.mockito.ArgumentMatchers.any(Account.class))).thenReturn(saved);
@@ -118,23 +119,26 @@ class AccountServiceImplTest {
     AccountDto dto = service.createAccount(request);
 
     assertEquals(1L, dto.id());
+    assertEquals(7L, dto.tenantId());
     org.mockito.Mockito.verify(sagaRunner).run(org.mockito.ArgumentMatchers.any());
   }
 
   @Test
   void createAccountContinuesWhenAuditLoggingFails()
       throws net.firedevops.firemud.common.saga.SagaException {
-    CreateAccountRequest request = new CreateAccountRequest("demo", "demo@example.com", "password");
+    CreateAccountRequest request =
+        new CreateAccountRequest(7L, "demo", "demo@example.com", "password");
     Account saved = new Account();
     saved.setId(1L);
     when(accountRepository.save(org.mockito.ArgumentMatchers.any(Account.class))).thenReturn(saved);
     org.mockito.Mockito.doThrow(new StatusRuntimeException(Status.UNAVAILABLE))
         .when(loggingAdminClient)
-        .logAccountCreation(0L, 1L);
+        .logAccountCreation(7L, 1L);
 
     AccountDto dto = service.createAccount(request);
 
     assertEquals(1L, dto.id());
+    assertEquals(7L, dto.tenantId());
     org.mockito.Mockito.verify(sagaRunner).run(org.mockito.ArgumentMatchers.any());
   }
 
@@ -245,7 +249,7 @@ class AccountServiceImplTest {
   void getTenantMembershipForRuntimeReturnsAdmissionAllowedForExistingAccount() {
     Account account = new Account();
     account.setId(11L);
-    account.setTenantId(0L);
+    account.setTenantId(7L);
     account.setUsername("demo");
     account.setEmail("demo@example.com");
     account.setPasswordHash(hash("password"));
@@ -267,6 +271,23 @@ class AccountServiceImplTest {
     assertThrows(
         IllegalArgumentException.class,
         () -> service.getTenantMembershipForRuntime(11L, 7L, "req-1"));
+  }
+
+  @Test
+  void getTenantMembershipForRuntimeRejectsCrossTenantAccount() {
+    Account account = new Account();
+    account.setId(11L);
+    account.setTenantId(3L);
+    account.setUsername("demo");
+    account.setEmail("demo@example.com");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+
+    var dto = service.getTenantMembershipForRuntime(11L, 7L, "req-1");
+
+    assertEquals(11L, dto.accountId());
+    assertEquals(7L, dto.tenantId());
+    assertTrue(!dto.gameplayAdmissionAllowed());
   }
 
   @Test

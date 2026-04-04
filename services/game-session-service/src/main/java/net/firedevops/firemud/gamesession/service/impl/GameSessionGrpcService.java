@@ -92,17 +92,6 @@ public final class GameSessionGrpcService
       StreamObserver<StartSessionResponse> responseObserver) {
     try {
       String clientIp = request.getClientIp();
-      if (clientIp != null && !clientIp.isBlank() && !ipConnectionLimiter.canAccept(clientIp)) {
-        StartSessionResponse response =
-            StartSessionResponse.newBuilder()
-                .setError(
-                    GrpcAppErrors.error(
-                        meterRegistry, "CONNECTION_LIMIT", "Too many connections from IP"))
-                .build();
-        responseObserver.onNext(response);
-        responseObserver.onCompleted();
-        return;
-      }
       StartSessionRequest dto =
           new StartSessionRequest(
               Long.valueOf(request.getTenantId()),
@@ -111,7 +100,18 @@ public final class GameSessionGrpcService
               parseOwnerAccountId(request.getOwnerAccountId()));
       GameInstanceDto instance = gameInstanceService.startSession(dto);
       if (clientIp != null && !clientIp.isBlank()) {
-        ipConnectionLimiter.register(clientIp, instance.id());
+        if (!ipConnectionLimiter.tryRegister(clientIp, instance.id())) {
+          gameInstanceService.stopSession(instance.id());
+          StartSessionResponse response =
+              StartSessionResponse.newBuilder()
+                  .setError(
+                      GrpcAppErrors.error(
+                          meterRegistry, "CONNECTION_LIMIT", "Too many connections from IP"))
+                  .build();
+          responseObserver.onNext(response);
+          responseObserver.onCompleted();
+          return;
+        }
       }
       StartSessionResponse response =
           StartSessionResponse.newBuilder().setSessionId(instance.id().toString()).build();

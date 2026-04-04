@@ -5,10 +5,8 @@ import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.annotation.PostConstruct;
-import java.time.Duration;
 import lombok.RequiredArgsConstructor;
-import net.firedevops.firemud.common.LoggingUtil;
-import org.slf4j.Logger;
+import net.firedevops.firemud.common.redis.RedisAtomicOperations;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
@@ -20,7 +18,6 @@ import org.springframework.stereotype.Service;
     value = "EI_EXPOSE_REP2",
     justification = "Dependencies are injected and not exposed")
 public class ScriptQuotaServiceImpl implements ScriptQuotaService {
-  private static final Logger logger = LoggingUtil.getLogger(ScriptQuotaServiceImpl.class);
   private final RedisTemplate<String, Object> redisTemplate;
   private final MeterRegistry meterRegistry;
 
@@ -43,14 +40,9 @@ public class ScriptQuotaServiceImpl implements ScriptQuotaService {
   @Timed(value = "script.quota.tryAcquire")
   public boolean tryAcquire(Long tenantId, Long scriptId) {
     String key = quotaKey(tenantId, scriptId);
-    Long count = redisTemplate.opsForValue().increment(key);
-    if (Long.valueOf(1L).equals(count)) {
-      boolean expirationSet =
-          Boolean.TRUE.equals(redisTemplate.expire(key, Duration.ofSeconds(windowSeconds)));
-      if (!expirationSet) {
-        logger.warn("Failed to set expiration for {}", key);
-      }
-    }
+    Long count =
+        RedisAtomicOperations.incrementWithTtl(
+            redisTemplate, key, java.time.Duration.ofSeconds(windowSeconds));
     boolean allowed = count != null && count <= limit;
     if (allowed) {
       allowedCounter.increment();
