@@ -149,6 +149,12 @@ TLS for player and Telnet flows is applied hop-by-hop so traffic stays protected
 
 Local Docker Compose environments may use plain `http://` / `ws://` for simplicity, but the production Kubernetes profile is expected to follow this termination chain so that only the Internet edge terminates TLS and all intra-cluster hops to and from the gateway are either mTLS (gRPC) or `wss://` with mTLS for the Telnet bridge.
 
+Implementation note:
+
+- Hosted `pr-preview` may temporarily run plaintext internal gRPC while the repository completes the Spring gRPC `1.0.x` SSL-bundle migration for gRPC server TLS.
+- This is a narrow preview-only operational exception so preview can remain reviewer-usable while server-side TLS configuration is corrected.
+- The target-state rule for non-local environments remains unchanged: internal service-to-service gRPC is mTLS.
+
 ---
 
 ### TLS Config Matrix: TCP Proxy ↔ Spring Cloud Gateway (WebSocket)

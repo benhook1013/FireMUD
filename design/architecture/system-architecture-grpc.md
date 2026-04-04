@@ -157,6 +157,17 @@ The [Environment & Secrets](./infrastructure/environment-and-secrets.md#grpc-tls
 
 Adopting these conventions helps keep FireMUD services consistent and makes it easier for new contributors to work with the APIs. See [Security Architecture](./system-architecture-security.md#cross-service-trust) for mTLS design.
 
+## Implementation Notes
+
+- The canonical target state remains: internal gRPC uses mTLS everywhere outside intentionally relaxed local development.
+- Hosted `pr-preview` is temporarily allowed to run **plaintext internal gRPC** while the repository migrates fully to Spring gRPC `1.0.x` server TLS configuration using `spring.grpc.server.ssl.*` plus `spring.ssl.bundle.*`.
+- This preview-only plaintext exception is operational scaffolding, not a design change. It exists so preview can reach reviewer-usable `LOGIN -> PLAY -> LOOK` proof while the repo removes older server-TLS property patterns that Spring gRPC no longer honors.
+- New runtime or preview work should not introduce additional bespoke transport patterns. The cleanup path is:
+  - document preview plaintext explicitly,
+  - migrate server TLS to SSL bundles repo-wide,
+  - add CI/static checks that reject legacy/ignored gRPC server TLS property usage,
+  - then remove the preview plaintext exception.
+
 ## Related Documentation
 
 - [Infrastructure Overview](./infrastructure/README.md)

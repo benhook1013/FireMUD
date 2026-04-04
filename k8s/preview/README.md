@@ -62,6 +62,17 @@ The next hosted preview milestone is:
 - real reviewer-accessible preview traffic
 - manual `LOGIN -> PLAY -> LOOK` proof over the TCP/Telnet path first
 
+## Current transport stance
+
+- Preview keeps the **target-state** service topology, auth/session model, and per-PR namespace isolation.
+- Preview currently uses a **temporary plaintext internal gRPC** stance inside the preview namespace while the repository migrates fully to Spring gRPC `1.0.x` server TLS configuration using SSL bundles.
+- This is a preview-only implementation note, not a design pivot. The long-term internal transport contract remains mTLS gRPC.
+- The explicit cleanup path is:
+  - keep preview/plaintext documented,
+  - migrate services from legacy `grpc.server.security.*` assumptions to `spring.grpc.server.ssl.*` with `spring.ssl.bundle.*`,
+  - add CI/static checks to prevent legacy server-TLS property drift,
+  - remove the preview plaintext override.
+
 Preview TCP contract:
 
 - preview TCP uses a small reserved external port range `32000-32015`
