@@ -177,6 +177,20 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           helm version
 
+      - name: Set up GitHub CLI
+        run: |
+          if ! command -v gh >/dev/null 2>&1; then
+            GH_VERSION="2.76.2"
+            INSTALL_DIR="$HOME/.local/bin"
+            mkdir -p "$INSTALL_DIR"
+            curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_amd64.tar.gz" -o /tmp/gh.tgz
+            tar -xzf /tmp/gh.tgz -C /tmp
+            install "/tmp/gh_${GH_VERSION}_linux_amd64/bin/gh" "$INSTALL_DIR/gh"
+          fi
+          export PATH="$HOME/.local/bin:$PATH"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          gh --version
+
       - name: Write preview kubeconfig
         env:
           PREVIEW_KUBECONFIG: ${{ secrets.PREVIEW_KUBECONFIG }}
@@ -301,6 +315,8 @@ jobs:
             "${{ steps.telnet-port.outputs.telnet_port }}"
 
       - name: Deploy preview release
+        id: deploy-release
+        continue-on-error: true
         run: |
           helm upgrade --install "${{ needs.preview-plan.outputs.release_name }}" k8s/helm/firemud \
             -f /tmp/preview-values.yaml \
@@ -309,10 +325,40 @@ jobs:
             --timeout 15m
 
       - name: Show deployed preview services
+        if: ${{ always() }}
         run: |
           kubectl -n "${{ needs.preview-plan.outputs.namespace }}" get pods,svc,ingress
 
+      - name: Show preview rollout diagnostics
+        if: ${{ always() && steps.deploy-release.outcome == 'failure' }}
+        run: |
+          echo "=== pods ==="
+          kubectl -n "${{ needs.preview-plan.outputs.namespace }}" get pods -o wide || true
+          echo
+          echo "=== events ==="
+          kubectl -n "${{ needs.preview-plan.outputs.namespace }}" get events --sort-by=.lastTimestamp | tail -n 120 || true
+          echo
+          echo "=== pod describe ==="
+          for pod in $(kubectl -n "${{ needs.preview-plan.outputs.namespace }}" get pods --no-headers | awk '$2 != $3 || $3 != "Running" {print $1}'); do
+            echo "--- ${pod} ---"
+            kubectl -n "${{ needs.preview-plan.outputs.namespace }}" describe pod "${pod}" || true
+            echo
+          done
+          echo "=== recent logs ==="
+          for deployment in account-service automation-scripting-service entity-management-service game-design-service game-logic-service game-session-service logging-admin-service social-groups-service spring-cloud-gateway tcp-proxy-service world-management-service; do
+            echo "--- ${deployment} ---"
+            kubectl -n "${{ needs.preview-plan.outputs.namespace }}" logs "deploy/${deployment}" --tail=120 || true
+            echo
+          done
+
+      - name: Fail if preview rollout did not complete
+        if: ${{ always() && steps.deploy-release.outcome == 'failure' }}
+        run: |
+          echo "Preview rollout failed during helm upgrade/install."
+          exit 1
+
       - name: Create preview smoke account
+        if: ${{ steps.deploy-release.outcome == 'success' }}
         env:
           PREVIEW_NAMESPACE: ${{ needs.preview-plan.outputs.namespace }}
           PREVIEW_EMAIL: demo@example.com
@@ -335,6 +381,7 @@ jobs:
           cat /tmp/preview-account-create.json || true
 
       - name: Smoke hosted preview over TCP
+        if: ${{ steps.deploy-release.outcome == 'success' }}
         env:
           PREVIEW_BASE_URL: https://${{ needs.preview-plan.outputs.hostname }}
           SMOKE_TELNET_HOST: ${{ needs.preview-plan.outputs.hostname }}
@@ -345,6 +392,7 @@ jobs:
           bash ./dev-tools/preview/preview-login-look-smoke.sh
 
       - name: Summarize preview access
+        if: ${{ steps.deploy-release.outcome == 'success' }}
         run: |
           {
             echo "## Preview Ready"
