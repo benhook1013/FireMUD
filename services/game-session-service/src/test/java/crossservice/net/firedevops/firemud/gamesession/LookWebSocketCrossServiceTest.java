@@ -69,6 +69,15 @@ class LookWebSocketCrossServiceTest {
   private static CrossServiceAppHarness.GameLogicHolder GAME_LOGIC;
   private static CrossServiceAppHarness.GameSessionHolder GAME_SESSION;
 
+  private static synchronized void replaceGameLogic(
+      CrossServiceAppHarness.GameLogicHolder restartedGameLogic) {
+    CrossServiceAppHarness.GameLogicHolder previous = GAME_LOGIC;
+    GAME_LOGIC = restartedGameLogic;
+    if (previous != null) {
+      previous.close();
+    }
+  }
+
   @AfterAll
   static synchronized void stopServices() {
     CrossServiceAppHarness.GameSessionHolder gameSession = GAME_SESSION;
@@ -221,7 +230,7 @@ class LookWebSocketCrossServiceTest {
           .matches(
               matchesCanonicalMoveRefreshWithOptionalPrompt(LookTestFixtures.DESTINATION_ROOM_ID));
 
-      GAME_LOGIC = GAME_LOGIC.restart();
+      replaceGameLogic(GAME_LOGIC.restart());
 
       socket.sendAndAwait("LOOK", 4);
       assertThat(socket.responses().get(3).trim())

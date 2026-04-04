@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamesession.controller;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.List;
 import net.firedevops.firemud.common.ApiResponse;
 import net.firedevops.firemud.common.config.FiremudReconnectionProperties;
@@ -23,6 +24,9 @@ import org.springframework.web.server.ResponseStatusException;
 /** Operator/debug surface for inspecting effective pre-06 settings in Game Session. */
 @RestController
 @RequestMapping("/actuator/settings")
+@SuppressFBWarnings(
+    value = "EI_EXPOSE_REP2",
+    justification = "Injected collaborators are framework-managed and retained internally")
 public class EffectiveSettingsController {
   private final EffectiveSettingsResolver settingsResolver;
   private final EffectiveReconnectionSettingsResolver reconnectionSettingsResolver;

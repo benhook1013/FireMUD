@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamesession.controller;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import jakarta.validation.Valid;
 import net.firedevops.firemud.common.ApiResponse;
 import net.firedevops.firemud.gamesession.command.text.TextCommandInterpretationResult;
@@ -16,6 +17,9 @@ import org.springframework.web.bind.annotation.RestController;
 /** REST shim for enqueuing player commands when forwarded via HTTP. */
 @RestController
 @RequestMapping("/sessions")
+@SuppressFBWarnings(
+    value = "EI_EXPOSE_REP2",
+    justification = "Injected interpreter is framework-managed and retained internally")
 public class CommandController {
   private final TextCommandInterpreter interpreter;
 

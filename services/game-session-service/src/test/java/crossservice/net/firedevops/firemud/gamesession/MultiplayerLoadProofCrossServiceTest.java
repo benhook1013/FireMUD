@@ -244,7 +244,7 @@ class MultiplayerLoadProofCrossServiceTest {
   private PlayerRunResult runPlayerSequence(URI uri, PlayerSeed player, CountDownLatch start)
       throws Exception {
     try (TrackingClient client = new TrackingClient(uri, player.sessionId())) {
-      start.await(COMMAND_WAIT.toSeconds(), TimeUnit.SECONDS);
+      assertThat(start.await(COMMAND_WAIT.toSeconds(), TimeUnit.SECONDS)).isTrue();
       client.send("LOGIN " + player.username() + " swordfish");
       client.awaitResponse(payload -> payload.startsWith("OK LOGIN"));
       client.send("PLAY demo");

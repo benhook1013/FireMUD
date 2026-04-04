@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamesession.websocket;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.List;
 import net.firedevops.firemud.gamesession.command.text.TextCommand;
 import net.firedevops.firemud.gamesession.command.text.TextCommandInterpretationResult;
@@ -19,6 +20,9 @@ import org.springframework.web.socket.WebSocketSession;
 
 /** Projects structured player outputs to either classic text or first-party structured messages. */
 @Component
+@SuppressFBWarnings(
+    value = "EI_EXPOSE_REP2",
+    justification = "Injected renderer dependency is framework-managed and retained internally")
 public final class WebSocketOutputProjector {
   private final TextPlayerOutputRenderer textRenderer;
   private final com.fasterxml.jackson.databind.ObjectMapper objectMapper =

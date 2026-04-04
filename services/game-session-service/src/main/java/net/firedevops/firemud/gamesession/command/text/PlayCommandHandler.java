@@ -1,6 +1,5 @@
 package net.firedevops.firemud.gamesession.command.text;
 
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.util.List;
@@ -27,9 +26,6 @@ import org.springframework.util.StringUtils;
 
 /** Handles the gameplay-binding PLAY command after login. */
 @Component
-@SuppressFBWarnings(
-    value = "EI_EXPOSE_REP2",
-    justification = "Injected services/configuration are stored internally")
 public class PlayCommandHandler {
   private static final Logger LOG = LoggerFactory.getLogger(PlayCommandHandler.class);
   private static final String INVOCATIONS_METRIC = "gamesession.command.play.invocations";

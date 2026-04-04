@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamesession.websocket;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.io.IOException;
 import java.util.Optional;
 import net.firedevops.firemud.cache.ScreenBufferService;
@@ -36,6 +37,9 @@ import org.springframework.web.socket.handler.TextWebSocketHandler;
 
 /** Handles WebSocket text commands from clients that span both Telnet and browser connections. */
 @Component
+@SuppressFBWarnings(
+    value = "EI_EXPOSE_REP2",
+    justification = "Injected collaborators are framework-managed and retained internally")
 public class GameSessionWebSocketHandler extends TextWebSocketHandler {
   private static final Logger logger = LoggerFactory.getLogger(GameSessionWebSocketHandler.class);
 

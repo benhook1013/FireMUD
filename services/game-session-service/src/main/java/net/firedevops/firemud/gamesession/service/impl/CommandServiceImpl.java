@@ -26,6 +26,9 @@ import org.springframework.stereotype.Service;
     name = "game-session.dev-isolated",
     havingValue = "false",
     matchIfMissing = false)
+@SuppressFBWarnings(
+    value = "EI_EXPOSE_REP2",
+    justification = "Injected collaborators are framework-managed and retained internally")
 public class CommandServiceImpl implements CommandService {
   private static final Logger logger = LoggingUtil.getLogger(CommandServiceImpl.class);
 

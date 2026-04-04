@@ -261,10 +261,6 @@ class SessionResumptionFlowTest {
             List.of("demo@example.com", "swordfish"),
             "LOGIN demo@example.com swordfish");
 
-    GameInstance instance = new GameInstance();
-    instance.setId(1L);
-    instance.setTenantId(22L);
-    instance.setOwnerAccountId(77L);
     when(instanceRepository.findById(Mockito.anyLong()))
         .thenAnswer(
             invocation -> {

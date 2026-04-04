@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamesession.service;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.JwtException;
 import java.util.Optional;
@@ -11,6 +12,9 @@ import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
 @Component
+@SuppressFBWarnings(
+    value = "EI_EXPOSE_REP2",
+    justification = "Injected configuration properties are framework-managed singletons")
 public class FirstPartyConnectContextService {
   private static final Logger logger =
       LoggerFactory.getLogger(FirstPartyConnectContextService.class);

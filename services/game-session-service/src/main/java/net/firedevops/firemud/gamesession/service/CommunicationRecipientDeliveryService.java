@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamesession.service;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.io.IOException;
 import java.util.Optional;
@@ -23,6 +24,9 @@ import org.springframework.web.socket.WebSocketSession;
 
 /** Delivers structured non-actor communication views to live recipient sessions. */
 @Service
+@SuppressFBWarnings(
+    value = "EI_EXPOSE_REP2",
+    justification = "Injected service collaborators are framework-managed and retained internally")
 public final class CommunicationRecipientDeliveryService {
   private static final Logger LOG =
       LoggerFactory.getLogger(CommunicationRecipientDeliveryService.class);
