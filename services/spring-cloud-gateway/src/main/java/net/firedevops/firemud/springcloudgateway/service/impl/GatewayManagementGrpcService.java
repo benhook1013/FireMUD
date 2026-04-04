@@ -4,6 +4,7 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
+import java.util.concurrent.CompletionException;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.gateway.v1.GatewayManagementServiceGrpc;
 import net.firedevops.firemud.gateway.v1.PingRequest;
@@ -18,7 +19,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.grpc.server.service.GrpcService;
 import reactor.core.publisher.Mono;
-import java.util.concurrent.CompletionException;
 
 /** gRPC implementation for remote gateway management. */
 @GrpcService
@@ -152,15 +152,17 @@ public class GatewayManagementGrpcService
   }
 
   private <T> void respond(Mono<T> responseMono, StreamObserver<T> responseObserver) {
-    responseMono.toFuture().whenComplete(
-        (response, error) -> {
-          if (error != null) {
-            responseObserver.onError(unwrapCompletionException(error));
-            return;
-          }
-          responseObserver.onNext(response);
-          responseObserver.onCompleted();
-        });
+    responseMono
+        .toFuture()
+        .whenComplete(
+            (response, error) -> {
+              if (error != null) {
+                responseObserver.onError(unwrapCompletionException(error));
+                return;
+              }
+              responseObserver.onNext(response);
+              responseObserver.onCompleted();
+            });
   }
 
   private Throwable unwrapCompletionException(Throwable error) {
