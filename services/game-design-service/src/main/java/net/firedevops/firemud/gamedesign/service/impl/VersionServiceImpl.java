@@ -58,7 +58,7 @@ public class VersionServiceImpl implements VersionService {
   public VersionDto publishVersion(String tenantId, String notes) throws SagaException {
     logger.info("Publishing version for tenant {}", tenantId);
     Game game =
-        Optional.ofNullable(gameRepository.findByTenantId(tenantId))
+        Optional.ofNullable(gameRepository.findByTenantIdForUpdate(tenantId))
             .orElseThrow(() -> new IllegalArgumentException("game not found"));
 
     Version version = new Version();
@@ -93,7 +93,7 @@ public class VersionServiceImpl implements VersionService {
         tenantId,
         baseVersionId);
     Game game =
-        Optional.ofNullable(gameRepository.findByTenantId(tenantId))
+        Optional.ofNullable(gameRepository.findByTenantIdForUpdate(tenantId))
             .orElseThrow(() -> new IllegalArgumentException("game not found"));
 
     Version version = new Version();
@@ -124,19 +124,16 @@ public class VersionServiceImpl implements VersionService {
     Game game =
         Optional.ofNullable(gameRepository.findByTenantId(tenantId))
             .orElseThrow(() -> new IllegalArgumentException("game not found"));
-    return versionRepository.findAll().stream()
-        .filter(v -> v.getTenantId().equals(game.getTenantId()))
+    return versionRepository.findAllByTenantIdOrderByVersionNumberAsc(game.getTenantId()).stream()
         .map(versionMapper::toDto)
         .toList();
   }
 
   private int calculateNextNumber(String tenantId) {
-    return (int)
-            versionRepository.findAll().stream()
-                .filter(v -> v.getTenantId().equals(tenantId))
-                .mapToInt(Version::getVersionNumber)
-                .max()
-                .orElse(0)
+    return versionRepository
+            .findTopByTenantIdOrderByVersionNumberDesc(tenantId)
+            .map(Version::getVersionNumber)
+            .orElse(0)
         + 1;
   }
 }

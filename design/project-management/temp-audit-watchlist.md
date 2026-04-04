@@ -20,7 +20,7 @@ This file tracks post-pre-`06` audit findings that still appear live in the curr
 - [ ] Make Redis lock release ownership-safe in entity-management and automation-scripting tick locks.
 - [ ] Make `RedisSessionContextService.save` fully atomic across its indexes.
 - [ ] Move remaining cross-service/network calls out of open DB transactions in places like `GuildServiceImpl` / saga orchestration paths.
-- [ ] Fix race-prone version numbering in `game-design-service` and add a DB uniqueness invariant for `(tenant_id, version_number)`.
+- [x] Fix race-prone version numbering in `game-design-service` and add a DB uniqueness invariant for `(tenant_id, version_number)`.
 - [ ] Enforce same-tenant ownership in entity-management aggregate stitching, including inventory attachments and friendship links.
 - [ ] Cap or otherwise harden gateway gameplay bridge buffering during upstream reconnect/backpressure stalls.
 
