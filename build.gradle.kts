@@ -320,6 +320,12 @@ tasks.register<Exec>("linkCheck") {
     environment("CHECK_EXTERNAL_LINKS", if (fullCheck) "1" else "0")
 }
 
+tasks.register<Exec>("checkFlywayVersions") {
+    group = "verification"
+    description = "Checks service Flyway migrations for duplicate or out-of-order versions."
+    commandLine("bash", "dev-tools/check-flyway-versions.sh")
+}
+
 tasks.register<Exec>("validateObservabilityContract") {
     group = "verification"
     description = "Validates the design-level observability contract (metric names/labels) against dashboards and snippets."
@@ -367,7 +373,7 @@ tasks.register<Exec>("verifyPlatformSettingsDocs") {
 
 tasks.named("check") {
     // Always run Markdown lint and link checks; they are relatively fast.
-    dependsOn("lintMarkdown", "linkCheck", "validateObservabilityContract", "verifyPlatformSettingsDocs")
+    dependsOn("lintMarkdown", "linkCheck", "checkFlywayVersions", "validateObservabilityContract", "verifyPlatformSettingsDocs")
     if (fullCheck) {
         dependsOn(
             "checkstyleMain",

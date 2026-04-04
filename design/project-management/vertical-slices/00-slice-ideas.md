@@ -38,6 +38,10 @@ This zero-indexed overview sits at the top of the design/project-management/vert
 33. **Basic Multiplayer Load Proof** - Add the first bounded real multiplayer/load validation with roughly 10 concurrent players performing `LOGIN` -> `PLAY` -> `LOOK` against the real service stack, using generated test data where practical (planned in `05.1-task-list-basic-multiplayer-load-proof-vertical-slice.md`).
 34. **Hosted Preview Manual Proof** - Turn PR preview into a real reviewer-usable hosted environment and make manual `LOGIN -> PLAY -> LOOK` over TCP/Telnet the first hosted proof milestone (planned in `02.15-task-list-hosted-preview-manual-proof-vertical-slice.md`).
 35. **Dedicated First-Party Web App Service** - Introduce the dedicated long-term home for browser assets and first-party web bootstrap, starting with a terminal-style browser client if needed (planned in `02.16-task-list-dedicated-first-party-web-app-service-vertical-slice.md`).
+36. **Local Reset and Bootstrap Proof Tooling** - Add one canonical local reset/rebuild-from-zero toolchain so developers can reproduce preview/smoke startup issues, prove fresh bootstrap, and safely test pre-launch migration cleanup (planned in `02.17-task-list-local-reset-and-bootstrap-proof-tooling-vertical-slice.md`).
+37. **Service DB Reset and Flyway Hygiene** - Add service-scoped destructive reset tooling that understands owned Flyway history and service-local schema cleanup rather than wiping the whole local stack (planned in `02.17.1-task-list-service-db-reset-and-flyway-hygiene-vertical-slice.md`).
+38. **Fresh Bootstrap and Restart Proof Tooling** - Add explicit local verification commands for “boot from zero” and “restart against existing state,” including a narrow gameplay happy-path proof (planned in `02.17.2-task-list-fresh-bootstrap-and-restart-proof-tooling-vertical-slice.md`).
+39. **Flyway Migration Sanity Checks** - Add fast local/CI validation for obvious migration-shape errors such as duplicate Flyway versions before full smoke or preview startup discovers them (planned in `02.17.3-task-list-flyway-migration-sanity-checks-vertical-slice.md`).
 
 ---
 
