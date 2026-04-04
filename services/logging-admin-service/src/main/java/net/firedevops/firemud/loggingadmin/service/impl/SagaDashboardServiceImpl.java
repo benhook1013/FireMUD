@@ -22,7 +22,9 @@ public class SagaDashboardServiceImpl implements SagaDashboardService {
       value = "EI_EXPOSE_REP2",
       justification = "Spring manages injected repository and mapper dependencies")
   public SagaDashboardServiceImpl(
-      SagaInstanceRepository instanceRepository, SagaStepRepository stepRepository, SagaMapper mapper) {
+      SagaInstanceRepository instanceRepository,
+      SagaStepRepository stepRepository,
+      SagaMapper mapper) {
     this.instanceRepository = instanceRepository;
     this.stepRepository = stepRepository;
     this.mapper = mapper;

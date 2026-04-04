@@ -72,7 +72,10 @@ public class JwtAuthInterceptor implements HandlerInterceptor {
   }
 
   private boolean isPublicPath(String requestUri) {
-    return "/ping".equals(requestUri) || "/ping/".equals(requestUri);
+    return "/ping".equals(requestUri)
+        || "/ping/".equals(requestUri)
+        || requestUri.startsWith("/actuator/")
+        || requestUri.startsWith("/.well-known/");
   }
 
   private boolean hasAdminRole(Claims payload) {
