@@ -14,6 +14,7 @@ import net.firedevops.firemud.worldmanagement.dto.RoomSnapshotDto;
 import net.firedevops.firemud.worldmanagement.entity.Region;
 import net.firedevops.firemud.worldmanagement.entity.Room;
 import net.firedevops.firemud.worldmanagement.entity.RoomExit;
+import net.firedevops.firemud.worldmanagement.entity.Zone;
 import net.firedevops.firemud.worldmanagement.mapper.RoomMapper;
 import net.firedevops.firemud.worldmanagement.repository.RoomExitRepository;
 import net.firedevops.firemud.worldmanagement.repository.RoomRepository;
@@ -57,7 +58,8 @@ class RoomServiceImplTest {
     entity.setTenantId(1L);
     Region region = new Region();
     region.setId(2L);
-    entity.setRegion(region);
+    Zone zone = zoneWithRegion(region);
+    entity.setZone(zone);
     entity.setName("A");
     when(repository.findById(1L)).thenReturn(Optional.of(entity));
     RoomDto first = service.getRoom(1L, 1L);
@@ -77,7 +79,8 @@ class RoomServiceImplTest {
     room.setTenantId(1L);
     Region region = new Region();
     region.setId(200L);
-    room.setRegion(region);
+    Zone zone = zoneWithRegion(region);
+    room.setZone(zone);
     room.setName("Candle-lit Antechamber");
     String longDesc =
         "Stalactites drip along the northern wall while a faint draft carries the smell of damp earth "
@@ -88,7 +91,7 @@ class RoomServiceImplTest {
     Room other = new Room();
     other.setId(2045L);
     other.setTenantId(1L);
-    other.setRegion(region);
+    other.setZone(zone);
     other.setName("Crafting Hall of Ember");
 
     RoomExit exit = new RoomExit();
@@ -115,7 +118,8 @@ class RoomServiceImplTest {
     room.setTenantId(1L);
     Region region = new Region();
     region.setId(200L);
-    room.setRegion(region);
+    Zone zone = zoneWithRegion(region);
+    room.setZone(zone);
     room.setName("Candle-lit Antechamber");
     room.setDescription("Stalactites drip along the northern wall.");
     room.setNameLocalizedVariantsJson(
@@ -133,7 +137,7 @@ class RoomServiceImplTest {
     Room targetRoom = new Room();
     targetRoom.setId(2045L);
     targetRoom.setTenantId(1L);
-    targetRoom.setRegion(region);
+    targetRoom.setZone(zone);
     targetRoom.setName("North Hall");
     targetRoom.setNameLocalizedVariantsJson(
         new tools.jackson.databind.ObjectMapper()
@@ -166,7 +170,7 @@ class RoomServiceImplTest {
     entity.setTenantId(1L);
     Region region = new Region();
     region.setId(2L);
-    entity.setRegion(region);
+    entity.setZone(zoneWithRegion(region));
     entity.setName("A");
     when(valueOps.get("room:1:1"))
         .thenThrow(new RedisSystemException("boom", new RuntimeException()));
@@ -185,7 +189,7 @@ class RoomServiceImplTest {
     entity.setTenantId(1L);
     Region region = new Region();
     region.setId(2L);
-    entity.setRegion(region);
+    entity.setZone(zoneWithRegion(region));
     entity.setName("A");
     when(repository.findById(1L)).thenReturn(Optional.of(entity));
     doThrow(new RedisSystemException("boom", new RuntimeException()))
@@ -206,5 +210,11 @@ class RoomServiceImplTest {
   @SuppressWarnings("unchecked")
   private static ValueOperations<String, Object> mockValueOperations() {
     return mock(ValueOperations.class);
+  }
+
+  private static Zone zoneWithRegion(Region region) {
+    Zone zone = new Zone();
+    zone.setRegion(region);
+    return zone;
   }
 }

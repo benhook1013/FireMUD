@@ -18,6 +18,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.grpc.server.service.GrpcService;
 import reactor.core.publisher.Mono;
+import java.util.concurrent.CompletionException;
 
 /** gRPC implementation for remote gateway management. */
 @GrpcService
@@ -151,11 +152,22 @@ public class GatewayManagementGrpcService
   }
 
   private <T> void respond(Mono<T> responseMono, StreamObserver<T> responseObserver) {
-    responseMono.subscribe(
-        response -> {
+    responseMono.toFuture().whenComplete(
+        (response, error) -> {
+          if (error != null) {
+            responseObserver.onError(unwrapCompletionException(error));
+            return;
+          }
           responseObserver.onNext(response);
           responseObserver.onCompleted();
-        },
-        responseObserver::onError);
+        });
+  }
+
+  private Throwable unwrapCompletionException(Throwable error) {
+    if (error instanceof CompletionException completionException
+        && completionException.getCause() != null) {
+      return completionException.getCause();
+    }
+    return error;
   }
 }

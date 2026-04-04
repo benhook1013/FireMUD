@@ -47,14 +47,14 @@ public class TestDataSeeder implements ApplicationRunner {
 
       Room room1 = new Room();
       room1.setTenantId(1L);
-      room1.setRegion(region);
+      room1.setZone(zone);
       room1.setName("Room A");
       room1.setDescription("Seed room A");
       roomRepository.save(room1);
 
       Room room2 = new Room();
       room2.setTenantId(1L);
-      room2.setRegion(region);
+      room2.setZone(zone);
       room2.setName("Room B");
       room2.setDescription("Seed room B");
       roomRepository.save(room2);
