@@ -24,11 +24,15 @@ import net.firedevops.firemud.gamelogic.v1.PingRequest;
 import net.firedevops.firemud.gamelogic.v1.PingResponse;
 import net.firedevops.firemud.gamelogic.v1.SendCommunicationRequest;
 import net.firedevops.firemud.gamelogic.v1.SendCommunicationResponse;
+import net.firedevops.firemud.shared.v1.ErrorDetail;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.grpc.server.service.GrpcService;
 
 /** gRPC endpoints for the Game Logic Service. */
 @GrpcService
 public class GameLogicGrpcService extends GameLogicServiceGrpc.GameLogicServiceImplBase {
+  private static final Logger logger = LoggerFactory.getLogger(GameLogicGrpcService.class);
   private final PingService pingService;
   private final CommandService commandService;
   private final LookAggregationService lookAggregationService;
@@ -86,11 +90,34 @@ public class GameLogicGrpcService extends GameLogicServiceGrpc.GameLogicServiceI
       responseObserver.onNext(result);
       responseObserver.onCompleted();
     } catch (StatusRuntimeException ex) {
-      responseObserver.onError(ex);
+      responseObserver.onNext(LookResult.newBuilder().setError(mapLookError(ex)).build());
+      responseObserver.onCompleted();
     } catch (Exception ex) {
-      responseObserver.onError(
-          Status.UNAVAILABLE.withDescription(ex.getMessage()).asRuntimeException());
+      responseObserver.onNext(
+          LookResult.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry, logger, "ResolveLook", "LOOK_UNAVAILABLE", ex.getMessage()))
+              .build());
+      responseObserver.onCompleted();
     }
+  }
+
+  private ErrorDetail mapLookError(StatusRuntimeException ex) {
+    Status.Code code = ex.getStatus().getCode();
+    String description = ex.getStatus().getDescription();
+    String mappedCode =
+        switch (code) {
+          case NOT_FOUND -> "ROOM_NOT_FOUND";
+          case UNAVAILABLE ->
+              description != null && description.contains("EntityManagement")
+                  ? "ENTITY_UNAVAILABLE"
+                  : "WORLD_UNAVAILABLE";
+          case DEADLINE_EXCEEDED -> "WORLD_UNAVAILABLE";
+          case PERMISSION_DENIED -> "NOT_AUTHORIZED";
+          default -> "LOOK_UNAVAILABLE";
+        };
+    return GrpcAppErrors.error(meterRegistry, logger, "ResolveLook", mappedCode, description);
   }
 
   @Override

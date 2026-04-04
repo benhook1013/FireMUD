@@ -111,12 +111,14 @@ public class GameInstanceServiceImpl implements GameInstanceService {
         request.runtimeVersion(),
         request.scriptPatchVersion());
     repository
-        .findFirstByOwnerAccountIdAndStatus(request.ownerAccountId(), "RUNNING")
+        .findFirstByTenantIdAndOwnerAccountIdAndStatus(
+            request.tenantId(), request.ownerAccountId(), "RUNNING")
         .ifPresent(
             existing -> {
               logger.info(
-                  "Stopping existing session {} for owner {}",
+                  "Stopping existing session {} for tenant {} owner {}",
                   existing.getId(),
+                  existing.getTenantId(),
                   existing.getOwnerAccountId());
               existing.setStatus("STOPPED");
               repository.save(existing);

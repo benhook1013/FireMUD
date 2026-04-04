@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamesession.client;
 
 import jakarta.annotation.PostConstruct;
 import java.util.Optional;
+import java.util.concurrent.TimeUnit;
 import javax.net.ssl.SSLException;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.AbstractBlockingGrpcClient;
@@ -25,6 +26,7 @@ import org.springframework.stereotype.Component;
 public final class EntityManagementClient
     extends AbstractBlockingGrpcClient<
         EntityManagementServiceGrpc.EntityManagementServiceBlockingStub> {
+  private static final long CALL_DEADLINE_SECONDS = 5L;
 
   public EntityManagementClient(
       ServiceEndpointsProperties endpoints,
@@ -56,12 +58,12 @@ public final class EntityManagementClient
 
   /** Simple ping to verify connectivity. */
   public PingResponse ping() {
-    return stub().ping(PingRequest.newBuilder().build());
+    return callStub().ping(PingRequest.newBuilder().build());
   }
 
   public Optional<Character> findCharacterByName(String tenantId, String name) {
     FindCharacterByNameResponse response =
-        stub()
+        callStub()
             .findCharacterByName(
                 FindCharacterByNameRequest.newBuilder()
                     .setTenantId(tenantId)
@@ -71,5 +73,9 @@ public final class EntityManagementClient
       return Optional.empty();
     }
     return Optional.of(response.getCharacter());
+  }
+
+  private EntityManagementServiceGrpc.EntityManagementServiceBlockingStub callStub() {
+    return stub().withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS);
   }
 }

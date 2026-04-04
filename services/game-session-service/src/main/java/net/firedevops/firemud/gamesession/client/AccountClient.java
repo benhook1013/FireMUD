@@ -29,6 +29,7 @@ import org.springframework.stereotype.Component;
 public final class AccountClient
     extends AbstractBlockingGrpcClient<AccountServiceGrpc.AccountServiceBlockingStub> {
   private static final long READINESS_DEADLINE_SECONDS = 2L;
+  private static final long CALL_DEADLINE_SECONDS = 5L;
   private static final Logger logger = LoggingUtil.getLogger(AccountClient.class);
 
   private final DevIsolatedProperties devIsolatedProperties;
@@ -65,14 +66,14 @@ public final class AccountClient
             .setOtp(otp == null ? "" : otp)
             .build();
     try {
-      return stub().authenticate(request);
+      return callStub().authenticate(request);
     } catch (StatusRuntimeException ex) {
       if (ex.getStatus().getCode() == Status.Code.UNAVAILABLE) {
         logger.warn(
             "Account Service unavailable; rebuilding channel and retrying authenticate", ex);
         try {
           initClient();
-          return stub().authenticate(request);
+          return callStub().authenticate(request);
         } catch (Exception retryEx) {
           logger.warn("Failed to retry Account Service authenticate after channel reload", retryEx);
         }
@@ -108,7 +109,7 @@ public final class AccountClient
   }
 
   public PingResponse ping() {
-    return stub().ping(PingRequest.getDefaultInstance());
+    return callStub().ping(PingRequest.getDefaultInstance());
   }
 
   public GetTenantMembershipForRuntimeResponse getTenantMembershipForRuntime(
@@ -129,14 +130,14 @@ public final class AccountClient
             .setRequestId(requestId == null ? "" : requestId)
             .build();
     try {
-      return stub().getTenantMembershipForRuntime(request);
+      return callStub().getTenantMembershipForRuntime(request);
     } catch (StatusRuntimeException ex) {
       if (ex.getStatus().getCode() == Status.Code.UNAVAILABLE) {
         logger.warn(
             "Account Service unavailable; rebuilding channel and retrying runtime membership", ex);
         try {
           initClient();
-          return stub().getTenantMembershipForRuntime(request);
+          return callStub().getTenantMembershipForRuntime(request);
         } catch (Exception retryEx) {
           logger.warn(
               "Failed to retry Account Service runtime membership after channel reload", retryEx);
@@ -172,7 +173,7 @@ public final class AccountClient
             .setRequestId(requestId == null ? "" : requestId)
             .build();
     try {
-      return stub().getTenantEntitlementsForRuntime(request);
+      return callStub().getTenantEntitlementsForRuntime(request);
     } catch (StatusRuntimeException ex) {
       if (ex.getStatus().getCode() == Status.Code.UNAVAILABLE) {
         logger.warn(
@@ -180,7 +181,7 @@ public final class AccountClient
             ex);
         try {
           initClient();
-          return stub().getTenantEntitlementsForRuntime(request);
+          return callStub().getTenantEntitlementsForRuntime(request);
         } catch (Exception retryEx) {
           logger.warn(
               "Failed to retry Account Service runtime entitlements after channel reload", retryEx);
@@ -213,5 +214,9 @@ public final class AccountClient
   protected AccountServiceGrpc.AccountServiceBlockingStub buildStub(
       io.grpc.ManagedChannel channel) {
     return AccountServiceGrpc.newBlockingStub(channel).withCompression("gzip");
+  }
+
+  private AccountServiceGrpc.AccountServiceBlockingStub callStub() {
+    return stub().withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS);
   }
 }

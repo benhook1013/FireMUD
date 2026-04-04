@@ -87,7 +87,7 @@ class GameSessionGrpcServiceTest {
     Mockito.when(
             gameInstanceService.startSession(
                 Mockito.any(net.firedevops.firemud.gamesession.dto.StartSessionRequest.class)))
-        .thenReturn(new GameInstanceDto(1L, 1L, "v1", null, 0L, "RUNNING"));
+        .thenReturn(new GameInstanceDto(1L, 1L, "v1", null, 42L, "RUNNING"));
     GameSessionGrpcService service =
         new GameSessionGrpcService(
             pingService,
@@ -105,6 +105,7 @@ class GameSessionGrpcServiceTest {
             .setRuntimeVersion("v1")
             .setScriptPatchVersion("")
             .setClientIp("127.0.0.1")
+            .setOwnerAccountId("42")
             .build(),
         new StreamObserver<StartSessionResponse>() {
           @Override
@@ -122,6 +123,13 @@ class GameSessionGrpcServiceTest {
         });
 
     assertEquals("1", ref.get().getSessionId());
+    Mockito.verify(gameInstanceService)
+        .startSession(
+            Mockito.argThat(
+                request ->
+                    request.tenantId().equals(1L)
+                        && request.runtimeVersion().equals("v1")
+                        && request.ownerAccountId().equals(42L)));
   }
 
   @Test
@@ -227,6 +235,7 @@ class GameSessionGrpcServiceTest {
             .setTenantId("1")
             .setRuntimeVersion("v1")
             .setClientIp("1.2.3.4")
+            .setOwnerAccountId("42")
             .build(),
         new StreamObserver<StartSessionResponse>() {
           @Override

@@ -15,6 +15,7 @@ import net.firedevops.firemud.gateway.v1.UpsertRouteResponse;
 import net.firedevops.firemud.springcloudgateway.service.GatewayRoute;
 import net.firedevops.firemud.springcloudgateway.service.GatewayRouteService;
 import org.junit.jupiter.api.Test;
+import reactor.core.publisher.Mono;
 
 class GatewayManagementGrpcServiceTest {
 
@@ -46,7 +47,8 @@ class GatewayManagementGrpcServiceTest {
   @Test
   void upsertRouteValidCallsService() {
     GatewayRouteService routeService = mock(GatewayRouteService.class);
-    when(routeService.upsert(any())).thenReturn(new GatewayRoute("id", "http://u", null, null));
+    when(routeService.upsert(any()))
+        .thenReturn(Mono.just(new GatewayRoute("id", "http://u", null, null)));
     GatewayManagementGrpcService service =
         new GatewayManagementGrpcService(routeService, new SimpleMeterRegistry());
 
@@ -105,7 +107,7 @@ class GatewayManagementGrpcServiceTest {
   @Test
   void removeRouteNotFoundReturnsErrorDetail() {
     GatewayRouteService routeService = mock(GatewayRouteService.class);
-    when(routeService.remove("missing")).thenReturn(false);
+    when(routeService.remove("missing")).thenReturn(Mono.just(false));
     GatewayManagementGrpcService service =
         new GatewayManagementGrpcService(routeService, new SimpleMeterRegistry());
 

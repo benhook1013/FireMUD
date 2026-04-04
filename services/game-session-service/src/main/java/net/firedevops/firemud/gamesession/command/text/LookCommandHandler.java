@@ -19,6 +19,7 @@ import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.presentation.TextPlayerOutputRenderer;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
+import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -88,6 +89,18 @@ public final class LookCommandHandler {
       }
       try {
         LookResult lookResult = resolveLook(context);
+        if (lookResult.hasError()) {
+          ErrorDetail error = lookResult.getError();
+          String errorCode =
+              StringUtils.hasText(error.getCode()) ? error.getCode() : "LOOK_UNAVAILABLE";
+          recordFailure(
+              context, tenantTag, errorCode, new IllegalStateException(error.getMessage()));
+          return PlayerOutput.error(
+              errorCode,
+              errorMessage(error.getMessage()),
+              lookErrorMessageKey(errorCode),
+              Map.of());
+        }
         return toPlayerOutput(
             context, lookResult, includeLongDescription, refreshReason, briefRenderingHint);
       } catch (StatusRuntimeException ex) {

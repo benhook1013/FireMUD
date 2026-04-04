@@ -28,6 +28,7 @@ import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.presentation.TextPlayerOutputRenderer;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
+import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.shared.v1.RoomInstanceRef;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -118,10 +119,16 @@ class LookCommandHandlerTest {
   }
 
   @Test
-  void mapsGrpcFailureToErrorResponse() {
-    StatusRuntimeException worldDown =
-        new StatusRuntimeException(Status.UNAVAILABLE.withDescription("WorldManagement: down"));
-    when(gameLogicClient.resolveLook("22", "1", "911", "room-42", "")).thenThrow(worldDown);
+  void mapsLookErrorResponseToErrorPlayerOutput() {
+    when(gameLogicClient.resolveLook("22", "1", "911", "room-42", ""))
+        .thenReturn(
+            lookResult.toBuilder()
+                .setError(
+                    ErrorDetail.newBuilder()
+                        .setCode("WORLD_UNAVAILABLE")
+                        .setMessage("WorldManagement: down")
+                        .build())
+                .build());
     PlayerOutput response = handler.describePlayerOutput("123", true);
     assertEquals(
         "ERROR WORLD_UNAVAILABLE World data is temporarily unavailable.",
@@ -136,6 +143,19 @@ class LookCommandHandlerTest {
             .tag("error", "WORLD_UNAVAILABLE")
             .counter();
     assertEquals(1.0, failures.count());
+  }
+
+  @Test
+  void propagatesInfrastructureFailuresFromGrpcAsBefore() {
+    StatusRuntimeException worldDown =
+        new StatusRuntimeException(Status.UNAVAILABLE.withDescription("WorldManagement: down"));
+    when(gameLogicClient.resolveLook("22", "1", "911", "room-42", "")).thenThrow(worldDown);
+
+    PlayerOutput response = handler.describePlayerOutput("123", true);
+
+    assertEquals(
+        "ERROR WORLD_UNAVAILABLE World data is temporarily unavailable.",
+        outputRenderer.render(response));
   }
 
   @Test

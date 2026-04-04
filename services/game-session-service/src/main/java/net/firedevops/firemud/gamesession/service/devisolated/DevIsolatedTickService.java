@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamesession.service.devisolated;
 
 import net.firedevops.firemud.common.LoggingUtil;
+import net.firedevops.firemud.gamesession.logging.GameSessionCommandLogSanitizer;
 import net.firedevops.firemud.gamesession.service.TickService;
 import net.firedevops.firemud.gamesession.v1.TickStatus;
 import org.slf4j.Logger;
@@ -18,16 +19,21 @@ public class DevIsolatedTickService implements TickService {
   private static final Logger logger = LoggingUtil.getLogger(DevIsolatedTickService.class);
 
   @Override
-  public void enqueueCommand(Long sessionId, String command, boolean requiresSoloTick) {
+  public void enqueueCommand(
+      Long tenantId, Long queueTargetId, String command, boolean requiresSoloTick) {
     logger.info(
-        "Dev-isolated mode enabled; recording enqueue request for session {} command {}",
-        sessionId,
-        command);
+        "Dev-isolated mode enabled; recording enqueue request for tenant {} target {} command {}",
+        tenantId,
+        queueTargetId,
+        GameSessionCommandLogSanitizer.sanitize(command));
   }
 
   @Override
-  public void processTick(Long sessionId) {
-    logger.info("Dev-isolated mode enabled; skipping tick processing for session {}", sessionId);
+  public void processTick(Long tenantId, Long queueTargetId) {
+    logger.info(
+        "Dev-isolated mode enabled; skipping tick processing for tenant {} target {}",
+        tenantId,
+        queueTargetId);
   }
 
   @Override

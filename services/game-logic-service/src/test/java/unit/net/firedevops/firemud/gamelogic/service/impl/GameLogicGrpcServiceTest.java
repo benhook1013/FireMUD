@@ -5,6 +5,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 import static org.mockito.ArgumentMatchers.any;
 
+import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.concurrent.atomic.AtomicReference;
@@ -19,6 +21,8 @@ import net.firedevops.firemud.gamelogic.service.MoveAggregationService;
 import net.firedevops.firemud.gamelogic.service.PingService;
 import net.firedevops.firemud.gamelogic.v1.ExecuteCommandRequest;
 import net.firedevops.firemud.gamelogic.v1.ExecuteCommandResponse;
+import net.firedevops.firemud.gamelogic.v1.LookRequest;
+import net.firedevops.firemud.gamelogic.v1.LookResult;
 import net.firedevops.firemud.gamelogic.v1.MoveRequest;
 import net.firedevops.firemud.gamelogic.v1.MoveResult;
 import net.firedevops.firemud.gamelogic.v1.PingRequest;
@@ -154,5 +158,56 @@ class GameLogicGrpcServiceTest {
 
     Mockito.verify(moveAggregationService).resolve(any());
     assertTrue(holder.get().getSuccess());
+  }
+
+  @Test
+  void resolveLookReturnsErrorDetailInsteadOfTransportError() {
+    PingService pingService = new PingServiceImpl();
+    var dispatcher = new EventDispatcher();
+    var processor = new SimpleCommandProcessor(dispatcher, new NoOpScriptingHook());
+    var commandService = new CommandServiceImpl(new DefaultCommandParser(), processor);
+    LookAggregationService lookAggregationService = Mockito.mock(LookAggregationService.class);
+    CommunicationAggregationService communicationAggregationService =
+        Mockito.mock(CommunicationAggregationService.class);
+    MoveAggregationService moveAggregationService = Mockito.mock(MoveAggregationService.class);
+    MoveResult moveResult = MoveResult.newBuilder().setSuccess(true).build();
+    Mockito.when(moveAggregationService.resolve(any())).thenReturn(moveResult);
+    Mockito.when(lookAggregationService.resolve(any()))
+        .thenThrow(new StatusRuntimeException(Status.UNAVAILABLE.withDescription("down")));
+    GameLogicGrpcService service =
+        new GameLogicGrpcService(
+            pingService,
+            commandService,
+            lookAggregationService,
+            communicationAggregationService,
+            moveAggregationService,
+            new SimpleMeterRegistry());
+
+    AtomicReference<LookResult> holder = new AtomicReference<>();
+    service.resolveLook(
+        LookRequest.newBuilder()
+            .setTenantId("22")
+            .setSessionId("1")
+            .setCharacterId("911")
+            .setPreferredLocale("")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(LookResult value) {
+            holder.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {
+            fail(t);
+          }
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertTrue(holder.get().hasError());
+    assertEquals("WORLD_UNAVAILABLE", holder.get().getError().getCode());
+    assertTrue(holder.get().getError().getMessage().contains("down"));
   }
 }

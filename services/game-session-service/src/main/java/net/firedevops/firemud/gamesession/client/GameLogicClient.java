@@ -23,6 +23,7 @@ import org.springframework.stereotype.Component;
 @Component
 public class GameLogicClient
     extends AbstractBlockingGrpcClient<GameLogicServiceGrpc.GameLogicServiceBlockingStub> {
+  private static final long CALL_DEADLINE_SECONDS = 5L;
   private static final long READINESS_DEADLINE_SECONDS = 2L;
 
   public GameLogicClient(
@@ -67,7 +68,7 @@ public class GameLogicClient
                     .setRoomInstanceId(roomId)
                     .build())
             .build();
-    return stub().resolveLook(request);
+    return callStub().resolveLook(request);
   }
 
   public LookResult resolveLookForReadiness(
@@ -119,7 +120,7 @@ public class GameLogicClient
             .setGameInstanceId(gameInstanceId == null ? "" : gameInstanceId)
             .setSpeakerName(speakerName == null ? "" : speakerName)
             .build();
-    return stub().sendCommunication(request);
+    return callStub().sendCommunication(request);
   }
 
   public MoveResult resolveMove(
@@ -142,11 +143,15 @@ public class GameLogicClient
                     .build())
             .setDirection(direction)
             .build();
-    return stub().resolveMove(request);
+    return callStub().resolveMove(request);
   }
 
   public PingResponse ping() {
-    return stub().ping(PingRequest.getDefaultInstance());
+    return callStub().ping(PingRequest.getDefaultInstance());
+  }
+
+  private GameLogicServiceGrpc.GameLogicServiceBlockingStub callStub() {
+    return stub().withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS);
   }
 
   private CommunicationTargetKind targetKindFor(CommunicationType type) {

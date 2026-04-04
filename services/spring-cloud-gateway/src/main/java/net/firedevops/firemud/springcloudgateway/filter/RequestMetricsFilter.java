@@ -11,24 +11,24 @@ import org.springframework.web.server.WebFilter;
 import org.springframework.web.server.WebFilterChain;
 import reactor.core.publisher.Mono;
 
-/** Tracks connection metrics for monitoring purposes. */
+/** Tracks HTTP request activity for gateway observability. */
 @Component
-public class ConnectionMetricsFilter implements WebFilter, Ordered {
+public class RequestMetricsFilter implements WebFilter, Ordered {
 
-  private final AtomicInteger activeConnections = new AtomicInteger();
-  private final Counter connectionCounter;
+  private final AtomicInteger inFlightRequests = new AtomicInteger();
+  private final Counter requestCounter;
 
-  public ConnectionMetricsFilter(MeterRegistry meterRegistry) {
-    this.connectionCounter = meterRegistry.counter("gateway.connections.total");
-    Gauge.builder("gateway.connections.active", activeConnections, AtomicInteger::get)
+  public RequestMetricsFilter(MeterRegistry meterRegistry) {
+    this.requestCounter = meterRegistry.counter("gateway.http.requests.total");
+    Gauge.builder("gateway.http.requests.in_flight", inFlightRequests, AtomicInteger::get)
         .register(meterRegistry);
   }
 
   @Override
   public Mono<Void> filter(ServerWebExchange exchange, WebFilterChain chain) {
-    connectionCounter.increment();
-    activeConnections.incrementAndGet();
-    return chain.filter(exchange).doFinally(signalType -> activeConnections.decrementAndGet());
+    requestCounter.increment();
+    inFlightRequests.incrementAndGet();
+    return chain.filter(exchange).doFinally(signalType -> inFlightRequests.decrementAndGet());
   }
 
   @Override

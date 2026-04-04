@@ -108,7 +108,7 @@ public final class GameSessionGrpcService
               Long.valueOf(request.getTenantId()),
               request.getRuntimeVersion(),
               request.getScriptPatchVersion(),
-              0L);
+              parseOwnerAccountId(request.getOwnerAccountId()));
       GameInstanceDto instance = gameInstanceService.startSession(dto);
       if (clientIp != null && !clientIp.isBlank()) {
         ipConnectionLimiter.register(clientIp, instance.id());
@@ -125,6 +125,17 @@ public final class GameSessionGrpcService
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     }
+  }
+
+  private long parseOwnerAccountId(String ownerAccountIdText) {
+    if (ownerAccountIdText == null || ownerAccountIdText.isBlank()) {
+      throw new IllegalArgumentException("ownerAccountId is required");
+    }
+    long ownerAccountId = Long.parseLong(ownerAccountIdText);
+    if (ownerAccountId <= 0) {
+      throw new IllegalArgumentException("ownerAccountId must be positive");
+    }
+    return ownerAccountId;
   }
 
   @Override

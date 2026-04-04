@@ -3,10 +3,10 @@ package net.firedevops.firemud.gamesession.service;
 /** Coordinates tick execution and command queues using Redis. */
 public interface TickService {
   /** Add a command to the queue for the next tick. */
-  void enqueueCommand(Long sessionId, String command, boolean requiresSoloTick);
+  void enqueueCommand(Long tenantId, Long queueTargetId, String command, boolean requiresSoloTick);
 
   /** Execute a single tick if the lock is acquired. */
-  void processTick(Long sessionId);
+  void processTick(Long tenantId, Long queueTargetId);
 
   /** Retrieve the latest persisted state for monitoring. */
   String queryState(Long sessionId);

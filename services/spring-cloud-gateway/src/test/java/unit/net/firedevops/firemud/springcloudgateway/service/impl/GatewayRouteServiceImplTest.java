@@ -7,6 +7,7 @@ import net.firedevops.firemud.springcloudgateway.service.GatewayRoute;
 import org.junit.jupiter.api.Test;
 import org.springframework.cloud.gateway.route.InMemoryRouteDefinitionRepository;
 import reactor.core.publisher.Flux;
+import reactor.test.StepVerifier;
 
 class GatewayRouteServiceImplTest {
 
@@ -17,11 +18,10 @@ class GatewayRouteServiceImplTest {
     GatewayRoute route =
         new GatewayRoute("test", "http://example.com", List.of("Path=/foo"), List.of());
 
-    service.upsert(route);
+    StepVerifier.create(service.upsert(route)).expectNext(route).verifyComplete();
     assertEquals(1, Flux.from(repo.getRouteDefinitions()).collectList().block().size());
 
-    boolean removed = service.remove("test");
-    assertEquals(true, removed);
+    StepVerifier.create(service.remove("test")).expectNext(true).verifyComplete();
     assertEquals(0, Flux.from(repo.getRouteDefinitions()).collectList().block().size());
   }
 }

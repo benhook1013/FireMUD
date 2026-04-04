@@ -8,6 +8,7 @@ import net.firedevops.firemud.gamesession.command.text.GameplayLoggingContext;
 import net.firedevops.firemud.gamesession.config.DevIsolatedProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
+import net.firedevops.firemud.gamesession.logging.GameSessionCommandLogSanitizer;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.CommandService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
@@ -38,6 +39,8 @@ public class CommandServiceImpl implements CommandService {
   private final GameInstanceRepository gameInstanceRepository;
   private final SessionContextService sessionContextService;
 
+  private record QueueTarget(long tenantId, long queueTargetId) {}
+
   public CommandServiceImpl(
       TickService tickService,
       SessionRateLimiter sessionRateLimiter,
@@ -56,7 +59,9 @@ public class CommandServiceImpl implements CommandService {
       String sessionIdText, String command, boolean requiresSoloTick) {
     String traceId = Span.current().getSpanContext().getTraceId();
     var sessionContext = resolveSessionContext(sessionIdText);
-    String tenantContext = resolveTenantContext(sessionIdText, sessionContext);
+    Optional<QueueTarget> queueTarget = resolveQueueTarget(sessionIdText, sessionContext);
+    String tenantContext =
+        queueTarget.map(target -> String.valueOf(target.tenantId())).orElse("unknown");
     GameplayLoggingContext gameplayLoggingContext =
         sessionContext
             .<GameplayLoggingContext>map(GameplayLoggingContext::from)
@@ -70,13 +75,13 @@ public class CommandServiceImpl implements CommandService {
           sessionContext.map(SessionContext::gameInstanceId).filter(id -> id > 0).orElse(null),
           sessionContext.map(SessionContext::characterId).filter(id -> id > 0).orElse(null),
           sessionIdText,
-          command);
+          GameSessionCommandLogSanitizer.sanitize(command));
 
       if (devIsolatedProperties.isDevIsolated()) {
         logger.info(
             "Dev-isolated mode enabled; acknowledging enqueue for session {} command {}",
             sessionIdText,
-            command);
+            GameSessionCommandLogSanitizer.sanitize(command));
         return CommandEnqueueResult.success();
       }
 
@@ -95,8 +100,16 @@ public class CommandServiceImpl implements CommandService {
         return CommandEnqueueResult.failure("RATE_LIMIT", "Command rate limit exceeded");
       }
 
+      if (queueTarget.isEmpty()) {
+        return CommandEnqueueResult.failure("NOT_FOUND", "Unable to resolve command queue target");
+      }
+
       try {
-        tickService.enqueueCommand(resolveQueueTarget(sessionId), command, requiresSoloTick);
+        tickService.enqueueCommand(
+            queueTarget.get().tenantId(),
+            queueTarget.get().queueTargetId(),
+            command,
+            requiresSoloTick);
         return CommandEnqueueResult.success();
       } catch (IllegalArgumentException ex) {
         return CommandEnqueueResult.failure("INVALID_ARGUMENT", ex.getMessage());
@@ -113,28 +126,21 @@ public class CommandServiceImpl implements CommandService {
     }
   }
 
-  private String resolveTenantContext(
+  private Optional<QueueTarget> resolveQueueTarget(
       String sessionIdText, Optional<SessionContext> sessionContext) {
-    if (sessionContext.isPresent()) {
-      return String.valueOf(sessionContext.get().tenantId());
-    }
     try {
       long sessionId = Long.parseLong(sessionIdText);
+      if (sessionContext.isPresent()) {
+        SessionContext context = sessionContext.get();
+        long queueTargetId = context.gameInstanceId() > 0 ? context.gameInstanceId() : sessionId;
+        return Optional.of(new QueueTarget(context.tenantId(), queueTargetId));
+      }
       return gameInstanceRepository
           .findById(sessionId)
           .map(GameInstance::getTenantId)
-          .map(String::valueOf)
-          .orElse("unknown");
+          .map(tenantId -> new QueueTarget(tenantId, sessionId));
     } catch (NumberFormatException ex) {
-      return "unknown";
+      return Optional.empty();
     }
-  }
-
-  private long resolveQueueTarget(long sessionId) {
-    return sessionContextService
-        .findBySessionId(sessionId)
-        .map(SessionContext::gameInstanceId)
-        .filter(gameInstanceId -> gameInstanceId > 0)
-        .orElse(sessionId);
   }
 }

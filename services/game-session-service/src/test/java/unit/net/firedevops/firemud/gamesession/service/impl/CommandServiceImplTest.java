@@ -17,9 +17,13 @@ import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.gamesession.service.SessionRateLimiter;
 import net.firedevops.firemud.gamesession.service.TickService;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mockito;
 import org.slf4j.MDC;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 
+@ExtendWith(OutputCaptureExtension.class)
 class CommandServiceImplTest {
   @Test
   void devIsolatedAcknowledgesCommands() {
@@ -40,7 +44,8 @@ class CommandServiceImplTest {
     assertTrue(result.accepted());
     verify(rateLimiter, never()).allow(Mockito.anyLong());
     verify(tickService, never())
-        .enqueueCommand(Mockito.anyLong(), Mockito.anyString(), Mockito.anyBoolean());
+        .enqueueCommand(
+            Mockito.anyLong(), Mockito.anyLong(), Mockito.anyString(), Mockito.anyBoolean());
   }
 
   @Test
@@ -63,7 +68,8 @@ class CommandServiceImplTest {
     assertTrue(result.hasError());
     assertEquals("RATE_LIMIT", result.errorCode());
     verify(tickService, never())
-        .enqueueCommand(Mockito.anyLong(), Mockito.anyString(), Mockito.anyBoolean());
+        .enqueueCommand(
+            Mockito.anyLong(), Mockito.anyLong(), Mockito.anyString(), Mockito.anyBoolean());
   }
 
   @Test
@@ -88,7 +94,7 @@ class CommandServiceImplTest {
 
     assertTrue(result.accepted());
     verify(rateLimiter).allow(7L);
-    verify(tickService, times(1)).enqueueCommand(7L, "look", true);
+    verify(tickService, times(1)).enqueueCommand(9L, 7L, "look", true);
   }
 
   @Test
@@ -112,7 +118,7 @@ class CommandServiceImplTest {
     CommandEnqueueResult result = service.enqueue("17", "look", false);
 
     assertTrue(result.accepted());
-    verify(tickService, times(1)).enqueueCommand(99L, "look", false);
+    verify(tickService, times(1)).enqueueCommand(9L, 99L, "look", false);
   }
 
   @Test
@@ -134,7 +140,7 @@ class CommandServiceImplTest {
               return null;
             })
         .when(tickService)
-        .enqueueCommand(99L, "look", false);
+        .enqueueCommand(9L, 99L, "look", false);
 
     CommandServiceImpl service =
         new CommandServiceImpl(
@@ -150,5 +156,30 @@ class CommandServiceImplTest {
     assertNull(MDC.get("tenantId"));
     assertNull(MDC.get("gameInstanceId"));
     assertNull(MDC.get("characterId"));
+  }
+
+  @Test
+  void loginCommandsAreRedactedFromLogs(CapturedOutput output) {
+    TickService tickService = Mockito.mock(TickService.class);
+    SessionRateLimiter rateLimiter = Mockito.mock(SessionRateLimiter.class);
+    Mockito.when(rateLimiter.allow(17L)).thenReturn(true);
+    GameInstanceRepository repository = Mockito.mock(GameInstanceRepository.class);
+    SessionContextService sessionContextService = Mockito.mock(SessionContextService.class);
+    Mockito.when(sessionContextService.findBySessionId(17L))
+        .thenReturn(
+            Optional.of(new SessionContext(17L, 9L, 3L, "demo", 44L, "char", 99L, "room", "jwt")));
+    CommandServiceImpl service =
+        new CommandServiceImpl(
+            tickService,
+            rateLimiter,
+            new DevIsolatedProperties(false),
+            repository,
+            sessionContextService);
+
+    service.enqueue("17", "LOGIN demo@example.com swordfish", false);
+
+    String logs = output.getOut() + output.getErr();
+    assertTrue(logs.contains("LOGIN [redacted]"));
+    assertTrue(!logs.contains("LOGIN demo@example.com swordfish"));
   }
 }

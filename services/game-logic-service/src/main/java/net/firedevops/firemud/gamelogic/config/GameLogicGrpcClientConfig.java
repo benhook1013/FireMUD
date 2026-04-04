@@ -3,6 +3,7 @@ package net.firedevops.firemud.gamelogic.config;
 import io.grpc.ManagedChannel;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
+import java.util.concurrent.TimeUnit;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
@@ -19,6 +20,7 @@ import org.springframework.context.annotation.Lazy;
 @Configuration
 @RequiredArgsConstructor
 public class GameLogicGrpcClientConfig {
+  private static final long CALL_DEADLINE_SECONDS = 5L;
   private final ServiceEndpointsProperties endpoints;
   private final CommonGrpcClientProperties grpcClientProperties;
   private final GrpcChannelFactory channelFactory;
@@ -56,18 +58,24 @@ public class GameLogicGrpcClientConfig {
   @Bean
   @Lazy(false)
   public WorldManagementServiceBlockingStub worldManagementStub() {
-    return WorldManagementServiceGrpc.newBlockingStub(worldChannel).withCompression("gzip");
+    return WorldManagementServiceGrpc.newBlockingStub(worldChannel)
+        .withCompression("gzip")
+        .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS);
   }
 
   @Bean
   @Lazy(false)
   public EntityManagementServiceBlockingStub entityManagementStub() {
-    return EntityManagementServiceGrpc.newBlockingStub(entityChannel).withCompression("gzip");
+    return EntityManagementServiceGrpc.newBlockingStub(entityChannel)
+        .withCompression("gzip")
+        .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS);
   }
 
   @Bean
   @Lazy(false)
   public SocialGroupsServiceGrpc.SocialGroupsServiceBlockingStub socialGroupsStub() {
-    return SocialGroupsServiceGrpc.newBlockingStub(socialChannel).withCompression("gzip");
+    return SocialGroupsServiceGrpc.newBlockingStub(socialChannel)
+        .withCompression("gzip")
+        .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS);
   }
 }

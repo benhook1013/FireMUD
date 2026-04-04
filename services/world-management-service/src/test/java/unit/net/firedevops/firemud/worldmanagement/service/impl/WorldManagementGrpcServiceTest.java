@@ -84,6 +84,70 @@ class WorldManagementGrpcServiceTest {
   }
 
   @Test
+  void getRoomSnapshotMissingRoomIdReturnsInvalidArgument() {
+    PingService pingService = Mockito.mock(PingService.class);
+    RoomService roomService = Mockito.mock(RoomService.class);
+    MeterRegistry meterRegistry = Mockito.mock(MeterRegistry.class);
+    Mockito.when(meterRegistry.counter(Mockito.anyString(), Mockito.any(String[].class)))
+        .thenReturn(Mockito.mock(io.micrometer.core.instrument.Counter.class));
+    WorldManagementGrpcService service =
+        new WorldManagementGrpcService(pingService, roomService, meterRegistry);
+
+    AtomicReference<GetRoomSnapshotResponse> ref = new AtomicReference<>();
+    service.getRoomSnapshot(
+        GetRoomSnapshotRequest.newBuilder().setTenantId("1").setPreferredLocale("fr").build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(GetRoomSnapshotResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+  }
+
+  @Test
+  void getRoomSnapshotMissingRoomReturnsNotFound() {
+    PingService pingService = Mockito.mock(PingService.class);
+    RoomService roomService = Mockito.mock(RoomService.class);
+    Mockito.when(roomService.getRoomSnapshot(1L, 1L, "fr"))
+        .thenThrow(new IllegalArgumentException("Room not found"));
+    MeterRegistry meterRegistry = Mockito.mock(MeterRegistry.class);
+    Mockito.when(meterRegistry.counter(Mockito.anyString(), Mockito.any(String[].class)))
+        .thenReturn(Mockito.mock(io.micrometer.core.instrument.Counter.class));
+    WorldManagementGrpcService service =
+        new WorldManagementGrpcService(pingService, roomService, meterRegistry);
+
+    AtomicReference<GetRoomSnapshotResponse> ref = new AtomicReference<>();
+    service.getRoomSnapshot(
+        GetRoomSnapshotRequest.newBuilder()
+            .setTenantId("1")
+            .setPreferredLocale("fr")
+            .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("1").build())
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(GetRoomSnapshotResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertEquals("NOT_FOUND", ref.get().getError().getCode());
+  }
+
+  @Test
   void getRoomSnapshotReturnsSnapshot() {
     PingService pingService = Mockito.mock(PingService.class);
     RoomService roomService = Mockito.mock(RoomService.class);

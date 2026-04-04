@@ -47,6 +47,7 @@ message StartSessionRequest {
   string script_patch_version = 3;
   string client_ip = 4;
   string game_instance_id = 5;
+  string owner_account_id = 6;
 }
 
 message StartSessionResponse {

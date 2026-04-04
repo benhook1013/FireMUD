@@ -54,6 +54,7 @@ message LookResult {
   string entity_snapshot_id = 9;
   string look_snapshot_id = 10;
   RoomAmbientState ambient_state = 11;
+  shared.v1.ErrorDetail error = 12;
 }
 
 message SendCommunicationRequest {

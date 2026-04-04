@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamesession.client;
 
 import jakarta.annotation.PostConstruct;
+import java.util.concurrent.TimeUnit;
 import javax.net.ssl.SSLException;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.AbstractBlockingGrpcClient;
@@ -21,6 +22,7 @@ import org.springframework.stereotype.Component;
 public final class WorldManagementClient
     extends AbstractBlockingGrpcClient<
         WorldManagementServiceGrpc.WorldManagementServiceBlockingStub> {
+  private static final long CALL_DEADLINE_SECONDS = 5L;
 
   public WorldManagementClient(
       ServiceEndpointsProperties endpoints,
@@ -52,6 +54,10 @@ public final class WorldManagementClient
 
   /** Simple ping to verify connectivity. */
   public PingResponse ping() {
-    return stub().ping(PingRequest.newBuilder().build());
+    return callStub().ping(PingRequest.newBuilder().build());
+  }
+
+  private WorldManagementServiceGrpc.WorldManagementServiceBlockingStub callStub() {
+    return stub().withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS);
   }
 }
