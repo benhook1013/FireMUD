@@ -8,6 +8,29 @@ This slice builds on the current authenticated gameplay path, authoritative room
 
 Scope note: this slice should establish the canonical container/equipment/audit model and prove the first player-facing item actions such as `INVENTORY`, `GET`, `DROP`, and one equipment action. It should not try to solve crafting, shops, banks, loot generation, or deep scripted item behaviors in the same change.
 
+## First Implementation Boundary
+
+The first narrow implementation for `06` should start from the authoritative runtime model, not from parser or transcript polish.
+
+Recommended first order:
+
+1. strengthen the authoritative inventory/runtime contract in `entity-management-service`
+2. add room-ground storage as the first visible non-inventory location
+3. expose the first player-facing command loop:
+   - `INVENTORY`
+   - `GET <item>`
+   - `DROP <item>`
+4. add presentation/help coverage for that loop
+5. defer general named containers, nested containers, and full equipment/body-layout behavior until the runtime path is solid
+
+This means the first implementation should treat:
+
+- hidden/internal character inventory containers as implementation-owned storage, not direct player-addressable containers;
+- room-ground storage as the first visible transfer target/source;
+- `LOOK` as room-context output, not a replacement for inventory/equipment queries.
+
+Equipment is still part of the overall `06` slice, but if it materially widens the first runtime loop it should follow immediately after the room-ground inventory proof rather than blocking it.
+
 ## 1. Design Alignment for Containment, Equipment, and Audit
 
 - [ ] Re-read the [Entity Management Service](../../architecture/microservices/entity-management-service/README.md), [Entity Management runtime/data model](../../architecture/microservices/entity-management-service/runtime-and-data.md), [World Management Service](../../architecture/microservices/world-management-service/README.md), and [Game Logic Service](../../architecture/microservices/game-logic-service/README.md) docs to confirm the ownership split for room identity, room-ground containers, item instances, hidden inventory containers, and equipment bindings.
@@ -17,6 +40,11 @@ Scope note: this slice should establish the canonical container/equipment/audit 
   - equipped items use first-class equipment bindings rather than "bag position with a flag";
   - slot definitions and body layouts are game-configured rather than platform-global enums.
 - [ ] Decide and document the minimum player-facing protocol surface for the first inventory slice, including at least `INVENTORY`, `GET <item>`, `DROP <item>`, and one equipment action such as `WEAR` / `EQUIP` or `REMOVE`.
+- [ ] Explicitly document that the first MVP command loop is expected to land as:
+  - `INVENTORY`
+  - `GET <item>`
+  - `DROP <item>`
+  and that named containers plus richer equip/unequip flows may remain one bounded follow-up if they jeopardize the first transfer proof.
 - [ ] Document the canonical success and failure transcript shapes for both WebSocket and Telnet, including at least one successful pickup from room ground, one successful drop to room ground, one successful equipment change, and one failure such as `ERROR ITEM_NOT_FOUND` or `ERROR SLOT_INCOMPATIBLE`.
 - [ ] Document the canonical audit requirement for inventory/equipment mutation so future implementation treats item movement as an auditable core invariant rather than optional observability.
 
@@ -24,11 +52,13 @@ Scope note: this slice should establish the canonical container/equipment/audit 
 
 - [ ] Before changing this service for the slice, run `./gradlew :entity-management-service:test` and stabilize the baseline if necessary.
 - [ ] Replace or extend the current weak inventory-facing contract (`QueryInventory -> item_ids[]`) with a richer inventory query shape that can return item instance metadata, container/equipped state, quantity, and game-defined type/tag information needed for gameplay and future GUIs.
+- [ ] Treat this authoritative runtime contract as the real starting point for `06`; do not begin by adding command text without first landing the inventory/query/transfer model that the command path will call.
 - [ ] Introduce or refine explicit runtime records for:
   - containers;
   - containment entries;
   - equipment bindings;
   - room-ground containers attached to `(tenantId, gameInstanceId, roomInstanceId)`.
+- [ ] Keep hidden/internal inventory containers implementation-owned in the first pass rather than directly player-addressable.
 - [ ] Ensure equipped items are not simultaneously represented as normal inventory-container members while equipped unless the design is deliberately revised and documented. The default target state is one authoritative location/binding per item instance.
 - [ ] Define the first mutation contract(s) needed for the slice, such as transfer item between container and room-ground container, bind item to equipment slot, and unbind item back to inventory container.
 - [ ] Add or refine validation rules for:
@@ -71,6 +101,7 @@ Scope note: this slice should establish the canonical container/equipment/audit 
   - `DropItem`;
   - `EquipItem`;
   - `UnequipItem`.
+- [ ] Prefer landing room-ground pickup/drop orchestration before broader container semantics so the first player-visible loop is narrow and auditable.
 - [ ] Keep the Game Logic layer responsible for gameplay-facing validation and orchestration, while Entity Management remains authoritative for item/container/equipment persistence.
 - [ ] Ensure Game Logic can combine room visibility, room-ground container identity, session/character identity, and item-filter/query semantics into stable player-facing results.
 - [ ] Add unit tests covering successful pickup/drop/equip flows, invalid item names/selectors, incompatible slots, inaccessible containers, and backend error propagation.
@@ -80,6 +111,11 @@ Scope note: this slice should establish the canonical container/equipment/audit 
 - [ ] Before changing this service for the slice, run `./gradlew :game-session-service:test` and stabilize the baseline if necessary.
 - [ ] Extend the text command interpreter so the first inventory commands are authenticated gameplay commands using the same session/context guard already used by `LOOK`, `SAY`, and movement.
 - [ ] Add handlers for the initial item command set, mapping structured Game Logic results into canonical text/WebSocket responses without inventing a second competing inventory format.
+- [ ] Keep the first parser/handler surface intentionally narrow:
+  - `INVENTORY`
+  - `GET <item>`
+  - `DROP <item>`
+  and only add broader container/equipment verbs once the underlying runtime path is stable.
 - [ ] Decide and document how players refer to items in the MVP:
   - simple name matching;
   - stable item selectors;
