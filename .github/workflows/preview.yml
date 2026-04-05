@@ -401,45 +401,32 @@ jobs:
           PREVIEW_EMAIL: demo@example.com
           PREVIEW_PASSWORD: swordfish
         run: |
-          set -o pipefail
-          ACCOUNT_PF_LOG=/tmp/preview-account-port-forward.log
-          SESSION_PF_LOG=/tmp/preview-game-session-port-forward.log
-          kubectl -n "${PREVIEW_NAMESPACE}" port-forward svc/account-service 18081:8080 >"${ACCOUNT_PF_LOG}" 2>&1 &
-          ACCOUNT_PF_PID=$!
-          kubectl -n "${PREVIEW_NAMESPACE}" port-forward svc/game-session-service 18086:8080 >"${SESSION_PF_LOG}" 2>&1 &
-          SESSION_PF_PID=$!
-          dump_port_forward_logs() {
-            for log in "${ACCOUNT_PF_LOG}" "${SESSION_PF_LOG}"; do
-              if [ -f "${log}" ]; then
-                echo "=== ${log} ==="
-                cat "${log}"
-                echo
-              fi
-            done
-          }
-          trap 'kill ${ACCOUNT_PF_PID} >/dev/null 2>&1 || true; kill ${SESSION_PF_PID} >/dev/null 2>&1 || true' EXIT
-          for _ in $(seq 1 30); do
-            if curl --silent --fail http://127.0.0.1:18081/actuator/health/readiness >/dev/null && \
-               curl --silent --fail http://127.0.0.1:18086/actuator/health/readiness >/dev/null; then
-              break
-            fi
-            sleep 1
-          done
-          if ! curl --silent --fail http://127.0.0.1:18081/actuator/health/readiness >/dev/null || \
-             ! curl --silent --fail http://127.0.0.1:18086/actuator/health/readiness >/dev/null; then
-            echo "Preview smoke bootstrap port-forwards did not become ready."
-            dump_port_forward_logs
-            exit 1
-          fi
-          if ! python3 - <<'PY'
+          BOOTSTRAP_SCRIPT=/tmp/preview-smoke-bootstrap.py
+          cat >"${BOOTSTRAP_SCRIPT}" <<'PY'
           import json
-          import sys
+          import time
           import urllib.error
           import urllib.request
 
           tenant_id = 1
           email = "demo@example.com"
           password = "swordfish"
+
+          def readiness_ok(url):
+            try:
+              with urllib.request.urlopen(url, timeout=10) as response:
+                body = response.read().decode("utf-8", errors="ignore")
+                return response.status < 500 and "\"status\":\"UP\"" in body.replace(" ", "")
+            except OSError:
+              return False
+
+          def wait_for_ready(name, url, timeout_seconds=60):
+            deadline = time.time() + timeout_seconds
+            while time.time() < deadline:
+              if readiness_ok(url):
+                return
+              time.sleep(2)
+            raise SystemExit(f"{name} readiness did not report UP at {url}")
 
           def post_json(url, payload):
             request = urllib.request.Request(
@@ -454,8 +441,11 @@ jobs:
             except urllib.error.HTTPError as exc:
               return exc.code, exc.read().decode("utf-8", errors="ignore")
 
+          wait_for_ready("account-service", "http://account-service:8080/actuator/health/readiness")
+          wait_for_ready("game-session-service", "http://game-session-service:8080/actuator/health/readiness")
+
           status, account_body = post_json(
-            "http://127.0.0.1:18081/accounts",
+            "http://account-service:8080/accounts",
             {
               "tenantId": tenant_id,
               "username": "demo",
@@ -466,15 +456,13 @@ jobs:
           print(account_body)
           if status >= 400:
             raise SystemExit(f"Account bootstrap failed with status {status}: {account_body}")
-          if status >= 500:
-            raise SystemExit(f"Account bootstrap failed with status {status}")
           account_payload = json.loads(account_body or "{}")
           account_id = (((account_payload.get("data") or {}).get("id")))
           if not account_id:
             raise SystemExit(f"Preview smoke account response did not include account id: {account_body}")
 
           status, session_body = post_json(
-            "http://127.0.0.1:18086/sessions",
+            "http://game-session-service:8080/sessions",
             {
               "tenantId": tenant_id,
               "runtimeVersion": "preview-smoke",
@@ -493,11 +481,44 @@ jobs:
               f"got {session_id!r}"
             )
           PY
-          then
-            echo "Preview smoke bootstrap account or session creation failed."
-            dump_port_forward_logs
+          BOOTSTRAP_POD_LOG=/tmp/preview-bootstrap-pod.log
+          trap 'kubectl -n "${PREVIEW_NAMESPACE}" delete pod preview-smoke-bootstrap --ignore-not-found >/dev/null 2>&1 || true; kubectl -n "${PREVIEW_NAMESPACE}" delete configmap preview-smoke-bootstrap-script --ignore-not-found >/dev/null 2>&1 || true' EXIT
+          kubectl -n "${PREVIEW_NAMESPACE}" create configmap preview-smoke-bootstrap-script \
+            --from-file=bootstrap.py="${BOOTSTRAP_SCRIPT}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+          kubectl -n "${PREVIEW_NAMESPACE}" delete pod preview-smoke-bootstrap --ignore-not-found >/dev/null 2>&1 || true
+          cat <<'EOF' | kubectl -n "${PREVIEW_NAMESPACE}" apply -f -
+          apiVersion: v1
+          kind: Pod
+          metadata:
+            name: preview-smoke-bootstrap
+          spec:
+            restartPolicy: Never
+            terminationGracePeriodSeconds: 0
+            containers:
+              - name: preview-smoke-bootstrap
+                image: python:3.12-alpine
+                command: ["python", "/tmp/bootstrap.py"]
+                volumeMounts:
+                  - name: bootstrap-script
+                    mountPath: /tmp
+            volumes:
+              - name: bootstrap-script
+                configMap:
+                  name: preview-smoke-bootstrap-script
+          EOF
+          if ! kubectl -n "${PREVIEW_NAMESPACE}" wait --for=condition=Ready pod/preview-smoke-bootstrap --timeout=90s >/dev/null 2>&1; then
+            :
+          fi
+          if ! kubectl -n "${PREVIEW_NAMESPACE}" wait --for=jsonpath='{.status.phase}'=Succeeded pod/preview-smoke-bootstrap --timeout=120s >/dev/null 2>&1; then
+            echo "Preview smoke bootstrap pod did not succeed."
+            kubectl -n "${PREVIEW_NAMESPACE}" logs preview-smoke-bootstrap || true
+            kubectl -n "${PREVIEW_NAMESPACE}" describe pod preview-smoke-bootstrap || true
             exit 1
           fi
+          kubectl -n "${PREVIEW_NAMESPACE}" logs preview-smoke-bootstrap | tee "${BOOTSTRAP_POD_LOG}"
+          kubectl -n "${PREVIEW_NAMESPACE}" delete pod preview-smoke-bootstrap --ignore-not-found >/dev/null 2>&1 || true
+          kubectl -n "${PREVIEW_NAMESPACE}" delete configmap preview-smoke-bootstrap-script --ignore-not-found >/dev/null 2>&1 || true
 
       - name: Smoke hosted preview over TCP
         if: ${{ steps.deploy-release.outcome == 'success' }}
