@@ -19,6 +19,7 @@ rules:
       - persistentvolumeclaims
       - pods
       - pods/log
+      - pods/portforward
       - events
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: ["apps"]
