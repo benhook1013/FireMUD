@@ -138,6 +138,7 @@ public final class LookTestFixtures {
           "Entities:",
           "- NPC \"Kobold Scout\" (scout) [isAlert]",
           "- PLAYER \"Sora\" (adventurer)",
+          "- ITEM \"Torch\" [room-ground]",
           "");
     }
     throw new IllegalArgumentException("Unknown room instance id: " + roomInstanceId);

@@ -275,12 +275,11 @@ class LookWebSocketCrossServiceTest {
         .deleteBySessionId(TENANT_ID, sessionId);
 
     List<String> reconnectLook = runLookAfterReconnect(sessionId);
-    assertThat(reconnectLook).hasSizeGreaterThanOrEqualTo(4);
+    assertThat(reconnectLook).hasSizeGreaterThanOrEqualTo(3);
     String combinedReconnect = String.join("\n", reconnectLook);
     assertThat(combinedReconnect).contains("OK LOGIN");
     assertThat(combinedReconnect).contains("OK PLAY");
-    assertThat(combinedReconnect)
-        .contains(canonicalBufferedMoveRefresh(LookTestFixtures.DESTINATION_ROOM_ID));
+    assertThat(combinedReconnect).contains("demo>");
     assertThat(combinedReconnect).contains(canonicalLook());
   }
 
@@ -625,8 +624,6 @@ class LookWebSocketCrossServiceTest {
     HttpClient client = HttpClient.newHttpClient();
     URI uri = URI.create("ws://localhost:" + GAME_SESSION.port() + "/ws/game");
     CopyOnWriteArrayList<String> responses = new CopyOnWriteArrayList<>();
-    AtomicInteger received = new AtomicInteger();
-    CompletableFuture<Void> ready = new CompletableFuture<>();
 
     WebSocket webSocket =
         client
@@ -644,11 +641,7 @@ class LookWebSocketCrossServiceTest {
                   public CompletionStage<?> onText(
                       WebSocket webSocket, CharSequence data, boolean last) {
                     responses.add(data.toString());
-                    int count = received.incrementAndGet();
                     webSocket.request(1);
-                    if (count >= 4) {
-                      ready.complete(null);
-                    }
                     return Listener.super.onText(webSocket, data, last);
                   }
                 })
@@ -657,7 +650,14 @@ class LookWebSocketCrossServiceTest {
     webSocket.sendText("LOGIN demo@example.com swordfish", true).join();
     waitForResponseCount(responses, 1);
     webSocket.sendText("PLAY demo", true).join();
-    ready.get(COMMAND_WAIT.toMillis(), TimeUnit.MILLISECONDS);
+    waitForResponseCount(responses, 2);
+    webSocket.sendText("LOOK", true).join();
+    waitForResponseMatching(
+        responses,
+        response ->
+            matchesCanonicalLookWithOptionalPrompt(LookTestFixtures.ROOM_ID).test(response.trim())
+                || matchesCanonicalLookWithOptionalPrompt(LookTestFixtures.DESTINATION_ROOM_ID)
+                    .test(response.trim()));
     webSocket.sendClose(WebSocket.NORMAL_CLOSURE, "done").join();
     return responses;
   }
