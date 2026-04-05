@@ -8,6 +8,7 @@ import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.gamesession.config.FirstPartyConnectContextProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
@@ -23,7 +24,8 @@ public class FirstPartyConnectContextService {
   private final JwtUtil jwtUtil;
 
   public FirstPartyConnectContextService(
-      FirstPartyConnectContextProperties properties, JwtUtil jwtUtil) {
+      FirstPartyConnectContextProperties properties,
+      @Qualifier("firstPartyConnectContextJwtUtil") JwtUtil jwtUtil) {
     this.properties = properties;
     this.jwtUtil = jwtUtil;
   }
