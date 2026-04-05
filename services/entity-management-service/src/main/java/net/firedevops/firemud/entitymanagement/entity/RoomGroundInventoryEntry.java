@@ -44,10 +44,27 @@ public class RoomGroundInventoryEntry {
   }
 
   public Item getItem() {
-    return item;
+    if (item == null) {
+      return null;
+    }
+    Item copy = new Item();
+    copy.setId(item.getId());
+    copy.setTenantId(item.getTenantId());
+    copy.setName(item.getName());
+    copy.setDescription(item.getDescription());
+    return copy;
   }
 
   public void setItem(Item item) {
-    this.item = item;
+    if (item == null) {
+      this.item = null;
+    } else {
+      Item copy = new Item();
+      copy.setId(item.getId());
+      copy.setTenantId(item.getTenantId());
+      copy.setName(item.getName());
+      copy.setDescription(item.getDescription());
+      this.item = copy;
+    }
   }
 }

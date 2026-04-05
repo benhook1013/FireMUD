@@ -44,18 +44,52 @@ public class InventoryEntry {
   }
 
   public Character getCharacter() {
-    return character;
+    if (character == null) {
+      return null;
+    }
+    Character copy = new Character();
+    copy.setId(character.getId());
+    copy.setTenantId(character.getTenantId());
+    copy.setAccountId(character.getAccountId());
+    copy.setName(character.getName());
+    return copy;
   }
 
   public void setCharacter(Character character) {
-    this.character = character;
+    if (character == null) {
+      this.character = null;
+    } else {
+      Character copy = new Character();
+      copy.setId(character.getId());
+      copy.setTenantId(character.getTenantId());
+      copy.setAccountId(character.getAccountId());
+      copy.setName(character.getName());
+      this.character = copy;
+    }
   }
 
   public Item getItem() {
-    return item;
+    if (item == null) {
+      return null;
+    }
+    Item copy = new Item();
+    copy.setId(item.getId());
+    copy.setTenantId(item.getTenantId());
+    copy.setName(item.getName());
+    copy.setDescription(item.getDescription());
+    return copy;
   }
 
   public void setItem(Item item) {
-    this.item = item;
+    if (item == null) {
+      this.item = null;
+    } else {
+      Item copy = new Item();
+      copy.setId(item.getId());
+      copy.setTenantId(item.getTenantId());
+      copy.setName(item.getName());
+      copy.setDescription(item.getDescription());
+      this.item = copy;
+    }
   }
 }

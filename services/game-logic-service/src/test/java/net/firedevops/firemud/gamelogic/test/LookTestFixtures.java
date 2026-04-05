@@ -62,7 +62,18 @@ public final class LookTestFixtures {
             .setEntityType(net.firedevops.firemud.entitymanagement.v1.EntityType.PLAYER)
             .setRole("adventurer")
             .build();
-    return ListRoomEntitiesResponse.newBuilder().addEntities(kobold).addEntities(player).build();
+    net.firedevops.firemud.entitymanagement.v1.RoomEntity item =
+        net.firedevops.firemud.entitymanagement.v1.RoomEntity.newBuilder()
+            .setEntityId("ITEM-009")
+            .setDisplayName("Torch")
+            .setEntityType(net.firedevops.firemud.entitymanagement.v1.EntityType.ITEM)
+            .addStateFlags("room-ground")
+            .build();
+    return ListRoomEntitiesResponse.newBuilder()
+        .addEntities(kobold)
+        .addEntities(player)
+        .addEntities(item)
+        .build();
   }
 
   public static String canonicalLookText() {
@@ -76,6 +87,7 @@ public final class LookTestFixtures {
         "Entities:",
         "- NPC \"Kobold Scout\" (scout) [isAlert]",
         "- PLAYER \"Sora\" (adventurer)",
+        "- ITEM \"Torch\" [room-ground]",
         "");
   }
 
@@ -107,6 +119,13 @@ public final class LookTestFixtures {
             .setEntityType(EntityType.PLAYER)
             .setRole("adventurer")
             .build();
+    RoomEntity itemEntity =
+        RoomEntity.newBuilder()
+            .setEntityId("ITEM-009")
+            .setDisplayName("Torch")
+            .setEntityType(EntityType.ITEM)
+            .addStateFlags("room-ground")
+            .build();
 
     return LookResult.newBuilder()
         .setRoomInstance(
@@ -122,6 +141,7 @@ public final class LookTestFixtures {
         .addExits(eastExit)
         .addEntities(koboldEntity)
         .addEntities(playerEntity)
+        .addEntities(itemEntity)
         .build();
   }
 }

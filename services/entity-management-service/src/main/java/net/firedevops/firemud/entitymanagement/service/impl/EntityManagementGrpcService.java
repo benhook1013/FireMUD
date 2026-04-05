@@ -304,7 +304,8 @@ public class EntityManagementGrpcService
       ListRoomEntitiesRequest request, StreamObserver<ListRoomEntitiesResponse> responseObserver) {
     try {
       var entities =
-          roomEntityService.listEntities(resolveTenantId(request), resolveRoomId(request));
+          roomEntityService.listEntities(
+              resolveTenantId(request), resolveGameInstanceId(request), resolveRoomId(request));
       var builder = ListRoomEntitiesResponse.newBuilder();
       entities.stream().map(this::toProto).forEach(builder::addEntities);
       responseObserver.onNext(builder.build());
@@ -344,6 +345,13 @@ public class EntityManagementGrpcService
       throw new IllegalArgumentException("room_instance.room_instance_id is required");
     }
     return request.getRoomInstance().getRoomInstanceId();
+  }
+
+  private String resolveGameInstanceId(ListRoomEntitiesRequest request) {
+    if (request.getRoomInstance().getGameInstanceId().isBlank()) {
+      throw new IllegalArgumentException("room_instance.game_instance_id is required");
+    }
+    return request.getRoomInstance().getGameInstanceId();
   }
 
   private Character toProto(CharacterDto dto) {
