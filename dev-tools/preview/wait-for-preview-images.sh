@@ -6,79 +6,78 @@ if [[ $# -lt 1 ]]; then
   exit 1
 fi
 
-if [[ -z "${PREVIEW_GHCR_USERNAME:-}" || -z "${PREVIEW_GHCR_TOKEN:-}" ]]; then
-  echo "PREVIEW_GHCR_USERNAME and PREVIEW_GHCR_TOKEN are required" >&2
+if [[ -z "${GH_TOKEN:-}" || -z "${GITHUB_REPOSITORY:-}" ]]; then
+  echo "GH_TOKEN and GITHUB_REPOSITORY are required" >&2
   exit 1
 fi
 
 image_tag="$1"
 timeout_seconds="${PREVIEW_IMAGE_WAIT_TIMEOUT_SECONDS:-1800}"
 sleep_seconds="${PREVIEW_IMAGE_WAIT_SLEEP_SECONDS:-10}"
-manifest_timeout_seconds="${PREVIEW_IMAGE_MANIFEST_TIMEOUT_SECONDS:-20}"
 start_epoch="${SECONDS}"
-
-services=(
-  account-service
-  automation-scripting-service
-  entity-management-service
-  game-design-service
-  game-logic-service
-  game-session-service
-  logging-admin-service
-  social-groups-service
-  spring-cloud-gateway
-  tcp-proxy-service
-  world-management-service
-)
-
 deadline=$((SECONDS + timeout_seconds))
-accept_header='application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json'
 
 while (( SECONDS < deadline )); do
-  loop_start="${SECONDS}"
-  missing=()
-  probe_summary=()
-  for service in "${services[@]}"; do
-    manifest_url="https://ghcr.io/v2/benhook1013/${service}/manifests/${image_tag}"
-    if curl \
-      --silent \
-      --show-error \
-      --fail \
-      --head \
-      --location \
-      --max-time "${manifest_timeout_seconds}" \
-      --user "${PREVIEW_GHCR_USERNAME}:${PREVIEW_GHCR_TOKEN}" \
-      --header "Accept: ${accept_header}" \
-      "${manifest_url}" >/dev/null 2>&1; then
-      probe_summary+=("${service}:ok")
-    else
-      rc=$?
-      if [[ $rc -eq 28 ]]; then
-        probe_summary+=("${service}:timeout")
-      else
-        probe_summary+=("${service}:missing")
-      fi
-      missing+=("$service")
-    fi
-  done
+  run_state="$(
+    gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/runtime-images.yml/runs?per_page=100" |
+      python3 - "$image_tag" <<'PY'
+import json
+import sys
 
-  if (( ${#missing[@]} == 0 )); then
-    printf 'All required preview images are available for %s after %ss.\n' \
+target_sha = sys.argv[1]
+payload = json.load(sys.stdin)
+runs = [run for run in payload.get("workflow_runs", []) if run.get("head_sha") == target_sha]
+runs.sort(key=lambda run: run.get("created_at", ""), reverse=True)
+
+if not runs:
+    print("missing")
+    sys.exit(0)
+
+run = runs[0]
+print("\t".join(
+    [
+        "found",
+        str(run.get("id", "")),
+        run.get("status", ""),
+        run.get("conclusion") or "",
+        run.get("html_url", ""),
+    ]
+))
+PY
+  )"
+
+  IFS=$'\t' read -r state run_id run_status run_conclusion run_url <<<"${run_state}"
+
+  if [[ "${state}" == "missing" ]]; then
+    printf 'Waiting for runtime-images workflow for %s after %ss. Matching run not visible yet.\n' \
       "${image_tag}" "$((SECONDS - start_epoch))"
+    sleep "${sleep_seconds}"
+    continue
+  fi
+
+  if [[ "${run_status}" == "completed" && "${run_conclusion}" == "success" ]]; then
+    printf 'Matching runtime-images workflow %s succeeded for %s after %ss.\n' \
+      "${run_id}" "${image_tag}" "$((SECONDS - start_epoch))"
     exit 0
   fi
 
-  printf 'Waiting for preview images for %s after %ss. Missing: %s\n' \
-    "${image_tag}" "$((SECONDS - start_epoch))" "${missing[*]}"
-  printf 'Probe summary: %s\n' "${probe_summary[*]}"
-  if (( SECONDS - loop_start >= manifest_timeout_seconds )); then
-    printf 'Manifest probe loop consumed at least %ss this round; inspect GHCR availability or docker manifest latency.\n' \
-      "${manifest_timeout_seconds}"
+  if [[ "${run_status}" == "completed" ]]; then
+    printf 'Matching runtime-images workflow %s completed with %s for %s.\n' \
+      "${run_id}" "${run_conclusion}" "${image_tag}" >&2
+    if [[ -n "${run_url}" ]]; then
+      printf 'Workflow URL: %s\n' "${run_url}" >&2
+    fi
+    exit 1
   fi
-  sleep "$sleep_seconds"
+
+  printf 'Waiting for runtime-images workflow %s for %s after %ss. status=%s conclusion=%s\n' \
+    "${run_id}" "${image_tag}" "$((SECONDS - start_epoch))" "${run_status}" "${run_conclusion:-pending}"
+  if [[ -n "${run_url}" ]]; then
+    printf 'Workflow URL: %s\n' "${run_url}"
+  fi
+  sleep "${sleep_seconds}"
 done
 
-printf 'Timed out waiting for preview images for %s after %ss.\n' \
+printf 'Timed out waiting for runtime-images workflow for %s after %ss.\n' \
   "${image_tag}" "$((SECONDS - start_epoch))" >&2
-printf 'Still missing: %s\n' "${missing[*]:-unknown}" >&2
 exit 1
