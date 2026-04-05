@@ -32,18 +32,28 @@ services=(
 )
 
 deadline=$((SECONDS + timeout_seconds))
+accept_header='application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json'
 
 while (( SECONDS < deadline )); do
   loop_start="${SECONDS}"
   missing=()
   probe_summary=()
   for service in "${services[@]}"; do
-    image="ghcr.io/benhook1013/${service}:${image_tag}"
-    if timeout "${manifest_timeout_seconds}" docker manifest inspect "$image" >/dev/null 2>&1; then
+    manifest_url="https://ghcr.io/v2/benhook1013/${service}/manifests/${image_tag}"
+    if curl \
+      --silent \
+      --show-error \
+      --fail \
+      --head \
+      --location \
+      --max-time "${manifest_timeout_seconds}" \
+      --user "${PREVIEW_GHCR_USERNAME}:${PREVIEW_GHCR_TOKEN}" \
+      --header "Accept: ${accept_header}" \
+      "${manifest_url}" >/dev/null 2>&1; then
       probe_summary+=("${service}:ok")
     else
       rc=$?
-      if [[ $rc -eq 124 ]]; then
+      if [[ $rc -eq 28 ]]; then
         probe_summary+=("${service}:timeout")
       else
         probe_summary+=("${service}:missing")
