@@ -3,6 +3,35 @@ name: Build Runtime Images
 on:
   pull_request:
     branches: [main, develop]
+    paths:
+      - 'build.gradle.kts'
+      - 'settings.gradle.kts'
+      - 'gradle.properties'
+      - 'buildSrc/**'
+      - 'gradle/**'
+      - 'protos/**'
+      - 'docker/**'
+      - '.github/workflows/runtime-images.yml'
+      - '.github/workflows/smoke.yml'
+      - '.github/workflows/smoke-full.yml'
+      - 'services/common-data-runtime/**'
+      - 'services/common-library/**'
+      - 'services/common-platform-core/**'
+      - 'services/common-saga/**'
+      - 'services/common-security/**'
+      - 'services/common-test-support/**'
+      - 'services/common-web-support/**'
+      - 'services/account-service/**'
+      - 'services/automation-scripting-service/**'
+      - 'services/entity-management-service/**'
+      - 'services/game-design-service/**'
+      - 'services/game-logic-service/**'
+      - 'services/game-session-service/**'
+      - 'services/logging-admin-service/**'
+      - 'services/social-groups-service/**'
+      - 'services/spring-cloud-gateway/**'
+      - 'services/tcp-proxy-service/**'
+      - 'services/world-management-service/**'
   push:
     branches: [main, develop]
   workflow_dispatch:
