@@ -20,30 +20,18 @@ deadline=$((SECONDS + timeout_seconds))
 while (( SECONDS < deadline )); do
   run_state="$(
     gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/runtime-images.yml/runs?per_page=100" |
-      python3 - "$image_tag" <<'PY'
-import json
-import sys
-
-target_sha = sys.argv[1]
-payload = json.load(sys.stdin)
-runs = [run for run in payload.get("workflow_runs", []) if run.get("head_sha") == target_sha]
-runs.sort(key=lambda run: run.get("created_at", ""), reverse=True)
-
-if not runs:
-    print("missing")
-    sys.exit(0)
-
-run = runs[0]
-print("\t".join(
-    [
-        "found",
-        str(run.get("id", "")),
-        run.get("status", ""),
-        run.get("conclusion") or "",
-        run.get("html_url", ""),
-    ]
-))
-PY
+      jq -r --arg target_sha "${image_tag}" '
+        (.workflow_runs // [])
+        | map(select(.head_sha == $target_sha))
+        | sort_by(.created_at)
+        | reverse
+        | if length == 0 then
+            "missing"
+          else
+            .[0] as $run
+            | "found\t\($run.id)\t\($run.status // "")\t\($run.conclusion // "")\t\($run.html_url // "")"
+          end
+      '
   )"
 
   IFS=$'\t' read -r state run_id run_status run_conclusion run_url <<<"${run_state}"
