@@ -40,12 +40,20 @@ message UpdateEntityResponse {
 }
 
 message QueryInventoryRequest {
-  string entity_id = 1;
+  string tenant_id = 1;
+  string character_id = 2;
 }
 
 message QueryInventoryResponse {
-  repeated string item_ids = 1;
+  repeated InventoryItem items = 1;
   shared.v1.ErrorDetail error = 2;
+}
+
+message InventoryItem {
+  string item_id = 1;
+  string item_name = 2;
+  string item_description = 3;
+  int32 quantity = 4;
 }
 
 message ListCharactersByAccountRequest {

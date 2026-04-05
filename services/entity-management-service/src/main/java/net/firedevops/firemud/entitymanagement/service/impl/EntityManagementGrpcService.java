@@ -18,6 +18,7 @@ import net.firedevops.firemud.entitymanagement.v1.CreateCharacterResponse;
 import net.firedevops.firemud.entitymanagement.v1.EntityManagementServiceGrpc;
 import net.firedevops.firemud.entitymanagement.v1.FindCharacterByNameRequest;
 import net.firedevops.firemud.entitymanagement.v1.FindCharacterByNameResponse;
+import net.firedevops.firemud.entitymanagement.v1.InventoryItem;
 import net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountRequest;
 import net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse;
 import net.firedevops.firemud.entitymanagement.v1.ListRoomEntitiesRequest;
@@ -269,11 +270,13 @@ public class EntityManagementGrpcService
   public void queryInventory(
       QueryInventoryRequest request, StreamObserver<QueryInventoryResponse> responseObserver) {
     try {
-      long characterId = Long.parseLong(request.getEntityId());
-      var entries = inventoryService.listInventory(characterId, Pageable.unpaged()).getContent();
-      var itemIds = entries.stream().map(e -> String.valueOf(e.itemId())).toList();
+      long tenantId = Long.parseLong(request.getTenantId());
+      long characterId = Long.parseLong(request.getCharacterId());
+      var entries =
+          inventoryService.listInventory(tenantId, characterId, Pageable.unpaged()).getContent();
+      var items = entries.stream().map(this::toProto).toList();
       QueryInventoryResponse response =
-          QueryInventoryResponse.newBuilder().addAllItemIds(itemIds).build();
+          QueryInventoryResponse.newBuilder().addAllItems(items).build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (NumberFormatException ex) {
@@ -357,6 +360,15 @@ public class EntityManagementGrpcService
         .setStamina(dto.stamina())
         .setHealth(dto.health())
         .setMana(dto.mana())
+        .build();
+  }
+
+  private InventoryItem toProto(net.firedevops.firemud.entitymanagement.dto.InventoryEntryDto dto) {
+    return InventoryItem.newBuilder()
+        .setItemId(String.valueOf(dto.itemId()))
+        .setItemName(dto.itemName())
+        .setItemDescription(dto.itemDescription() == null ? "" : dto.itemDescription())
+        .setQuantity(dto.quantity())
         .build();
   }
 

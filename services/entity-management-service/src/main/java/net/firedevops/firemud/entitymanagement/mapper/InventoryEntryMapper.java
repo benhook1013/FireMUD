@@ -7,7 +7,10 @@ import org.mapstruct.Mapping;
 
 @Mapper(componentModel = "spring")
 public interface InventoryEntryMapper {
+  @Mapping(target = "tenantId", source = "character.tenantId")
   @Mapping(target = "characterId", source = "character.id")
   @Mapping(target = "itemId", source = "item.id")
+  @Mapping(target = "itemName", source = "item.name")
+  @Mapping(target = "itemDescription", source = "item.description")
   InventoryEntryDto toDto(InventoryEntry entity);
 }

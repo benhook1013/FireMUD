@@ -44,40 +44,18 @@ public class InventoryEntry {
   }
 
   public Character getCharacter() {
-    if (character == null) {
-      return null;
-    }
-    Character copy = new Character();
-    copy.setId(character.getId());
-    return copy;
+    return character;
   }
 
   public void setCharacter(Character character) {
-    if (character == null) {
-      this.character = null;
-    } else {
-      Character copy = new Character();
-      copy.setId(character.getId());
-      this.character = copy;
-    }
+    this.character = character;
   }
 
   public Item getItem() {
-    if (item == null) {
-      return null;
-    }
-    Item copy = new Item();
-    copy.setId(item.getId());
-    return copy;
+    return item;
   }
 
   public void setItem(Item item) {
-    if (item == null) {
-      this.item = null;
-    } else {
-      Item copy = new Item();
-      copy.setId(item.getId());
-      this.item = copy;
-    }
+    this.item = item;
   }
 }

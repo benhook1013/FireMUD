@@ -11,6 +11,8 @@ import net.firedevops.firemud.entitymanagement.service.PingService;
 import net.firedevops.firemud.entitymanagement.service.RoomEntityService;
 import net.firedevops.firemud.entitymanagement.v1.PingRequest;
 import net.firedevops.firemud.entitymanagement.v1.PingResponse;
+import net.firedevops.firemud.entitymanagement.v1.QueryInventoryRequest;
+import net.firedevops.firemud.entitymanagement.v1.QueryInventoryResponse;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.springframework.data.domain.Pageable;
@@ -245,5 +247,46 @@ class EntityManagementGrpcServiceTest {
         });
 
     assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+  }
+
+  @Test
+  void queryInventoryReturnsItemsWithMetadata() {
+    PingService pingService = Mockito.mock(PingService.class);
+    CharacterService characterService = Mockito.mock(CharacterService.class);
+    InventoryService inventoryService = Mockito.mock(InventoryService.class);
+    var dto =
+        new net.firedevops.firemud.entitymanagement.dto.InventoryEntryDto(
+            1L, 7L, 99L, "Torch", "A small torch", 2);
+    Mockito.when(inventoryService.listInventory(1L, 7L, Pageable.unpaged()))
+        .thenReturn(new org.springframework.data.domain.PageImpl<>(java.util.List.of(dto)));
+    io.micrometer.core.instrument.MeterRegistry meterRegistry =
+        Mockito.mock(io.micrometer.core.instrument.MeterRegistry.class);
+    io.micrometer.core.instrument.Counter counter =
+        Mockito.mock(io.micrometer.core.instrument.Counter.class);
+    Mockito.when(meterRegistry.counter(Mockito.anyString(), Mockito.any(String[].class)))
+        .thenReturn(counter);
+    RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
+    EntityManagementGrpcService service =
+        new EntityManagementGrpcService(
+            pingService, characterService, inventoryService, roomEntityService, meterRegistry);
+
+    AtomicReference<QueryInventoryResponse> ref = new AtomicReference<>();
+    service.queryInventory(
+        QueryInventoryRequest.newBuilder().setTenantId("1").setCharacterId("7").build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(QueryInventoryResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertEquals("Torch", ref.get().getItems(0).getItemName());
+    assertEquals(2, ref.get().getItems(0).getQuantity());
   }
 }
