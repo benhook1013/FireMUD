@@ -240,6 +240,9 @@ previewStack:
       envFromShared: true
       mountGrpcTls: true
       healthPort: 8080
+      extraEnv:
+        FIREMUD_GATEWAY_HEADER_TRUST_TCP_PROXY_ALLOW_INSECURE_HEADERS_FROM_TRUSTED_CIDRS: "true"
+        FIREMUD_GATEWAY_HEADER_TRUST_TCP_PROXY_INSECURE_TRUSTED_CIDRS_0: 10.42.0.0/16
       ports:
         - port: 80
           targetPort: 8080
