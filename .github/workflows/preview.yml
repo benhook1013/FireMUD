@@ -283,6 +283,7 @@ jobs:
           PREVIEW_GHCR_USERNAME: ${{ secrets.PREVIEW_GHCR_USERNAME }}
           PREVIEW_GHCR_TOKEN: ${{ secrets.PREVIEW_GHCR_TOKEN }}
         run: |
+          echo "PREVIEW_STAGE=wait-for-images" >> "$GITHUB_ENV"
           bash ./dev-tools/preview/wait-for-preview-images.sh "${{ steps.effective-image-tag.outputs.image_tag }}"
 
       - name: Ensure preview gRPC TLS secret exists
@@ -333,6 +334,16 @@ jobs:
             "${{ steps.effective-image-tag.outputs.image_tag }}" \
             "${{ steps.telnet-port.outputs.telnet_port }}"
 
+      - name: Summarize preview target
+        run: |
+          bash ./dev-tools/preview/write-preview-summary.sh \
+            target \
+            "${{ needs.preview-plan.outputs.pr_number }}" \
+            "${{ needs.preview-plan.outputs.head_sha }}" \
+            "${{ steps.effective-image-tag.outputs.image_tag }}" \
+            "${{ needs.preview-plan.outputs.hostname }}" \
+            "${{ steps.telnet-port.outputs.telnet_port }}" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Cancel if preview target was superseded before deploy
         env:
           GH_TOKEN: ${{ github.token }}
@@ -354,6 +365,7 @@ jobs:
         id: deploy-release
         continue-on-error: true
         run: |
+          echo "PREVIEW_STAGE=deploy" >> "$GITHUB_ENV"
           helm upgrade --install "${{ needs.preview-plan.outputs.release_name }}" k8s/helm/firemud \
             -f /tmp/preview-values.yaml \
             --namespace "${{ needs.preview-plan.outputs.namespace }}" \
@@ -401,6 +413,7 @@ jobs:
           PREVIEW_EMAIL: demo@example.com
           PREVIEW_PASSWORD: swordfish
         run: |
+          echo "PREVIEW_STAGE=bootstrap" >> "$GITHUB_ENV"
           BOOTSTRAP_SCRIPT=/tmp/preview-smoke-bootstrap.py
           cat >"${BOOTSTRAP_SCRIPT}" <<'PY'
           import json
@@ -529,6 +542,7 @@ jobs:
           SMOKE_USERNAME: demo@example.com
           SMOKE_PASSWORD: swordfish
         run: |
+          echo "PREVIEW_STAGE=smoke" >> "$GITHUB_ENV"
           set -o pipefail
           SMOKE_TRANSCRIPT=/tmp/preview-hosted-tcp-smoke.log
           if ! bash ./dev-tools/preview/preview-login-look-smoke.sh 2>&1 | tee "${SMOKE_TRANSCRIPT}"; then
@@ -540,14 +554,29 @@ jobs:
       - name: Summarize preview access
         if: ${{ steps.deploy-release.outcome == 'success' }}
         run: |
+          bash ./dev-tools/preview/write-preview-summary.sh \
+            success \
+            "${{ needs.preview-plan.outputs.pr_number }}" \
+            "${{ needs.preview-plan.outputs.head_sha }}" \
+            "${{ steps.effective-image-tag.outputs.image_tag }}" \
+            "${{ needs.preview-plan.outputs.hostname }}" \
+            "${{ steps.telnet-port.outputs.telnet_port }}" >> "$GITHUB_STEP_SUMMARY"
           {
-            echo "## Preview Ready"
             echo ""
-            echo "- Web: https://${{ needs.preview-plan.outputs.hostname }}"
-            echo "- TCP: telnet ${{ needs.preview-plan.outputs.hostname }} ${{ steps.telnet-port.outputs.telnet_port }}"
-            echo "- Image tag: ${{ steps.effective-image-tag.outputs.image_tag }}"
             echo "- Demo login: demo@example.com / swordfish"
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Summarize preview failure
+        if: ${{ always() && failure() }}
+        run: |
+          bash ./dev-tools/preview/write-preview-summary.sh \
+            failure \
+            "${{ needs.preview-plan.outputs.pr_number }}" \
+            "${{ needs.preview-plan.outputs.head_sha }}" \
+            "${{ steps.effective-image-tag.outputs.image_tag }}" \
+            "${{ needs.preview-plan.outputs.hostname }}" \
+            "${{ steps.telnet-port.outputs.telnet_port }}" \
+            "${PREVIEW_STAGE:-unknown}" >> "$GITHUB_STEP_SUMMARY"
 
   preview-destroy:
     name: Destroy Preview Release

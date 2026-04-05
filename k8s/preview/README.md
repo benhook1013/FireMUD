@@ -82,6 +82,7 @@ The next hosted preview milestone is:
   - the smoke path expects the initial bootstrap session to resolve to session `1` in tenant `1`
 - That bootstrap contract is preview-only operational glue, not the long-term player-facing TCP contract.
 - The purpose of this explicit bootstrap state is to keep preview reviewer-usable while the actual gameplay admission path is still being hardened and documented.
+- The cleanup path for retiring or replacing this bootstrap contract is tracked in `02.15.5-task-list-preview-tcp-admission-cleanup-vertical-slice.md`.
 
 Preview TCP contract:
 
