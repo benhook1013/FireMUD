@@ -34,8 +34,7 @@ JQ
 while (( SECONDS < deadline )); do
   run_state="$(
     gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/runtime-images.yml/runs?per_page=100" \
-      --arg head_sha "${image_tag}" \
-      --jq "${jq_filter}"
+      | jq -r --arg head_sha "${image_tag}" "${jq_filter}"
   )"
 
   IFS=$'\t' read -r state run_id run_status run_conclusion run_url <<<"${run_state}"
