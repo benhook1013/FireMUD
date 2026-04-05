@@ -4,14 +4,22 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.when;
 
 import java.util.List;
+import net.firedevops.firemud.entitymanagement.v1.DropItemToRoomResponse;
+import net.firedevops.firemud.entitymanagement.v1.EntityType;
 import net.firedevops.firemud.entitymanagement.v1.InventoryItem;
+import net.firedevops.firemud.entitymanagement.v1.PickupItemFromRoomResponse;
 import net.firedevops.firemud.entitymanagement.v1.QueryInventoryResponse;
+import net.firedevops.firemud.entitymanagement.v1.ListRoomEntitiesResponse;
+import net.firedevops.firemud.entitymanagement.v1.RoomEntity;
+import net.firedevops.firemud.entitymanagement.v1.QueryInventoryResponse;
+import net.firedevops.firemud.entitymanagement.v1.RoomGroundInventoryItem;
 import net.firedevops.firemud.gamesession.client.EntityManagementClient;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.presentation.InventoryViewOutput;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutputKind;
 import net.firedevops.firemud.gamesession.service.SessionContext;
+import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
@@ -61,7 +69,110 @@ class InventoryCommandHandlerTest {
   }
 
   @Test
-  void dropWithItemReferenceUsesPendingRuntimeContractError() {
+  void getWithItemReferenceCallsPickupMutation() {
+    when(entityManagementClient.listRoomEntities("22", "77", "room-7"))
+        .thenReturn(
+            ListRoomEntitiesResponse.newBuilder()
+                .addEntities(
+                    RoomEntity.newBuilder()
+                        .setEntityId("22:77:room-7:7")
+                        .setDisplayName("Rough Iron Key")
+                        .setEntityType(EntityType.ITEM)
+                        .addStateFlags("room-ground")
+                        .build())
+                .build());
+    when(entityManagementClient.pickupItemFromRoom(
+            "22", "911", "77", "room-7", "7", 1))
+        .thenReturn(
+            PickupItemFromRoomResponse.newBuilder()
+                .setInventoryItem(
+                    InventoryItem.newBuilder()
+                        .setItemId("7")
+                        .setItemName("Rough Iron Key")
+                        .setItemDescription("A battered key")
+                        .setQuantity(1)
+                        .build())
+                .build());
+    when(entityManagementClient.queryInventory("22", "911"))
+        .thenReturn(
+            QueryInventoryResponse.newBuilder()
+                .addItems(
+                    InventoryItem.newBuilder()
+                        .setItemId("7")
+                        .setItemName("Rough Iron Key")
+                        .setItemDescription("A battered key")
+                        .setQuantity(1)
+                        .build())
+                .build());
+
+    InventoryCommandHandlingResult result =
+        handler.handle(
+            context,
+            new TextCommand(TextCommandType.GET, List.of("rough iron key"), "GET rough iron key"));
+
+    assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
+    assertThat(result.outputs())
+        .extracting(PlayerOutput::kind)
+        .containsExactly(PlayerOutputKind.MESSAGE, PlayerOutputKind.VIEW);
+    assertThat(result.outputs().get(0).text()).isEqualTo("You pick up Rough Iron Key.");
+    assertThat(((InventoryViewOutput) result.outputs().get(1).payload()).lines())
+        .containsExactly("- Rough Iron Key (A battered key)");
+  }
+
+  @Test
+  void dropWithItemReferenceCallsDropMutation() {
+    when(entityManagementClient.queryInventory("22", "911"))
+        .thenReturn(
+            QueryInventoryResponse.newBuilder()
+                .addItems(
+                    InventoryItem.newBuilder()
+                        .setItemId("7")
+                        .setItemName("Rough Iron Key")
+                        .setItemDescription("A battered key")
+                        .setQuantity(1)
+                        .build())
+                .build());
+    when(entityManagementClient.dropItemToRoom("22", "911", "77", "room-7", "7", 1))
+        .thenReturn(
+            DropItemToRoomResponse.newBuilder()
+                .setRoomGroundItem(
+                    RoomGroundInventoryItem.newBuilder()
+                        .setItemId("7")
+                        .setItemName("Rough Iron Key")
+                        .setItemDescription("A battered key")
+                        .setQuantity(1)
+                        .build())
+                .build());
+    when(entityManagementClient.queryInventory("22", "911"))
+        .thenReturn(QueryInventoryResponse.newBuilder().build());
+
+    InventoryCommandHandlingResult result =
+        handler.handle(
+            context,
+            new TextCommand(
+                TextCommandType.DROP, List.of("rough iron key"), "DROP rough iron key"));
+
+    assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
+    assertThat(result.outputs())
+        .extracting(PlayerOutput::kind)
+        .containsExactly(PlayerOutputKind.MESSAGE, PlayerOutputKind.VIEW);
+    assertThat(result.outputs().get(0).text()).isEqualTo("You drop Rough Iron Key.");
+    assertThat(((InventoryViewOutput) result.outputs().get(1).payload()).lines())
+        .containsExactly("You are not carrying anything.");
+  }
+
+  @Test
+  void dropWithItemReferenceReportsRuntimeError() {
+    when(entityManagementClient.dropItemToRoom("22", "911", "77", "room-7", "rough iron key", 1))
+        .thenReturn(
+            DropItemToRoomResponse.newBuilder()
+                .setError(
+                    ErrorDetail.newBuilder()
+                        .setCode("INVALID_ARGUMENT")
+                        .setMessage("Item not found for tenant")
+                        .build())
+                .build());
+
     InventoryCommandHandlingResult result =
         handler.handle(
             context,
@@ -69,10 +180,10 @@ class InventoryCommandHandlerTest {
                 TextCommandType.DROP, List.of("rough iron key"), "DROP rough iron key"));
 
     assertThat(result.commandResult().accepted()).isFalse();
-    assertThat(result.commandResult().errorCode()).isEqualTo("INVENTORY_UNAVAILABLE");
+    assertThat(result.commandResult().errorCode()).isEqualTo("INVALID_ARGUMENT");
     assertThat(result.outputs()).hasSize(1);
+    assertThat(result.outputs().get(0).kind()).isEqualTo(PlayerOutputKind.ERROR);
     assertThat(result.outputs().get(0).text())
-        .isEqualTo(
-            "ERROR INVENTORY_UNAVAILABLE DROP rough iron key is not yet wired to runtime inventory mutations");
+        .isEqualTo("ERROR INVALID_ARGUMENT Item not found for tenant");
   }
 }
