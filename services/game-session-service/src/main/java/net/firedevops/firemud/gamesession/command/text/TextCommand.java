@@ -36,6 +36,12 @@ public record TextCommand(
         : Optional.empty();
   }
 
+  public Optional<TextCommandPayload.ItemReference> itemReferencePayload() {
+    return payload instanceof TextCommandPayload.ItemReference itemReference
+        ? Optional.of(itemReference)
+        : Optional.empty();
+  }
+
   public Optional<TextCommandPayload.Message> messagePayload() {
     return payload instanceof TextCommandPayload.Message message
         ? Optional.of(message)

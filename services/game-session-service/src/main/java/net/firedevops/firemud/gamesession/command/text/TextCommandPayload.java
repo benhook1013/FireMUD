@@ -9,6 +9,7 @@ public sealed interface TextCommandPayload
         TextCommandPayload.Tokens,
         TextCommandPayload.Credentials,
         TextCommandPayload.Selection,
+        TextCommandPayload.ItemReference,
         TextCommandPayload.Message,
         TextCommandPayload.TargetedMessage,
         TextCommandPayload.Directional,
@@ -26,6 +27,8 @@ public sealed interface TextCommandPayload
 
   record Selection(String primary, String secondary) implements TextCommandPayload {}
 
+  record ItemReference(String reference) implements TextCommandPayload {}
+
   record Message(String text) implements TextCommandPayload {}
 
   record TargetedMessage(String target, String message) implements TextCommandPayload {}
@@ -38,8 +41,12 @@ public sealed interface TextCommandPayload
     List<String> safeArgs = args == null ? List.of() : List.copyOf(args);
     return switch (type) {
       case NOOP -> new None();
-      case WORLDS, LOOK, QUICKLOOK -> new ViewRequest(type.name());
+      case WORLDS, LOOK, QUICKLOOK, INVENTORY -> new ViewRequest(type.name());
       case HELP -> safeArgs.isEmpty() ? new None() : new Tokens(safeArgs);
+      case GET, DROP ->
+          !safeArgs.isEmpty()
+              ? new ItemReference(String.join(" ", safeArgs).trim())
+              : new Tokens(safeArgs);
       case LOGIN ->
           safeArgs.size() >= 2
               ? new Credentials(

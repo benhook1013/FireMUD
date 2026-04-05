@@ -21,6 +21,9 @@ public class TextCommandParser {
           case WORLDS ->
               new ParsedCommandData(List.of(), new TextCommandPayload.ViewRequest("WORLDS"));
           case HELP -> parseHelp(tokens);
+          case INVENTORY ->
+              new ParsedCommandData(List.of(), new TextCommandPayload.ViewRequest("INVENTORY"));
+          case GET, DROP -> parseItemReference(trimmed);
           case LOOK -> new ParsedCommandData(List.of(), new TextCommandPayload.ViewRequest("LOOK"));
           case QUICKLOOK ->
               new ParsedCommandData(List.of(), new TextCommandPayload.ViewRequest("QUICKLOOK"));
@@ -64,11 +67,31 @@ public class TextCommandParser {
     return new ParsedCommandData(args, new TextCommandPayload.Tokens(args));
   }
 
+  private ParsedCommandData parseItemReference(String trimmed) {
+    List<String> args = parseSingleRemainderArgument(trimmed);
+    if (args.isEmpty()) {
+      return new ParsedCommandData(args, new TextCommandPayload.Tokens(args));
+    }
+    return new ParsedCommandData(args, new TextCommandPayload.ItemReference(args.get(0)));
+  }
+
   private List<String> parseRemainingTokens(String[] tokens) {
     if (tokens.length <= 1) {
       return List.of();
     }
     return List.of(Arrays.copyOfRange(tokens, 1, tokens.length));
+  }
+
+  private List<String> parseSingleRemainderArgument(String trimmed) {
+    int firstSpace = trimmed.indexOf(' ');
+    if (firstSpace < 0 || firstSpace == trimmed.length() - 1) {
+      return List.of();
+    }
+    String remainder = trimmed.substring(firstSpace + 1).trim();
+    if (remainder.isEmpty()) {
+      return List.of();
+    }
+    return List.of(remainder);
   }
 
   private ParsedCommandData parseSay(String trimmed) {

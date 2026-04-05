@@ -34,6 +34,13 @@ public class HelpCommandHandler {
           success(
               "PLAY <world> [character]\n"
                   + "Select the world to enter and optional character name.");
+      case "INVENTORY" ->
+          success(
+              "INVENTORY shows what you are carrying.\n"
+                  + "GET <item> picks an item up from the room.\n"
+                  + "DROP <item> places an item on the room ground.");
+      case "GET" -> success("GET <item>\nPick an item up from the room and carry it.");
+      case "DROP" -> success("DROP <item>\nPlace an item you are carrying on the room ground.");
       case "MOVEMENT" ->
           success(
               "Movement commands: NORTH, SOUTH, EAST, WEST, UP, DOWN\n"
@@ -77,6 +84,9 @@ public class HelpCommandHandler {
       case "HELP" -> "HELP";
       case "LOGIN", "LOGON" -> "LOGIN";
       case "PLAY" -> "PLAY";
+      case "INVENTORY", "INV", "I" -> "INVENTORY";
+      case "GET" -> "GET";
+      case "DROP" -> "DROP";
       case "MOVEMENT", "MOVE", "WALK", "GO" -> "MOVEMENT";
       case "LOOK", "QUICKLOOK", "QLOOK" -> "LOOK";
       case "SAY" -> "SAY";
@@ -90,6 +100,9 @@ public class HelpCommandHandler {
     return "Help topics:\n"
         + "- HELP LOGIN\n"
         + "- HELP PLAY\n"
+        + "- HELP INVENTORY\n"
+        + "- HELP GET\n"
+        + "- HELP DROP\n"
         + "- HELP MOVEMENT\n"
         + "- HELP LOOK\n"
         + "- HELP SAY\n"

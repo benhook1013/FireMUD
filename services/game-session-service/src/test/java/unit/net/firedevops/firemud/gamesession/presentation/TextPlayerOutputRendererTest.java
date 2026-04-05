@@ -150,6 +150,38 @@ class TextPlayerOutputRendererTest {
   }
 
   @Test
+  void renderAllFormatsInventoryViewThroughNormalRendererPath() {
+    TextPlayerOutputRenderer renderer =
+        new TextPlayerOutputRenderer(
+            new PresentationProperties(
+                "en-NZ",
+                PresentationProperties.ColorMode.NONE,
+                false,
+                new PresentationProperties.Prompt(true, true, 150L)));
+
+    String rendered =
+        renderer.renderAll(
+            new TextCommand(TextCommandType.INVENTORY, List.of(), "INVENTORY"),
+            CommandEnqueueResult.success(),
+            List.of(
+                PlayerOutput.view(
+                    new InventoryViewOutput(
+                        "Inventory:",
+                        List.of(
+                            "This command surface is ready.",
+                            "The runtime inventory contract is still being wired."))),
+                PlayerOutput.prompt("demo> ")));
+
+    assertThat(rendered)
+        .isEqualTo(
+            "OK INVENTORY\n"
+                + "Inventory:\n"
+                + "This command surface is ready.\n"
+                + "The runtime inventory contract is still being wired.\n\n"
+                + "demo> ");
+  }
+
+  @Test
   void quickLookRenderingOmitsLongDescriptionWithoutGlobalBriefMode() {
     TextPlayerOutputRenderer renderer =
         new TextPlayerOutputRenderer(

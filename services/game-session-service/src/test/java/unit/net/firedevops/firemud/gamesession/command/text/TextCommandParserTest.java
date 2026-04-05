@@ -70,6 +70,43 @@ class TextCommandParserTest {
   }
 
   @Test
+  void parsesInventoryAsViewRequest() {
+    TextCommand command = parser.parse("inv");
+
+    assertEquals(TextCommandType.INVENTORY, command.type());
+    assertEquals("inv", command.aliasUsed());
+    assertTrue(command.args().isEmpty());
+    assertEquals("inv", command.rawLine());
+    assertTrue(command.payload() instanceof TextCommandPayload.ViewRequest);
+    assertTrue(command.viewRequestPayload().isPresent());
+    assertEquals("INVENTORY", command.viewRequestPayload().orElseThrow().viewName());
+  }
+
+  @Test
+  void parsesGetAsItemReference() {
+    TextCommand command = parser.parse("GET rough iron key");
+
+    assertEquals(TextCommandType.GET, command.type());
+    assertEquals("GET", command.aliasUsed());
+    assertEquals(List.of("rough iron key"), command.args());
+    assertEquals("GET rough iron key", command.rawLine());
+    assertTrue(command.payload() instanceof TextCommandPayload.ItemReference);
+    assertEquals("rough iron key", command.itemReferencePayload().orElseThrow().reference());
+  }
+
+  @Test
+  void parsesDropAsItemReference() {
+    TextCommand command = parser.parse("DROP iron key");
+
+    assertEquals(TextCommandType.DROP, command.type());
+    assertEquals("DROP", command.aliasUsed());
+    assertEquals(List.of("iron key"), command.args());
+    assertEquals("DROP iron key", command.rawLine());
+    assertTrue(command.payload() instanceof TextCommandPayload.ItemReference);
+    assertEquals("iron key", command.itemReferencePayload().orElseThrow().reference());
+  }
+
+  @Test
   void parsesLookWithWhitespace() {
     TextCommand command = parser.parse("   LOOK   ");
 

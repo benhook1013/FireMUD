@@ -21,6 +21,7 @@ public class TextCommandInterpreter {
   private final PlayCommandHandler playHandler;
   private final MoveCommandHandler moveHandler;
   private final HelpCommandHandler helpHandler;
+  private final InventoryCommandHandler inventoryHandler;
   private final SessionAuthenticationService sessionAuthenticationService;
   private final CommunicationCommandHandler communicationHandler;
   private final WorldsCommandHandler worldsHandler;
@@ -35,6 +36,7 @@ public class TextCommandInterpreter {
       PlayCommandHandler playHandler,
       MoveCommandHandler moveHandler,
       HelpCommandHandler helpHandler,
+      InventoryCommandHandler inventoryHandler,
       SessionAuthenticationService sessionAuthenticationService,
       CommunicationCommandHandler communicationHandler,
       WorldsCommandHandler worldsHandler,
@@ -46,6 +48,7 @@ public class TextCommandInterpreter {
         playHandler,
         moveHandler,
         helpHandler,
+        inventoryHandler,
         sessionAuthenticationService,
         communicationHandler,
         worldsHandler,
@@ -60,6 +63,7 @@ public class TextCommandInterpreter {
       PlayCommandHandler playHandler,
       MoveCommandHandler moveHandler,
       HelpCommandHandler helpHandler,
+      InventoryCommandHandler inventoryHandler,
       SessionAuthenticationService sessionAuthenticationService,
       CommunicationCommandHandler communicationHandler,
       WorldsCommandHandler worldsHandler,
@@ -71,6 +75,8 @@ public class TextCommandInterpreter {
     this.playHandler = Objects.requireNonNull(playHandler, "playHandler must not be null");
     this.moveHandler = Objects.requireNonNull(moveHandler, "moveHandler must not be null");
     this.helpHandler = Objects.requireNonNull(helpHandler, "helpHandler must not be null");
+    this.inventoryHandler =
+        Objects.requireNonNull(inventoryHandler, "inventoryHandler must not be null");
     this.sessionAuthenticationService =
         Objects.requireNonNull(
             sessionAuthenticationService, "sessionAuthenticationService must not be null");
@@ -150,6 +156,16 @@ public class TextCommandInterpreter {
           GameplayStageCommandConstants.PLAY_REQUIRED_MESSAGE);
     }
 
+    if (isInventoryCommand(command.type())) {
+      InventoryCommandHandlingResult inventoryResult =
+          inventoryHandler.handle(maybeContext.orElseThrow(), command);
+      List<PlayerOutput> outputs = inventoryResult.outputs();
+      if (inventoryResult.commandResult().accepted()) {
+        outputs = appendPrompt(maybeContext.orElseThrow(), outputs);
+      }
+      return new TextCommandInterpretationResult(inventoryResult.commandResult(), outputs);
+    }
+
     if (isCommunicationCommand(command.type())) {
       CommunicationCommandHandlingResult communicationResult =
           communicationHandler.handle(maybeContext.orElseThrow(), command);
@@ -199,7 +215,10 @@ public class TextCommandInterpreter {
   }
 
   private static boolean requiresGameplayAuthentication(TextCommandType type) {
-    return isLookCommand(type) || isCommunicationCommand(type) || type == TextCommandType.MOVE;
+    return isLookCommand(type)
+        || isCommunicationCommand(type)
+        || isInventoryCommand(type)
+        || type == TextCommandType.MOVE;
   }
 
   private static boolean isLookCommand(TextCommandType type) {
@@ -210,6 +229,12 @@ public class TextCommandInterpreter {
     return type == TextCommandType.SAY
         || type == TextCommandType.WHISPER
         || type == TextCommandType.TELL;
+  }
+
+  private static boolean isInventoryCommand(TextCommandType type) {
+    return type == TextCommandType.INVENTORY
+        || type == TextCommandType.GET
+        || type == TextCommandType.DROP;
   }
 
   private TextCommandInterpretationResult stageFailure(String code, String message) {

@@ -19,6 +19,7 @@ class HelpCommandHandlerTest {
     assertEquals(1, result.outputs().size());
     assertTrue(result.outputs().get(0).text().contains("HELP MOVEMENT"));
     assertTrue(result.outputs().get(0).text().contains("HELP SAY"));
+    assertTrue(result.outputs().get(0).text().contains("HELP INVENTORY"));
   }
 
   @Test
@@ -29,6 +30,18 @@ class HelpCommandHandlerTest {
     assertTrue(result.commandResult().accepted());
     assertTrue(result.outputs().get(0).text().contains("Shorthand aliases: N, S, E, W, U, D"));
     assertTrue(result.outputs().get(0).text().contains("GO <direction>"));
+  }
+
+  @Test
+  void helpInventoryTopicExplainsTheNewLoop() {
+    TextCommandInterpretationResult result =
+        handler.handle(
+            new TextCommand(TextCommandType.HELP, List.of("inventory"), "HELP inventory"));
+
+    assertTrue(result.commandResult().accepted());
+    assertTrue(result.outputs().get(0).text().contains("INVENTORY shows what you are carrying."));
+    assertTrue(result.outputs().get(0).text().contains("GET <item>"));
+    assertTrue(result.outputs().get(0).text().contains("DROP <item>"));
   }
 
   @Test

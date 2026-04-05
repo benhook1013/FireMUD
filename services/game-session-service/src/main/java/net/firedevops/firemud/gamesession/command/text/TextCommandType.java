@@ -8,6 +8,9 @@ public enum TextCommandType {
   LOGIN,
   PLAY,
   HELP,
+  INVENTORY,
+  GET,
+  DROP,
   LOOK,
   QUICKLOOK,
   SAY,
@@ -28,6 +31,9 @@ public enum TextCommandType {
       case "LOGIN", "LOGON" -> LOGIN;
       case "PLAY" -> PLAY;
       case "HELP" -> HELP;
+      case "INVENTORY", "INV", "I" -> INVENTORY;
+      case "GET" -> GET;
+      case "DROP" -> DROP;
       case "LOOK" -> LOOK;
       case "QUICKLOOK", "QLOOK" -> QUICKLOOK;
       case "SAY" -> SAY;

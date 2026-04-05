@@ -68,6 +68,7 @@ class TextCommandInterpreterTest {
   private final AccountClient accountClient = Mockito.mock(AccountClient.class);
   private final MoveCommandHandler moveHandler = Mockito.mock(MoveCommandHandler.class);
   private final HelpCommandHandler helpHandler = new HelpCommandHandler();
+  private final InventoryCommandHandler inventoryHandler = new InventoryCommandHandler();
   private final CommunicationCommandHandler communicationHandler =
       Mockito.mock(CommunicationCommandHandler.class);
   private final FirstPartyConnectContextRegistry firstPartyConnectContextRegistry =
@@ -227,6 +228,7 @@ class TextCommandInterpreterTest {
             playHandler,
             moveHandler,
             helpHandler,
+            inventoryHandler,
             sessionAuthenticationService,
             communicationHandler,
             worldsHandler,
@@ -270,6 +272,66 @@ class TextCommandInterpreterTest {
             + "Shorthand aliases: N, S, E, W, U, D\n"
             + "You can also type GO <direction>.\n\n",
         renderedResponse("HELP MOVE", interpretation));
+  }
+
+  @Test
+  void inventoryIsVisibleAfterPlay() {
+    interpreter.interpret("1", "LOGIN demo@example.com swordfish", false);
+    interpreter.interpret("1", "PLAY demo", false);
+
+    TextCommandInterpretationResult interpretation = interpreter.interpret("1", "INVENTORY", false);
+
+    assertTrue(interpretation.commandResult().accepted());
+    assertEquals(
+        List.of(PlayerOutputKind.VIEW, PlayerOutputKind.PROMPT),
+        interpretation.outputs().stream().map(PlayerOutput::kind).toList());
+    assertEquals(
+        "OK INVENTORY\n"
+            + "Inventory:\n"
+            + "This command surface is ready.\n"
+            + "The runtime inventory contract is still being wired.\n\n"
+            + "demo> ",
+        renderedResponse("INVENTORY", interpretation));
+  }
+
+  @Test
+  void inventoryBeforeLoginReturnsLoginRequired() {
+    TextCommandInterpretationResult interpretation =
+        interpreter.interpret("321", "INVENTORY", false);
+
+    assertFalse(interpretation.commandResult().accepted());
+    assertEquals("LOGIN_REQUIRED", interpretation.commandResult().errorCode());
+    verify(commandService, never()).enqueue("321", "INVENTORY", false);
+  }
+
+  @Test
+  void getAfterPlayReturnsInventoryUnavailableUntilRuntimeContractLands() {
+    interpreter.interpret("1", "LOGIN demo@example.com swordfish", false);
+    interpreter.interpret("1", "PLAY demo", false);
+
+    TextCommandInterpretationResult interpretation =
+        interpreter.interpret("1", "GET iron key", false);
+
+    assertFalse(interpretation.commandResult().accepted());
+    assertEquals("INVENTORY_UNAVAILABLE", interpretation.commandResult().errorCode());
+    assertEquals(
+        "ERROR INVENTORY_UNAVAILABLE GET iron key is not yet wired to runtime inventory state",
+        renderedResponse("GET iron key", interpretation));
+  }
+
+  @Test
+  void dropAfterPlayReturnsInventoryUnavailableUntilRuntimeContractLands() {
+    interpreter.interpret("1", "LOGIN demo@example.com swordfish", false);
+    interpreter.interpret("1", "PLAY demo", false);
+
+    TextCommandInterpretationResult interpretation =
+        interpreter.interpret("1", "DROP rough iron key", false);
+
+    assertFalse(interpretation.commandResult().accepted());
+    assertEquals("INVENTORY_UNAVAILABLE", interpretation.commandResult().errorCode());
+    assertEquals(
+        "ERROR INVENTORY_UNAVAILABLE DROP rough iron key is not yet wired to runtime inventory state",
+        renderedResponse("DROP rough iron key", interpretation));
   }
 
   @Test
@@ -319,8 +381,7 @@ class TextCommandInterpreterTest {
         List.of(PlayerOutputKind.ERROR),
         interpretation.outputs().stream().map(PlayerOutput::kind).toList());
     assertEquals(
-        "ERROR UNKNOWN_COMMAND Unknown command",
-        renderedResponse("FROBULATE", interpretation));
+        "ERROR UNKNOWN_COMMAND Unknown command", renderedResponse("FROBULATE", interpretation));
   }
 
   @Test

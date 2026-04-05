@@ -188,6 +188,7 @@ class SessionResumptionFlowTest {
             playHandler,
             moveHandler,
             helpHandler,
+            new InventoryCommandHandler(),
             sessionAuthenticationService,
             communicationHandler,
             worldsHandler,

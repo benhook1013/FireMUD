@@ -49,6 +49,9 @@ public class TextPlayerOutputRenderer {
         if (output.payload() instanceof LookViewOutput lookView) {
           yield renderLookView(lookView, localeTag, effectivePresentationProperties);
         }
+        if (output.payload() instanceof InventoryViewOutput inventoryView) {
+          yield renderInventoryView(inventoryView, localeTag, effectivePresentationProperties);
+        }
         if (output.payload() instanceof WorldsViewOutput worldsView) {
           yield renderWorldsView(worldsView);
         }
@@ -231,6 +234,29 @@ public class TextPlayerOutputRenderer {
     return output.worlds().stream()
         .map(world -> world.ordinal() + ") " + world.displayName() + " (" + world.slug() + ")")
         .collect(Collectors.joining("\n"));
+  }
+
+  private String renderInventoryView(
+      InventoryViewOutput output,
+      String localeTag,
+      PresentationProperties effectivePresentationProperties) {
+    StringBuilder out = new StringBuilder();
+    out.append(
+            colorizeLabel(
+                localizedLabel("label.inventory", output.title(), localeTag),
+                effectivePresentationProperties))
+        .append("\n");
+    if (output.lines().isEmpty()) {
+      out.append("(empty)");
+    } else {
+      for (String line : output.lines()) {
+        out.append(line).append("\n");
+      }
+      if (out.charAt(out.length() - 1) == '\n') {
+        out.setLength(out.length() - 1);
+      }
+    }
+    return out.toString();
   }
 
   private String renderMessage(TextMessageOutput output, String localeTag) {

@@ -23,6 +23,13 @@ class PlayerOutputTest {
         .isTrue();
     assertThat(
             PlayerOutput.view(
+                    new InventoryViewOutput(
+                        "Inventory:",
+                        java.util.List.of("The runtime inventory contract is still being wired.")))
+                .screenBufferEligible())
+        .isTrue();
+    assertThat(
+            PlayerOutput.view(
                     new WorldsViewOutput(
                         java.util.List.of(
                             new WorldsViewOutput.WorldEntry(1, "demo", "Demo World", 1L, false))))
