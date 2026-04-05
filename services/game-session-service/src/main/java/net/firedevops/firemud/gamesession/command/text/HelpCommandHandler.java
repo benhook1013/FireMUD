@@ -38,15 +38,16 @@ public class HelpCommandHandler {
           success(
               "INVENTORY shows what you are carrying.\n"
                   + "If nothing is listed, you are empty-handed.\n"
-                  + "GET <item> picks up a matching room-ground item.\n"
-                  + "DROP <item> places a carried item on the room ground.");
+                  + "GET <item> picks up a matching room-ground item and refreshes your inventory.\n"
+                  + "DROP <item> places a carried item on the room ground and refreshes your inventory.");
       case "GET" ->
           success(
-              "GET <item>\n" + "Reserved for picking an item up from the room and carrying it.");
+              "GET <item>\n"
+                  + "Pick up a matching room-ground item and refresh your inventory.");
       case "DROP" ->
           success(
               "DROP <item>\n"
-                  + "Reserved for placing an item you are carrying on the room ground.");
+                  + "Place a carried item on the room ground and refresh your inventory.");
       case "MOVEMENT" ->
           success(
               "Movement commands: NORTH, SOUTH, EAST, WEST, UP, DOWN\n"

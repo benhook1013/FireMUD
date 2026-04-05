@@ -47,13 +47,35 @@ class HelpCommandHandlerTest {
             .outputs()
             .get(0)
             .text()
-            .contains("GET <item> picks up a matching room-ground item."));
+            .contains(
+                "GET <item> picks up a matching room-ground item and refreshes your inventory."));
     assertTrue(
         result
             .outputs()
             .get(0)
             .text()
-            .contains("DROP <item> places a carried item on the room ground."));
+            .contains(
+                "DROP <item> places a carried item on the room ground and refreshes your inventory."));
+  }
+
+  @Test
+  void helpGetTopicExplainsPickupBehavior() {
+    TextCommandInterpretationResult result =
+        handler.handle(new TextCommand(TextCommandType.HELP, List.of("get"), "HELP get"));
+
+    assertTrue(result.commandResult().accepted());
+    assertTrue(result.outputs().get(0).text().contains("GET <item>"));
+    assertTrue(result.outputs().get(0).text().contains("Pick up a matching room-ground item"));
+  }
+
+  @Test
+  void helpDropTopicExplainsDropBehavior() {
+    TextCommandInterpretationResult result =
+        handler.handle(new TextCommand(TextCommandType.HELP, List.of("drop"), "HELP drop"));
+
+    assertTrue(result.commandResult().accepted());
+    assertTrue(result.outputs().get(0).text().contains("DROP <item>"));
+    assertTrue(result.outputs().get(0).text().contains("Place a carried item on the room ground"));
   }
 
   @Test
