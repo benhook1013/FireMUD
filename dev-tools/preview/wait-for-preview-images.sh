@@ -19,10 +19,10 @@ deadline=$((SECONDS + timeout_seconds))
 
 while (( SECONDS < deadline )); do
   run_state="$(
-    gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/runtime-images.yml/runs?per_page=100" |
-      jq -r --arg target_sha "${image_tag}" '
-        (.workflow_runs // [])
-        | map(select(.head_sha == $target_sha))
+    gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/runtime-images.yml/runs?per_page=100" \
+      --jq '
+        .workflow_runs
+        | map(select(.head_sha == "'"${image_tag}"'"))
         | sort_by(.created_at)
         | reverse
         | if length == 0 then
