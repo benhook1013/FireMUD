@@ -69,9 +69,11 @@ public class InventoryServiceImpl implements InventoryService {
   @Timed(value = "roomGround.list")
   public Page<RoomGroundInventoryEntryDto> listRoomGroundItems(
       Long tenantId, String gameInstanceId, String roomInstanceId, Pageable pageable) {
+    String normalizedGameInstanceId = requireText(gameInstanceId, "gameInstanceId");
+    String normalizedRoomInstanceId = requireText(roomInstanceId, "roomInstanceId");
     return roomGroundRepository
         .findByIdTenantIdAndIdGameInstanceIdAndIdRoomInstanceId(
-            tenantId, gameInstanceId, roomInstanceId, pageable)
+            tenantId, normalizedGameInstanceId, normalizedRoomInstanceId, pageable)
         .map(roomGroundMapper::toDto);
   }
 
@@ -86,6 +88,8 @@ public class InventoryServiceImpl implements InventoryService {
       Long itemId,
       int quantity) {
     requirePositiveQuantity(quantity);
+    String normalizedGameInstanceId = requireText(gameInstanceId, "gameInstanceId");
+    String normalizedRoomInstanceId = requireText(roomInstanceId, "roomInstanceId");
     Character character = requireCharacter(tenantId, characterId);
     Item item = requireItem(tenantId, itemId);
     InventoryEntry carried = requireInventoryEntry(character.getId(), itemId);
@@ -94,7 +98,7 @@ public class InventoryServiceImpl implements InventoryService {
     }
     adjustInventoryQuantity(carried, -quantity);
     RoomGroundInventoryEntry roomEntry =
-        upsertRoomGroundEntry(tenantId, gameInstanceId, roomInstanceId, item, quantity);
+        upsertRoomGroundEntry(tenantId, normalizedGameInstanceId, normalizedRoomInstanceId, item, quantity);
     return roomGroundMapper.toDto(roomEntry);
   }
 
@@ -109,10 +113,12 @@ public class InventoryServiceImpl implements InventoryService {
       Long itemId,
       int quantity) {
     requirePositiveQuantity(quantity);
+    String normalizedGameInstanceId = requireText(gameInstanceId, "gameInstanceId");
+    String normalizedRoomInstanceId = requireText(roomInstanceId, "roomInstanceId");
     Character character = requireCharacter(tenantId, characterId);
     Item item = requireItem(tenantId, itemId);
     RoomGroundInventoryEntry roomEntry =
-        requireRoomGroundEntry(tenantId, gameInstanceId, roomInstanceId, itemId);
+        requireRoomGroundEntry(tenantId, normalizedGameInstanceId, normalizedRoomInstanceId, itemId);
     if (roomEntry.getQuantity() < quantity) {
       throw new IllegalArgumentException("Not enough quantity on the room ground");
     }
@@ -218,6 +224,13 @@ public class InventoryServiceImpl implements InventoryService {
     if (quantity <= 0) {
       throw new IllegalArgumentException("quantity must be positive");
     }
+  }
+
+  private String requireText(String value, String fieldName) {
+    if (value == null || value.isBlank()) {
+      throw new IllegalArgumentException(fieldName + " must be provided");
+    }
+    return value.trim();
   }
 
   private InventoryKey inventoryKey(Long characterId, Long itemId) {
