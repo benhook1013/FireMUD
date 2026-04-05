@@ -259,6 +259,8 @@ previewStack:
       healthPort: 8080
       extraEnv:
         GATEWAY_WS_URL: ws://spring-cloud-gateway/ws/game
+        TCP_PROXY_DEFAULT_GAME_INSTANCE_ID: "1"
+        TCP_PROXY_DEFAULT_TENANT_ID: "1"
       ports:
         - port: 2323
           nodePort: 32000

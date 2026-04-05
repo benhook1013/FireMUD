@@ -363,24 +363,82 @@ jobs:
         if: ${{ steps.deploy-release.outcome == 'success' }}
         env:
           PREVIEW_NAMESPACE: ${{ needs.preview-plan.outputs.namespace }}
+          PREVIEW_TENANT_ID: "1"
           PREVIEW_EMAIL: demo@example.com
           PREVIEW_PASSWORD: swordfish
         run: |
           kubectl -n "${PREVIEW_NAMESPACE}" port-forward svc/account-service 18081:8080 >/tmp/preview-account-port-forward.log 2>&1 &
-          PF_PID=$!
-          trap 'kill ${PF_PID} >/dev/null 2>&1 || true' EXIT
+          ACCOUNT_PF_PID=$!
+          kubectl -n "${PREVIEW_NAMESPACE}" port-forward svc/game-session-service 18086:8080 >/tmp/preview-game-session-port-forward.log 2>&1 &
+          SESSION_PF_PID=$!
+          trap 'kill ${ACCOUNT_PF_PID} >/dev/null 2>&1 || true; kill ${SESSION_PF_PID} >/dev/null 2>&1 || true' EXIT
           for _ in $(seq 1 30); do
-            if curl --silent --fail http://127.0.0.1:18081/actuator/health/readiness >/dev/null; then
+            if curl --silent --fail http://127.0.0.1:18081/actuator/health/readiness >/dev/null && \
+               curl --silent --fail http://127.0.0.1:18086/actuator/health/readiness >/dev/null; then
               break
             fi
             sleep 1
           done
-          curl --silent --show-error \
-            --header 'Content-Type: application/json' \
-            --data "{\"username\":\"demo\",\"email\":\"${PREVIEW_EMAIL}\",\"password\":\"${PREVIEW_PASSWORD}\"}" \
-            http://127.0.0.1:18081/accounts >/tmp/preview-account-create.json \
-            || true
-          cat /tmp/preview-account-create.json || true
+          python3 - <<'PY'
+          import json
+          import sys
+          import urllib.error
+          import urllib.request
+
+          tenant_id = 1
+          email = "demo@example.com"
+          password = "swordfish"
+
+          def post_json(url, payload):
+            request = urllib.request.Request(
+              url,
+              data=json.dumps(payload).encode("utf-8"),
+              headers={"Content-Type": "application/json"},
+              method="POST",
+            )
+            try:
+              with urllib.request.urlopen(request, timeout=30) as response:
+                return response.status, response.read().decode("utf-8", errors="ignore")
+            except urllib.error.HTTPError as exc:
+              return exc.code, exc.read().decode("utf-8", errors="ignore")
+
+          status, account_body = post_json(
+            "http://127.0.0.1:18081/accounts",
+            {
+              "tenantId": tenant_id,
+              "username": "demo",
+              "email": email,
+              "password": password,
+            },
+          )
+          print(account_body)
+          if status >= 500:
+            raise SystemExit(f"Account bootstrap failed with status {status}")
+          account_payload = json.loads(account_body or "{}")
+          account_id = (((account_payload.get("data") or {}).get("id")))
+          if not account_id:
+            raise SystemExit(f"Preview smoke account response did not include account id: {account_body}")
+
+          status, session_body = post_json(
+            "http://127.0.0.1:18086/sessions",
+            {
+              "tenantId": tenant_id,
+              "runtimeVersion": "preview-smoke",
+              "scriptPatchVersion": None,
+              "ownerAccountId": int(account_id),
+            },
+          )
+          print(session_body)
+          if status >= 400:
+            raise SystemExit(f"Session bootstrap failed with status {status}: {session_body}")
+          session_payload = json.loads(session_body or "{}")
+          session_id = (((session_payload.get("data") or {}).get("id")))
+          if str(session_id) != "1":
+            raise SystemExit(
+              "Preview smoke expects bootstrap game session id 1 for tcp-proxy default session wiring; "
+              f"got {session_id!r}"
+            )
+          PY
 
       - name: Smoke hosted preview over TCP
         if: ${{ steps.deploy-release.outcome == 'success' }}
