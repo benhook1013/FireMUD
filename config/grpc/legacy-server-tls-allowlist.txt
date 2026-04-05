@@ -1,25 +1,2 @@
 # Temporary allowlist for legacy top-level grpc.server.* server TLS config.
-# Remove entries as the Spring gRPC SSL-bundle migration completes.
-services/account-service/src/main/resources/application-prod.yml
-services/account-service/src/main/resources/application.yml
-services/automation-scripting-service/src/main/resources/application-prod.yml
-services/automation-scripting-service/src/main/resources/application.yml
-services/entity-management-service/src/main/resources/application-prod.yml
-services/entity-management-service/src/main/resources/application.yml
-services/game-design-service/src/main/resources/application-prod.yml
-services/game-design-service/src/main/resources/application.yml
-services/game-logic-service/src/main/resources/application-prod.yml
-services/game-logic-service/src/main/resources/application.yml
-services/game-session-service/src/main/resources/application-prod.yml
-services/game-session-service/src/main/resources/application.yml
-services/logging-admin-service/src/main/resources/application-prod.yml
-services/logging-admin-service/src/main/resources/application.yml
-services/social-groups-service/src/main/resources/application-prod.yml
-services/social-groups-service/src/main/resources/application.yml
-services/spring-cloud-gateway/src/main/resources/application.yml
-services/tcp-proxy-service/src/main/resources/application-prod.yml
-services/tcp-proxy-service/src/main/resources/application-dev.yml
-services/tcp-proxy-service/src/main/resources/application-test.yml
-services/tcp-proxy-service/src/main/resources/application.yml
-services/world-management-service/src/main/resources/application-prod.yml
-services/world-management-service/src/main/resources/application.yml
+# The allowlist is intentionally empty once the SSL-bundle migration is complete.

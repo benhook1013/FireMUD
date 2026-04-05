@@ -40,8 +40,8 @@ text = text.replace(
     f"tlsSecretName: {release_name}-tls",
 )
 text = text.replace(
-    "GATEWAY_WS_URL: wss://pr-123.preview.firedevops.net/ws/game",
-    f"GATEWAY_WS_URL: wss://{hostname}/ws/game",
+    "GATEWAY_WS_URL: ws://spring-cloud-gateway/ws/game",
+    "GATEWAY_WS_URL: ws://spring-cloud-gateway/ws/game",
 )
 text = text.replace("nodePort: 32000", f"nodePort: {telnet_port}")
 output_path.write_text(text)

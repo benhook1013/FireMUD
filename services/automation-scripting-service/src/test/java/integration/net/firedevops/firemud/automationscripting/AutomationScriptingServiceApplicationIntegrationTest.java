@@ -2,6 +2,7 @@ package net.firedevops.firemud.automationscripting;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import net.firedevops.firemud.test.GatewayTestProperties;
 import net.firedevops.firemud.test.HttpTestSupport;
 import net.firedevops.firemud.test.NoGrpcServerTestConfiguration;
 import org.junit.jupiter.api.Test;
@@ -24,7 +25,11 @@ import org.testcontainers.junit.jupiter.Testcontainers;
       "spring.profiles.active=test",
       "firemud.auth.jwt-secret=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "firemud.grpc.plaintext=true",
-      "spring.grpc.server.port=0"
+      "spring.grpc.server.port=0",
+      GatewayTestProperties.SPRING_GRPC_SERVER_SSL_DISABLED,
+      GatewayTestProperties.FIREMUD_GRPC_CERT_CHAIN_PATH,
+      GatewayTestProperties.FIREMUD_GRPC_PRIVATE_KEY_PATH,
+      GatewayTestProperties.FIREMUD_GRPC_CA_CERT_PATH
     })
 @Import(NoGrpcServerTestConfiguration.class)
 class AutomationScriptingServiceApplicationIntegrationTest {

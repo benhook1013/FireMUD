@@ -65,11 +65,13 @@ The next hosted preview milestone is:
 ## Current transport stance
 
 - Preview keeps the **target-state** service topology, auth/session model, and per-PR namespace isolation.
-- Preview now follows the same Spring Boot SSL-bundle plus Spring gRPC server SSL-bundle contract as the rest of the Kubernetes-backed runtime. Any preview-only transport exception must be explicitly documented here and removed after verification.
+- Preview currently uses a temporary plaintext internal gRPC exception while the Spring gRPC SSL-bundle migration is still being re-proven. That exception is preview-only, must remain documented here and in the transport-alignment slice, and must be removed once preview mTLS is validated end-to-end again.
+- The canonical non-local target state remains Spring Boot SSL bundles plus Spring gRPC server SSL-bundle binding for internal gRPC everywhere outside intentionally relaxed local development.
 - The explicit cleanup path is:
   - keep preview transport expectations documented,
   - migrate services away from legacy top-level `grpc.server.*` assumptions to `spring.grpc.server.ssl.*` with `spring.ssl.bundle.*`,
-  - add CI/static checks to prevent legacy server-TLS property drift.
+  - add CI/static checks to prevent legacy server-TLS property drift,
+  - remove the temporary preview plaintext exception after preview mTLS is re-proved.
 
 Preview TCP contract:
 

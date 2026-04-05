@@ -145,7 +145,17 @@ Gameplay command streams from clients into Game Session are intentionally **diff
 
 ## TLS Requirements
 
-All internal gRPC calls use **mutual TLS**. Each service sets the following environment variables so certificates can be mounted from Secrets or local files:
+All internal gRPC calls use **mutual TLS**. FireMUD services now express the server-side TLS contract with Spring gRPC SSL bundles:
+
+- `spring.ssl.bundle.pem.firemud-grpc.keystore.certificate`
+- `spring.ssl.bundle.pem.firemud-grpc.keystore.private-key`
+- `spring.ssl.bundle.pem.firemud-grpc.truststore.certificate`
+- `spring.grpc.server.ssl.bundle=firemud-grpc`
+- `spring.grpc.server.ssl.client-auth=REQUIRE` for services that require client certificates
+
+Hosted preview may temporarily use plaintext internal gRPC while the Spring gRPC `1.0.x` SSL-bundle migration and preview re-proof are in flight. That exception is preview-only, must be documented in the preview slice/docs, and does not change the canonical non-local target state above.
+
+The bundle material still comes from the same file paths, but the supported server-side contract is now the Spring Boot SSL bundle plus Spring gRPC server SSL bundle binding. Each service sets the following environment variables so certificates can be mounted from Secrets or local files:
 
 | Variable | Description |
 | -------- | ----------- |
@@ -160,13 +170,9 @@ Adopting these conventions helps keep FireMUD services consistent and makes it e
 ## Implementation Notes
 
 - The canonical target state remains: internal gRPC uses mTLS everywhere outside intentionally relaxed local development.
-- Hosted `pr-preview` is temporarily allowed to run **plaintext internal gRPC** while the repository migrates fully to Spring gRPC `1.0.x` server TLS configuration using `spring.grpc.server.ssl.*` plus `spring.ssl.bundle.*`.
-- This preview-only plaintext exception is operational scaffolding, not a design change. It exists so preview can reach reviewer-usable `LOGIN -> PLAY -> LOOK` proof while the repo removes older server-TLS property patterns that Spring gRPC no longer honors.
-- New runtime or preview work should not introduce additional bespoke transport patterns. The cleanup path is:
-  - document preview plaintext explicitly,
-  - migrate server TLS to SSL bundles repo-wide,
-  - add CI/static checks that reject legacy/ignored gRPC server TLS property usage,
-  - then remove the preview plaintext exception.
+- The canonical server-TLS contract is now Spring Boot SSL bundles plus Spring gRPC server SSL bundle binding (`spring.ssl.bundle.*` and `spring.grpc.server.ssl.*`).
+- Preview-only plaintext internal gRPC is an explicit temporary exception, not a second long-lived transport model.
+- New runtime or preview work should not introduce additional bespoke transport patterns. The remaining hardening path is to add CI/static checks that reject legacy or ignored gRPC server TLS property usage.
 
 ## Related Documentation
 

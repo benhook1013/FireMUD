@@ -19,7 +19,7 @@ Kubernetes Secrets has been selected as the platform's unified secret storage so
 - cert-manager issues the mTLS certificates used between services. These TLS certificates are rotated automatically by cert-manager.
 - JWT signing keys are stored as Secrets and rotated by dedicated Kubernetes Jobs that update both the signing key Secret and the JWKS document. See [JWT Key & JWKS Rotation Workflow](#jwt-key--jwks-rotation-workflow) and [Environment Variables & Secrets Management](./infrastructure/environment-and-secrets.md) for how services consume these Secrets.
 - All services support **hot reload** of mounted TLS materials using the `TlsCertificateWatcher` and `GrpcServerTlsReloader` utilities from the `firemud-common` library. Services that consume JWT signing key material (primarily the Account Service) hot-reload that key file via `JwtSecretWatcher` so signing-key rotation does not require restarts.
-- The environment variables `FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, and `FIREMUD_GRPC_CA_CERT_PATH` control the TLS file locations that the TLS watchers monitor. The Account Service additionally uses `FIREMUD_AUTH_JWT_SECRET_PATH` to point `JwtSecretWatcher` at the mounted signing-key file.
+- The environment variables `FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC_PRIVATE_KEY_PATH`, and `FIREMUD_GRPC_CA_CERT_PATH` control the TLS file locations that the TLS watchers monitor. Services materialize those files through Spring Boot SSL bundles under `spring.ssl.bundle.pem.*` and bind gRPC server TLS via `spring.grpc.server.ssl.bundle` and `spring.grpc.server.ssl.client-auth`. The Account Service additionally uses `FIREMUD_AUTH_JWT_SECRET_PATH` to point `JwtSecretWatcher` at the mounted signing-key file.
 - During rotation, services reload credentials when files change.
 - The JWKS endpoint serves a key file that is mounted into the Account Service pod (from a `jwt-jwks` Secret in player-facing environments). The same JWT rotation Jobs that update signing key Secrets also regenerate this JWKS document so validators always see the current public keys.
 
@@ -151,9 +151,8 @@ Local Docker Compose environments may use plain `http://` / `ws://` for simplici
 
 Implementation note:
 
-- Hosted `pr-preview` may temporarily run plaintext internal gRPC while the repository completes the Spring gRPC `1.0.x` SSL-bundle migration for gRPC server TLS.
-- This is a narrow preview-only operational exception so preview can remain reviewer-usable while server-side TLS configuration is corrected.
-- The target-state rule for non-local environments remains unchanged: internal service-to-service gRPC is mTLS.
+- The target-state rule for non-local environments remains unchanged: internal service-to-service gRPC is mTLS using Spring Boot SSL bundles and Spring gRPC server SSL bundle binding.
+- Any preview-specific transport exception must be documented in preview operator docs and removed once the preview rollout proves the bundle-based configuration.
 
 ---
 
@@ -186,6 +185,7 @@ This matrix is the authoritative reference for configuring the Proxy → Gateway
 - Traffic flow is controlled via **NetworkPolicies**, which whitelist internal service access.
    A baseline policy restricts **ingress** for all microservice pods (except the Gateway and TCP proxy) so they only accept traffic from other pods in the namespace. The manifests are provided under [`k8s/network-policies/`](../../k8s/network-policies).
 - **Zero-trust** principles are enforced through mTLS and JWT-based validation, providing a foundation for ongoing hardening efforts.
+- Hosted preview may temporarily relax internal gRPC to plaintext while the SSL-bundle migration and preview re-proof are in flight. That exception is explicitly preview-only and must be documented in preview design docs; the canonical target state remains mTLS for non-local environments.
 - Spring Cloud Gateway is the canonicalization point for gateway-owned identity headers:
   - It strips inbound `X-Client-IP`, `X-Tenant-Id`, and `X-Game-Instance-Id` from public ingress and rewrites them to canonical values before forwarding to backend services.
   - For HTTP and WebSocket clients, it derives the canonical `X-Client-IP` from load-balancer forwarded headers (`Forwarded`, `X-Forwarded-For`, `X-Real-IP`) only when the immediate peer address is a configured trusted proxy CIDR. Otherwise it falls back to the direct TCP peer address. The trusted-proxy CIDRs are configured on the gateway via `firemud.gateway.header-trust.forwarded-client-ip.trusted-proxy-cidrs`.

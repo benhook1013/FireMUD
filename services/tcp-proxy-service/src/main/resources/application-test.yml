@@ -4,15 +4,21 @@ spring:
     name: tcp-proxy-service
   flyway:
     enabled: false
-
-grpc:
-  server:
-    security:
-      enabled: ${GRPC_SERVER_TLS_ENABLED:false}
-      certificateChainPath: ${FIREMUD_GRPC_CERT_CHAIN_PATH:classpath:certs/dev-cert.pem}
-      privateKeyPath: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:classpath:certs/dev-key.pem}
-      trustCertCollectionPath: ${FIREMUD_GRPC_CA_CERT_PATH:classpath:certs/dev-ca.pem}
-      clientAuth: ${GRPC_SERVER_CLIENT_AUTH:NONE}
+  ssl:
+    bundle:
+      pem:
+        firemud-grpc:
+          keystore:
+            certificate: ${FIREMUD_GRPC_CERT_CHAIN_PATH:classpath:certs/dev-cert.pem}
+            private-key: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:classpath:certs/dev-key.pem}
+          truststore:
+            certificate: ${FIREMUD_GRPC_CA_CERT_PATH:classpath:certs/dev-ca.pem}
+  grpc:
+    server:
+      ssl:
+        enabled: ${GRPC_SERVER_TLS_ENABLED:false}
+        bundle: firemud-grpc
+        client-auth: ${GRPC_SERVER_CLIENT_AUTH:NONE}
 
 GATEWAY_WS_URL: ${TCP_PROXY_GATEWAY_WS_URL_TEST:ws://localhost:8080/dev/echo}
 

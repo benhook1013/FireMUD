@@ -31,6 +31,10 @@ import org.testcontainers.junit.jupiter.Testcontainers;
     properties = {
       "spring.profiles.active=test",
       "spring.grpc.server.port=0",
+      "spring.grpc.server.ssl.enabled=false",
+      "FIREMUD_GRPC_CERT_CHAIN_PATH=classpath:certs/dev-cert.pem",
+      "FIREMUD_GRPC_PRIVATE_KEY_PATH=classpath:certs/dev-key.pem",
+      "FIREMUD_GRPC_CA_CERT_PATH=classpath:certs/dev-ca.pem",
       "firemud.grpc.plaintext=true",
       "firemud.auth.jwt-secret=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     })

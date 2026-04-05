@@ -255,7 +255,7 @@ previewStack:
       mountGrpcTls: true
       healthPort: 8080
       extraEnv:
-        GATEWAY_WS_URL: wss://pr-123.preview.firedevops.net/ws/game
+        GATEWAY_WS_URL: ws://spring-cloud-gateway/ws/game
       ports:
         - port: 2323
           nodePort: 32000
