@@ -201,6 +201,33 @@ class TextPlayerOutputRendererTest {
   }
 
   @Test
+  void lookRenderingHighlightsRoomGroundItems() {
+    TextPlayerOutputRenderer renderer =
+        new TextPlayerOutputRenderer(
+            new PresentationProperties(
+                "en-NZ",
+                PresentationProperties.ColorMode.NONE,
+                false,
+                new PresentationProperties.Prompt(false, true, 150L)));
+
+    String rendered =
+        renderer.render(
+            PlayerOutput.view(
+                new LookViewOutput(
+                    "R-305",
+                    "Grounded Hall",
+                    "A torchlit hall with a loose key on the floor.",
+                    "A torchlit hall with a loose key on the floor and dust shifting in the corners.",
+                    true,
+                    List.of(),
+                    List.of(
+                        new LookViewEntity(
+                            "ITEM", "Rough Iron Key", "", List.of("room-ground"))))));
+
+    assertThat(rendered).contains("ITEM \"Rough Iron Key\" [room-ground]");
+  }
+
+  @Test
   void renderAllPrefersStructuredErrorOutputForFailedCommands() {
     TextPlayerOutputRenderer renderer =
         new TextPlayerOutputRenderer(

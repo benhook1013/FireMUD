@@ -47,8 +47,13 @@ class HelpCommandHandlerTest {
             .outputs()
             .get(0)
             .text()
-            .contains(
-                "GET <item> and DROP <item> are visible now, but the mutation path is still pending."));
+            .contains("GET <item> picks up a matching room-ground item."));
+    assertTrue(
+        result
+            .outputs()
+            .get(0)
+            .text()
+            .contains("DROP <item> places a carried item on the room ground."));
   }
 
   @Test

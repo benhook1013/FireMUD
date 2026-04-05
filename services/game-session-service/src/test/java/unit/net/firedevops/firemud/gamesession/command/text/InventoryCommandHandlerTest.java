@@ -7,11 +7,10 @@ import java.util.List;
 import net.firedevops.firemud.entitymanagement.v1.DropItemToRoomResponse;
 import net.firedevops.firemud.entitymanagement.v1.EntityType;
 import net.firedevops.firemud.entitymanagement.v1.InventoryItem;
+import net.firedevops.firemud.entitymanagement.v1.ListRoomEntitiesResponse;
 import net.firedevops.firemud.entitymanagement.v1.PickupItemFromRoomResponse;
 import net.firedevops.firemud.entitymanagement.v1.QueryInventoryResponse;
-import net.firedevops.firemud.entitymanagement.v1.ListRoomEntitiesResponse;
 import net.firedevops.firemud.entitymanagement.v1.RoomEntity;
-import net.firedevops.firemud.entitymanagement.v1.QueryInventoryResponse;
 import net.firedevops.firemud.entitymanagement.v1.RoomGroundInventoryItem;
 import net.firedevops.firemud.gamesession.client.EntityManagementClient;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
@@ -81,8 +80,7 @@ class InventoryCommandHandlerTest {
                         .addStateFlags("room-ground")
                         .build())
                 .build());
-    when(entityManagementClient.pickupItemFromRoom(
-            "22", "911", "77", "room-7", "7", 1))
+    when(entityManagementClient.pickupItemFromRoom("22", "911", "77", "room-7", "7", 1))
         .thenReturn(
             PickupItemFromRoomResponse.newBuilder()
                 .setInventoryItem(
@@ -131,7 +129,8 @@ class InventoryCommandHandlerTest {
                         .setItemDescription("A battered key")
                         .setQuantity(1)
                         .build())
-                .build());
+                .build(),
+            QueryInventoryResponse.newBuilder().build());
     when(entityManagementClient.dropItemToRoom("22", "911", "77", "room-7", "7", 1))
         .thenReturn(
             DropItemToRoomResponse.newBuilder()
@@ -143,8 +142,6 @@ class InventoryCommandHandlerTest {
                         .setQuantity(1)
                         .build())
                 .build());
-    when(entityManagementClient.queryInventory("22", "911"))
-        .thenReturn(QueryInventoryResponse.newBuilder().build());
 
     InventoryCommandHandlingResult result =
         handler.handle(
@@ -163,7 +160,18 @@ class InventoryCommandHandlerTest {
 
   @Test
   void dropWithItemReferenceReportsRuntimeError() {
-    when(entityManagementClient.dropItemToRoom("22", "911", "77", "room-7", "rough iron key", 1))
+    when(entityManagementClient.queryInventory("22", "911"))
+        .thenReturn(
+            QueryInventoryResponse.newBuilder()
+                .addItems(
+                    InventoryItem.newBuilder()
+                        .setItemId("7")
+                        .setItemName("Rough Iron Key")
+                        .setItemDescription("A battered key")
+                        .setQuantity(1)
+                        .build())
+                .build());
+    when(entityManagementClient.dropItemToRoom("22", "911", "77", "room-7", "7", 1))
         .thenReturn(
             DropItemToRoomResponse.newBuilder()
                 .setError(
