@@ -261,6 +261,23 @@ jobs:
             "${{ needs.preview-plan.outputs.image_tag }}")"
           echo "image_tag=${EFFECTIVE_IMAGE_TAG}" >> "$GITHUB_OUTPUT"
 
+      - name: Cancel if preview target was superseded before image wait
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! bash ./dev-tools/preview/check-preview-head-current.sh \
+            "${{ needs.preview-plan.outputs.pr_number }}" \
+            "${{ needs.preview-plan.outputs.head_sha }}"; then
+            status=$?
+            if [ "$status" -eq 10 ]; then
+              echo "Cancelling stale preview run before image wait."
+              gh run cancel "${GITHUB_RUN_ID}"
+              sleep 5
+              exit 0
+            fi
+            exit "$status"
+          fi
+
       - name: Wait for preview runtime images
         env:
           PREVIEW_GHCR_USERNAME: ${{ secrets.PREVIEW_GHCR_USERNAME }}
@@ -315,6 +332,23 @@ jobs:
             "${{ needs.preview-plan.outputs.head_sha }}" \
             "${{ steps.effective-image-tag.outputs.image_tag }}" \
             "${{ steps.telnet-port.outputs.telnet_port }}"
+
+      - name: Cancel if preview target was superseded before deploy
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! bash ./dev-tools/preview/check-preview-head-current.sh \
+            "${{ needs.preview-plan.outputs.pr_number }}" \
+            "${{ needs.preview-plan.outputs.head_sha }}"; then
+            status=$?
+            if [ "$status" -eq 10 ]; then
+              echo "Cancelling stale preview run before deploy."
+              gh run cancel "${GITHUB_RUN_ID}"
+              sleep 5
+              exit 0
+            fi
+            exit "$status"
+          fi
 
       - name: Deploy preview release
         id: deploy-release
