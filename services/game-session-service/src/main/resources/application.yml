@@ -30,6 +30,7 @@ spring:
         timeout: 5s
         permit-without-calls: true
       ssl:
+        enabled: ${GRPC_SERVER_TLS_ENABLED:true}
         bundle: firemud-grpc
         client-auth: REQUIRE
 game-session:
