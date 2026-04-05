@@ -17,24 +17,35 @@ sleep_seconds="${PREVIEW_IMAGE_WAIT_SLEEP_SECONDS:-10}"
 start_epoch="${SECONDS}"
 deadline=$((SECONDS + timeout_seconds))
 
-jq_filter="$(cat <<'JQ'
-.workflow_runs
-| map(select(.head_sha == $head_sha))
-| sort_by(.created_at)
-| reverse
-| if length == 0 then
-    "missing"
-  else
-    .[0] as $run
-    | "found\t\($run.id)\t\($run.status // "")\t\($run.conclusion // "")\t\($run.html_url // "")"
-  end
-JQ
-)"
+read_run_state() {
+  python3 -c '
+import json
+import sys
+
+head_sha = sys.argv[1]
+payload = json.load(sys.stdin)
+workflow_runs = payload.get("workflow_runs", [])
+matching_runs = [run for run in workflow_runs if run.get("head_sha") == head_sha]
+if not matching_runs:
+    print("missing")
+    raise SystemExit(0)
+
+run = sorted(matching_runs, key=lambda item: item.get("created_at", ""), reverse=True)[0]
+print(
+    "found\t{}\t{}\t{}\t{}".format(
+        run.get("id", ""),
+        run.get("status", ""),
+        run.get("conclusion", ""),
+        run.get("html_url", ""),
+    )
+)
+' "${image_tag}"
+}
 
 while (( SECONDS < deadline )); do
   run_state="$(
     gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/runtime-images.yml/runs?per_page=100" \
-      | jq -r --arg head_sha "${image_tag}" "${jq_filter}"
+      | read_run_state
   )"
 
   IFS=$'\t' read -r state run_id run_status run_conclusion run_url <<<"${run_state}"
