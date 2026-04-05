@@ -247,13 +247,6 @@ jobs:
         run: |
           bash ./dev-tools/preview/ensure-ghcr-pull-secret.sh "${{ needs.preview-plan.outputs.namespace }}"
 
-      - name: Login to GHCR for image availability checks
-        env:
-          PREVIEW_GHCR_USERNAME: ${{ secrets.PREVIEW_GHCR_USERNAME }}
-          PREVIEW_GHCR_TOKEN: ${{ secrets.PREVIEW_GHCR_TOKEN }}
-        run: |
-          printf '%s' "${PREVIEW_GHCR_TOKEN}" | docker login ghcr.io -u "${PREVIEW_GHCR_USERNAME}" --password-stdin
-
       - name: Resolve exact preview image tag
         id: effective-image-tag
         run: |
@@ -280,8 +273,7 @@ jobs:
 
       - name: Wait for preview runtime images
         env:
-          PREVIEW_GHCR_USERNAME: ${{ secrets.PREVIEW_GHCR_USERNAME }}
-          PREVIEW_GHCR_TOKEN: ${{ secrets.PREVIEW_GHCR_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           echo "PREVIEW_STAGE=wait-for-images" >> "$GITHUB_ENV"
           bash ./dev-tools/preview/wait-for-preview-images.sh "${{ steps.effective-image-tag.outputs.image_tag }}"
