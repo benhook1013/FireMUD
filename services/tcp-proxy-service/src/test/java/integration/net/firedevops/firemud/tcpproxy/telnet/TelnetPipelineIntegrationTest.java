@@ -60,6 +60,15 @@ class TelnetPipelineIntegrationTest {
     byte[] payload = {(byte) 255, (byte) 253, (byte) 1, 'l', 'i', 'n', 'e', '\r', '\n'};
     channel.writeInbound(Unpooled.wrappedBuffer(payload));
 
+    String guidance = channel.readOutbound();
+    assertEquals(
+        "OK CONNECTED\n"
+            + "Type WORLDS to list available worlds.\n"
+            + "Type LOGIN <email> <password> to authenticate.\n"
+            + "Type PLAY <world> after LOGIN to enter a world.\n"
+            + "Type HELP for commands.\n",
+        guidance);
+
     ByteBuf response = channel.readOutbound();
     assertEquals((byte) 255, response.readByte());
     assertEquals((byte) 251, response.readByte());

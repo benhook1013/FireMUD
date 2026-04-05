@@ -53,6 +53,12 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   private static final String OK = "OK";
   private static final String STARTUP_UNAVAILABLE_MESSAGE =
       "DISCONNECT startup_unavailable Gameplay path starting; please reconnect\n";
+  private static final String INITIAL_GUIDANCE_MESSAGE =
+      "OK CONNECTED\n"
+          + "Type WORLDS to list available worlds.\n"
+          + "Type LOGIN <email> <password> to authenticate.\n"
+          + "Type PLAY <world> after LOGIN to enter a world.\n"
+          + "Type HELP for commands.\n";
   private static final Set<String> SENSITIVE_COMMANDS = Set.of("LOGIN", "LOGON");
 
   private final String gatewayWsUrl;
@@ -459,6 +465,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
         ctx.writeAndFlush(STARTUP_UNAVAILABLE_MESSAGE).addListener(ChannelFutureListener.CLOSE);
         return;
       }
+      ctx.writeAndFlush(INITIAL_GUIDANCE_MESSAGE);
       if (devIsolated) {
         logger.info("Dev-isolated mode enabled; using internal Telnet echo handler");
       } else {

@@ -53,6 +53,11 @@ class DevEchoTelnetIntegrationTest {
             new BufferedReader(
                 new InputStreamReader(socket.getInputStream(), StandardCharsets.ISO_8859_1))) {
       socket.setSoTimeout(10_000);
+      assertThat(reader.readLine()).isEqualTo("OK CONNECTED");
+      assertThat(reader.readLine()).isEqualTo("Type WORLDS to list available worlds.");
+      assertThat(reader.readLine()).isEqualTo("Type LOGIN <email> <password> to authenticate.");
+      assertThat(reader.readLine()).isEqualTo("Type PLAY <world> after LOGIN to enter a world.");
+      assertThat(reader.readLine()).isEqualTo("Type HELP for commands.");
       String payload = "hello dev echo";
       writer.println(payload);
       String echoed = reader.readLine();
