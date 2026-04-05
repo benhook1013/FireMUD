@@ -27,7 +27,7 @@ public sealed interface TextCommandPayload
 
   record Selection(String primary, String secondary) implements TextCommandPayload {}
 
-  record ItemReference(String reference) implements TextCommandPayload {}
+  record ItemReference(String reference, int quantity) implements TextCommandPayload {}
 
   record Message(String text) implements TextCommandPayload {}
 
@@ -44,9 +44,9 @@ public sealed interface TextCommandPayload
       case WORLDS, LOOK, QUICKLOOK, INVENTORY -> new ViewRequest(type.name());
       case HELP -> safeArgs.isEmpty() ? new None() : new Tokens(safeArgs);
       case GET, DROP ->
-          !safeArgs.isEmpty()
-              ? new ItemReference(String.join(" ", safeArgs).trim())
-              : new Tokens(safeArgs);
+          parseQuantityAwareItemReference(safeArgs)
+              .map(itemReference -> (TextCommandPayload) itemReference)
+              .orElseGet(() -> safeArgs.isEmpty() ? new None() : new Tokens(safeArgs));
       case LOGIN ->
           safeArgs.size() >= 2
               ? new Credentials(
@@ -70,5 +70,28 @@ public sealed interface TextCommandPayload
               : new Tokens(safeArgs);
       case UNKNOWN -> new Tokens(safeArgs);
     };
+  }
+
+  private static java.util.Optional<ItemReference> parseQuantityAwareItemReference(
+      List<String> args) {
+    if (args == null || args.isEmpty()) {
+      return java.util.Optional.empty();
+    }
+    if (args.size() == 1) {
+      String single = args.get(0) == null ? "" : args.get(0).trim();
+      if (single.matches("-?\\d+")) {
+        return java.util.Optional.empty();
+      }
+      return java.util.Optional.of(new ItemReference(single, 1));
+    }
+    String first = args.get(0) == null ? "" : args.get(0).trim();
+    if (!first.matches("-?\\d+")) {
+      return java.util.Optional.of(new ItemReference(String.join(" ", args).trim(), 1));
+    }
+    String reference = String.join(" ", args.subList(1, args.size())).trim();
+    if (!StringUtils.hasText(reference)) {
+      return java.util.Optional.empty();
+    }
+    return java.util.Optional.of(new ItemReference(reference, Integer.parseInt(first)));
   }
 }

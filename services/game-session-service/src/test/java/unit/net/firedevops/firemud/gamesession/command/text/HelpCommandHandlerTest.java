@@ -54,8 +54,20 @@ class HelpCommandHandlerTest {
             .outputs()
             .get(0)
             .text()
+            .contains("GET <count> <item> picks up that many matching room-ground items."));
+    assertTrue(
+        result
+            .outputs()
+            .get(0)
+            .text()
             .contains(
                 "DROP <item> places a carried item on the room ground and refreshes your inventory."));
+    assertTrue(
+        result
+            .outputs()
+            .get(0)
+            .text()
+            .contains("DROP <count> <item> drops that many carried items."));
   }
 
   @Test
@@ -66,6 +78,7 @@ class HelpCommandHandlerTest {
     assertTrue(result.commandResult().accepted());
     assertTrue(result.outputs().get(0).text().contains("GET <item>"));
     assertTrue(result.outputs().get(0).text().contains("Pick up a matching room-ground item"));
+    assertTrue(result.outputs().get(0).text().contains("GET <count> <item>"));
   }
 
   @Test
@@ -76,6 +89,7 @@ class HelpCommandHandlerTest {
     assertTrue(result.commandResult().accepted());
     assertTrue(result.outputs().get(0).text().contains("DROP <item>"));
     assertTrue(result.outputs().get(0).text().contains("Place a carried item on the room ground"));
+    assertTrue(result.outputs().get(0).text().contains("DROP <count> <item>"));
   }
 
   @Test

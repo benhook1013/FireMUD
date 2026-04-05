@@ -88,10 +88,11 @@ class TextCommandParserTest {
 
     assertEquals(TextCommandType.GET, command.type());
     assertEquals("GET", command.aliasUsed());
-    assertEquals(List.of("rough iron key"), command.args());
+    assertEquals(List.of("rough", "iron", "key"), command.args());
     assertEquals("GET rough iron key", command.rawLine());
     assertTrue(command.payload() instanceof TextCommandPayload.ItemReference);
     assertEquals("rough iron key", command.itemReferencePayload().orElseThrow().reference());
+    assertEquals(1, command.itemReferencePayload().orElseThrow().quantity());
   }
 
   @Test
@@ -100,10 +101,37 @@ class TextCommandParserTest {
 
     assertEquals(TextCommandType.DROP, command.type());
     assertEquals("DROP", command.aliasUsed());
-    assertEquals(List.of("iron key"), command.args());
+    assertEquals(List.of("iron", "key"), command.args());
     assertEquals("DROP iron key", command.rawLine());
     assertTrue(command.payload() instanceof TextCommandPayload.ItemReference);
     assertEquals("iron key", command.itemReferencePayload().orElseThrow().reference());
+    assertEquals(1, command.itemReferencePayload().orElseThrow().quantity());
+  }
+
+  @Test
+  void parsesGetWithQuantityAsItemReference() {
+    TextCommand command = parser.parse("GET 2 rough iron key");
+
+    assertEquals(TextCommandType.GET, command.type());
+    assertEquals("GET", command.aliasUsed());
+    assertEquals(List.of("2", "rough", "iron", "key"), command.args());
+    assertEquals("GET 2 rough iron key", command.rawLine());
+    assertTrue(command.payload() instanceof TextCommandPayload.ItemReference);
+    assertEquals("rough iron key", command.itemReferencePayload().orElseThrow().reference());
+    assertEquals(2, command.itemReferencePayload().orElseThrow().quantity());
+  }
+
+  @Test
+  void parsesDropWithQuantityAsItemReference() {
+    TextCommand command = parser.parse("DROP 3 iron key");
+
+    assertEquals(TextCommandType.DROP, command.type());
+    assertEquals("DROP", command.aliasUsed());
+    assertEquals(List.of("3", "iron", "key"), command.args());
+    assertEquals("DROP 3 iron key", command.rawLine());
+    assertTrue(command.payload() instanceof TextCommandPayload.ItemReference);
+    assertEquals("iron key", command.itemReferencePayload().orElseThrow().reference());
+    assertEquals(3, command.itemReferencePayload().orElseThrow().quantity());
   }
 
   @Test

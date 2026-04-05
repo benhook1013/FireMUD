@@ -115,7 +115,14 @@ public class InventoryCommandHandler {
                   "error.inventory.item-required",
                   Map.of("verb", verb))));
     }
-    String itemReference = command.itemReferencePayload().orElseThrow().reference();
+    TextCommandPayload.ItemReference itemReference = command.itemReferencePayload().orElseThrow();
+    if (itemReference.quantity() <= 0) {
+      return inventoryMutationFailure(
+          "INVALID_ARGUMENT",
+          itemReference.reference(),
+          verb + " quantity must be positive");
+    }
+    String itemReferenceValue = itemReference.reference();
     try {
       if (pickup) {
         var roomEntities =
@@ -130,10 +137,12 @@ public class InventoryCommandHandler {
                   : "Room entities unavailable");
         }
         Optional<ResolvedItem> resolved =
-            findRoomGroundItem(roomEntities.getEntitiesList(), itemReference);
+            findRoomGroundItem(roomEntities.getEntitiesList(), itemReferenceValue);
         if (resolved.isEmpty()) {
           return inventoryMutationFailure(
-              "INVALID_ARGUMENT", itemReference, "No room item matches \"" + itemReference + "\"");
+              "INVALID_ARGUMENT",
+              itemReferenceValue,
+              "No room item matches \"" + itemReferenceValue + "\"");
         }
         ResolvedItem item = resolved.orElseThrow();
         var response =
@@ -143,15 +152,18 @@ public class InventoryCommandHandler {
                 Long.toString(context.gameInstanceId()),
                 context.roomInstanceId(),
                 item.itemId(),
-                1);
+                itemReference.quantity());
         if (response.hasError()) {
           return inventoryMutationFailure(
               errorCode(response.getError().getCode()),
-              itemReference,
+              itemReferenceValue,
               response.getError().getMessage());
         }
         return inventoryMutationSuccess(
-            context, "GET", displayItemName(response.getInventoryItem(), item.itemName()));
+            context,
+            "GET",
+            displayItemName(response.getInventoryItem(), item.itemName()),
+            itemReference.quantity());
       }
 
       var inventoryResponse =
@@ -164,10 +176,12 @@ public class InventoryCommandHandler {
                 : "Inventory unavailable");
       }
       Optional<ResolvedItem> resolved =
-          findCarriedItem(inventoryResponse.getItemsList(), itemReference);
+          findCarriedItem(inventoryResponse.getItemsList(), itemReferenceValue);
       if (resolved.isEmpty()) {
         return inventoryMutationFailure(
-            "INVALID_ARGUMENT", itemReference, "No carried item matches \"" + itemReference + "\"");
+            "INVALID_ARGUMENT",
+            itemReferenceValue,
+            "No carried item matches \"" + itemReferenceValue + "\"");
       }
       ResolvedItem item = resolved.orElseThrow();
       var response =
@@ -177,31 +191,34 @@ public class InventoryCommandHandler {
               Long.toString(context.gameInstanceId()),
               context.roomInstanceId(),
               item.itemId(),
-              1);
+              itemReference.quantity());
       if (response.hasError()) {
         return inventoryMutationFailure(
             errorCode(response.getError().getCode()),
-            itemReference,
+            itemReferenceValue,
             response.getError().getMessage());
       }
       return inventoryMutationSuccess(
-          context, "DROP", displayItemName(response.getRoomGroundItem(), item.itemName()));
+          context,
+          "DROP",
+          displayItemName(response.getRoomGroundItem(), item.itemName()),
+          itemReference.quantity());
     } catch (RuntimeException ex) {
       LOG.warn(
           "Inventory mutation failed tenantId={} characterId={} verb={} itemReference={}",
           context.tenantId(),
           context.characterId(),
           verb,
-          itemReference,
+          itemReferenceValue,
           ex);
       return inventoryUnavailable("Inventory service unavailable");
     }
   }
 
   private InventoryCommandHandlingResult inventoryMutationSuccess(
-      SessionContext context, String verb, String itemName) {
+      SessionContext context, String verb, String itemName, int quantity) {
     List<PlayerOutput> outputs = new ArrayList<>();
-    outputs.add(PlayerOutput.message(successMessage(verb, itemName)));
+    outputs.add(PlayerOutput.message(successMessage(verb, itemName, quantity)));
     InventoryCommandHandlingResult refreshedInventory = describeInventory(context);
     if (refreshedInventory.commandResult().accepted()) {
       outputs.addAll(refreshedInventory.outputs());
@@ -218,12 +235,13 @@ public class InventoryCommandHandler {
         List.of(PlayerOutput.error(errorCode, message)));
   }
 
-  private String successMessage(String verb, String itemName) {
+  private String successMessage(String verb, String itemName, int quantity) {
     String safeName = StringUtils.hasText(itemName) ? itemName : "item";
+    String quantitySuffix = quantity > 1 ? " x" + quantity : "";
     return switch (verb) {
-      case "GET" -> "You pick up " + safeName + ".";
-      case "DROP" -> "You drop " + safeName + ".";
-      default -> "You " + verb.toLowerCase() + " " + safeName + ".";
+      case "GET" -> "You pick up " + safeName + quantitySuffix + ".";
+      case "DROP" -> "You drop " + safeName + quantitySuffix + ".";
+      default -> "You " + verb.toLowerCase() + " " + safeName + quantitySuffix + ".";
     };
   }
 

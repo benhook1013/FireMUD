@@ -118,6 +118,56 @@ class InventoryCommandHandlerTest {
   }
 
   @Test
+  void getWithQuantityCallsPickupMutation() {
+    when(entityManagementClient.listRoomEntities("22", "77", "room-7"))
+        .thenReturn(
+            ListRoomEntitiesResponse.newBuilder()
+                .addEntities(
+                    RoomEntity.newBuilder()
+                        .setEntityId("22:77:room-7:7")
+                        .setDisplayName("Torch")
+                        .setEntityType(EntityType.ITEM)
+                        .addStateFlags("room-ground")
+                        .build())
+                .build());
+    when(entityManagementClient.pickupItemFromRoom("22", "911", "77", "room-7", "7", 2))
+        .thenReturn(
+            PickupItemFromRoomResponse.newBuilder()
+                .setInventoryItem(
+                    InventoryItem.newBuilder()
+                        .setItemId("7")
+                        .setItemName("Torch")
+                        .setItemDescription("A small torch")
+                        .setQuantity(2)
+                        .build())
+                .build());
+    when(entityManagementClient.queryInventory("22", "911"))
+        .thenReturn(
+            QueryInventoryResponse.newBuilder()
+                .addItems(
+                    InventoryItem.newBuilder()
+                        .setItemId("7")
+                        .setItemName("Torch")
+                        .setItemDescription("A small torch")
+                        .setQuantity(2)
+                        .build())
+                .build());
+
+    InventoryCommandHandlingResult result =
+        handler.handle(
+            context,
+            new TextCommand(TextCommandType.GET, List.of("2", "Torch"), "GET 2 Torch"));
+
+    assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
+    assertThat(result.outputs())
+        .extracting(PlayerOutput::kind)
+        .containsExactly(PlayerOutputKind.MESSAGE, PlayerOutputKind.VIEW);
+    assertThat(result.outputs().get(0).text()).isEqualTo("You pick up Torch x2.");
+    assertThat(((InventoryViewOutput) result.outputs().get(1).payload()).lines())
+        .containsExactly("- Torch x2 (A small torch)");
+  }
+
+  @Test
   void dropWithItemReferenceCallsDropMutation() {
     when(entityManagementClient.queryInventory("22", "911"))
         .thenReturn(
@@ -156,6 +206,52 @@ class InventoryCommandHandlerTest {
     assertThat(result.outputs().get(0).text()).isEqualTo("You drop Rough Iron Key.");
     assertThat(((InventoryViewOutput) result.outputs().get(1).payload()).lines())
         .containsExactly("You are not carrying anything.");
+  }
+
+  @Test
+  void dropWithQuantityCallsDropMutation() {
+    when(entityManagementClient.queryInventory("22", "911"))
+        .thenReturn(
+            QueryInventoryResponse.newBuilder()
+                .addItems(
+                    InventoryItem.newBuilder()
+                        .setItemId("7")
+                        .setItemName("Torch")
+                        .setItemDescription("A small torch")
+                        .setQuantity(3)
+                        .build())
+                .build(),
+            QueryInventoryResponse.newBuilder()
+                .addItems(
+                    InventoryItem.newBuilder()
+                        .setItemId("7")
+                        .setItemName("Torch")
+                        .setItemDescription("A small torch")
+                        .setQuantity(1)
+                        .build())
+                .build());
+    when(entityManagementClient.dropItemToRoom("22", "911", "77", "room-7", "7", 2))
+        .thenReturn(
+            DropItemToRoomResponse.newBuilder()
+                .setRoomGroundItem(
+                    RoomGroundInventoryItem.newBuilder()
+                        .setItemId("7")
+                        .setItemName("Torch")
+                        .setItemDescription("A small torch")
+                        .setQuantity(2)
+                        .build())
+                .build());
+
+    InventoryCommandHandlingResult result =
+        handler.handle(context, new TextCommand(TextCommandType.DROP, List.of("2", "Torch"), "DROP 2 Torch"));
+
+    assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
+    assertThat(result.outputs())
+        .extracting(PlayerOutput::kind)
+        .containsExactly(PlayerOutputKind.MESSAGE, PlayerOutputKind.VIEW);
+    assertThat(result.outputs().get(0).text()).isEqualTo("You drop Torch x2.");
+    assertThat(((InventoryViewOutput) result.outputs().get(1).payload()).lines())
+        .containsExactly("- Torch (A small torch)");
   }
 
   @Test
