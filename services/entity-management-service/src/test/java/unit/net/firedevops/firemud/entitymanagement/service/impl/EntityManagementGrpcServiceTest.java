@@ -9,6 +9,10 @@ import net.firedevops.firemud.entitymanagement.service.CharacterService;
 import net.firedevops.firemud.entitymanagement.service.InventoryService;
 import net.firedevops.firemud.entitymanagement.service.PingService;
 import net.firedevops.firemud.entitymanagement.service.RoomEntityService;
+import net.firedevops.firemud.entitymanagement.v1.DropItemToRoomRequest;
+import net.firedevops.firemud.entitymanagement.v1.DropItemToRoomResponse;
+import net.firedevops.firemud.entitymanagement.v1.PickupItemFromRoomRequest;
+import net.firedevops.firemud.entitymanagement.v1.PickupItemFromRoomResponse;
 import net.firedevops.firemud.entitymanagement.v1.PingRequest;
 import net.firedevops.firemud.entitymanagement.v1.PingResponse;
 import net.firedevops.firemud.entitymanagement.v1.QueryInventoryRequest;
@@ -288,5 +292,100 @@ class EntityManagementGrpcServiceTest {
 
     assertEquals("Torch", ref.get().getItems(0).getItemName());
     assertEquals(2, ref.get().getItems(0).getQuantity());
+  }
+
+  @Test
+  void pickupItemFromRoomReturnsInventoryItem() {
+    PingService pingService = Mockito.mock(PingService.class);
+    CharacterService characterService = Mockito.mock(CharacterService.class);
+    InventoryService inventoryService = Mockito.mock(InventoryService.class);
+    var dto =
+        new net.firedevops.firemud.entitymanagement.dto.InventoryEntryDto(
+            1L, 7L, 99L, "Torch", "A small torch", 2);
+    Mockito.when(inventoryService.pickupItemFromRoom(1L, 7L, "GI-1", "R-1", 99L, 1))
+        .thenReturn(dto);
+    io.micrometer.core.instrument.MeterRegistry meterRegistry =
+        Mockito.mock(io.micrometer.core.instrument.MeterRegistry.class);
+    io.micrometer.core.instrument.Counter counter =
+        Mockito.mock(io.micrometer.core.instrument.Counter.class);
+    Mockito.when(meterRegistry.counter(Mockito.anyString(), Mockito.any(String[].class)))
+        .thenReturn(counter);
+    RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
+    EntityManagementGrpcService service =
+        new EntityManagementGrpcService(
+            pingService, characterService, inventoryService, roomEntityService, meterRegistry);
+
+    AtomicReference<PickupItemFromRoomResponse> ref = new AtomicReference<>();
+    service.pickupItemFromRoom(
+        PickupItemFromRoomRequest.newBuilder()
+            .setTenantId("1")
+            .setCharacterId("7")
+            .setGameInstanceId("GI-1")
+            .setRoomInstanceId("R-1")
+            .setItemId("99")
+            .setQuantity(1)
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(PickupItemFromRoomResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertEquals("Torch", ref.get().getInventoryItem().getItemName());
+    assertEquals(2, ref.get().getInventoryItem().getQuantity());
+  }
+
+  @Test
+  void dropItemToRoomReturnsRoomGroundItem() {
+    PingService pingService = Mockito.mock(PingService.class);
+    CharacterService characterService = Mockito.mock(CharacterService.class);
+    InventoryService inventoryService = Mockito.mock(InventoryService.class);
+    var dto =
+        new net.firedevops.firemud.entitymanagement.dto.RoomGroundInventoryEntryDto(
+            1L, "GI-1", "R-1", 99L, "Torch", "A small torch", 1);
+    Mockito.when(inventoryService.dropItemToRoom(1L, 7L, "GI-1", "R-1", 99L, 1)).thenReturn(dto);
+    io.micrometer.core.instrument.MeterRegistry meterRegistry =
+        Mockito.mock(io.micrometer.core.instrument.MeterRegistry.class);
+    io.micrometer.core.instrument.Counter counter =
+        Mockito.mock(io.micrometer.core.instrument.Counter.class);
+    Mockito.when(meterRegistry.counter(Mockito.anyString(), Mockito.any(String[].class)))
+        .thenReturn(counter);
+    RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
+    EntityManagementGrpcService service =
+        new EntityManagementGrpcService(
+            pingService, characterService, inventoryService, roomEntityService, meterRegistry);
+
+    AtomicReference<DropItemToRoomResponse> ref = new AtomicReference<>();
+    service.dropItemToRoom(
+        DropItemToRoomRequest.newBuilder()
+            .setTenantId("1")
+            .setCharacterId("7")
+            .setGameInstanceId("GI-1")
+            .setRoomInstanceId("R-1")
+            .setItemId("99")
+            .setQuantity(1)
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(DropItemToRoomResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertEquals("Torch", ref.get().getRoomGroundItem().getItemName());
+    assertEquals(1, ref.get().getRoomGroundItem().getQuantity());
   }
 }

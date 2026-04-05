@@ -15,6 +15,8 @@ import net.firedevops.firemud.entitymanagement.service.RoomEntityService;
 import net.firedevops.firemud.entitymanagement.v1.Character;
 import net.firedevops.firemud.entitymanagement.v1.CreateCharacterRequest;
 import net.firedevops.firemud.entitymanagement.v1.CreateCharacterResponse;
+import net.firedevops.firemud.entitymanagement.v1.DropItemToRoomRequest;
+import net.firedevops.firemud.entitymanagement.v1.DropItemToRoomResponse;
 import net.firedevops.firemud.entitymanagement.v1.EntityManagementServiceGrpc;
 import net.firedevops.firemud.entitymanagement.v1.FindCharacterByNameRequest;
 import net.firedevops.firemud.entitymanagement.v1.FindCharacterByNameResponse;
@@ -23,11 +25,14 @@ import net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountRequest
 import net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse;
 import net.firedevops.firemud.entitymanagement.v1.ListRoomEntitiesRequest;
 import net.firedevops.firemud.entitymanagement.v1.ListRoomEntitiesResponse;
+import net.firedevops.firemud.entitymanagement.v1.PickupItemFromRoomRequest;
+import net.firedevops.firemud.entitymanagement.v1.PickupItemFromRoomResponse;
 import net.firedevops.firemud.entitymanagement.v1.PingRequest;
 import net.firedevops.firemud.entitymanagement.v1.PingResponse;
 import net.firedevops.firemud.entitymanagement.v1.QueryInventoryRequest;
 import net.firedevops.firemud.entitymanagement.v1.QueryInventoryResponse;
 import net.firedevops.firemud.entitymanagement.v1.RoomEntity;
+import net.firedevops.firemud.entitymanagement.v1.RoomGroundInventoryItem;
 import net.firedevops.firemud.entitymanagement.v1.UpdateEntityRequest;
 import net.firedevops.firemud.entitymanagement.v1.UpdateEntityResponse;
 import org.slf4j.Logger;
@@ -299,6 +304,113 @@ public class EntityManagementGrpcService
   }
 
   @Override
+  @Timed(value = "entityGrpc.pickupItemFromRoom")
+  public void pickupItemFromRoom(
+      PickupItemFromRoomRequest request,
+      StreamObserver<PickupItemFromRoomResponse> responseObserver) {
+    try {
+      long tenantId = Long.parseLong(request.getTenantId());
+      long characterId = Long.parseLong(request.getCharacterId());
+      long itemId = Long.parseLong(request.getItemId());
+      int quantity = request.getQuantity();
+      var dto =
+          inventoryService.pickupItemFromRoom(
+              tenantId,
+              characterId,
+              request.getGameInstanceId(),
+              request.getRoomInstanceId(),
+              itemId,
+              quantity);
+      PickupItemFromRoomResponse response =
+          PickupItemFromRoomResponse.newBuilder().setInventoryItem(toProto(dto)).build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (NumberFormatException ex) {
+      PickupItemFromRoomResponse response =
+          PickupItemFromRoomResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry,
+                      logger,
+                      "PickupItemFromRoom",
+                      "INVALID_ARGUMENT",
+                      ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      PickupItemFromRoomResponse response =
+          PickupItemFromRoomResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry,
+                      logger,
+                      "PickupItemFromRoom",
+                      "INVALID_ARGUMENT",
+                      ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      PickupItemFromRoomResponse response =
+          PickupItemFromRoomResponse.newBuilder()
+              .setError(GrpcAppErrors.internal(meterRegistry, logger, "PickupItemFromRoom", ex))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    }
+  }
+
+  @Override
+  @Timed(value = "entityGrpc.dropItemToRoom")
+  public void dropItemToRoom(
+      DropItemToRoomRequest request, StreamObserver<DropItemToRoomResponse> responseObserver) {
+    try {
+      long tenantId = Long.parseLong(request.getTenantId());
+      long characterId = Long.parseLong(request.getCharacterId());
+      long itemId = Long.parseLong(request.getItemId());
+      int quantity = request.getQuantity();
+      var dto =
+          inventoryService.dropItemToRoom(
+              tenantId,
+              characterId,
+              request.getGameInstanceId(),
+              request.getRoomInstanceId(),
+              itemId,
+              quantity);
+      DropItemToRoomResponse response =
+          DropItemToRoomResponse.newBuilder().setRoomGroundItem(toProto(dto)).build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (NumberFormatException ex) {
+      DropItemToRoomResponse response =
+          DropItemToRoomResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry, logger, "DropItemToRoom", "INVALID_ARGUMENT", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      DropItemToRoomResponse response =
+          DropItemToRoomResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry, logger, "DropItemToRoom", "INVALID_ARGUMENT", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      DropItemToRoomResponse response =
+          DropItemToRoomResponse.newBuilder()
+              .setError(GrpcAppErrors.internal(meterRegistry, logger, "DropItemToRoom", ex))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    }
+  }
+
+  @Override
   @Timed(value = "entityGrpc.listRoomEntities")
   public void listRoomEntities(
       ListRoomEntitiesRequest request, StreamObserver<ListRoomEntitiesResponse> responseObserver) {
@@ -373,6 +485,19 @@ public class EntityManagementGrpcService
 
   private InventoryItem toProto(net.firedevops.firemud.entitymanagement.dto.InventoryEntryDto dto) {
     return InventoryItem.newBuilder()
+        .setItemId(String.valueOf(dto.itemId()))
+        .setItemName(dto.itemName())
+        .setItemDescription(dto.itemDescription() == null ? "" : dto.itemDescription())
+        .setQuantity(dto.quantity())
+        .build();
+  }
+
+  private RoomGroundInventoryItem toProto(
+      net.firedevops.firemud.entitymanagement.dto.RoomGroundInventoryEntryDto dto) {
+    return RoomGroundInventoryItem.newBuilder()
+        .setTenantId(String.valueOf(dto.tenantId()))
+        .setGameInstanceId(dto.gameInstanceId())
+        .setRoomInstanceId(dto.roomInstanceId())
         .setItemId(String.valueOf(dto.itemId()))
         .setItemName(dto.itemName())
         .setItemDescription(dto.itemDescription() == null ? "" : dto.itemDescription())

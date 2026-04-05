@@ -13,6 +13,8 @@ service EntityManagementService {
   rpc CreateCharacter(CreateCharacterRequest) returns (CreateCharacterResponse);
   rpc UpdateEntity(UpdateEntityRequest) returns (UpdateEntityResponse);
   rpc QueryInventory(QueryInventoryRequest) returns (QueryInventoryResponse);
+  rpc PickupItemFromRoom(PickupItemFromRoomRequest) returns (PickupItemFromRoomResponse);
+  rpc DropItemToRoom(DropItemToRoomRequest) returns (DropItemToRoomResponse);
   rpc ListCharactersByAccount(ListCharactersByAccountRequest) returns (ListCharactersByAccountResponse);
   rpc FindCharacterByName(FindCharacterByNameRequest) returns (FindCharacterByNameResponse);
   rpc ListRoomEntities(ListRoomEntitiesRequest) returns (ListRoomEntitiesResponse);
@@ -54,6 +56,46 @@ message InventoryItem {
   string item_name = 2;
   string item_description = 3;
   int32 quantity = 4;
+}
+
+message RoomGroundInventoryItem {
+  string tenant_id = 1;
+  string game_instance_id = 2;
+  string room_instance_id = 3;
+  string item_id = 4;
+  string item_name = 5;
+  string item_description = 6;
+  int32 quantity = 7;
+}
+
+message PickupItemFromRoomRequest {
+  string tenant_id = 1;
+  string character_id = 2;
+  string game_instance_id = 3;
+  string room_instance_id = 4;
+  string item_id = 5;
+  int32 quantity = 6;
+}
+
+message PickupItemFromRoomResponse {
+  InventoryItem inventory_item = 1;
+  RoomGroundInventoryItem room_ground_item = 2;
+  shared.v1.ErrorDetail error = 3;
+}
+
+message DropItemToRoomRequest {
+  string tenant_id = 1;
+  string character_id = 2;
+  string game_instance_id = 3;
+  string room_instance_id = 4;
+  string item_id = 5;
+  int32 quantity = 6;
+}
+
+message DropItemToRoomResponse {
+  InventoryItem inventory_item = 1;
+  RoomGroundInventoryItem room_ground_item = 2;
+  shared.v1.ErrorDetail error = 3;
 }
 
 message ListCharactersByAccountRequest {
