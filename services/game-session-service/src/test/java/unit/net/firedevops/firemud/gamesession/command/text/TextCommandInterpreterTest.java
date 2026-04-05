@@ -21,8 +21,14 @@ import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
 import net.firedevops.firemud.cache.LookCacheService;
 import net.firedevops.firemud.common.settings.ScopedSettingsSnapshot;
+import net.firedevops.firemud.entitymanagement.v1.DropItemToRoomResponse;
+import net.firedevops.firemud.entitymanagement.v1.EntityType;
 import net.firedevops.firemud.entitymanagement.v1.InventoryItem;
+import net.firedevops.firemud.entitymanagement.v1.ListRoomEntitiesResponse;
+import net.firedevops.firemud.entitymanagement.v1.PickupItemFromRoomResponse;
 import net.firedevops.firemud.entitymanagement.v1.QueryInventoryResponse;
+import net.firedevops.firemud.entitymanagement.v1.RoomEntity;
+import net.firedevops.firemud.entitymanagement.v1.RoomGroundInventoryItem;
 import net.firedevops.firemud.gamelogic.v1.LookResult;
 import net.firedevops.firemud.gamesession.client.AccountClient;
 import net.firedevops.firemud.gamesession.client.EntityManagementClient;
@@ -124,10 +130,56 @@ class TextCommandInterpreterTest {
             QueryInventoryResponse.newBuilder()
                 .addItems(
                     InventoryItem.newBuilder()
-                        .setItemId("7")
+                        .setItemId("ITEM-009")
                         .setItemName("Torch")
                         .setItemDescription("A small torch")
                         .setQuantity(2)
+                        .build())
+                .build());
+    when(entityManagementClient.listRoomEntities(
+            Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(
+            ListRoomEntitiesResponse.newBuilder()
+                .addEntities(
+                    RoomEntity.newBuilder()
+                        .setEntityId("22:77:room-7:ITEM-009")
+                        .setDisplayName("Torch")
+                        .setEntityType(EntityType.ITEM)
+                        .addStateFlags("room-ground")
+                        .build())
+                .build());
+    when(entityManagementClient.pickupItemFromRoom(
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.eq(1)))
+        .thenReturn(
+            PickupItemFromRoomResponse.newBuilder()
+                .setInventoryItem(
+                    InventoryItem.newBuilder()
+                        .setItemId("ITEM-009")
+                        .setItemName("Torch")
+                        .setItemDescription("A battered key")
+                        .setQuantity(1)
+                        .build())
+                .build());
+    when(entityManagementClient.dropItemToRoom(
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.eq(1)))
+        .thenReturn(
+            DropItemToRoomResponse.newBuilder()
+                .setRoomGroundItem(
+                    RoomGroundInventoryItem.newBuilder()
+                        .setItemId("ITEM-009")
+                        .setItemName("Torch")
+                        .setItemDescription("A battered key")
+                        .setQuantity(1)
                         .build())
                 .build());
     when(devIsolatedRegistryProvider.getIfAvailable()).thenReturn(null);
@@ -318,33 +370,39 @@ class TextCommandInterpreterTest {
   }
 
   @Test
-  void getAfterPlayReturnsInventoryUnavailableUntilRuntimeContractLands() {
+  void getAfterPlayReturnsSuccessWithMutationNotice() {
     interpreter.interpret("1", "LOGIN demo@example.com swordfish", false);
     interpreter.interpret("1", "PLAY demo", false);
 
     TextCommandInterpretationResult interpretation =
-        interpreter.interpret("1", "GET iron key", false);
+        interpreter.interpret("1", "GET Torch", false);
 
-    assertFalse(interpretation.commandResult().accepted());
-    assertEquals("INVENTORY_UNAVAILABLE", interpretation.commandResult().errorCode());
+    assertTrue(interpretation.commandResult().accepted());
     assertEquals(
-        "ERROR INVENTORY_UNAVAILABLE GET iron key is not yet wired to runtime inventory mutations",
-        renderedResponse("GET iron key", interpretation));
+        List.of(PlayerOutputKind.MESSAGE, PlayerOutputKind.VIEW, PlayerOutputKind.PROMPT),
+        interpretation.outputs().stream().map(PlayerOutput::kind).toList());
+    assertEquals(
+        "OK GET\nYou pick up Torch.\nInventory:\n- Torch x2 (A small torch)\n\n"
+            + "demo> ",
+        renderedResponse("GET Torch", interpretation));
   }
 
   @Test
-  void dropAfterPlayReturnsInventoryUnavailableUntilRuntimeContractLands() {
+  void dropAfterPlayReturnsSuccessWithMutationNotice() {
     interpreter.interpret("1", "LOGIN demo@example.com swordfish", false);
     interpreter.interpret("1", "PLAY demo", false);
 
     TextCommandInterpretationResult interpretation =
-        interpreter.interpret("1", "DROP rough iron key", false);
+        interpreter.interpret("1", "DROP Torch", false);
 
-    assertFalse(interpretation.commandResult().accepted());
-    assertEquals("INVENTORY_UNAVAILABLE", interpretation.commandResult().errorCode());
+    assertTrue(interpretation.commandResult().accepted());
     assertEquals(
-        "ERROR INVENTORY_UNAVAILABLE DROP rough iron key is not yet wired to runtime inventory mutations",
-        renderedResponse("DROP rough iron key", interpretation));
+        List.of(PlayerOutputKind.MESSAGE, PlayerOutputKind.VIEW, PlayerOutputKind.PROMPT),
+        interpretation.outputs().stream().map(PlayerOutput::kind).toList());
+    assertEquals(
+        "OK DROP\nYou drop Torch.\nInventory:\n- Torch x2 (A small torch)\n\n"
+            + "demo> ",
+        renderedResponse("DROP Torch", interpretation));
   }
 
   @Test

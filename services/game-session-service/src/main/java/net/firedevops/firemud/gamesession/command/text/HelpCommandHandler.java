@@ -38,7 +38,8 @@ public class HelpCommandHandler {
           success(
               "INVENTORY shows what you are carrying.\n"
                   + "If nothing is listed, you are empty-handed.\n"
-                  + "GET <item> and DROP <item> are visible now, but the mutation path is still pending.");
+                  + "GET <item> picks up a matching room-ground item.\n"
+                  + "DROP <item> places a carried item on the room ground.");
       case "GET" ->
           success(
               "GET <item>\n" + "Reserved for picking an item up from the room and carrying it.");
