@@ -42,8 +42,7 @@ public class RoomServiceImpl implements RoomService {
   private final MeterRegistry meterRegistry;
   private final WorldProperties worldProperties;
   private final RoomExitRepository roomExitRepository;
-  private final tools.jackson.databind.ObjectMapper objectMapper =
-      new tools.jackson.databind.ObjectMapper();
+  private final tools.jackson.databind.ObjectMapper objectMapper;
 
   private static final int SHORT_DESCRIPTION_LENGTH = 120;
 

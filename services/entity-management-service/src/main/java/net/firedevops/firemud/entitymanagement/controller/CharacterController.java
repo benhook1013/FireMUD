@@ -14,15 +14,16 @@ import org.springframework.web.bind.annotation.RestController;
 
 /** REST endpoints for listing characters by account. */
 @RestController
-@RequestMapping("/accounts/{accountId}/characters")
+@RequestMapping("/tenants/{tenantId}/accounts/{accountId}/characters")
 @RequiredArgsConstructor
 public class CharacterController {
   private final CharacterService characterService;
 
   @GetMapping
   public ResponseEntity<ApiResponse<Page<CharacterDto>>> list(
-      @PathVariable Long accountId, Pageable pageable) {
-    Page<CharacterDto> list = characterService.listForAccount(accountId, pageable);
+      @PathVariable Long tenantId, @PathVariable Long accountId, Pageable pageable) {
+    Page<CharacterDto> list =
+        characterService.listForTenantAndAccount(tenantId, accountId, pageable);
     return ResponseEntity.ok(ApiResponse.success(list));
   }
 }

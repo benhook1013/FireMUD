@@ -28,11 +28,11 @@ class CharacterControllerTest {
   @Test
   void listReturnsCharacters() throws Exception {
     CharacterDto dto = new CharacterDto(1L, 1L, 1L, "Hero", 1, 0, 1, 1, 1, 1, 10, 5);
-    when(characterService.listForAccount(eq(1L), any(Pageable.class)))
+    when(characterService.listForTenantAndAccount(eq(1L), eq(1L), any(Pageable.class)))
         .thenReturn(new PageImpl<>(List.of(dto)));
 
     mockMvc
-        .perform(get("/accounts/1/characters"))
+        .perform(get("/tenants/1/accounts/1/characters"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("SUCCESS"))
         .andExpect(jsonPath("$.data.content[0].name").value("Hero"));

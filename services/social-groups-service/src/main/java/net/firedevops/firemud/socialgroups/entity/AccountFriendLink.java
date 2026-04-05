@@ -14,6 +14,9 @@ public class AccountFriendLink {
   private Long id;
 
   @Column(nullable = false)
+  private Long tenantId;
+
+  @Column(nullable = false)
   private Long accountId;
 
   @Column(nullable = false)

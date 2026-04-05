@@ -39,7 +39,7 @@ public class WorldManagementGrpcService
   private final PingService pingService;
   private final RoomService roomService;
   private final MeterRegistry meterRegistry;
-  private final ObjectMapper objectMapper = new ObjectMapper();
+  private final ObjectMapper objectMapper;
 
   @Override
   @Timed(value = "worldGrpc.ping")

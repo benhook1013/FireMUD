@@ -182,11 +182,16 @@ paths:
                     type: object
         '400':
           description: Invalid item or character ID
-  /accounts/{accountId}/characters:
+  /tenants/{tenantId}/accounts/{accountId}/characters:
     get:
       summary: List characters by account
       operationId: listCharactersForAccount
       parameters:
+        - in: path
+          name: tenantId
+          required: true
+          schema:
+            type: integer
         - in: path
           name: accountId
           required: true
@@ -205,7 +210,7 @@ paths:
                     items:
                       $ref: '#/components/schemas/CharacterDto'
         '400':
-          description: Invalid account ID
+          description: Invalid tenant or account ID
   /crafting/recipes:
     post:
       summary: Create crafting recipe
@@ -250,4 +255,3 @@ paths:
                     $ref: '#/components/schemas/CraftingRecipeDto'
         '400':
           description: Recipe not found
-

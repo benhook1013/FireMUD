@@ -100,9 +100,10 @@ public class EntityManagementGrpcService
       ListCharactersByAccountRequest request,
       StreamObserver<ListCharactersByAccountResponse> responseObserver) {
     try {
+      long tenantId = Long.parseLong(request.getTenantId());
       long accountId = Long.parseLong(request.getAccountId());
       var characters =
-          characterService.listForAccount(accountId, Pageable.unpaged()).stream()
+          characterService.listForTenantAndAccount(tenantId, accountId, Pageable.unpaged()).stream()
               .map(this::toProto)
               .collect(Collectors.toList());
       ListCharactersByAccountResponse response =

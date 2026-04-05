@@ -6,6 +6,7 @@ import java.time.Instant;
 /** DTO for account-level friend links. */
 public record AccountFriendLinkDto(
     Long id,
+    @NotNull Long tenantId,
     @NotNull Long accountId,
     @NotNull Long friendAccountId,
     String status,

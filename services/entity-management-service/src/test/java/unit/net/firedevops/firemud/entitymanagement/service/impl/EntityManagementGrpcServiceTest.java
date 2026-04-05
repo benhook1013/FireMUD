@@ -145,6 +145,7 @@ class EntityManagementGrpcServiceTest {
         ref = new AtomicReference<>();
     service.listCharactersByAccount(
         net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountRequest.newBuilder()
+            .setTenantId("1")
             .setAccountId("bad")
             .build(),
         new StreamObserver<>() {
@@ -169,8 +170,49 @@ class EntityManagementGrpcServiceTest {
     PingService pingService = Mockito.mock(PingService.class);
     CharacterService characterService = Mockito.mock(CharacterService.class);
     InventoryService inventoryService = Mockito.mock(InventoryService.class);
-    Mockito.when(characterService.listForAccount(1L, Pageable.unpaged()))
+    Mockito.when(characterService.listForTenantAndAccount(1L, 1L, Pageable.unpaged()))
         .thenThrow(new RuntimeException("boom"));
+    io.micrometer.core.instrument.MeterRegistry meterRegistry =
+        Mockito.mock(io.micrometer.core.instrument.MeterRegistry.class);
+    io.micrometer.core.instrument.Counter counter =
+        Mockito.mock(io.micrometer.core.instrument.Counter.class);
+    Mockito.when(meterRegistry.counter(Mockito.anyString(), Mockito.any(String[].class)))
+        .thenReturn(counter);
+    RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
+    EntityManagementGrpcService service =
+        new EntityManagementGrpcService(
+            pingService, characterService, inventoryService, roomEntityService, meterRegistry);
+
+    AtomicReference<net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse>
+        ref = new AtomicReference<>();
+    service.listCharactersByAccount(
+        net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountRequest.newBuilder()
+            .setTenantId("1")
+            .setAccountId("1")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(
+              net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(ref.get());
+    assertEquals("INTERNAL", ref.get().getError().getCode());
+  }
+
+  @Test
+  void listCharactersMissingTenantIdReturnsErrorDetail() {
+    PingService pingService = Mockito.mock(PingService.class);
+    CharacterService characterService = Mockito.mock(CharacterService.class);
+    InventoryService inventoryService = Mockito.mock(InventoryService.class);
     io.micrometer.core.instrument.MeterRegistry meterRegistry =
         Mockito.mock(io.micrometer.core.instrument.MeterRegistry.class);
     io.micrometer.core.instrument.Counter counter =
@@ -202,7 +244,6 @@ class EntityManagementGrpcServiceTest {
           public void onCompleted() {}
         });
 
-    assertNotNull(ref.get());
-    assertEquals("INTERNAL", ref.get().getError().getCode());
+    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
   }
 }

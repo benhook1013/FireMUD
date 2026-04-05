@@ -19,6 +19,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
+import tools.jackson.databind.ObjectMapper;
 
 @ExtendWith(MockitoExtension.class)
 class AssetExportServiceImplTest {
@@ -35,7 +36,7 @@ class AssetExportServiceImplTest {
     props.setRegion("ap-southeast-2");
     props.setAccessKey("a");
     props.setSecretKey("s");
-    service = new AssetExportServiceImpl(repository, s3Client, props);
+    service = new AssetExportServiceImpl(repository, s3Client, props, new ObjectMapper());
   }
 
   @Test

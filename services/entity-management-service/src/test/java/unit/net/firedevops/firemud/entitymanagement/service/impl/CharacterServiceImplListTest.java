@@ -1,6 +1,7 @@
 package net.firedevops.firemud.entitymanagement.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -17,7 +18,7 @@ import org.springframework.data.domain.Pageable;
 
 class CharacterServiceImplListTest {
   @Test
-  void listForAccountReturnsDtos() {
+  void listForTenantAndAccountReturnsDtos() {
     CharacterRepository repo = Mockito.mock(CharacterRepository.class);
     CharacterMapper mapper = Mappers.getMapper(CharacterMapper.class);
     var cacheManager = new ConcurrentMapCacheManager("characterGraph");
@@ -32,10 +33,30 @@ class CharacterServiceImplListTest {
     c.setAccountId(1L);
     c.setName("Hero");
 
-    when(repo.findByAccountId(1L, Pageable.unpaged())).thenReturn(new PageImpl<>(List.of(c)));
+    when(repo.findByTenantIdAndAccountId(1L, 1L, Pageable.unpaged()))
+        .thenReturn(new PageImpl<>(List.of(c)));
 
-    var result = service.listForAccount(1L, Pageable.unpaged());
+    var result = service.listForTenantAndAccount(1L, 1L, Pageable.unpaged());
     assertEquals(1, result.getTotalElements());
     assertEquals("Hero", result.getContent().get(0).name());
+    verify(repo).findByTenantIdAndAccountId(1L, 1L, Pageable.unpaged());
+  }
+
+  @Test
+  void listForTenantAndAccountDoesNotCrossTenantBoundary() {
+    CharacterRepository repo = Mockito.mock(CharacterRepository.class);
+    CharacterMapper mapper = Mappers.getMapper(CharacterMapper.class);
+    var cacheManager = new ConcurrentMapCacheManager("characterGraph");
+    SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+    CharacterServiceImpl service =
+        new CharacterServiceImpl(repo, mapper, cacheManager, meterRegistry);
+    service.initMetrics();
+
+    when(repo.findByTenantIdAndAccountId(2L, 1L, Pageable.unpaged()))
+        .thenReturn(new PageImpl<>(List.of()));
+
+    var result = service.listForTenantAndAccount(2L, 1L, Pageable.unpaged());
+    assertEquals(0, result.getTotalElements());
+    verify(repo).findByTenantIdAndAccountId(2L, 1L, Pageable.unpaged());
   }
 }

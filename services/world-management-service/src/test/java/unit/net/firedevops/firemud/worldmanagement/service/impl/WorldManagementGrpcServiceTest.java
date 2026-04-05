@@ -18,6 +18,7 @@ import net.firedevops.firemud.worldmanagement.v1.PingRequest;
 import net.firedevops.firemud.worldmanagement.v1.PingResponse;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
+import tools.jackson.databind.ObjectMapper;
 
 class WorldManagementGrpcServiceTest {
   @Test
@@ -29,7 +30,7 @@ class WorldManagementGrpcServiceTest {
     Mockito.when(meterRegistry.counter(Mockito.anyString(), Mockito.any(String[].class)))
         .thenReturn(Mockito.mock(io.micrometer.core.instrument.Counter.class));
     WorldManagementGrpcService service =
-        new WorldManagementGrpcService(pingService, roomService, meterRegistry);
+        new WorldManagementGrpcService(pingService, roomService, meterRegistry, new ObjectMapper());
 
     AtomicReference<PingResponse> ref = new AtomicReference<>();
     service.ping(
@@ -58,7 +59,7 @@ class WorldManagementGrpcServiceTest {
     Mockito.when(meterRegistry.counter(Mockito.anyString(), Mockito.any(String[].class)))
         .thenReturn(Mockito.mock(io.micrometer.core.instrument.Counter.class));
     WorldManagementGrpcService service =
-        new WorldManagementGrpcService(pingService, roomService, meterRegistry);
+        new WorldManagementGrpcService(pingService, roomService, meterRegistry, new ObjectMapper());
 
     AtomicReference<net.firedevops.firemud.worldmanagement.v1.GetRoomResponse> ref =
         new AtomicReference<>();
@@ -91,7 +92,7 @@ class WorldManagementGrpcServiceTest {
     Mockito.when(meterRegistry.counter(Mockito.anyString(), Mockito.any(String[].class)))
         .thenReturn(Mockito.mock(io.micrometer.core.instrument.Counter.class));
     WorldManagementGrpcService service =
-        new WorldManagementGrpcService(pingService, roomService, meterRegistry);
+        new WorldManagementGrpcService(pingService, roomService, meterRegistry, new ObjectMapper());
 
     AtomicReference<GetRoomSnapshotResponse> ref = new AtomicReference<>();
     service.getRoomSnapshot(
@@ -122,7 +123,7 @@ class WorldManagementGrpcServiceTest {
     Mockito.when(meterRegistry.counter(Mockito.anyString(), Mockito.any(String[].class)))
         .thenReturn(Mockito.mock(io.micrometer.core.instrument.Counter.class));
     WorldManagementGrpcService service =
-        new WorldManagementGrpcService(pingService, roomService, meterRegistry);
+        new WorldManagementGrpcService(pingService, roomService, meterRegistry, new ObjectMapper());
 
     AtomicReference<GetRoomSnapshotResponse> ref = new AtomicReference<>();
     service.getRoomSnapshot(
@@ -168,7 +169,7 @@ class WorldManagementGrpcServiceTest {
     Mockito.when(meterRegistry.counter(Mockito.anyString(), Mockito.any(String[].class)))
         .thenReturn(Mockito.mock(io.micrometer.core.instrument.Counter.class));
     WorldManagementGrpcService service =
-        new WorldManagementGrpcService(pingService, roomService, meterRegistry);
+        new WorldManagementGrpcService(pingService, roomService, meterRegistry, new ObjectMapper());
 
     AtomicReference<GetRoomSnapshotResponse> ref = new AtomicReference<>();
     AtomicReference<Throwable> error = new AtomicReference<>();

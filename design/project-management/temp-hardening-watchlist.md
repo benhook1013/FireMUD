@@ -4,19 +4,19 @@ Temporary tracking for still-live audit items that need implementation or follow
 
 ## Fix Now
 
-- [ ] Entity-management `ListCharactersByAccount` leaks cross-tenant character enumeration and exposes `tenant_id` on a tenant-agnostic request/contract.
-- [ ] `game-design-service` publish flows hold DB transactions open across S3 export and gRPC notification work.
-- [ ] `game-session-service` session start/stop flows hold DB transactions open across saga and Redis side effects.
+- [x] Entity-management `ListCharactersByAccount` is tenant-scoped in both request and service path.
+- [x] `game-design-service` publish flows no longer hold DB transactions open across S3 export and gRPC notification work.
+- [x] `game-session-service` session start/stop flows no longer hold DB transactions open across saga and Redis side effects.
 
 ## Fix Soon
 
-- [ ] `social-groups-service` chat history Redis writes are non-atomic and can diverge from the surrounding DB transaction.
-- [ ] `social-groups-service` account-level friendships have no tenant scope in storage/schema even though the API is tenant-scoped.
+- [x] `social-groups-service` chat history Redis writes are now deferred until after DB commit.
+- [x] `social-groups-service` account-level friendships now carry tenant scope in storage/schema and service mapping.
 
 ## Refactor / Hygiene
 
-- [ ] Replace direct `new ObjectMapper()` construction in runtime services with injected shared Jackson infrastructure.
-- [ ] Replace direct `new JwtUtil(...)` construction in `FirstPartyConnectContextService` with injected/shared JWT infrastructure.
+- [x] Replace direct `new ObjectMapper()` construction in runtime services with injected shared Jackson infrastructure.
+- [x] Replace direct `new JwtUtil(...)` construction in `FirstPartyConnectContextService` with injected/shared JWT infrastructure.
 
 ## Already Addressed Elsewhere
 
