@@ -367,10 +367,22 @@ jobs:
           PREVIEW_EMAIL: demo@example.com
           PREVIEW_PASSWORD: swordfish
         run: |
-          kubectl -n "${PREVIEW_NAMESPACE}" port-forward svc/account-service 18081:8080 >/tmp/preview-account-port-forward.log 2>&1 &
+          set -o pipefail
+          ACCOUNT_PF_LOG=/tmp/preview-account-port-forward.log
+          SESSION_PF_LOG=/tmp/preview-game-session-port-forward.log
+          kubectl -n "${PREVIEW_NAMESPACE}" port-forward svc/account-service 18081:8080 >"${ACCOUNT_PF_LOG}" 2>&1 &
           ACCOUNT_PF_PID=$!
-          kubectl -n "${PREVIEW_NAMESPACE}" port-forward svc/game-session-service 18086:8080 >/tmp/preview-game-session-port-forward.log 2>&1 &
+          kubectl -n "${PREVIEW_NAMESPACE}" port-forward svc/game-session-service 18086:8080 >"${SESSION_PF_LOG}" 2>&1 &
           SESSION_PF_PID=$!
+          dump_port_forward_logs() {
+            for log in "${ACCOUNT_PF_LOG}" "${SESSION_PF_LOG}"; do
+              if [ -f "${log}" ]; then
+                echo "=== ${log} ==="
+                cat "${log}"
+                echo
+              fi
+            done
+          }
           trap 'kill ${ACCOUNT_PF_PID} >/dev/null 2>&1 || true; kill ${SESSION_PF_PID} >/dev/null 2>&1 || true' EXIT
           for _ in $(seq 1 30); do
             if curl --silent --fail http://127.0.0.1:18081/actuator/health/readiness >/dev/null && \
@@ -379,7 +391,13 @@ jobs:
             fi
             sleep 1
           done
-          python3 - <<'PY'
+          if ! curl --silent --fail http://127.0.0.1:18081/actuator/health/readiness >/dev/null || \
+             ! curl --silent --fail http://127.0.0.1:18086/actuator/health/readiness >/dev/null; then
+            echo "Preview smoke bootstrap port-forwards did not become ready."
+            dump_port_forward_logs
+            exit 1
+          fi
+          if ! python3 - <<'PY'
           import json
           import sys
           import urllib.error
@@ -412,6 +430,8 @@ jobs:
             },
           )
           print(account_body)
+          if status >= 400:
+            raise SystemExit(f"Account bootstrap failed with status {status}: {account_body}")
           if status >= 500:
             raise SystemExit(f"Account bootstrap failed with status {status}")
           account_payload = json.loads(account_body or "{}")
@@ -439,6 +459,11 @@ jobs:
               f"got {session_id!r}"
             )
           PY
+          then
+            echo "Preview smoke bootstrap account or session creation failed."
+            dump_port_forward_logs
+            exit 1
+          fi
 
       - name: Smoke hosted preview over TCP
         if: ${{ steps.deploy-release.outcome == 'success' }}
@@ -449,7 +474,13 @@ jobs:
           SMOKE_USERNAME: demo@example.com
           SMOKE_PASSWORD: swordfish
         run: |
-          bash ./dev-tools/preview/preview-login-look-smoke.sh
+          set -o pipefail
+          SMOKE_TRANSCRIPT=/tmp/preview-hosted-tcp-smoke.log
+          if ! bash ./dev-tools/preview/preview-login-look-smoke.sh 2>&1 | tee "${SMOKE_TRANSCRIPT}"; then
+            echo "=== Hosted preview TCP smoke transcript ==="
+            cat "${SMOKE_TRANSCRIPT}"
+            exit 1
+          fi
 
       - name: Summarize preview access
         if: ${{ steps.deploy-release.outcome == 'success' }}

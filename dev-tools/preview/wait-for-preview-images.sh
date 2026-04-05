@@ -15,6 +15,7 @@ image_tag="$1"
 timeout_seconds="${PREVIEW_IMAGE_WAIT_TIMEOUT_SECONDS:-1800}"
 sleep_seconds="${PREVIEW_IMAGE_WAIT_SLEEP_SECONDS:-10}"
 manifest_timeout_seconds="${PREVIEW_IMAGE_MANIFEST_TIMEOUT_SECONDS:-20}"
+start_epoch="${SECONDS}"
 
 services=(
   account-service
@@ -33,23 +34,41 @@ services=(
 deadline=$((SECONDS + timeout_seconds))
 
 while (( SECONDS < deadline )); do
+  loop_start="${SECONDS}"
   missing=()
+  probe_summary=()
   for service in "${services[@]}"; do
     image="ghcr.io/benhook1013/${service}:${image_tag}"
-    if ! timeout "${manifest_timeout_seconds}" docker manifest inspect "$image" >/dev/null 2>&1; then
+    if timeout "${manifest_timeout_seconds}" docker manifest inspect "$image" >/dev/null 2>&1; then
+      probe_summary+=("${service}:ok")
+    else
+      rc=$?
+      if [[ $rc -eq 124 ]]; then
+        probe_summary+=("${service}:timeout")
+      else
+        probe_summary+=("${service}:missing")
+      fi
       missing+=("$service")
     fi
   done
 
   if (( ${#missing[@]} == 0 )); then
-    echo "All required preview images are available for ${image_tag}."
+    printf 'All required preview images are available for %s after %ss.\n' \
+      "${image_tag}" "$((SECONDS - start_epoch))"
     exit 0
   fi
 
-  echo "Waiting for preview images for ${image_tag}. Missing: ${missing[*]}"
+  printf 'Waiting for preview images for %s after %ss. Missing: %s\n' \
+    "${image_tag}" "$((SECONDS - start_epoch))" "${missing[*]}"
+  printf 'Probe summary: %s\n' "${probe_summary[*]}"
+  if (( SECONDS - loop_start >= manifest_timeout_seconds )); then
+    printf 'Manifest probe loop consumed at least %ss this round; inspect GHCR availability or docker manifest latency.\n' \
+      "${manifest_timeout_seconds}"
+  fi
   sleep "$sleep_seconds"
 done
 
-echo "Timed out waiting for preview images for ${image_tag}." >&2
+printf 'Timed out waiting for preview images for %s after %ss.\n' \
+  "${image_tag}" "$((SECONDS - start_epoch))" >&2
 printf 'Still missing: %s\n' "${missing[*]:-unknown}" >&2
 exit 1
