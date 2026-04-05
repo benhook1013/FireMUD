@@ -42,8 +42,7 @@ public class HelpCommandHandler {
                   + "DROP <item> places a carried item on the room ground and refreshes your inventory.");
       case "GET" ->
           success(
-              "GET <item>\n"
-                  + "Pick up a matching room-ground item and refresh your inventory.");
+              "GET <item>\n" + "Pick up a matching room-ground item and refresh your inventory.");
       case "DROP" ->
           success(
               "DROP <item>\n"

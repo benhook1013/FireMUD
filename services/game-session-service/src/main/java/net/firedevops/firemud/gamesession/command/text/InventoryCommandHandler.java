@@ -133,9 +133,7 @@ public class InventoryCommandHandler {
             findRoomGroundItem(roomEntities.getEntitiesList(), itemReference);
         if (resolved.isEmpty()) {
           return inventoryMutationFailure(
-              "INVALID_ARGUMENT",
-              itemReference,
-              "No room item matches \"" + itemReference + "\"");
+              "INVALID_ARGUMENT", itemReference, "No room item matches \"" + itemReference + "\"");
         }
         ResolvedItem item = resolved.orElseThrow();
         var response =
@@ -249,7 +247,8 @@ public class InventoryCommandHandler {
         .filter(entity -> entity.getStateFlagsList().contains("room-ground"))
         .filter(entity -> entity.getDisplayName().equalsIgnoreCase(reference))
         .findFirst()
-        .map(entity -> new ResolvedItem(parseItemId(entity.getEntityId()), entity.getDisplayName()));
+        .map(
+            entity -> new ResolvedItem(parseItemId(entity.getEntityId()), entity.getDisplayName()));
   }
 
   private Optional<ResolvedItem> findCarriedItem(List<InventoryItem> items, String reference) {
