@@ -72,7 +72,7 @@ public class InventoryCommandHandler {
 
   private List<String> formatInventoryLines(List<InventoryItem> items) {
     if (items.isEmpty()) {
-      return List.of("(empty)");
+      return List.of("You are not carrying anything.");
     }
     return items.stream().map(this::formatInventoryItem).collect(Collectors.toList());
   }

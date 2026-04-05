@@ -37,8 +37,8 @@ public class HelpCommandHandler {
       case "INVENTORY" ->
           success(
               "INVENTORY shows what you are carrying.\n"
-                  + "GET <item> and DROP <item> are reserved for the runtime room-ground transfer flow.\n"
-                  + "The listing view is live; mutations are still being wired.");
+                  + "If nothing is listed, you are empty-handed.\n"
+                  + "GET <item> and DROP <item> are visible now, but the mutation path is still pending.");
       case "GET" ->
           success(
               "GET <item>\n" + "Reserved for picking an item up from the room and carrying it.");
