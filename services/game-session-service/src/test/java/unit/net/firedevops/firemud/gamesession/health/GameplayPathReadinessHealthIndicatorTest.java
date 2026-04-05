@@ -37,7 +37,7 @@ class GameplayPathReadinessHealthIndicatorTest {
     GameLogicClient gameLogicClient = mock(GameLogicClient.class);
     doThrow(new StatusRuntimeException(io.grpc.Status.NOT_FOUND.withDescription("room missing")))
         .when(gameLogicClient)
-        .resolveLookForReadiness(anyString(), anyString(), anyString(), anyString());
+        .resolveLookForReadiness(anyString(), anyString(), anyString(), anyString(), anyString());
     GameplayLocalPathReadinessProbe localPathProbe = mock(GameplayLocalPathReadinessProbe.class);
     when(localPathProbe.probeSessionContextStore()).thenReturn(ProbeResult.up("ROUND_TRIP_OK"));
     when(localPathProbe.probeCommandQueueStore()).thenReturn(ProbeResult.up("QUEUE_WRITE_OK"));
@@ -96,7 +96,7 @@ class GameplayPathReadinessHealthIndicatorTest {
     GameLogicClient gameLogicClient = mock(GameLogicClient.class);
     doThrow(new StatusRuntimeException(io.grpc.Status.UNAVAILABLE.withDescription("logic down")))
         .when(gameLogicClient)
-        .resolveLookForReadiness(anyString(), anyString(), anyString(), anyString());
+        .resolveLookForReadiness(anyString(), anyString(), anyString(), anyString(), anyString());
     GameplayLocalPathReadinessProbe localPathProbe = mock(GameplayLocalPathReadinessProbe.class);
     when(localPathProbe.probeSessionContextStore()).thenReturn(ProbeResult.up("ROUND_TRIP_OK"));
     when(localPathProbe.probeCommandQueueStore()).thenReturn(ProbeResult.up("QUEUE_WRITE_OK"));

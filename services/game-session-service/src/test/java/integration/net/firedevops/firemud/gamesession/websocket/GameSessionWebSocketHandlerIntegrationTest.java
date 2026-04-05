@@ -199,15 +199,15 @@ class GameSessionWebSocketHandlerIntegrationTest {
         .thenReturn(CommandEnqueueResult.success());
     when(commandService.enqueue(eq("1"), eq("LOOK"), eq(false)))
         .thenReturn(CommandEnqueueResult.success());
-    when(gameLogicClient.resolveLook(eq("22"), eq("41"), eq("123"), eq("1021"), eq("")))
+    when(gameLogicClient.resolveLook(eq("22"), eq("41"), eq("123"), eq("1"), eq("1021"), eq("")))
         .thenReturn(lookResult);
-    when(gameLogicClient.resolveLook(eq("22"), eq("41"), eq("123"), eq("1021"), eq("fr")))
+    when(gameLogicClient.resolveLook(eq("22"), eq("41"), eq("123"), eq("1"), eq("1021"), eq("fr")))
         .thenReturn(lookResult);
-    when(gameLogicClient.resolveLook(eq("22"), eq("42"), eq("123"), eq("1021"), eq("")))
+    when(gameLogicClient.resolveLook(eq("22"), eq("42"), eq("123"), eq("1"), eq("1021"), eq("")))
         .thenReturn(lookResult);
-    when(gameLogicClient.resolveLook(eq("22"), eq("1"), eq("123"), eq("1021"), eq("")))
+    when(gameLogicClient.resolveLook(eq("22"), eq("1"), eq("123"), eq("1"), eq("1021"), eq("")))
         .thenReturn(lookResult);
-    when(gameLogicClient.resolveLook(eq("22"), eq("2"), eq("123"), eq("1021"), eq("")))
+    when(gameLogicClient.resolveLook(eq("22"), eq("2"), eq("123"), eq("1"), eq("1021"), eq("")))
         .thenReturn(lookResult);
     when(lookTextRenderer.toPlayerOutput(
             eq(lookResult),
@@ -326,7 +326,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
 
     verify(commandService).enqueue("41", "LOGIN demo@example.com swordfish", false);
     verify(commandService).enqueue("41", "LOOK", false);
-    verify(gameLogicClient).resolveLook("22", "41", "123", "1021", "");
+    verify(gameLogicClient).resolveLook("22", "41", "123", "1", "1021", "");
     verify(lookCacheService)
         .cache(
             eq(22L),
@@ -454,7 +454,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
                     .setDescription("porte etroite")
                     .build())
             .build();
-    when(gameLogicClient.resolveLook(eq("22"), eq("41"), eq("123"), eq("1021"), eq("fr")))
+    when(gameLogicClient.resolveLook(eq("22"), eq("41"), eq("123"), eq("1"), eq("1021"), eq("fr")))
         .thenReturn(lookResult);
     when(lookTextRenderer.toPlayerOutput(
             eq(lookResult),
@@ -531,7 +531,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
             .setLongDescription("A northern hall used for movement verification.")
             .build();
     when(gameLogicClient.resolveMove(
-            eq("22"), eq("42"), eq("123"), eq("1021"), eq("north"), eq("")))
+            eq("22"), eq("42"), eq("123"), eq("1"), eq("1021"), eq("north"), eq("")))
         .thenReturn(
             net.firedevops.firemud.gamelogic.v1.MoveResult.newBuilder()
                 .setSuccess(true)
@@ -606,7 +606,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
     assertThat(sessionContextService.findByTenantAndSessionId(22L, 42L))
         .hasValueSatisfying(context -> assertThat(context.roomInstanceId()).isEqualTo("2045"));
 
-    verify(gameLogicClient).resolveMove("22", "42", "123", "1021", "north", "");
+    verify(gameLogicClient).resolveMove("22", "42", "123", "1", "1021", "north", "");
     verify(lookCacheService)
         .cache(
             eq(22L),

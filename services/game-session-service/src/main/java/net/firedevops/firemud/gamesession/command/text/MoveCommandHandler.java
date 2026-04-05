@@ -61,6 +61,7 @@ public class MoveCommandHandler {
                 Long.toString(context.tenantId()),
                 Long.toString(context.sessionId()),
                 Long.toString(context.characterId()),
+                Long.toString(context.gameInstanceId()),
                 StringUtils.hasText(context.roomInstanceId())
                     ? context.roomInstanceId()
                     : gameLogicProperties.getDefaultRoomId(),

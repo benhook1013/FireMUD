@@ -29,6 +29,7 @@ public class GameplayPathReadinessHealthIndicator implements HealthIndicator {
   private static final String PROBE_PASSWORD = "invalid";
   private static final String PROBE_SESSION_ID = "1";
   private static final String PROBE_PLAYER_ID = "1";
+  private static final String PROBE_GAME_INSTANCE_ID = "1";
   private static final String PROBE_ROOM_ID = "1";
 
   private final AccountClient accountClient;
@@ -113,7 +114,11 @@ public class GameplayPathReadinessHealthIndicator implements HealthIndicator {
 
     try {
       gameLogicClient.resolveLookForReadiness(
-          PROBE_TENANT_ID, PROBE_SESSION_ID, PROBE_PLAYER_ID, PROBE_ROOM_ID);
+          PROBE_TENANT_ID,
+          PROBE_SESSION_ID,
+          PROBE_PLAYER_ID,
+          PROBE_GAME_INSTANCE_ID,
+          PROBE_ROOM_ID);
       dependencies.put(
           "gameLogicService",
           DependencyReadinessSupport.upDependency(

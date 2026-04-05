@@ -249,6 +249,7 @@ class TextCommandInterpreterTest {
             Mockito.eq("22"),
             Mockito.eq("1"),
             Mockito.anyString(),
+            Mockito.anyString(),
             Mockito.eq("1021"),
             Mockito.anyString()))
         .thenReturn(lookResult);
@@ -374,16 +375,14 @@ class TextCommandInterpreterTest {
     interpreter.interpret("1", "LOGIN demo@example.com swordfish", false);
     interpreter.interpret("1", "PLAY demo", false);
 
-    TextCommandInterpretationResult interpretation =
-        interpreter.interpret("1", "GET Torch", false);
+    TextCommandInterpretationResult interpretation = interpreter.interpret("1", "GET Torch", false);
 
     assertTrue(interpretation.commandResult().accepted());
     assertEquals(
         List.of(PlayerOutputKind.MESSAGE, PlayerOutputKind.VIEW, PlayerOutputKind.PROMPT),
         interpretation.outputs().stream().map(PlayerOutput::kind).toList());
     assertEquals(
-        "OK GET\nYou pick up Torch.\nInventory:\n- Torch x2 (A small torch)\n\n"
-            + "demo> ",
+        "OK GET\nYou pick up Torch.\nInventory:\n- Torch x2 (A small torch)\n\n" + "demo> ",
         renderedResponse("GET Torch", interpretation));
   }
 
@@ -400,8 +399,7 @@ class TextCommandInterpreterTest {
         List.of(PlayerOutputKind.MESSAGE, PlayerOutputKind.VIEW, PlayerOutputKind.PROMPT),
         interpretation.outputs().stream().map(PlayerOutput::kind).toList());
     assertEquals(
-        "OK DROP\nYou drop Torch.\nInventory:\n- Torch x2 (A small torch)\n\n"
-            + "demo> ",
+        "OK DROP\nYou drop Torch.\nInventory:\n- Torch x2 (A small torch)\n\n" + "demo> ",
         renderedResponse("DROP Torch", interpretation));
   }
 

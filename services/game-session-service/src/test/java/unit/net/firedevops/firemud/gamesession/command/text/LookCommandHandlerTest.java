@@ -71,7 +71,7 @@ class LookCommandHandlerTest {
     when(sessionAuthenticationService.resolveSessionContext(
             String.valueOf(sessionContext.sessionId())))
         .thenReturn(Optional.of(sessionContext));
-    when(gameLogicClient.resolveLook("22", "1", "911", "room-42", "")).thenReturn(lookResult);
+    when(gameLogicClient.resolveLook("22", "1", "911", "0", "room-42", "")).thenReturn(lookResult);
     when(lookTextRenderer.toPlayerOutput(
             eq(lookResult),
             eq(false),
@@ -120,7 +120,7 @@ class LookCommandHandlerTest {
 
   @Test
   void mapsLookErrorResponseToErrorPlayerOutput() {
-    when(gameLogicClient.resolveLook("22", "1", "911", "room-42", ""))
+    when(gameLogicClient.resolveLook("22", "1", "911", "0", "room-42", ""))
         .thenReturn(
             lookResult.toBuilder()
                 .setError(
@@ -149,7 +149,7 @@ class LookCommandHandlerTest {
   void propagatesInfrastructureFailuresFromGrpcAsBefore() {
     StatusRuntimeException worldDown =
         new StatusRuntimeException(Status.UNAVAILABLE.withDescription("WorldManagement: down"));
-    when(gameLogicClient.resolveLook("22", "1", "911", "room-42", "")).thenThrow(worldDown);
+    when(gameLogicClient.resolveLook("22", "1", "911", "0", "room-42", "")).thenThrow(worldDown);
 
     PlayerOutput response = handler.describePlayerOutput("123", true);
 
@@ -226,7 +226,8 @@ class LookCommandHandlerTest {
         new SessionContext(17L, 22L, 123L, "demo", 911L, "demo", 77L, "room-42", "jwt");
     when(sessionAuthenticationService.resolveSessionContext("played"))
         .thenReturn(Optional.of(playedContext));
-    when(gameLogicClient.resolveLook("22", "17", "911", "room-42", "")).thenReturn(lookResult);
+    when(gameLogicClient.resolveLook("22", "17", "911", "77", "room-42", ""))
+        .thenReturn(lookResult);
 
     handler.describePlayerOutput("played", true);
 

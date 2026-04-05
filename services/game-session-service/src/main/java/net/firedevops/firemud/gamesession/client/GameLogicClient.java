@@ -55,7 +55,12 @@ public class GameLogicClient
   }
 
   public LookResult resolveLook(
-      String tenantId, String sessionId, String characterId, String roomId, String localeTag) {
+      String tenantId,
+      String sessionId,
+      String characterId,
+      String gameInstanceId,
+      String roomId,
+      String localeTag) {
     LookRequest request =
         LookRequest.newBuilder()
             .setTenantId(tenantId)
@@ -65,6 +70,7 @@ public class GameLogicClient
             .setRoomInstance(
                 RoomInstanceRef.newBuilder()
                     .setTenantId(tenantId)
+                    .setGameInstanceId(gameInstanceId == null ? "" : gameInstanceId)
                     .setRoomInstanceId(roomId)
                     .build())
             .build();
@@ -72,7 +78,7 @@ public class GameLogicClient
   }
 
   public LookResult resolveLookForReadiness(
-      String tenantId, String sessionId, String characterId, String roomId) {
+      String tenantId, String sessionId, String characterId, String gameInstanceId, String roomId) {
     LookRequest request =
         LookRequest.newBuilder()
             .setTenantId(tenantId)
@@ -81,6 +87,7 @@ public class GameLogicClient
             .setRoomInstance(
                 RoomInstanceRef.newBuilder()
                     .setTenantId(tenantId)
+                    .setGameInstanceId(gameInstanceId == null ? "" : gameInstanceId)
                     .setRoomInstanceId(roomId)
                     .build())
             .build();
@@ -110,6 +117,7 @@ public class GameLogicClient
             .setRoomInstance(
                 RoomInstanceRef.newBuilder()
                     .setTenantId(tenantId)
+                    .setGameInstanceId(gameInstanceId == null ? "" : gameInstanceId)
                     .setRoomInstanceId(roomId)
                     .build())
             .setType(type)
@@ -127,6 +135,7 @@ public class GameLogicClient
       String tenantId,
       String sessionId,
       String characterId,
+      String gameInstanceId,
       String roomId,
       String direction,
       String localeTag) {
@@ -139,6 +148,7 @@ public class GameLogicClient
             .setRoomInstance(
                 RoomInstanceRef.newBuilder()
                     .setTenantId(tenantId)
+                    .setGameInstanceId(gameInstanceId == null ? "" : gameInstanceId)
                     .setRoomInstanceId(roomId)
                     .build())
             .setDirection(direction)
