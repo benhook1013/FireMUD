@@ -4,10 +4,10 @@ package net.firedevops.firemud.gamesession.command.text;
 public final class GameplayStageCommandConstants {
   public static final String LOGIN_REQUIRED_CODE = "LOGIN_REQUIRED";
   public static final String LOGIN_REQUIRED_MESSAGE =
-      "Use LOGIN <username> <password> to continue.";
+      "You must LOGIN before gameplay commands.";
 
   public static final String PLAY_REQUIRED_CODE = "PLAY_REQUIRED";
-  public static final String PLAY_REQUIRED_MESSAGE = "Use PLAY <world> [character] to enter.";
+  public static final String PLAY_REQUIRED_MESSAGE = "You must PLAY before in-world commands.";
 
   public static final String PLAY_INVALID_ARGUMENT_CODE = "INVALID_ARGUMENT";
   public static final String PLAY_INVALID_ARGUMENT_MESSAGE =

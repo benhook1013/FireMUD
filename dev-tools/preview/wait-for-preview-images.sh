@@ -17,21 +17,25 @@ sleep_seconds="${PREVIEW_IMAGE_WAIT_SLEEP_SECONDS:-10}"
 start_epoch="${SECONDS}"
 deadline=$((SECONDS + timeout_seconds))
 
+jq_filter="$(cat <<'JQ'
+.workflow_runs
+| map(select(.head_sha == $head_sha))
+| sort_by(.created_at)
+| reverse
+| if length == 0 then
+    "missing"
+  else
+    .[0] as $run
+    | "found\t\($run.id)\t\($run.status // "")\t\($run.conclusion // "")\t\($run.html_url // "")"
+  end
+JQ
+)"
+
 while (( SECONDS < deadline )); do
   run_state="$(
     gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/runtime-images.yml/runs?per_page=100" \
-      --jq '
-        .workflow_runs
-        | map(select(.head_sha == "'"${image_tag}"'"))
-        | sort_by(.created_at)
-        | reverse
-        | if length == 0 then
-            "missing"
-          else
-            .[0] as $run
-            | "found\t\($run.id)\t\($run.status // "")\t\($run.conclusion // "")\t\($run.html_url // "")"
-          end
-      '
+      --arg head_sha "${image_tag}" \
+      --jq "${jq_filter}"
   )"
 
   IFS=$'\t' read -r state run_id run_status run_conclusion run_url <<<"${run_state}"

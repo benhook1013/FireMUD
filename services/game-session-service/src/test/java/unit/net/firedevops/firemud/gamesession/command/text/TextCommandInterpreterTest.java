@@ -319,7 +319,8 @@ class TextCommandInterpreterTest {
         List.of(PlayerOutputKind.ERROR),
         interpretation.outputs().stream().map(PlayerOutput::kind).toList());
     assertEquals(
-        "ERROR UNKNOWN_COMMAND Unknown command", renderedResponse("FROBULATE", interpretation));
+        "ERROR UNKNOWN_COMMAND Unknown command",
+        renderedResponse("FROBULATE", interpretation));
   }
 
   @Test
