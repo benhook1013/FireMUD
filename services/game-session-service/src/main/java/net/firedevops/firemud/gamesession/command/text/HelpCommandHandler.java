@@ -37,10 +37,15 @@ public class HelpCommandHandler {
       case "INVENTORY" ->
           success(
               "INVENTORY shows what you are carrying.\n"
-                  + "GET <item> picks an item up from the room.\n"
-                  + "DROP <item> places an item on the room ground.");
-      case "GET" -> success("GET <item>\nPick an item up from the room and carry it.");
-      case "DROP" -> success("DROP <item>\nPlace an item you are carrying on the room ground.");
+                  + "GET <item> and DROP <item> are reserved for the runtime room-ground transfer flow.\n"
+                  + "The listing view is live; mutations are still being wired.");
+      case "GET" ->
+          success(
+              "GET <item>\n" + "Reserved for picking an item up from the room and carrying it.");
+      case "DROP" ->
+          success(
+              "DROP <item>\n"
+                  + "Reserved for placing an item you are carrying on the room ground.");
       case "MOVEMENT" ->
           success(
               "Movement commands: NORTH, SOUTH, EAST, WEST, UP, DOWN\n"

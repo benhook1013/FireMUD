@@ -24,8 +24,7 @@ class PlayerOutputTest {
     assertThat(
             PlayerOutput.view(
                     new InventoryViewOutput(
-                        "Inventory:",
-                        java.util.List.of("The runtime inventory contract is still being wired.")))
+                        "Inventory:", java.util.List.of("- Torch x2 (A small torch)")))
                 .screenBufferEligible())
         .isTrue();
     assertThat(

@@ -21,8 +21,11 @@ import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
 import net.firedevops.firemud.cache.LookCacheService;
 import net.firedevops.firemud.common.settings.ScopedSettingsSnapshot;
+import net.firedevops.firemud.entitymanagement.v1.InventoryItem;
+import net.firedevops.firemud.entitymanagement.v1.QueryInventoryResponse;
 import net.firedevops.firemud.gamelogic.v1.LookResult;
 import net.firedevops.firemud.gamesession.client.AccountClient;
+import net.firedevops.firemud.gamesession.client.EntityManagementClient;
 import net.firedevops.firemud.gamesession.client.GameLogicClient;
 import net.firedevops.firemud.gamesession.config.DevIsolatedProperties;
 import net.firedevops.firemud.gamesession.config.EffectiveSettingsResolver;
@@ -55,6 +58,8 @@ import org.springframework.beans.factory.ObjectProvider;
 class TextCommandInterpreterTest {
   private final CommandService commandService = Mockito.mock(CommandService.class);
   private final GameLogicClient gameLogicClient = Mockito.mock(GameLogicClient.class);
+  private final EntityManagementClient entityManagementClient =
+      Mockito.mock(EntityManagementClient.class);
   private final LookTextRenderer lookTextRenderer = Mockito.mock(LookTextRenderer.class);
   private final GameLogicProperties gameLogicProperties = new GameLogicProperties();
   private final GameSessionProperties gameSessionProperties = new GameSessionProperties();
@@ -68,7 +73,8 @@ class TextCommandInterpreterTest {
   private final AccountClient accountClient = Mockito.mock(AccountClient.class);
   private final MoveCommandHandler moveHandler = Mockito.mock(MoveCommandHandler.class);
   private final HelpCommandHandler helpHandler = new HelpCommandHandler();
-  private final InventoryCommandHandler inventoryHandler = new InventoryCommandHandler();
+  private final InventoryCommandHandler inventoryHandler =
+      new InventoryCommandHandler(entityManagementClient);
   private final CommunicationCommandHandler communicationHandler =
       Mockito.mock(CommunicationCommandHandler.class);
   private final FirstPartyConnectContextRegistry firstPartyConnectContextRegistry =
@@ -112,6 +118,17 @@ class TextCommandInterpreterTest {
                 .setEntitlementVersion(1L)
                 .setTenantBillingSequence(1L)
                 .setEvaluatedAt("2026-03-30T00:00:00Z")
+                .build());
+    when(entityManagementClient.queryInventory(Mockito.eq("22"), anyString()))
+        .thenReturn(
+            QueryInventoryResponse.newBuilder()
+                .addItems(
+                    InventoryItem.newBuilder()
+                        .setItemId("7")
+                        .setItemName("Torch")
+                        .setItemDescription("A small torch")
+                        .setQuantity(2)
+                        .build())
                 .build());
     when(devIsolatedRegistryProvider.getIfAvailable()).thenReturn(null);
     when(commandService.enqueue(anyString(), anyString(), anyBoolean()))
@@ -286,11 +303,7 @@ class TextCommandInterpreterTest {
         List.of(PlayerOutputKind.VIEW, PlayerOutputKind.PROMPT),
         interpretation.outputs().stream().map(PlayerOutput::kind).toList());
     assertEquals(
-        "OK INVENTORY\n"
-            + "Inventory:\n"
-            + "This command surface is ready.\n"
-            + "The runtime inventory contract is still being wired.\n\n"
-            + "demo> ",
+        "OK INVENTORY\n" + "Inventory:\n" + "- Torch x2 (A small torch)\n\n" + "demo> ",
         renderedResponse("INVENTORY", interpretation));
   }
 
@@ -315,7 +328,7 @@ class TextCommandInterpreterTest {
     assertFalse(interpretation.commandResult().accepted());
     assertEquals("INVENTORY_UNAVAILABLE", interpretation.commandResult().errorCode());
     assertEquals(
-        "ERROR INVENTORY_UNAVAILABLE GET iron key is not yet wired to runtime inventory state",
+        "ERROR INVENTORY_UNAVAILABLE GET iron key is not yet wired to runtime inventory mutations",
         renderedResponse("GET iron key", interpretation));
   }
 
@@ -330,7 +343,7 @@ class TextCommandInterpreterTest {
     assertFalse(interpretation.commandResult().accepted());
     assertEquals("INVENTORY_UNAVAILABLE", interpretation.commandResult().errorCode());
     assertEquals(
-        "ERROR INVENTORY_UNAVAILABLE DROP rough iron key is not yet wired to runtime inventory state",
+        "ERROR INVENTORY_UNAVAILABLE DROP rough iron key is not yet wired to runtime inventory mutations",
         renderedResponse("DROP rough iron key", interpretation));
   }
 

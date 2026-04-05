@@ -40,8 +40,13 @@ class HelpCommandHandlerTest {
 
     assertTrue(result.commandResult().accepted());
     assertTrue(result.outputs().get(0).text().contains("INVENTORY shows what you are carrying."));
-    assertTrue(result.outputs().get(0).text().contains("GET <item>"));
-    assertTrue(result.outputs().get(0).text().contains("DROP <item>"));
+    assertTrue(
+        result
+            .outputs()
+            .get(0)
+            .text()
+            .contains(
+                "GET <item> and DROP <item> are reserved for the runtime room-ground transfer flow."));
   }
 
   @Test

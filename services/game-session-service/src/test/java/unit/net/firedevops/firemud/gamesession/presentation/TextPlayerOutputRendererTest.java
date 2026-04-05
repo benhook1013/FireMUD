@@ -165,20 +165,11 @@ class TextPlayerOutputRendererTest {
             CommandEnqueueResult.success(),
             List.of(
                 PlayerOutput.view(
-                    new InventoryViewOutput(
-                        "Inventory:",
-                        List.of(
-                            "This command surface is ready.",
-                            "The runtime inventory contract is still being wired."))),
+                    new InventoryViewOutput("Inventory:", List.of("- Torch x2 (A small torch)"))),
                 PlayerOutput.prompt("demo> ")));
 
     assertThat(rendered)
-        .isEqualTo(
-            "OK INVENTORY\n"
-                + "Inventory:\n"
-                + "This command surface is ready.\n"
-                + "The runtime inventory contract is still being wired.\n\n"
-                + "demo> ");
+        .isEqualTo("OK INVENTORY\n" + "Inventory:\n" + "- Torch x2 (A small torch)\n\n" + "demo> ");
   }
 
   @Test

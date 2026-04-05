@@ -19,6 +19,7 @@ import net.firedevops.firemud.cache.LookCacheService;
 import net.firedevops.firemud.common.settings.ScopedSettingsSnapshot;
 import net.firedevops.firemud.gamelogic.v1.LookResult;
 import net.firedevops.firemud.gamesession.client.AccountClient;
+import net.firedevops.firemud.gamesession.client.EntityManagementClient;
 import net.firedevops.firemud.gamesession.client.GameLogicClient;
 import net.firedevops.firemud.gamesession.config.DevIsolatedProperties;
 import net.firedevops.firemud.gamesession.config.EffectiveSettingsResolver;
@@ -57,6 +58,8 @@ class SessionResumptionFlowTest {
   private final GameInstanceRepository instanceRepository =
       Mockito.mock(GameInstanceRepository.class);
   private final AccountClient accountClient = Mockito.mock(AccountClient.class);
+  private final EntityManagementClient entityManagementClient =
+      Mockito.mock(EntityManagementClient.class);
   private final GameSessionProperties properties = new GameSessionProperties();
   private final GameplayWorldCatalog worldCatalog = new GameplayWorldCatalog(properties);
   private final DevIsolatedProperties devIsolatedProperties = new DevIsolatedProperties(false);
@@ -188,7 +191,7 @@ class SessionResumptionFlowTest {
             playHandler,
             moveHandler,
             helpHandler,
-            new InventoryCommandHandler(),
+            new InventoryCommandHandler(entityManagementClient),
             sessionAuthenticationService,
             communicationHandler,
             worldsHandler,
