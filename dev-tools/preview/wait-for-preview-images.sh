@@ -14,6 +14,7 @@ fi
 image_tag="$1"
 timeout_seconds="${PREVIEW_IMAGE_WAIT_TIMEOUT_SECONDS:-1800}"
 sleep_seconds="${PREVIEW_IMAGE_WAIT_SLEEP_SECONDS:-10}"
+manifest_timeout_seconds="${PREVIEW_IMAGE_MANIFEST_TIMEOUT_SECONDS:-20}"
 
 services=(
   account-service
@@ -35,7 +36,7 @@ while (( SECONDS < deadline )); do
   missing=()
   for service in "${services[@]}"; do
     image="ghcr.io/benhook1013/${service}:${image_tag}"
-    if ! docker manifest inspect "$image" >/dev/null 2>&1; then
+    if ! timeout "${manifest_timeout_seconds}" docker manifest inspect "$image" >/dev/null 2>&1; then
       missing+=("$service")
     fi
   done
