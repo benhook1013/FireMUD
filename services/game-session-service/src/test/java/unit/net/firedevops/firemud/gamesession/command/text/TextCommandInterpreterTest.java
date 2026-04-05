@@ -67,6 +67,7 @@ class TextCommandInterpreterTest {
   private final LookCacheService lookCacheService = Mockito.mock(LookCacheService.class);
   private final AccountClient accountClient = Mockito.mock(AccountClient.class);
   private final MoveCommandHandler moveHandler = Mockito.mock(MoveCommandHandler.class);
+  private final HelpCommandHandler helpHandler = new HelpCommandHandler();
   private final CommunicationCommandHandler communicationHandler =
       Mockito.mock(CommunicationCommandHandler.class);
   private final FirstPartyConnectContextRegistry firstPartyConnectContextRegistry =
@@ -225,6 +226,7 @@ class TextCommandInterpreterTest {
             loginHandler,
             playHandler,
             moveHandler,
+            helpHandler,
             sessionAuthenticationService,
             communicationHandler,
             worldsHandler,
@@ -254,6 +256,20 @@ class TextCommandInterpreterTest {
         "ERROR LOGIN_REQUIRED You must LOGIN before gameplay commands.",
         renderedResponse("LOOK", interpretation));
     verify(commandService, never()).enqueue(anyString(), anyString(), anyBoolean());
+  }
+
+  @Test
+  void helpIsVisibleBeforeLogin() {
+    TextCommandInterpretationResult interpretation =
+        interpreter.interpret("321", "HELP MOVE", false);
+
+    assertTrue(interpretation.commandResult().accepted());
+    assertEquals(
+        "OK HELP\n"
+            + "Movement commands: NORTH, SOUTH, EAST, WEST, UP, DOWN\n"
+            + "Shorthand aliases: N, S, E, W, U, D\n"
+            + "You can also type GO <direction>.\n\n",
+        renderedResponse("HELP MOVE", interpretation));
   }
 
   @Test

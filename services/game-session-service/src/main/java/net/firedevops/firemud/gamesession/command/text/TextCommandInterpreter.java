@@ -20,6 +20,7 @@ public class TextCommandInterpreter {
   private final LoginCommandHandler loginHandler;
   private final PlayCommandHandler playHandler;
   private final MoveCommandHandler moveHandler;
+  private final HelpCommandHandler helpHandler;
   private final SessionAuthenticationService sessionAuthenticationService;
   private final CommunicationCommandHandler communicationHandler;
   private final WorldsCommandHandler worldsHandler;
@@ -33,6 +34,7 @@ public class TextCommandInterpreter {
       LoginCommandHandler loginHandler,
       PlayCommandHandler playHandler,
       MoveCommandHandler moveHandler,
+      HelpCommandHandler helpHandler,
       SessionAuthenticationService sessionAuthenticationService,
       CommunicationCommandHandler communicationHandler,
       WorldsCommandHandler worldsHandler,
@@ -43,6 +45,7 @@ public class TextCommandInterpreter {
         loginHandler,
         playHandler,
         moveHandler,
+        helpHandler,
         sessionAuthenticationService,
         communicationHandler,
         worldsHandler,
@@ -56,6 +59,7 @@ public class TextCommandInterpreter {
       LoginCommandHandler loginHandler,
       PlayCommandHandler playHandler,
       MoveCommandHandler moveHandler,
+      HelpCommandHandler helpHandler,
       SessionAuthenticationService sessionAuthenticationService,
       CommunicationCommandHandler communicationHandler,
       WorldsCommandHandler worldsHandler,
@@ -66,6 +70,7 @@ public class TextCommandInterpreter {
     this.loginHandler = Objects.requireNonNull(loginHandler, "loginHandler must not be null");
     this.playHandler = Objects.requireNonNull(playHandler, "playHandler must not be null");
     this.moveHandler = Objects.requireNonNull(moveHandler, "moveHandler must not be null");
+    this.helpHandler = Objects.requireNonNull(helpHandler, "helpHandler must not be null");
     this.sessionAuthenticationService =
         Objects.requireNonNull(
             sessionAuthenticationService, "sessionAuthenticationService must not be null");
@@ -109,6 +114,15 @@ public class TextCommandInterpreter {
     boolean hasLogin = maybeContext.isPresent();
     boolean hasPlay =
         maybeContext.isPresent() && StringUtils.hasText(maybeContext.get().roomInstanceId());
+
+    if (command.type() == TextCommandType.HELP) {
+      TextCommandInterpretationResult helpResult = helpHandler.handle(command);
+      List<PlayerOutput> outputs = helpResult.outputs();
+      if (helpResult.commandResult().accepted() && hasLogin) {
+        outputs = appendPrompt(maybeContext.get(), outputs);
+      }
+      return new TextCommandInterpretationResult(helpResult.commandResult(), outputs);
+    }
 
     if (command.type() == TextCommandType.PLAY) {
       if (!hasLogin) {

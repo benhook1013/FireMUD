@@ -7,6 +7,7 @@ public enum TextCommandType {
   WORLDS,
   LOGIN,
   PLAY,
+  HELP,
   LOOK,
   QUICKLOOK,
   SAY,
@@ -26,6 +27,7 @@ public enum TextCommandType {
       case "WORLDS" -> WORLDS;
       case "LOGIN", "LOGON" -> LOGIN;
       case "PLAY" -> PLAY;
+      case "HELP" -> HELP;
       case "LOOK" -> LOOK;
       case "QUICKLOOK", "QLOOK" -> QUICKLOOK;
       case "SAY" -> SAY;

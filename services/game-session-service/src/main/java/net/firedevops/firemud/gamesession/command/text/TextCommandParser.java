@@ -20,6 +20,7 @@ public class TextCommandParser {
         switch (type) {
           case WORLDS ->
               new ParsedCommandData(List.of(), new TextCommandPayload.ViewRequest("WORLDS"));
+          case HELP -> parseHelp(tokens);
           case LOOK -> new ParsedCommandData(List.of(), new TextCommandPayload.ViewRequest("LOOK"));
           case QUICKLOOK ->
               new ParsedCommandData(List.of(), new TextCommandPayload.ViewRequest("QUICKLOOK"));
@@ -51,6 +52,14 @@ public class TextCommandParser {
       return new ParsedCommandData(
           args,
           new TextCommandPayload.Selection(args.get(0), args.size() > 1 ? args.get(1) : null));
+    }
+    return new ParsedCommandData(args, new TextCommandPayload.Tokens(args));
+  }
+
+  private ParsedCommandData parseHelp(String[] tokens) {
+    List<String> args = parseRemainingTokens(tokens);
+    if (args.isEmpty()) {
+      return new ParsedCommandData(args, new TextCommandPayload.None());
     }
     return new ParsedCommandData(args, new TextCommandPayload.Tokens(args));
   }

@@ -48,6 +48,28 @@ class TextCommandParserTest {
   }
 
   @Test
+  void parsesHelpWithoutTopic() {
+    TextCommand command = parser.parse("HELP");
+
+    assertEquals(TextCommandType.HELP, command.type());
+    assertEquals("HELP", command.aliasUsed());
+    assertTrue(command.args().isEmpty());
+    assertEquals("HELP", command.rawLine());
+    assertTrue(command.payload() instanceof TextCommandPayload.None);
+  }
+
+  @Test
+  void parsesHelpTopicLookup() {
+    TextCommand command = parser.parse("HELP walk");
+
+    assertEquals(TextCommandType.HELP, command.type());
+    assertEquals("HELP", command.aliasUsed());
+    assertEquals(List.of("walk"), command.args());
+    assertEquals("HELP walk", command.rawLine());
+    assertTrue(command.payload() instanceof TextCommandPayload.Tokens);
+  }
+
+  @Test
   void parsesLookWithWhitespace() {
     TextCommand command = parser.parse("   LOOK   ");
 

@@ -39,6 +39,7 @@ public sealed interface TextCommandPayload
     return switch (type) {
       case NOOP -> new None();
       case WORLDS, LOOK, QUICKLOOK -> new ViewRequest(type.name());
+      case HELP -> safeArgs.isEmpty() ? new None() : new Tokens(safeArgs);
       case LOGIN ->
           safeArgs.size() >= 2
               ? new Credentials(

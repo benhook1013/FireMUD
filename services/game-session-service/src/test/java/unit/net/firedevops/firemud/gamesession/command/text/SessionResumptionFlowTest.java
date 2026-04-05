@@ -75,6 +75,7 @@ class SessionResumptionFlowTest {
       Mockito.mock(FirstPartyConnectContextRegistry.class);
   private PlayCommandHandler playHandler;
   private final MoveCommandHandler moveHandler = Mockito.mock(MoveCommandHandler.class);
+  private final HelpCommandHandler helpHandler = new HelpCommandHandler();
   private final CommunicationCommandHandler communicationHandler =
       Mockito.mock(CommunicationCommandHandler.class);
   private WorldsCommandHandler worldsHandler;
@@ -186,6 +187,7 @@ class SessionResumptionFlowTest {
             loginHandler,
             playHandler,
             moveHandler,
+            helpHandler,
             sessionAuthenticationService,
             communicationHandler,
             worldsHandler,
