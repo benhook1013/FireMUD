@@ -360,7 +360,7 @@ class TextCommandInterpreterTest {
 
   @Test
   void directionalAliasBeforeLoginStillHitsInterpreterStageGate() {
-    TextCommandInterpretationResult interpretation = interpreter.interpret("321", "north", false);
+    TextCommandInterpretationResult interpretation = interpreter.interpret("321", "s", false);
 
     assertFalse(interpretation.commandResult().accepted());
     assertEquals("LOGIN_REQUIRED", interpretation.commandResult().errorCode());
@@ -391,7 +391,7 @@ class TextCommandInterpreterTest {
                         java.util.List.of(),
                         java.util.List.of()))));
 
-    TextCommandInterpretationResult interpretation = interpreter.interpret("1", "north", false);
+    TextCommandInterpretationResult interpretation = interpreter.interpret("1", "s", false);
 
     assertTrue(interpretation.commandResult().accepted());
     verify(moveHandler).handle(Mockito.eq(played), Mockito.any(TextCommand.class));

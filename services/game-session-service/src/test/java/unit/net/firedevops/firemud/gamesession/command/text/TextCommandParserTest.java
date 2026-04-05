@@ -118,6 +118,18 @@ class TextCommandParserTest {
   }
 
   @Test
+  void parsesSingleLetterDirectionalAliasAsMove() {
+    TextCommand command = parser.parse("s");
+
+    assertEquals(TextCommandType.MOVE, command.type());
+    assertEquals("s", command.aliasUsed());
+    assertEquals(List.of("south"), command.args());
+    assertEquals("s", command.rawLine());
+    assertTrue(command.payload() instanceof TextCommandPayload.Directional);
+    assertEquals("south", command.directionalPayload().orElseThrow().direction());
+  }
+
+  @Test
   void parsesMoveVerbWithDirection() {
     TextCommand command = parser.parse("MOVE east");
 
@@ -137,6 +149,18 @@ class TextCommandParserTest {
     assertEquals(List.of("west"), command.args());
     assertEquals("go west", command.rawLine());
     assertTrue(command.payload() instanceof TextCommandPayload.Directional);
+  }
+
+  @Test
+  void parsesGoAliasWithSingleLetterDirection() {
+    TextCommand command = parser.parse("go n");
+
+    assertEquals(TextCommandType.MOVE, command.type());
+    assertEquals("go", command.aliasUsed());
+    assertEquals(List.of("north"), command.args());
+    assertEquals("go n", command.rawLine());
+    assertTrue(command.payload() instanceof TextCommandPayload.Directional);
+    assertEquals("north", command.directionalPayload().orElseThrow().direction());
   }
 
   @Test

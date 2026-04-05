@@ -161,7 +161,7 @@ class WorldManagementGrpcServiceTest {
                 "Seed room A",
                 List.of(
                     new RoomSnapshotDto.RoomExitSnapshotDto(
-                        1L, 2L, "Room B", "NORTH", "Room B", "Leads toward Room B", 1)),
+                        1L, 2L, "Room B", "NORTH", "NORTH", "Leads toward Room B", 1)),
                 Map.of("weather", "dim"),
                 List.of()));
     MeterRegistry meterRegistry = Mockito.mock(MeterRegistry.class);

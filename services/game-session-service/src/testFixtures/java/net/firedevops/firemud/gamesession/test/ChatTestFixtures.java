@@ -81,15 +81,15 @@ public final class ChatTestFixtures {
   }
 
   public static String canonicalSayText() {
-    return "You say, \"Hello travelers\"";
+    return "You say, \"Hello travelers.\"";
   }
 
   public static String canonicalWhisperText() {
-    return "You whisper to Sora, \"Keep quiet\"";
+    return "You whisper to Sora, \"Keep quiet.\"";
   }
 
   public static String canonicalWhisperTargetText() {
-    return "Emberline whispers to you, \"Keep quiet\"";
+    return "Emberline whispers to you, \"Keep quiet.\"";
   }
 
   public static String canonicalWhisperObserverMetadataText() {
@@ -97,10 +97,10 @@ public final class ChatTestFixtures {
   }
 
   public static String canonicalTellText() {
-    return "You tell Sora, \"Meet me at the forge\"";
+    return "You tell Sora, \"Meet me at the forge.\"";
   }
 
   public static String canonicalTellTargetText() {
-    return "Emberline tells you, \"Meet me at the forge\"";
+    return "Emberline tells you, \"Meet me at the forge.\"";
   }
 }

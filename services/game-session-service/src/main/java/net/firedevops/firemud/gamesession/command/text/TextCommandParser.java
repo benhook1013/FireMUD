@@ -118,15 +118,21 @@ public class TextCommandParser {
   private ParsedCommandData parseMove(String aliasUsed, String[] tokens) {
     List<String> args = extractMoveArguments(tokens);
     if (!args.isEmpty()) {
-      return new ParsedCommandData(args, new TextCommandPayload.Directional(args.get(0)));
-    }
-    if ("NORTH".equalsIgnoreCase(aliasUsed)
-        || "SOUTH".equalsIgnoreCase(aliasUsed)
-        || "EAST".equalsIgnoreCase(aliasUsed)
-        || "WEST".equalsIgnoreCase(aliasUsed)) {
+      String canonicalDirection = canonicalDirection(args.get(0));
+      List<String> canonicalArgs =
+          canonicalDirection.isEmpty() ? args : List.of(canonicalDirection);
       return new ParsedCommandData(
-          List.of(aliasUsed.trim().toLowerCase()),
-          new TextCommandPayload.Directional(aliasUsed.trim().toLowerCase()));
+          canonicalArgs,
+          new TextCommandPayload.Directional(
+              canonicalDirection.isEmpty()
+                  ? args.get(0).trim().toLowerCase()
+                  : canonicalDirection));
+    }
+    String canonicalAliasDirection = canonicalDirection(aliasUsed);
+    if (!canonicalAliasDirection.isEmpty()) {
+      return new ParsedCommandData(
+          List.of(canonicalAliasDirection),
+          new TextCommandPayload.Directional(canonicalAliasDirection));
     }
     return new ParsedCommandData(args, new TextCommandPayload.Tokens(args));
   }
@@ -137,12 +143,25 @@ public class TextCommandParser {
     }
     String verb = tokens[0];
     if (tokens.length == 1) {
-      return switch (verb.trim().toUpperCase()) {
-        case "NORTH", "SOUTH", "EAST", "WEST" -> List.of(verb.trim().toLowerCase());
-        default -> List.of();
-      };
+      String canonical = canonicalDirection(verb);
+      return canonical.isEmpty() ? List.of() : List.of(canonical);
     }
     return List.of(Arrays.copyOfRange(tokens, 1, tokens.length));
+  }
+
+  private String canonicalDirection(String token) {
+    if (token == null || token.isBlank()) {
+      return "";
+    }
+    return switch (token.trim().toUpperCase()) {
+      case "N", "NORTH" -> "north";
+      case "S", "SOUTH" -> "south";
+      case "E", "EAST" -> "east";
+      case "W", "WEST" -> "west";
+      case "U", "UP" -> "up";
+      case "D", "DOWN" -> "down";
+      default -> "";
+    };
   }
 
   private ParsedCommandData parseUnknown(String[] tokens) {

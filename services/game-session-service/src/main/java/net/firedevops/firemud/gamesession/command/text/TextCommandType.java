@@ -31,7 +31,21 @@ public enum TextCommandType {
       case "SAY" -> SAY;
       case "WHISPER" -> WHISPER;
       case "TELL" -> TELL;
-      case "MOVE", "GO", "NORTH", "SOUTH", "EAST", "WEST" -> MOVE;
+      case "MOVE",
+          "GO",
+          "NORTH",
+          "SOUTH",
+          "EAST",
+          "WEST",
+          "UP",
+          "DOWN",
+          "N",
+          "S",
+          "E",
+          "W",
+          "U",
+          "D" ->
+          MOVE;
       default -> UNKNOWN;
     };
   }

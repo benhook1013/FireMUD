@@ -274,7 +274,12 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       TextCommand command,
       TextCommandInterpretationResult interpretation)
       throws IOException {
-    if (command.type() != TextCommandType.PLAY || !interpretation.commandResult().accepted()) {
+    boolean reconnectRestoreRequested =
+        interpretation.reconnectRedrawRecommended()
+            || StringUtils.hasText(resolveConnectContext(session));
+    if (command.type() != TextCommandType.PLAY
+        || !interpretation.commandResult().accepted()
+        || !reconnectRestoreRequested) {
       return;
     }
     sessionContextService
@@ -286,7 +291,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
                 Optional<ScreenBufferService.BufferedScreen> maybeBuffer =
                     screenBufferService.get(
                         context.tenantId(), context.gameInstanceId(), context.characterId());
-                if (!interpretation.reconnectRedrawRecommended() && maybeBuffer.isEmpty()) {
+                if (maybeBuffer.isEmpty()) {
                   return;
                 }
                 maybeBuffer.ifPresent(

@@ -208,6 +208,31 @@ class TelnetServerHandlerTest {
   }
 
   @Test
+  void helpCommandReprintsInitialGuidance() {
+    SimpleMeterRegistry registry = new SimpleMeterRegistry();
+    TelnetServerHandler handler = newHandler(registry, false);
+    ChannelHandlerContext ctx = mock(ChannelHandlerContext.class);
+    Channel channel = mock(Channel.class);
+    DefaultEventExecutor executor = new DefaultEventExecutor();
+    when(ctx.channel()).thenReturn(channel);
+    when(ctx.executor()).thenReturn(executor);
+    when(ctx.writeAndFlush(any())).thenReturn(null);
+    when(channel.remoteAddress()).thenReturn(new InetSocketAddress("127.0.0.1", 0));
+
+    handler.channelActive(ctx);
+    handler.channelRead0(ctx, "HELP");
+
+    verify(ctx, times(2))
+        .writeAndFlush(
+            "OK CONNECTED\n"
+                + "Type WORLDS to list available worlds.\n"
+                + "Type LOGIN <email> <password> to authenticate.\n"
+                + "Type PLAY <world> after LOGIN to enter a world.\n"
+                + "Type HELP for commands.\n");
+    executor.shutdownGracefully();
+  }
+
+  @Test
   void bufferClearedOnDisconnect() {
     SimpleMeterRegistry registry = new SimpleMeterRegistry();
     TelnetServerHandler handler =

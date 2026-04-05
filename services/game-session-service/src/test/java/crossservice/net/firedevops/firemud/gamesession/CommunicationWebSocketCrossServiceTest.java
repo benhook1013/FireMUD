@@ -115,7 +115,7 @@ class CommunicationWebSocketCrossServiceTest {
   void websocketSayFlowReportsCanonicalTranscriptAndMetrics() throws Exception {
     ensureTestServicesStarted();
     long sessionId = prepareGameInstance();
-    List<String> responses = runCommunicationSequence(sessionId, "SAY Hello travelers");
+    List<String> responses = runCommunicationSequence(sessionId, "SAY hello travelers");
 
     assertThat(responses).hasSizeGreaterThanOrEqualTo(3);
     assertThat(responses.get(0)).startsWith("OK LOGIN");
@@ -124,7 +124,7 @@ class CommunicationWebSocketCrossServiceTest {
     assertThat(SOCIAL_STUB.lastRequest())
         .hasValueSatisfying(
             request -> {
-              assertThat(request.getContent()).isEqualTo("Hello travelers");
+              assertThat(request.getContent()).isEqualTo("hello travelers");
               assertThat(request.getType())
                   .isEqualTo(net.firedevops.firemud.socialgroups.v1.ChatType.CHAT_TYPE_SAY);
             });
@@ -136,14 +136,14 @@ class CommunicationWebSocketCrossServiceTest {
   void websocketWhisperFlowReportsCanonicalTranscriptAndMetadata() throws Exception {
     ensureTestServicesStarted();
     long sessionId = prepareGameInstance();
-    List<String> responses = runCommunicationSequence(sessionId, "WHISPER Sora Keep quiet");
+    List<String> responses = runCommunicationSequence(sessionId, "WHISPER Sora keep quiet");
 
     assertThat(responses).hasSizeGreaterThanOrEqualTo(3);
     assertThat(responses.get(2)).contains(ChatTestFixtures.canonicalWhisperText());
     assertThat(SOCIAL_STUB.lastRequest())
         .hasValueSatisfying(
             request -> {
-              assertThat(request.getContent()).isEqualTo("Keep quiet");
+              assertThat(request.getContent()).isEqualTo("keep quiet");
               assertThat(request.getType()).isEqualTo(ChatType.CHAT_TYPE_WHISPER);
               assertThat(request.getRecipientId()).isEqualTo(ChatTestFixtures.PLAYER_SORA);
             });
@@ -156,14 +156,14 @@ class CommunicationWebSocketCrossServiceTest {
     ensureTestServicesStarted();
     long sessionId = prepareGameInstance();
     seedLiveTargetSession();
-    List<String> responses = runCommunicationSequence(sessionId, "TELL Sora Meet me at the forge");
+    List<String> responses = runCommunicationSequence(sessionId, "TELL Sora meet me at the forge");
 
     assertThat(responses).hasSizeGreaterThanOrEqualTo(3);
     assertThat(responses.get(2)).contains(ChatTestFixtures.canonicalTellText());
     assertThat(SOCIAL_STUB.lastRequest())
         .hasValueSatisfying(
             request -> {
-              assertThat(request.getContent()).isEqualTo("Meet me at the forge");
+              assertThat(request.getContent()).isEqualTo("meet me at the forge");
               assertThat(request.getType()).isEqualTo(ChatType.CHAT_TYPE_TELL);
               assertThat(request.getRecipientId()).isEqualTo(ChatTestFixtures.PLAYER_SORA);
             });

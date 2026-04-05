@@ -762,6 +762,57 @@ class GameSessionWebSocketHandlerIntegrationTest {
   }
 
   @Test
+  void websocketFreshPlayDoesNotReplayBufferedLookFromOldSession() throws Exception {
+    when(screenBufferService.get(eq(22L), eq(41L), eq(123L)))
+        .thenReturn(
+            Optional.of(
+                new ScreenBufferService.BufferedScreen(
+                    java.util.List.of(
+                        ScreenBufferService.BufferedEntry.fromText(
+                            "OK LOOK\nStale buffered look\n\n")),
+                    1,
+                    3,
+                    24L)));
+
+    StandardWebSocketClient client = new StandardWebSocketClient();
+    WebSocketHttpHeaders headers = new WebSocketHttpHeaders();
+    headers.add("X-Game-Instance-Id", "41");
+    List<String> payloads = new java.util.concurrent.CopyOnWriteArrayList<>();
+    CountDownLatch latch = new CountDownLatch(2);
+
+    var future =
+        client.execute(
+            new TextWebSocketHandler() {
+              @Override
+              public void afterConnectionEstablished(WebSocketSession session) throws IOException {
+                session.sendMessage(new TextMessage("LOGIN demo@example.com swordfish"));
+              }
+
+              @Override
+              protected void handleTextMessage(WebSocketSession session, TextMessage message)
+                  throws IOException {
+                payloads.add(message.getPayload());
+                if (message.getPayload().startsWith("OK LOGIN")) {
+                  session.sendMessage(new TextMessage("PLAY demo"));
+                }
+                latch.countDown();
+              }
+            },
+            headers,
+            URI.create("ws://localhost:" + port + "/ws/game"));
+
+    WebSocketSession session = future.get(5, TimeUnit.SECONDS);
+    assertThat(latch.await(5, TimeUnit.SECONDS)).isTrue();
+    session.close();
+
+    assertThat(payloads).hasSizeGreaterThanOrEqualTo(2);
+    assertThat(payloads).anyMatch(payload -> payload.startsWith("OK LOGIN"));
+    assertThat(payloads).anyMatch(payload -> payload.startsWith("OK PLAY"));
+    assertThat(payloads).noneMatch(payload -> payload.contains("Stale buffered look"));
+    assertThat(payloads.stream().filter(payload -> payload.startsWith("OK LOOK"))).isEmpty();
+  }
+
+  @Test
   void websocketFirstPartyInvalidConnectContextClosesImmediately() throws Exception {
     StandardWebSocketClient client = new StandardWebSocketClient();
     WebSocketHttpHeaders headers = new WebSocketHttpHeaders();

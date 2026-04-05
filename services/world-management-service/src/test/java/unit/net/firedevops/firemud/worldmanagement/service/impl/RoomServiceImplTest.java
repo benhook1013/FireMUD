@@ -160,6 +160,7 @@ class RoomServiceImplTest {
     assertEquals("Des stalactites perlent le long du mur nord.", snapshot.longDescription());
     assertEquals("Des stalactites perlent le long du mur nord.", snapshot.shortDescription());
     assertEquals("Salle du Nord", snapshot.exits().get(0).targetRoomName());
+    assertEquals("NORTH", snapshot.exits().get(0).label());
     assertEquals("Leads toward Salle du Nord", snapshot.exits().get(0).description());
   }
 
