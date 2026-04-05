@@ -73,6 +73,16 @@ The next hosted preview milestone is:
   - add CI/static checks to prevent legacy server-TLS property drift,
   - remove the temporary preview plaintext exception after preview mTLS is re-proved.
 
+## Current TCP bootstrap contract
+
+- Hosted preview TCP smoke and manual reviewer proof both assume a bootstrap gameplay session exists before `LOGIN`.
+- Preview currently creates that bootstrap state explicitly rather than deriving it from a hidden client-side convention:
+  - the preview workflow creates the smoke account in tenant `1`
+  - preview `tcp-proxy-service` is given preview-only default bootstrap metadata
+  - the smoke path expects the initial bootstrap session to resolve to session `1` in tenant `1`
+- That bootstrap contract is preview-only operational glue, not the long-term player-facing TCP contract.
+- The purpose of this explicit bootstrap state is to keep preview reviewer-usable while the actual gameplay admission path is still being hardened and documented.
+
 Preview TCP contract:
 
 - preview TCP uses a small reserved external port range `32000-32015`
