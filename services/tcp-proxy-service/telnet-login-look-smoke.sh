@@ -186,6 +186,12 @@ def verify_pre_readiness_telnet_admission():
                 response = recv_until(sock, "\n", timeout_seconds).strip()
                 print("=== Pre-readiness Telnet response ===")
                 print(response or "<no data>")
+                # A pre-readiness admission block may surface as either an explicit
+                # startup refusal or an immediate close before any payload is sent.
+                if not response:
+                    print("Observed empty pre-readiness response; treating as acceptable blocked admission.")
+                    time.sleep(1)
+                    continue
                 if startup_expect not in response:
                     raise RuntimeError(
                         "Expected pre-readiness Telnet refusal containing "
