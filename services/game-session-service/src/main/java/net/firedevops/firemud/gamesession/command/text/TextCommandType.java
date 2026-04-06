@@ -10,8 +10,11 @@ public enum TextCommandType {
   HELP,
   INVENTORY,
   EQUIPMENT,
+  CONTAINER,
   GET,
   DROP,
+  PUT,
+  TAKE,
   WEAR,
   REMOVE,
   LOOK,
@@ -36,8 +39,11 @@ public enum TextCommandType {
       case "HELP" -> HELP;
       case "INVENTORY", "INV", "I" -> INVENTORY;
       case "EQUIPMENT", "EQUIP", "EQ" -> EQUIPMENT;
+      case "CONTAINER", "CONT" -> CONTAINER;
       case "GET" -> GET;
       case "DROP" -> DROP;
+      case "PUT" -> PUT;
+      case "TAKE" -> TAKE;
       case "WEAR" -> WEAR;
       case "REMOVE" -> REMOVE;
       case "LOOK" -> LOOK;

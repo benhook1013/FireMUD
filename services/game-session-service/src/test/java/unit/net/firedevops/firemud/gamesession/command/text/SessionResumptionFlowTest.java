@@ -193,6 +193,7 @@ class SessionResumptionFlowTest {
             helpHandler,
             new InventoryCommandHandler(entityManagementClient),
             new EquipmentCommandHandler(entityManagementClient),
+            new ContainerCommandHandler(entityManagementClient),
             sessionAuthenticationService,
             communicationHandler,
             worldsHandler,

@@ -16,6 +16,8 @@ import net.firedevops.firemud.entitymanagement.v1.DropItemToRoomResponse;
 import net.firedevops.firemud.entitymanagement.v1.EntityManagementServiceGrpc;
 import net.firedevops.firemud.entitymanagement.v1.FindCharacterByNameRequest;
 import net.firedevops.firemud.entitymanagement.v1.FindCharacterByNameResponse;
+import net.firedevops.firemud.entitymanagement.v1.ListContainerContentsRequest;
+import net.firedevops.firemud.entitymanagement.v1.ListContainerContentsResponse;
 import net.firedevops.firemud.entitymanagement.v1.ListEquipmentRequest;
 import net.firedevops.firemud.entitymanagement.v1.ListEquipmentResponse;
 import net.firedevops.firemud.entitymanagement.v1.ListRoomEntitiesRequest;
@@ -24,10 +26,14 @@ import net.firedevops.firemud.entitymanagement.v1.PickupItemFromRoomRequest;
 import net.firedevops.firemud.entitymanagement.v1.PickupItemFromRoomResponse;
 import net.firedevops.firemud.entitymanagement.v1.PingRequest;
 import net.firedevops.firemud.entitymanagement.v1.PingResponse;
+import net.firedevops.firemud.entitymanagement.v1.PutItemIntoContainerRequest;
+import net.firedevops.firemud.entitymanagement.v1.PutItemIntoContainerResponse;
 import net.firedevops.firemud.entitymanagement.v1.QueryInventoryRequest;
 import net.firedevops.firemud.entitymanagement.v1.QueryInventoryResponse;
 import net.firedevops.firemud.entitymanagement.v1.RemoveEquipmentRequest;
 import net.firedevops.firemud.entitymanagement.v1.RemoveEquipmentResponse;
+import net.firedevops.firemud.entitymanagement.v1.TakeItemFromContainerRequest;
+import net.firedevops.firemud.entitymanagement.v1.TakeItemFromContainerResponse;
 import net.firedevops.firemud.entitymanagement.v1.WearEquipmentItemRequest;
 import net.firedevops.firemud.entitymanagement.v1.WearEquipmentItemResponse;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
@@ -161,6 +167,42 @@ public final class EntityManagementClient
         .build();
   }
 
+  public ListContainerContentsResponse listContainerContents(
+      String tenantId, String characterId, String containerItemId) {
+    ListContainerContentsRequest request =
+        ListContainerContentsRequest.newBuilder()
+            .setTenantId(tenantId)
+            .setCharacterId(characterId)
+            .setContainerItemId(containerItemId)
+            .build();
+    try {
+      return callStub().listContainerContents(request);
+    } catch (StatusRuntimeException ex) {
+      if (ex.getStatus().getCode() == Status.Code.UNAVAILABLE) {
+        logger.warn(
+            "Entity Management Service unavailable; rebuilding channel and retrying container query",
+            ex);
+        try {
+          initClient();
+          return callStub().listContainerContents(request);
+        } catch (Exception retryEx) {
+          logger.warn(
+              "Failed to retry Entity Management container query after channel reload", retryEx);
+        }
+      } else {
+        logger.warn("Failed to call Entity Management container query endpoint", ex);
+      }
+    } catch (Exception ex) {
+      logger.warn("Failed to call Entity Management container query endpoint", ex);
+    }
+    return ListContainerContentsResponse.newBuilder()
+        .setError(
+            ErrorDetail.newBuilder()
+                .setCode("CONTAINER_UNAVAILABLE")
+                .setMessage("Container service unavailable"))
+        .build();
+  }
+
   public WearEquipmentItemResponse wearEquipment(
       String tenantId, String characterId, String itemId) {
     WearEquipmentItemRequest request =
@@ -229,6 +271,82 @@ public final class EntityManagementClient
             ErrorDetail.newBuilder()
                 .setCode("EQUIPMENT_UNAVAILABLE")
                 .setMessage("Equipment service unavailable"))
+        .build();
+  }
+
+  public PutItemIntoContainerResponse putItemIntoContainer(
+      String tenantId, String characterId, String containerItemId, String itemId, int quantity) {
+    PutItemIntoContainerRequest request =
+        PutItemIntoContainerRequest.newBuilder()
+            .setTenantId(tenantId)
+            .setCharacterId(characterId)
+            .setContainerItemId(containerItemId)
+            .setItemId(itemId)
+            .setQuantity(quantity)
+            .build();
+    try {
+      return callStub().putItemIntoContainer(request);
+    } catch (StatusRuntimeException ex) {
+      if (ex.getStatus().getCode() == Status.Code.UNAVAILABLE) {
+        logger.warn(
+            "Entity Management Service unavailable; rebuilding channel and retrying container put",
+            ex);
+        try {
+          initClient();
+          return callStub().putItemIntoContainer(request);
+        } catch (Exception retryEx) {
+          logger.warn(
+              "Failed to retry Entity Management container put after channel reload", retryEx);
+        }
+      } else {
+        logger.warn("Failed to call Entity Management container put endpoint", ex);
+      }
+    } catch (Exception ex) {
+      logger.warn("Failed to call Entity Management container put endpoint", ex);
+    }
+    return PutItemIntoContainerResponse.newBuilder()
+        .setError(
+            ErrorDetail.newBuilder()
+                .setCode("CONTAINER_UNAVAILABLE")
+                .setMessage("Container service unavailable"))
+        .build();
+  }
+
+  public TakeItemFromContainerResponse takeItemFromContainer(
+      String tenantId, String characterId, String containerItemId, String itemId, int quantity) {
+    TakeItemFromContainerRequest request =
+        TakeItemFromContainerRequest.newBuilder()
+            .setTenantId(tenantId)
+            .setCharacterId(characterId)
+            .setContainerItemId(containerItemId)
+            .setItemId(itemId)
+            .setQuantity(quantity)
+            .build();
+    try {
+      return callStub().takeItemFromContainer(request);
+    } catch (StatusRuntimeException ex) {
+      if (ex.getStatus().getCode() == Status.Code.UNAVAILABLE) {
+        logger.warn(
+            "Entity Management Service unavailable; rebuilding channel and retrying container take",
+            ex);
+        try {
+          initClient();
+          return callStub().takeItemFromContainer(request);
+        } catch (Exception retryEx) {
+          logger.warn(
+              "Failed to retry Entity Management container take after channel reload", retryEx);
+        }
+      } else {
+        logger.warn("Failed to call Entity Management container take endpoint", ex);
+      }
+    } catch (Exception ex) {
+      logger.warn("Failed to call Entity Management container take endpoint", ex);
+    }
+    return TakeItemFromContainerResponse.newBuilder()
+        .setError(
+            ErrorDetail.newBuilder()
+                .setCode("CONTAINER_UNAVAILABLE")
+                .setMessage("Container service unavailable"))
         .build();
   }
 

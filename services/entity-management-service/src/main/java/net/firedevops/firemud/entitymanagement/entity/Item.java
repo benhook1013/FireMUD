@@ -23,5 +23,8 @@ public class Item {
   @Column(name = "equipment_slot", length = 32)
   private String equipmentSlot;
 
+  @Column(name = "is_container", nullable = false)
+  private boolean container;
+
   @Version private int version;
 }

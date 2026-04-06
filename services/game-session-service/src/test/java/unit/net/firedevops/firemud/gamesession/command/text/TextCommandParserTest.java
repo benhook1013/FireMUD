@@ -96,6 +96,19 @@ class TextCommandParserTest {
   }
 
   @Test
+  void parsesContainerAsViewRequest() {
+    TextCommand command = parser.parse("container old chest");
+
+    assertEquals(TextCommandType.CONTAINER, command.type());
+    assertEquals("container", command.aliasUsed());
+    assertEquals(List.of("old", "chest"), command.args());
+    assertEquals("container old chest", command.rawLine());
+    assertTrue(command.payload() instanceof TextCommandPayload.ContainerView);
+    assertTrue(command.containerViewPayload().isPresent());
+    assertEquals("old chest", command.containerViewPayload().orElseThrow().containerReference());
+  }
+
+  @Test
   void parsesGetAsItemReference() {
     TextCommand command = parser.parse("GET rough iron key");
 
@@ -145,6 +158,37 @@ class TextCommandParserTest {
     assertTrue(command.payload() instanceof TextCommandPayload.ItemReference);
     assertEquals("iron key", command.itemReferencePayload().orElseThrow().reference());
     assertEquals(1, command.itemReferencePayload().orElseThrow().quantity());
+  }
+
+  @Test
+  void parsesPutAsContainerTransfer() {
+    TextCommand command = parser.parse("PUT 2 rough iron key INTO old chest");
+
+    assertEquals(TextCommandType.PUT, command.type());
+    assertEquals("PUT", command.aliasUsed());
+    assertEquals(List.of("2", "rough", "iron", "key", "INTO", "old", "chest"), command.args());
+    assertEquals("PUT 2 rough iron key INTO old chest", command.rawLine());
+    assertTrue(command.payload() instanceof TextCommandPayload.ContainerTransfer);
+    assertEquals(
+        "rough iron key", command.containerTransferPayload().orElseThrow().itemReference());
+    assertEquals(2, command.containerTransferPayload().orElseThrow().quantity());
+    assertEquals(
+        "old chest", command.containerTransferPayload().orElseThrow().containerReference());
+  }
+
+  @Test
+  void parsesTakeAsContainerTransfer() {
+    TextCommand command = parser.parse("TAKE torch FROM old chest");
+
+    assertEquals(TextCommandType.TAKE, command.type());
+    assertEquals("TAKE", command.aliasUsed());
+    assertEquals(List.of("torch", "FROM", "old", "chest"), command.args());
+    assertEquals("TAKE torch FROM old chest", command.rawLine());
+    assertTrue(command.payload() instanceof TextCommandPayload.ContainerTransfer);
+    assertEquals("torch", command.containerTransferPayload().orElseThrow().itemReference());
+    assertEquals(1, command.containerTransferPayload().orElseThrow().quantity());
+    assertEquals(
+        "old chest", command.containerTransferPayload().orElseThrow().containerReference());
   }
 
   @Test

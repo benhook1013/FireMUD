@@ -5,16 +5,22 @@ import lombok.Data;
 
 @Data
 @Entity
-@Table(name = "inventory")
-public class InventoryEntry {
-  @EmbeddedId private InventoryKey id;
+@Table(name = "container_contents")
+public class ContainerContentEntry {
+  @EmbeddedId private ContainerContentKey id;
 
   @ManyToOne(fetch = FetchType.LAZY)
   @MapsId("characterId")
   private Character character;
 
   @ManyToOne(fetch = FetchType.LAZY)
+  @MapsId("containerItemId")
+  @JoinColumn(name = "container_item_id", nullable = false)
+  private Item containerItem;
+
+  @ManyToOne(fetch = FetchType.LAZY)
   @MapsId("itemId")
+  @JoinColumn(name = "item_id", nullable = false)
   private Item item;
 
   @Column(nullable = false)
@@ -22,22 +28,26 @@ public class InventoryEntry {
 
   @Version private int version;
 
-  public InventoryKey getId() {
+  public ContainerContentKey getId() {
     if (id == null) {
       return null;
     }
-    InventoryKey copy = new InventoryKey();
+    ContainerContentKey copy = new ContainerContentKey();
+    copy.setTenantId(id.getTenantId());
     copy.setCharacterId(id.getCharacterId());
+    copy.setContainerItemId(id.getContainerItemId());
     copy.setItemId(id.getItemId());
     return copy;
   }
 
-  public void setId(InventoryKey id) {
+  public void setId(ContainerContentKey id) {
     if (id == null) {
       this.id = null;
     } else {
-      InventoryKey copy = new InventoryKey();
+      ContainerContentKey copy = new ContainerContentKey();
+      copy.setTenantId(id.getTenantId());
       copy.setCharacterId(id.getCharacterId());
+      copy.setContainerItemId(id.getContainerItemId());
       copy.setItemId(id.getItemId());
       this.id = copy;
     }
@@ -65,6 +75,35 @@ public class InventoryEntry {
       copy.setAccountId(character.getAccountId());
       copy.setName(character.getName());
       this.character = copy;
+    }
+  }
+
+  public Item getContainerItem() {
+    if (containerItem == null) {
+      return null;
+    }
+    Item copy = new Item();
+    copy.setId(containerItem.getId());
+    copy.setTenantId(containerItem.getTenantId());
+    copy.setName(containerItem.getName());
+    copy.setDescription(containerItem.getDescription());
+    copy.setEquipmentSlot(containerItem.getEquipmentSlot());
+    copy.setContainer(containerItem.isContainer());
+    return copy;
+  }
+
+  public void setContainerItem(Item containerItem) {
+    if (containerItem == null) {
+      this.containerItem = null;
+    } else {
+      Item copy = new Item();
+      copy.setId(containerItem.getId());
+      copy.setTenantId(containerItem.getTenantId());
+      copy.setName(containerItem.getName());
+      copy.setDescription(containerItem.getDescription());
+      copy.setEquipmentSlot(containerItem.getEquipmentSlot());
+      copy.setContainer(containerItem.isContainer());
+      this.containerItem = copy;
     }
   }
 

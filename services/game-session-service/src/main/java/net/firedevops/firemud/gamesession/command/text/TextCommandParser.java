@@ -25,7 +25,9 @@ public class TextCommandParser {
               new ParsedCommandData(List.of(), new TextCommandPayload.ViewRequest("INVENTORY"));
           case EQUIPMENT ->
               new ParsedCommandData(List.of(), new TextCommandPayload.ViewRequest("EQUIPMENT"));
+          case CONTAINER -> parseContainerView(tokens);
           case GET, DROP, WEAR, REMOVE -> parseItemReference(type, tokens);
+          case PUT, TAKE -> parseContainerTransfer(type, tokens);
           case LOOK -> new ParsedCommandData(List.of(), new TextCommandPayload.ViewRequest("LOOK"));
           case QUICKLOOK ->
               new ParsedCommandData(List.of(), new TextCommandPayload.ViewRequest("QUICKLOOK"));
@@ -75,6 +77,23 @@ public class TextCommandParser {
       return new ParsedCommandData(args, new TextCommandPayload.Tokens(args));
     }
     return new ParsedCommandData(args, TextCommandPayload.fromLegacy(type, args));
+  }
+
+  private ParsedCommandData parseContainerTransfer(TextCommandType type, String[] tokens) {
+    List<String> args = parseRemainingTokens(tokens);
+    if (args.isEmpty()) {
+      return new ParsedCommandData(args, new TextCommandPayload.Tokens(args));
+    }
+    return new ParsedCommandData(args, TextCommandPayload.fromLegacy(type, args));
+  }
+
+  private ParsedCommandData parseContainerView(String[] tokens) {
+    List<String> args = parseRemainingTokens(tokens);
+    if (args.isEmpty()) {
+      return new ParsedCommandData(args, new TextCommandPayload.Tokens(args));
+    }
+    return new ParsedCommandData(
+        args, TextCommandPayload.fromLegacy(TextCommandType.CONTAINER, args));
   }
 
   private List<String> parseRemainingTokens(String[] tokens) {

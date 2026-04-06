@@ -8,13 +8,16 @@ import java.util.stream.Collectors;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.entitymanagement.dto.CharacterDto;
 import net.firedevops.firemud.entitymanagement.dto.CharacterEquipmentEntryDto;
+import net.firedevops.firemud.entitymanagement.dto.ContainerContentEntryDto;
 import net.firedevops.firemud.entitymanagement.dto.RoomEntityDto;
 import net.firedevops.firemud.entitymanagement.service.CharacterService;
+import net.firedevops.firemud.entitymanagement.service.ContainerService;
 import net.firedevops.firemud.entitymanagement.service.EquipmentService;
 import net.firedevops.firemud.entitymanagement.service.InventoryService;
 import net.firedevops.firemud.entitymanagement.service.PingService;
 import net.firedevops.firemud.entitymanagement.service.RoomEntityService;
 import net.firedevops.firemud.entitymanagement.v1.Character;
+import net.firedevops.firemud.entitymanagement.v1.ContainerItem;
 import net.firedevops.firemud.entitymanagement.v1.CreateCharacterRequest;
 import net.firedevops.firemud.entitymanagement.v1.CreateCharacterResponse;
 import net.firedevops.firemud.entitymanagement.v1.DropItemToRoomRequest;
@@ -26,6 +29,8 @@ import net.firedevops.firemud.entitymanagement.v1.FindCharacterByNameResponse;
 import net.firedevops.firemud.entitymanagement.v1.InventoryItem;
 import net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountRequest;
 import net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse;
+import net.firedevops.firemud.entitymanagement.v1.ListContainerContentsRequest;
+import net.firedevops.firemud.entitymanagement.v1.ListContainerContentsResponse;
 import net.firedevops.firemud.entitymanagement.v1.ListEquipmentRequest;
 import net.firedevops.firemud.entitymanagement.v1.ListEquipmentResponse;
 import net.firedevops.firemud.entitymanagement.v1.ListRoomEntitiesRequest;
@@ -34,12 +39,16 @@ import net.firedevops.firemud.entitymanagement.v1.PickupItemFromRoomRequest;
 import net.firedevops.firemud.entitymanagement.v1.PickupItemFromRoomResponse;
 import net.firedevops.firemud.entitymanagement.v1.PingRequest;
 import net.firedevops.firemud.entitymanagement.v1.PingResponse;
+import net.firedevops.firemud.entitymanagement.v1.PutItemIntoContainerRequest;
+import net.firedevops.firemud.entitymanagement.v1.PutItemIntoContainerResponse;
 import net.firedevops.firemud.entitymanagement.v1.QueryInventoryRequest;
 import net.firedevops.firemud.entitymanagement.v1.QueryInventoryResponse;
 import net.firedevops.firemud.entitymanagement.v1.RemoveEquipmentRequest;
 import net.firedevops.firemud.entitymanagement.v1.RemoveEquipmentResponse;
 import net.firedevops.firemud.entitymanagement.v1.RoomEntity;
 import net.firedevops.firemud.entitymanagement.v1.RoomGroundInventoryItem;
+import net.firedevops.firemud.entitymanagement.v1.TakeItemFromContainerRequest;
+import net.firedevops.firemud.entitymanagement.v1.TakeItemFromContainerResponse;
 import net.firedevops.firemud.entitymanagement.v1.UpdateEntityRequest;
 import net.firedevops.firemud.entitymanagement.v1.UpdateEntityResponse;
 import net.firedevops.firemud.entitymanagement.v1.WearEquipmentItemRequest;
@@ -69,6 +78,11 @@ public class EntityManagementGrpcService
 
   @SuppressFBWarnings(
       value = "EI_EXPOSE_REP2",
+      justification = "Injected ContainerService is not exposed externally")
+  private final ContainerService containerService;
+
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
       justification = "MeterRegistry is thread-safe and stored as injected")
   private final MeterRegistry meterRegistry;
 
@@ -79,12 +93,14 @@ public class EntityManagementGrpcService
       CharacterService characterService,
       EquipmentService equipmentService,
       InventoryService inventoryService,
+      ContainerService containerService,
       RoomEntityService roomEntityService,
       MeterRegistry meterRegistry) {
     this.pingService = pingService;
     this.characterService = characterService;
     this.equipmentService = equipmentService;
     this.inventoryService = inventoryService;
+    this.containerService = containerService;
     this.roomEntityService = roomEntityService;
     this.meterRegistry = meterRegistry;
   }
@@ -444,6 +460,166 @@ public class EntityManagementGrpcService
   }
 
   @Override
+  @Timed(value = "entityGrpc.listContainerContents")
+  public void listContainerContents(
+      ListContainerContentsRequest request,
+      StreamObserver<ListContainerContentsResponse> responseObserver) {
+    try {
+      long tenantId = Long.parseLong(request.getTenantId());
+      long characterId = Long.parseLong(request.getCharacterId());
+      long containerItemId = Long.parseLong(request.getContainerItemId());
+      var items =
+          containerService.listContainerContents(
+              tenantId, characterId, containerItemId, Pageable.unpaged());
+      ListContainerContentsResponse response =
+          ListContainerContentsResponse.newBuilder()
+              .addAllItems(items.stream().map(this::toProto).toList())
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (NumberFormatException ex) {
+      ListContainerContentsResponse response =
+          ListContainerContentsResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry,
+                      logger,
+                      "ListContainerContents",
+                      "INVALID_ARGUMENT",
+                      ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      ListContainerContentsResponse response =
+          ListContainerContentsResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry,
+                      logger,
+                      "ListContainerContents",
+                      "INVALID_ARGUMENT",
+                      ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      ListContainerContentsResponse response =
+          ListContainerContentsResponse.newBuilder()
+              .setError(GrpcAppErrors.internal(meterRegistry, logger, "ListContainerContents", ex))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    }
+  }
+
+  @Override
+  @Timed(value = "entityGrpc.putItemIntoContainer")
+  public void putItemIntoContainer(
+      PutItemIntoContainerRequest request,
+      StreamObserver<PutItemIntoContainerResponse> responseObserver) {
+    try {
+      long tenantId = Long.parseLong(request.getTenantId());
+      long characterId = Long.parseLong(request.getCharacterId());
+      long containerItemId = Long.parseLong(request.getContainerItemId());
+      long itemId = Long.parseLong(request.getItemId());
+      var dto =
+          containerService.putItemIntoContainer(
+              tenantId, characterId, containerItemId, itemId, request.getQuantity());
+      PutItemIntoContainerResponse response =
+          PutItemIntoContainerResponse.newBuilder().setContainerItem(toProto(dto)).build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (NumberFormatException ex) {
+      PutItemIntoContainerResponse response =
+          PutItemIntoContainerResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry,
+                      logger,
+                      "PutItemIntoContainer",
+                      "INVALID_ARGUMENT",
+                      ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      PutItemIntoContainerResponse response =
+          PutItemIntoContainerResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry,
+                      logger,
+                      "PutItemIntoContainer",
+                      "INVALID_ARGUMENT",
+                      ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      PutItemIntoContainerResponse response =
+          PutItemIntoContainerResponse.newBuilder()
+              .setError(GrpcAppErrors.internal(meterRegistry, logger, "PutItemIntoContainer", ex))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    }
+  }
+
+  @Override
+  @Timed(value = "entityGrpc.takeItemFromContainer")
+  public void takeItemFromContainer(
+      TakeItemFromContainerRequest request,
+      StreamObserver<TakeItemFromContainerResponse> responseObserver) {
+    try {
+      long tenantId = Long.parseLong(request.getTenantId());
+      long characterId = Long.parseLong(request.getCharacterId());
+      long containerItemId = Long.parseLong(request.getContainerItemId());
+      long itemId = Long.parseLong(request.getItemId());
+      var dto =
+          containerService.takeItemFromContainer(
+              tenantId, characterId, containerItemId, itemId, request.getQuantity());
+      TakeItemFromContainerResponse response =
+          TakeItemFromContainerResponse.newBuilder().setInventoryItem(toProto(dto)).build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (NumberFormatException ex) {
+      TakeItemFromContainerResponse response =
+          TakeItemFromContainerResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry,
+                      logger,
+                      "TakeItemFromContainer",
+                      "INVALID_ARGUMENT",
+                      ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      TakeItemFromContainerResponse response =
+          TakeItemFromContainerResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry,
+                      logger,
+                      "TakeItemFromContainer",
+                      "INVALID_ARGUMENT",
+                      ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      TakeItemFromContainerResponse response =
+          TakeItemFromContainerResponse.newBuilder()
+              .setError(GrpcAppErrors.internal(meterRegistry, logger, "TakeItemFromContainer", ex))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    }
+  }
+
+  @Override
   @Timed(value = "entityGrpc.pickupItemFromRoom")
   public void pickupItemFromRoom(
       PickupItemFromRoomRequest request,
@@ -640,6 +816,18 @@ public class EntityManagementGrpcService
         .setItemId(String.valueOf(dto.itemId()))
         .setItemName(dto.itemName())
         .setItemDescription(dto.itemDescription() == null ? "" : dto.itemDescription())
+        .build();
+  }
+
+  private ContainerItem toProto(ContainerContentEntryDto dto) {
+    return ContainerItem.newBuilder()
+        .setTenantId(String.valueOf(dto.tenantId()))
+        .setCharacterId(String.valueOf(dto.characterId()))
+        .setContainerItemId(String.valueOf(dto.containerItemId()))
+        .setItemId(String.valueOf(dto.itemId()))
+        .setItemName(dto.itemName())
+        .setItemDescription(dto.itemDescription() == null ? "" : dto.itemDescription())
+        .setQuantity(dto.quantity())
         .build();
   }
 

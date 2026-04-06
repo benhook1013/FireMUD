@@ -9,11 +9,15 @@ import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
+import net.firedevops.firemud.entitymanagement.v1.ContainerItem;
 import net.firedevops.firemud.entitymanagement.v1.DropItemToRoomResponse;
 import net.firedevops.firemud.entitymanagement.v1.EntityManagementServiceGrpc;
 import net.firedevops.firemud.entitymanagement.v1.InventoryItem;
+import net.firedevops.firemud.entitymanagement.v1.ListContainerContentsResponse;
 import net.firedevops.firemud.entitymanagement.v1.PickupItemFromRoomResponse;
+import net.firedevops.firemud.entitymanagement.v1.PutItemIntoContainerResponse;
 import net.firedevops.firemud.entitymanagement.v1.RoomGroundInventoryItem;
+import net.firedevops.firemud.entitymanagement.v1.TakeItemFromContainerResponse;
 import org.junit.jupiter.api.Test;
 
 class EntityManagementClientTest {
@@ -85,6 +89,99 @@ class EntityManagementClientTest {
 
     assertThat(response.getRoomGroundItem().getItemName()).isEqualTo("Torch");
     assertThat(response.getRoomGroundItem().getQuantity()).isEqualTo(1);
+  }
+
+  @Test
+  void listContainerContentsForwardsRequestAndReturnsContainerItems() throws Exception {
+    EntityManagementClient client = newClient();
+    EntityManagementServiceGrpc.EntityManagementServiceBlockingStub stub =
+        mock(EntityManagementServiceGrpc.EntityManagementServiceBlockingStub.class);
+    when(stub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(stub);
+    when(stub.listContainerContents(
+            net.firedevops.firemud.entitymanagement.v1.ListContainerContentsRequest.newBuilder()
+                .setTenantId("1")
+                .setCharacterId("7")
+                .setContainerItemId("99")
+                .build()))
+        .thenReturn(
+            ListContainerContentsResponse.newBuilder()
+                .addItems(
+                    ContainerItem.newBuilder()
+                        .setContainerItemId("99")
+                        .setItemId("100")
+                        .setItemName("Torch")
+                        .setQuantity(2)
+                        .build())
+                .build());
+    setStub(client, stub);
+
+    ListContainerContentsResponse response = client.listContainerContents("1", "7", "99");
+
+    assertThat(response.getItems(0).getItemName()).isEqualTo("Torch");
+    assertThat(response.getItems(0).getQuantity()).isEqualTo(2);
+  }
+
+  @Test
+  void putItemIntoContainerForwardsRequestAndReturnsContainerItem() throws Exception {
+    EntityManagementClient client = newClient();
+    EntityManagementServiceGrpc.EntityManagementServiceBlockingStub stub =
+        mock(EntityManagementServiceGrpc.EntityManagementServiceBlockingStub.class);
+    when(stub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(stub);
+    when(stub.putItemIntoContainer(
+            net.firedevops.firemud.entitymanagement.v1.PutItemIntoContainerRequest.newBuilder()
+                .setTenantId("1")
+                .setCharacterId("7")
+                .setContainerItemId("99")
+                .setItemId("100")
+                .setQuantity(1)
+                .build()))
+        .thenReturn(
+            PutItemIntoContainerResponse.newBuilder()
+                .setContainerItem(
+                    ContainerItem.newBuilder()
+                        .setContainerItemId("99")
+                        .setItemId("100")
+                        .setItemName("Torch")
+                        .setQuantity(1)
+                        .build())
+                .build());
+    setStub(client, stub);
+
+    PutItemIntoContainerResponse response = client.putItemIntoContainer("1", "7", "99", "100", 1);
+
+    assertThat(response.getContainerItem().getItemName()).isEqualTo("Torch");
+    assertThat(response.getContainerItem().getQuantity()).isEqualTo(1);
+  }
+
+  @Test
+  void takeItemFromContainerForwardsRequestAndReturnsInventoryItem() throws Exception {
+    EntityManagementClient client = newClient();
+    EntityManagementServiceGrpc.EntityManagementServiceBlockingStub stub =
+        mock(EntityManagementServiceGrpc.EntityManagementServiceBlockingStub.class);
+    when(stub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(stub);
+    when(stub.takeItemFromContainer(
+            net.firedevops.firemud.entitymanagement.v1.TakeItemFromContainerRequest.newBuilder()
+                .setTenantId("1")
+                .setCharacterId("7")
+                .setContainerItemId("99")
+                .setItemId("100")
+                .setQuantity(1)
+                .build()))
+        .thenReturn(
+            TakeItemFromContainerResponse.newBuilder()
+                .setInventoryItem(
+                    InventoryItem.newBuilder()
+                        .setItemId("100")
+                        .setItemName("Torch")
+                        .setQuantity(1)
+                        .build())
+                .build());
+    setStub(client, stub);
+
+    TakeItemFromContainerResponse response = client.takeItemFromContainer("1", "7", "99", "100", 1);
+
+    assertThat(response.getInventoryItem().getItemName()).isEqualTo("Torch");
+    assertThat(response.getInventoryItem().getQuantity()).isEqualTo(1);
   }
 
   private static EntityManagementClient newClient() {

@@ -23,6 +23,7 @@ public class TextCommandInterpreter {
   private final HelpCommandHandler helpHandler;
   private final InventoryCommandHandler inventoryHandler;
   private final EquipmentCommandHandler equipmentHandler;
+  private final ContainerCommandHandler containerHandler;
   private final SessionAuthenticationService sessionAuthenticationService;
   private final CommunicationCommandHandler communicationHandler;
   private final WorldsCommandHandler worldsHandler;
@@ -39,6 +40,7 @@ public class TextCommandInterpreter {
       HelpCommandHandler helpHandler,
       InventoryCommandHandler inventoryHandler,
       EquipmentCommandHandler equipmentHandler,
+      ContainerCommandHandler containerHandler,
       SessionAuthenticationService sessionAuthenticationService,
       CommunicationCommandHandler communicationHandler,
       WorldsCommandHandler worldsHandler,
@@ -52,6 +54,7 @@ public class TextCommandInterpreter {
         helpHandler,
         inventoryHandler,
         equipmentHandler,
+        containerHandler,
         sessionAuthenticationService,
         communicationHandler,
         worldsHandler,
@@ -68,6 +71,7 @@ public class TextCommandInterpreter {
       HelpCommandHandler helpHandler,
       InventoryCommandHandler inventoryHandler,
       EquipmentCommandHandler equipmentHandler,
+      ContainerCommandHandler containerHandler,
       SessionAuthenticationService sessionAuthenticationService,
       CommunicationCommandHandler communicationHandler,
       WorldsCommandHandler worldsHandler,
@@ -83,6 +87,8 @@ public class TextCommandInterpreter {
         Objects.requireNonNull(inventoryHandler, "inventoryHandler must not be null");
     this.equipmentHandler =
         Objects.requireNonNull(equipmentHandler, "equipmentHandler must not be null");
+    this.containerHandler =
+        Objects.requireNonNull(containerHandler, "containerHandler must not be null");
     this.sessionAuthenticationService =
         Objects.requireNonNull(
             sessionAuthenticationService, "sessionAuthenticationService must not be null");
@@ -182,6 +188,16 @@ public class TextCommandInterpreter {
       return new TextCommandInterpretationResult(equipmentResult.commandResult(), outputs);
     }
 
+    if (isContainerCommand(command.type())) {
+      TextCommandInterpretationResult containerResult =
+          containerHandler.handle(maybeContext.orElseThrow(), command);
+      List<PlayerOutput> outputs = containerResult.outputs();
+      if (containerResult.commandResult().accepted()) {
+        outputs = appendPrompt(maybeContext.orElseThrow(), outputs);
+      }
+      return new TextCommandInterpretationResult(containerResult.commandResult(), outputs);
+    }
+
     if (isCommunicationCommand(command.type())) {
       CommunicationCommandHandlingResult communicationResult =
           communicationHandler.handle(maybeContext.orElseThrow(), command);
@@ -235,6 +251,7 @@ public class TextCommandInterpreter {
         || isCommunicationCommand(type)
         || isInventoryCommand(type)
         || isEquipmentCommand(type)
+        || isContainerCommand(type)
         || type == TextCommandType.MOVE;
   }
 
@@ -258,6 +275,12 @@ public class TextCommandInterpreter {
     return type == TextCommandType.EQUIPMENT
         || type == TextCommandType.WEAR
         || type == TextCommandType.REMOVE;
+  }
+
+  private static boolean isContainerCommand(TextCommandType type) {
+    return type == TextCommandType.CONTAINER
+        || type == TextCommandType.PUT
+        || type == TextCommandType.TAKE;
   }
 
   private TextCommandInterpretationResult stageFailure(String code, String message) {

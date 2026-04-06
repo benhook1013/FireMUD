@@ -8,4 +8,5 @@ public record ItemDto(
     @NotNull Long tenantId,
     @NotNull @Size(max = 100) String name,
     String description,
-    String equipmentSlot) {}
+    String equipmentSlot,
+    boolean container) {}

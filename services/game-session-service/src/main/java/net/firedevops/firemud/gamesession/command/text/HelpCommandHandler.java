@@ -49,6 +49,21 @@ public class HelpCommandHandler {
                   + "WEAR <item> equips a carried item.\n"
                   + "REMOVE <item|slot> takes an equipped item off.\n"
                   + "The command surface is now backed by the equipment service.");
+      case "CONTAINER" ->
+          success(
+              "CONTAINER <container>\n"
+                  + "Inspect a carried container's contents.\n"
+                  + "See HELP PUT and HELP TAKE for transfer syntax.");
+      case "PUT" ->
+          success(
+              "PUT <item> INTO <container>\n"
+                  + "Move a carried item into a carried container.\n"
+                  + "PUT <count> <item> INTO <container> moves that many items.");
+      case "TAKE" ->
+          success(
+              "TAKE <item> FROM <container>\n"
+                  + "Move an item out of a carried container.\n"
+                  + "TAKE <count> <item> FROM <container> moves that many items.");
       case "WEAR" ->
           success(
               "WEAR <item>\n"
@@ -114,6 +129,9 @@ public class HelpCommandHandler {
       case "PLAY" -> "PLAY";
       case "INVENTORY", "INV", "I" -> "INVENTORY";
       case "EQUIPMENT", "EQUIP", "EQ", "WEAR", "REMOVE" -> "EQUIPMENT";
+      case "CONTAINER", "CONT" -> "CONTAINER";
+      case "PUT" -> "PUT";
+      case "TAKE" -> "TAKE";
       case "GET" -> "GET";
       case "DROP" -> "DROP";
       case "MOVEMENT", "MOVE", "WALK", "GO" -> "MOVEMENT";
@@ -131,6 +149,9 @@ public class HelpCommandHandler {
         + "- HELP PLAY\n"
         + "- HELP INVENTORY\n"
         + "- HELP EQUIPMENT\n"
+        + "- HELP CONTAINER\n"
+        + "- HELP PUT\n"
+        + "- HELP TAKE\n"
         + "- HELP WEAR\n"
         + "- HELP REMOVE\n"
         + "- HELP GET\n"

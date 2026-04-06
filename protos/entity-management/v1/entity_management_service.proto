@@ -16,6 +16,9 @@ service EntityManagementService {
   rpc ListEquipment(ListEquipmentRequest) returns (ListEquipmentResponse);
   rpc WearEquipment(WearEquipmentItemRequest) returns (WearEquipmentItemResponse);
   rpc RemoveEquipment(RemoveEquipmentRequest) returns (RemoveEquipmentResponse);
+  rpc ListContainerContents(ListContainerContentsRequest) returns (ListContainerContentsResponse);
+  rpc PutItemIntoContainer(PutItemIntoContainerRequest) returns (PutItemIntoContainerResponse);
+  rpc TakeItemFromContainer(TakeItemFromContainerRequest) returns (TakeItemFromContainerResponse);
   rpc PickupItemFromRoom(PickupItemFromRoomRequest) returns (PickupItemFromRoomResponse);
   rpc DropItemToRoom(DropItemToRoomRequest) returns (DropItemToRoomResponse);
   rpc ListCharactersByAccount(ListCharactersByAccountRequest) returns (ListCharactersByAccountResponse);
@@ -99,6 +102,53 @@ message RemoveEquipmentRequest {
 
 message RemoveEquipmentResponse {
   EquipmentItem equipment_item = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message ContainerItem {
+  string tenant_id = 1;
+  string character_id = 2;
+  string container_item_id = 3;
+  string item_id = 4;
+  string item_name = 5;
+  string item_description = 6;
+  int32 quantity = 7;
+}
+
+message ListContainerContentsRequest {
+  string tenant_id = 1;
+  string character_id = 2;
+  string container_item_id = 3;
+}
+
+message ListContainerContentsResponse {
+  repeated ContainerItem items = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message PutItemIntoContainerRequest {
+  string tenant_id = 1;
+  string character_id = 2;
+  string container_item_id = 3;
+  string item_id = 4;
+  int32 quantity = 5;
+}
+
+message PutItemIntoContainerResponse {
+  ContainerItem container_item = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message TakeItemFromContainerRequest {
+  string tenant_id = 1;
+  string character_id = 2;
+  string container_item_id = 3;
+  string item_id = 4;
+  int32 quantity = 5;
+}
+
+message TakeItemFromContainerResponse {
+  InventoryItem inventory_item = 1;
   shared.v1.ErrorDetail error = 2;
 }
 

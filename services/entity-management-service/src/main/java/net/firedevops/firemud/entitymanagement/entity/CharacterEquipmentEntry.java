@@ -75,6 +75,7 @@ public class CharacterEquipmentEntry {
     copy.setName(item.getName());
     copy.setDescription(item.getDescription());
     copy.setEquipmentSlot(item.getEquipmentSlot());
+    copy.setContainer(item.isContainer());
     return copy;
   }
 
@@ -88,6 +89,7 @@ public class CharacterEquipmentEntry {
       copy.setName(item.getName());
       copy.setDescription(item.getDescription());
       copy.setEquipmentSlot(item.getEquipmentSlot());
+      copy.setContainer(item.isContainer());
       this.item = copy;
     }
   }
