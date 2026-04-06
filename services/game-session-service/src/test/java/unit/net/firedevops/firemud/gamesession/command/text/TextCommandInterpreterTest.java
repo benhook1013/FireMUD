@@ -234,7 +234,7 @@ class TextCommandInterpreterTest {
             ListContainerContentsResponse.newBuilder()
                 .addItems(
                     net.firedevops.firemud.entitymanagement.v1.ContainerItem.newBuilder()
-                        .setContainerItemId("ITEM-009")
+                        .setContainerInstanceId("ITEM-009")
                         .setItemId("ITEM-010")
                         .setItemName("Ration")
                         .setItemDescription("A travel ration")

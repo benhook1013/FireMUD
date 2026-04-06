@@ -8,12 +8,14 @@ import net.firedevops.firemud.entitymanagement.dto.CharacterEquipmentEntryDto;
 import net.firedevops.firemud.entitymanagement.entity.Character;
 import net.firedevops.firemud.entitymanagement.entity.CharacterEquipmentEntry;
 import net.firedevops.firemud.entitymanagement.entity.CharacterEquipmentKey;
+import net.firedevops.firemud.entitymanagement.entity.ContainerInstance;
 import net.firedevops.firemud.entitymanagement.entity.InventoryEntry;
 import net.firedevops.firemud.entitymanagement.entity.InventoryKey;
 import net.firedevops.firemud.entitymanagement.entity.Item;
 import net.firedevops.firemud.entitymanagement.mapper.CharacterEquipmentEntryMapper;
 import net.firedevops.firemud.entitymanagement.repository.CharacterEquipmentRepository;
 import net.firedevops.firemud.entitymanagement.repository.CharacterRepository;
+import net.firedevops.firemud.entitymanagement.repository.ContainerInstanceRepository;
 import net.firedevops.firemud.entitymanagement.repository.InventoryEntryRepository;
 import net.firedevops.firemud.entitymanagement.repository.ItemRepository;
 import net.firedevops.firemud.entitymanagement.service.EquipmentService;
@@ -27,6 +29,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class EquipmentServiceImpl implements EquipmentService {
   private final CharacterEquipmentRepository equipmentRepository;
   private final CharacterEquipmentEntryMapper equipmentMapper;
+  private final ContainerInstanceRepository containerInstanceRepository;
   private final InventoryEntryRepository inventoryRepository;
   private final CharacterRepository characterRepository;
   private final ItemRepository itemRepository;
@@ -39,7 +42,7 @@ public class EquipmentServiceImpl implements EquipmentService {
     requireCharacter(tenantId, characterId);
     return equipmentRepository
         .findByIdCharacterIdAndCharacterTenantId(characterId, tenantId, pageable)
-        .map(equipmentMapper::toDto);
+        .map(this::toDto);
   }
 
   @Override
@@ -59,7 +62,11 @@ public class EquipmentServiceImpl implements EquipmentService {
     entry.setId(key);
     entry.setCharacter(character);
     entry.setItem(item);
-    return equipmentMapper.toDto(equipmentRepository.save(entry));
+    CharacterEquipmentEntry saved = equipmentRepository.save(entry);
+    if (item.isContainer()) {
+      saved.setContainerInstanceId(ensureContainerInstance(character, item).getId());
+    }
+    return toDto(saved);
   }
 
   @Override
@@ -74,8 +81,11 @@ public class EquipmentServiceImpl implements EquipmentService {
             .orElseThrow(() -> new IllegalArgumentException("Equipment slot is empty"));
     Item item = entry.getItem();
     equipmentRepository.delete(entry);
-    upsertInventoryEntry(character, item, 1);
-    return equipmentMapper.toDto(entry);
+    InventoryEntry carried = upsertInventoryEntry(character, item, 1);
+    if (item.isContainer()) {
+      carried.setContainerInstanceId(ensureContainerInstance(character, item).getId());
+    }
+    return toDto(entry);
   }
 
   private Character requireCharacter(Long tenantId, Long characterId) {
@@ -113,7 +123,43 @@ public class EquipmentServiceImpl implements EquipmentService {
     } else {
       entry.setQuantity(entry.getQuantity() + quantity);
     }
-    return inventoryRepository.save(entry);
+    InventoryEntry saved = inventoryRepository.save(entry);
+    if (item.isContainer()) {
+      saved.setContainerInstanceId(ensureContainerInstance(character, item).getId());
+    }
+    return saved;
+  }
+
+  private CharacterEquipmentEntryDto toDto(CharacterEquipmentEntry entry) {
+    if (entry.getItem() != null && entry.getItem().isContainer()) {
+      entry.setContainerInstanceId(
+          resolveContainerInstanceId(entry.getCharacter(), entry.getItem()));
+    } else {
+      entry.setContainerInstanceId(null);
+    }
+    return equipmentMapper.toDto(entry);
+  }
+
+  private Long resolveContainerInstanceId(Character character, Item item) {
+    return containerInstanceRepository
+        .findByTenantIdAndCharacter_IdAndItem_Id(
+            character.getTenantId(), character.getId(), item.getId())
+        .map(ContainerInstance::getId)
+        .orElse(null);
+  }
+
+  private ContainerInstance ensureContainerInstance(Character character, Item item) {
+    return containerInstanceRepository
+        .findByTenantIdAndCharacter_IdAndItem_Id(
+            character.getTenantId(), character.getId(), item.getId())
+        .orElseGet(
+            () -> {
+              ContainerInstance instance = new ContainerInstance();
+              instance.setTenantId(character.getTenantId());
+              instance.setCharacter(character);
+              instance.setItem(item);
+              return containerInstanceRepository.save(instance);
+            });
   }
 
   private void adjustInventoryQuantity(InventoryEntry entry, int delta) {

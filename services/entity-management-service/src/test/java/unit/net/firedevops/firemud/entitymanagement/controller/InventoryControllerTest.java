@@ -30,7 +30,7 @@ class InventoryControllerTest {
 
   @Test
   void listReturnsInventory() throws Exception {
-    InventoryEntryDto dto = new InventoryEntryDto(1L, 2L, 3L, "Torch", "A small torch", 4);
+    InventoryEntryDto dto = new InventoryEntryDto(1L, 2L, 3L, "Torch", "A small torch", 4, null);
     when(inventoryService.listInventory(eq(1L), eq(2L), any(Pageable.class)))
         .thenReturn(new PageImpl<>(List.of(dto)));
 
@@ -45,7 +45,7 @@ class InventoryControllerTest {
   @Test
   void addAndDeleteUseTenantScopedPath() throws Exception {
     when(inventoryService.addItem(eq(1L), eq(2L), eq(3L), eq(1)))
-        .thenReturn(new InventoryEntryDto(1L, 2L, 3L, "Torch", null, 1));
+        .thenReturn(new InventoryEntryDto(1L, 2L, 3L, "Torch", null, 1, null));
 
     mockMvc
         .perform(

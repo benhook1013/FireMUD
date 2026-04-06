@@ -183,7 +183,7 @@ public class InventoryCommandHandler {
             "No carried item matches \"" + itemReferenceValue + "\"");
       }
       ResolvedItem item = resolved.orElseThrow();
-      if (isNonEmptyContainer(context, item.itemId())) {
+      if (isNonEmptyContainer(context, item.containerInstanceId())) {
         return inventoryMutationFailure(
             "INVALID_ARGUMENT",
             itemReferenceValue,
@@ -264,18 +264,20 @@ public class InventoryCommandHandler {
     return StringUtils.hasText(item.getItemName()) ? item.getItemName() : fallback;
   }
 
-  private boolean isNonEmptyContainer(SessionContext context, String itemId) {
+  private boolean isNonEmptyContainer(SessionContext context, String containerInstanceId) {
     try {
       ListContainerContentsResponse response =
           entityManagementClient.listContainerContents(
-              Long.toString(context.tenantId()), Long.toString(context.characterId()), itemId);
+              Long.toString(context.tenantId()),
+              Long.toString(context.characterId()),
+              containerInstanceId);
       return response.hasError() ? false : !response.getItemsList().isEmpty();
     } catch (RuntimeException ex) {
       LOG.warn(
-          "Container probe failed tenantId={} characterId={} itemId={}",
+          "Container probe failed tenantId={} characterId={} containerInstanceId={}",
           context.tenantId(),
           context.characterId(),
-          itemId,
+          containerInstanceId,
           ex);
       return false;
     }
@@ -288,14 +290,23 @@ public class InventoryCommandHandler {
         .filter(entity -> entity.getDisplayName().equalsIgnoreCase(reference))
         .findFirst()
         .map(
-            entity -> new ResolvedItem(parseItemId(entity.getEntityId()), entity.getDisplayName()));
+            entity ->
+                new ResolvedItem(
+                    parseItemId(entity.getEntityId()),
+                    entity.getDisplayName(),
+                    parseItemId(entity.getEntityId())));
   }
 
   private Optional<ResolvedItem> findCarriedItem(List<InventoryItem> items, String reference) {
     return items.stream()
-        .filter(item -> item.getItemName().equalsIgnoreCase(reference))
+        .filter(item -> ContainerIdentitySupport.matchesReference(item, reference))
         .findFirst()
-        .map(item -> new ResolvedItem(item.getItemId(), item.getItemName()));
+        .map(
+            item ->
+                new ResolvedItem(
+                    item.getItemId(),
+                    item.getItemName(),
+                    ContainerIdentitySupport.resolveContainerInstanceId(item)));
   }
 
   private String parseItemId(String entityId) {
@@ -310,5 +321,5 @@ public class InventoryCommandHandler {
     return StringUtils.hasText(errorCode) ? errorCode : "INVENTORY_UNAVAILABLE";
   }
 
-  private record ResolvedItem(String itemId, String itemName) {}
+  private record ResolvedItem(String itemId, String itemName, String containerInstanceId) {}
 }

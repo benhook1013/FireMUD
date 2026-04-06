@@ -7,11 +7,11 @@ import org.springframework.data.domain.Pageable;
 
 public interface ContainerService {
   Page<ContainerContentEntryDto> listContainerContents(
-      Long tenantId, Long characterId, Long containerItemId, Pageable pageable);
+      Long tenantId, Long characterId, Long containerInstanceId, Pageable pageable);
 
   ContainerContentEntryDto putItemIntoContainer(
-      Long tenantId, Long characterId, Long containerItemId, Long itemId, int quantity);
+      Long tenantId, Long characterId, Long containerInstanceId, Long itemId, int quantity);
 
   InventoryEntryDto takeItemFromContainer(
-      Long tenantId, Long characterId, Long containerItemId, Long itemId, int quantity);
+      Long tenantId, Long characterId, Long containerInstanceId, Long itemId, int quantity);
 }

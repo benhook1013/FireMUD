@@ -92,7 +92,8 @@ public class EquipmentCommandHandler {
     }
 
     InventoryItem carried = resolution.item().orElseThrow();
-    if (isNonEmptyContainer(context, carried.getItemId())) {
+    if (isNonEmptyContainer(
+        context, ContainerIdentitySupport.resolveContainerInstanceId(carried))) {
       return equipmentInvalidArgument(
           "WEAR", "You must empty " + carried.getItemName() + " before wearing it");
     }
@@ -191,39 +192,28 @@ public class EquipmentCommandHandler {
     }
     Optional<InventoryItem> item =
         inventory.getItemsList().stream()
-            .filter(
-                carried ->
-                    matchesReference(carried.getItemId(), reference)
-                        || carried.getItemName().equalsIgnoreCase(reference))
+            .filter(carried -> ContainerIdentitySupport.matchesReference(carried, reference))
             .findFirst();
     return EquipmentResolution.available(item);
   }
 
   private Optional<EquipmentItem> findEquippedItem(List<EquipmentItem> items, String reference) {
     return items.stream()
-        .filter(
-            item ->
-                item.getSlot().equalsIgnoreCase(reference)
-                    || item.getItemName().equalsIgnoreCase(reference)
-                    || matchesReference(item.getItemId(), reference))
+        .filter(item -> ContainerIdentitySupport.matchesReference(item, reference))
         .findFirst();
   }
 
-  private boolean isNonEmptyContainer(SessionContext context, String itemId) {
+  private boolean isNonEmptyContainer(SessionContext context, String containerInstanceId) {
     try {
       ListContainerContentsResponse response =
           entityManagementClient.listContainerContents(
-              Long.toString(context.tenantId()), Long.toString(context.characterId()), itemId);
+              Long.toString(context.tenantId()),
+              Long.toString(context.characterId()),
+              containerInstanceId);
       return response.hasError() ? false : !response.getItemsList().isEmpty();
     } catch (RuntimeException ex) {
       return false;
     }
-  }
-
-  private boolean matchesReference(String candidate, String reference) {
-    return StringUtils.hasText(candidate)
-        && StringUtils.hasText(reference)
-        && candidate.equals(reference);
   }
 
   private String formatEquipmentItem(EquipmentItem item) {

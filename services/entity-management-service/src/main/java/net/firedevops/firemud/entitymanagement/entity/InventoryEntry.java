@@ -2,6 +2,8 @@ package net.firedevops.firemud.entitymanagement.entity;
 
 import jakarta.persistence.*;
 import lombok.Data;
+import lombok.EqualsAndHashCode;
+import lombok.ToString;
 
 @Data
 @Entity
@@ -19,6 +21,8 @@ public class InventoryEntry {
 
   @Column(nullable = false)
   private int quantity;
+
+  @Transient @EqualsAndHashCode.Exclude @ToString.Exclude private Long containerInstanceId;
 
   @Version private int version;
 

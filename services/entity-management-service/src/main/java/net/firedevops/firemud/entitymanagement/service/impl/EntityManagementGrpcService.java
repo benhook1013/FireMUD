@@ -467,10 +467,10 @@ public class EntityManagementGrpcService
     try {
       long tenantId = Long.parseLong(request.getTenantId());
       long characterId = Long.parseLong(request.getCharacterId());
-      long containerItemId = Long.parseLong(request.getContainerItemId());
+      long containerInstanceId = Long.parseLong(request.getContainerInstanceId());
       var items =
           containerService.listContainerContents(
-              tenantId, characterId, containerItemId, Pageable.unpaged());
+              tenantId, characterId, containerInstanceId, Pageable.unpaged());
       ListContainerContentsResponse response =
           ListContainerContentsResponse.newBuilder()
               .addAllItems(items.stream().map(this::toProto).toList())
@@ -521,11 +521,11 @@ public class EntityManagementGrpcService
     try {
       long tenantId = Long.parseLong(request.getTenantId());
       long characterId = Long.parseLong(request.getCharacterId());
-      long containerItemId = Long.parseLong(request.getContainerItemId());
+      long containerInstanceId = Long.parseLong(request.getContainerInstanceId());
       long itemId = Long.parseLong(request.getItemId());
       var dto =
           containerService.putItemIntoContainer(
-              tenantId, characterId, containerItemId, itemId, request.getQuantity());
+              tenantId, characterId, containerInstanceId, itemId, request.getQuantity());
       PutItemIntoContainerResponse response =
           PutItemIntoContainerResponse.newBuilder().setContainerItem(toProto(dto)).build();
       responseObserver.onNext(response);
@@ -574,11 +574,11 @@ public class EntityManagementGrpcService
     try {
       long tenantId = Long.parseLong(request.getTenantId());
       long characterId = Long.parseLong(request.getCharacterId());
-      long containerItemId = Long.parseLong(request.getContainerItemId());
+      long containerInstanceId = Long.parseLong(request.getContainerInstanceId());
       long itemId = Long.parseLong(request.getItemId());
       var dto =
           containerService.takeItemFromContainer(
-              tenantId, characterId, containerItemId, itemId, request.getQuantity());
+              tenantId, characterId, containerInstanceId, itemId, request.getQuantity());
       TakeItemFromContainerResponse response =
           TakeItemFromContainerResponse.newBuilder().setInventoryItem(toProto(dto)).build();
       responseObserver.onNext(response);
@@ -800,30 +800,38 @@ public class EntityManagementGrpcService
   }
 
   private InventoryItem toProto(net.firedevops.firemud.entitymanagement.dto.InventoryEntryDto dto) {
-    return InventoryItem.newBuilder()
-        .setItemId(String.valueOf(dto.itemId()))
-        .setItemName(dto.itemName())
-        .setItemDescription(dto.itemDescription() == null ? "" : dto.itemDescription())
-        .setQuantity(dto.quantity())
-        .build();
+    InventoryItem.Builder builder =
+        InventoryItem.newBuilder()
+            .setItemId(String.valueOf(dto.itemId()))
+            .setItemName(dto.itemName())
+            .setItemDescription(dto.itemDescription() == null ? "" : dto.itemDescription())
+            .setQuantity(dto.quantity());
+    if (dto.containerInstanceId() != null) {
+      builder.setContainerInstanceId(String.valueOf(dto.containerInstanceId()));
+    }
+    return builder.build();
   }
 
   private EquipmentItem toProto(CharacterEquipmentEntryDto dto) {
-    return EquipmentItem.newBuilder()
-        .setTenantId(String.valueOf(dto.tenantId()))
-        .setCharacterId(String.valueOf(dto.characterId()))
-        .setSlot(dto.slot())
-        .setItemId(String.valueOf(dto.itemId()))
-        .setItemName(dto.itemName())
-        .setItemDescription(dto.itemDescription() == null ? "" : dto.itemDescription())
-        .build();
+    EquipmentItem.Builder builder =
+        EquipmentItem.newBuilder()
+            .setTenantId(String.valueOf(dto.tenantId()))
+            .setCharacterId(String.valueOf(dto.characterId()))
+            .setSlot(dto.slot())
+            .setItemId(String.valueOf(dto.itemId()))
+            .setItemName(dto.itemName())
+            .setItemDescription(dto.itemDescription() == null ? "" : dto.itemDescription());
+    if (dto.containerInstanceId() != null) {
+      builder.setContainerInstanceId(String.valueOf(dto.containerInstanceId()));
+    }
+    return builder.build();
   }
 
   private ContainerItem toProto(ContainerContentEntryDto dto) {
     return ContainerItem.newBuilder()
         .setTenantId(String.valueOf(dto.tenantId()))
         .setCharacterId(String.valueOf(dto.characterId()))
-        .setContainerItemId(String.valueOf(dto.containerItemId()))
+        .setContainerInstanceId(String.valueOf(dto.containerInstanceId()))
         .setItemId(String.valueOf(dto.itemId()))
         .setItemName(dto.itemName())
         .setItemDescription(dto.itemDescription() == null ? "" : dto.itemDescription())

@@ -266,15 +266,16 @@ class InventoryCommandHandlerTest {
                         .setItemId("10")
                         .setItemName("Old Chest")
                         .setItemDescription("A worn chest")
+                        .setContainerInstanceId("container-10")
                         .setQuantity(1)
                         .build())
                 .build());
-    when(entityManagementClient.listContainerContents("22", "911", "10"))
+    when(entityManagementClient.listContainerContents("22", "911", "container-10"))
         .thenReturn(
             ListContainerContentsResponse.newBuilder()
                 .addItems(
                     ContainerItem.newBuilder()
-                        .setContainerItemId("10")
+                        .setContainerInstanceId("container-10")
                         .setItemId("99")
                         .setItemName("Torch")
                         .setQuantity(1)

@@ -2,47 +2,29 @@ package net.firedevops.firemud.entitymanagement.entity;
 
 import jakarta.persistence.*;
 import lombok.Data;
-import lombok.EqualsAndHashCode;
-import lombok.ToString;
 
 @Data
 @Entity
-@Table(name = "character_equipment")
-public class CharacterEquipmentEntry {
-  @EmbeddedId private CharacterEquipmentKey id;
+@Table(
+    name = "container_instances",
+    uniqueConstraints = @UniqueConstraint(columnNames = {"tenant_id", "character_id", "item_id"}))
+public class ContainerInstance {
+  @Id
+  @GeneratedValue(strategy = GenerationType.IDENTITY)
+  private Long id;
+
+  @Column(name = "tenant_id", nullable = false)
+  private Long tenantId;
 
   @ManyToOne(fetch = FetchType.LAZY)
-  @MapsId("characterId")
+  @JoinColumn(name = "character_id", nullable = false)
   private Character character;
 
   @ManyToOne(fetch = FetchType.LAZY)
   @JoinColumn(name = "item_id", nullable = false)
   private Item item;
 
-  @Transient @EqualsAndHashCode.Exclude @ToString.Exclude private Long containerInstanceId;
-
   @Version private int version;
-
-  public CharacterEquipmentKey getId() {
-    if (id == null) {
-      return null;
-    }
-    CharacterEquipmentKey copy = new CharacterEquipmentKey();
-    copy.setCharacterId(id.getCharacterId());
-    copy.setSlot(id.getSlot());
-    return copy;
-  }
-
-  public void setId(CharacterEquipmentKey id) {
-    if (id == null) {
-      this.id = null;
-    } else {
-      CharacterEquipmentKey copy = new CharacterEquipmentKey();
-      copy.setCharacterId(id.getCharacterId());
-      copy.setSlot(id.getSlot());
-      this.id = copy;
-    }
-  }
 
   public Character getCharacter() {
     if (character == null) {

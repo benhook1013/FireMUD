@@ -6,6 +6,7 @@ import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.entitymanagement.dto.InventoryEntryDto;
 import net.firedevops.firemud.entitymanagement.dto.RoomGroundInventoryEntryDto;
 import net.firedevops.firemud.entitymanagement.entity.Character;
+import net.firedevops.firemud.entitymanagement.entity.ContainerInstance;
 import net.firedevops.firemud.entitymanagement.entity.InventoryEntry;
 import net.firedevops.firemud.entitymanagement.entity.InventoryKey;
 import net.firedevops.firemud.entitymanagement.entity.Item;
@@ -14,6 +15,7 @@ import net.firedevops.firemud.entitymanagement.entity.RoomGroundInventoryKey;
 import net.firedevops.firemud.entitymanagement.mapper.InventoryEntryMapper;
 import net.firedevops.firemud.entitymanagement.mapper.RoomGroundInventoryEntryMapper;
 import net.firedevops.firemud.entitymanagement.repository.CharacterRepository;
+import net.firedevops.firemud.entitymanagement.repository.ContainerInstanceRepository;
 import net.firedevops.firemud.entitymanagement.repository.InventoryEntryRepository;
 import net.firedevops.firemud.entitymanagement.repository.ItemRepository;
 import net.firedevops.firemud.entitymanagement.repository.RoomGroundInventoryRepository;
@@ -28,6 +30,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class InventoryServiceImpl implements InventoryService {
   private final InventoryEntryRepository inventoryRepository;
   private final InventoryEntryMapper inventoryMapper;
+  private final ContainerInstanceRepository containerInstanceRepository;
   private final RoomGroundInventoryRepository roomGroundRepository;
   private final RoomGroundInventoryEntryMapper roomGroundMapper;
   private final CharacterRepository characterRepository;
@@ -40,7 +43,7 @@ public class InventoryServiceImpl implements InventoryService {
     requireCharacter(tenantId, characterId);
     return inventoryRepository
         .findByIdCharacterIdAndCharacterTenantId(characterId, tenantId, pageable)
-        .map(inventoryMapper::toDto);
+        .map(this::toDto);
   }
 
   @Override
@@ -51,7 +54,7 @@ public class InventoryServiceImpl implements InventoryService {
     Character character = requireCharacter(tenantId, characterId);
     Item item = requireItem(tenantId, itemId);
     InventoryEntry entry = upsertInventoryEntry(character, item, quantity);
-    return inventoryMapper.toDto(entry);
+    return toDto(entry);
   }
 
   @Override
@@ -126,7 +129,7 @@ public class InventoryServiceImpl implements InventoryService {
     }
     adjustRoomGroundQuantity(roomEntry, -quantity);
     InventoryEntry carried = upsertInventoryEntry(character, item, quantity);
-    return inventoryMapper.toDto(carried);
+    return toDto(carried);
   }
 
   private Character requireCharacter(Long tenantId, Long characterId) {
@@ -166,7 +169,43 @@ public class InventoryServiceImpl implements InventoryService {
     } else {
       entry.setQuantity(entry.getQuantity() + quantity);
     }
-    return inventoryRepository.save(entry);
+    InventoryEntry saved = inventoryRepository.save(entry);
+    if (item.isContainer()) {
+      saved.setContainerInstanceId(ensureContainerInstance(character, item).getId());
+    }
+    return saved;
+  }
+
+  private InventoryEntryDto toDto(InventoryEntry entry) {
+    if (entry.getItem() != null && entry.getItem().isContainer()) {
+      entry.setContainerInstanceId(
+          resolveContainerInstanceId(entry.getCharacter(), entry.getItem()));
+    } else {
+      entry.setContainerInstanceId(null);
+    }
+    return inventoryMapper.toDto(entry);
+  }
+
+  private Long resolveContainerInstanceId(Character character, Item item) {
+    return containerInstanceRepository
+        .findByTenantIdAndCharacter_IdAndItem_Id(
+            character.getTenantId(), character.getId(), item.getId())
+        .map(ContainerInstance::getId)
+        .orElse(null);
+  }
+
+  private ContainerInstance ensureContainerInstance(Character character, Item item) {
+    return containerInstanceRepository
+        .findByTenantIdAndCharacter_IdAndItem_Id(
+            character.getTenantId(), character.getId(), item.getId())
+        .orElseGet(
+            () -> {
+              ContainerInstance instance = new ContainerInstance();
+              instance.setTenantId(character.getTenantId());
+              instance.setCharacter(character);
+              instance.setItem(item);
+              return containerInstanceRepository.save(instance);
+            });
   }
 
   private RoomGroundInventoryEntry upsertRoomGroundEntry(

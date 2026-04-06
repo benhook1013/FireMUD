@@ -168,12 +168,12 @@ public final class EntityManagementClient
   }
 
   public ListContainerContentsResponse listContainerContents(
-      String tenantId, String characterId, String containerItemId) {
+      String tenantId, String characterId, String containerInstanceId) {
     ListContainerContentsRequest request =
         ListContainerContentsRequest.newBuilder()
             .setTenantId(tenantId)
             .setCharacterId(characterId)
-            .setContainerItemId(containerItemId)
+            .setContainerInstanceId(containerInstanceId)
             .build();
     try {
       return callStub().listContainerContents(request);
@@ -275,12 +275,16 @@ public final class EntityManagementClient
   }
 
   public PutItemIntoContainerResponse putItemIntoContainer(
-      String tenantId, String characterId, String containerItemId, String itemId, int quantity) {
+      String tenantId,
+      String characterId,
+      String containerInstanceId,
+      String itemId,
+      int quantity) {
     PutItemIntoContainerRequest request =
         PutItemIntoContainerRequest.newBuilder()
             .setTenantId(tenantId)
             .setCharacterId(characterId)
-            .setContainerItemId(containerItemId)
+            .setContainerInstanceId(containerInstanceId)
             .setItemId(itemId)
             .setQuantity(quantity)
             .build();
@@ -313,12 +317,16 @@ public final class EntityManagementClient
   }
 
   public TakeItemFromContainerResponse takeItemFromContainer(
-      String tenantId, String characterId, String containerItemId, String itemId, int quantity) {
+      String tenantId,
+      String characterId,
+      String containerInstanceId,
+      String itemId,
+      int quantity) {
     TakeItemFromContainerRequest request =
         TakeItemFromContainerRequest.newBuilder()
             .setTenantId(tenantId)
             .setCharacterId(characterId)
-            .setContainerItemId(containerItemId)
+            .setContainerInstanceId(containerInstanceId)
             .setItemId(itemId)
             .setQuantity(quantity)
             .build();

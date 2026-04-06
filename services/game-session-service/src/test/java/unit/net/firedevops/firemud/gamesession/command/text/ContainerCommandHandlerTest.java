@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamesession.command.text;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.util.List;
@@ -35,15 +36,16 @@ class ContainerCommandHandlerTest {
                     InventoryItem.newBuilder()
                         .setItemId("10")
                         .setItemName("Old Chest")
+                        .setContainerInstanceId("container-10")
                         .setQuantity(1)
                         .build())
                 .build());
-    when(entityManagementClient.listContainerContents("22", "911", "10"))
+    when(entityManagementClient.listContainerContents("22", "911", "container-10"))
         .thenReturn(
             ListContainerContentsResponse.newBuilder()
                 .addItems(
                     ContainerItem.newBuilder()
-                        .setContainerItemId("10")
+                        .setContainerInstanceId("container-10")
                         .setItemId("99")
                         .setItemName("Torch")
                         .setItemDescription("A small torch")
@@ -72,26 +74,30 @@ class ContainerCommandHandlerTest {
         .thenReturn(
             QueryInventoryResponse.newBuilder()
                 .addItems(
-                    InventoryItem.newBuilder().setItemId("10").setItemName("Old Chest").build())
+                    InventoryItem.newBuilder()
+                        .setItemId("10")
+                        .setItemName("Old Chest")
+                        .setContainerInstanceId("container-10")
+                        .build())
                 .addItems(InventoryItem.newBuilder().setItemId("99").setItemName("Torch").build())
                 .build());
-    when(entityManagementClient.putItemIntoContainer("22", "911", "10", "99", 1))
+    when(entityManagementClient.putItemIntoContainer("22", "911", "container-10", "99", 1))
         .thenReturn(
             PutItemIntoContainerResponse.newBuilder()
                 .setContainerItem(
                     ContainerItem.newBuilder()
-                        .setContainerItemId("10")
+                        .setContainerInstanceId("container-10")
                         .setItemId("99")
                         .setItemName("Torch")
                         .setQuantity(1)
                         .build())
                 .build());
-    when(entityManagementClient.listContainerContents("22", "911", "10"))
+    when(entityManagementClient.listContainerContents("22", "911", "container-10"))
         .thenReturn(
             ListContainerContentsResponse.newBuilder()
                 .addItems(
                     ContainerItem.newBuilder()
-                        .setContainerItemId("10")
+                        .setContainerInstanceId("container-10")
                         .setItemId("99")
                         .setItemName("Torch")
                         .setQuantity(1)
@@ -119,21 +125,25 @@ class ContainerCommandHandlerTest {
         .thenReturn(
             QueryInventoryResponse.newBuilder()
                 .addItems(
-                    InventoryItem.newBuilder().setItemId("10").setItemName("Old Chest").build())
+                    InventoryItem.newBuilder()
+                        .setItemId("10")
+                        .setItemName("Old Chest")
+                        .setContainerInstanceId("container-10")
+                        .build())
                 .build());
-    when(entityManagementClient.listContainerContents("22", "911", "10"))
+    when(entityManagementClient.listContainerContents("22", "911", "container-10"))
         .thenReturn(
             ListContainerContentsResponse.newBuilder()
                 .addItems(
                     ContainerItem.newBuilder()
-                        .setContainerItemId("10")
+                        .setContainerInstanceId("container-10")
                         .setItemId("99")
                         .setItemName("Torch")
                         .setQuantity(2)
                         .build())
                 .build(),
             ListContainerContentsResponse.newBuilder().build());
-    when(entityManagementClient.takeItemFromContainer("22", "911", "10", "99", 2))
+    when(entityManagementClient.takeItemFromContainer("22", "911", "container-10", "99", 2))
         .thenReturn(
             TakeItemFromContainerResponse.newBuilder()
                 .setInventoryItem(
@@ -157,5 +167,6 @@ class ContainerCommandHandlerTest {
     assertThat(result.outputs().get(0).text()).isEqualTo("You take Torch x2 from Old Chest.");
     InventoryViewOutput view = (InventoryViewOutput) result.outputs().get(1).payload();
     assertThat(view.lines()).containsExactly("It is empty.");
+    verify(entityManagementClient).takeItemFromContainer("22", "911", "container-10", "99", 2);
   }
 }

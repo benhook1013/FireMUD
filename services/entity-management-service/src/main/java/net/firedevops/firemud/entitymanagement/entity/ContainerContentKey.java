@@ -11,11 +11,8 @@ public class ContainerContentKey implements Serializable {
   @Column(name = "tenant_id")
   private Long tenantId;
 
-  @Column(name = "character_id")
-  private Long characterId;
-
-  @Column(name = "container_item_id")
-  private Long containerItemId;
+  @Column(name = "container_instance_id")
+  private Long containerInstanceId;
 
   @Column(name = "item_id")
   private Long itemId;

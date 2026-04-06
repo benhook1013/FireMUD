@@ -118,7 +118,7 @@ public class ContainerCommandHandler {
           entityManagementClient.putItemIntoContainer(
               Long.toString(context.tenantId()),
               Long.toString(context.characterId()),
-              resolvedContainer.orElseThrow().getItemId(),
+              ContainerIdentitySupport.resolveContainerInstanceId(resolvedContainer.orElseThrow()),
               resolvedItem.orElseThrow().getItemId(),
               transfer.quantity());
       if (response.hasError()) {
@@ -179,7 +179,7 @@ public class ContainerCommandHandler {
           entityManagementClient.listContainerContents(
               Long.toString(context.tenantId()),
               Long.toString(context.characterId()),
-              resolvedContainer.orElseThrow().getItemId());
+              ContainerIdentitySupport.resolveContainerInstanceId(resolvedContainer.orElseThrow()));
       if (contents.hasError()) {
         return containerFailure(
             errorCode(contents.getError().getCode()), contents.getError().getMessage());
@@ -196,7 +196,7 @@ public class ContainerCommandHandler {
           entityManagementClient.takeItemFromContainer(
               Long.toString(context.tenantId()),
               Long.toString(context.characterId()),
-              resolvedContainer.orElseThrow().getItemId(),
+              ContainerIdentitySupport.resolveContainerInstanceId(resolvedContainer.orElseThrow()),
               resolvedItem.orElseThrow().getItemId(),
               transfer.quantity());
       if (response.hasError()) {
@@ -233,7 +233,7 @@ public class ContainerCommandHandler {
         entityManagementClient.listContainerContents(
             Long.toString(context.tenantId()),
             Long.toString(context.characterId()),
-            containerItem.getItemId());
+            ContainerIdentitySupport.resolveContainerInstanceId(containerItem));
     if (response.hasError()) {
       return containerFailure(
           errorCode(response.getError().getCode()), response.getError().getMessage());
@@ -265,10 +265,7 @@ public class ContainerCommandHandler {
 
   private Optional<InventoryItem> findInventoryItem(List<InventoryItem> items, String reference) {
     return items.stream()
-        .filter(
-            item ->
-                matchesReference(item.getItemId(), reference)
-                    || item.getItemName().equalsIgnoreCase(reference))
+        .filter(item -> ContainerIdentitySupport.matchesReference(item, reference))
         .findFirst();
   }
 
@@ -276,15 +273,9 @@ public class ContainerCommandHandler {
     return items.stream()
         .filter(
             item ->
-                matchesReference(item.getItemId(), reference)
+                item.getItemId().equalsIgnoreCase(reference)
                     || item.getItemName().equalsIgnoreCase(reference))
         .findFirst();
-  }
-
-  private boolean matchesReference(String candidate, String reference) {
-    return StringUtils.hasText(candidate)
-        && StringUtils.hasText(reference)
-        && candidate.equals(reference);
   }
 
   private String formatContainerItem(ContainerItem item) {

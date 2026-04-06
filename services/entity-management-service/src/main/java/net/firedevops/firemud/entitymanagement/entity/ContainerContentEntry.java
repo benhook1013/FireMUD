@@ -10,13 +10,9 @@ public class ContainerContentEntry {
   @EmbeddedId private ContainerContentKey id;
 
   @ManyToOne(fetch = FetchType.LAZY)
-  @MapsId("characterId")
-  private Character character;
-
-  @ManyToOne(fetch = FetchType.LAZY)
-  @MapsId("containerItemId")
-  @JoinColumn(name = "container_item_id", nullable = false)
-  private Item containerItem;
+  @MapsId("containerInstanceId")
+  @JoinColumn(name = "container_instance_id", nullable = false)
+  private ContainerInstance containerInstance;
 
   @ManyToOne(fetch = FetchType.LAZY)
   @MapsId("itemId")
@@ -34,8 +30,7 @@ public class ContainerContentEntry {
     }
     ContainerContentKey copy = new ContainerContentKey();
     copy.setTenantId(id.getTenantId());
-    copy.setCharacterId(id.getCharacterId());
-    copy.setContainerItemId(id.getContainerItemId());
+    copy.setContainerInstanceId(id.getContainerInstanceId());
     copy.setItemId(id.getItemId());
     return copy;
   }
@@ -46,64 +41,34 @@ public class ContainerContentEntry {
     } else {
       ContainerContentKey copy = new ContainerContentKey();
       copy.setTenantId(id.getTenantId());
-      copy.setCharacterId(id.getCharacterId());
-      copy.setContainerItemId(id.getContainerItemId());
+      copy.setContainerInstanceId(id.getContainerInstanceId());
       copy.setItemId(id.getItemId());
       this.id = copy;
     }
   }
 
-  public Character getCharacter() {
-    if (character == null) {
+  public ContainerInstance getContainerInstance() {
+    if (containerInstance == null) {
       return null;
     }
-    Character copy = new Character();
-    copy.setId(character.getId());
-    copy.setTenantId(character.getTenantId());
-    copy.setAccountId(character.getAccountId());
-    copy.setName(character.getName());
+    ContainerInstance copy = new ContainerInstance();
+    copy.setId(containerInstance.getId());
+    copy.setTenantId(containerInstance.getTenantId());
+    copy.setCharacter(containerInstance.getCharacter());
+    copy.setItem(containerInstance.getItem());
     return copy;
   }
 
-  public void setCharacter(Character character) {
-    if (character == null) {
-      this.character = null;
+  public void setContainerInstance(ContainerInstance containerInstance) {
+    if (containerInstance == null) {
+      this.containerInstance = null;
     } else {
-      Character copy = new Character();
-      copy.setId(character.getId());
-      copy.setTenantId(character.getTenantId());
-      copy.setAccountId(character.getAccountId());
-      copy.setName(character.getName());
-      this.character = copy;
-    }
-  }
-
-  public Item getContainerItem() {
-    if (containerItem == null) {
-      return null;
-    }
-    Item copy = new Item();
-    copy.setId(containerItem.getId());
-    copy.setTenantId(containerItem.getTenantId());
-    copy.setName(containerItem.getName());
-    copy.setDescription(containerItem.getDescription());
-    copy.setEquipmentSlot(containerItem.getEquipmentSlot());
-    copy.setContainer(containerItem.isContainer());
-    return copy;
-  }
-
-  public void setContainerItem(Item containerItem) {
-    if (containerItem == null) {
-      this.containerItem = null;
-    } else {
-      Item copy = new Item();
-      copy.setId(containerItem.getId());
-      copy.setTenantId(containerItem.getTenantId());
-      copy.setName(containerItem.getName());
-      copy.setDescription(containerItem.getDescription());
-      copy.setEquipmentSlot(containerItem.getEquipmentSlot());
-      copy.setContainer(containerItem.isContainer());
-      this.containerItem = copy;
+      ContainerInstance copy = new ContainerInstance();
+      copy.setId(containerInstance.getId());
+      copy.setTenantId(containerInstance.getTenantId());
+      copy.setCharacter(containerInstance.getCharacter());
+      copy.setItem(containerInstance.getItem());
+      this.containerInstance = copy;
     }
   }
 

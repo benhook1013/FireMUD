@@ -9,6 +9,7 @@ import static org.mockito.Mockito.when;
 import java.util.List;
 import java.util.Optional;
 import net.firedevops.firemud.entitymanagement.entity.Character;
+import net.firedevops.firemud.entitymanagement.entity.ContainerInstance;
 import net.firedevops.firemud.entitymanagement.entity.InventoryEntry;
 import net.firedevops.firemud.entitymanagement.entity.InventoryKey;
 import net.firedevops.firemud.entitymanagement.entity.Item;
@@ -16,6 +17,7 @@ import net.firedevops.firemud.entitymanagement.entity.RoomGroundInventoryEntry;
 import net.firedevops.firemud.entitymanagement.entity.RoomGroundInventoryKey;
 import net.firedevops.firemud.entitymanagement.mapper.InventoryEntryMapper;
 import net.firedevops.firemud.entitymanagement.mapper.RoomGroundInventoryEntryMapper;
+import net.firedevops.firemud.entitymanagement.repository.ContainerInstanceRepository;
 import net.firedevops.firemud.entitymanagement.repository.InventoryEntryRepository;
 import net.firedevops.firemud.entitymanagement.repository.RoomGroundInventoryRepository;
 import org.junit.jupiter.api.Test;
@@ -28,6 +30,8 @@ class InventoryServiceImplTest {
   @Test
   void listInventoryReturnsMappedDtos() {
     InventoryEntryRepository inventoryRepo = Mockito.mock(InventoryEntryRepository.class);
+    ContainerInstanceRepository containerInstanceRepo =
+        Mockito.mock(ContainerInstanceRepository.class);
     RoomGroundInventoryRepository roomRepo = Mockito.mock(RoomGroundInventoryRepository.class);
     InventoryEntryMapper inventoryMapper = Mappers.getMapper(InventoryEntryMapper.class);
     RoomGroundInventoryEntryMapper roomGroundMapper =
@@ -38,7 +42,13 @@ class InventoryServiceImplTest {
         Mockito.mock(net.firedevops.firemud.entitymanagement.repository.ItemRepository.class);
     InventoryServiceImpl service =
         new InventoryServiceImpl(
-            inventoryRepo, inventoryMapper, roomRepo, roomGroundMapper, charRepo, itemRepo);
+            inventoryRepo,
+            inventoryMapper,
+            containerInstanceRepo,
+            roomRepo,
+            roomGroundMapper,
+            charRepo,
+            itemRepo);
 
     Character character = new Character();
     character.setId(1L);
@@ -48,6 +58,13 @@ class InventoryServiceImplTest {
     item.setTenantId(11L);
     item.setName("Torch");
     item.setDescription("A small torch");
+    item.setContainer(true);
+
+    ContainerInstance containerInstance = new ContainerInstance();
+    containerInstance.setId(99L);
+    containerInstance.setTenantId(11L);
+    containerInstance.setCharacter(character);
+    containerInstance.setItem(item);
 
     InventoryEntry entry = new InventoryEntry();
     InventoryKey key = new InventoryKey();
@@ -59,6 +76,8 @@ class InventoryServiceImplTest {
     entry.setQuantity(3);
 
     when(charRepo.findByIdAndTenantId(1L, 11L)).thenReturn(Optional.of(character));
+    when(containerInstanceRepo.findByTenantIdAndCharacter_IdAndItem_Id(11L, 1L, 2L))
+        .thenReturn(Optional.of(containerInstance));
     when(inventoryRepo.findByIdCharacterIdAndCharacterTenantId(1L, 11L, Pageable.unpaged()))
         .thenReturn(new PageImpl<>(List.of(entry)));
 
@@ -67,11 +86,14 @@ class InventoryServiceImplTest {
     assertEquals(11L, result.getContent().get(0).tenantId());
     assertEquals("Torch", result.getContent().get(0).itemName());
     assertEquals(3, result.getContent().get(0).quantity());
+    assertEquals(99L, result.getContent().get(0).containerInstanceId());
   }
 
   @Test
   void addItemRejectsCrossTenantOwnership() {
     InventoryEntryRepository inventoryRepo = Mockito.mock(InventoryEntryRepository.class);
+    ContainerInstanceRepository containerInstanceRepo =
+        Mockito.mock(ContainerInstanceRepository.class);
     RoomGroundInventoryRepository roomRepo = Mockito.mock(RoomGroundInventoryRepository.class);
     InventoryEntryMapper inventoryMapper = Mappers.getMapper(InventoryEntryMapper.class);
     RoomGroundInventoryEntryMapper roomGroundMapper =
@@ -82,7 +104,13 @@ class InventoryServiceImplTest {
         Mockito.mock(net.firedevops.firemud.entitymanagement.repository.ItemRepository.class);
     InventoryServiceImpl service =
         new InventoryServiceImpl(
-            inventoryRepo, inventoryMapper, roomRepo, roomGroundMapper, charRepo, itemRepo);
+            inventoryRepo,
+            inventoryMapper,
+            containerInstanceRepo,
+            roomRepo,
+            roomGroundMapper,
+            charRepo,
+            itemRepo);
 
     Character character = new Character();
     character.setId(1L);
@@ -97,6 +125,8 @@ class InventoryServiceImplTest {
   @Test
   void removeItemRejectsCrossTenantOwnership() {
     InventoryEntryRepository inventoryRepo = Mockito.mock(InventoryEntryRepository.class);
+    ContainerInstanceRepository containerInstanceRepo =
+        Mockito.mock(ContainerInstanceRepository.class);
     RoomGroundInventoryRepository roomRepo = Mockito.mock(RoomGroundInventoryRepository.class);
     InventoryEntryMapper inventoryMapper = Mappers.getMapper(InventoryEntryMapper.class);
     RoomGroundInventoryEntryMapper roomGroundMapper =
@@ -107,7 +137,13 @@ class InventoryServiceImplTest {
         Mockito.mock(net.firedevops.firemud.entitymanagement.repository.ItemRepository.class);
     InventoryServiceImpl service =
         new InventoryServiceImpl(
-            inventoryRepo, inventoryMapper, roomRepo, roomGroundMapper, charRepo, itemRepo);
+            inventoryRepo,
+            inventoryMapper,
+            containerInstanceRepo,
+            roomRepo,
+            roomGroundMapper,
+            charRepo,
+            itemRepo);
 
     Character character = new Character();
     character.setId(1L);
@@ -122,6 +158,8 @@ class InventoryServiceImplTest {
   @Test
   void dropItemMovesQuantityToRoomGround() {
     InventoryEntryRepository inventoryRepo = Mockito.mock(InventoryEntryRepository.class);
+    ContainerInstanceRepository containerInstanceRepo =
+        Mockito.mock(ContainerInstanceRepository.class);
     RoomGroundInventoryRepository roomRepo = Mockito.mock(RoomGroundInventoryRepository.class);
     InventoryEntryMapper inventoryMapper = Mappers.getMapper(InventoryEntryMapper.class);
     RoomGroundInventoryEntryMapper roomGroundMapper =
@@ -132,7 +170,13 @@ class InventoryServiceImplTest {
         Mockito.mock(net.firedevops.firemud.entitymanagement.repository.ItemRepository.class);
     InventoryServiceImpl service =
         new InventoryServiceImpl(
-            inventoryRepo, inventoryMapper, roomRepo, roomGroundMapper, charRepo, itemRepo);
+            inventoryRepo,
+            inventoryMapper,
+            containerInstanceRepo,
+            roomRepo,
+            roomGroundMapper,
+            charRepo,
+            itemRepo);
 
     Character character = new Character();
     character.setId(1L);
@@ -170,6 +214,8 @@ class InventoryServiceImplTest {
   @Test
   void dropItemRejectsInsufficientQuantity() {
     InventoryEntryRepository inventoryRepo = Mockito.mock(InventoryEntryRepository.class);
+    ContainerInstanceRepository containerInstanceRepo =
+        Mockito.mock(ContainerInstanceRepository.class);
     RoomGroundInventoryRepository roomRepo = Mockito.mock(RoomGroundInventoryRepository.class);
     InventoryEntryMapper inventoryMapper = Mappers.getMapper(InventoryEntryMapper.class);
     RoomGroundInventoryEntryMapper roomGroundMapper =
@@ -180,7 +226,13 @@ class InventoryServiceImplTest {
         Mockito.mock(net.firedevops.firemud.entitymanagement.repository.ItemRepository.class);
     InventoryServiceImpl service =
         new InventoryServiceImpl(
-            inventoryRepo, inventoryMapper, roomRepo, roomGroundMapper, charRepo, itemRepo);
+            inventoryRepo,
+            inventoryMapper,
+            containerInstanceRepo,
+            roomRepo,
+            roomGroundMapper,
+            charRepo,
+            itemRepo);
 
     Character character = new Character();
     character.setId(1L);
@@ -209,6 +261,8 @@ class InventoryServiceImplTest {
   @Test
   void pickupItemMovesQuantityBackToInventory() {
     InventoryEntryRepository inventoryRepo = Mockito.mock(InventoryEntryRepository.class);
+    ContainerInstanceRepository containerInstanceRepo =
+        Mockito.mock(ContainerInstanceRepository.class);
     RoomGroundInventoryRepository roomRepo = Mockito.mock(RoomGroundInventoryRepository.class);
     InventoryEntryMapper inventoryMapper = Mappers.getMapper(InventoryEntryMapper.class);
     RoomGroundInventoryEntryMapper roomGroundMapper =
@@ -219,7 +273,13 @@ class InventoryServiceImplTest {
         Mockito.mock(net.firedevops.firemud.entitymanagement.repository.ItemRepository.class);
     InventoryServiceImpl service =
         new InventoryServiceImpl(
-            inventoryRepo, inventoryMapper, roomRepo, roomGroundMapper, charRepo, itemRepo);
+            inventoryRepo,
+            inventoryMapper,
+            containerInstanceRepo,
+            roomRepo,
+            roomGroundMapper,
+            charRepo,
+            itemRepo);
 
     Character character = new Character();
     character.setId(1L);
@@ -257,6 +317,8 @@ class InventoryServiceImplTest {
   @Test
   void pickupItemRejectsInsufficientQuantity() {
     InventoryEntryRepository inventoryRepo = Mockito.mock(InventoryEntryRepository.class);
+    ContainerInstanceRepository containerInstanceRepo =
+        Mockito.mock(ContainerInstanceRepository.class);
     RoomGroundInventoryRepository roomRepo = Mockito.mock(RoomGroundInventoryRepository.class);
     InventoryEntryMapper inventoryMapper = Mappers.getMapper(InventoryEntryMapper.class);
     RoomGroundInventoryEntryMapper roomGroundMapper =
@@ -267,7 +329,13 @@ class InventoryServiceImplTest {
         Mockito.mock(net.firedevops.firemud.entitymanagement.repository.ItemRepository.class);
     InventoryServiceImpl service =
         new InventoryServiceImpl(
-            inventoryRepo, inventoryMapper, roomRepo, roomGroundMapper, charRepo, itemRepo);
+            inventoryRepo,
+            inventoryMapper,
+            containerInstanceRepo,
+            roomRepo,
+            roomGroundMapper,
+            charRepo,
+            itemRepo);
 
     Character character = new Character();
     character.setId(1L);
@@ -298,6 +366,8 @@ class InventoryServiceImplTest {
   @Test
   void roomGroundMethodsRejectBlankScopeBeforeRepositoryLookup() {
     InventoryEntryRepository inventoryRepo = Mockito.mock(InventoryEntryRepository.class);
+    ContainerInstanceRepository containerInstanceRepo =
+        Mockito.mock(ContainerInstanceRepository.class);
     RoomGroundInventoryRepository roomRepo = Mockito.mock(RoomGroundInventoryRepository.class);
     InventoryEntryMapper inventoryMapper = Mappers.getMapper(InventoryEntryMapper.class);
     RoomGroundInventoryEntryMapper roomGroundMapper =
@@ -308,7 +378,13 @@ class InventoryServiceImplTest {
         Mockito.mock(net.firedevops.firemud.entitymanagement.repository.ItemRepository.class);
     InventoryServiceImpl service =
         new InventoryServiceImpl(
-            inventoryRepo, inventoryMapper, roomRepo, roomGroundMapper, charRepo, itemRepo);
+            inventoryRepo,
+            inventoryMapper,
+            containerInstanceRepo,
+            roomRepo,
+            roomGroundMapper,
+            charRepo,
+            itemRepo);
 
     assertThrows(
         IllegalArgumentException.class,
@@ -325,6 +401,8 @@ class InventoryServiceImplTest {
   @Test
   void listRoomGroundItemsReturnsMappedDtos() {
     InventoryEntryRepository inventoryRepo = Mockito.mock(InventoryEntryRepository.class);
+    ContainerInstanceRepository containerInstanceRepo =
+        Mockito.mock(ContainerInstanceRepository.class);
     RoomGroundInventoryRepository roomRepo = Mockito.mock(RoomGroundInventoryRepository.class);
     InventoryEntryMapper inventoryMapper = Mappers.getMapper(InventoryEntryMapper.class);
     RoomGroundInventoryEntryMapper roomGroundMapper =
@@ -335,7 +413,13 @@ class InventoryServiceImplTest {
         Mockito.mock(net.firedevops.firemud.entitymanagement.repository.ItemRepository.class);
     InventoryServiceImpl service =
         new InventoryServiceImpl(
-            inventoryRepo, inventoryMapper, roomRepo, roomGroundMapper, charRepo, itemRepo);
+            inventoryRepo,
+            inventoryMapper,
+            containerInstanceRepo,
+            roomRepo,
+            roomGroundMapper,
+            charRepo,
+            itemRepo);
 
     Item item = new Item();
     item.setId(3L);

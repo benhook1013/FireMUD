@@ -62,6 +62,7 @@ message InventoryItem {
   string item_name = 2;
   string item_description = 3;
   int32 quantity = 4;
+  string container_instance_id = 5;
 }
 
 message EquipmentItem {
@@ -71,6 +72,7 @@ message EquipmentItem {
   string item_id = 4;
   string item_name = 5;
   string item_description = 6;
+  string container_instance_id = 7;
 }
 
 message ListEquipmentRequest {
@@ -108,7 +110,7 @@ message RemoveEquipmentResponse {
 message ContainerItem {
   string tenant_id = 1;
   string character_id = 2;
-  string container_item_id = 3;
+  string container_instance_id = 3;
   string item_id = 4;
   string item_name = 5;
   string item_description = 6;
@@ -118,7 +120,7 @@ message ContainerItem {
 message ListContainerContentsRequest {
   string tenant_id = 1;
   string character_id = 2;
-  string container_item_id = 3;
+  string container_instance_id = 3;
 }
 
 message ListContainerContentsResponse {
@@ -129,7 +131,7 @@ message ListContainerContentsResponse {
 message PutItemIntoContainerRequest {
   string tenant_id = 1;
   string character_id = 2;
-  string container_item_id = 3;
+  string container_instance_id = 3;
   string item_id = 4;
   int32 quantity = 5;
 }
@@ -142,7 +144,7 @@ message PutItemIntoContainerResponse {
 message TakeItemFromContainerRequest {
   string tenant_id = 1;
   string character_id = 2;
-  string container_item_id = 3;
+  string container_instance_id = 3;
   string item_id = 4;
   int32 quantity = 5;
 }

@@ -10,6 +10,7 @@ import java.util.Optional;
 import net.firedevops.firemud.entitymanagement.entity.Character;
 import net.firedevops.firemud.entitymanagement.entity.ContainerContentEntry;
 import net.firedevops.firemud.entitymanagement.entity.ContainerContentKey;
+import net.firedevops.firemud.entitymanagement.entity.ContainerInstance;
 import net.firedevops.firemud.entitymanagement.entity.InventoryEntry;
 import net.firedevops.firemud.entitymanagement.entity.InventoryKey;
 import net.firedevops.firemud.entitymanagement.entity.Item;
@@ -17,6 +18,7 @@ import net.firedevops.firemud.entitymanagement.mapper.ContainerContentEntryMappe
 import net.firedevops.firemud.entitymanagement.mapper.InventoryEntryMapper;
 import net.firedevops.firemud.entitymanagement.repository.CharacterRepository;
 import net.firedevops.firemud.entitymanagement.repository.ContainerContentRepository;
+import net.firedevops.firemud.entitymanagement.repository.ContainerInstanceRepository;
 import net.firedevops.firemud.entitymanagement.repository.InventoryEntryRepository;
 import net.firedevops.firemud.entitymanagement.repository.ItemRepository;
 import org.junit.jupiter.api.Test;
@@ -31,6 +33,8 @@ class ContainerServiceImplTest {
     ContainerContentRepository containerRepo = Mockito.mock(ContainerContentRepository.class);
     ContainerContentEntryMapper containerMapper =
         Mappers.getMapper(ContainerContentEntryMapper.class);
+    ContainerInstanceRepository containerInstanceRepo =
+        Mockito.mock(ContainerInstanceRepository.class);
     InventoryEntryRepository inventoryRepo = Mockito.mock(InventoryEntryRepository.class);
     InventoryEntryMapper inventoryMapper = Mappers.getMapper(InventoryEntryMapper.class);
     CharacterRepository characterRepo = Mockito.mock(CharacterRepository.class);
@@ -39,6 +43,7 @@ class ContainerServiceImplTest {
         new ContainerServiceImpl(
             containerRepo,
             containerMapper,
+            containerInstanceRepo,
             inventoryRepo,
             inventoryMapper,
             characterRepo,
@@ -53,6 +58,12 @@ class ContainerServiceImplTest {
     container.setTenantId(1L);
     container.setName("Old Chest");
     container.setContainer(true);
+
+    ContainerInstance containerInstance = new ContainerInstance();
+    containerInstance.setId(500L);
+    containerInstance.setTenantId(1L);
+    containerInstance.setCharacter(character);
+    containerInstance.setItem(container);
 
     Item item = new Item();
     item.setId(100L);
@@ -72,27 +83,27 @@ class ContainerServiceImplTest {
     ContainerContentEntry entry = new ContainerContentEntry();
     ContainerContentKey key = new ContainerContentKey();
     key.setTenantId(1L);
-    key.setCharacterId(7L);
-    key.setContainerItemId(99L);
+    key.setContainerInstanceId(500L);
     key.setItemId(100L);
     entry.setId(key);
-    entry.setCharacter(character);
-    entry.setContainerItem(container);
+    entry.setContainerInstance(containerInstance);
     entry.setItem(item);
     entry.setQuantity(2);
 
     when(characterRepo.findByIdAndTenantId(7L, 1L)).thenReturn(Optional.of(character));
     when(itemRepo.findByIdAndTenantId(99L, 1L)).thenReturn(Optional.of(container));
     when(inventoryRepo.findById(carriedContainerKey)).thenReturn(Optional.of(carriedContainer));
-    when(containerRepo.findByIdTenantIdAndIdCharacterIdAndIdContainerItemId(
-            1L, 7L, 99L, Pageable.unpaged()))
+    when(containerInstanceRepo.findByIdAndTenantIdAndCharacter_Id(500L, 1L, 7L))
+        .thenReturn(Optional.of(containerInstance));
+    when(containerRepo.findByIdTenantIdAndIdContainerInstanceId(1L, 500L, Pageable.unpaged()))
         .thenReturn(new PageImpl<>(List.of(entry)));
 
-    var result = service.listContainerContents(1L, 7L, 99L, Pageable.unpaged());
+    var result = service.listContainerContents(1L, 7L, 500L, Pageable.unpaged());
 
     assertEquals(1, result.getTotalElements());
     assertEquals("Torch", result.getContent().get(0).itemName());
     assertEquals(2, result.getContent().get(0).quantity());
+    assertEquals(500L, result.getContent().get(0).containerInstanceId());
   }
 
   @Test
@@ -100,6 +111,8 @@ class ContainerServiceImplTest {
     ContainerContentRepository containerRepo = Mockito.mock(ContainerContentRepository.class);
     ContainerContentEntryMapper containerMapper =
         Mappers.getMapper(ContainerContentEntryMapper.class);
+    ContainerInstanceRepository containerInstanceRepo =
+        Mockito.mock(ContainerInstanceRepository.class);
     InventoryEntryRepository inventoryRepo = Mockito.mock(InventoryEntryRepository.class);
     InventoryEntryMapper inventoryMapper = Mappers.getMapper(InventoryEntryMapper.class);
     CharacterRepository characterRepo = Mockito.mock(CharacterRepository.class);
@@ -108,6 +121,7 @@ class ContainerServiceImplTest {
         new ContainerServiceImpl(
             containerRepo,
             containerMapper,
+            containerInstanceRepo,
             inventoryRepo,
             inventoryMapper,
             characterRepo,
@@ -122,6 +136,12 @@ class ContainerServiceImplTest {
     container.setTenantId(1L);
     container.setName("Old Chest");
     container.setContainer(true);
+
+    ContainerInstance containerInstance = new ContainerInstance();
+    containerInstance.setId(500L);
+    containerInstance.setTenantId(1L);
+    containerInstance.setCharacter(character);
+    containerInstance.setItem(container);
 
     Item item = new Item();
     item.setId(100L);
@@ -151,17 +171,20 @@ class ContainerServiceImplTest {
     when(itemRepo.findByIdAndTenantId(100L, 1L)).thenReturn(Optional.of(item));
     when(inventoryRepo.findById(containerKey)).thenReturn(Optional.of(carriedContainer));
     when(inventoryRepo.findById(carriedKey)).thenReturn(Optional.of(carriedItem));
+    when(containerInstanceRepo.findByIdAndTenantIdAndCharacter_Id(500L, 1L, 7L))
+        .thenReturn(Optional.of(containerInstance));
     when(containerRepo.findById(any(ContainerContentKey.class))).thenReturn(Optional.empty());
     when(containerRepo.save(any(ContainerContentEntry.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
     when(inventoryRepo.save(any(InventoryEntry.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
 
-    var stored = service.putItemIntoContainer(1L, 7L, 99L, 100L, 2);
+    var stored = service.putItemIntoContainer(1L, 7L, 500L, 100L, 2);
 
     assertEquals("Torch", stored.itemName());
     assertEquals(2, stored.quantity());
     assertEquals(1, carriedItem.getQuantity());
+    assertEquals(500L, stored.containerInstanceId());
   }
 
   @Test
@@ -169,6 +192,8 @@ class ContainerServiceImplTest {
     ContainerContentRepository containerRepo = Mockito.mock(ContainerContentRepository.class);
     ContainerContentEntryMapper containerMapper =
         Mappers.getMapper(ContainerContentEntryMapper.class);
+    ContainerInstanceRepository containerInstanceRepo =
+        Mockito.mock(ContainerInstanceRepository.class);
     InventoryEntryRepository inventoryRepo = Mockito.mock(InventoryEntryRepository.class);
     InventoryEntryMapper inventoryMapper = Mappers.getMapper(InventoryEntryMapper.class);
     CharacterRepository characterRepo = Mockito.mock(CharacterRepository.class);
@@ -177,6 +202,7 @@ class ContainerServiceImplTest {
         new ContainerServiceImpl(
             containerRepo,
             containerMapper,
+            containerInstanceRepo,
             inventoryRepo,
             inventoryMapper,
             characterRepo,
@@ -191,6 +217,12 @@ class ContainerServiceImplTest {
     container.setTenantId(1L);
     container.setName("Old Chest");
     container.setContainer(true);
+
+    ContainerInstance containerInstance = new ContainerInstance();
+    containerInstance.setId(500L);
+    containerInstance.setTenantId(1L);
+    containerInstance.setCharacter(character);
+    containerInstance.setItem(container);
 
     Item item = new Item();
     item.setId(100L);
@@ -208,13 +240,11 @@ class ContainerServiceImplTest {
 
     ContainerContentKey contentKey = new ContainerContentKey();
     contentKey.setTenantId(1L);
-    contentKey.setCharacterId(7L);
-    contentKey.setContainerItemId(99L);
+    contentKey.setContainerInstanceId(500L);
     contentKey.setItemId(100L);
     ContainerContentEntry entry = new ContainerContentEntry();
     entry.setId(contentKey);
-    entry.setCharacter(character);
-    entry.setContainerItem(container);
+    entry.setContainerInstance(containerInstance);
     entry.setItem(item);
     entry.setQuantity(2);
 
@@ -226,14 +256,15 @@ class ContainerServiceImplTest {
     when(itemRepo.findByIdAndTenantId(99L, 1L)).thenReturn(Optional.of(container));
     when(itemRepo.findByIdAndTenantId(100L, 1L)).thenReturn(Optional.of(item));
     when(inventoryRepo.findById(containerKey)).thenReturn(Optional.of(carriedContainer));
-    when(containerRepo.findByIdTenantIdAndIdCharacterIdAndIdContainerItemIdAndIdItemId(
-            1L, 7L, 99L, 100L))
+    when(containerInstanceRepo.findByIdAndTenantIdAndCharacter_Id(500L, 1L, 7L))
+        .thenReturn(Optional.of(containerInstance));
+    when(containerRepo.findByIdTenantIdAndIdContainerInstanceIdAndIdItemId(1L, 500L, 100L))
         .thenReturn(Optional.of(entry));
     when(inventoryRepo.findById(returnedInventoryKey)).thenReturn(Optional.empty());
     when(inventoryRepo.save(any(InventoryEntry.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
 
-    var taken = service.takeItemFromContainer(1L, 7L, 99L, 100L, 1);
+    var taken = service.takeItemFromContainer(1L, 7L, 500L, 100L, 1);
 
     assertEquals("Torch", taken.itemName());
     assertEquals(1, taken.quantity());
@@ -245,6 +276,8 @@ class ContainerServiceImplTest {
     ContainerContentRepository containerRepo = Mockito.mock(ContainerContentRepository.class);
     ContainerContentEntryMapper containerMapper =
         Mappers.getMapper(ContainerContentEntryMapper.class);
+    ContainerInstanceRepository containerInstanceRepo =
+        Mockito.mock(ContainerInstanceRepository.class);
     InventoryEntryRepository inventoryRepo = Mockito.mock(InventoryEntryRepository.class);
     InventoryEntryMapper inventoryMapper = Mappers.getMapper(InventoryEntryMapper.class);
     CharacterRepository characterRepo = Mockito.mock(CharacterRepository.class);
@@ -253,6 +286,7 @@ class ContainerServiceImplTest {
         new ContainerServiceImpl(
             containerRepo,
             containerMapper,
+            containerInstanceRepo,
             inventoryRepo,
             inventoryMapper,
             characterRepo,

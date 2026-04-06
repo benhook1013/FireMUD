@@ -8,6 +8,7 @@ import net.firedevops.firemud.entitymanagement.dto.InventoryEntryDto;
 import net.firedevops.firemud.entitymanagement.entity.Character;
 import net.firedevops.firemud.entitymanagement.entity.ContainerContentEntry;
 import net.firedevops.firemud.entitymanagement.entity.ContainerContentKey;
+import net.firedevops.firemud.entitymanagement.entity.ContainerInstance;
 import net.firedevops.firemud.entitymanagement.entity.InventoryEntry;
 import net.firedevops.firemud.entitymanagement.entity.InventoryKey;
 import net.firedevops.firemud.entitymanagement.entity.Item;
@@ -15,6 +16,7 @@ import net.firedevops.firemud.entitymanagement.mapper.ContainerContentEntryMappe
 import net.firedevops.firemud.entitymanagement.mapper.InventoryEntryMapper;
 import net.firedevops.firemud.entitymanagement.repository.CharacterRepository;
 import net.firedevops.firemud.entitymanagement.repository.ContainerContentRepository;
+import net.firedevops.firemud.entitymanagement.repository.ContainerInstanceRepository;
 import net.firedevops.firemud.entitymanagement.repository.InventoryEntryRepository;
 import net.firedevops.firemud.entitymanagement.repository.ItemRepository;
 import net.firedevops.firemud.entitymanagement.service.ContainerService;
@@ -28,6 +30,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class ContainerServiceImpl implements ContainerService {
   private final ContainerContentRepository containerContentRepository;
   private final ContainerContentEntryMapper containerContentMapper;
+  private final ContainerInstanceRepository containerInstanceRepository;
   private final InventoryEntryRepository inventoryRepository;
   private final InventoryEntryMapper inventoryMapper;
   private final CharacterRepository characterRepository;
@@ -37,12 +40,12 @@ public class ContainerServiceImpl implements ContainerService {
   @Transactional(readOnly = true)
   @Timed(value = "container.list")
   public Page<ContainerContentEntryDto> listContainerContents(
-      Long tenantId, Long characterId, Long containerItemId, Pageable pageable) {
+      Long tenantId, Long characterId, Long containerInstanceId, Pageable pageable) {
     Character character = requireCharacter(tenantId, characterId);
-    requireContainerItemOwnedByCharacter(character.getId(), tenantId, containerItemId);
+    ContainerInstance containerInstance =
+        requireContainerInstanceOwnedByCharacter(character.getId(), tenantId, containerInstanceId);
     return containerContentRepository
-        .findByIdTenantIdAndIdCharacterIdAndIdContainerItemId(
-            tenantId, characterId, containerItemId, pageable)
+        .findByIdTenantIdAndIdContainerInstanceId(tenantId, containerInstance.getId(), pageable)
         .map(containerContentMapper::toDto);
   }
 
@@ -50,11 +53,12 @@ public class ContainerServiceImpl implements ContainerService {
   @Transactional
   @Timed(value = "container.put")
   public ContainerContentEntryDto putItemIntoContainer(
-      Long tenantId, Long characterId, Long containerItemId, Long itemId, int quantity) {
+      Long tenantId, Long characterId, Long containerInstanceId, Long itemId, int quantity) {
     requirePositiveQuantity(quantity);
     Character character = requireCharacter(tenantId, characterId);
-    Item containerItem =
-        requireContainerItemOwnedByCharacter(character.getId(), tenantId, containerItemId);
+    ContainerInstance containerInstance =
+        requireContainerInstanceOwnedByCharacter(character.getId(), tenantId, containerInstanceId);
+    Item containerItem = containerInstance.getItem();
     Item item = requireItem(tenantId, itemId);
     if (!containerItem.isContainer()) {
       throw new IllegalArgumentException("Item is not a container");
@@ -62,7 +66,7 @@ public class ContainerServiceImpl implements ContainerService {
     if (item.isContainer()) {
       throw new IllegalArgumentException("Nested containers are not supported");
     }
-    if (containerItemId.equals(itemId)) {
+    if (containerItem.getId().equals(itemId)) {
       throw new IllegalArgumentException("Item cannot be placed into itself");
     }
     InventoryEntry carried = requireInventoryEntry(character.getId(), itemId);
@@ -70,8 +74,7 @@ public class ContainerServiceImpl implements ContainerService {
       throw new IllegalArgumentException("Not enough quantity to put into container");
     }
     adjustInventoryQuantity(carried, -quantity);
-    ContainerContentEntry entry =
-        upsertContainerContentEntry(character, containerItem, item, quantity);
+    ContainerContentEntry entry = upsertContainerContentEntry(containerInstance, item, quantity);
     return containerContentMapper.toDto(entry);
   }
 
@@ -79,13 +82,14 @@ public class ContainerServiceImpl implements ContainerService {
   @Transactional
   @Timed(value = "container.take")
   public InventoryEntryDto takeItemFromContainer(
-      Long tenantId, Long characterId, Long containerItemId, Long itemId, int quantity) {
+      Long tenantId, Long characterId, Long containerInstanceId, Long itemId, int quantity) {
     requirePositiveQuantity(quantity);
     Character character = requireCharacter(tenantId, characterId);
-    requireContainerItemOwnedByCharacter(character.getId(), tenantId, containerItemId);
+    ContainerInstance containerInstance =
+        requireContainerInstanceOwnedByCharacter(character.getId(), tenantId, containerInstanceId);
     Item item = requireItem(tenantId, itemId);
     ContainerContentEntry entry =
-        requireContainerContentEntry(tenantId, character.getId(), containerItemId, itemId);
+        requireContainerContentEntry(tenantId, containerInstance.getId(), itemId);
     if (entry.getQuantity() < quantity) {
       throw new IllegalArgumentException("Not enough quantity in container");
     }
@@ -106,14 +110,18 @@ public class ContainerServiceImpl implements ContainerService {
         .orElseThrow(() -> new IllegalArgumentException("Item not found for tenant"));
   }
 
-  private Item requireContainerItemOwnedByCharacter(
-      Long characterId, Long tenantId, Long containerItemId) {
-    Item containerItem = requireItem(tenantId, containerItemId);
-    requireInventoryEntry(characterId, containerItemId);
+  private ContainerInstance requireContainerInstanceOwnedByCharacter(
+      Long characterId, Long tenantId, Long containerInstanceId) {
+    ContainerInstance containerInstance =
+        containerInstanceRepository
+            .findByIdAndTenantIdAndCharacter_Id(containerInstanceId, tenantId, characterId)
+            .orElseThrow(() -> new IllegalArgumentException("Container instance not found"));
+    Item containerItem = containerInstance.getItem();
+    requireInventoryEntry(characterId, containerItem.getId());
     if (!containerItem.isContainer()) {
       throw new IllegalArgumentException("Item is not a container");
     }
-    return containerItem;
+    return containerInstance;
   }
 
   private InventoryEntry requireInventoryEntry(Long characterId, Long itemId) {
@@ -123,10 +131,9 @@ public class ContainerServiceImpl implements ContainerService {
   }
 
   private ContainerContentEntry requireContainerContentEntry(
-      Long tenantId, Long characterId, Long containerItemId, Long itemId) {
+      Long tenantId, Long containerInstanceId, Long itemId) {
     return containerContentRepository
-        .findByIdTenantIdAndIdCharacterIdAndIdContainerItemIdAndIdItemId(
-            tenantId, characterId, containerItemId, itemId)
+        .findByIdTenantIdAndIdContainerInstanceIdAndIdItemId(tenantId, containerInstanceId, itemId)
         .orElseThrow(() -> new IllegalArgumentException("Container item not found"));
   }
 
@@ -146,16 +153,15 @@ public class ContainerServiceImpl implements ContainerService {
   }
 
   private ContainerContentEntry upsertContainerContentEntry(
-      Character character, Item containerItem, Item item, int quantity) {
+      ContainerInstance containerInstance, Item item, int quantity) {
     ContainerContentKey key =
         containerContentKey(
-            character.getTenantId(), character.getId(), containerItem.getId(), item.getId());
+            containerInstance.getTenantId(), containerInstance.getId(), item.getId());
     ContainerContentEntry entry = containerContentRepository.findById(key).orElse(null);
     if (entry == null) {
       entry = new ContainerContentEntry();
       entry.setId(key);
-      entry.setCharacter(character);
-      entry.setContainerItem(containerItem);
+      entry.setContainerInstance(containerInstance);
       entry.setItem(item);
       entry.setQuantity(quantity);
     } else {
@@ -215,11 +221,10 @@ public class ContainerServiceImpl implements ContainerService {
   }
 
   private ContainerContentKey containerContentKey(
-      Long tenantId, Long characterId, Long containerItemId, Long itemId) {
+      Long tenantId, Long containerInstanceId, Long itemId) {
     ContainerContentKey key = new ContainerContentKey();
     key.setTenantId(tenantId);
-    key.setCharacterId(characterId);
-    key.setContainerItemId(containerItemId);
+    key.setContainerInstanceId(containerInstanceId);
     key.setItemId(itemId);
     return key;
   }

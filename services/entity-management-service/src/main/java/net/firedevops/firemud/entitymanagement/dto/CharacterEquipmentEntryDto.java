@@ -8,4 +8,5 @@ public record CharacterEquipmentEntryDto(
     @NotNull String slot,
     @NotNull Long itemId,
     @NotNull String itemName,
-    String itemDescription) {}
+    String itemDescription,
+    Long containerInstanceId) {}

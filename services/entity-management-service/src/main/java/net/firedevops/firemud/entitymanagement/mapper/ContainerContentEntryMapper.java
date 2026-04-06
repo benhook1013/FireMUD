@@ -8,8 +8,8 @@ import org.mapstruct.Mapping;
 @Mapper(componentModel = "spring")
 public interface ContainerContentEntryMapper {
   @Mapping(target = "tenantId", source = "id.tenantId")
-  @Mapping(target = "characterId", source = "id.characterId")
-  @Mapping(target = "containerItemId", source = "id.containerItemId")
+  @Mapping(target = "characterId", source = "containerInstance.character.id")
+  @Mapping(target = "containerInstanceId", source = "containerInstance.id")
   @Mapping(target = "itemId", source = "item.id")
   @Mapping(target = "itemName", source = "item.name")
   @Mapping(target = "itemDescription", source = "item.description")

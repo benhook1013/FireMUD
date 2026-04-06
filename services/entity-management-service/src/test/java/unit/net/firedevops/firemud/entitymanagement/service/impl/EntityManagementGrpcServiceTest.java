@@ -150,7 +150,7 @@ class EntityManagementGrpcServiceTest {
         ListContainerContentsRequest.newBuilder()
             .setTenantId("1")
             .setCharacterId("7")
-            .setContainerItemId("10")
+            .setContainerInstanceId("10")
             .build(),
         new StreamObserver<>() {
           @Override
@@ -167,6 +167,7 @@ class EntityManagementGrpcServiceTest {
 
     assertEquals(1, ref.get().getItemsCount());
     assertEquals("Torch", ref.get().getItems(0).getItemName());
+    assertEquals("10", ref.get().getItems(0).getContainerInstanceId());
   }
 
   @Test
@@ -202,7 +203,7 @@ class EntityManagementGrpcServiceTest {
         PutItemIntoContainerRequest.newBuilder()
             .setTenantId("1")
             .setCharacterId("7")
-            .setContainerItemId("10")
+            .setContainerInstanceId("10")
             .setItemId("11")
             .setQuantity(2)
             .build(),
@@ -222,6 +223,7 @@ class EntityManagementGrpcServiceTest {
     ContainerItem item = ref.get().getContainerItem();
     assertEquals("Torch", item.getItemName());
     assertEquals(2, item.getQuantity());
+    assertEquals("10", item.getContainerInstanceId());
   }
 
   @Test
@@ -241,7 +243,7 @@ class EntityManagementGrpcServiceTest {
     Mockito.when(containerService.takeItemFromContainer(1L, 7L, 10L, 11L, 1))
         .thenReturn(
             new net.firedevops.firemud.entitymanagement.dto.InventoryEntryDto(
-                1L, 7L, 11L, "Torch", "A small torch", 1));
+                1L, 7L, 11L, "Torch", "A small torch", 1, null));
     EntityManagementGrpcService service =
         newService(
             pingService,
@@ -257,7 +259,7 @@ class EntityManagementGrpcServiceTest {
         TakeItemFromContainerRequest.newBuilder()
             .setTenantId("1")
             .setCharacterId("7")
-            .setContainerItemId("10")
+            .setContainerInstanceId("10")
             .setItemId("11")
             .setQuantity(1)
             .build(),
@@ -510,7 +512,7 @@ class EntityManagementGrpcServiceTest {
     InventoryService inventoryService = Mockito.mock(InventoryService.class);
     var dto =
         new net.firedevops.firemud.entitymanagement.dto.InventoryEntryDto(
-            1L, 7L, 99L, "Torch", "A small torch", 2);
+            1L, 7L, 99L, "Torch", "A small torch", 2, 55L);
     Mockito.when(inventoryService.listInventory(1L, 7L, Pageable.unpaged()))
         .thenReturn(new org.springframework.data.domain.PageImpl<>(java.util.List.of(dto)));
     io.micrometer.core.instrument.MeterRegistry meterRegistry =
@@ -547,6 +549,7 @@ class EntityManagementGrpcServiceTest {
 
     assertEquals("Torch", ref.get().getItems(0).getItemName());
     assertEquals(2, ref.get().getItems(0).getQuantity());
+    assertEquals("55", ref.get().getItems(0).getContainerInstanceId());
   }
 
   @Test
@@ -557,7 +560,7 @@ class EntityManagementGrpcServiceTest {
     InventoryService inventoryService = Mockito.mock(InventoryService.class);
     var dto =
         new net.firedevops.firemud.entitymanagement.dto.CharacterEquipmentEntryDto(
-            1L, 7L, "HEAD", 99L, "Leather Cap", "A small cap");
+            1L, 7L, "HEAD", 99L, "Leather Cap", "A small cap", 66L);
     Mockito.when(equipmentService.listEquipment(1L, 7L, Pageable.unpaged()))
         .thenReturn(new org.springframework.data.domain.PageImpl<>(java.util.List.of(dto)));
     io.micrometer.core.instrument.MeterRegistry meterRegistry =
@@ -594,6 +597,7 @@ class EntityManagementGrpcServiceTest {
 
     assertEquals("Leather Cap", ref.get().getItems(0).getItemName());
     assertEquals("HEAD", ref.get().getItems(0).getSlot());
+    assertEquals("66", ref.get().getItems(0).getContainerInstanceId());
   }
 
   @Test
@@ -604,7 +608,7 @@ class EntityManagementGrpcServiceTest {
     InventoryService inventoryService = Mockito.mock(InventoryService.class);
     var dto =
         new net.firedevops.firemud.entitymanagement.dto.CharacterEquipmentEntryDto(
-            1L, 7L, "HEAD", 99L, "Leather Cap", "A small cap");
+            1L, 7L, "HEAD", 99L, "Leather Cap", "A small cap", 66L);
     Mockito.when(equipmentService.wearItem(1L, 7L, 99L)).thenReturn(dto);
     io.micrometer.core.instrument.MeterRegistry meterRegistry =
         Mockito.mock(io.micrometer.core.instrument.MeterRegistry.class);
@@ -644,6 +648,7 @@ class EntityManagementGrpcServiceTest {
 
     assertEquals("Leather Cap", ref.get().getEquipmentItem().getItemName());
     assertEquals("HEAD", ref.get().getEquipmentItem().getSlot());
+    assertEquals("66", ref.get().getEquipmentItem().getContainerInstanceId());
   }
 
   @Test
@@ -654,7 +659,7 @@ class EntityManagementGrpcServiceTest {
     InventoryService inventoryService = Mockito.mock(InventoryService.class);
     var dto =
         new net.firedevops.firemud.entitymanagement.dto.CharacterEquipmentEntryDto(
-            1L, 7L, "HEAD", 99L, "Leather Cap", "A small cap");
+            1L, 7L, "HEAD", 99L, "Leather Cap", "A small cap", 66L);
     Mockito.when(equipmentService.removeWornItem(1L, 7L, "HEAD")).thenReturn(dto);
     io.micrometer.core.instrument.MeterRegistry meterRegistry =
         Mockito.mock(io.micrometer.core.instrument.MeterRegistry.class);
@@ -694,6 +699,7 @@ class EntityManagementGrpcServiceTest {
 
     assertEquals("Leather Cap", ref.get().getEquipmentItem().getItemName());
     assertEquals("HEAD", ref.get().getEquipmentItem().getSlot());
+    assertEquals("66", ref.get().getEquipmentItem().getContainerInstanceId());
   }
 
   @Test
@@ -704,7 +710,7 @@ class EntityManagementGrpcServiceTest {
     InventoryService inventoryService = Mockito.mock(InventoryService.class);
     var dto =
         new net.firedevops.firemud.entitymanagement.dto.InventoryEntryDto(
-            1L, 7L, 99L, "Torch", "A small torch", 2);
+            1L, 7L, 99L, "Torch", "A small torch", 2, null);
     Mockito.when(inventoryService.pickupItemFromRoom(1L, 7L, "GI-1", "R-1", 99L, 1))
         .thenReturn(dto);
     io.micrometer.core.instrument.MeterRegistry meterRegistry =

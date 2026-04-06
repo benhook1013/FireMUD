@@ -11,12 +11,14 @@ import java.util.Optional;
 import net.firedevops.firemud.entitymanagement.entity.Character;
 import net.firedevops.firemud.entitymanagement.entity.CharacterEquipmentEntry;
 import net.firedevops.firemud.entitymanagement.entity.CharacterEquipmentKey;
+import net.firedevops.firemud.entitymanagement.entity.ContainerInstance;
 import net.firedevops.firemud.entitymanagement.entity.InventoryEntry;
 import net.firedevops.firemud.entitymanagement.entity.InventoryKey;
 import net.firedevops.firemud.entitymanagement.entity.Item;
 import net.firedevops.firemud.entitymanagement.mapper.CharacterEquipmentEntryMapper;
 import net.firedevops.firemud.entitymanagement.repository.CharacterEquipmentRepository;
 import net.firedevops.firemud.entitymanagement.repository.CharacterRepository;
+import net.firedevops.firemud.entitymanagement.repository.ContainerInstanceRepository;
 import net.firedevops.firemud.entitymanagement.repository.InventoryEntryRepository;
 import net.firedevops.firemud.entitymanagement.repository.ItemRepository;
 import org.junit.jupiter.api.Test;
@@ -31,11 +33,19 @@ class EquipmentServiceImplTest {
     CharacterEquipmentRepository equipmentRepo = Mockito.mock(CharacterEquipmentRepository.class);
     CharacterEquipmentEntryMapper equipmentMapper =
         Mappers.getMapper(CharacterEquipmentEntryMapper.class);
+    ContainerInstanceRepository containerInstanceRepo =
+        Mockito.mock(ContainerInstanceRepository.class);
     InventoryEntryRepository inventoryRepo = Mockito.mock(InventoryEntryRepository.class);
     CharacterRepository charRepo = Mockito.mock(CharacterRepository.class);
     ItemRepository itemRepo = Mockito.mock(ItemRepository.class);
     EquipmentServiceImpl service =
-        new EquipmentServiceImpl(equipmentRepo, equipmentMapper, inventoryRepo, charRepo, itemRepo);
+        new EquipmentServiceImpl(
+            equipmentRepo,
+            equipmentMapper,
+            containerInstanceRepo,
+            inventoryRepo,
+            charRepo,
+            itemRepo);
 
     Character character = new Character();
     character.setId(1L);
@@ -47,6 +57,13 @@ class EquipmentServiceImplTest {
     item.setName("Leather Cap");
     item.setDescription("A worn cap");
     item.setEquipmentSlot("HEAD");
+    item.setContainer(true);
+
+    ContainerInstance containerInstance = new ContainerInstance();
+    containerInstance.setId(88L);
+    containerInstance.setTenantId(11L);
+    containerInstance.setCharacter(character);
+    containerInstance.setItem(item);
 
     CharacterEquipmentEntry entry = new CharacterEquipmentEntry();
     CharacterEquipmentKey key = new CharacterEquipmentKey();
@@ -57,6 +74,8 @@ class EquipmentServiceImplTest {
     entry.setItem(item);
 
     when(charRepo.findByIdAndTenantId(1L, 11L)).thenReturn(Optional.of(character));
+    when(containerInstanceRepo.findByTenantIdAndCharacter_IdAndItem_Id(11L, 1L, 2L))
+        .thenReturn(Optional.of(containerInstance));
     when(equipmentRepo.findByIdCharacterIdAndCharacterTenantId(1L, 11L, Pageable.unpaged()))
         .thenReturn(new PageImpl<>(List.of(entry)));
 
@@ -65,6 +84,7 @@ class EquipmentServiceImplTest {
     assertEquals(1, result.getTotalElements());
     assertEquals("HEAD", result.getContent().get(0).slot());
     assertEquals("Leather Cap", result.getContent().get(0).itemName());
+    assertEquals(88L, result.getContent().get(0).containerInstanceId());
   }
 
   @Test
@@ -72,11 +92,19 @@ class EquipmentServiceImplTest {
     CharacterEquipmentRepository equipmentRepo = Mockito.mock(CharacterEquipmentRepository.class);
     CharacterEquipmentEntryMapper equipmentMapper =
         Mappers.getMapper(CharacterEquipmentEntryMapper.class);
+    ContainerInstanceRepository containerInstanceRepo =
+        Mockito.mock(ContainerInstanceRepository.class);
     InventoryEntryRepository inventoryRepo = Mockito.mock(InventoryEntryRepository.class);
     CharacterRepository charRepo = Mockito.mock(CharacterRepository.class);
     ItemRepository itemRepo = Mockito.mock(ItemRepository.class);
     EquipmentServiceImpl service =
-        new EquipmentServiceImpl(equipmentRepo, equipmentMapper, inventoryRepo, charRepo, itemRepo);
+        new EquipmentServiceImpl(
+            equipmentRepo,
+            equipmentMapper,
+            containerInstanceRepo,
+            inventoryRepo,
+            charRepo,
+            itemRepo);
 
     Character character = new Character();
     character.setId(1L);
@@ -87,6 +115,13 @@ class EquipmentServiceImplTest {
     item.setTenantId(1L);
     item.setName("Leather Cap");
     item.setEquipmentSlot("head");
+    item.setContainer(true);
+
+    ContainerInstance containerInstance = new ContainerInstance();
+    containerInstance.setId(77L);
+    containerInstance.setTenantId(1L);
+    containerInstance.setCharacter(character);
+    containerInstance.setItem(item);
 
     InventoryEntry carried = new InventoryEntry();
     InventoryKey inventoryKey = new InventoryKey();
@@ -99,6 +134,8 @@ class EquipmentServiceImplTest {
 
     when(charRepo.findByIdAndTenantId(1L, 1L)).thenReturn(Optional.of(character));
     when(itemRepo.findByIdAndTenantId(2L, 1L)).thenReturn(Optional.of(item));
+    when(containerInstanceRepo.findByTenantIdAndCharacter_IdAndItem_Id(1L, 1L, 2L))
+        .thenReturn(Optional.of(containerInstance));
     when(equipmentRepo.findById(any(CharacterEquipmentKey.class))).thenReturn(Optional.empty());
     when(inventoryRepo.findById(inventoryKey)).thenReturn(Optional.of(carried));
     when(inventoryRepo.save(any(InventoryEntry.class)))
@@ -111,6 +148,7 @@ class EquipmentServiceImplTest {
     assertEquals("HEAD", equipped.slot());
     assertEquals("Leather Cap", equipped.itemName());
     assertEquals(1, carried.getQuantity());
+    assertEquals(77L, equipped.containerInstanceId());
   }
 
   @Test
@@ -118,11 +156,19 @@ class EquipmentServiceImplTest {
     CharacterEquipmentRepository equipmentRepo = Mockito.mock(CharacterEquipmentRepository.class);
     CharacterEquipmentEntryMapper equipmentMapper =
         Mappers.getMapper(CharacterEquipmentEntryMapper.class);
+    ContainerInstanceRepository containerInstanceRepo =
+        Mockito.mock(ContainerInstanceRepository.class);
     InventoryEntryRepository inventoryRepo = Mockito.mock(InventoryEntryRepository.class);
     CharacterRepository charRepo = Mockito.mock(CharacterRepository.class);
     ItemRepository itemRepo = Mockito.mock(ItemRepository.class);
     EquipmentServiceImpl service =
-        new EquipmentServiceImpl(equipmentRepo, equipmentMapper, inventoryRepo, charRepo, itemRepo);
+        new EquipmentServiceImpl(
+            equipmentRepo,
+            equipmentMapper,
+            containerInstanceRepo,
+            inventoryRepo,
+            charRepo,
+            itemRepo);
 
     Character character = new Character();
     character.setId(1L);
@@ -145,11 +191,19 @@ class EquipmentServiceImplTest {
     CharacterEquipmentRepository equipmentRepo = Mockito.mock(CharacterEquipmentRepository.class);
     CharacterEquipmentEntryMapper equipmentMapper =
         Mappers.getMapper(CharacterEquipmentEntryMapper.class);
+    ContainerInstanceRepository containerInstanceRepo =
+        Mockito.mock(ContainerInstanceRepository.class);
     InventoryEntryRepository inventoryRepo = Mockito.mock(InventoryEntryRepository.class);
     CharacterRepository charRepo = Mockito.mock(CharacterRepository.class);
     ItemRepository itemRepo = Mockito.mock(ItemRepository.class);
     EquipmentServiceImpl service =
-        new EquipmentServiceImpl(equipmentRepo, equipmentMapper, inventoryRepo, charRepo, itemRepo);
+        new EquipmentServiceImpl(
+            equipmentRepo,
+            equipmentMapper,
+            containerInstanceRepo,
+            inventoryRepo,
+            charRepo,
+            itemRepo);
 
     Character character = new Character();
     character.setId(1L);
@@ -181,11 +235,19 @@ class EquipmentServiceImplTest {
     CharacterEquipmentRepository equipmentRepo = Mockito.mock(CharacterEquipmentRepository.class);
     CharacterEquipmentEntryMapper equipmentMapper =
         Mappers.getMapper(CharacterEquipmentEntryMapper.class);
+    ContainerInstanceRepository containerInstanceRepo =
+        Mockito.mock(ContainerInstanceRepository.class);
     InventoryEntryRepository inventoryRepo = Mockito.mock(InventoryEntryRepository.class);
     CharacterRepository charRepo = Mockito.mock(CharacterRepository.class);
     ItemRepository itemRepo = Mockito.mock(ItemRepository.class);
     EquipmentServiceImpl service =
-        new EquipmentServiceImpl(equipmentRepo, equipmentMapper, inventoryRepo, charRepo, itemRepo);
+        new EquipmentServiceImpl(
+            equipmentRepo,
+            equipmentMapper,
+            containerInstanceRepo,
+            inventoryRepo,
+            charRepo,
+            itemRepo);
 
     Character character = new Character();
     character.setId(1L);
@@ -223,11 +285,19 @@ class EquipmentServiceImplTest {
     CharacterEquipmentRepository equipmentRepo = Mockito.mock(CharacterEquipmentRepository.class);
     CharacterEquipmentEntryMapper equipmentMapper =
         Mappers.getMapper(CharacterEquipmentEntryMapper.class);
+    ContainerInstanceRepository containerInstanceRepo =
+        Mockito.mock(ContainerInstanceRepository.class);
     InventoryEntryRepository inventoryRepo = Mockito.mock(InventoryEntryRepository.class);
     CharacterRepository charRepo = Mockito.mock(CharacterRepository.class);
     ItemRepository itemRepo = Mockito.mock(ItemRepository.class);
     EquipmentServiceImpl service =
-        new EquipmentServiceImpl(equipmentRepo, equipmentMapper, inventoryRepo, charRepo, itemRepo);
+        new EquipmentServiceImpl(
+            equipmentRepo,
+            equipmentMapper,
+            containerInstanceRepo,
+            inventoryRepo,
+            charRepo,
+            itemRepo);
 
     assertThrows(IllegalArgumentException.class, () -> service.removeWornItem(1L, 1L, " "));
     verifyNoInteractions(equipmentRepo, inventoryRepo, itemRepo);
