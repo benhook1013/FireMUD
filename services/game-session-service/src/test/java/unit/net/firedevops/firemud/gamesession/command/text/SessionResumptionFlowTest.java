@@ -180,6 +180,7 @@ class SessionResumptionFlowTest {
             worldCatalog,
             gameLogicProperties,
             accountClient,
+            entityManagementClient,
             firstPartyConnectContextRegistry,
             meterRegistry);
     worldsHandler = new WorldsCommandHandler(worldCatalog);

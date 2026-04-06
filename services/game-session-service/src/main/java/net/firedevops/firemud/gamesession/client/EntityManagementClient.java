@@ -55,6 +55,7 @@ public final class EntityManagementClient
         EntityManagementServiceGrpc.EntityManagementServiceBlockingStub> {
   private static final Logger logger = LoggerFactory.getLogger(EntityManagementClient.class);
   private static final long CALL_DEADLINE_SECONDS = 5L;
+  private static final long FIND_CHARACTER_DEADLINE_MILLIS = 500L;
 
   public EntityManagementClient(
       ServiceEndpointsProperties endpoints,
@@ -90,17 +91,29 @@ public final class EntityManagementClient
   }
 
   public Optional<Character> findCharacterByName(String tenantId, String name) {
-    FindCharacterByNameResponse response =
-        callStub()
-            .findCharacterByName(
-                FindCharacterByNameRequest.newBuilder()
-                    .setTenantId(tenantId)
-                    .setName(name)
-                    .build());
-    if (response.hasError() || !response.hasCharacter()) {
+    FindCharacterByNameRequest request =
+        FindCharacterByNameRequest.newBuilder().setTenantId(tenantId).setName(name).build();
+    try {
+      FindCharacterByNameResponse response =
+          stub()
+              .withDeadlineAfter(FIND_CHARACTER_DEADLINE_MILLIS, TimeUnit.MILLISECONDS)
+              .findCharacterByName(request);
+      if (response.hasError() || !response.hasCharacter()) {
+        return Optional.empty();
+      }
+      return Optional.of(response.getCharacter());
+    } catch (StatusRuntimeException ex) {
+      logger.debug(
+          "Entity Management character lookup failed tenantId={} name={}", tenantId, name, ex);
+      return Optional.empty();
+    } catch (Exception ex) {
+      logger.debug(
+          "Entity Management character lookup failed unexpectedly tenantId={} name={}",
+          tenantId,
+          name,
+          ex);
       return Optional.empty();
     }
-    return Optional.of(response.getCharacter());
   }
 
   public QueryInventoryResponse queryInventory(String tenantId, String characterId) {

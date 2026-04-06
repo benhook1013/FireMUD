@@ -306,6 +306,7 @@ class TextCommandInterpreterTest {
             worldCatalog,
             gameLogicProperties,
             accountClient,
+            entityManagementClient,
             firstPartyConnectContextRegistry,
             meterRegistry);
     LookCommandHandler lookHandler =
