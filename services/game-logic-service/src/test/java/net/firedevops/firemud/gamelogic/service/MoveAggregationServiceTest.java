@@ -101,8 +101,52 @@ class MoveAggregationServiceTest {
     verify(lookAggregationService).resolve(lookRequestCaptor.capture());
     assertThat(lookRequestCaptor.getValue().getRoomInstance().getRoomInstanceId())
         .isEqualTo("R-2045");
+    assertThat(lookRequestCaptor.getValue().getRoomInstance().getGameInstanceId())
+        .isEqualTo(LookTestFixtures.GAME_INSTANCE_ID);
     assertThat(lookRequestCaptor.getValue().getPreferredLocale()).isEqualTo("fr");
     verify(worldStub).getRoomSnapshot(any());
+  }
+
+  @Test
+  void resolveFallsBackToRequestGameInstanceIdWhenSnapshotOmitsIt() {
+    RoomSnapshot snapshot =
+        RoomSnapshot.newBuilder()
+            .setTenantId(LookTestFixtures.TENANT)
+            .setRoomInstanceId(LookTestFixtures.ROOM_INSTANCE_ID)
+            .setRoomName(LookTestFixtures.ROOM_NAME)
+            .addExits(
+                RoomExitSnapshot.newBuilder()
+                    .setDirection("NORTH")
+                    .setLabel("NORTH")
+                    .setTargetRoomInstanceId("R-3042")
+                    .setDescription("arched passage")
+                    .build())
+            .build();
+    when(worldStub.getRoomSnapshot(any()))
+        .thenReturn(GetRoomSnapshotResponse.newBuilder().setSnapshot(snapshot).build());
+    when(lookAggregationService.resolve(any())).thenReturn(LookTestFixtures.sampleLookResult());
+
+    service.resolve(
+        MoveRequest.newBuilder()
+            .setTenantId(LookTestFixtures.TENANT)
+            .setSessionId("session-1")
+            .setCharacterId("player-1")
+            .setPreferredLocale("en-NZ")
+            .setRoomInstance(
+                RoomInstanceRef.newBuilder()
+                    .setTenantId(LookTestFixtures.TENANT)
+                    .setGameInstanceId(LookTestFixtures.GAME_INSTANCE_ID)
+                    .setRoomInstanceId(LookTestFixtures.ROOM_INSTANCE_ID)
+                    .build())
+            .setDirection("north")
+            .build());
+
+    ArgumentCaptor<LookRequest> lookRequestCaptor = ArgumentCaptor.forClass(LookRequest.class);
+    verify(lookAggregationService).resolve(lookRequestCaptor.capture());
+    assertThat(lookRequestCaptor.getValue().getRoomInstance().getGameInstanceId())
+        .isEqualTo(LookTestFixtures.GAME_INSTANCE_ID);
+    assertThat(lookRequestCaptor.getValue().getRoomInstance().getRoomInstanceId())
+        .isEqualTo("R-3042");
   }
 
   @Test

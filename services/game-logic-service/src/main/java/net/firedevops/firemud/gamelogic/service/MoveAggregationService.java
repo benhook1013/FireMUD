@@ -21,6 +21,7 @@ import net.firedevops.firemud.worldmanagement.v1.WorldManagementServiceGrpc;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
 
 @Service
 @RequiredArgsConstructor
@@ -72,6 +73,7 @@ public class MoveAggregationService {
 
       RoomExitSnapshot exit = maybeExit.get();
       try {
+        String destinationGameInstanceId = resolveGameInstanceId(request, snapshot);
         LookResult destination =
             lookAggregationService.resolve(
                 LookRequest.newBuilder()
@@ -81,7 +83,7 @@ public class MoveAggregationService {
                     .setRoomInstance(
                         RoomInstanceRef.newBuilder()
                             .setTenantId(snapshot.getTenantId())
-                            .setGameInstanceId(snapshot.getGameInstanceId())
+                            .setGameInstanceId(destinationGameInstanceId)
                             .setRoomInstanceId(exit.getTargetRoomInstanceId())
                             .build())
                     .setPreferredLocale(request.getPreferredLocale())
@@ -112,6 +114,17 @@ public class MoveAggregationService {
       return request.getRoomInstance().getTenantId();
     }
     return request.getTenantId();
+  }
+
+  private String resolveGameInstanceId(MoveRequest request, RoomSnapshot snapshot) {
+    if (StringUtils.hasText(snapshot.getGameInstanceId())) {
+      return snapshot.getGameInstanceId();
+    }
+    if (request.hasRoomInstance()
+        && StringUtils.hasText(request.getRoomInstance().getGameInstanceId())) {
+      return request.getRoomInstance().getGameInstanceId();
+    }
+    return "";
   }
 
   private MoveResult errorResponse(MoveResult.Builder builder, String code, String message) {
