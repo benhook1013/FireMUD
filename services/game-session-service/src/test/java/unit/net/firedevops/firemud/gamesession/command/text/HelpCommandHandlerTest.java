@@ -80,13 +80,13 @@ class HelpCommandHandlerTest {
     assertTrue(result.commandResult().accepted());
     assertTrue(result.outputs().get(0).text().contains("WEAR <item> equips a carried item."));
     assertTrue(
-        result.outputs().get(0).text().contains("REMOVE <item> takes an equipped item off."));
+        result.outputs().get(0).text().contains("REMOVE <item|slot> takes an equipped item off."));
     assertTrue(
         result
             .outputs()
             .get(0)
             .text()
-            .contains("The runtime path is prepared, but the equipment backend is not yet wired."));
+            .contains("The command surface is now backed by the equipment service."));
   }
 
   @Test

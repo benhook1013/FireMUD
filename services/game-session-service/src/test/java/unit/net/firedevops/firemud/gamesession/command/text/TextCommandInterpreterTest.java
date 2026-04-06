@@ -23,12 +23,16 @@ import net.firedevops.firemud.cache.LookCacheService;
 import net.firedevops.firemud.common.settings.ScopedSettingsSnapshot;
 import net.firedevops.firemud.entitymanagement.v1.DropItemToRoomResponse;
 import net.firedevops.firemud.entitymanagement.v1.EntityType;
+import net.firedevops.firemud.entitymanagement.v1.EquipmentItem;
 import net.firedevops.firemud.entitymanagement.v1.InventoryItem;
+import net.firedevops.firemud.entitymanagement.v1.ListEquipmentResponse;
 import net.firedevops.firemud.entitymanagement.v1.ListRoomEntitiesResponse;
 import net.firedevops.firemud.entitymanagement.v1.PickupItemFromRoomResponse;
 import net.firedevops.firemud.entitymanagement.v1.QueryInventoryResponse;
+import net.firedevops.firemud.entitymanagement.v1.RemoveEquipmentResponse;
 import net.firedevops.firemud.entitymanagement.v1.RoomEntity;
 import net.firedevops.firemud.entitymanagement.v1.RoomGroundInventoryItem;
+import net.firedevops.firemud.entitymanagement.v1.WearEquipmentItemResponse;
 import net.firedevops.firemud.gamelogic.v1.LookResult;
 import net.firedevops.firemud.gamesession.client.AccountClient;
 import net.firedevops.firemud.gamesession.client.EntityManagementClient;
@@ -81,7 +85,8 @@ class TextCommandInterpreterTest {
   private final HelpCommandHandler helpHandler = new HelpCommandHandler();
   private final InventoryCommandHandler inventoryHandler =
       new InventoryCommandHandler(entityManagementClient);
-  private final EquipmentCommandHandler equipmentHandler = new EquipmentCommandHandler();
+  private final EquipmentCommandHandler equipmentHandler =
+      new EquipmentCommandHandler(entityManagementClient);
   private final CommunicationCommandHandler communicationHandler =
       Mockito.mock(CommunicationCommandHandler.class);
   private final FirstPartyConnectContextRegistry firstPartyConnectContextRegistry =
@@ -181,6 +186,41 @@ class TextCommandInterpreterTest {
                         .setItemName("Torch")
                         .setItemDescription("A battered key")
                         .setQuantity(1)
+                        .build())
+                .build());
+    when(entityManagementClient.listEquipment(Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(
+            ListEquipmentResponse.newBuilder()
+                .addItems(
+                    EquipmentItem.newBuilder()
+                        .setSlot("HEAD")
+                        .setItemId("ITEM-009")
+                        .setItemName("Torch")
+                        .setItemDescription("A small torch")
+                        .build())
+                .build());
+    when(entityManagementClient.wearEquipment(
+            Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(
+            WearEquipmentItemResponse.newBuilder()
+                .setEquipmentItem(
+                    EquipmentItem.newBuilder()
+                        .setSlot("HEAD")
+                        .setItemId("ITEM-009")
+                        .setItemName("Torch")
+                        .setItemDescription("A small torch")
+                        .build())
+                .build());
+    when(entityManagementClient.removeEquipment(
+            Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(
+            RemoveEquipmentResponse.newBuilder()
+                .setEquipmentItem(
+                    EquipmentItem.newBuilder()
+                        .setSlot("HEAD")
+                        .setItemId("ITEM-009")
+                        .setItemName("Torch")
+                        .setItemDescription("A small torch")
                         .build())
                 .build());
     when(devIsolatedRegistryProvider.getIfAvailable()).thenReturn(null);
@@ -383,33 +423,35 @@ class TextCommandInterpreterTest {
   }
 
   @Test
-  void wearAfterPlayReturnsEquipmentUnavailable() {
+  void wearAfterPlayReturnsSuccessWithMutationNotice() {
     interpreter.interpret("1", "LOGIN demo@example.com swordfish", false);
     interpreter.interpret("1", "PLAY demo", false);
 
     TextCommandInterpretationResult interpretation =
         interpreter.interpret("1", "WEAR Torch", false);
 
-    assertFalse(interpretation.commandResult().accepted());
-    assertEquals("EQUIPMENT_UNAVAILABLE", interpretation.commandResult().errorCode());
+    assertTrue(interpretation.commandResult().accepted());
     assertEquals(
-        "ERROR EQUIPMENT_UNAVAILABLE WEAR Torch is prepared in the command surface, but the equipment runtime is not yet wired.",
-        renderedResponse("WEAR Torch", interpretation));
+        List.of(PlayerOutputKind.MESSAGE, PlayerOutputKind.PROMPT),
+        interpretation.outputs().stream().map(PlayerOutput::kind).toList());
+    assertEquals(
+        "OK WEAR\nYou wear Torch.\n\ndemo> ", renderedResponse("WEAR Torch", interpretation));
   }
 
   @Test
-  void removeAfterPlayReturnsEquipmentUnavailable() {
+  void removeAfterPlayReturnsSuccessWithMutationNotice() {
     interpreter.interpret("1", "LOGIN demo@example.com swordfish", false);
     interpreter.interpret("1", "PLAY demo", false);
 
     TextCommandInterpretationResult interpretation =
         interpreter.interpret("1", "REMOVE Torch", false);
 
-    assertFalse(interpretation.commandResult().accepted());
-    assertEquals("EQUIPMENT_UNAVAILABLE", interpretation.commandResult().errorCode());
+    assertTrue(interpretation.commandResult().accepted());
     assertEquals(
-        "ERROR EQUIPMENT_UNAVAILABLE REMOVE Torch is prepared in the command surface, but the equipment runtime is not yet wired.",
-        renderedResponse("REMOVE Torch", interpretation));
+        List.of(PlayerOutputKind.MESSAGE, PlayerOutputKind.PROMPT),
+        interpretation.outputs().stream().map(PlayerOutput::kind).toList());
+    assertEquals(
+        "OK REMOVE\nYou remove Torch.\n\ndemo> ", renderedResponse("REMOVE Torch", interpretation));
   }
 
   @Test

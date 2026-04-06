@@ -45,18 +45,17 @@ public class HelpCommandHandler {
       case "EQUIPMENT" ->
           success(
               "WEAR <item> equips a carried item.\n"
-                  + "REMOVE <item> takes an equipped item off.\n"
-                  + "This command surface is reserved for the first equipment slice.\n"
-                  + "The runtime path is prepared, but the equipment backend is not yet wired.");
+                  + "REMOVE <item|slot> takes an equipped item off.\n"
+                  + "The command surface is now backed by the equipment service.");
       case "WEAR" ->
           success(
               "WEAR <item>\n"
-                  + "Equip a carried item.\n"
+                  + "Equip a carried item that has an equipment slot.\n"
                   + "See HELP EQUIPMENT for the broader command surface.");
       case "REMOVE" ->
           success(
-              "REMOVE <item>\n"
-                  + "Take an equipped item off.\n"
+              "REMOVE <item|slot>\n"
+                  + "Take an equipped item off by name or slot.\n"
                   + "See HELP EQUIPMENT for the broader command surface.");
       case "GET" ->
           success(

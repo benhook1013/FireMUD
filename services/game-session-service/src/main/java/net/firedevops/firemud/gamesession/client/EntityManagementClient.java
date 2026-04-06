@@ -16,6 +16,8 @@ import net.firedevops.firemud.entitymanagement.v1.DropItemToRoomResponse;
 import net.firedevops.firemud.entitymanagement.v1.EntityManagementServiceGrpc;
 import net.firedevops.firemud.entitymanagement.v1.FindCharacterByNameRequest;
 import net.firedevops.firemud.entitymanagement.v1.FindCharacterByNameResponse;
+import net.firedevops.firemud.entitymanagement.v1.ListEquipmentRequest;
+import net.firedevops.firemud.entitymanagement.v1.ListEquipmentResponse;
 import net.firedevops.firemud.entitymanagement.v1.ListRoomEntitiesRequest;
 import net.firedevops.firemud.entitymanagement.v1.ListRoomEntitiesResponse;
 import net.firedevops.firemud.entitymanagement.v1.PickupItemFromRoomRequest;
@@ -24,6 +26,10 @@ import net.firedevops.firemud.entitymanagement.v1.PingRequest;
 import net.firedevops.firemud.entitymanagement.v1.PingResponse;
 import net.firedevops.firemud.entitymanagement.v1.QueryInventoryRequest;
 import net.firedevops.firemud.entitymanagement.v1.QueryInventoryResponse;
+import net.firedevops.firemud.entitymanagement.v1.RemoveEquipmentRequest;
+import net.firedevops.firemud.entitymanagement.v1.RemoveEquipmentResponse;
+import net.firedevops.firemud.entitymanagement.v1.WearEquipmentItemRequest;
+import net.firedevops.firemud.entitymanagement.v1.WearEquipmentItemResponse;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.shared.v1.RoomInstanceRef;
 import org.slf4j.Logger;
@@ -121,6 +127,108 @@ public final class EntityManagementClient
             ErrorDetail.newBuilder()
                 .setCode("INVENTORY_UNAVAILABLE")
                 .setMessage("Inventory service unavailable"))
+        .build();
+  }
+
+  public ListEquipmentResponse listEquipment(String tenantId, String characterId) {
+    ListEquipmentRequest request =
+        ListEquipmentRequest.newBuilder().setTenantId(tenantId).setCharacterId(characterId).build();
+    try {
+      return callStub().listEquipment(request);
+    } catch (StatusRuntimeException ex) {
+      if (ex.getStatus().getCode() == Status.Code.UNAVAILABLE) {
+        logger.warn(
+            "Entity Management Service unavailable; rebuilding channel and retrying equipment query",
+            ex);
+        try {
+          initClient();
+          return callStub().listEquipment(request);
+        } catch (Exception retryEx) {
+          logger.warn(
+              "Failed to retry Entity Management equipment query after channel reload", retryEx);
+        }
+      } else {
+        logger.warn("Failed to call Entity Management equipment query endpoint", ex);
+      }
+    } catch (Exception ex) {
+      logger.warn("Failed to call Entity Management equipment query endpoint", ex);
+    }
+    return ListEquipmentResponse.newBuilder()
+        .setError(
+            ErrorDetail.newBuilder()
+                .setCode("EQUIPMENT_UNAVAILABLE")
+                .setMessage("Equipment service unavailable"))
+        .build();
+  }
+
+  public WearEquipmentItemResponse wearEquipment(
+      String tenantId, String characterId, String itemId) {
+    WearEquipmentItemRequest request =
+        WearEquipmentItemRequest.newBuilder()
+            .setTenantId(tenantId)
+            .setCharacterId(characterId)
+            .setItemId(itemId)
+            .build();
+    try {
+      return callStub().wearEquipment(request);
+    } catch (StatusRuntimeException ex) {
+      if (ex.getStatus().getCode() == Status.Code.UNAVAILABLE) {
+        logger.warn(
+            "Entity Management Service unavailable; rebuilding channel and retrying equipment wear",
+            ex);
+        try {
+          initClient();
+          return callStub().wearEquipment(request);
+        } catch (Exception retryEx) {
+          logger.warn(
+              "Failed to retry Entity Management equipment wear after channel reload", retryEx);
+        }
+      } else {
+        logger.warn("Failed to call Entity Management equipment wear endpoint", ex);
+      }
+    } catch (Exception ex) {
+      logger.warn("Failed to call Entity Management equipment wear endpoint", ex);
+    }
+    return WearEquipmentItemResponse.newBuilder()
+        .setError(
+            ErrorDetail.newBuilder()
+                .setCode("EQUIPMENT_UNAVAILABLE")
+                .setMessage("Equipment service unavailable"))
+        .build();
+  }
+
+  public RemoveEquipmentResponse removeEquipment(String tenantId, String characterId, String slot) {
+    RemoveEquipmentRequest request =
+        RemoveEquipmentRequest.newBuilder()
+            .setTenantId(tenantId)
+            .setCharacterId(characterId)
+            .setSlot(slot)
+            .build();
+    try {
+      return callStub().removeEquipment(request);
+    } catch (StatusRuntimeException ex) {
+      if (ex.getStatus().getCode() == Status.Code.UNAVAILABLE) {
+        logger.warn(
+            "Entity Management Service unavailable; rebuilding channel and retrying equipment remove",
+            ex);
+        try {
+          initClient();
+          return callStub().removeEquipment(request);
+        } catch (Exception retryEx) {
+          logger.warn(
+              "Failed to retry Entity Management equipment remove after channel reload", retryEx);
+        }
+      } else {
+        logger.warn("Failed to call Entity Management equipment remove endpoint", ex);
+      }
+    } catch (Exception ex) {
+      logger.warn("Failed to call Entity Management equipment remove endpoint", ex);
+    }
+    return RemoveEquipmentResponse.newBuilder()
+        .setError(
+            ErrorDetail.newBuilder()
+                .setCode("EQUIPMENT_UNAVAILABLE")
+                .setMessage("Equipment service unavailable"))
         .build();
   }
 
