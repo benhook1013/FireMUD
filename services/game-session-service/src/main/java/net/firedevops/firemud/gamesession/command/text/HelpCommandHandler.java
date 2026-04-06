@@ -93,6 +93,7 @@ public class HelpCommandHandler {
       case "LOOK" ->
           success(
               "LOOK refreshes the current room.\n"
+                  + "L is a short alias for LOOK.\n"
                   + "When available, LOOK shows lightweight item affordances like container and wearable tags.\n"
                   + "QUICKLOOK is the shorter room refresh.");
       case "SAY" -> success("SAY <message>\nSpeak to everyone in the room.");

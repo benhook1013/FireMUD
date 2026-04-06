@@ -231,6 +231,19 @@ class TextCommandParserTest {
   }
 
   @Test
+  void parsesLookSingleLetterAliasAsViewRequest() {
+    TextCommand command = parser.parse("l");
+
+    assertEquals(TextCommandType.LOOK, command.type());
+    assertEquals("l", command.aliasUsed());
+    assertTrue(command.args().isEmpty());
+    assertEquals("l", command.rawLine());
+    assertTrue(command.payload() instanceof TextCommandPayload.ViewRequest);
+    assertTrue(command.viewRequestPayload().isPresent());
+    assertEquals("LOOK", command.viewRequestPayload().orElseThrow().viewName());
+  }
+
+  @Test
   void parsesQuickLookAliasAsViewRequest() {
     TextCommand command = parser.parse("qlook");
 

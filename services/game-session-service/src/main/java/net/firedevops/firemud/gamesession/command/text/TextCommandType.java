@@ -46,7 +46,7 @@ public enum TextCommandType {
       case "TAKE" -> TAKE;
       case "WEAR" -> WEAR;
       case "REMOVE" -> REMOVE;
-      case "LOOK" -> LOOK;
+      case "LOOK", "L" -> LOOK;
       case "QUICKLOOK", "QLOOK" -> QUICKLOOK;
       case "SAY" -> SAY;
       case "WHISPER" -> WHISPER;
