@@ -47,6 +47,10 @@ public sealed interface TextCommandPayload
           parseQuantityAwareItemReference(safeArgs)
               .map(itemReference -> (TextCommandPayload) itemReference)
               .orElseGet(() -> safeArgs.isEmpty() ? new None() : new Tokens(safeArgs));
+      case WEAR, REMOVE ->
+          parseQuantityAwareItemReference(safeArgs)
+              .map(itemReference -> (TextCommandPayload) itemReference)
+              .orElseGet(() -> safeArgs.isEmpty() ? new None() : new Tokens(safeArgs));
       case LOGIN ->
           safeArgs.size() >= 2
               ? new Credentials(

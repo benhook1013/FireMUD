@@ -20,6 +20,7 @@ class HelpCommandHandlerTest {
     assertTrue(result.outputs().get(0).text().contains("HELP MOVEMENT"));
     assertTrue(result.outputs().get(0).text().contains("HELP SAY"));
     assertTrue(result.outputs().get(0).text().contains("HELP INVENTORY"));
+    assertTrue(result.outputs().get(0).text().contains("HELP EQUIPMENT"));
   }
 
   @Test
@@ -68,6 +69,24 @@ class HelpCommandHandlerTest {
             .get(0)
             .text()
             .contains("DROP <count> <item> drops that many carried items."));
+  }
+
+  @Test
+  void helpEquipmentTopicExplainsTheReservedCommands() {
+    TextCommandInterpretationResult result =
+        handler.handle(
+            new TextCommand(TextCommandType.HELP, List.of("equipment"), "HELP equipment"));
+
+    assertTrue(result.commandResult().accepted());
+    assertTrue(result.outputs().get(0).text().contains("WEAR <item> equips a carried item."));
+    assertTrue(
+        result.outputs().get(0).text().contains("REMOVE <item> takes an equipped item off."));
+    assertTrue(
+        result
+            .outputs()
+            .get(0)
+            .text()
+            .contains("The runtime path is prepared, but the equipment backend is not yet wired."));
   }
 
   @Test

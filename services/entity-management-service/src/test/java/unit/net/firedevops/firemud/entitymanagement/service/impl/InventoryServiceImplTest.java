@@ -3,8 +3,8 @@ package net.firedevops.firemud.entitymanagement.service.impl;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
 
 import java.util.List;
 import java.util.Optional;
@@ -203,8 +203,7 @@ class InventoryServiceImplTest {
     when(inventoryRepo.findById(inventoryKey)).thenReturn(Optional.of(carried));
 
     assertThrows(
-        IllegalArgumentException.class,
-        () -> service.dropItemToRoom(1L, 1L, "GI-1", "R-1", 2L, 2));
+        IllegalArgumentException.class, () -> service.dropItemToRoom(1L, 1L, "GI-1", "R-1", 2L, 2));
   }
 
   @Test
@@ -315,8 +314,7 @@ class InventoryServiceImplTest {
         IllegalArgumentException.class,
         () -> service.listRoomGroundItems(1L, " ", "R-1", Pageable.unpaged()));
     assertThrows(
-        IllegalArgumentException.class,
-        () -> service.dropItemToRoom(1L, 1L, "GI-1", "", 2L, 1));
+        IllegalArgumentException.class, () -> service.dropItemToRoom(1L, 1L, "GI-1", "", 2L, 1));
     assertThrows(
         IllegalArgumentException.class,
         () -> service.pickupItemFromRoom(1L, 1L, null, "R-1", 2L, 1));

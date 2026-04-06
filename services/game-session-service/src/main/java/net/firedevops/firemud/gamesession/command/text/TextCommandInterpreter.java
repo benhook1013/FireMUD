@@ -22,6 +22,7 @@ public class TextCommandInterpreter {
   private final MoveCommandHandler moveHandler;
   private final HelpCommandHandler helpHandler;
   private final InventoryCommandHandler inventoryHandler;
+  private final EquipmentCommandHandler equipmentHandler;
   private final SessionAuthenticationService sessionAuthenticationService;
   private final CommunicationCommandHandler communicationHandler;
   private final WorldsCommandHandler worldsHandler;
@@ -37,6 +38,7 @@ public class TextCommandInterpreter {
       MoveCommandHandler moveHandler,
       HelpCommandHandler helpHandler,
       InventoryCommandHandler inventoryHandler,
+      EquipmentCommandHandler equipmentHandler,
       SessionAuthenticationService sessionAuthenticationService,
       CommunicationCommandHandler communicationHandler,
       WorldsCommandHandler worldsHandler,
@@ -49,6 +51,7 @@ public class TextCommandInterpreter {
         moveHandler,
         helpHandler,
         inventoryHandler,
+        equipmentHandler,
         sessionAuthenticationService,
         communicationHandler,
         worldsHandler,
@@ -64,6 +67,7 @@ public class TextCommandInterpreter {
       MoveCommandHandler moveHandler,
       HelpCommandHandler helpHandler,
       InventoryCommandHandler inventoryHandler,
+      EquipmentCommandHandler equipmentHandler,
       SessionAuthenticationService sessionAuthenticationService,
       CommunicationCommandHandler communicationHandler,
       WorldsCommandHandler worldsHandler,
@@ -77,6 +81,8 @@ public class TextCommandInterpreter {
     this.helpHandler = Objects.requireNonNull(helpHandler, "helpHandler must not be null");
     this.inventoryHandler =
         Objects.requireNonNull(inventoryHandler, "inventoryHandler must not be null");
+    this.equipmentHandler =
+        Objects.requireNonNull(equipmentHandler, "equipmentHandler must not be null");
     this.sessionAuthenticationService =
         Objects.requireNonNull(
             sessionAuthenticationService, "sessionAuthenticationService must not be null");
@@ -166,6 +172,16 @@ public class TextCommandInterpreter {
       return new TextCommandInterpretationResult(inventoryResult.commandResult(), outputs);
     }
 
+    if (isEquipmentCommand(command.type())) {
+      TextCommandInterpretationResult equipmentResult =
+          equipmentHandler.handle(maybeContext.orElseThrow(), command);
+      List<PlayerOutput> outputs = equipmentResult.outputs();
+      if (equipmentResult.commandResult().accepted()) {
+        outputs = appendPrompt(maybeContext.orElseThrow(), outputs);
+      }
+      return new TextCommandInterpretationResult(equipmentResult.commandResult(), outputs);
+    }
+
     if (isCommunicationCommand(command.type())) {
       CommunicationCommandHandlingResult communicationResult =
           communicationHandler.handle(maybeContext.orElseThrow(), command);
@@ -218,6 +234,7 @@ public class TextCommandInterpreter {
     return isLookCommand(type)
         || isCommunicationCommand(type)
         || isInventoryCommand(type)
+        || isEquipmentCommand(type)
         || type == TextCommandType.MOVE;
   }
 
@@ -235,6 +252,10 @@ public class TextCommandInterpreter {
     return type == TextCommandType.INVENTORY
         || type == TextCommandType.GET
         || type == TextCommandType.DROP;
+  }
+
+  private static boolean isEquipmentCommand(TextCommandType type) {
+    return type == TextCommandType.WEAR || type == TextCommandType.REMOVE;
   }
 
   private TextCommandInterpretationResult stageFailure(String code, String message) {

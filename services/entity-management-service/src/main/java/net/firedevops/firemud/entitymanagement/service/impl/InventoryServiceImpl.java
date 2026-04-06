@@ -98,7 +98,8 @@ public class InventoryServiceImpl implements InventoryService {
     }
     adjustInventoryQuantity(carried, -quantity);
     RoomGroundInventoryEntry roomEntry =
-        upsertRoomGroundEntry(tenantId, normalizedGameInstanceId, normalizedRoomInstanceId, item, quantity);
+        upsertRoomGroundEntry(
+            tenantId, normalizedGameInstanceId, normalizedRoomInstanceId, item, quantity);
     return roomGroundMapper.toDto(roomEntry);
   }
 
@@ -118,7 +119,8 @@ public class InventoryServiceImpl implements InventoryService {
     Character character = requireCharacter(tenantId, characterId);
     Item item = requireItem(tenantId, itemId);
     RoomGroundInventoryEntry roomEntry =
-        requireRoomGroundEntry(tenantId, normalizedGameInstanceId, normalizedRoomInstanceId, itemId);
+        requireRoomGroundEntry(
+            tenantId, normalizedGameInstanceId, normalizedRoomInstanceId, itemId);
     if (roomEntry.getQuantity() < quantity) {
       throw new IllegalArgumentException("Not enough quantity on the room ground");
     }

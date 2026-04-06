@@ -118,9 +118,7 @@ public class InventoryCommandHandler {
     TextCommandPayload.ItemReference itemReference = command.itemReferencePayload().orElseThrow();
     if (itemReference.quantity() <= 0) {
       return inventoryMutationFailure(
-          "INVALID_ARGUMENT",
-          itemReference.reference(),
-          verb + " quantity must be positive");
+          "INVALID_ARGUMENT", itemReference.reference(), verb + " quantity must be positive");
     }
     String itemReferenceValue = itemReference.reference();
     try {

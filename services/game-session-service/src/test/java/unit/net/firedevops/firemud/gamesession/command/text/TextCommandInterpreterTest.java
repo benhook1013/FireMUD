@@ -81,6 +81,7 @@ class TextCommandInterpreterTest {
   private final HelpCommandHandler helpHandler = new HelpCommandHandler();
   private final InventoryCommandHandler inventoryHandler =
       new InventoryCommandHandler(entityManagementClient);
+  private final EquipmentCommandHandler equipmentHandler = new EquipmentCommandHandler();
   private final CommunicationCommandHandler communicationHandler =
       Mockito.mock(CommunicationCommandHandler.class);
   private final FirstPartyConnectContextRegistry firstPartyConnectContextRegistry =
@@ -299,6 +300,7 @@ class TextCommandInterpreterTest {
             moveHandler,
             helpHandler,
             inventoryHandler,
+            equipmentHandler,
             sessionAuthenticationService,
             communicationHandler,
             worldsHandler,
@@ -325,7 +327,7 @@ class TextCommandInterpreterTest {
     assertFalse(interpretation.commandResult().accepted());
     assertEquals("LOGIN_REQUIRED", interpretation.commandResult().errorCode());
     assertEquals(
-        "ERROR LOGIN_REQUIRED You must LOGIN before gameplay commands.",
+        "ERROR LOGIN_REQUIRED You must LOGIN first. Use LOGIN <email> <password>.",
         renderedResponse("LOOK", interpretation));
     verify(commandService, never()).enqueue(anyString(), anyString(), anyBoolean());
   }
@@ -368,6 +370,46 @@ class TextCommandInterpreterTest {
     assertFalse(interpretation.commandResult().accepted());
     assertEquals("LOGIN_REQUIRED", interpretation.commandResult().errorCode());
     verify(commandService, never()).enqueue("321", "INVENTORY", false);
+  }
+
+  @Test
+  void wearBeforeLoginReturnsLoginRequired() {
+    TextCommandInterpretationResult interpretation =
+        interpreter.interpret("321", "WEAR Torch", false);
+
+    assertFalse(interpretation.commandResult().accepted());
+    assertEquals("LOGIN_REQUIRED", interpretation.commandResult().errorCode());
+    verify(commandService, never()).enqueue("321", "WEAR Torch", false);
+  }
+
+  @Test
+  void wearAfterPlayReturnsEquipmentUnavailable() {
+    interpreter.interpret("1", "LOGIN demo@example.com swordfish", false);
+    interpreter.interpret("1", "PLAY demo", false);
+
+    TextCommandInterpretationResult interpretation =
+        interpreter.interpret("1", "WEAR Torch", false);
+
+    assertFalse(interpretation.commandResult().accepted());
+    assertEquals("EQUIPMENT_UNAVAILABLE", interpretation.commandResult().errorCode());
+    assertEquals(
+        "ERROR EQUIPMENT_UNAVAILABLE WEAR Torch is prepared in the command surface, but the equipment runtime is not yet wired.",
+        renderedResponse("WEAR Torch", interpretation));
+  }
+
+  @Test
+  void removeAfterPlayReturnsEquipmentUnavailable() {
+    interpreter.interpret("1", "LOGIN demo@example.com swordfish", false);
+    interpreter.interpret("1", "PLAY demo", false);
+
+    TextCommandInterpretationResult interpretation =
+        interpreter.interpret("1", "REMOVE Torch", false);
+
+    assertFalse(interpretation.commandResult().accepted());
+    assertEquals("EQUIPMENT_UNAVAILABLE", interpretation.commandResult().errorCode());
+    assertEquals(
+        "ERROR EQUIPMENT_UNAVAILABLE REMOVE Torch is prepared in the command surface, but the equipment runtime is not yet wired.",
+        renderedResponse("REMOVE Torch", interpretation));
   }
 
   @Test
@@ -435,7 +477,7 @@ class TextCommandInterpreterTest {
     assertFalse(interpretation.commandResult().accepted());
     assertEquals("PLAY_REQUIRED", interpretation.commandResult().errorCode());
     assertEquals(
-        "ERROR PLAY_REQUIRED You must PLAY before in-world commands.",
+        "ERROR PLAY_REQUIRED You must PLAY first. Use PLAY <world> [character].",
         renderedResponse("LOOK", interpretation));
     verify(commandService, never()).enqueue("1", "LOOK", false);
   }

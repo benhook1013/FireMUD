@@ -155,8 +155,7 @@ class InventoryCommandHandlerTest {
 
     InventoryCommandHandlingResult result =
         handler.handle(
-            context,
-            new TextCommand(TextCommandType.GET, List.of("2", "Torch"), "GET 2 Torch"));
+            context, new TextCommand(TextCommandType.GET, List.of("2", "Torch"), "GET 2 Torch"));
 
     assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
     assertThat(result.outputs())
@@ -243,7 +242,8 @@ class InventoryCommandHandlerTest {
                 .build());
 
     InventoryCommandHandlingResult result =
-        handler.handle(context, new TextCommand(TextCommandType.DROP, List.of("2", "Torch"), "DROP 2 Torch"));
+        handler.handle(
+            context, new TextCommand(TextCommandType.DROP, List.of("2", "Torch"), "DROP 2 Torch"));
 
     assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
     assertThat(result.outputs())

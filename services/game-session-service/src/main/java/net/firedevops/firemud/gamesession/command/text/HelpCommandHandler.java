@@ -42,6 +42,22 @@ public class HelpCommandHandler {
                   + "GET <count> <item> picks up that many matching room-ground items.\n"
                   + "DROP <item> places a carried item on the room ground and refreshes your inventory.\n"
                   + "DROP <count> <item> drops that many carried items.");
+      case "EQUIPMENT" ->
+          success(
+              "WEAR <item> equips a carried item.\n"
+                  + "REMOVE <item> takes an equipped item off.\n"
+                  + "This command surface is reserved for the first equipment slice.\n"
+                  + "The runtime path is prepared, but the equipment backend is not yet wired.");
+      case "WEAR" ->
+          success(
+              "WEAR <item>\n"
+                  + "Equip a carried item.\n"
+                  + "See HELP EQUIPMENT for the broader command surface.");
+      case "REMOVE" ->
+          success(
+              "REMOVE <item>\n"
+                  + "Take an equipped item off.\n"
+                  + "See HELP EQUIPMENT for the broader command surface.");
       case "GET" ->
           success(
               "GET <item>\n"
@@ -96,6 +112,7 @@ public class HelpCommandHandler {
       case "LOGIN", "LOGON" -> "LOGIN";
       case "PLAY" -> "PLAY";
       case "INVENTORY", "INV", "I" -> "INVENTORY";
+      case "EQUIPMENT", "WEAR", "REMOVE" -> "EQUIPMENT";
       case "GET" -> "GET";
       case "DROP" -> "DROP";
       case "MOVEMENT", "MOVE", "WALK", "GO" -> "MOVEMENT";
@@ -112,6 +129,9 @@ public class HelpCommandHandler {
         + "- HELP LOGIN\n"
         + "- HELP PLAY\n"
         + "- HELP INVENTORY\n"
+        + "- HELP EQUIPMENT\n"
+        + "- HELP WEAR\n"
+        + "- HELP REMOVE\n"
         + "- HELP GET\n"
         + "- HELP DROP\n"
         + "- HELP MOVEMENT\n"

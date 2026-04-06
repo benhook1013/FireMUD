@@ -109,6 +109,32 @@ class TextCommandParserTest {
   }
 
   @Test
+  void parsesWearAsItemReference() {
+    TextCommand command = parser.parse("WEAR iron key");
+
+    assertEquals(TextCommandType.WEAR, command.type());
+    assertEquals("WEAR", command.aliasUsed());
+    assertEquals(List.of("iron", "key"), command.args());
+    assertEquals("WEAR iron key", command.rawLine());
+    assertTrue(command.payload() instanceof TextCommandPayload.ItemReference);
+    assertEquals("iron key", command.itemReferencePayload().orElseThrow().reference());
+    assertEquals(1, command.itemReferencePayload().orElseThrow().quantity());
+  }
+
+  @Test
+  void parsesRemoveAsItemReference() {
+    TextCommand command = parser.parse("REMOVE iron key");
+
+    assertEquals(TextCommandType.REMOVE, command.type());
+    assertEquals("REMOVE", command.aliasUsed());
+    assertEquals(List.of("iron", "key"), command.args());
+    assertEquals("REMOVE iron key", command.rawLine());
+    assertTrue(command.payload() instanceof TextCommandPayload.ItemReference);
+    assertEquals("iron key", command.itemReferencePayload().orElseThrow().reference());
+    assertEquals(1, command.itemReferencePayload().orElseThrow().quantity());
+  }
+
+  @Test
   void parsesGetWithQuantityAsItemReference() {
     TextCommand command = parser.parse("GET 2 rough iron key");
 
