@@ -6,17 +6,24 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import io.grpc.stub.StreamObserver;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.entitymanagement.service.CharacterService;
+import net.firedevops.firemud.entitymanagement.service.EquipmentService;
 import net.firedevops.firemud.entitymanagement.service.InventoryService;
 import net.firedevops.firemud.entitymanagement.service.PingService;
 import net.firedevops.firemud.entitymanagement.service.RoomEntityService;
 import net.firedevops.firemud.entitymanagement.v1.DropItemToRoomRequest;
 import net.firedevops.firemud.entitymanagement.v1.DropItemToRoomResponse;
+import net.firedevops.firemud.entitymanagement.v1.ListEquipmentRequest;
+import net.firedevops.firemud.entitymanagement.v1.ListEquipmentResponse;
 import net.firedevops.firemud.entitymanagement.v1.PickupItemFromRoomRequest;
 import net.firedevops.firemud.entitymanagement.v1.PickupItemFromRoomResponse;
 import net.firedevops.firemud.entitymanagement.v1.PingRequest;
 import net.firedevops.firemud.entitymanagement.v1.PingResponse;
 import net.firedevops.firemud.entitymanagement.v1.QueryInventoryRequest;
 import net.firedevops.firemud.entitymanagement.v1.QueryInventoryResponse;
+import net.firedevops.firemud.entitymanagement.v1.RemoveEquipmentRequest;
+import net.firedevops.firemud.entitymanagement.v1.RemoveEquipmentResponse;
+import net.firedevops.firemud.entitymanagement.v1.WearEquipmentItemRequest;
+import net.firedevops.firemud.entitymanagement.v1.WearEquipmentItemResponse;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.springframework.data.domain.Pageable;
@@ -27,6 +34,7 @@ class EntityManagementGrpcServiceTest {
     PingService pingService = Mockito.mock(PingService.class);
     Mockito.when(pingService.ping()).thenReturn("pong");
     CharacterService characterService = Mockito.mock(CharacterService.class);
+    EquipmentService equipmentService = Mockito.mock(EquipmentService.class);
     InventoryService inventoryService = Mockito.mock(InventoryService.class);
     io.micrometer.core.instrument.MeterRegistry meterRegistry =
         Mockito.mock(io.micrometer.core.instrument.MeterRegistry.class);
@@ -37,7 +45,12 @@ class EntityManagementGrpcServiceTest {
     RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
     EntityManagementGrpcService service =
         new EntityManagementGrpcService(
-            pingService, characterService, inventoryService, roomEntityService, meterRegistry);
+            pingService,
+            characterService,
+            equipmentService,
+            inventoryService,
+            roomEntityService,
+            meterRegistry);
 
     AtomicReference<PingResponse> ref = new AtomicReference<>();
     service.ping(
@@ -63,6 +76,7 @@ class EntityManagementGrpcServiceTest {
     PingService pingService = Mockito.mock(PingService.class);
     Mockito.when(pingService.ping()).thenThrow(new IllegalArgumentException("bad"));
     CharacterService characterService = Mockito.mock(CharacterService.class);
+    EquipmentService equipmentService = Mockito.mock(EquipmentService.class);
     InventoryService inventoryService = Mockito.mock(InventoryService.class);
     io.micrometer.core.instrument.MeterRegistry meterRegistry =
         Mockito.mock(io.micrometer.core.instrument.MeterRegistry.class);
@@ -73,7 +87,12 @@ class EntityManagementGrpcServiceTest {
     RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
     EntityManagementGrpcService service =
         new EntityManagementGrpcService(
-            pingService, characterService, inventoryService, roomEntityService, meterRegistry);
+            pingService,
+            characterService,
+            equipmentService,
+            inventoryService,
+            roomEntityService,
+            meterRegistry);
 
     AtomicReference<PingResponse> ref = new AtomicReference<>();
     service.ping(
@@ -99,6 +118,7 @@ class EntityManagementGrpcServiceTest {
     PingService pingService = Mockito.mock(PingService.class);
     Mockito.when(pingService.ping()).thenThrow(new RuntimeException("boom"));
     CharacterService characterService = Mockito.mock(CharacterService.class);
+    EquipmentService equipmentService = Mockito.mock(EquipmentService.class);
     InventoryService inventoryService = Mockito.mock(InventoryService.class);
     io.micrometer.core.instrument.MeterRegistry meterRegistry =
         Mockito.mock(io.micrometer.core.instrument.MeterRegistry.class);
@@ -109,7 +129,12 @@ class EntityManagementGrpcServiceTest {
     RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
     EntityManagementGrpcService service =
         new EntityManagementGrpcService(
-            pingService, characterService, inventoryService, roomEntityService, meterRegistry);
+            pingService,
+            characterService,
+            equipmentService,
+            inventoryService,
+            roomEntityService,
+            meterRegistry);
 
     AtomicReference<PingResponse> ref = new AtomicReference<>();
     service.ping(
@@ -135,6 +160,7 @@ class EntityManagementGrpcServiceTest {
   void listCharactersInvalidAccountIdReturnsErrorDetail() {
     PingService pingService = Mockito.mock(PingService.class);
     CharacterService characterService = Mockito.mock(CharacterService.class);
+    EquipmentService equipmentService = Mockito.mock(EquipmentService.class);
     InventoryService inventoryService = Mockito.mock(InventoryService.class);
     io.micrometer.core.instrument.MeterRegistry meterRegistry =
         Mockito.mock(io.micrometer.core.instrument.MeterRegistry.class);
@@ -145,7 +171,12 @@ class EntityManagementGrpcServiceTest {
     RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
     EntityManagementGrpcService service =
         new EntityManagementGrpcService(
-            pingService, characterService, inventoryService, roomEntityService, meterRegistry);
+            pingService,
+            characterService,
+            equipmentService,
+            inventoryService,
+            roomEntityService,
+            meterRegistry);
 
     AtomicReference<net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse>
         ref = new AtomicReference<>();
@@ -175,6 +206,7 @@ class EntityManagementGrpcServiceTest {
   void listCharactersUnexpectedErrorReturnsInternal() {
     PingService pingService = Mockito.mock(PingService.class);
     CharacterService characterService = Mockito.mock(CharacterService.class);
+    EquipmentService equipmentService = Mockito.mock(EquipmentService.class);
     InventoryService inventoryService = Mockito.mock(InventoryService.class);
     Mockito.when(characterService.listForTenantAndAccount(1L, 1L, Pageable.unpaged()))
         .thenThrow(new RuntimeException("boom"));
@@ -187,7 +219,12 @@ class EntityManagementGrpcServiceTest {
     RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
     EntityManagementGrpcService service =
         new EntityManagementGrpcService(
-            pingService, characterService, inventoryService, roomEntityService, meterRegistry);
+            pingService,
+            characterService,
+            equipmentService,
+            inventoryService,
+            roomEntityService,
+            meterRegistry);
 
     AtomicReference<net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse>
         ref = new AtomicReference<>();
@@ -218,6 +255,7 @@ class EntityManagementGrpcServiceTest {
   void listCharactersMissingTenantIdReturnsErrorDetail() {
     PingService pingService = Mockito.mock(PingService.class);
     CharacterService characterService = Mockito.mock(CharacterService.class);
+    EquipmentService equipmentService = Mockito.mock(EquipmentService.class);
     InventoryService inventoryService = Mockito.mock(InventoryService.class);
     io.micrometer.core.instrument.MeterRegistry meterRegistry =
         Mockito.mock(io.micrometer.core.instrument.MeterRegistry.class);
@@ -228,7 +266,12 @@ class EntityManagementGrpcServiceTest {
     RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
     EntityManagementGrpcService service =
         new EntityManagementGrpcService(
-            pingService, characterService, inventoryService, roomEntityService, meterRegistry);
+            pingService,
+            characterService,
+            equipmentService,
+            inventoryService,
+            roomEntityService,
+            meterRegistry);
 
     AtomicReference<net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse>
         ref = new AtomicReference<>();
@@ -257,6 +300,7 @@ class EntityManagementGrpcServiceTest {
   void queryInventoryReturnsItemsWithMetadata() {
     PingService pingService = Mockito.mock(PingService.class);
     CharacterService characterService = Mockito.mock(CharacterService.class);
+    EquipmentService equipmentService = Mockito.mock(EquipmentService.class);
     InventoryService inventoryService = Mockito.mock(InventoryService.class);
     var dto =
         new net.firedevops.firemud.entitymanagement.dto.InventoryEntryDto(
@@ -272,7 +316,12 @@ class EntityManagementGrpcServiceTest {
     RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
     EntityManagementGrpcService service =
         new EntityManagementGrpcService(
-            pingService, characterService, inventoryService, roomEntityService, meterRegistry);
+            pingService,
+            characterService,
+            equipmentService,
+            inventoryService,
+            roomEntityService,
+            meterRegistry);
 
     AtomicReference<QueryInventoryResponse> ref = new AtomicReference<>();
     service.queryInventory(
@@ -295,9 +344,157 @@ class EntityManagementGrpcServiceTest {
   }
 
   @Test
+  void listEquipmentReturnsEquipmentItems() {
+    PingService pingService = Mockito.mock(PingService.class);
+    CharacterService characterService = Mockito.mock(CharacterService.class);
+    EquipmentService equipmentService = Mockito.mock(EquipmentService.class);
+    InventoryService inventoryService = Mockito.mock(InventoryService.class);
+    var dto =
+        new net.firedevops.firemud.entitymanagement.dto.CharacterEquipmentEntryDto(
+            1L, 7L, "HEAD", 99L, "Leather Cap", "A small cap");
+    Mockito.when(equipmentService.listEquipment(1L, 7L, Pageable.unpaged()))
+        .thenReturn(new org.springframework.data.domain.PageImpl<>(java.util.List.of(dto)));
+    io.micrometer.core.instrument.MeterRegistry meterRegistry =
+        Mockito.mock(io.micrometer.core.instrument.MeterRegistry.class);
+    io.micrometer.core.instrument.Counter counter =
+        Mockito.mock(io.micrometer.core.instrument.Counter.class);
+    Mockito.when(meterRegistry.counter(Mockito.anyString(), Mockito.any(String[].class)))
+        .thenReturn(counter);
+    RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
+    EntityManagementGrpcService service =
+        new EntityManagementGrpcService(
+            pingService,
+            characterService,
+            equipmentService,
+            inventoryService,
+            roomEntityService,
+            meterRegistry);
+
+    AtomicReference<ListEquipmentResponse> ref = new AtomicReference<>();
+    service.listEquipment(
+        ListEquipmentRequest.newBuilder().setTenantId("1").setCharacterId("7").build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(ListEquipmentResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertEquals("Leather Cap", ref.get().getItems(0).getItemName());
+    assertEquals("HEAD", ref.get().getItems(0).getSlot());
+  }
+
+  @Test
+  void wearEquipmentReturnsEquippedItem() {
+    PingService pingService = Mockito.mock(PingService.class);
+    CharacterService characterService = Mockito.mock(CharacterService.class);
+    EquipmentService equipmentService = Mockito.mock(EquipmentService.class);
+    InventoryService inventoryService = Mockito.mock(InventoryService.class);
+    var dto =
+        new net.firedevops.firemud.entitymanagement.dto.CharacterEquipmentEntryDto(
+            1L, 7L, "HEAD", 99L, "Leather Cap", "A small cap");
+    Mockito.when(equipmentService.wearItem(1L, 7L, 99L)).thenReturn(dto);
+    io.micrometer.core.instrument.MeterRegistry meterRegistry =
+        Mockito.mock(io.micrometer.core.instrument.MeterRegistry.class);
+    io.micrometer.core.instrument.Counter counter =
+        Mockito.mock(io.micrometer.core.instrument.Counter.class);
+    Mockito.when(meterRegistry.counter(Mockito.anyString(), Mockito.any(String[].class)))
+        .thenReturn(counter);
+    RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
+    EntityManagementGrpcService service =
+        new EntityManagementGrpcService(
+            pingService,
+            characterService,
+            equipmentService,
+            inventoryService,
+            roomEntityService,
+            meterRegistry);
+
+    AtomicReference<WearEquipmentItemResponse> ref = new AtomicReference<>();
+    service.wearEquipment(
+        WearEquipmentItemRequest.newBuilder()
+            .setTenantId("1")
+            .setCharacterId("7")
+            .setItemId("99")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(WearEquipmentItemResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertEquals("Leather Cap", ref.get().getEquipmentItem().getItemName());
+    assertEquals("HEAD", ref.get().getEquipmentItem().getSlot());
+  }
+
+  @Test
+  void removeEquipmentReturnsRemovedItem() {
+    PingService pingService = Mockito.mock(PingService.class);
+    CharacterService characterService = Mockito.mock(CharacterService.class);
+    EquipmentService equipmentService = Mockito.mock(EquipmentService.class);
+    InventoryService inventoryService = Mockito.mock(InventoryService.class);
+    var dto =
+        new net.firedevops.firemud.entitymanagement.dto.CharacterEquipmentEntryDto(
+            1L, 7L, "HEAD", 99L, "Leather Cap", "A small cap");
+    Mockito.when(equipmentService.removeWornItem(1L, 7L, "HEAD")).thenReturn(dto);
+    io.micrometer.core.instrument.MeterRegistry meterRegistry =
+        Mockito.mock(io.micrometer.core.instrument.MeterRegistry.class);
+    io.micrometer.core.instrument.Counter counter =
+        Mockito.mock(io.micrometer.core.instrument.Counter.class);
+    Mockito.when(meterRegistry.counter(Mockito.anyString(), Mockito.any(String[].class)))
+        .thenReturn(counter);
+    RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
+    EntityManagementGrpcService service =
+        new EntityManagementGrpcService(
+            pingService,
+            characterService,
+            equipmentService,
+            inventoryService,
+            roomEntityService,
+            meterRegistry);
+
+    AtomicReference<RemoveEquipmentResponse> ref = new AtomicReference<>();
+    service.removeEquipment(
+        RemoveEquipmentRequest.newBuilder()
+            .setTenantId("1")
+            .setCharacterId("7")
+            .setSlot("HEAD")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(RemoveEquipmentResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertEquals("Leather Cap", ref.get().getEquipmentItem().getItemName());
+    assertEquals("HEAD", ref.get().getEquipmentItem().getSlot());
+  }
+
+  @Test
   void pickupItemFromRoomReturnsInventoryItem() {
     PingService pingService = Mockito.mock(PingService.class);
     CharacterService characterService = Mockito.mock(CharacterService.class);
+    EquipmentService equipmentService = Mockito.mock(EquipmentService.class);
     InventoryService inventoryService = Mockito.mock(InventoryService.class);
     var dto =
         new net.firedevops.firemud.entitymanagement.dto.InventoryEntryDto(
@@ -313,7 +510,12 @@ class EntityManagementGrpcServiceTest {
     RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
     EntityManagementGrpcService service =
         new EntityManagementGrpcService(
-            pingService, characterService, inventoryService, roomEntityService, meterRegistry);
+            pingService,
+            characterService,
+            equipmentService,
+            inventoryService,
+            roomEntityService,
+            meterRegistry);
 
     AtomicReference<PickupItemFromRoomResponse> ref = new AtomicReference<>();
     service.pickupItemFromRoom(
@@ -346,6 +548,7 @@ class EntityManagementGrpcServiceTest {
   void dropItemToRoomReturnsRoomGroundItem() {
     PingService pingService = Mockito.mock(PingService.class);
     CharacterService characterService = Mockito.mock(CharacterService.class);
+    EquipmentService equipmentService = Mockito.mock(EquipmentService.class);
     InventoryService inventoryService = Mockito.mock(InventoryService.class);
     var dto =
         new net.firedevops.firemud.entitymanagement.dto.RoomGroundInventoryEntryDto(
@@ -360,7 +563,12 @@ class EntityManagementGrpcServiceTest {
     RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
     EntityManagementGrpcService service =
         new EntityManagementGrpcService(
-            pingService, characterService, inventoryService, roomEntityService, meterRegistry);
+            pingService,
+            characterService,
+            equipmentService,
+            inventoryService,
+            roomEntityService,
+            meterRegistry);
 
     AtomicReference<DropItemToRoomResponse> ref = new AtomicReference<>();
     service.dropItemToRoom(

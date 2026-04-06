@@ -13,6 +13,9 @@ service EntityManagementService {
   rpc CreateCharacter(CreateCharacterRequest) returns (CreateCharacterResponse);
   rpc UpdateEntity(UpdateEntityRequest) returns (UpdateEntityResponse);
   rpc QueryInventory(QueryInventoryRequest) returns (QueryInventoryResponse);
+  rpc ListEquipment(ListEquipmentRequest) returns (ListEquipmentResponse);
+  rpc WearEquipment(WearEquipmentItemRequest) returns (WearEquipmentItemResponse);
+  rpc RemoveEquipment(RemoveEquipmentRequest) returns (RemoveEquipmentResponse);
   rpc PickupItemFromRoom(PickupItemFromRoomRequest) returns (PickupItemFromRoomResponse);
   rpc DropItemToRoom(DropItemToRoomRequest) returns (DropItemToRoomResponse);
   rpc ListCharactersByAccount(ListCharactersByAccountRequest) returns (ListCharactersByAccountResponse);
@@ -56,6 +59,47 @@ message InventoryItem {
   string item_name = 2;
   string item_description = 3;
   int32 quantity = 4;
+}
+
+message EquipmentItem {
+  string tenant_id = 1;
+  string character_id = 2;
+  string slot = 3;
+  string item_id = 4;
+  string item_name = 5;
+  string item_description = 6;
+}
+
+message ListEquipmentRequest {
+  string tenant_id = 1;
+  string character_id = 2;
+}
+
+message ListEquipmentResponse {
+  repeated EquipmentItem items = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message WearEquipmentItemRequest {
+  string tenant_id = 1;
+  string character_id = 2;
+  string item_id = 3;
+}
+
+message WearEquipmentItemResponse {
+  EquipmentItem equipment_item = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message RemoveEquipmentRequest {
+  string tenant_id = 1;
+  string character_id = 2;
+  string slot = 3;
+}
+
+message RemoveEquipmentResponse {
+  EquipmentItem equipment_item = 1;
+  shared.v1.ErrorDetail error = 2;
 }
 
 message RoomGroundInventoryItem {

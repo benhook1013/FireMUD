@@ -7,8 +7,10 @@ import io.micrometer.core.instrument.MeterRegistry;
 import java.util.stream.Collectors;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.entitymanagement.dto.CharacterDto;
+import net.firedevops.firemud.entitymanagement.dto.CharacterEquipmentEntryDto;
 import net.firedevops.firemud.entitymanagement.dto.RoomEntityDto;
 import net.firedevops.firemud.entitymanagement.service.CharacterService;
+import net.firedevops.firemud.entitymanagement.service.EquipmentService;
 import net.firedevops.firemud.entitymanagement.service.InventoryService;
 import net.firedevops.firemud.entitymanagement.service.PingService;
 import net.firedevops.firemud.entitymanagement.service.RoomEntityService;
@@ -18,11 +20,14 @@ import net.firedevops.firemud.entitymanagement.v1.CreateCharacterResponse;
 import net.firedevops.firemud.entitymanagement.v1.DropItemToRoomRequest;
 import net.firedevops.firemud.entitymanagement.v1.DropItemToRoomResponse;
 import net.firedevops.firemud.entitymanagement.v1.EntityManagementServiceGrpc;
+import net.firedevops.firemud.entitymanagement.v1.EquipmentItem;
 import net.firedevops.firemud.entitymanagement.v1.FindCharacterByNameRequest;
 import net.firedevops.firemud.entitymanagement.v1.FindCharacterByNameResponse;
 import net.firedevops.firemud.entitymanagement.v1.InventoryItem;
 import net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountRequest;
 import net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse;
+import net.firedevops.firemud.entitymanagement.v1.ListEquipmentRequest;
+import net.firedevops.firemud.entitymanagement.v1.ListEquipmentResponse;
 import net.firedevops.firemud.entitymanagement.v1.ListRoomEntitiesRequest;
 import net.firedevops.firemud.entitymanagement.v1.ListRoomEntitiesResponse;
 import net.firedevops.firemud.entitymanagement.v1.PickupItemFromRoomRequest;
@@ -31,10 +36,14 @@ import net.firedevops.firemud.entitymanagement.v1.PingRequest;
 import net.firedevops.firemud.entitymanagement.v1.PingResponse;
 import net.firedevops.firemud.entitymanagement.v1.QueryInventoryRequest;
 import net.firedevops.firemud.entitymanagement.v1.QueryInventoryResponse;
+import net.firedevops.firemud.entitymanagement.v1.RemoveEquipmentRequest;
+import net.firedevops.firemud.entitymanagement.v1.RemoveEquipmentResponse;
 import net.firedevops.firemud.entitymanagement.v1.RoomEntity;
 import net.firedevops.firemud.entitymanagement.v1.RoomGroundInventoryItem;
 import net.firedevops.firemud.entitymanagement.v1.UpdateEntityRequest;
 import net.firedevops.firemud.entitymanagement.v1.UpdateEntityResponse;
+import net.firedevops.firemud.entitymanagement.v1.WearEquipmentItemRequest;
+import net.firedevops.firemud.entitymanagement.v1.WearEquipmentItemResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.Pageable;
@@ -47,6 +56,11 @@ public class EntityManagementGrpcService
   private static final Logger logger = LoggerFactory.getLogger(EntityManagementGrpcService.class);
   private final PingService pingService;
   private final CharacterService characterService;
+
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "Injected EquipmentService is not exposed externally")
+  private final EquipmentService equipmentService;
 
   @SuppressFBWarnings(
       value = "EI_EXPOSE_REP2",
@@ -63,11 +77,13 @@ public class EntityManagementGrpcService
   public EntityManagementGrpcService(
       PingService pingService,
       CharacterService characterService,
+      EquipmentService equipmentService,
       InventoryService inventoryService,
       RoomEntityService roomEntityService,
       MeterRegistry meterRegistry) {
     this.pingService = pingService;
     this.characterService = characterService;
+    this.equipmentService = equipmentService;
     this.inventoryService = inventoryService;
     this.roomEntityService = roomEntityService;
     this.meterRegistry = meterRegistry;
@@ -304,6 +320,130 @@ public class EntityManagementGrpcService
   }
 
   @Override
+  @Timed(value = "entityGrpc.listEquipment")
+  public void listEquipment(
+      ListEquipmentRequest request, StreamObserver<ListEquipmentResponse> responseObserver) {
+    try {
+      long tenantId = Long.parseLong(request.getTenantId());
+      long characterId = Long.parseLong(request.getCharacterId());
+      var items = equipmentService.listEquipment(tenantId, characterId, Pageable.unpaged());
+      ListEquipmentResponse response =
+          ListEquipmentResponse.newBuilder()
+              .addAllItems(items.stream().map(this::toProto).toList())
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (NumberFormatException ex) {
+      ListEquipmentResponse response =
+          ListEquipmentResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry, logger, "ListEquipment", "INVALID_ARGUMENT", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      ListEquipmentResponse response =
+          ListEquipmentResponse.newBuilder()
+              .setError(GrpcAppErrors.internal(meterRegistry, logger, "ListEquipment", ex))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    }
+  }
+
+  @Override
+  @Timed(value = "entityGrpc.wearEquipment")
+  public void wearEquipment(
+      WearEquipmentItemRequest request,
+      StreamObserver<WearEquipmentItemResponse> responseObserver) {
+    try {
+      long tenantId = Long.parseLong(request.getTenantId());
+      long characterId = Long.parseLong(request.getCharacterId());
+      long itemId = Long.parseLong(request.getItemId());
+      CharacterEquipmentEntryDto dto = equipmentService.wearItem(tenantId, characterId, itemId);
+      WearEquipmentItemResponse response =
+          WearEquipmentItemResponse.newBuilder().setEquipmentItem(toProto(dto)).build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (NumberFormatException ex) {
+      WearEquipmentItemResponse response =
+          WearEquipmentItemResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry, logger, "WearEquipment", "INVALID_ARGUMENT", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      WearEquipmentItemResponse response =
+          WearEquipmentItemResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry, logger, "WearEquipment", "INVALID_ARGUMENT", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      WearEquipmentItemResponse response =
+          WearEquipmentItemResponse.newBuilder()
+              .setError(GrpcAppErrors.internal(meterRegistry, logger, "WearEquipment", ex))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    }
+  }
+
+  @Override
+  @Timed(value = "entityGrpc.removeEquipment")
+  public void removeEquipment(
+      RemoveEquipmentRequest request, StreamObserver<RemoveEquipmentResponse> responseObserver) {
+    try {
+      long tenantId = Long.parseLong(request.getTenantId());
+      long characterId = Long.parseLong(request.getCharacterId());
+      CharacterEquipmentEntryDto dto =
+          equipmentService.removeWornItem(tenantId, characterId, request.getSlot());
+      RemoveEquipmentResponse response =
+          RemoveEquipmentResponse.newBuilder().setEquipmentItem(toProto(dto)).build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (NumberFormatException ex) {
+      RemoveEquipmentResponse response =
+          RemoveEquipmentResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry,
+                      logger,
+                      "RemoveEquipment",
+                      "INVALID_ARGUMENT",
+                      ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      RemoveEquipmentResponse response =
+          RemoveEquipmentResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry,
+                      logger,
+                      "RemoveEquipment",
+                      "INVALID_ARGUMENT",
+                      ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      RemoveEquipmentResponse response =
+          RemoveEquipmentResponse.newBuilder()
+              .setError(GrpcAppErrors.internal(meterRegistry, logger, "RemoveEquipment", ex))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    }
+  }
+
+  @Override
   @Timed(value = "entityGrpc.pickupItemFromRoom")
   public void pickupItemFromRoom(
       PickupItemFromRoomRequest request,
@@ -489,6 +629,17 @@ public class EntityManagementGrpcService
         .setItemName(dto.itemName())
         .setItemDescription(dto.itemDescription() == null ? "" : dto.itemDescription())
         .setQuantity(dto.quantity())
+        .build();
+  }
+
+  private EquipmentItem toProto(CharacterEquipmentEntryDto dto) {
+    return EquipmentItem.newBuilder()
+        .setTenantId(String.valueOf(dto.tenantId()))
+        .setCharacterId(String.valueOf(dto.characterId()))
+        .setSlot(dto.slot())
+        .setItemId(String.valueOf(dto.itemId()))
+        .setItemName(dto.itemName())
+        .setItemDescription(dto.itemDescription() == null ? "" : dto.itemDescription())
         .build();
   }
 
