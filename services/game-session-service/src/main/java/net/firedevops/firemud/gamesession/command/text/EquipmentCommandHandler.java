@@ -7,6 +7,7 @@ import java.util.Objects;
 import java.util.Optional;
 import net.firedevops.firemud.entitymanagement.v1.EquipmentItem;
 import net.firedevops.firemud.entitymanagement.v1.InventoryItem;
+import net.firedevops.firemud.entitymanagement.v1.ListContainerContentsResponse;
 import net.firedevops.firemud.entitymanagement.v1.ListEquipmentResponse;
 import net.firedevops.firemud.entitymanagement.v1.RemoveEquipmentResponse;
 import net.firedevops.firemud.entitymanagement.v1.WearEquipmentItemResponse;
@@ -91,6 +92,10 @@ public class EquipmentCommandHandler {
     }
 
     InventoryItem carried = resolution.item().orElseThrow();
+    if (isNonEmptyContainer(context, carried.getItemId())) {
+      return equipmentInvalidArgument(
+          "WEAR", "You must empty " + carried.getItemName() + " before wearing it");
+    }
     WearEquipmentItemResponse response =
         entityManagementClient.wearEquipment(
             Long.toString(context.tenantId()),
@@ -202,6 +207,17 @@ public class EquipmentCommandHandler {
                     || item.getItemName().equalsIgnoreCase(reference)
                     || matchesReference(item.getItemId(), reference))
         .findFirst();
+  }
+
+  private boolean isNonEmptyContainer(SessionContext context, String itemId) {
+    try {
+      ListContainerContentsResponse response =
+          entityManagementClient.listContainerContents(
+              Long.toString(context.tenantId()), Long.toString(context.characterId()), itemId);
+      return response.hasError() ? false : !response.getItemsList().isEmpty();
+    } catch (RuntimeException ex) {
+      return false;
+    }
   }
 
   private boolean matchesReference(String candidate, String reference) {
