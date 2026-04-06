@@ -173,6 +173,31 @@ class TextPlayerOutputRendererTest {
   }
 
   @Test
+  void renderAllFormatsEquipmentViewThroughNormalRendererPath() {
+    TextPlayerOutputRenderer renderer =
+        new TextPlayerOutputRenderer(
+            new PresentationProperties(
+                "en-NZ",
+                PresentationProperties.ColorMode.NONE,
+                false,
+                new PresentationProperties.Prompt(true, true, 150L)));
+
+    String rendered =
+        renderer.renderAll(
+            new TextCommand(TextCommandType.EQUIPMENT, List.of(), "EQUIPMENT"),
+            CommandEnqueueResult.success(),
+            List.of(
+                PlayerOutput.view(
+                    new InventoryViewOutput(
+                        "Equipment:", List.of("- HEAD: Leather Cap (A small cap)"))),
+                PlayerOutput.prompt("demo> ")));
+
+    assertThat(rendered)
+        .isEqualTo(
+            "OK EQUIPMENT\n" + "Equipment:\n" + "- HEAD: Leather Cap (A small cap)\n\n" + "demo> ");
+  }
+
+  @Test
   void quickLookRenderingOmitsLongDescriptionWithoutGlobalBriefMode() {
     TextPlayerOutputRenderer renderer =
         new TextPlayerOutputRenderer(

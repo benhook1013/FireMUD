@@ -78,6 +78,9 @@ class HelpCommandHandlerTest {
             new TextCommand(TextCommandType.HELP, List.of("equipment"), "HELP equipment"));
 
     assertTrue(result.commandResult().accepted());
+    assertTrue(
+        result.outputs().get(0).text().contains("EQUIPMENT shows what you are currently wearing."));
+    assertTrue(result.outputs().get(0).text().contains("EQ is a short alias for EQUIPMENT."));
     assertTrue(result.outputs().get(0).text().contains("WEAR <item> equips a carried item."));
     assertTrue(
         result.outputs().get(0).text().contains("REMOVE <item|slot> takes an equipped item off."));

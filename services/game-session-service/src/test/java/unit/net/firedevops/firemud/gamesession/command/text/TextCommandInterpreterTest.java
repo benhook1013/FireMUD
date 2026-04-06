@@ -413,6 +413,31 @@ class TextCommandInterpreterTest {
   }
 
   @Test
+  void equipmentIsVisibleAfterPlay() {
+    interpreter.interpret("1", "LOGIN demo@example.com swordfish", false);
+    interpreter.interpret("1", "PLAY demo", false);
+
+    TextCommandInterpretationResult interpretation = interpreter.interpret("1", "EQ", false);
+
+    assertTrue(interpretation.commandResult().accepted());
+    assertEquals(
+        List.of(PlayerOutputKind.VIEW, PlayerOutputKind.PROMPT),
+        interpretation.outputs().stream().map(PlayerOutput::kind).toList());
+    assertEquals(
+        "OK EQUIPMENT\n" + "Equipment:\n" + "- HEAD: Torch (A small torch)\n\n" + "demo> ",
+        renderedResponse("EQ", interpretation));
+  }
+
+  @Test
+  void equipmentBeforeLoginReturnsLoginRequired() {
+    TextCommandInterpretationResult interpretation = interpreter.interpret("321", "EQ", false);
+
+    assertFalse(interpretation.commandResult().accepted());
+    assertEquals("LOGIN_REQUIRED", interpretation.commandResult().errorCode());
+    verify(commandService, never()).enqueue("321", "EQ", false);
+  }
+
+  @Test
   void wearBeforeLoginReturnsLoginRequired() {
     TextCommandInterpretationResult interpretation =
         interpreter.interpret("321", "WEAR Torch", false);

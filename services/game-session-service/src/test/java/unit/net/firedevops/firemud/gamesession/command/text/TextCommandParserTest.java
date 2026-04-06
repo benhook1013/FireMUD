@@ -83,6 +83,19 @@ class TextCommandParserTest {
   }
 
   @Test
+  void parsesEquipmentAsViewRequest() {
+    TextCommand command = parser.parse("eq");
+
+    assertEquals(TextCommandType.EQUIPMENT, command.type());
+    assertEquals("eq", command.aliasUsed());
+    assertTrue(command.args().isEmpty());
+    assertEquals("eq", command.rawLine());
+    assertTrue(command.payload() instanceof TextCommandPayload.ViewRequest);
+    assertTrue(command.viewRequestPayload().isPresent());
+    assertEquals("EQUIPMENT", command.viewRequestPayload().orElseThrow().viewName());
+  }
+
+  @Test
   void parsesGetAsItemReference() {
     TextCommand command = parser.parse("GET rough iron key");
 

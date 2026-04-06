@@ -11,6 +11,7 @@ import net.firedevops.firemud.entitymanagement.v1.QueryInventoryResponse;
 import net.firedevops.firemud.entitymanagement.v1.RemoveEquipmentResponse;
 import net.firedevops.firemud.entitymanagement.v1.WearEquipmentItemResponse;
 import net.firedevops.firemud.gamesession.client.EntityManagementClient;
+import net.firedevops.firemud.gamesession.presentation.InventoryViewOutput;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutputKind;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import org.junit.jupiter.api.Test;
@@ -35,6 +36,33 @@ class EquipmentCommandHandlerTest {
     assertThat(result.outputs()).hasSize(1);
     assertThat(result.outputs().get(0).kind()).isEqualTo(PlayerOutputKind.ERROR);
     assertThat(result.outputs().get(0).text()).contains("WEAR command requires an item");
+  }
+
+  @Test
+  void equipmentViewReturnsStructuredEquipmentLines() {
+    when(entityManagementClient.listEquipment("22", "911"))
+        .thenReturn(
+            ListEquipmentResponse.newBuilder()
+                .addItems(
+                    EquipmentItem.newBuilder()
+                        .setSlot("HEAD")
+                        .setItemId("3")
+                        .setItemName("Leather Cap")
+                        .setItemDescription("A small cap")
+                        .build())
+                .build());
+
+    TextCommandInterpretationResult result =
+        handler.handle(context, new TextCommand(TextCommandType.EQUIPMENT, List.of(), "EQUIPMENT"));
+
+    assertThat(result.commandResult().accepted()).isTrue();
+    assertThat(result.outputs()).hasSize(1);
+    assertThat(result.outputs().get(0).kind()).isEqualTo(PlayerOutputKind.VIEW);
+    assertThat(result.outputs().get(0).payload()).isInstanceOf(InventoryViewOutput.class);
+    assertThat(((InventoryViewOutput) result.outputs().get(0).payload()).title())
+        .isEqualTo("Equipment:");
+    assertThat(((InventoryViewOutput) result.outputs().get(0).payload()).lines())
+        .containsExactly("- HEAD: Leather Cap (A small cap)");
   }
 
   @Test

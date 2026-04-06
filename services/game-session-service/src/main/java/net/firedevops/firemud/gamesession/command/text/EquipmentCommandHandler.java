@@ -12,6 +12,7 @@ import net.firedevops.firemud.entitymanagement.v1.RemoveEquipmentResponse;
 import net.firedevops.firemud.entitymanagement.v1.WearEquipmentItemResponse;
 import net.firedevops.firemud.gamesession.client.EntityManagementClient;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
+import net.firedevops.firemud.gamesession.presentation.InventoryViewOutput;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import org.springframework.stereotype.Component;
@@ -33,6 +34,7 @@ public class EquipmentCommandHandler {
     Objects.requireNonNull(command, "command must not be null");
 
     return switch (command.type()) {
+      case EQUIPMENT -> describeEquipment(context);
       case WEAR -> wear(context, command);
       case REMOVE -> remove(context, command);
       default ->
@@ -45,6 +47,22 @@ public class EquipmentCommandHandler {
                       "error.equipment.invalid-command",
                       Map.of())));
     };
+  }
+
+  private TextCommandInterpretationResult describeEquipment(SessionContext context) {
+    ListEquipmentResponse equipment =
+        entityManagementClient.listEquipment(
+            Long.toString(context.tenantId()), Long.toString(context.characterId()));
+    if (equipment.hasError()) {
+      return equipmentUnavailable(equipment.getError().getMessage());
+    }
+    List<String> lines =
+        equipment.getItemsList().isEmpty()
+            ? List.of("You have nothing equipped.")
+            : equipment.getItemsList().stream().map(this::formatEquipmentItem).toList();
+    return new TextCommandInterpretationResult(
+        CommandEnqueueResult.success(),
+        List.of(PlayerOutput.view(new InventoryViewOutput("Equipment:", lines))));
   }
 
   private TextCommandInterpretationResult wear(SessionContext context, TextCommand command) {
@@ -190,6 +208,15 @@ public class EquipmentCommandHandler {
     return StringUtils.hasText(candidate)
         && StringUtils.hasText(reference)
         && candidate.equals(reference);
+  }
+
+  private String formatEquipmentItem(EquipmentItem item) {
+    StringBuilder line = new StringBuilder();
+    line.append("- ").append(item.getSlot()).append(": ").append(item.getItemName());
+    if (StringUtils.hasText(item.getItemDescription())) {
+      line.append(" (").append(item.getItemDescription()).append(")");
+    }
+    return line.toString();
   }
 
   private record EquipmentResolution(

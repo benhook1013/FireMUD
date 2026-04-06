@@ -44,7 +44,9 @@ public class HelpCommandHandler {
                   + "DROP <count> <item> drops that many carried items.");
       case "EQUIPMENT" ->
           success(
-              "WEAR <item> equips a carried item.\n"
+              "EQUIPMENT shows what you are currently wearing.\n"
+                  + "EQ is a short alias for EQUIPMENT.\n"
+                  + "WEAR <item> equips a carried item.\n"
                   + "REMOVE <item|slot> takes an equipped item off.\n"
                   + "The command surface is now backed by the equipment service.");
       case "WEAR" ->
@@ -111,7 +113,7 @@ public class HelpCommandHandler {
       case "LOGIN", "LOGON" -> "LOGIN";
       case "PLAY" -> "PLAY";
       case "INVENTORY", "INV", "I" -> "INVENTORY";
-      case "EQUIPMENT", "WEAR", "REMOVE" -> "EQUIPMENT";
+      case "EQUIPMENT", "EQUIP", "EQ", "WEAR", "REMOVE" -> "EQUIPMENT";
       case "GET" -> "GET";
       case "DROP" -> "DROP";
       case "MOVEMENT", "MOVE", "WALK", "GO" -> "MOVEMENT";

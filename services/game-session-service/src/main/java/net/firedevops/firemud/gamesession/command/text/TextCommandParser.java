@@ -23,6 +23,8 @@ public class TextCommandParser {
           case HELP -> parseHelp(tokens);
           case INVENTORY ->
               new ParsedCommandData(List.of(), new TextCommandPayload.ViewRequest("INVENTORY"));
+          case EQUIPMENT ->
+              new ParsedCommandData(List.of(), new TextCommandPayload.ViewRequest("EQUIPMENT"));
           case GET, DROP, WEAR, REMOVE -> parseItemReference(type, tokens);
           case LOOK -> new ParsedCommandData(List.of(), new TextCommandPayload.ViewRequest("LOOK"));
           case QUICKLOOK ->

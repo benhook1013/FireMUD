@@ -255,7 +255,9 @@ public class TextCommandInterpreter {
   }
 
   private static boolean isEquipmentCommand(TextCommandType type) {
-    return type == TextCommandType.WEAR || type == TextCommandType.REMOVE;
+    return type == TextCommandType.EQUIPMENT
+        || type == TextCommandType.WEAR
+        || type == TextCommandType.REMOVE;
   }
 
   private TextCommandInterpretationResult stageFailure(String code, String message) {
