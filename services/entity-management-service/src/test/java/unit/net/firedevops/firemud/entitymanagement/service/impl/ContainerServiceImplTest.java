@@ -93,7 +93,7 @@ class ContainerServiceImplTest {
     when(characterRepo.findByIdAndTenantId(7L, 1L)).thenReturn(Optional.of(character));
     when(itemRepo.findByIdAndTenantId(99L, 1L)).thenReturn(Optional.of(container));
     when(inventoryRepo.findById(carriedContainerKey)).thenReturn(Optional.of(carriedContainer));
-    when(containerInstanceRepo.findByIdAndTenantIdAndCharacter_Id(500L, 1L, 7L))
+    when(containerInstanceRepo.findAccessibleByIdAndTenantIdAndCharacterId(500L, 1L, 7L))
         .thenReturn(Optional.of(containerInstance));
     when(containerRepo.findByIdTenantIdAndIdContainerInstanceId(1L, 500L, Pageable.unpaged()))
         .thenReturn(new PageImpl<>(List.of(entry)));
@@ -171,7 +171,7 @@ class ContainerServiceImplTest {
     when(itemRepo.findByIdAndTenantId(100L, 1L)).thenReturn(Optional.of(item));
     when(inventoryRepo.findById(containerKey)).thenReturn(Optional.of(carriedContainer));
     when(inventoryRepo.findById(carriedKey)).thenReturn(Optional.of(carriedItem));
-    when(containerInstanceRepo.findByIdAndTenantIdAndCharacter_Id(500L, 1L, 7L))
+    when(containerInstanceRepo.findAccessibleByIdAndTenantIdAndCharacterId(500L, 1L, 7L))
         .thenReturn(Optional.of(containerInstance));
     when(containerRepo.findById(any(ContainerContentKey.class))).thenReturn(Optional.empty());
     when(containerRepo.save(any(ContainerContentEntry.class)))
@@ -256,7 +256,7 @@ class ContainerServiceImplTest {
     when(itemRepo.findByIdAndTenantId(99L, 1L)).thenReturn(Optional.of(container));
     when(itemRepo.findByIdAndTenantId(100L, 1L)).thenReturn(Optional.of(item));
     when(inventoryRepo.findById(containerKey)).thenReturn(Optional.of(carriedContainer));
-    when(containerInstanceRepo.findByIdAndTenantIdAndCharacter_Id(500L, 1L, 7L))
+    when(containerInstanceRepo.findAccessibleByIdAndTenantIdAndCharacterId(500L, 1L, 7L))
         .thenReturn(Optional.of(containerInstance));
     when(containerRepo.findByIdTenantIdAndIdContainerInstanceIdAndIdItemId(1L, 500L, 100L))
         .thenReturn(Optional.of(entry));

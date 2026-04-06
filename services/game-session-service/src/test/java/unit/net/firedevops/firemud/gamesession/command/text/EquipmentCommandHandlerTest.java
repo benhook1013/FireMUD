@@ -4,10 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.when;
 
 import java.util.List;
-import net.firedevops.firemud.entitymanagement.v1.ContainerItem;
 import net.firedevops.firemud.entitymanagement.v1.EquipmentItem;
 import net.firedevops.firemud.entitymanagement.v1.InventoryItem;
-import net.firedevops.firemud.entitymanagement.v1.ListContainerContentsResponse;
 import net.firedevops.firemud.entitymanagement.v1.ListEquipmentResponse;
 import net.firedevops.firemud.entitymanagement.v1.QueryInventoryResponse;
 import net.firedevops.firemud.entitymanagement.v1.RemoveEquipmentResponse;
@@ -127,14 +125,14 @@ class EquipmentCommandHandlerTest {
                         .setQuantity(1)
                         .build())
                 .build());
-    when(entityManagementClient.listContainerContents("22", "911", "5"))
+    when(entityManagementClient.wearEquipment("22", "911", "5"))
         .thenReturn(
-            ListContainerContentsResponse.newBuilder()
-                .addItems(
-                    ContainerItem.newBuilder()
-                        .setItemId("8")
-                        .setItemName("Trail Ration")
-                        .setQuantity(1)
+            WearEquipmentItemResponse.newBuilder()
+                .setEquipmentItem(
+                    EquipmentItem.newBuilder()
+                        .setSlot("BACK")
+                        .setItemId("5")
+                        .setItemName("Satchel")
                         .build())
                 .build());
 
@@ -142,11 +140,10 @@ class EquipmentCommandHandlerTest {
         handler.handle(
             context, new TextCommand(TextCommandType.WEAR, List.of("Satchel"), "WEAR Satchel"));
 
-    assertThat(result.commandResult().accepted()).isFalse();
-    assertThat(result.commandResult().errorCode()).isEqualTo("INVALID_ARGUMENT");
+    assertThat(result.commandResult().accepted()).isTrue();
     assertThat(result.outputs()).hasSize(1);
-    assertThat(result.outputs().get(0).kind()).isEqualTo(PlayerOutputKind.ERROR);
-    assertThat(result.outputs().get(0).text()).contains("must empty Satchel before wearing it");
+    assertThat(result.outputs().get(0).kind()).isEqualTo(PlayerOutputKind.MESSAGE);
+    assertThat(result.outputs().get(0).text()).isEqualTo("You wear Satchel.");
   }
 
   @Test

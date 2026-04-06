@@ -162,6 +162,7 @@ message RoomGroundInventoryItem {
   string item_name = 5;
   string item_description = 6;
   int32 quantity = 7;
+  string container_instance_id = 8;
 }
 
 message PickupItemFromRoomRequest {

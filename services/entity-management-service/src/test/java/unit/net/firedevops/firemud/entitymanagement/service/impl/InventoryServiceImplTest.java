@@ -76,7 +76,9 @@ class InventoryServiceImplTest {
     entry.setQuantity(3);
 
     when(charRepo.findByIdAndTenantId(1L, 11L)).thenReturn(Optional.of(character));
-    when(containerInstanceRepo.findByTenantIdAndCharacter_IdAndItem_Id(11L, 1L, 2L))
+    when(containerInstanceRepo
+            .findByTenantIdAndCharacter_IdAndItem_IdAndEquipmentSlotIsNullAndGameInstanceIdIsNullAndRoomInstanceIdIsNull(
+                11L, 1L, 2L))
         .thenReturn(Optional.of(containerInstance));
     when(inventoryRepo.findByIdCharacterIdAndCharacterTenantId(1L, 11L, Pageable.unpaged()))
         .thenReturn(new PageImpl<>(List.of(entry)));

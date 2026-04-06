@@ -841,15 +841,19 @@ public class EntityManagementGrpcService
 
   private RoomGroundInventoryItem toProto(
       net.firedevops.firemud.entitymanagement.dto.RoomGroundInventoryEntryDto dto) {
-    return RoomGroundInventoryItem.newBuilder()
-        .setTenantId(String.valueOf(dto.tenantId()))
-        .setGameInstanceId(dto.gameInstanceId())
-        .setRoomInstanceId(dto.roomInstanceId())
-        .setItemId(String.valueOf(dto.itemId()))
-        .setItemName(dto.itemName())
-        .setItemDescription(dto.itemDescription() == null ? "" : dto.itemDescription())
-        .setQuantity(dto.quantity())
-        .build();
+    RoomGroundInventoryItem.Builder builder =
+        RoomGroundInventoryItem.newBuilder()
+            .setTenantId(String.valueOf(dto.tenantId()))
+            .setGameInstanceId(dto.gameInstanceId())
+            .setRoomInstanceId(dto.roomInstanceId())
+            .setItemId(String.valueOf(dto.itemId()))
+            .setItemName(dto.itemName())
+            .setItemDescription(dto.itemDescription() == null ? "" : dto.itemDescription())
+            .setQuantity(dto.quantity());
+    if (dto.containerInstanceId() != null) {
+      builder.setContainerInstanceId(String.valueOf(dto.containerInstanceId()));
+    }
+    return builder.build();
   }
 
   private RoomEntity toProto(RoomEntityDto dto) {

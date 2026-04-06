@@ -764,7 +764,7 @@ class EntityManagementGrpcServiceTest {
     InventoryService inventoryService = Mockito.mock(InventoryService.class);
     var dto =
         new net.firedevops.firemud.entitymanagement.dto.RoomGroundInventoryEntryDto(
-            1L, "GI-1", "R-1", 99L, "Torch", "A small torch", 1);
+            1L, "GI-1", "R-1", 99L, "Torch", "A small torch", 1, null);
     Mockito.when(inventoryService.dropItemToRoom(1L, 7L, "GI-1", "R-1", 99L, 1)).thenReturn(dto);
     io.micrometer.core.instrument.MeterRegistry meterRegistry =
         Mockito.mock(io.micrometer.core.instrument.MeterRegistry.class);

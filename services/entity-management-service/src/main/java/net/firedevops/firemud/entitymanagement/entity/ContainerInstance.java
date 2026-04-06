@@ -5,9 +5,7 @@ import lombok.Data;
 
 @Data
 @Entity
-@Table(
-    name = "container_instances",
-    uniqueConstraints = @UniqueConstraint(columnNames = {"tenant_id", "character_id", "item_id"}))
+@Table(name = "container_instances")
 public class ContainerInstance {
   @Id
   @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -17,8 +15,17 @@ public class ContainerInstance {
   private Long tenantId;
 
   @ManyToOne(fetch = FetchType.LAZY)
-  @JoinColumn(name = "character_id", nullable = false)
+  @JoinColumn(name = "character_id")
   private Character character;
+
+  @Column(name = "equipment_slot")
+  private String equipmentSlot;
+
+  @Column(name = "game_instance_id")
+  private String gameInstanceId;
+
+  @Column(name = "room_instance_id")
+  private String roomInstanceId;
 
   @ManyToOne(fetch = FetchType.LAZY)
   @JoinColumn(name = "item_id", nullable = false)

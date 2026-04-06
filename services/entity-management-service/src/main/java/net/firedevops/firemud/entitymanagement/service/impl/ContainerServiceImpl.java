@@ -43,7 +43,8 @@ public class ContainerServiceImpl implements ContainerService {
       Long tenantId, Long characterId, Long containerInstanceId, Pageable pageable) {
     Character character = requireCharacter(tenantId, characterId);
     ContainerInstance containerInstance =
-        requireContainerInstanceOwnedByCharacter(character.getId(), tenantId, containerInstanceId);
+        requireContainerInstanceAccessibleToCharacter(
+            character.getId(), tenantId, containerInstanceId);
     return containerContentRepository
         .findByIdTenantIdAndIdContainerInstanceId(tenantId, containerInstance.getId(), pageable)
         .map(containerContentMapper::toDto);
@@ -57,7 +58,8 @@ public class ContainerServiceImpl implements ContainerService {
     requirePositiveQuantity(quantity);
     Character character = requireCharacter(tenantId, characterId);
     ContainerInstance containerInstance =
-        requireContainerInstanceOwnedByCharacter(character.getId(), tenantId, containerInstanceId);
+        requireContainerInstanceAccessibleToCharacter(
+            character.getId(), tenantId, containerInstanceId);
     Item containerItem = containerInstance.getItem();
     Item item = requireItem(tenantId, itemId);
     if (!containerItem.isContainer()) {
@@ -86,7 +88,8 @@ public class ContainerServiceImpl implements ContainerService {
     requirePositiveQuantity(quantity);
     Character character = requireCharacter(tenantId, characterId);
     ContainerInstance containerInstance =
-        requireContainerInstanceOwnedByCharacter(character.getId(), tenantId, containerInstanceId);
+        requireContainerInstanceAccessibleToCharacter(
+            character.getId(), tenantId, containerInstanceId);
     Item item = requireItem(tenantId, itemId);
     ContainerContentEntry entry =
         requireContainerContentEntry(tenantId, containerInstance.getId(), itemId);
@@ -110,14 +113,13 @@ public class ContainerServiceImpl implements ContainerService {
         .orElseThrow(() -> new IllegalArgumentException("Item not found for tenant"));
   }
 
-  private ContainerInstance requireContainerInstanceOwnedByCharacter(
+  private ContainerInstance requireContainerInstanceAccessibleToCharacter(
       Long characterId, Long tenantId, Long containerInstanceId) {
     ContainerInstance containerInstance =
         containerInstanceRepository
-            .findByIdAndTenantIdAndCharacter_Id(containerInstanceId, tenantId, characterId)
+            .findAccessibleByIdAndTenantIdAndCharacterId(containerInstanceId, tenantId, characterId)
             .orElseThrow(() -> new IllegalArgumentException("Container instance not found"));
     Item containerItem = containerInstance.getItem();
-    requireInventoryEntry(characterId, containerItem.getId());
     if (!containerItem.isContainer()) {
       throw new IllegalArgumentException("Item is not a container");
     }

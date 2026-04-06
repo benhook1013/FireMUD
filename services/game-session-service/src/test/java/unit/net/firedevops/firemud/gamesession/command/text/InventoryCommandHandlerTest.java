@@ -4,11 +4,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.when;
 
 import java.util.List;
-import net.firedevops.firemud.entitymanagement.v1.ContainerItem;
 import net.firedevops.firemud.entitymanagement.v1.DropItemToRoomResponse;
 import net.firedevops.firemud.entitymanagement.v1.EntityType;
 import net.firedevops.firemud.entitymanagement.v1.InventoryItem;
-import net.firedevops.firemud.entitymanagement.v1.ListContainerContentsResponse;
 import net.firedevops.firemud.entitymanagement.v1.ListRoomEntitiesResponse;
 import net.firedevops.firemud.entitymanagement.v1.PickupItemFromRoomResponse;
 import net.firedevops.firemud.entitymanagement.v1.QueryInventoryResponse;
@@ -257,7 +255,7 @@ class InventoryCommandHandlerTest {
   }
 
   @Test
-  void dropRejectsNonEmptyCarriedContainer() {
+  void dropAllowsNonEmptyCarriedContainerWhenBackendPreservesIdentity() {
     when(entityManagementClient.queryInventory("22", "911"))
         .thenReturn(
             QueryInventoryResponse.newBuilder()
@@ -269,16 +267,26 @@ class InventoryCommandHandlerTest {
                         .setContainerInstanceId("container-10")
                         .setQuantity(1)
                         .build())
-                .build());
-    when(entityManagementClient.listContainerContents("22", "911", "container-10"))
+                .build())
         .thenReturn(
-            ListContainerContentsResponse.newBuilder()
+            QueryInventoryResponse.newBuilder()
                 .addItems(
-                    ContainerItem.newBuilder()
-                        .setContainerInstanceId("container-10")
-                        .setItemId("99")
+                    InventoryItem.newBuilder()
+                        .setItemId("7")
                         .setItemName("Torch")
+                        .setItemDescription("A small torch")
                         .setQuantity(1)
+                        .build())
+                .build());
+    when(entityManagementClient.dropItemToRoom("22", "911", "77", "room-7", "10", 1))
+        .thenReturn(
+            DropItemToRoomResponse.newBuilder()
+                .setRoomGroundItem(
+                    RoomGroundInventoryItem.newBuilder()
+                        .setItemId("10")
+                        .setItemName("Old Chest")
+                        .setQuantity(1)
+                        .setContainerInstanceId("container-10")
                         .build())
                 .build());
 
@@ -286,11 +294,11 @@ class InventoryCommandHandlerTest {
         handler.handle(
             context, new TextCommand(TextCommandType.DROP, List.of("Old Chest"), "DROP Old Chest"));
 
-    assertThat(result.commandResult().accepted()).isFalse();
-    assertThat(result.commandResult().errorCode()).isEqualTo("INVALID_ARGUMENT");
-    assertThat(result.outputs()).hasSize(1);
-    assertThat(result.outputs().get(0).kind()).isEqualTo(PlayerOutputKind.ERROR);
-    assertThat(result.outputs().get(0).text()).contains("must empty Old Chest before dropping it");
+    assertThat(result.commandResult().accepted()).isTrue();
+    assertThat(result.outputs())
+        .extracting(PlayerOutput::kind)
+        .containsExactly(PlayerOutputKind.MESSAGE, PlayerOutputKind.VIEW);
+    assertThat(result.outputs().get(0).text()).isEqualTo("You drop Old Chest.");
   }
 
   @Test

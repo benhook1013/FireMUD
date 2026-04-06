@@ -58,13 +58,16 @@ public class EquipmentServiceImpl implements EquipmentService {
     }
     InventoryEntry carried = requireInventoryEntry(character.getId(), itemId);
     adjustInventoryQuantity(carried, -1);
+    if (item.isContainer()) {
+      moveContainerInstanceToEquipment(character, item, slot);
+    }
     CharacterEquipmentEntry entry = new CharacterEquipmentEntry();
     entry.setId(key);
     entry.setCharacter(character);
     entry.setItem(item);
     CharacterEquipmentEntry saved = equipmentRepository.save(entry);
     if (item.isContainer()) {
-      saved.setContainerInstanceId(ensureContainerInstance(character, item).getId());
+      saved.setContainerInstanceId(resolveEquippedContainerInstanceId(character, item, slot));
     }
     return toDto(saved);
   }
@@ -81,9 +84,12 @@ public class EquipmentServiceImpl implements EquipmentService {
             .orElseThrow(() -> new IllegalArgumentException("Equipment slot is empty"));
     Item item = entry.getItem();
     equipmentRepository.delete(entry);
+    if (item.isContainer()) {
+      moveContainerInstanceToCarriedFromEquipment(character, item, normalizedSlot);
+    }
     InventoryEntry carried = upsertInventoryEntry(character, item, 1);
     if (item.isContainer()) {
-      carried.setContainerInstanceId(ensureContainerInstance(character, item).getId());
+      carried.setContainerInstanceId(resolveCarriedContainerInstanceId(character, item));
     }
     return toDto(entry);
   }
@@ -125,7 +131,7 @@ public class EquipmentServiceImpl implements EquipmentService {
     }
     InventoryEntry saved = inventoryRepository.save(entry);
     if (item.isContainer()) {
-      saved.setContainerInstanceId(ensureContainerInstance(character, item).getId());
+      saved.setContainerInstanceId(ensureCarriedContainerInstance(character, item).getId());
     }
     return saved;
   }
@@ -133,33 +139,74 @@ public class EquipmentServiceImpl implements EquipmentService {
   private CharacterEquipmentEntryDto toDto(CharacterEquipmentEntry entry) {
     if (entry.getItem() != null && entry.getItem().isContainer()) {
       entry.setContainerInstanceId(
-          resolveContainerInstanceId(entry.getCharacter(), entry.getItem()));
+          resolveEquippedContainerInstanceId(
+              entry.getCharacter(), entry.getItem(), entry.getId().getSlot()));
     } else {
       entry.setContainerInstanceId(null);
     }
     return equipmentMapper.toDto(entry);
   }
 
-  private Long resolveContainerInstanceId(Character character, Item item) {
+  private Long resolveCarriedContainerInstanceId(Character character, Item item) {
     return containerInstanceRepository
-        .findByTenantIdAndCharacter_IdAndItem_Id(
+        .findByTenantIdAndCharacter_IdAndItem_IdAndEquipmentSlotIsNullAndGameInstanceIdIsNullAndRoomInstanceIdIsNull(
             character.getTenantId(), character.getId(), item.getId())
         .map(ContainerInstance::getId)
         .orElse(null);
   }
 
-  private ContainerInstance ensureContainerInstance(Character character, Item item) {
+  private Long resolveEquippedContainerInstanceId(Character character, Item item, String slot) {
     return containerInstanceRepository
-        .findByTenantIdAndCharacter_IdAndItem_Id(
+        .findByTenantIdAndCharacter_IdAndEquipmentSlotAndItem_IdAndGameInstanceIdIsNullAndRoomInstanceIdIsNull(
+            character.getTenantId(), character.getId(), slot, item.getId())
+        .map(ContainerInstance::getId)
+        .orElse(null);
+  }
+
+  private ContainerInstance ensureCarriedContainerInstance(Character character, Item item) {
+    return containerInstanceRepository
+        .findByTenantIdAndCharacter_IdAndItem_IdAndEquipmentSlotIsNullAndGameInstanceIdIsNullAndRoomInstanceIdIsNull(
             character.getTenantId(), character.getId(), item.getId())
         .orElseGet(
             () -> {
               ContainerInstance instance = new ContainerInstance();
               instance.setTenantId(character.getTenantId());
               instance.setCharacter(character);
+              instance.setEquipmentSlot(null);
+              instance.setGameInstanceId(null);
+              instance.setRoomInstanceId(null);
               instance.setItem(item);
               return containerInstanceRepository.save(instance);
             });
+  }
+
+  private void moveContainerInstanceToEquipment(Character character, Item item, String slot) {
+    ContainerInstance instance = ensureCarriedContainerInstance(character, item);
+    instance.setCharacter(character);
+    instance.setEquipmentSlot(slot);
+    instance.setGameInstanceId(null);
+    instance.setRoomInstanceId(null);
+    containerInstanceRepository.save(instance);
+  }
+
+  private void moveContainerInstanceToCarriedFromEquipment(
+      Character character, Item item, String slot) {
+    ContainerInstance instance =
+        containerInstanceRepository
+            .findByTenantIdAndCharacter_IdAndEquipmentSlotAndItem_IdAndGameInstanceIdIsNullAndRoomInstanceIdIsNull(
+                character.getTenantId(), character.getId(), slot, item.getId())
+            .orElseGet(
+                () -> {
+                  ContainerInstance created = new ContainerInstance();
+                  created.setTenantId(character.getTenantId());
+                  created.setItem(item);
+                  return created;
+                });
+    instance.setCharacter(character);
+    instance.setEquipmentSlot(null);
+    instance.setGameInstanceId(null);
+    instance.setRoomInstanceId(null);
+    containerInstanceRepository.save(instance);
   }
 
   private void adjustInventoryQuantity(InventoryEntry entry, int delta) {

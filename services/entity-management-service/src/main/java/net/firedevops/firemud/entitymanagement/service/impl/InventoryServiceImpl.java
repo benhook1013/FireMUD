@@ -77,7 +77,7 @@ public class InventoryServiceImpl implements InventoryService {
     return roomGroundRepository
         .findByIdTenantIdAndIdGameInstanceIdAndIdRoomInstanceId(
             tenantId, normalizedGameInstanceId, normalizedRoomInstanceId, pageable)
-        .map(roomGroundMapper::toDto);
+        .map(this::toRoomGroundDto);
   }
 
   @Override
@@ -100,10 +100,15 @@ public class InventoryServiceImpl implements InventoryService {
       throw new IllegalArgumentException("Not enough quantity to drop");
     }
     adjustInventoryQuantity(carried, -quantity);
+    if (item.isContainer()) {
+      requireSingleContainerTransfer(quantity);
+      moveContainerInstanceToRoom(
+          character, normalizedGameInstanceId, normalizedRoomInstanceId, item);
+    }
     RoomGroundInventoryEntry roomEntry =
         upsertRoomGroundEntry(
             tenantId, normalizedGameInstanceId, normalizedRoomInstanceId, item, quantity);
-    return roomGroundMapper.toDto(roomEntry);
+    return toRoomGroundDto(roomEntry);
   }
 
   @Override
@@ -128,6 +133,11 @@ public class InventoryServiceImpl implements InventoryService {
       throw new IllegalArgumentException("Not enough quantity on the room ground");
     }
     adjustRoomGroundQuantity(roomEntry, -quantity);
+    if (item.isContainer()) {
+      requireSingleContainerTransfer(quantity);
+      moveContainerInstanceToCarriedFromRoom(
+          character, normalizedGameInstanceId, normalizedRoomInstanceId, item);
+    }
     InventoryEntry carried = upsertInventoryEntry(character, item, quantity);
     return toDto(carried);
   }
@@ -171,7 +181,7 @@ public class InventoryServiceImpl implements InventoryService {
     }
     InventoryEntry saved = inventoryRepository.save(entry);
     if (item.isContainer()) {
-      saved.setContainerInstanceId(ensureContainerInstance(character, item).getId());
+      saved.setContainerInstanceId(ensureCarriedContainerInstance(character, item).getId());
     }
     return saved;
   }
@@ -179,33 +189,89 @@ public class InventoryServiceImpl implements InventoryService {
   private InventoryEntryDto toDto(InventoryEntry entry) {
     if (entry.getItem() != null && entry.getItem().isContainer()) {
       entry.setContainerInstanceId(
-          resolveContainerInstanceId(entry.getCharacter(), entry.getItem()));
+          resolveCarriedContainerInstanceId(entry.getCharacter(), entry.getItem()));
     } else {
       entry.setContainerInstanceId(null);
     }
     return inventoryMapper.toDto(entry);
   }
 
-  private Long resolveContainerInstanceId(Character character, Item item) {
+  private RoomGroundInventoryEntryDto toRoomGroundDto(RoomGroundInventoryEntry entry) {
+    if (entry.getItem() != null && entry.getItem().isContainer()) {
+      entry.setContainerInstanceId(
+          resolveRoomContainerInstanceId(
+              entry.getId().getTenantId(),
+              entry.getId().getGameInstanceId(),
+              entry.getId().getRoomInstanceId(),
+              entry.getItem()));
+    } else {
+      entry.setContainerInstanceId(null);
+    }
+    return roomGroundMapper.toDto(entry);
+  }
+
+  private Long resolveCarriedContainerInstanceId(Character character, Item item) {
     return containerInstanceRepository
-        .findByTenantIdAndCharacter_IdAndItem_Id(
+        .findByTenantIdAndCharacter_IdAndItem_IdAndEquipmentSlotIsNullAndGameInstanceIdIsNullAndRoomInstanceIdIsNull(
             character.getTenantId(), character.getId(), item.getId())
         .map(ContainerInstance::getId)
         .orElse(null);
   }
 
-  private ContainerInstance ensureContainerInstance(Character character, Item item) {
+  private Long resolveRoomContainerInstanceId(
+      Long tenantId, String gameInstanceId, String roomInstanceId, Item item) {
     return containerInstanceRepository
-        .findByTenantIdAndCharacter_IdAndItem_Id(
+        .findByTenantIdAndGameInstanceIdAndRoomInstanceIdAndItem_IdAndCharacterIsNullAndEquipmentSlotIsNull(
+            tenantId, gameInstanceId, roomInstanceId, item.getId())
+        .map(ContainerInstance::getId)
+        .orElse(null);
+  }
+
+  private ContainerInstance ensureCarriedContainerInstance(Character character, Item item) {
+    return containerInstanceRepository
+        .findByTenantIdAndCharacter_IdAndItem_IdAndEquipmentSlotIsNullAndGameInstanceIdIsNullAndRoomInstanceIdIsNull(
             character.getTenantId(), character.getId(), item.getId())
         .orElseGet(
             () -> {
               ContainerInstance instance = new ContainerInstance();
               instance.setTenantId(character.getTenantId());
               instance.setCharacter(character);
+              instance.setEquipmentSlot(null);
+              instance.setGameInstanceId(null);
+              instance.setRoomInstanceId(null);
               instance.setItem(item);
               return containerInstanceRepository.save(instance);
             });
+  }
+
+  private void moveContainerInstanceToRoom(
+      Character character, String gameInstanceId, String roomInstanceId, Item item) {
+    ContainerInstance instance = ensureCarriedContainerInstance(character, item);
+    instance.setCharacter(null);
+    instance.setEquipmentSlot(null);
+    instance.setGameInstanceId(gameInstanceId);
+    instance.setRoomInstanceId(roomInstanceId);
+    containerInstanceRepository.save(instance);
+  }
+
+  private void moveContainerInstanceToCarriedFromRoom(
+      Character character, String gameInstanceId, String roomInstanceId, Item item) {
+    ContainerInstance instance =
+        containerInstanceRepository
+            .findByTenantIdAndGameInstanceIdAndRoomInstanceIdAndItem_IdAndCharacterIsNullAndEquipmentSlotIsNull(
+                character.getTenantId(), gameInstanceId, roomInstanceId, item.getId())
+            .orElseGet(
+                () -> {
+                  ContainerInstance created = new ContainerInstance();
+                  created.setTenantId(character.getTenantId());
+                  created.setItem(item);
+                  return created;
+                });
+    instance.setCharacter(character);
+    instance.setEquipmentSlot(null);
+    instance.setGameInstanceId(null);
+    instance.setRoomInstanceId(null);
+    containerInstanceRepository.save(instance);
   }
 
   private RoomGroundInventoryEntry upsertRoomGroundEntry(
@@ -264,6 +330,12 @@ public class InventoryServiceImpl implements InventoryService {
   private void requirePositiveQuantity(int quantity) {
     if (quantity <= 0) {
       throw new IllegalArgumentException("quantity must be positive");
+    }
+  }
+
+  private void requireSingleContainerTransfer(int quantity) {
+    if (quantity != 1) {
+      throw new IllegalArgumentException("Container transfers must move exactly one item");
     }
   }
 

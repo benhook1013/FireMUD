@@ -74,7 +74,9 @@ class EquipmentServiceImplTest {
     entry.setItem(item);
 
     when(charRepo.findByIdAndTenantId(1L, 11L)).thenReturn(Optional.of(character));
-    when(containerInstanceRepo.findByTenantIdAndCharacter_IdAndItem_Id(11L, 1L, 2L))
+    when(containerInstanceRepo
+            .findByTenantIdAndCharacter_IdAndEquipmentSlotAndItem_IdAndGameInstanceIdIsNullAndRoomInstanceIdIsNull(
+                11L, 1L, "HEAD", 2L))
         .thenReturn(Optional.of(containerInstance));
     when(equipmentRepo.findByIdCharacterIdAndCharacterTenantId(1L, 11L, Pageable.unpaged()))
         .thenReturn(new PageImpl<>(List.of(entry)));
@@ -121,6 +123,7 @@ class EquipmentServiceImplTest {
     containerInstance.setId(77L);
     containerInstance.setTenantId(1L);
     containerInstance.setCharacter(character);
+    containerInstance.setEquipmentSlot("HEAD");
     containerInstance.setItem(item);
 
     InventoryEntry carried = new InventoryEntry();
@@ -134,7 +137,13 @@ class EquipmentServiceImplTest {
 
     when(charRepo.findByIdAndTenantId(1L, 1L)).thenReturn(Optional.of(character));
     when(itemRepo.findByIdAndTenantId(2L, 1L)).thenReturn(Optional.of(item));
-    when(containerInstanceRepo.findByTenantIdAndCharacter_IdAndItem_Id(1L, 1L, 2L))
+    when(containerInstanceRepo
+            .findByTenantIdAndCharacter_IdAndItem_IdAndEquipmentSlotIsNullAndGameInstanceIdIsNullAndRoomInstanceIdIsNull(
+                1L, 1L, 2L))
+        .thenReturn(Optional.of(containerInstance));
+    when(containerInstanceRepo
+            .findByTenantIdAndCharacter_IdAndEquipmentSlotAndItem_IdAndGameInstanceIdIsNullAndRoomInstanceIdIsNull(
+                1L, 1L, "HEAD", 2L))
         .thenReturn(Optional.of(containerInstance));
     when(equipmentRepo.findById(any(CharacterEquipmentKey.class))).thenReturn(Optional.empty());
     when(inventoryRepo.findById(inventoryKey)).thenReturn(Optional.of(carried));
