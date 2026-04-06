@@ -6,6 +6,7 @@ import java.util.Map;
 import java.util.stream.Stream;
 import net.firedevops.firemud.entitymanagement.config.LookProperties;
 import net.firedevops.firemud.entitymanagement.dto.RoomEntityDto;
+import net.firedevops.firemud.entitymanagement.entity.Item;
 import net.firedevops.firemud.entitymanagement.entity.RoomGroundInventoryEntry;
 import net.firedevops.firemud.entitymanagement.repository.RoomGroundInventoryRepository;
 import net.firedevops.firemud.entitymanagement.service.RoomEntityService;
@@ -71,15 +72,30 @@ public class RoomEntityServiceImpl implements RoomEntityService {
     if (entry.getQuantity() > 1) {
       displayName = displayName + " x" + entry.getQuantity();
     }
+    List<String> stateFlags = roomGroundAffordanceFlags(entry);
     return new RoomEntityDto(
         roomGroundEntityId(entry),
         displayName,
         EntityType.ITEM,
         "",
-        List.of("room-ground"),
+        stateFlags,
         0,
         ReloadHint.STABLE,
         true);
+  }
+
+  private List<String> roomGroundAffordanceFlags(RoomGroundInventoryEntry entry) {
+    Item item = entry.getItem();
+    List<String> flags = new java.util.ArrayList<>();
+    flags.add("room-ground");
+    if (item.isContainer()) {
+      flags.add("container");
+    }
+    String equipmentSlot = item.getEquipmentSlot();
+    if (equipmentSlot != null && !equipmentSlot.isBlank()) {
+      flags.add("wearable:" + equipmentSlot.trim().toUpperCase(java.util.Locale.ROOT));
+    }
+    return List.copyOf(flags);
   }
 
   private String roomGroundEntityId(RoomGroundInventoryEntry entry) {

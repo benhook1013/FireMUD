@@ -65,9 +65,11 @@ public final class LookTestFixtures {
     net.firedevops.firemud.entitymanagement.v1.RoomEntity item =
         net.firedevops.firemud.entitymanagement.v1.RoomEntity.newBuilder()
             .setEntityId("ITEM-009")
-            .setDisplayName("Torch")
+            .setDisplayName("Backpack")
             .setEntityType(net.firedevops.firemud.entitymanagement.v1.EntityType.ITEM)
             .addStateFlags("room-ground")
+            .addStateFlags("container")
+            .addStateFlags("wearable:BACK")
             .build();
     return ListRoomEntitiesResponse.newBuilder()
         .addEntities(kobold)
@@ -87,7 +89,7 @@ public final class LookTestFixtures {
         "Entities:",
         "- NPC \"Kobold Scout\" (scout) [isAlert]",
         "- PLAYER \"Sora\" (adventurer)",
-        "- ITEM \"Torch\" [room-ground]",
+        "- ITEM \"Backpack\" [room-ground,container,wearable:BACK]",
         "");
   }
 
@@ -122,9 +124,11 @@ public final class LookTestFixtures {
     RoomEntity itemEntity =
         RoomEntity.newBuilder()
             .setEntityId("ITEM-009")
-            .setDisplayName("Torch")
+            .setDisplayName("Backpack")
             .setEntityType(EntityType.ITEM)
             .addStateFlags("room-ground")
+            .addStateFlags("container")
+            .addStateFlags("wearable:BACK")
             .build();
 
     return LookResult.newBuilder()

@@ -89,7 +89,7 @@ class HelpCommandHandlerTest {
             .outputs()
             .get(0)
             .text()
-            .contains("The command surface is now backed by the equipment service."));
+            .contains("LOOK may show wearable:<slot> tags for items that can be worn."));
   }
 
   @Test
@@ -110,6 +110,12 @@ class HelpCommandHandlerTest {
             .get(0)
             .text()
             .contains("Inspect a carried container's contents."));
+    assertTrue(
+        containerResult
+            .outputs()
+            .get(0)
+            .text()
+            .contains("LOOK may show which items are containers."));
 
     assertTrue(putResult.commandResult().accepted());
     assertTrue(putResult.outputs().get(0).text().contains("PUT <item> INTO <container>"));
@@ -118,6 +124,23 @@ class HelpCommandHandlerTest {
     assertTrue(takeResult.commandResult().accepted());
     assertTrue(takeResult.outputs().get(0).text().contains("TAKE <item> FROM <container>"));
     assertTrue(takeResult.outputs().get(0).text().contains("TAKE <count> <item> FROM <container>"));
+  }
+
+  @Test
+  void helpLookTopicExplainsActionableAffordanceTags() {
+    TextCommandInterpretationResult result =
+        handler.handle(new TextCommand(TextCommandType.HELP, List.of("look"), "HELP look"));
+
+    assertTrue(result.commandResult().accepted());
+    assertTrue(result.outputs().get(0).text().contains("LOOK refreshes the current room."));
+    assertTrue(
+        result
+            .outputs()
+            .get(0)
+            .text()
+            .contains(
+                "When available, LOOK shows lightweight item affordances like container and wearable tags."));
+    assertTrue(result.outputs().get(0).text().contains("QUICKLOOK is the shorter room refresh."));
   }
 
   @Test

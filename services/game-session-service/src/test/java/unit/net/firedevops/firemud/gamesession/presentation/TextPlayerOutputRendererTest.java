@@ -343,6 +343,37 @@ class TextPlayerOutputRendererTest {
   }
 
   @Test
+  void lookRenderingSurfacesContainerAndWearableAffordancesClearly() {
+    TextPlayerOutputRenderer renderer =
+        new TextPlayerOutputRenderer(
+            new PresentationProperties(
+                "en-NZ",
+                PresentationProperties.ColorMode.NONE,
+                false,
+                new PresentationProperties.Prompt(false, true, 150L)));
+
+    String rendered =
+        renderer.render(
+            PlayerOutput.view(
+                new LookViewOutput(
+                    "R-306",
+                    "Tagged Hall",
+                    "A hall with a useful pack on the floor.",
+                    "A hall with a useful pack on the floor and a spare hook on the wall.",
+                    true,
+                    List.of(),
+                    List.of(
+                        new LookViewEntity(
+                            "ITEM",
+                            "Backpack",
+                            "",
+                            List.of("room-ground", "container", "wearable:BACK"))))));
+
+    assertThat(rendered)
+        .contains("ITEM \"Backpack\" [room-ground; affordances: container, wearable BACK]");
+  }
+
+  @Test
   void renderAllPrefersStructuredErrorOutputForFailedCommands() {
     TextPlayerOutputRenderer renderer =
         new TextPlayerOutputRenderer(

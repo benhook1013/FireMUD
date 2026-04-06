@@ -510,6 +510,9 @@ class TextCommandInterpreterTest {
   void wearAfterPlayReturnsSuccessWithMutationNotice() {
     interpreter.interpret("1", "LOGIN demo@example.com swordfish", false);
     interpreter.interpret("1", "PLAY demo", false);
+    when(entityManagementClient.listContainerContents(
+            Mockito.anyString(), Mockito.anyString(), Mockito.eq("ITEM-009")))
+        .thenReturn(ListContainerContentsResponse.newBuilder().build());
 
     TextCommandInterpretationResult interpretation =
         interpreter.interpret("1", "WEAR Torch", false);
@@ -558,6 +561,9 @@ class TextCommandInterpreterTest {
   void dropAfterPlayReturnsSuccessWithMutationNotice() {
     interpreter.interpret("1", "LOGIN demo@example.com swordfish", false);
     interpreter.interpret("1", "PLAY demo", false);
+    when(entityManagementClient.listContainerContents(
+            Mockito.anyString(), Mockito.anyString(), Mockito.eq("ITEM-009")))
+        .thenReturn(ListContainerContentsResponse.newBuilder().build());
 
     TextCommandInterpretationResult interpretation =
         interpreter.interpret("1", "DROP Torch", false);

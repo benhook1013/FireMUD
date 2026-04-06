@@ -48,11 +48,12 @@ public class HelpCommandHandler {
                   + "EQ is a short alias for EQUIPMENT.\n"
                   + "WEAR <item> equips a carried item.\n"
                   + "REMOVE <item|slot> takes an equipped item off.\n"
-                  + "The command surface is now backed by the equipment service.");
+                  + "LOOK may show wearable:<slot> tags for items that can be worn.");
       case "CONTAINER" ->
           success(
               "CONTAINER <container>\n"
                   + "Inspect a carried container's contents.\n"
+                  + "LOOK may show which items are containers.\n"
                   + "See HELP PUT and HELP TAKE for transfer syntax.");
       case "PUT" ->
           success(
@@ -90,7 +91,10 @@ public class HelpCommandHandler {
                   + "Shorthand aliases: N, S, E, W, U, D\n"
                   + "You can also type GO <direction>.");
       case "LOOK" ->
-          success("LOOK refreshes the current room.\nQUICKLOOK is the shorter room refresh.");
+          success(
+              "LOOK refreshes the current room.\n"
+                  + "When available, LOOK shows lightweight item affordances like container and wearable tags.\n"
+                  + "QUICKLOOK is the shorter room refresh.");
       case "SAY" -> success("SAY <message>\nSpeak to everyone in the room.");
       case "WHISPER" ->
           success("WHISPER <target> <message>\nSpeak privately to one nearby character.");

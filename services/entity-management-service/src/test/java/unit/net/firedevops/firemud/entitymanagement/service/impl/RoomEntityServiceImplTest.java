@@ -52,8 +52,10 @@ class RoomEntityServiceImplTest {
     var item = new net.firedevops.firemud.entitymanagement.entity.Item();
     item.setId(9L);
     item.setTenantId(1L);
-    item.setName("Torch");
-    item.setDescription("A small torch");
+    item.setName("Backpack");
+    item.setDescription("A battered travel pack");
+    item.setContainer(true);
+    item.setEquipmentSlot("back");
 
     var key = new RoomGroundInventoryKey();
     key.setTenantId(1L);
@@ -74,8 +76,8 @@ class RoomEntityServiceImplTest {
     List<RoomEntityDto> listed = service.listEntities("1", "game-1", "R-1021");
     assertEquals(1, listed.size());
     assertEquals(EntityType.ITEM, listed.get(0).entityType());
-    assertEquals("Torch x2", listed.get(0).displayName());
-    assertTrue(listed.get(0).stateFlags().contains("room-ground"));
+    assertEquals("Backpack x2", listed.get(0).displayName());
+    assertEquals(List.of("room-ground", "container", "wearable:BACK"), listed.get(0).stateFlags());
   }
 
   private LookProperties.LookEntity entity(

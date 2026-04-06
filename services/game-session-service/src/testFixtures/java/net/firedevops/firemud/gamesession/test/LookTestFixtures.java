@@ -97,9 +97,11 @@ public final class LookTestFixtures {
     RoomEntity item =
         RoomEntity.newBuilder()
             .setEntityId("ITEM-009")
-            .setDisplayName("Torch")
+            .setDisplayName("Backpack")
             .setEntityType(EntityType.ITEM)
             .addStateFlags("room-ground")
+            .addStateFlags("container")
+            .addStateFlags("wearable:BACK")
             .build();
     return ListRoomEntitiesResponse.newBuilder()
         .addEntities(kobold)
@@ -124,7 +126,7 @@ public final class LookTestFixtures {
           "Entities:",
           "- NPC \"Kobold Scout\" (scout) [isAlert]",
           "- PLAYER \"Sora\" (adventurer)",
-          "- ITEM \"Torch\" [room-ground]",
+          "- ITEM \"Backpack\" [room-ground; affordances: container, wearable BACK]",
           "");
     }
     if (DESTINATION_ROOM_ID.equals(roomInstanceId)) {
@@ -138,7 +140,7 @@ public final class LookTestFixtures {
           "Entities:",
           "- NPC \"Kobold Scout\" (scout) [isAlert]",
           "- PLAYER \"Sora\" (adventurer)",
-          "- ITEM \"Torch\" [room-ground]",
+          "- ITEM \"Backpack\" [room-ground; affordances: container, wearable BACK]",
           "");
     }
     throw new IllegalArgumentException("Unknown room instance id: " + roomInstanceId);
@@ -184,9 +186,11 @@ public final class LookTestFixtures {
     net.firedevops.firemud.gamelogic.v1.RoomEntity itemEntity =
         net.firedevops.firemud.gamelogic.v1.RoomEntity.newBuilder()
             .setEntityId("ITEM-009")
-            .setDisplayName("Torch")
+            .setDisplayName("Backpack")
             .setEntityType(net.firedevops.firemud.gamelogic.v1.EntityType.ITEM)
             .addStateFlags("room-ground")
+            .addStateFlags("container")
+            .addStateFlags("wearable:BACK")
             .build();
 
     LookResult.Builder builder =

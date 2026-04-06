@@ -1,5 +1,7 @@
 package net.firedevops.firemud.gamesession.presentation;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.stream.Collectors;
 import net.firedevops.firemud.gamesession.command.text.TextCommand;
 import net.firedevops.firemud.gamesession.command.text.TextCommandType;
@@ -213,12 +215,52 @@ public class TextPlayerOutputRenderer {
           .append(entity.displayName())
           .append("\"")
           .append(entity.role().isEmpty() ? "" : " (" + entity.role() + ")");
-      if (!entity.stateFlags().isEmpty()) {
-        out.append(" [").append(String.join(",", entity.stateFlags())).append("]");
+      String stateFlags = formatStateFlags(entity.stateFlags());
+      if (!stateFlags.isEmpty()) {
+        out.append(stateFlags);
       }
       out.append("\n");
     }
     return out.toString().trim();
+  }
+
+  private String formatStateFlags(List<String> stateFlags) {
+    if (stateFlags.isEmpty()) {
+      return "";
+    }
+
+    List<String> visibleFlags = new ArrayList<>();
+    List<String> affordances = new ArrayList<>();
+    for (String flag : stateFlags) {
+      if (!StringUtils.hasText(flag)) {
+        continue;
+      }
+      if (flag.equals("container")) {
+        affordances.add("container");
+        continue;
+      }
+      if (flag.startsWith("wearable:")) {
+        String slot = flag.substring("wearable:".length()).trim();
+        affordances.add(StringUtils.hasText(slot) ? "wearable " + slot : "wearable");
+        continue;
+      }
+      visibleFlags.add(flag);
+    }
+
+    if (visibleFlags.isEmpty() && affordances.isEmpty()) {
+      return "";
+    }
+    if (affordances.isEmpty()) {
+      return " [" + String.join(",", visibleFlags) + "]";
+    }
+    if (visibleFlags.isEmpty()) {
+      return " [affordances: " + String.join(", ", affordances) + "]";
+    }
+    return " ["
+        + String.join(",", visibleFlags)
+        + "; affordances: "
+        + String.join(", ", affordances)
+        + "]";
   }
 
   private String renderPrompt(
