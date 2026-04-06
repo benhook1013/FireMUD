@@ -7,9 +7,11 @@ import java.util.List;
 import net.firedevops.firemud.entitymanagement.v1.DropItemToRoomResponse;
 import net.firedevops.firemud.entitymanagement.v1.EntityType;
 import net.firedevops.firemud.entitymanagement.v1.InventoryItem;
+import net.firedevops.firemud.entitymanagement.v1.ListContainerContentsResponse;
 import net.firedevops.firemud.entitymanagement.v1.ListRoomEntitiesResponse;
 import net.firedevops.firemud.entitymanagement.v1.PickupItemFromRoomResponse;
 import net.firedevops.firemud.entitymanagement.v1.QueryInventoryResponse;
+import net.firedevops.firemud.entitymanagement.v1.ContainerItem;
 import net.firedevops.firemud.entitymanagement.v1.RoomEntity;
 import net.firedevops.firemud.entitymanagement.v1.RoomGroundInventoryItem;
 import net.firedevops.firemud.gamesession.client.EntityManagementClient;
@@ -252,6 +254,43 @@ class InventoryCommandHandlerTest {
     assertThat(result.outputs().get(0).text()).isEqualTo("You drop Torch x2.");
     assertThat(((InventoryViewOutput) result.outputs().get(1).payload()).lines())
         .containsExactly("- Torch (A small torch)");
+  }
+
+  @Test
+  void dropRejectsNonEmptyCarriedContainer() {
+    when(entityManagementClient.queryInventory("22", "911"))
+        .thenReturn(
+            QueryInventoryResponse.newBuilder()
+                .addItems(
+                    InventoryItem.newBuilder()
+                        .setItemId("10")
+                        .setItemName("Old Chest")
+                        .setItemDescription("A worn chest")
+                        .setQuantity(1)
+                        .build())
+                .build());
+    when(entityManagementClient.listContainerContents("22", "911", "10"))
+        .thenReturn(
+            ListContainerContentsResponse.newBuilder()
+                .addItems(
+                    ContainerItem.newBuilder()
+                        .setContainerItemId("10")
+                        .setItemId("99")
+                        .setItemName("Torch")
+                        .setQuantity(1)
+                        .build())
+                .build());
+
+    InventoryCommandHandlingResult result =
+        handler.handle(
+            context, new TextCommand(TextCommandType.DROP, List.of("Old Chest"), "DROP Old Chest"));
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode()).isEqualTo("INVALID_ARGUMENT");
+    assertThat(result.outputs()).hasSize(1);
+    assertThat(result.outputs().get(0).kind()).isEqualTo(PlayerOutputKind.ERROR);
+    assertThat(result.outputs().get(0).text())
+        .contains("must empty Old Chest before dropping it");
   }
 
   @Test

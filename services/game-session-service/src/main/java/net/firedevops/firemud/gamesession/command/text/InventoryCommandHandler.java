@@ -10,6 +10,7 @@ import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.entitymanagement.v1.EntityType;
 import net.firedevops.firemud.entitymanagement.v1.InventoryItem;
+import net.firedevops.firemud.entitymanagement.v1.ListContainerContentsResponse;
 import net.firedevops.firemud.entitymanagement.v1.RoomEntity;
 import net.firedevops.firemud.entitymanagement.v1.RoomGroundInventoryItem;
 import net.firedevops.firemud.gamesession.client.EntityManagementClient;
@@ -182,6 +183,12 @@ public class InventoryCommandHandler {
             "No carried item matches \"" + itemReferenceValue + "\"");
       }
       ResolvedItem item = resolved.orElseThrow();
+      if (isNonEmptyContainer(context, item.itemId())) {
+        return inventoryMutationFailure(
+            "INVALID_ARGUMENT",
+            itemReferenceValue,
+            "You must empty " + item.itemName() + " before dropping it");
+      }
       var response =
           entityManagementClient.dropItemToRoom(
               Long.toString(context.tenantId()),
@@ -255,6 +262,25 @@ public class InventoryCommandHandler {
       return fallback;
     }
     return StringUtils.hasText(item.getItemName()) ? item.getItemName() : fallback;
+  }
+
+  private boolean isNonEmptyContainer(SessionContext context, String itemId) {
+    try {
+      ListContainerContentsResponse response =
+          entityManagementClient.listContainerContents(
+              Long.toString(context.tenantId()),
+              Long.toString(context.characterId()),
+              itemId);
+      return response.hasError() ? false : !response.getItemsList().isEmpty();
+    } catch (RuntimeException ex) {
+      LOG.warn(
+          "Container probe failed tenantId={} characterId={} itemId={}",
+          context.tenantId(),
+          context.characterId(),
+          itemId,
+          ex);
+      return false;
+    }
   }
 
   private Optional<ResolvedItem> findRoomGroundItem(List<RoomEntity> entities, String reference) {
