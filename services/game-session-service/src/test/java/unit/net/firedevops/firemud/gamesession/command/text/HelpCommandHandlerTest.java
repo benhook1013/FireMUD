@@ -93,6 +93,34 @@ class HelpCommandHandlerTest {
   }
 
   @Test
+  void helpContainerTopicsExplainTheFirstContainerLoop() {
+    TextCommandInterpretationResult containerResult =
+        handler.handle(
+            new TextCommand(TextCommandType.HELP, List.of("container"), "HELP container"));
+    TextCommandInterpretationResult putResult =
+        handler.handle(new TextCommand(TextCommandType.HELP, List.of("put"), "HELP put"));
+    TextCommandInterpretationResult takeResult =
+        handler.handle(new TextCommand(TextCommandType.HELP, List.of("take"), "HELP take"));
+
+    assertTrue(containerResult.commandResult().accepted());
+    assertTrue(containerResult.outputs().get(0).text().contains("CONTAINER <container>"));
+    assertTrue(
+        containerResult
+            .outputs()
+            .get(0)
+            .text()
+            .contains("Inspect a carried container's contents."));
+
+    assertTrue(putResult.commandResult().accepted());
+    assertTrue(putResult.outputs().get(0).text().contains("PUT <item> INTO <container>"));
+    assertTrue(putResult.outputs().get(0).text().contains("PUT <count> <item> INTO <container>"));
+
+    assertTrue(takeResult.commandResult().accepted());
+    assertTrue(takeResult.outputs().get(0).text().contains("TAKE <item> FROM <container>"));
+    assertTrue(takeResult.outputs().get(0).text().contains("TAKE <count> <item> FROM <container>"));
+  }
+
+  @Test
   void helpGetTopicExplainsPickupBehavior() {
     TextCommandInterpretationResult result =
         handler.handle(new TextCommand(TextCommandType.HELP, List.of("get"), "HELP get"));

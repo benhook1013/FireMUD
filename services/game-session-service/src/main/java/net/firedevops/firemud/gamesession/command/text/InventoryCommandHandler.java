@@ -268,9 +268,7 @@ public class InventoryCommandHandler {
     try {
       ListContainerContentsResponse response =
           entityManagementClient.listContainerContents(
-              Long.toString(context.tenantId()),
-              Long.toString(context.characterId()),
-              itemId);
+              Long.toString(context.tenantId()), Long.toString(context.characterId()), itemId);
       return response.hasError() ? false : !response.getItemsList().isEmpty();
     } catch (RuntimeException ex) {
       LOG.warn(

@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.when;
 
 import java.util.List;
+import net.firedevops.firemud.entitymanagement.v1.ContainerItem;
 import net.firedevops.firemud.entitymanagement.v1.DropItemToRoomResponse;
 import net.firedevops.firemud.entitymanagement.v1.EntityType;
 import net.firedevops.firemud.entitymanagement.v1.InventoryItem;
@@ -11,7 +12,6 @@ import net.firedevops.firemud.entitymanagement.v1.ListContainerContentsResponse;
 import net.firedevops.firemud.entitymanagement.v1.ListRoomEntitiesResponse;
 import net.firedevops.firemud.entitymanagement.v1.PickupItemFromRoomResponse;
 import net.firedevops.firemud.entitymanagement.v1.QueryInventoryResponse;
-import net.firedevops.firemud.entitymanagement.v1.ContainerItem;
 import net.firedevops.firemud.entitymanagement.v1.RoomEntity;
 import net.firedevops.firemud.entitymanagement.v1.RoomGroundInventoryItem;
 import net.firedevops.firemud.gamesession.client.EntityManagementClient;
@@ -289,8 +289,7 @@ class InventoryCommandHandlerTest {
     assertThat(result.commandResult().errorCode()).isEqualTo("INVALID_ARGUMENT");
     assertThat(result.outputs()).hasSize(1);
     assertThat(result.outputs().get(0).kind()).isEqualTo(PlayerOutputKind.ERROR);
-    assertThat(result.outputs().get(0).text())
-        .contains("must empty Old Chest before dropping it");
+    assertThat(result.outputs().get(0).text()).contains("must empty Old Chest before dropping it");
   }
 
   @Test

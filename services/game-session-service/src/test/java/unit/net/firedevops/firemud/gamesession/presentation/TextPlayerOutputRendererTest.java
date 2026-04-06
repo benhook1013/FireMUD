@@ -198,6 +198,96 @@ class TextPlayerOutputRendererTest {
   }
 
   @Test
+  void renderAllFormatsContainerViewThroughNormalRendererPath() {
+    TextPlayerOutputRenderer renderer =
+        new TextPlayerOutputRenderer(
+            new PresentationProperties(
+                "en-NZ",
+                PresentationProperties.ColorMode.NONE,
+                false,
+                new PresentationProperties.Prompt(true, true, 150L)));
+
+    String rendered =
+        renderer.renderAll(
+            new TextCommand(TextCommandType.CONTAINER, List.of("satchel"), "CONTAINER satchel"),
+            CommandEnqueueResult.success(),
+            List.of(
+                PlayerOutput.view(
+                    new InventoryViewOutput(
+                        "Container: Satchel", List.of("- Trail Ration x2 (A dry ration)"))),
+                PlayerOutput.prompt("demo> ")));
+
+    assertThat(rendered)
+        .isEqualTo(
+            "OK CONTAINER\n"
+                + "Container: Satchel\n"
+                + "- Trail Ration x2 (A dry ration)\n\n"
+                + "demo> ");
+  }
+
+  @Test
+  void renderAllFormatsPutResultWithContainerRefresh() {
+    TextPlayerOutputRenderer renderer =
+        new TextPlayerOutputRenderer(
+            new PresentationProperties(
+                "en-NZ",
+                PresentationProperties.ColorMode.NONE,
+                false,
+                new PresentationProperties.Prompt(true, true, 150L)));
+
+    String rendered =
+        renderer.renderAll(
+            new TextCommand(
+                TextCommandType.PUT, List.of("torch", "into", "satchel"), "PUT torch INTO satchel"),
+            CommandEnqueueResult.success(),
+            List.of(
+                PlayerOutput.message("You put Torch into Satchel."),
+                PlayerOutput.view(
+                    new InventoryViewOutput("Container: Satchel", List.of("It is empty."))),
+                PlayerOutput.prompt("demo> ")));
+
+    assertThat(rendered)
+        .isEqualTo(
+            "OK PUT\n"
+                + "You put Torch into Satchel.\n"
+                + "Container: Satchel\n"
+                + "It is empty.\n\n"
+                + "demo> ");
+  }
+
+  @Test
+  void renderAllFormatsTakeResultWithContainerRefresh() {
+    TextPlayerOutputRenderer renderer =
+        new TextPlayerOutputRenderer(
+            new PresentationProperties(
+                "en-NZ",
+                PresentationProperties.ColorMode.NONE,
+                false,
+                new PresentationProperties.Prompt(true, true, 150L)));
+
+    String rendered =
+        renderer.renderAll(
+            new TextCommand(
+                TextCommandType.TAKE,
+                List.of("torch", "from", "satchel"),
+                "TAKE torch FROM satchel"),
+            CommandEnqueueResult.success(),
+            List.of(
+                PlayerOutput.message("You take Torch from Satchel."),
+                PlayerOutput.view(
+                    new InventoryViewOutput("Container: Satchel", List.of("It is empty."))),
+                PlayerOutput.prompt("demo> ")));
+
+    assertThat(rendered)
+        .isEqualTo(
+            "OK TAKE\n"
+                + "You take Torch from Satchel.\n"
+                + "Container: Satchel\n"
+                + "It is empty.\n\n"
+                + "demo> ");
+  }
+
+  @Test
   void quickLookRenderingOmitsLongDescriptionWithoutGlobalBriefMode() {
     TextPlayerOutputRenderer renderer =
         new TextPlayerOutputRenderer(
@@ -455,6 +545,27 @@ class TextPlayerOutputRendererTest {
 
     assertThat(rendered)
         .isEqualTo("ERROR LOGIN_REQUIRED You must LOGIN first. Use LOGIN <email> <password>.");
+  }
+
+  @Test
+  void localizedUnknownHelpTopicUsesConfiguredLocaleTemplate() {
+    TextPlayerOutputRenderer renderer =
+        new TextPlayerOutputRenderer(
+            new PresentationProperties(
+                "fr",
+                PresentationProperties.ColorMode.NONE,
+                false,
+                new PresentationProperties.Prompt(true, true, 150L)));
+
+    String rendered =
+        renderer.render(
+            PlayerOutput.error(
+                "HELP_UNKNOWN_TOPIC",
+                "fallback",
+                "error.help.unknown-topic",
+                java.util.Map.of("topic", "banane")));
+
+    assertThat(rendered).isEqualTo("ERROR HELP_UNKNOWN_TOPIC Sujet d'aide inconnu : banane");
   }
 
   @Test
