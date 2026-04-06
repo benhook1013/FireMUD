@@ -49,7 +49,7 @@ class EntityManagementClientTest {
     setStub(client, stub);
 
     PickupItemFromRoomResponse response =
-        client.pickupItemFromRoom("1", "7", "GI-1", "R-1", "99", 2);
+        client.pickupItemFromRoom("1", "7", "GI-1", "R-1", "99", null, 2);
 
     assertThat(response.getInventoryItem().getItemName()).isEqualTo("Torch");
     assertThat(response.getInventoryItem().getQuantity()).isEqualTo(2);
@@ -85,7 +85,7 @@ class EntityManagementClientTest {
                 .build());
     setStub(client, stub);
 
-    DropItemToRoomResponse response = client.dropItemToRoom("1", "7", "GI-1", "R-1", "99", 1);
+    DropItemToRoomResponse response = client.dropItemToRoom("1", "7", "GI-1", "R-1", "99", null, 1);
 
     assertThat(response.getRoomGroundItem().getItemName()).isEqualTo("Torch");
     assertThat(response.getRoomGroundItem().getQuantity()).isEqualTo(1);

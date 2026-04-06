@@ -636,6 +636,7 @@ public class EntityManagementGrpcService
               request.getGameInstanceId(),
               request.getRoomInstanceId(),
               itemId,
+              request.getContainerInstanceId(),
               quantity);
       PickupItemFromRoomResponse response =
           PickupItemFromRoomResponse.newBuilder().setInventoryItem(toProto(dto)).build();
@@ -693,6 +694,7 @@ public class EntityManagementGrpcService
               request.getGameInstanceId(),
               request.getRoomInstanceId(),
               itemId,
+              request.getContainerInstanceId(),
               quantity);
       DropItemToRoomResponse response =
           DropItemToRoomResponse.newBuilder().setRoomGroundItem(toProto(dto)).build();

@@ -6,8 +6,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.util.List;
 import net.firedevops.firemud.entitymanagement.config.LookProperties;
 import net.firedevops.firemud.entitymanagement.dto.RoomEntityDto;
+import net.firedevops.firemud.entitymanagement.entity.ContainerInstance;
 import net.firedevops.firemud.entitymanagement.entity.RoomGroundInventoryEntry;
 import net.firedevops.firemud.entitymanagement.entity.RoomGroundInventoryKey;
+import net.firedevops.firemud.entitymanagement.repository.ContainerInstanceRepository;
 import net.firedevops.firemud.entitymanagement.repository.RoomGroundInventoryRepository;
 import net.firedevops.firemud.entitymanagement.v1.EntityType;
 import net.firedevops.firemud.entitymanagement.v1.ReloadHint;
@@ -20,13 +22,17 @@ import org.springframework.data.domain.Pageable;
 class RoomEntityServiceImplTest {
   private LookProperties props;
   private RoomGroundInventoryRepository roomGroundInventoryRepository;
+  private ContainerInstanceRepository containerInstanceRepository;
   private RoomEntityServiceImpl service;
 
   @BeforeEach
   void setup() {
     props = new LookProperties();
     roomGroundInventoryRepository = Mockito.mock(RoomGroundInventoryRepository.class);
-    service = new RoomEntityServiceImpl(props, roomGroundInventoryRepository);
+    containerInstanceRepository = Mockito.mock(ContainerInstanceRepository.class);
+    service =
+        new RoomEntityServiceImpl(
+            props, roomGroundInventoryRepository, containerInstanceRepository);
   }
 
   @Test
@@ -68,16 +74,30 @@ class RoomEntityServiceImplTest {
     entry.setItem(item);
     entry.setQuantity(2);
 
+    ContainerInstance instance = new ContainerInstance();
+    instance.setId(42L);
+    instance.setTenantId(1L);
+    instance.setGameInstanceId("game-1");
+    instance.setRoomInstanceId("R-1021");
+    instance.setItem(item);
+
     Mockito.when(
             roomGroundInventoryRepository.findByIdTenantIdAndIdGameInstanceIdAndIdRoomInstanceId(
                 1L, "game-1", "R-1021", Pageable.unpaged()))
         .thenReturn(new PageImpl<>(List.of(entry)));
+    Mockito.when(
+            containerInstanceRepository
+                .findByTenantIdAndGameInstanceIdAndRoomInstanceIdAndItem_IdAndCharacterIsNullAndEquipmentSlotIsNull(
+                    1L, "game-1", "R-1021", 9L))
+        .thenReturn(java.util.Optional.of(instance));
 
     List<RoomEntityDto> listed = service.listEntities("1", "game-1", "R-1021");
     assertEquals(1, listed.size());
     assertEquals(EntityType.ITEM, listed.get(0).entityType());
     assertEquals("Backpack x2", listed.get(0).displayName());
-    assertEquals(List.of("room-ground", "container", "wearable:BACK"), listed.get(0).stateFlags());
+    assertEquals(
+        List.of("room-ground", "container", "container-instance:42", "wearable:BACK"),
+        listed.get(0).stateFlags());
   }
 
   private LookProperties.LookEntity entity(

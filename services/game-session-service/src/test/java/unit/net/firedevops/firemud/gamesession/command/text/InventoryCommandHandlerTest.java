@@ -80,7 +80,7 @@ class InventoryCommandHandlerTest {
                         .addStateFlags("room-ground")
                         .build())
                 .build());
-    when(entityManagementClient.pickupItemFromRoom("22", "911", "77", "room-7", "7", 1))
+    when(entityManagementClient.pickupItemFromRoom("22", "911", "77", "room-7", "7", "7", 1))
         .thenReturn(
             PickupItemFromRoomResponse.newBuilder()
                 .setInventoryItem(
@@ -130,7 +130,7 @@ class InventoryCommandHandlerTest {
                         .addStateFlags("room-ground")
                         .build())
                 .build());
-    when(entityManagementClient.pickupItemFromRoom("22", "911", "77", "room-7", "7", 2))
+    when(entityManagementClient.pickupItemFromRoom("22", "911", "77", "room-7", "7", "7", 2))
         .thenReturn(
             PickupItemFromRoomResponse.newBuilder()
                 .setInventoryItem(
@@ -180,7 +180,7 @@ class InventoryCommandHandlerTest {
                         .build())
                 .build(),
             QueryInventoryResponse.newBuilder().build());
-    when(entityManagementClient.dropItemToRoom("22", "911", "77", "room-7", "7", 1))
+    when(entityManagementClient.dropItemToRoom("22", "911", "77", "room-7", "7", "7", 1))
         .thenReturn(
             DropItemToRoomResponse.newBuilder()
                 .setRoomGroundItem(
@@ -229,7 +229,7 @@ class InventoryCommandHandlerTest {
                         .setQuantity(1)
                         .build())
                 .build());
-    when(entityManagementClient.dropItemToRoom("22", "911", "77", "room-7", "7", 2))
+    when(entityManagementClient.dropItemToRoom("22", "911", "77", "room-7", "7", "7", 2))
         .thenReturn(
             DropItemToRoomResponse.newBuilder()
                 .setRoomGroundItem(
@@ -278,7 +278,8 @@ class InventoryCommandHandlerTest {
                         .setQuantity(1)
                         .build())
                 .build());
-    when(entityManagementClient.dropItemToRoom("22", "911", "77", "room-7", "10", 1))
+    when(entityManagementClient.dropItemToRoom(
+            "22", "911", "77", "room-7", "10", "container-10", 1))
         .thenReturn(
             DropItemToRoomResponse.newBuilder()
                 .setRoomGroundItem(
@@ -314,7 +315,7 @@ class InventoryCommandHandlerTest {
                         .setQuantity(1)
                         .build())
                 .build());
-    when(entityManagementClient.dropItemToRoom("22", "911", "77", "room-7", "7", 1))
+    when(entityManagementClient.dropItemToRoom("22", "911", "77", "room-7", "7", "7", 1))
         .thenReturn(
             DropItemToRoomResponse.newBuilder()
                 .setError(

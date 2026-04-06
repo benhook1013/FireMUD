@@ -206,7 +206,7 @@ class InventoryServiceImplTest {
     when(inventoryRepo.save(any(InventoryEntry.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
 
-    var dropped = service.dropItemToRoom(1L, 1L, "GI-1", "R-1", 2L, 1);
+    var dropped = service.dropItemToRoom(1L, 1L, "GI-1", "R-1", 2L, null, 1);
 
     assertEquals("Torch", dropped.itemName());
     assertEquals(1, dropped.quantity());
@@ -257,7 +257,8 @@ class InventoryServiceImplTest {
     when(inventoryRepo.findById(inventoryKey)).thenReturn(Optional.of(carried));
 
     assertThrows(
-        IllegalArgumentException.class, () -> service.dropItemToRoom(1L, 1L, "GI-1", "R-1", 2L, 2));
+        IllegalArgumentException.class,
+        () -> service.dropItemToRoom(1L, 1L, "GI-1", "R-1", 2L, null, 2));
   }
 
   @Test
@@ -309,7 +310,7 @@ class InventoryServiceImplTest {
     when(inventoryRepo.save(any(InventoryEntry.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
 
-    var pickedUp = service.pickupItemFromRoom(1L, 1L, "GI-1", "R-1", 2L, 1);
+    var pickedUp = service.pickupItemFromRoom(1L, 1L, "GI-1", "R-1", 2L, null, 1);
 
     assertEquals("Torch", pickedUp.itemName());
     assertEquals(1, pickedUp.quantity());
@@ -362,7 +363,7 @@ class InventoryServiceImplTest {
 
     assertThrows(
         IllegalArgumentException.class,
-        () -> service.pickupItemFromRoom(1L, 1L, "GI-1", "R-1", 2L, 2));
+        () -> service.pickupItemFromRoom(1L, 1L, "GI-1", "R-1", 2L, null, 2));
   }
 
   @Test
@@ -392,10 +393,11 @@ class InventoryServiceImplTest {
         IllegalArgumentException.class,
         () -> service.listRoomGroundItems(1L, " ", "R-1", Pageable.unpaged()));
     assertThrows(
-        IllegalArgumentException.class, () -> service.dropItemToRoom(1L, 1L, "GI-1", "", 2L, 1));
+        IllegalArgumentException.class,
+        () -> service.dropItemToRoom(1L, 1L, "GI-1", "", 2L, null, 1));
     assertThrows(
         IllegalArgumentException.class,
-        () -> service.pickupItemFromRoom(1L, 1L, null, "R-1", 2L, 1));
+        () -> service.pickupItemFromRoom(1L, 1L, null, "R-1", 2L, null, 1));
 
     verifyNoInteractions(roomRepo);
   }

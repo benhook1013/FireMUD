@@ -150,6 +150,7 @@ public class InventoryCommandHandler {
                 Long.toString(context.gameInstanceId()),
                 context.roomInstanceId(),
                 item.itemId(),
+                item.containerInstanceId(),
                 itemReference.quantity());
         if (response.hasError()) {
           return inventoryMutationFailure(
@@ -189,6 +190,7 @@ public class InventoryCommandHandler {
               Long.toString(context.gameInstanceId()),
               context.roomInstanceId(),
               item.itemId(),
+              item.containerInstanceId(),
               itemReference.quantity());
       if (response.hasError()) {
         return inventoryMutationFailure(
@@ -268,7 +270,7 @@ public class InventoryCommandHandler {
                 new ResolvedItem(
                     parseItemId(entity.getEntityId()),
                     entity.getDisplayName(),
-                    parseItemId(entity.getEntityId())));
+                    parseContainerInstanceId(entity)));
   }
 
   private Optional<ResolvedItem> findCarriedItem(List<InventoryItem> items, String reference) {
@@ -289,6 +291,15 @@ public class InventoryCommandHandler {
     }
     int lastColon = entityId.lastIndexOf(':');
     return lastColon < 0 ? entityId : entityId.substring(lastColon + 1);
+  }
+
+  private String parseContainerInstanceId(RoomEntity entity) {
+    return entity.getStateFlagsList().stream()
+        .filter(flag -> flag.startsWith("container-instance:"))
+        .map(flag -> flag.substring("container-instance:".length()))
+        .filter(StringUtils::hasText)
+        .findFirst()
+        .orElse(parseItemId(entity.getEntityId()));
   }
 
   private String errorCode(String errorCode) {

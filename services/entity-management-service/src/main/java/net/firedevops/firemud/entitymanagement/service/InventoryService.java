@@ -21,6 +21,7 @@ public interface InventoryService {
       String gameInstanceId,
       String roomInstanceId,
       Long itemId,
+      String containerInstanceId,
       int quantity);
 
   InventoryEntryDto pickupItemFromRoom(
@@ -29,5 +30,6 @@ public interface InventoryService {
       String gameInstanceId,
       String roomInstanceId,
       Long itemId,
+      String containerInstanceId,
       int quantity);
 }

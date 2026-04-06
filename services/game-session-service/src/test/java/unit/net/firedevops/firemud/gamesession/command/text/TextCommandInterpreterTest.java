@@ -165,6 +165,7 @@ class TextCommandInterpreterTest {
             Mockito.anyString(),
             Mockito.anyString(),
             Mockito.anyString(),
+            Mockito.anyString(),
             Mockito.eq(1)))
         .thenReturn(
             PickupItemFromRoomResponse.newBuilder()
@@ -177,6 +178,7 @@ class TextCommandInterpreterTest {
                         .build())
                 .build());
     when(entityManagementClient.dropItemToRoom(
+            Mockito.anyString(),
             Mockito.anyString(),
             Mockito.anyString(),
             Mockito.anyString(),

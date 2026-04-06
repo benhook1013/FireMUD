@@ -172,6 +172,7 @@ message PickupItemFromRoomRequest {
   string room_instance_id = 4;
   string item_id = 5;
   int32 quantity = 6;
+  string container_instance_id = 7;
 }
 
 message PickupItemFromRoomResponse {
@@ -187,6 +188,7 @@ message DropItemToRoomRequest {
   string room_instance_id = 4;
   string item_id = 5;
   int32 quantity = 6;
+  string container_instance_id = 7;
 }
 
 message DropItemToRoomResponse {

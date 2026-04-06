@@ -6,8 +6,10 @@ import java.util.Map;
 import java.util.stream.Stream;
 import net.firedevops.firemud.entitymanagement.config.LookProperties;
 import net.firedevops.firemud.entitymanagement.dto.RoomEntityDto;
+import net.firedevops.firemud.entitymanagement.entity.ContainerInstance;
 import net.firedevops.firemud.entitymanagement.entity.Item;
 import net.firedevops.firemud.entitymanagement.entity.RoomGroundInventoryEntry;
+import net.firedevops.firemud.entitymanagement.repository.ContainerInstanceRepository;
 import net.firedevops.firemud.entitymanagement.repository.RoomGroundInventoryRepository;
 import net.firedevops.firemud.entitymanagement.service.RoomEntityService;
 import net.firedevops.firemud.entitymanagement.v1.EntityType;
@@ -20,11 +22,15 @@ import org.springframework.stereotype.Service;
 public class RoomEntityServiceImpl implements RoomEntityService {
   private final LookProperties lookProperties;
   private final RoomGroundInventoryRepository roomGroundInventoryRepository;
+  private final ContainerInstanceRepository containerInstanceRepository;
 
   public RoomEntityServiceImpl(
-      LookProperties lookProperties, RoomGroundInventoryRepository roomGroundInventoryRepository) {
+      LookProperties lookProperties,
+      RoomGroundInventoryRepository roomGroundInventoryRepository,
+      ContainerInstanceRepository containerInstanceRepository) {
     this.lookProperties = lookProperties;
     this.roomGroundInventoryRepository = roomGroundInventoryRepository;
+    this.containerInstanceRepository = containerInstanceRepository;
   }
 
   @Override
@@ -90,6 +96,15 @@ public class RoomEntityServiceImpl implements RoomEntityService {
     flags.add("room-ground");
     if (item.isContainer()) {
       flags.add("container");
+      Long containerInstanceId =
+          resolveRoomContainerInstanceId(
+              entry.getId().getTenantId(),
+              entry.getId().getGameInstanceId(),
+              entry.getId().getRoomInstanceId(),
+              item.getId());
+      if (containerInstanceId != null) {
+        flags.add("container-instance:" + containerInstanceId);
+      }
     }
     String equipmentSlot = item.getEquipmentSlot();
     if (equipmentSlot != null && !equipmentSlot.isBlank()) {
@@ -105,5 +120,14 @@ public class RoomEntityServiceImpl implements RoomEntityService {
         entry.getId().getGameInstanceId(),
         entry.getId().getRoomInstanceId(),
         String.valueOf(entry.getId().getItemId()));
+  }
+
+  private Long resolveRoomContainerInstanceId(
+      Long tenantId, String gameInstanceId, String roomInstanceId, Long itemId) {
+    return containerInstanceRepository
+        .findByTenantIdAndGameInstanceIdAndRoomInstanceIdAndItem_IdAndCharacterIsNullAndEquipmentSlotIsNull(
+            tenantId, gameInstanceId, roomInstanceId, itemId)
+        .map(ContainerInstance::getId)
+        .orElse(null);
   }
 }

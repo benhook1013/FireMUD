@@ -42,6 +42,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
+import org.springframework.util.StringUtils;
 
 /** gRPC client for the Entity Management Service. */
 @Component
@@ -404,18 +405,21 @@ public final class EntityManagementClient
       String gameInstanceId,
       String roomInstanceId,
       String itemId,
+      String containerInstanceId,
       int quantity) {
-    PickupItemFromRoomRequest request =
+    PickupItemFromRoomRequest.Builder request =
         PickupItemFromRoomRequest.newBuilder()
             .setTenantId(tenantId)
             .setCharacterId(characterId)
             .setGameInstanceId(gameInstanceId)
             .setRoomInstanceId(roomInstanceId)
             .setItemId(itemId)
-            .setQuantity(quantity)
-            .build();
+            .setQuantity(quantity);
+    if (StringUtils.hasText(containerInstanceId)) {
+      request.setContainerInstanceId(containerInstanceId);
+    }
     try {
-      return callStub().pickupItemFromRoom(request);
+      return callStub().pickupItemFromRoom(request.build());
     } catch (StatusRuntimeException ex) {
       if (ex.getStatus().getCode() == Status.Code.UNAVAILABLE) {
         logger.warn(
@@ -423,7 +427,7 @@ public final class EntityManagementClient
             ex);
         try {
           initClient();
-          return callStub().pickupItemFromRoom(request);
+          return callStub().pickupItemFromRoom(request.build());
         } catch (Exception retryEx) {
           logger.warn(
               "Failed to retry Entity Management inventory pickup after channel reload", retryEx);
@@ -448,18 +452,21 @@ public final class EntityManagementClient
       String gameInstanceId,
       String roomInstanceId,
       String itemId,
+      String containerInstanceId,
       int quantity) {
-    DropItemToRoomRequest request =
+    DropItemToRoomRequest.Builder request =
         DropItemToRoomRequest.newBuilder()
             .setTenantId(tenantId)
             .setCharacterId(characterId)
             .setGameInstanceId(gameInstanceId)
             .setRoomInstanceId(roomInstanceId)
             .setItemId(itemId)
-            .setQuantity(quantity)
-            .build();
+            .setQuantity(quantity);
+    if (StringUtils.hasText(containerInstanceId)) {
+      request.setContainerInstanceId(containerInstanceId);
+    }
     try {
-      return callStub().dropItemToRoom(request);
+      return callStub().dropItemToRoom(request.build());
     } catch (StatusRuntimeException ex) {
       if (ex.getStatus().getCode() == Status.Code.UNAVAILABLE) {
         logger.warn(
@@ -467,7 +474,7 @@ public final class EntityManagementClient
             ex);
         try {
           initClient();
-          return callStub().dropItemToRoom(request);
+          return callStub().dropItemToRoom(request.build());
         } catch (Exception retryEx) {
           logger.warn(
               "Failed to retry Entity Management inventory drop after channel reload", retryEx);

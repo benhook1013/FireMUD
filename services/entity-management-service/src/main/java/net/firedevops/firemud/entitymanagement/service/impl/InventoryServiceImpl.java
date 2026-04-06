@@ -89,6 +89,7 @@ public class InventoryServiceImpl implements InventoryService {
       String gameInstanceId,
       String roomInstanceId,
       Long itemId,
+      String containerInstanceId,
       int quantity) {
     requirePositiveQuantity(quantity);
     String normalizedGameInstanceId = requireText(gameInstanceId, "gameInstanceId");
@@ -103,7 +104,11 @@ public class InventoryServiceImpl implements InventoryService {
     if (item.isContainer()) {
       requireSingleContainerTransfer(quantity);
       moveContainerInstanceToRoom(
-          character, normalizedGameInstanceId, normalizedRoomInstanceId, item);
+          character,
+          normalizedGameInstanceId,
+          normalizedRoomInstanceId,
+          item,
+          normalizeOptionalText(containerInstanceId));
     }
     RoomGroundInventoryEntry roomEntry =
         upsertRoomGroundEntry(
@@ -120,6 +125,7 @@ public class InventoryServiceImpl implements InventoryService {
       String gameInstanceId,
       String roomInstanceId,
       Long itemId,
+      String containerInstanceId,
       int quantity) {
     requirePositiveQuantity(quantity);
     String normalizedGameInstanceId = requireText(gameInstanceId, "gameInstanceId");
@@ -136,7 +142,11 @@ public class InventoryServiceImpl implements InventoryService {
     if (item.isContainer()) {
       requireSingleContainerTransfer(quantity);
       moveContainerInstanceToCarriedFromRoom(
-          character, normalizedGameInstanceId, normalizedRoomInstanceId, item);
+          character,
+          normalizedGameInstanceId,
+          normalizedRoomInstanceId,
+          item,
+          normalizeOptionalText(containerInstanceId));
     }
     InventoryEntry carried = upsertInventoryEntry(character, item, quantity);
     return toDto(carried);
@@ -245,8 +255,13 @@ public class InventoryServiceImpl implements InventoryService {
   }
 
   private void moveContainerInstanceToRoom(
-      Character character, String gameInstanceId, String roomInstanceId, Item item) {
-    ContainerInstance instance = ensureCarriedContainerInstance(character, item);
+      Character character,
+      String gameInstanceId,
+      String roomInstanceId,
+      Item item,
+      String containerInstanceId) {
+    ContainerInstance instance =
+        requireCarriedContainerInstance(character, item, containerInstanceId);
     instance.setCharacter(null);
     instance.setEquipmentSlot(null);
     instance.setGameInstanceId(gameInstanceId);
@@ -255,18 +270,14 @@ public class InventoryServiceImpl implements InventoryService {
   }
 
   private void moveContainerInstanceToCarriedFromRoom(
-      Character character, String gameInstanceId, String roomInstanceId, Item item) {
+      Character character,
+      String gameInstanceId,
+      String roomInstanceId,
+      Item item,
+      String containerInstanceId) {
     ContainerInstance instance =
-        containerInstanceRepository
-            .findByTenantIdAndGameInstanceIdAndRoomInstanceIdAndItem_IdAndCharacterIsNullAndEquipmentSlotIsNull(
-                character.getTenantId(), gameInstanceId, roomInstanceId, item.getId())
-            .orElseGet(
-                () -> {
-                  ContainerInstance created = new ContainerInstance();
-                  created.setTenantId(character.getTenantId());
-                  created.setItem(item);
-                  return created;
-                });
+        requireRoomContainerInstance(
+            character.getTenantId(), gameInstanceId, roomInstanceId, item, containerInstanceId);
     instance.setCharacter(character);
     instance.setEquipmentSlot(null);
     instance.setGameInstanceId(null);
@@ -339,11 +350,55 @@ public class InventoryServiceImpl implements InventoryService {
     }
   }
 
+  private ContainerInstance requireCarriedContainerInstance(
+      Character character, Item item, String containerInstanceId) {
+    if (containerInstanceId != null) {
+      return containerInstanceRepository
+          .findAccessibleByIdAndTenantIdAndCharacterId(
+              Long.parseLong(containerInstanceId), character.getTenantId(), character.getId())
+          .filter(instance -> instance.getItem().getId().equals(item.getId()))
+          .orElseThrow(() -> new IllegalArgumentException("Container instance not found"));
+    }
+    return ensureCarriedContainerInstance(character, item);
+  }
+
+  private ContainerInstance requireRoomContainerInstance(
+      Long tenantId,
+      String gameInstanceId,
+      String roomInstanceId,
+      Item item,
+      String containerInstanceId) {
+    if (containerInstanceId != null) {
+      return containerInstanceRepository
+          .findById(Long.parseLong(containerInstanceId))
+          .filter(instance -> instance.getTenantId().equals(tenantId))
+          .filter(instance -> instance.getCharacter() == null)
+          .filter(instance -> instance.getItem().getId().equals(item.getId()))
+          .filter(instance -> gameInstanceId.equals(instance.getGameInstanceId()))
+          .filter(instance -> roomInstanceId.equals(instance.getRoomInstanceId()))
+          .orElseThrow(() -> new IllegalArgumentException("Container instance not found"));
+    }
+    return containerInstanceRepository
+        .findByTenantIdAndGameInstanceIdAndRoomInstanceIdAndItem_IdAndCharacterIsNullAndEquipmentSlotIsNull(
+            tenantId, gameInstanceId, roomInstanceId, item.getId())
+        .orElseGet(
+            () -> {
+              ContainerInstance created = new ContainerInstance();
+              created.setTenantId(tenantId);
+              created.setItem(item);
+              return created;
+            });
+  }
+
   private String requireText(String value, String fieldName) {
     if (value == null || value.isBlank()) {
       throw new IllegalArgumentException(fieldName + " must be provided");
     }
     return value.trim();
+  }
+
+  private String normalizeOptionalText(String value) {
+    return value == null || value.isBlank() ? null : value.trim();
   }
 
   private InventoryKey inventoryKey(Long characterId, Long itemId) {
