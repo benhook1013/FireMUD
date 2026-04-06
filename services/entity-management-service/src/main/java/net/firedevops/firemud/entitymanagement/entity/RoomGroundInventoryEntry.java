@@ -52,6 +52,7 @@ public class RoomGroundInventoryEntry {
     copy.setTenantId(item.getTenantId());
     copy.setName(item.getName());
     copy.setDescription(item.getDescription());
+    copy.setEquipmentSlot(item.getEquipmentSlot());
     return copy;
   }
 
@@ -64,6 +65,7 @@ public class RoomGroundInventoryEntry {
       copy.setTenantId(item.getTenantId());
       copy.setName(item.getName());
       copy.setDescription(item.getDescription());
+      copy.setEquipmentSlot(item.getEquipmentSlot());
       this.item = copy;
     }
   }

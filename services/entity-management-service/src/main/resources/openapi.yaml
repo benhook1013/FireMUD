@@ -86,6 +86,28 @@ components:
       required:
         - itemId
         - quantity
+    WearEquipmentItemRequest:
+      type: object
+      properties:
+        itemId:
+          type: integer
+      required:
+        - itemId
+    CharacterEquipmentEntryDto:
+      type: object
+      properties:
+        tenantId:
+          type: integer
+        characterId:
+          type: integer
+        slot:
+          type: string
+        itemId:
+          type: integer
+        itemName:
+          type: string
+        itemDescription:
+          type: string
 paths:
   /ping:
     get:
@@ -182,6 +204,99 @@ paths:
                     type: object
         '400':
           description: Invalid item or character ID
+  /tenants/{tenantId}/characters/{characterId}/equipment:
+    get:
+      summary: List equipped items
+      operationId: listEquipment
+      parameters:
+        - in: path
+          name: tenantId
+          required: true
+          schema:
+            type: integer
+        - in: path
+          name: characterId
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Equipment list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/CharacterEquipmentEntryDto'
+        '400':
+          description: Invalid tenant or character ID
+    post:
+      summary: Wear an item
+      operationId: wearItem
+      parameters:
+        - in: path
+          name: tenantId
+          required: true
+          schema:
+            type: integer
+        - in: path
+          name: characterId
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WearEquipmentItemRequest'
+      responses:
+        '200':
+          description: Equipped item
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/CharacterEquipmentEntryDto'
+        '400':
+          description: Invalid equipment data
+  /tenants/{tenantId}/characters/{characterId}/equipment/{slot}:
+    delete:
+      summary: Remove a worn item
+      operationId: removeWornItem
+      parameters:
+        - in: path
+          name: tenantId
+          required: true
+          schema:
+            type: integer
+        - in: path
+          name: characterId
+          required: true
+          schema:
+            type: integer
+        - in: path
+          name: slot
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Removed equipment entry
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/CharacterEquipmentEntryDto'
+        '400':
+          description: Invalid slot or character ID
   /tenants/{tenantId}/accounts/{accountId}/characters:
     get:
       summary: List characters by account

@@ -5,40 +5,37 @@ import lombok.Data;
 
 @Data
 @Entity
-@Table(name = "inventory")
-public class InventoryEntry {
-  @EmbeddedId private InventoryKey id;
+@Table(name = "character_equipment")
+public class CharacterEquipmentEntry {
+  @EmbeddedId private CharacterEquipmentKey id;
 
   @ManyToOne(fetch = FetchType.LAZY)
   @MapsId("characterId")
   private Character character;
 
   @ManyToOne(fetch = FetchType.LAZY)
-  @MapsId("itemId")
+  @JoinColumn(name = "item_id", nullable = false)
   private Item item;
-
-  @Column(nullable = false)
-  private int quantity;
 
   @Version private int version;
 
-  public InventoryKey getId() {
+  public CharacterEquipmentKey getId() {
     if (id == null) {
       return null;
     }
-    InventoryKey copy = new InventoryKey();
+    CharacterEquipmentKey copy = new CharacterEquipmentKey();
     copy.setCharacterId(id.getCharacterId());
-    copy.setItemId(id.getItemId());
+    copy.setSlot(id.getSlot());
     return copy;
   }
 
-  public void setId(InventoryKey id) {
+  public void setId(CharacterEquipmentKey id) {
     if (id == null) {
       this.id = null;
     } else {
-      InventoryKey copy = new InventoryKey();
+      CharacterEquipmentKey copy = new CharacterEquipmentKey();
       copy.setCharacterId(id.getCharacterId());
-      copy.setItemId(id.getItemId());
+      copy.setSlot(id.getSlot());
       this.id = copy;
     }
   }
