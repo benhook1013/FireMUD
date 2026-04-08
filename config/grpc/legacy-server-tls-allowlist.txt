@@ -1,2 +1,0 @@
-# Temporary allowlist for legacy top-level grpc.server.* server TLS config.
-# The allowlist is intentionally empty once the SSL-bundle migration is complete.
