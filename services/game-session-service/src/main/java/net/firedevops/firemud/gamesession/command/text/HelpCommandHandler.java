@@ -140,7 +140,9 @@ public class HelpCommandHandler {
       case "PLAY" -> "PLAY";
       case "WHO" -> "WHO";
       case "INVENTORY", "INV", "I" -> "INVENTORY";
-      case "EQUIPMENT", "EQUIP", "EQ", "WEAR", "REMOVE" -> "EQUIPMENT";
+      case "EQUIPMENT", "EQUIP", "EQ" -> "EQUIPMENT";
+      case "WEAR" -> "WEAR";
+      case "REMOVE" -> "REMOVE";
       case "CONTAINER", "CONT" -> "CONTAINER";
       case "PUT" -> "PUT";
       case "TAKE" -> "TAKE";

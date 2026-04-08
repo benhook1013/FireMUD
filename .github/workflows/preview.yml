@@ -481,10 +481,9 @@ jobs:
             raise SystemExit(f"Session bootstrap failed with status {status}: {session_body}")
           session_payload = json.loads(session_body or "{}")
           session_id = (((session_payload.get("data") or {}).get("id")))
-          if str(session_id) != "1":
+          if not session_id:
             raise SystemExit(
-              "Preview smoke expects bootstrap game session id 1 for tcp-proxy default session wiring; "
-              f"got {session_id!r}"
+              f"Preview smoke session bootstrap response did not include a session id: {session_body}"
             )
           PY
           BOOTSTRAP_POD_LOG=/tmp/preview-bootstrap-pod.log

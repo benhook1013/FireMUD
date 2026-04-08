@@ -25,7 +25,8 @@ class WorldManagementGrpcServiceTest {
   private WorldManagementGrpcService newService(
       PingService pingService, RoomService roomService, MeterRegistry meterRegistry) {
     SessionContext.setContext("test-account", List.of("platformAdmin"), Map.of());
-    return new WorldManagementGrpcService(pingService, roomService, meterRegistry, new ObjectMapper());
+    return new WorldManagementGrpcService(
+        pingService, roomService, meterRegistry, new ObjectMapper());
   }
 
   @Test
