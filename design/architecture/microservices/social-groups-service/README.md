@@ -24,6 +24,10 @@ Provides chat, guild, and social networking features across games. Basic REST an
 - Presence indicators notify when friends come online
 - Game creators can broadcast announcements and send out-of-game emails
 
+### Presence Scope Note
+
+The gameplay `WHO` command is intentionally a current-game-instance presence view, not a broad social browser. If FireMUD later adds cross-game friend indicators, shared-type realm presence, or platform-wide online-status discovery, that should be modeled as a Social & Groups presence surface or a separate social command family rather than by broadening `WHO` beyond its in-game instance scope.
+
 ## Current Scope Notes
 
 - The current gameplay-connected communication slice is intentionally narrow in implementation: it proves room-local `say` delivery from Game Session through Game Logic into Social & Groups while establishing the broader shared communication model.
