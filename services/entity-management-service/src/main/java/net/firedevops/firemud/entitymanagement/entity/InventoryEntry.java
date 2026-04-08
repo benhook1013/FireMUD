@@ -2,6 +2,8 @@ package net.firedevops.firemud.entitymanagement.entity;
 
 import jakarta.persistence.*;
 import lombok.Data;
+import lombok.EqualsAndHashCode;
+import lombok.ToString;
 
 @Data
 @Entity
@@ -19,6 +21,8 @@ public class InventoryEntry {
 
   @Column(nullable = false)
   private int quantity;
+
+  @Transient @EqualsAndHashCode.Exclude @ToString.Exclude private Long containerInstanceId;
 
   @Version private int version;
 
@@ -49,6 +53,9 @@ public class InventoryEntry {
     }
     Character copy = new Character();
     copy.setId(character.getId());
+    copy.setTenantId(character.getTenantId());
+    copy.setAccountId(character.getAccountId());
+    copy.setName(character.getName());
     return copy;
   }
 
@@ -58,6 +65,9 @@ public class InventoryEntry {
     } else {
       Character copy = new Character();
       copy.setId(character.getId());
+      copy.setTenantId(character.getTenantId());
+      copy.setAccountId(character.getAccountId());
+      copy.setName(character.getName());
       this.character = copy;
     }
   }
@@ -68,6 +78,11 @@ public class InventoryEntry {
     }
     Item copy = new Item();
     copy.setId(item.getId());
+    copy.setTenantId(item.getTenantId());
+    copy.setName(item.getName());
+    copy.setDescription(item.getDescription());
+    copy.setEquipmentSlot(item.getEquipmentSlot());
+    copy.setContainer(item.isContainer());
     return copy;
   }
 
@@ -77,6 +92,11 @@ public class InventoryEntry {
     } else {
       Item copy = new Item();
       copy.setId(item.getId());
+      copy.setTenantId(item.getTenantId());
+      copy.setName(item.getName());
+      copy.setDescription(item.getDescription());
+      copy.setEquipmentSlot(item.getEquipmentSlot());
+      copy.setContainer(item.isContainer());
       this.item = copy;
     }
   }

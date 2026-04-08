@@ -35,6 +35,7 @@ jobs:
           PREVIEW_KUBECONFIG_LOCAL_SERVER: https://127.0.0.1:6443
         run: |
           KUBECONFIG_PATH="$(bash ./dev-tools/preview/write-kubeconfig.sh)"
+          bash ./dev-tools/preview/persist-runner-kubeconfig.sh "$KUBECONFIG_PATH"
           echo "KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"
 
       - name: Verify preview cluster access
@@ -49,20 +50,21 @@ jobs:
             exit 0
           fi
 
-          sudo mkdir -p /etc/apt/keyrings
-          curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
-            | sudo tee /etc/apt/keyrings/githubcli-archive-keyring.gpg >/dev/null
-          sudo chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg
-          echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
-            | sudo tee /etc/apt/sources.list.d/github-cli.list >/dev/null
-          sudo apt-get update
-          sudo apt-get install -y gh
+          GH_VERSION="2.76.2"
+          INSTALL_DIR="$HOME/.local/bin"
+          mkdir -p "$INSTALL_DIR"
+          curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_amd64.tar.gz" -o /tmp/gh.tgz
+          tar -xzf /tmp/gh.tgz -C /tmp
+          install "/tmp/gh_${GH_VERSION}_linux_amd64/bin/gh" "$INSTALL_DIR/gh"
+          export PATH="$HOME/.local/bin:$PATH"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           gh --version
 
       - name: Dispatch preview deploys for drifted PRs
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          preview_workflow_name="PR Preview Environment"
           gh api "repos/${GITHUB_REPOSITORY}/pulls?state=open&per_page=100" \
             --jq '.[] | [.number, .head.ref, .head.sha, .user.login] | @tsv' |
           while IFS=$'\t' read -r pr_number head_ref head_sha pr_author; do
@@ -77,6 +79,21 @@ jobs:
 
             if [[ "${current_head_sha}" == "${head_sha}" ]]; then
               echo "Preview ${namespace} already aligned to ${head_sha}"
+              continue
+            fi
+
+            active_preview_run_id="$(
+              gh run list \
+                --workflow "${preview_workflow_name}" \
+                --branch "${head_ref}" \
+                --limit 20 \
+                --json databaseId,status,displayTitle \
+                --jq '.[] | select(.displayTitle == "PR Preview Environment" and (.status == "queued" or .status == "in_progress")) | .databaseId' \
+                | head -n 1
+            )"
+
+            if [[ -n "${active_preview_run_id}" ]]; then
+              echo "Skipping dispatch for PR #${pr_number}: preview run ${active_preview_run_id} is already queued or in progress."
               continue
             fi
 

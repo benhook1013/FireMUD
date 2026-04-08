@@ -4,6 +4,7 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.ApiResponse;
+import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.entitymanagement.dto.AddInventoryItemRequest;
 import net.firedevops.firemud.entitymanagement.dto.InventoryEntryDto;
 import net.firedevops.firemud.entitymanagement.service.InventoryService;
@@ -14,7 +15,7 @@ import org.springframework.web.bind.annotation.*;
 
 /** REST endpoints for managing character inventories. */
 @RestController
-@RequestMapping("/characters/{characterId}/inventory")
+@RequestMapping("/tenants/{tenantId}/characters/{characterId}/inventory")
 @RequiredArgsConstructor
 public class InventoryController {
   @SuppressFBWarnings(
@@ -24,23 +25,28 @@ public class InventoryController {
 
   @GetMapping
   public ResponseEntity<ApiResponse<Page<InventoryEntryDto>>> list(
-      @PathVariable Long characterId, Pageable pageable) {
-    Page<InventoryEntryDto> list = inventoryService.listInventory(characterId, pageable);
+      @PathVariable Long tenantId, @PathVariable Long characterId, Pageable pageable) {
+    SessionContext.requireTenantAccess(tenantId);
+    Page<InventoryEntryDto> list = inventoryService.listInventory(tenantId, characterId, pageable);
     return ResponseEntity.ok(ApiResponse.success(list));
   }
 
   @PostMapping
   public ResponseEntity<ApiResponse<InventoryEntryDto>> addItem(
-      @PathVariable Long characterId, @Valid @RequestBody AddInventoryItemRequest request) {
+      @PathVariable Long tenantId,
+      @PathVariable Long characterId,
+      @Valid @RequestBody AddInventoryItemRequest request) {
+    SessionContext.requireTenantAccess(tenantId);
     InventoryEntryDto dto =
-        inventoryService.addItem(characterId, request.itemId(), request.quantity());
+        inventoryService.addItem(tenantId, characterId, request.itemId(), request.quantity());
     return ResponseEntity.ok(ApiResponse.success(dto));
   }
 
   @DeleteMapping("/{itemId}")
   public ResponseEntity<ApiResponse<Void>> remove(
-      @PathVariable Long characterId, @PathVariable Long itemId) {
-    inventoryService.removeItem(characterId, itemId);
+      @PathVariable Long tenantId, @PathVariable Long characterId, @PathVariable Long itemId) {
+    SessionContext.requireTenantAccess(tenantId);
+    inventoryService.removeItem(tenantId, characterId, itemId);
     return ResponseEntity.ok(ApiResponse.success(null));
   }
 }

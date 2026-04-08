@@ -6,6 +6,8 @@ import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.AbstractBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
+import net.firedevops.firemud.common.security.GrpcClientAuth;
+import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.gamelogic.v1.CommunicationTargetKind;
 import net.firedevops.firemud.gamelogic.v1.CommunicationType;
 import net.firedevops.firemud.gamelogic.v1.GameLogicServiceGrpc;
@@ -25,12 +27,15 @@ public class GameLogicClient
     extends AbstractBlockingGrpcClient<GameLogicServiceGrpc.GameLogicServiceBlockingStub> {
   private static final long CALL_DEADLINE_SECONDS = 5L;
   private static final long READINESS_DEADLINE_SECONDS = 2L;
+  private final JwtUtil jwtUtil;
 
   public GameLogicClient(
       ServiceEndpointsProperties endpoints,
       CommonGrpcClientProperties grpcClientProperties,
+      JwtUtil jwtUtil,
       GrpcChannelFactory channelFactory) {
     super(endpoints, grpcClientProperties, channelFactory);
+    this.jwtUtil = jwtUtil;
   }
 
   @PostConstruct
@@ -51,11 +56,17 @@ public class GameLogicClient
   @Override
   protected GameLogicServiceGrpc.GameLogicServiceBlockingStub buildStub(
       io.grpc.ManagedChannel channel) {
-    return GameLogicServiceGrpc.newBlockingStub(channel).withCompression("gzip");
+    return GrpcClientAuth.attach(
+        GameLogicServiceGrpc.newBlockingStub(channel).withCompression("gzip"), jwtUtil);
   }
 
   public LookResult resolveLook(
-      String tenantId, String sessionId, String characterId, String roomId, String localeTag) {
+      String tenantId,
+      String sessionId,
+      String characterId,
+      String gameInstanceId,
+      String roomId,
+      String localeTag) {
     LookRequest request =
         LookRequest.newBuilder()
             .setTenantId(tenantId)
@@ -65,6 +76,7 @@ public class GameLogicClient
             .setRoomInstance(
                 RoomInstanceRef.newBuilder()
                     .setTenantId(tenantId)
+                    .setGameInstanceId(gameInstanceId == null ? "" : gameInstanceId)
                     .setRoomInstanceId(roomId)
                     .build())
             .build();
@@ -72,7 +84,7 @@ public class GameLogicClient
   }
 
   public LookResult resolveLookForReadiness(
-      String tenantId, String sessionId, String characterId, String roomId) {
+      String tenantId, String sessionId, String characterId, String gameInstanceId, String roomId) {
     LookRequest request =
         LookRequest.newBuilder()
             .setTenantId(tenantId)
@@ -81,6 +93,7 @@ public class GameLogicClient
             .setRoomInstance(
                 RoomInstanceRef.newBuilder()
                     .setTenantId(tenantId)
+                    .setGameInstanceId(gameInstanceId == null ? "" : gameInstanceId)
                     .setRoomInstanceId(roomId)
                     .build())
             .build();
@@ -110,6 +123,7 @@ public class GameLogicClient
             .setRoomInstance(
                 RoomInstanceRef.newBuilder()
                     .setTenantId(tenantId)
+                    .setGameInstanceId(gameInstanceId == null ? "" : gameInstanceId)
                     .setRoomInstanceId(roomId)
                     .build())
             .setType(type)
@@ -127,6 +141,7 @@ public class GameLogicClient
       String tenantId,
       String sessionId,
       String characterId,
+      String gameInstanceId,
       String roomId,
       String direction,
       String localeTag) {
@@ -139,6 +154,7 @@ public class GameLogicClient
             .setRoomInstance(
                 RoomInstanceRef.newBuilder()
                     .setTenantId(tenantId)
+                    .setGameInstanceId(gameInstanceId == null ? "" : gameInstanceId)
                     .setRoomInstanceId(roomId)
                     .build())
             .setDirection(direction)

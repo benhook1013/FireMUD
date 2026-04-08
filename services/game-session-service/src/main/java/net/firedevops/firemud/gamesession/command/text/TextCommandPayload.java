@@ -9,6 +9,9 @@ public sealed interface TextCommandPayload
         TextCommandPayload.Tokens,
         TextCommandPayload.Credentials,
         TextCommandPayload.Selection,
+        TextCommandPayload.ItemReference,
+        TextCommandPayload.ContainerTransfer,
+        TextCommandPayload.ContainerView,
         TextCommandPayload.Message,
         TextCommandPayload.TargetedMessage,
         TextCommandPayload.Directional,
@@ -26,6 +29,13 @@ public sealed interface TextCommandPayload
 
   record Selection(String primary, String secondary) implements TextCommandPayload {}
 
+  record ItemReference(String reference, int quantity) implements TextCommandPayload {}
+
+  record ContainerTransfer(String itemReference, int quantity, String containerReference)
+      implements TextCommandPayload {}
+
+  record ContainerView(String containerReference) implements TextCommandPayload {}
+
   record Message(String text) implements TextCommandPayload {}
 
   record TargetedMessage(String target, String message) implements TextCommandPayload {}
@@ -38,7 +48,24 @@ public sealed interface TextCommandPayload
     List<String> safeArgs = args == null ? List.of() : List.copyOf(args);
     return switch (type) {
       case NOOP -> new None();
-      case WORLDS, LOOK, QUICKLOOK -> new ViewRequest(type.name());
+      case WORLDS, LOOK, QUICKLOOK, WHO, INVENTORY, EQUIPMENT -> new ViewRequest(type.name());
+      case HELP -> safeArgs.isEmpty() ? new None() : new Tokens(safeArgs);
+      case GET, DROP ->
+          parseQuantityAwareItemReference(safeArgs)
+              .map(itemReference -> (TextCommandPayload) itemReference)
+              .orElseGet(() -> safeArgs.isEmpty() ? new None() : new Tokens(safeArgs));
+      case PUT, TAKE ->
+          parseContainerTransfer(type, safeArgs)
+              .map(transfer -> (TextCommandPayload) transfer)
+              .orElseGet(() -> safeArgs.isEmpty() ? new None() : new Tokens(safeArgs));
+      case CONTAINER ->
+          parseContainerView(safeArgs)
+              .map(view -> (TextCommandPayload) view)
+              .orElseGet(() -> safeArgs.isEmpty() ? new None() : new Tokens(safeArgs));
+      case WEAR, REMOVE ->
+          parseQuantityAwareItemReference(safeArgs)
+              .map(itemReference -> (TextCommandPayload) itemReference)
+              .orElseGet(() -> safeArgs.isEmpty() ? new None() : new Tokens(safeArgs));
       case LOGIN ->
           safeArgs.size() >= 2
               ? new Credentials(
@@ -62,5 +89,79 @@ public sealed interface TextCommandPayload
               : new Tokens(safeArgs);
       case UNKNOWN -> new Tokens(safeArgs);
     };
+  }
+
+  private static java.util.Optional<ItemReference> parseQuantityAwareItemReference(
+      List<String> args) {
+    if (args == null || args.isEmpty()) {
+      return java.util.Optional.empty();
+    }
+    if (args.size() == 1) {
+      String single = args.get(0) == null ? "" : args.get(0).trim();
+      if (single.matches("-?\\d+")) {
+        return java.util.Optional.empty();
+      }
+      return java.util.Optional.of(new ItemReference(single, 1));
+    }
+    String first = args.get(0) == null ? "" : args.get(0).trim();
+    if (!first.matches("-?\\d+")) {
+      return java.util.Optional.of(new ItemReference(String.join(" ", args).trim(), 1));
+    }
+    String reference = String.join(" ", args.subList(1, args.size())).trim();
+    if (!StringUtils.hasText(reference)) {
+      return java.util.Optional.empty();
+    }
+    return java.util.Optional.of(new ItemReference(reference, Integer.parseInt(first)));
+  }
+
+  private static java.util.Optional<ContainerTransfer> parseContainerTransfer(
+      TextCommandType type, List<String> args) {
+    if (args == null || args.size() < 3) {
+      return java.util.Optional.empty();
+    }
+    String preposition = type == TextCommandType.PUT ? "INTO" : "FROM";
+    int prepositionIndex = indexOfIgnoreCase(args, preposition);
+    if (prepositionIndex <= 0 || prepositionIndex >= args.size() - 1) {
+      return java.util.Optional.empty();
+    }
+    List<String> itemTokens = args.subList(0, prepositionIndex);
+    List<String> containerTokens = args.subList(prepositionIndex + 1, args.size());
+    java.util.Optional<ItemReference> itemReference = parseQuantityAwareItemReference(itemTokens);
+    if (itemReference.isEmpty()) {
+      return java.util.Optional.empty();
+    }
+    String containerReference = String.join(" ", containerTokens).trim();
+    if (!StringUtils.hasText(containerReference)) {
+      return java.util.Optional.empty();
+    }
+    return java.util.Optional.of(
+        new ContainerTransfer(
+            itemReference.orElseThrow().reference(),
+            itemReference.orElseThrow().quantity(),
+            containerReference));
+  }
+
+  private static java.util.Optional<ContainerView> parseContainerView(List<String> args) {
+    if (args == null || args.isEmpty()) {
+      return java.util.Optional.empty();
+    }
+    String containerReference = String.join(" ", args).trim();
+    if (!StringUtils.hasText(containerReference)) {
+      return java.util.Optional.empty();
+    }
+    return java.util.Optional.of(new ContainerView(containerReference));
+  }
+
+  private static int indexOfIgnoreCase(List<String> args, String token) {
+    if (args == null || args.isEmpty()) {
+      return -1;
+    }
+    for (int i = 0; i < args.size(); i++) {
+      String value = args.get(i);
+      if (value != null && value.equalsIgnoreCase(token)) {
+        return i;
+      }
+    }
+    return -1;
   }
 }

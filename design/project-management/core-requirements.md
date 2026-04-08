@@ -142,7 +142,7 @@ See [Game Design Service](../architecture/microservices/game-design-service/READ
 - **TCP Proxy Service** bridges legacy **Telnet** clients to WebSockets before reaching the Gateway.
 - **API Gateway** manages requests between microservices and handles external integrations.
 - **Gameplay login is handled by the Game Session Service**; any JWT on admin or REST endpoints is validated by the consuming service. For first-party `/ws/game/**` handshakes, Spring Cloud Gateway validates the short-lived connect token at the edge and Game Session validates the signed Gateway-issued connect context before gameplay admission. Gameplay credentials and admission still remain `LOGIN` / `PLAY`-driven rather than JWT-on-every-message.
-- **Internal microservices communicate over gRPC**, secured by **mTLS** certificates issued via Kubernetes.
+- **Internal microservices communicate over gRPC**, with **mTLS** as the canonical target-state transport for Kubernetes-backed environments using Spring Boot SSL bundles plus Spring gRPC server SSL bundle binding. Hosted preview may temporarily use plaintext internal gRPC as an explicitly documented exception while the bundle-based path is being re-proved.
 - **Cert-manager** provisions and rotates these certificates as **Kubernetes Secrets**.
 - Multi-server support enables **scaling hosted games separately**.
 See [Gateway Architecture](../architecture/system-architecture-gateway.md) and [Reconnection Strategy](../architecture/system-architecture-reconnection.md) for network flow details.

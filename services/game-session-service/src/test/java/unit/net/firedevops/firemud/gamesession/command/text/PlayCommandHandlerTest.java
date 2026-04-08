@@ -9,6 +9,7 @@ import java.util.Optional;
 import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
 import net.firedevops.firemud.gamesession.client.AccountClient;
+import net.firedevops.firemud.gamesession.client.EntityManagementClient;
 import net.firedevops.firemud.gamesession.config.GameLogicProperties;
 import net.firedevops.firemud.gamesession.config.GameSessionProperties;
 import net.firedevops.firemud.gamesession.config.PresentationProperties;
@@ -17,6 +18,7 @@ import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.presentation.TextPlayerOutputRenderer;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContext;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
+import net.firedevops.firemud.gamesession.service.GameplayPresenceService;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
@@ -30,8 +32,12 @@ class PlayCommandHandlerTest {
   private final SessionContextService sessionContextService =
       Mockito.mock(SessionContextService.class);
   private final AccountClient accountClient = Mockito.mock(AccountClient.class);
+  private final EntityManagementClient entityManagementClient =
+      Mockito.mock(EntityManagementClient.class);
   private final FirstPartyConnectContextRegistry firstPartyConnectContextRegistry =
       Mockito.mock(FirstPartyConnectContextRegistry.class);
+  private final GameplayPresenceService gameplayPresenceService =
+      Mockito.mock(GameplayPresenceService.class);
   private final GameLogicProperties gameLogicProperties = new GameLogicProperties();
   private final GameplayWorldCatalog worldCatalog =
       new GameplayWorldCatalog(new GameSessionProperties());
@@ -47,7 +53,9 @@ class PlayCommandHandlerTest {
             worldCatalog,
             gameLogicProperties,
             accountClient,
+            entityManagementClient,
             firstPartyConnectContextRegistry,
+            gameplayPresenceService,
             meterRegistry);
     when(accountClient.getTenantMembershipForRuntime(
             Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
@@ -75,7 +83,14 @@ class PlayCommandHandlerTest {
     SessionContext context =
         new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
-    when(sessionContextService.findByGameplayIdentity(22L, 1L, 123L)).thenReturn(Optional.empty());
+    when(entityManagementClient.findCharacterByName("22", "demo"))
+        .thenReturn(
+            Optional.of(
+                net.firedevops.firemud.entitymanagement.v1.Character.newBuilder()
+                    .setId("7001")
+                    .setName("demo")
+                    .build()));
+    when(sessionContextService.findByGameplayIdentity(22L, 1L, 7001L)).thenReturn(Optional.empty());
 
     PlayCommandHandlingResult result =
         handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
@@ -89,9 +104,58 @@ class PlayCommandHandlerTest {
                 22L,
                 123L,
                 "demo@example.com",
-                123L,
+                7001L,
                 "demo",
                 1L,
+                gameLogicProperties.getDefaultRoomId(),
+                "jwt-token",
+                0L));
+    Mockito.verify(gameplayPresenceService)
+        .registerConnected(
+            new SessionContext(
+                1L,
+                22L,
+                123L,
+                "demo@example.com",
+                7001L,
+                "demo",
+                1L,
+                gameLogicProperties.getDefaultRoomId(),
+                "jwt-token",
+                0L));
+  }
+
+  @Test
+  void playUsesResolvedEntityManagementCharacterIdWhenNameExists() {
+    SessionContext context =
+        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    when(entityManagementClient.findCharacterByName("22", "Emberline"))
+        .thenReturn(
+            Optional.of(
+                net.firedevops.firemud.entitymanagement.v1.Character.newBuilder()
+                    .setId("9007")
+                    .setName("Emberline")
+                    .build()));
+    when(sessionContextService.findByGameplayIdentity(22L, 2L, 9007L)).thenReturn(Optional.empty());
+
+    PlayCommandHandlingResult result =
+        handler.handle(
+            "1",
+            new TextCommand(
+                TextCommandType.PLAY, List.of("sandbox", "Emberline"), "PLAY sandbox Emberline"));
+
+    assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
+    Mockito.verify(sessionContextService)
+        .save(
+            new SessionContext(
+                1L,
+                22L,
+                123L,
+                "demo@example.com",
+                9007L,
+                "Emberline",
+                2L,
                 gameLogicProperties.getDefaultRoomId(),
                 "jwt-token",
                 0L));

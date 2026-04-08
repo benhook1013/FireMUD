@@ -4,6 +4,7 @@ on:
   pull_request:
     types:
       - opened
+      - synchronize
       - reopened
       - closed
   workflow_dispatch:
@@ -197,6 +198,7 @@ jobs:
           PREVIEW_KUBECONFIG_LOCAL_SERVER: https://127.0.0.1:6443
         run: |
           KUBECONFIG_PATH="$(bash ./dev-tools/preview/write-kubeconfig.sh)"
+          bash ./dev-tools/preview/persist-runner-kubeconfig.sh "$KUBECONFIG_PATH"
           echo "KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"
 
       - name: Verify preview cluster access
@@ -246,31 +248,35 @@ jobs:
         run: |
           bash ./dev-tools/preview/ensure-ghcr-pull-secret.sh "${{ needs.preview-plan.outputs.namespace }}"
 
-      - name: Login to GHCR for image availability checks
-        env:
-          PREVIEW_GHCR_USERNAME: ${{ secrets.PREVIEW_GHCR_USERNAME }}
-          PREVIEW_GHCR_TOKEN: ${{ secrets.PREVIEW_GHCR_TOKEN }}
-        run: |
-          printf '%s' "${PREVIEW_GHCR_TOKEN}" | docker login ghcr.io -u "${PREVIEW_GHCR_USERNAME}" --password-stdin
-
-      - name: Resolve effective preview image tag
+      - name: Resolve exact preview image tag
         id: effective-image-tag
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PREVIEW_HEAD_BRANCH: ${{ github.head_ref || github.ref_name }}
-          PREVIEW_BASE_BRANCH: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.ref || 'develop' }}
         run: |
           EFFECTIVE_IMAGE_TAG="$(bash ./dev-tools/preview/resolve-preview-image-tag.sh \
-            "${{ needs.preview-plan.outputs.image_tag }}" \
-            "${PREVIEW_HEAD_BRANCH}" \
-            "${PREVIEW_BASE_BRANCH}")"
+            "${{ needs.preview-plan.outputs.image_tag }}")"
           echo "image_tag=${EFFECTIVE_IMAGE_TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Cancel if preview target was superseded before image wait
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! bash ./dev-tools/preview/check-preview-head-current.sh \
+            "${{ needs.preview-plan.outputs.pr_number }}" \
+            "${{ needs.preview-plan.outputs.head_sha }}"; then
+            status=$?
+            if [ "$status" -eq 10 ]; then
+              echo "Cancelling stale preview run before image wait."
+              gh run cancel "${GITHUB_RUN_ID}"
+              sleep 5
+              exit 0
+            fi
+            exit "$status"
+          fi
 
       - name: Wait for preview runtime images
         env:
-          PREVIEW_GHCR_USERNAME: ${{ secrets.PREVIEW_GHCR_USERNAME }}
-          PREVIEW_GHCR_TOKEN: ${{ secrets.PREVIEW_GHCR_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
         run: |
+          echo "PREVIEW_STAGE=wait-for-images" >> "$GITHUB_ENV"
           bash ./dev-tools/preview/wait-for-preview-images.sh "${{ steps.effective-image-tag.outputs.image_tag }}"
 
       - name: Ensure preview gRPC TLS secret exists
@@ -321,10 +327,38 @@ jobs:
             "${{ steps.effective-image-tag.outputs.image_tag }}" \
             "${{ steps.telnet-port.outputs.telnet_port }}"
 
+      - name: Summarize preview target
+        run: |
+          bash ./dev-tools/preview/write-preview-summary.sh \
+            target \
+            "${{ needs.preview-plan.outputs.pr_number }}" \
+            "${{ needs.preview-plan.outputs.head_sha }}" \
+            "${{ steps.effective-image-tag.outputs.image_tag }}" \
+            "${{ needs.preview-plan.outputs.hostname }}" \
+            "${{ steps.telnet-port.outputs.telnet_port }}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Cancel if preview target was superseded before deploy
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! bash ./dev-tools/preview/check-preview-head-current.sh \
+            "${{ needs.preview-plan.outputs.pr_number }}" \
+            "${{ needs.preview-plan.outputs.head_sha }}"; then
+            status=$?
+            if [ "$status" -eq 10 ]; then
+              echo "Cancelling stale preview run before deploy."
+              gh run cancel "${GITHUB_RUN_ID}"
+              sleep 5
+              exit 0
+            fi
+            exit "$status"
+          fi
+
       - name: Deploy preview release
         id: deploy-release
         continue-on-error: true
         run: |
+          echo "PREVIEW_STAGE=deploy" >> "$GITHUB_ENV"
           helm upgrade --install "${{ needs.preview-plan.outputs.release_name }}" k8s/helm/firemud \
             -f /tmp/preview-values.yaml \
             --namespace "${{ needs.preview-plan.outputs.namespace }}" \
@@ -368,24 +402,128 @@ jobs:
         if: ${{ steps.deploy-release.outcome == 'success' }}
         env:
           PREVIEW_NAMESPACE: ${{ needs.preview-plan.outputs.namespace }}
+          PREVIEW_TENANT_ID: "1"
           PREVIEW_EMAIL: demo@example.com
           PREVIEW_PASSWORD: swordfish
         run: |
-          kubectl -n "${PREVIEW_NAMESPACE}" port-forward svc/account-service 18081:8080 >/tmp/preview-account-port-forward.log 2>&1 &
-          PF_PID=$!
-          trap 'kill ${PF_PID} >/dev/null 2>&1 || true' EXIT
-          for _ in $(seq 1 30); do
-            if curl --silent --fail http://127.0.0.1:18081/actuator/health/readiness >/dev/null; then
-              break
-            fi
-            sleep 1
-          done
-          curl --silent --show-error \
-            --header 'Content-Type: application/json' \
-            --data "{\"username\":\"demo\",\"email\":\"${PREVIEW_EMAIL}\",\"password\":\"${PREVIEW_PASSWORD}\"}" \
-            http://127.0.0.1:18081/accounts >/tmp/preview-account-create.json \
-            || true
-          cat /tmp/preview-account-create.json || true
+          echo "PREVIEW_STAGE=bootstrap" >> "$GITHUB_ENV"
+          BOOTSTRAP_SCRIPT=/tmp/preview-smoke-bootstrap.py
+          cat >"${BOOTSTRAP_SCRIPT}" <<'PY'
+          import json
+          import time
+          import urllib.error
+          import urllib.request
+
+          tenant_id = 1
+          email = "demo@example.com"
+          password = "swordfish"
+
+          def readiness_ok(url):
+            try:
+              with urllib.request.urlopen(url, timeout=10) as response:
+                body = response.read().decode("utf-8", errors="ignore")
+                return response.status < 500 and "\"status\":\"UP\"" in body.replace(" ", "")
+            except OSError:
+              return False
+
+          def wait_for_ready(name, url, timeout_seconds=60):
+            deadline = time.time() + timeout_seconds
+            while time.time() < deadline:
+              if readiness_ok(url):
+                return
+              time.sleep(2)
+            raise SystemExit(f"{name} readiness did not report UP at {url}")
+
+          def post_json(url, payload):
+            request = urllib.request.Request(
+              url,
+              data=json.dumps(payload).encode("utf-8"),
+              headers={"Content-Type": "application/json"},
+              method="POST",
+            )
+            try:
+              with urllib.request.urlopen(request, timeout=30) as response:
+                return response.status, response.read().decode("utf-8", errors="ignore")
+            except urllib.error.HTTPError as exc:
+              return exc.code, exc.read().decode("utf-8", errors="ignore")
+
+          wait_for_ready("account-service", "http://account-service:8080/actuator/health/readiness")
+          wait_for_ready("game-session-service", "http://game-session-service:8080/actuator/health/readiness")
+
+          status, account_body = post_json(
+            "http://account-service:8080/accounts",
+            {
+              "tenantId": tenant_id,
+              "username": "demo",
+              "email": email,
+              "password": password,
+            },
+          )
+          print(account_body)
+          if status >= 400:
+            raise SystemExit(f"Account bootstrap failed with status {status}: {account_body}")
+          account_payload = json.loads(account_body or "{}")
+          account_id = (((account_payload.get("data") or {}).get("id")))
+          if not account_id:
+            raise SystemExit(f"Preview smoke account response did not include account id: {account_body}")
+
+          status, session_body = post_json(
+            "http://game-session-service:8080/sessions",
+            {
+              "tenantId": tenant_id,
+              "runtimeVersion": "preview-smoke",
+              "scriptPatchVersion": None,
+              "ownerAccountId": int(account_id),
+            },
+          )
+          print(session_body)
+          if status >= 400:
+            raise SystemExit(f"Session bootstrap failed with status {status}: {session_body}")
+          session_payload = json.loads(session_body or "{}")
+          session_id = (((session_payload.get("data") or {}).get("id")))
+          if not session_id:
+            raise SystemExit(
+              f"Preview smoke session bootstrap response did not include a session id: {session_body}"
+            )
+          PY
+          BOOTSTRAP_POD_LOG=/tmp/preview-bootstrap-pod.log
+          trap 'kubectl -n "${PREVIEW_NAMESPACE}" delete pod preview-smoke-bootstrap --ignore-not-found >/dev/null 2>&1 || true; kubectl -n "${PREVIEW_NAMESPACE}" delete configmap preview-smoke-bootstrap-script --ignore-not-found >/dev/null 2>&1 || true' EXIT
+          kubectl -n "${PREVIEW_NAMESPACE}" create configmap preview-smoke-bootstrap-script \
+            --from-file=bootstrap.py="${BOOTSTRAP_SCRIPT}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+          kubectl -n "${PREVIEW_NAMESPACE}" delete pod preview-smoke-bootstrap --ignore-not-found >/dev/null 2>&1 || true
+          cat <<'EOF' | kubectl -n "${PREVIEW_NAMESPACE}" apply -f -
+          apiVersion: v1
+          kind: Pod
+          metadata:
+            name: preview-smoke-bootstrap
+          spec:
+            restartPolicy: Never
+            terminationGracePeriodSeconds: 0
+            containers:
+              - name: preview-smoke-bootstrap
+                image: python:3.12-alpine
+                command: ["python", "/tmp/bootstrap.py"]
+                volumeMounts:
+                  - name: bootstrap-script
+                    mountPath: /tmp
+            volumes:
+              - name: bootstrap-script
+                configMap:
+                  name: preview-smoke-bootstrap-script
+          EOF
+          if ! kubectl -n "${PREVIEW_NAMESPACE}" wait --for=condition=Ready pod/preview-smoke-bootstrap --timeout=90s >/dev/null 2>&1; then
+            :
+          fi
+          if ! kubectl -n "${PREVIEW_NAMESPACE}" wait --for=jsonpath='{.status.phase}'=Succeeded pod/preview-smoke-bootstrap --timeout=120s >/dev/null 2>&1; then
+            echo "Preview smoke bootstrap pod did not succeed."
+            kubectl -n "${PREVIEW_NAMESPACE}" logs preview-smoke-bootstrap || true
+            kubectl -n "${PREVIEW_NAMESPACE}" describe pod preview-smoke-bootstrap || true
+            exit 1
+          fi
+          kubectl -n "${PREVIEW_NAMESPACE}" logs preview-smoke-bootstrap | tee "${BOOTSTRAP_POD_LOG}"
+          kubectl -n "${PREVIEW_NAMESPACE}" delete pod preview-smoke-bootstrap --ignore-not-found >/dev/null 2>&1 || true
+          kubectl -n "${PREVIEW_NAMESPACE}" delete configmap preview-smoke-bootstrap-script --ignore-not-found >/dev/null 2>&1 || true
 
       - name: Smoke hosted preview over TCP
         if: ${{ steps.deploy-release.outcome == 'success' }}
@@ -396,19 +534,41 @@ jobs:
           SMOKE_USERNAME: demo@example.com
           SMOKE_PASSWORD: swordfish
         run: |
-          bash ./dev-tools/preview/preview-login-look-smoke.sh
+          echo "PREVIEW_STAGE=smoke" >> "$GITHUB_ENV"
+          set -o pipefail
+          SMOKE_TRANSCRIPT=/tmp/preview-hosted-tcp-smoke.log
+          if ! bash ./dev-tools/preview/preview-login-look-smoke.sh 2>&1 | tee "${SMOKE_TRANSCRIPT}"; then
+            echo "=== Hosted preview TCP smoke transcript ==="
+            cat "${SMOKE_TRANSCRIPT}"
+            exit 1
+          fi
 
       - name: Summarize preview access
         if: ${{ steps.deploy-release.outcome == 'success' }}
         run: |
+          bash ./dev-tools/preview/write-preview-summary.sh \
+            success \
+            "${{ needs.preview-plan.outputs.pr_number }}" \
+            "${{ needs.preview-plan.outputs.head_sha }}" \
+            "${{ steps.effective-image-tag.outputs.image_tag }}" \
+            "${{ needs.preview-plan.outputs.hostname }}" \
+            "${{ steps.telnet-port.outputs.telnet_port }}" >> "$GITHUB_STEP_SUMMARY"
           {
-            echo "## Preview Ready"
             echo ""
-            echo "- Web: https://${{ needs.preview-plan.outputs.hostname }}"
-            echo "- TCP: telnet ${{ needs.preview-plan.outputs.hostname }} ${{ steps.telnet-port.outputs.telnet_port }}"
-            echo "- Image tag: ${{ steps.effective-image-tag.outputs.image_tag }}"
             echo "- Demo login: demo@example.com / swordfish"
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Summarize preview failure
+        if: ${{ always() && failure() }}
+        run: |
+          bash ./dev-tools/preview/write-preview-summary.sh \
+            failure \
+            "${{ needs.preview-plan.outputs.pr_number }}" \
+            "${{ needs.preview-plan.outputs.head_sha }}" \
+            "${{ steps.effective-image-tag.outputs.image_tag }}" \
+            "${{ needs.preview-plan.outputs.hostname }}" \
+            "${{ steps.telnet-port.outputs.telnet_port }}" \
+            "${PREVIEW_STAGE:-unknown}" >> "$GITHUB_STEP_SUMMARY"
 
   preview-destroy:
     name: Destroy Preview Release
@@ -446,6 +606,7 @@ jobs:
           PREVIEW_KUBECONFIG_LOCAL_SERVER: https://127.0.0.1:6443
         run: |
           KUBECONFIG_PATH="$(bash ./dev-tools/preview/write-kubeconfig.sh)"
+          bash ./dev-tools/preview/persist-runner-kubeconfig.sh "$KUBECONFIG_PATH"
           echo "KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"
 
       - name: Delete preview namespace and release

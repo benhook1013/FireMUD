@@ -36,6 +36,24 @@ public record TextCommand(
         : Optional.empty();
   }
 
+  public Optional<TextCommandPayload.ItemReference> itemReferencePayload() {
+    return payload instanceof TextCommandPayload.ItemReference itemReference
+        ? Optional.of(itemReference)
+        : Optional.empty();
+  }
+
+  public Optional<TextCommandPayload.ContainerTransfer> containerTransferPayload() {
+    return payload instanceof TextCommandPayload.ContainerTransfer transfer
+        ? Optional.of(transfer)
+        : Optional.empty();
+  }
+
+  public Optional<TextCommandPayload.ContainerView> containerViewPayload() {
+    return payload instanceof TextCommandPayload.ContainerView containerView
+        ? Optional.of(containerView)
+        : Optional.empty();
+  }
+
   public Optional<TextCommandPayload.Message> messagePayload() {
     return payload instanceof TextCommandPayload.Message message
         ? Optional.of(message)

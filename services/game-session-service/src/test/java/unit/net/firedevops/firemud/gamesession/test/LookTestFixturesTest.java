@@ -37,6 +37,8 @@ class LookTestFixturesTest {
     assertTrue(destination.contains("Crafting Hall of Ember"));
     assertTrue(source.contains("NORTH (arched passage leading toward the cavern mouth)"));
     assertTrue(destination.contains("SOUTH (return path to the antechamber)"));
+    assertTrue(source.contains("affordances: container, wearable BACK"));
+    assertTrue(destination.contains("affordances: container, wearable BACK"));
   }
 
   @Test

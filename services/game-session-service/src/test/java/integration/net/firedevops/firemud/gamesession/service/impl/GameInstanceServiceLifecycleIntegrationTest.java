@@ -1,10 +1,10 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -113,21 +113,20 @@ class GameInstanceServiceLifecycleIntegrationTest {
   }
 
   @Test
-  void startSessionRollsBackWhenStatePropagationFails() {
+  void startSessionCommitsWhenStatePropagationFails() {
     doThrow(new IllegalStateException("state propagation failed"))
         .when(sessionStateService)
         .saveState(any());
 
-    assertThatThrownBy(
-            () -> service.startSession(new StartSessionRequest(42L, "1.0.0", "patch-1", 100L)))
-        .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining("state propagation failed");
+    service.startSession(new StartSessionRequest(42L, "1.0.0", "patch-1", 100L));
 
-    assertThat(repository.findAll()).isEmpty();
+    assertThat(repository.findAll()).hasSize(1);
+    assertThat(repository.findAll().get(0).getStatus()).isEqualTo("RUNNING");
+    verify(sessionStateService).saveState(any());
   }
 
   @Test
-  void stopSessionRollsBackWhenStatePropagationFails() {
+  void stopSessionCommitsWhenStatePropagationFails() {
     GameInstance instance = new GameInstance();
     instance.setTenantId(42L);
     instance.setRuntimeVersion("1.0.0");
@@ -141,16 +140,15 @@ class GameInstanceServiceLifecycleIntegrationTest {
         .when(sessionStateService)
         .deleteState(42L, instanceId);
 
-    assertThatThrownBy(() -> service.stopSession(instanceId))
-        .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining("state propagation failed");
+    service.stopSession(instanceId);
 
     assertThat(repository.findById(instanceId)).isPresent();
-    assertThat(repository.findById(instanceId).orElseThrow().getStatus()).isEqualTo("RUNNING");
+    assertThat(repository.findById(instanceId).orElseThrow().getStatus()).isEqualTo("STOPPED");
+    verify(sessionStateService).deleteState(42L, instanceId);
   }
 
   @Test
-  void restartSessionRollsBackWhenStatePropagationFails() {
+  void restartSessionCommitsWhenStatePropagationFails() {
     GameInstance instance = new GameInstance();
     instance.setTenantId(42L);
     instance.setRuntimeVersion("1.0.0");
@@ -164,12 +162,11 @@ class GameInstanceServiceLifecycleIntegrationTest {
         .when(sessionStateService)
         .saveState(any());
 
-    assertThatThrownBy(() -> service.restartSession(instanceId))
-        .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining("state propagation failed");
+    service.restartSession(instanceId);
 
     assertThat(repository.findById(instanceId)).isPresent();
-    assertThat(repository.findById(instanceId).orElseThrow().getStatus()).isEqualTo("STOPPED");
+    assertThat(repository.findById(instanceId).orElseThrow().getStatus()).isEqualTo("RUNNING");
+    verify(sessionStateService).saveState(any());
   }
 
   @TestConfiguration

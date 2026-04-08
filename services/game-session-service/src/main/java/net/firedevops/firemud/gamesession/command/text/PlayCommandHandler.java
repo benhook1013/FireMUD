@@ -10,6 +10,7 @@ import java.util.UUID;
 import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
 import net.firedevops.firemud.gamesession.client.AccountClient;
+import net.firedevops.firemud.gamesession.client.EntityManagementClient;
 import net.firedevops.firemud.gamesession.config.GameLogicProperties;
 import net.firedevops.firemud.gamesession.config.GameSessionProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
@@ -41,8 +42,11 @@ public class PlayCommandHandler {
   private final GameplayWorldCatalog gameplayWorldCatalog;
   private final GameLogicProperties gameLogicProperties;
   private final AccountClient accountClient;
+  private final EntityManagementClient entityManagementClient;
   private final FirstPartyConnectContextRegistry firstPartyConnectContextRegistry;
   private final MeterRegistry meterRegistry;
+  private final net.firedevops.firemud.gamesession.service.GameplayPresenceService
+      gameplayPresenceService;
   private final Counter takeoverCounter;
   private final Counter resumeCounter;
 
@@ -52,7 +56,9 @@ public class PlayCommandHandler {
       GameplayWorldCatalog gameplayWorldCatalog,
       GameLogicProperties gameLogicProperties,
       AccountClient accountClient,
+      EntityManagementClient entityManagementClient,
       FirstPartyConnectContextRegistry firstPartyConnectContextRegistry,
+      net.firedevops.firemud.gamesession.service.GameplayPresenceService gameplayPresenceService,
       MeterRegistry meterRegistry) {
     this.sessionAuthenticationService =
         Objects.requireNonNull(
@@ -64,9 +70,13 @@ public class PlayCommandHandler {
     this.gameLogicProperties =
         Objects.requireNonNull(gameLogicProperties, "gameLogicProperties must not be null");
     this.accountClient = Objects.requireNonNull(accountClient, "accountClient must not be null");
+    this.entityManagementClient =
+        Objects.requireNonNull(entityManagementClient, "entityManagementClient must not be null");
     this.firstPartyConnectContextRegistry =
         Objects.requireNonNull(
             firstPartyConnectContextRegistry, "firstPartyConnectContextRegistry must not be null");
+    this.gameplayPresenceService =
+        Objects.requireNonNull(gameplayPresenceService, "gameplayPresenceService must not be null");
     this.meterRegistry = Objects.requireNonNull(meterRegistry, "meterRegistry must not be null");
     this.takeoverCounter = this.meterRegistry.counter(TAKEOVER_METRIC);
     this.resumeCounter = this.meterRegistry.counter(RESUME_METRIC);
@@ -145,6 +155,7 @@ public class PlayCommandHandler {
         }
 
         String character = selection.secondary();
+        String characterName = resolveCharacterName(context, character);
         if (selectedWorld.isRequiresCharacterSelection() && !StringUtils.hasText(character)) {
           return failure(
               "PLAY_SELECTION_REQUIRED",
@@ -159,8 +170,7 @@ public class PlayCommandHandler {
               null);
         }
         long gameInstanceId = selectedWorld.getGameInstanceId();
-        long characterId = resolveCharacterId(context, selectedWorld, character);
-        String characterName = resolveCharacterName(context, characterId, character);
+        long characterId = resolveCharacterId(context, selectedWorld, character, characterName);
         try (GameplayLoggingContext gameplayContext =
             GameplayLoggingContext.open(
                 Long.toString(context.tenantId()),
@@ -220,6 +230,7 @@ public class PlayCommandHandler {
                   context.localeTag(),
                   context.bootstrapGameInstanceId());
           sessionContextService.save(updated);
+          gameplayPresenceService.registerConnected(updated);
 
           return new PlayCommandHandlingResult(
               CommandEnqueueResult.success(),
@@ -285,23 +296,34 @@ public class PlayCommandHandler {
   }
 
   private long resolveCharacterId(
-      SessionContext context, GameSessionProperties.WorldOption selectedWorld, String character) {
+      SessionContext context,
+      GameSessionProperties.WorldOption selectedWorld,
+      String requestedCharacter,
+      String characterName) {
     if (context.characterId() > 0) {
       return context.characterId();
     }
-    if (!StringUtils.hasText(character)) {
+    if (StringUtils.hasText(characterName)) {
+      Optional<net.firedevops.firemud.entitymanagement.v1.Character> character =
+          entityManagementClient.findCharacterByName(
+              Long.toString(context.tenantId()), characterName.trim());
+      if (character.isPresent() && StringUtils.hasText(character.get().getId())) {
+        return Long.parseLong(character.get().getId());
+      }
+    }
+    if (!StringUtils.hasText(requestedCharacter)) {
       return context.accountId();
     }
     return Math.floorMod(
             Objects.hash(
                 context.tenantId(),
                 selectedWorld.getGameInstanceId(),
-                character.trim().toLowerCase()),
+                characterName.trim().toLowerCase()),
             Integer.MAX_VALUE - 1)
         + 1L;
   }
 
-  private String resolveCharacterName(SessionContext context, long characterId, String character) {
+  private String resolveCharacterName(SessionContext context, String character) {
     if (StringUtils.hasText(character)) {
       return character.trim();
     }
@@ -313,7 +335,7 @@ public class PlayCommandHandler {
       int at = login.indexOf('@');
       return at > 0 ? login.substring(0, at) : login;
     }
-    return "character-" + characterId;
+    return "character-" + context.accountId();
   }
 
   private boolean handleExistingBinding(
@@ -343,6 +365,7 @@ public class PlayCommandHandler {
         characterId,
         existing.sessionId(),
         incoming.sessionId());
+    gameplayPresenceService.removeBySessionId(existing.sessionId());
     sessionContextService.deleteBySessionId(existing.tenantId(), existing.sessionId());
     return true;
   }
@@ -370,7 +393,12 @@ public class PlayCommandHandler {
       String tenantTag,
       String requestedCharacter) {
     String requestId = context.sessionId() + ":" + UUID.randomUUID();
-    long requestedCharacterId = resolveCharacterId(context, selectedWorld, requestedCharacter);
+    long requestedCharacterId =
+        resolveCharacterId(
+            context,
+            selectedWorld,
+            requestedCharacter,
+            resolveCharacterName(context, requestedCharacter));
     GetTenantMembershipForRuntimeResponse membershipResponse =
         accountClient.getTenantMembershipForRuntime(
             Long.toString(context.accountId()), Long.toString(context.tenantId()), requestId);
@@ -523,8 +551,7 @@ public class PlayCommandHandler {
     if (StringUtils.hasText(context.roomInstanceId())
         && Objects.equals(
             normalizeName(context.characterName()),
-            normalizeName(
-                resolveCharacterName(context, requestedCharacterId, requestedCharacter)))) {
+            normalizeName(resolveCharacterName(context, requestedCharacter)))) {
       return false;
     }
     meterRegistry

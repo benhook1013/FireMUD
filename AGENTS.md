@@ -13,21 +13,12 @@ Use this file as the canonical AI instruction source for this repository.
 - For markdown or design-document changes (especially under `design/`), run `./gradlew linkCheck lintMarkdown` before hand-off.
 - Treat `./gradlew linkCheck lintMarkdown` as mandatory hygiene when editing files: if these checks fail, fix the reported issues before hand-off even when the failures were pre-existing and not introduced by your change.
 
-## Subagent Use
+## Execution Style
 
-- Use subagents for bounded, parallelizable work that can proceed without blocking the immediate next local step.
-- Prefer the smallest capable subagent model first; escalate model size only when the task genuinely needs it.
-- Pass enough repo and task context in the subagent prompt that the worker can act without repeating broad discovery work.
-- Keep immediate blocker discovery and tightly coupled critical-path work local when waiting on delegation would stall progress.
-
-## Subagent Ownership
-
-- Use subagents to reduce token cost and main-thread context load, not to duplicate work.
-- Spawning a subagent and then redoing the same write task locally is a failure mode, not a speedup.
-- When a subagent is assigned a write scope, treat that scope as owned by the subagent until it returns or is explicitly cancelled.
-- While a write task is delegated, use the main thread only for non-overlapping inspection, review preparation, validation planning, or genuinely separate work.
-- After a delegated write task returns, integrate or refine that result.
-- If a delegated worker stalls or fails, either reuse its partial work carefully or replace it cleanly.
+- Prefer a single main-thread workflow for normal repository work.
+- Optimize for token efficiency and continuity of reasoning over parallel delegation.
+- Treat subagent use as off by default; do not use subagents unless a human explicitly asks for them for a specific task.
+- When working on a large problem, keep the context in one thread and progress in coherent committed batches rather than splitting the work across delegated workers.
 
 ## Working Tree Safety
 
@@ -55,6 +46,15 @@ FireMUD is in initial development. Optimize for direct convergence to a clean ca
 - Document one canonical current behavior and remove obsolete legacy or transitional guidance.
 - Do not add phased rollout or compatibility narratives unless explicitly requested.
 - Do not use emojis in Markdown headings; they make anchor links harder to reference reliably across renderers.
+
+## AI Observation Log
+
+- When you encounter a reusable lesson about process friction, tool friction, unexpected environment behavior, wasteful workflow patterns, or notable code smells, record it in `/home/ben/src/FireMUD-wsl-copy/design/project-management/ai-observations.md`.
+- Do not log ordinary code bugs or one-off breakages that are fixed as part of the current task unless the underlying lesson still matters after the fix.
+- Prefer entries that could reasonably turn into an `AGENTS.md` rule, a CI check, a dev tool improvement, or a future design/slice refinement.
+- Treat that file as append-only during normal work: add new dated entries, do not rewrite or prune older entries unless a human explicitly asks for cleanup.
+- Prefer short high-signal entries that capture the concrete issue, where it appeared, and the expected better pattern.
+- Record observations when they are discovered, not only at the end of a task.
 
 ## Architecture and Operations Assumptions
 

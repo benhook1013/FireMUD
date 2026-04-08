@@ -68,6 +68,7 @@ previewStack:
     OTEL_ENDPOINT: http://otel-collector:4317
     FLUENT_ELASTICSEARCH_HOST: elasticsearch
     FLUENT_ELASTICSEARCH_PORT: "9200"
+    FIREMUD_GRPC_PLAINTEXT: "false"
     ASSET_STORE_ENDPOINT: http://minio:9000
     ASSET_STORE_BUCKET: firemud-assets
     ASSET_STORE_REGION: ap-southeast-2
@@ -239,6 +240,9 @@ previewStack:
       envFromShared: true
       mountGrpcTls: true
       healthPort: 8080
+      extraEnv:
+        FIREMUD_GATEWAY_HEADER_TRUST_TCP_PROXY_ALLOW_INSECURE_HEADERS_FROM_TRUSTED_CIDRS: "true"
+        FIREMUD_GATEWAY_HEADER_TRUST_TCP_PROXY_INSECURE_TRUSTED_CIDRS_0: 10.42.0.0/16
       ports:
         - port: 80
           targetPort: 8080
@@ -254,7 +258,9 @@ previewStack:
       mountGrpcTls: true
       healthPort: 8080
       extraEnv:
-        GATEWAY_WS_URL: wss://pr-123.preview.firedevops.net/ws/game
+        GATEWAY_WS_URL: ws://spring-cloud-gateway/ws/game
+        TCP_PROXY_DEFAULT_GAME_INSTANCE_ID: "1"
+        TCP_PROXY_DEFAULT_TENANT_ID: "1"
       ports:
         - port: 2323
           nodePort: 32000

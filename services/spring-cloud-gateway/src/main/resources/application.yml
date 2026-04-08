@@ -14,22 +14,27 @@ spring:
     properties:
       hibernate:
         default_schema: ${SERVICE_SCHEMA:public}
-  config:
-    import: "optional:classpath:routes-${spring.profiles.active}.yml"
-grpc:
-  server:
-    port: 6565
-    enableKeepAlive: true
-    keepAliveTime: 30s
-    keepAliveTimeout: 5s
-    permitKeepAliveWithoutCalls: true
-    compression: gzip
-    security:
-      enabled: true
-      certificateChainPath: ${FIREMUD_GRPC_CERT_CHAIN_PATH:certs/client.crt}
-      privateKeyPath: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:certs/client.key}
-      trustCertCollectionPath: ${FIREMUD_GRPC_CA_CERT_PATH:certs/ca.crt}
-      clientAuth: REQUIRE
+  ssl:
+    bundle:
+      pem:
+        firemud-grpc:
+          keystore:
+            certificate: ${FIREMUD_GRPC_CERT_CHAIN_PATH:certs/client.crt}
+            private-key: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:certs/client.key}
+          truststore:
+            certificate: ${FIREMUD_GRPC_CA_CERT_PATH:certs/ca.crt}
+  grpc:
+    server:
+      port: 6565
+      shutdown-grace-period: 30s
+      keep-alive:
+        time: 30s
+        timeout: 5s
+        permit-without-calls: true
+      ssl:
+        enabled: ${GRPC_SERVER_TLS_ENABLED:true}
+        bundle: firemud-grpc
+        client-auth: REQUIRE
 
 firemud:
   grpc:
@@ -68,6 +73,7 @@ spring:
   config:
     activate:
       on-profile: dev
+    import: "optional:classpath:routes-dev.yml"
   data:
     redis:
       host: ${FIREMUD_REDIS_CACHE_HOST:redis}
@@ -111,6 +117,7 @@ spring:
   config:
     activate:
       on-profile: prod
+    import: "optional:classpath:routes-prod.yml"
   data:
     redis:
       host: ${FIREMUD_REDIS_CACHE_HOST:redis}

@@ -1,12 +1,14 @@
 package net.firedevops.firemud.socialgroups.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 
 import java.time.Instant;
 import net.firedevops.firemud.socialgroups.dto.AddFriendRequest;
 import net.firedevops.firemud.socialgroups.dto.FriendLinkDto;
+import net.firedevops.firemud.socialgroups.entity.AccountFriendLink;
 import net.firedevops.firemud.socialgroups.entity.FriendLink;
 import net.firedevops.firemud.socialgroups.mapper.FriendLinkMapper;
 import net.firedevops.firemud.socialgroups.repository.AccountFriendLinkRepository;
@@ -18,14 +20,15 @@ import org.mockito.Mockito;
 
 class FriendServiceImplTest {
   private FriendLinkRepository repository;
+  private AccountFriendLinkRepository accountRepository;
   private FriendServiceImpl service;
 
   @BeforeEach
   void setUp() {
     repository = Mockito.mock(FriendLinkRepository.class);
-    AccountFriendLinkRepository accountRepo = Mockito.mock(AccountFriendLinkRepository.class);
+    accountRepository = Mockito.mock(AccountFriendLinkRepository.class);
     FriendLinkMapper mapper = Mappers.getMapper(FriendLinkMapper.class);
-    service = new FriendServiceImpl(repository, accountRepo, mapper);
+    service = new FriendServiceImpl(repository, accountRepository, mapper);
   }
 
   @Test
@@ -43,5 +46,24 @@ class FriendServiceImplTest {
     FriendLinkDto result = service.addFriend(request);
     assertEquals(2L, result.accountId());
     assertEquals(3L, result.friendAccountId());
+  }
+
+  @Test
+  void addFriendStoresAccountLevelLinksWithTenantScope() {
+    AddFriendRequest request = new AddFriendRequest(11L, 2L, 3L, true);
+    when(accountRepository.save(any(AccountFriendLink.class)))
+        .thenAnswer(
+            invocation -> {
+              AccountFriendLink link = invocation.getArgument(0);
+              link.setId(7L);
+              return link;
+            });
+
+    FriendLinkDto result = service.addFriend(request);
+
+    assertEquals(11L, result.tenantId());
+    assertEquals(2L, result.accountId());
+    assertEquals(3L, result.friendAccountId());
+    assertNotNull(result.createdAt());
   }
 }

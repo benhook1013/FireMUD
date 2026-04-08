@@ -5,9 +5,6 @@ import io.micrometer.core.annotation.Timed;
 import java.util.List;
 import java.util.Optional;
 import net.firedevops.firemud.common.LoggingUtil;
-import net.firedevops.firemud.common.saga.SagaBuilder;
-import net.firedevops.firemud.common.saga.SagaException;
-import net.firedevops.firemud.common.saga.SagaRunner;
 import net.firedevops.firemud.gamedesign.client.AutomationScriptingClient;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
 import net.firedevops.firemud.gamedesign.entity.Game;
@@ -21,6 +18,8 @@ import org.slf4j.Logger;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 @Service
 @SuppressFBWarnings(
@@ -33,7 +32,6 @@ public class VersionServiceImpl implements VersionService {
   private final GameRepository gameRepository;
   private final VersionMapper versionMapper;
   private final AutomationScriptingClient scriptingClient;
-  private final SagaRunner sagaRunner;
   private final AssetExportService assetExportService;
 
   @Autowired
@@ -42,20 +40,18 @@ public class VersionServiceImpl implements VersionService {
       GameRepository gameRepository,
       VersionMapper versionMapper,
       AutomationScriptingClient scriptingClient,
-      SagaRunner sagaRunner,
       AssetExportService assetExportService) {
     this.versionRepository = versionRepository;
     this.gameRepository = gameRepository;
     this.versionMapper = versionMapper;
     this.scriptingClient = scriptingClient;
-    this.sagaRunner = sagaRunner;
     this.assetExportService = assetExportService;
   }
 
   @Override
   @Transactional
   @Timed(value = "gamedesign.version.publish")
-  public VersionDto publishVersion(String tenantId, String notes) throws SagaException {
+  public VersionDto publishVersion(String tenantId, String notes) {
     logger.info("Publishing version for tenant {}", tenantId);
     Game game =
         Optional.ofNullable(gameRepository.findByTenantIdForUpdate(tenantId))
@@ -65,19 +61,10 @@ public class VersionServiceImpl implements VersionService {
     version.setTenantId(game.getTenantId());
     version.setNotes(notes);
     version.setVersionNumber(calculateNextNumber(tenantId));
-
-    SagaBuilder builder = new SagaBuilder("publishVersion");
-    builder.step(
-        "persistVersion",
-        () -> {
-          versionRepository.save(version);
-        },
-        () -> versionRepository.delete(version));
-    builder.step(
-        "exportAssets",
-        () -> assetExportService.exportAssets(tenantId, version.getVersionNumber()),
-        () -> assetExportService.deleteExportedAssets(tenantId, version.getVersionNumber()));
-    sagaRunner.run(builder.build());
+    versionRepository.save(version);
+    runAfterCommit(
+        "export version assets",
+        () -> assetExportService.exportAssets(tenantId, version.getVersionNumber()));
     return versionMapper.toDto(version);
   }
 
@@ -85,8 +72,7 @@ public class VersionServiceImpl implements VersionService {
   @Transactional
   @Timed(value = "gamedesign.version.publishScriptPatch")
   public VersionDto publishScriptPatchVersion(
-      String tenantId, Long baseVersionId, String scriptPatchVersion, String notes)
-      throws SagaException {
+      String tenantId, Long baseVersionId, String scriptPatchVersion, String notes) {
     logger.info(
         "Publishing script patch {} for tenant {} base {}",
         scriptPatchVersion,
@@ -104,16 +90,12 @@ public class VersionServiceImpl implements VersionService {
     version.setBaseVersionId(baseVersionId);
     version.setScriptOnly(true);
 
-    SagaBuilder builder = new SagaBuilder("publishScriptPatch");
-    builder.step(
-        "persistVersion",
-        () -> {
-          versionRepository.save(version);
-        },
-        () -> versionRepository.delete(version));
-    sagaRunner.run(builder.build());
-    scriptingClient.notifyScriptVersionUpdate(
-        String.valueOf(game.getTenantId()), scriptPatchVersion, List.of());
+    versionRepository.save(version);
+    runAfterCommit(
+        "notify script patch version update",
+        () ->
+            scriptingClient.notifyScriptVersionUpdate(
+                String.valueOf(game.getTenantId()), scriptPatchVersion, List.of()));
     return versionMapper.toDto(version);
   }
 
@@ -135,5 +117,27 @@ public class VersionServiceImpl implements VersionService {
             .map(Version::getVersionNumber)
             .orElse(0)
         + 1;
+  }
+
+  private void runAfterCommit(String actionName, Runnable action) {
+    if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+      runSafely(actionName, action);
+      return;
+    }
+    TransactionSynchronizationManager.registerSynchronization(
+        new TransactionSynchronization() {
+          @Override
+          public void afterCommit() {
+            runSafely(actionName, action);
+          }
+        });
+  }
+
+  private void runSafely(String actionName, Runnable action) {
+    try {
+      action.run();
+    } catch (RuntimeException ex) {
+      logger.warn("Failed to {}", actionName, ex);
+    }
   }
 }

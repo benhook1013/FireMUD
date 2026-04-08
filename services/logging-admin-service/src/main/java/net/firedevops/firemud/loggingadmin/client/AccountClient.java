@@ -10,18 +10,23 @@ import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.AbstractReloadingBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
+import net.firedevops.firemud.common.security.GrpcClientAuth;
+import net.firedevops.firemud.common.security.JwtUtil;
 import org.springframework.stereotype.Component;
 
 /** gRPC client for communicating with the Account Service. */
 @Component
 public class AccountClient
     extends AbstractReloadingBlockingGrpcClient<AccountServiceGrpc.AccountServiceBlockingStub> {
+  private final JwtUtil jwtUtil;
 
   public AccountClient(
       ServiceEndpointsProperties endpoints,
       CommonGrpcClientProperties tlsProps,
+      JwtUtil jwtUtil,
       GrpcChannelFactory channelFactory) {
     super(endpoints, tlsProps, channelFactory, AccountClient.class);
+    this.jwtUtil = jwtUtil;
   }
 
   @PostConstruct
@@ -42,7 +47,8 @@ public class AccountClient
   @Override
   protected AccountServiceGrpc.AccountServiceBlockingStub buildStub(
       io.grpc.ManagedChannel channel) {
-    return AccountServiceGrpc.newBlockingStub(channel).withCompression("gzip");
+    return GrpcClientAuth.attach(
+        AccountServiceGrpc.newBlockingStub(channel).withCompression("gzip"), jwtUtil);
   }
 
   /** Permanently delete the account. */

@@ -16,7 +16,7 @@ public class CommunicationOutputMapper {
 
   public PlayerOutput actorOutput(TextCommand command, SendCommunicationResponse response) {
     CommunicationType type = response.getType();
-    String message = response.getMessage();
+    String message = SpeechPresentationNormalizer.normalize(response.getMessage());
     String speakerName = fallbackSpeakerName(response.getSpeakerName(), command);
     String targetName = actorTargetName(command);
     return switch (type) {
@@ -44,12 +44,13 @@ public class CommunicationOutputMapper {
     String speakerName =
         StringUtils.hasText(view.getSpeakerName()) ? view.getSpeakerName() : "Unknown";
     String targetName = view.getTargetName();
+    String normalizedMessage = SpeechPresentationNormalizer.normalize(message);
     if (type == CommunicationType.WHISPER
         && view.getRole() == CommunicationRecipientRole.COMMUNICATION_RECIPIENT_ROLE_TARGET) {
       return PlayerOutput.message(
-          speakerName + " whispers to you, \"" + message + "\"",
+          speakerName + " whispers to you, \"" + normalizedMessage + "\"",
           "communication.whisper.target",
-          Map.of("speakerName", speakerName, "message", message));
+          Map.of("speakerName", speakerName, "message", normalizedMessage));
     }
     if (type == CommunicationType.WHISPER
         && view.getRole() == CommunicationRecipientRole.COMMUNICATION_RECIPIENT_ROLE_OBSERVER
@@ -62,12 +63,12 @@ public class CommunicationOutputMapper {
     if (type == CommunicationType.TELL
         && view.getRole() == CommunicationRecipientRole.COMMUNICATION_RECIPIENT_ROLE_TARGET) {
       return PlayerOutput.message(
-          speakerName + " tells you, \"" + message + "\"",
+          speakerName + " tells you, \"" + normalizedMessage + "\"",
           "communication.tell.target",
-          Map.of("speakerName", speakerName, "message", message));
+          Map.of("speakerName", speakerName, "message", normalizedMessage));
     }
     return PlayerOutput.message(
-        fallbackRecipientText(type, view, message, speakerName, targetName));
+        fallbackRecipientText(type, view, normalizedMessage, speakerName, targetName));
   }
 
   private String actorTargetName(TextCommand command) {

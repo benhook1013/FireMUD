@@ -96,12 +96,34 @@ class LookAggregationServiceTest {
         .containsExactly("2045");
     assertThat(result.getEntitiesList()).hasSize(1);
     assertThat(result.getEntitiesList().get(0).getDisplayName()).isEqualTo("Kobold");
+    assertThat(result.getEntitiesList().get(0).getStateFlagsList()).containsExactly("isAlert");
     assertThat(result.getAmbientState().getWeather()).isEqualTo("dim");
     ArgumentCaptor<net.firedevops.firemud.worldmanagement.v1.GetRoomSnapshotRequest> captor =
         ArgumentCaptor.forClass(
             net.firedevops.firemud.worldmanagement.v1.GetRoomSnapshotRequest.class);
     org.mockito.Mockito.verify(worldStub).getRoomSnapshot(captor.capture());
     assertThat(captor.getValue().getPreferredLocale()).isEqualTo("fr");
+  }
+
+  @Test
+  void preservesVisibleItemAffordanceFlags() {
+    RoomEntity item =
+        RoomEntity.newBuilder()
+            .setEntityId("ITEM-9")
+            .setDisplayName("Backpack")
+            .setEntityType(net.firedevops.firemud.entitymanagement.v1.EntityType.ITEM)
+            .addStateFlags("room-ground")
+            .addStateFlags("container")
+            .addStateFlags("wearable:BACK")
+            .build();
+    when(entityStub.listRoomEntities(any()))
+        .thenReturn(ListRoomEntitiesResponse.newBuilder().addEntities(item).build());
+
+    LookResult result = service.resolve(request);
+
+    assertThat(result.getEntitiesList()).hasSize(1);
+    assertThat(result.getEntitiesList().get(0).getStateFlagsList())
+        .containsExactly("room-ground", "container", "wearable:BACK");
   }
 
   @Test

@@ -17,7 +17,6 @@ import net.firedevops.firemud.loggingadmin.repository.ModerationActionRepository
 import net.firedevops.firemud.loggingadmin.service.ModerationService;
 import org.slf4j.Logger;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 @Service
 @SuppressFBWarnings(
@@ -46,7 +45,6 @@ public class ModerationServiceImpl implements ModerationService {
   }
 
   @Override
-  @Transactional
   @Timed(value = "moderation.applyAction")
   public ModerationActionDto applyAction(ApplyModerationActionRequest request) {
     logger.info(

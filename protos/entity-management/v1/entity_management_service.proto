@@ -13,6 +13,14 @@ service EntityManagementService {
   rpc CreateCharacter(CreateCharacterRequest) returns (CreateCharacterResponse);
   rpc UpdateEntity(UpdateEntityRequest) returns (UpdateEntityResponse);
   rpc QueryInventory(QueryInventoryRequest) returns (QueryInventoryResponse);
+  rpc ListEquipment(ListEquipmentRequest) returns (ListEquipmentResponse);
+  rpc WearEquipment(WearEquipmentItemRequest) returns (WearEquipmentItemResponse);
+  rpc RemoveEquipment(RemoveEquipmentRequest) returns (RemoveEquipmentResponse);
+  rpc ListContainerContents(ListContainerContentsRequest) returns (ListContainerContentsResponse);
+  rpc PutItemIntoContainer(PutItemIntoContainerRequest) returns (PutItemIntoContainerResponse);
+  rpc TakeItemFromContainer(TakeItemFromContainerRequest) returns (TakeItemFromContainerResponse);
+  rpc PickupItemFromRoom(PickupItemFromRoomRequest) returns (PickupItemFromRoomResponse);
+  rpc DropItemToRoom(DropItemToRoomRequest) returns (DropItemToRoomResponse);
   rpc ListCharactersByAccount(ListCharactersByAccountRequest) returns (ListCharactersByAccountResponse);
   rpc FindCharacterByName(FindCharacterByNameRequest) returns (FindCharacterByNameResponse);
   rpc ListRoomEntities(ListRoomEntitiesRequest) returns (ListRoomEntitiesResponse);
@@ -40,16 +48,158 @@ message UpdateEntityResponse {
 }
 
 message QueryInventoryRequest {
-  string entity_id = 1;
+  string tenant_id = 1;
+  string character_id = 2;
 }
 
 message QueryInventoryResponse {
-  repeated string item_ids = 1;
+  repeated InventoryItem items = 1;
   shared.v1.ErrorDetail error = 2;
 }
 
+message InventoryItem {
+  string item_id = 1;
+  string item_name = 2;
+  string item_description = 3;
+  int32 quantity = 4;
+  string container_instance_id = 5;
+}
+
+message EquipmentItem {
+  string tenant_id = 1;
+  string character_id = 2;
+  string slot = 3;
+  string item_id = 4;
+  string item_name = 5;
+  string item_description = 6;
+  string container_instance_id = 7;
+}
+
+message ListEquipmentRequest {
+  string tenant_id = 1;
+  string character_id = 2;
+}
+
+message ListEquipmentResponse {
+  repeated EquipmentItem items = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message WearEquipmentItemRequest {
+  string tenant_id = 1;
+  string character_id = 2;
+  string item_id = 3;
+}
+
+message WearEquipmentItemResponse {
+  EquipmentItem equipment_item = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message RemoveEquipmentRequest {
+  string tenant_id = 1;
+  string character_id = 2;
+  string slot = 3;
+}
+
+message RemoveEquipmentResponse {
+  EquipmentItem equipment_item = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message ContainerItem {
+  string tenant_id = 1;
+  string character_id = 2;
+  string container_instance_id = 3;
+  string item_id = 4;
+  string item_name = 5;
+  string item_description = 6;
+  int32 quantity = 7;
+}
+
+message ListContainerContentsRequest {
+  string tenant_id = 1;
+  string character_id = 2;
+  string container_instance_id = 3;
+}
+
+message ListContainerContentsResponse {
+  repeated ContainerItem items = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message PutItemIntoContainerRequest {
+  string tenant_id = 1;
+  string character_id = 2;
+  string container_instance_id = 3;
+  string item_id = 4;
+  int32 quantity = 5;
+}
+
+message PutItemIntoContainerResponse {
+  ContainerItem container_item = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message TakeItemFromContainerRequest {
+  string tenant_id = 1;
+  string character_id = 2;
+  string container_instance_id = 3;
+  string item_id = 4;
+  int32 quantity = 5;
+}
+
+message TakeItemFromContainerResponse {
+  InventoryItem inventory_item = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message RoomGroundInventoryItem {
+  string tenant_id = 1;
+  string game_instance_id = 2;
+  string room_instance_id = 3;
+  string item_id = 4;
+  string item_name = 5;
+  string item_description = 6;
+  int32 quantity = 7;
+  string container_instance_id = 8;
+}
+
+message PickupItemFromRoomRequest {
+  string tenant_id = 1;
+  string character_id = 2;
+  string game_instance_id = 3;
+  string room_instance_id = 4;
+  string item_id = 5;
+  int32 quantity = 6;
+  string container_instance_id = 7;
+}
+
+message PickupItemFromRoomResponse {
+  InventoryItem inventory_item = 1;
+  RoomGroundInventoryItem room_ground_item = 2;
+  shared.v1.ErrorDetail error = 3;
+}
+
+message DropItemToRoomRequest {
+  string tenant_id = 1;
+  string character_id = 2;
+  string game_instance_id = 3;
+  string room_instance_id = 4;
+  string item_id = 5;
+  int32 quantity = 6;
+  string container_instance_id = 7;
+}
+
+message DropItemToRoomResponse {
+  InventoryItem inventory_item = 1;
+  RoomGroundInventoryItem room_ground_item = 2;
+  shared.v1.ErrorDetail error = 3;
+}
+
 message ListCharactersByAccountRequest {
-  string account_id = 1;
+  string tenant_id = 1;
+  string account_id = 2;
 }
 
 message Character {

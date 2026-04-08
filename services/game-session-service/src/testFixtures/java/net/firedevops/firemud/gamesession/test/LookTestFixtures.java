@@ -94,7 +94,20 @@ public final class LookTestFixtures {
             .setEntityType(EntityType.PLAYER)
             .setRole("adventurer")
             .build();
-    return ListRoomEntitiesResponse.newBuilder().addEntities(kobold).addEntities(player).build();
+    RoomEntity item =
+        RoomEntity.newBuilder()
+            .setEntityId("ITEM-009")
+            .setDisplayName("Backpack")
+            .setEntityType(EntityType.ITEM)
+            .addStateFlags("room-ground")
+            .addStateFlags("container")
+            .addStateFlags("wearable:BACK")
+            .build();
+    return ListRoomEntitiesResponse.newBuilder()
+        .addEntities(kobold)
+        .addEntities(player)
+        .addEntities(item)
+        .build();
   }
 
   public static String canonicalLookText() {
@@ -113,6 +126,7 @@ public final class LookTestFixtures {
           "Entities:",
           "- NPC \"Kobold Scout\" (scout) [isAlert]",
           "- PLAYER \"Sora\" (adventurer)",
+          "- ITEM \"Backpack\" [room-ground; affordances: container, wearable BACK]",
           "");
     }
     if (DESTINATION_ROOM_ID.equals(roomInstanceId)) {
@@ -126,6 +140,7 @@ public final class LookTestFixtures {
           "Entities:",
           "- NPC \"Kobold Scout\" (scout) [isAlert]",
           "- PLAYER \"Sora\" (adventurer)",
+          "- ITEM \"Backpack\" [room-ground; affordances: container, wearable BACK]",
           "");
     }
     throw new IllegalArgumentException("Unknown room instance id: " + roomInstanceId);
@@ -168,6 +183,15 @@ public final class LookTestFixtures {
             .setEntityType(net.firedevops.firemud.gamelogic.v1.EntityType.PLAYER)
             .setRole("adventurer")
             .build();
+    net.firedevops.firemud.gamelogic.v1.RoomEntity itemEntity =
+        net.firedevops.firemud.gamelogic.v1.RoomEntity.newBuilder()
+            .setEntityId("ITEM-009")
+            .setDisplayName("Backpack")
+            .setEntityType(net.firedevops.firemud.gamelogic.v1.EntityType.ITEM)
+            .addStateFlags("room-ground")
+            .addStateFlags("container")
+            .addStateFlags("wearable:BACK")
+            .build();
 
     LookResult.Builder builder =
         LookResult.newBuilder()
@@ -181,7 +205,8 @@ public final class LookTestFixtures {
             .setShortDescription(snapshot.getShortDescription())
             .setLongDescription(snapshot.getLongDescription())
             .addEntities(koboldEntity)
-            .addEntities(playerEntity);
+            .addEntities(playerEntity)
+            .addEntities(itemEntity);
     builder.addExits(primaryExit);
     if (ROOM_INSTANCE_ID.equals(roomInstanceId)) {
       builder.addExits(secondaryExit);

@@ -6,7 +6,9 @@ import java.util.List;
 import net.firedevops.firemud.springcloudgateway.service.GatewayRoute;
 import org.junit.jupiter.api.Test;
 import org.springframework.cloud.gateway.route.InMemoryRouteDefinitionRepository;
+import org.springframework.cloud.gateway.route.RouteDefinitionWriter;
 import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
 class GatewayRouteServiceImplTest {
@@ -23,5 +25,35 @@ class GatewayRouteServiceImplTest {
 
     StepVerifier.create(service.remove("test")).expectNext(true).verifyComplete();
     assertEquals(0, Flux.from(repo.getRouteDefinitions()).collectList().block().size());
+  }
+
+  @Test
+  void removeMissingRouteReturnsFalse() {
+    InMemoryRouteDefinitionRepository repo = new InMemoryRouteDefinitionRepository();
+    GatewayRouteServiceImpl service = new GatewayRouteServiceImpl(repo, e -> {});
+
+    StepVerifier.create(service.remove("missing")).expectNext(false).verifyComplete();
+  }
+
+  @Test
+  void removePropagatesWriterFailures() {
+    RouteDefinitionWriter writer =
+        new RouteDefinitionWriter() {
+          @Override
+          public Mono<Void> save(
+              Mono<org.springframework.cloud.gateway.route.RouteDefinition> route) {
+            return Mono.empty();
+          }
+
+          @Override
+          public Mono<Void> delete(Mono<String> routeId) {
+            return Mono.error(new IllegalStateException("boom"));
+          }
+        };
+    GatewayRouteServiceImpl service = new GatewayRouteServiceImpl(writer, e -> {});
+
+    StepVerifier.create(service.remove("test"))
+        .expectErrorSatisfies(error -> assertEquals("boom", error.getMessage()))
+        .verify();
   }
 }

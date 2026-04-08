@@ -10,6 +10,7 @@ option java_multiple_files = true;
 service LoggingAdminService {
   rpc Ping(PingRequest) returns (PingResponse);
   rpc QueryLogs(QueryLogsRequest) returns (QueryLogsResponse);
+  rpc CreateLogEvent(CreateLogEventRequest) returns (CreateLogEventResponse);
   rpc ApplyModerationAction(ApplyModerationActionRequest) returns (ApplyModerationActionResponse);
   rpc ToggleFeatureFlag(ToggleFeatureFlagRequest) returns (ToggleFeatureFlagResponse);
 }
@@ -28,6 +29,18 @@ message QueryLogsRequest {
 
 message QueryLogsResponse {
   repeated string entries = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message CreateLogEventRequest {
+  string tenant_id = 1;
+  string account_id = 2;
+  string type = 3;
+  string message = 4;
+}
+
+message CreateLogEventResponse {
+  string log_event_id = 1;
   shared.v1.ErrorDetail error = 2;
 }
 

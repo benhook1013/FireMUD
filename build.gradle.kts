@@ -326,6 +326,12 @@ tasks.register<Exec>("checkFlywayVersions") {
     commandLine("bash", "dev-tools/check-flyway-versions.sh")
 }
 
+tasks.register<Exec>("checkGrpcTransportConfig") {
+    group = "verification"
+    description = "Checks gRPC transport configuration for stale server TLS property usage."
+    commandLine("bash", "dev-tools/check-grpc-transport-config.sh")
+}
+
 tasks.register<Exec>("validateObservabilityContract") {
     group = "verification"
     description = "Validates the design-level observability contract (metric names/labels) against dashboards and snippets."
@@ -373,7 +379,14 @@ tasks.register<Exec>("verifyPlatformSettingsDocs") {
 
 tasks.named("check") {
     // Always run Markdown lint and link checks; they are relatively fast.
-    dependsOn("lintMarkdown", "linkCheck", "checkFlywayVersions", "validateObservabilityContract", "verifyPlatformSettingsDocs")
+    dependsOn(
+        "lintMarkdown",
+        "linkCheck",
+        "checkFlywayVersions",
+        "checkGrpcTransportConfig",
+        "validateObservabilityContract",
+        "verifyPlatformSettingsDocs"
+    )
     if (fullCheck) {
         dependsOn(
             "checkstyleMain",

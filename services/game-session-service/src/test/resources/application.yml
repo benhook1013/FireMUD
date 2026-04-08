@@ -1,6 +1,10 @@
 spring:
   profiles:
     active: test
+  grpc:
+    server:
+      ssl:
+        enabled: false
 firemud:
   grpc:
     plaintext: true

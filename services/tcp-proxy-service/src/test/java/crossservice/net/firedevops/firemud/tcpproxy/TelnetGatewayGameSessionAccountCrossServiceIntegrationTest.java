@@ -484,9 +484,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     assertThat(telnetMoveResponse.trim())
         .matches(
             matchesCanonicalMoveRefreshWithOptionalPrompt(LookTestFixtures.DESTINATION_ROOM_ID));
-    assertThat(telnetReplayResponse.trim())
-        .matches(
-            matchesCanonicalMoveRefreshWithOptionalPrompt(LookTestFixtures.DESTINATION_ROOM_ID));
+    assertThat(telnetReplayResponse.trim()).isEqualTo("demo>");
     assertThat(telnetReconnectLookResponse.trim())
         .matches(matchesCanonicalLookWithOptionalPrompt());
   }
@@ -566,7 +564,8 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
           .contains("OK PLAY Entered world: demo");
 
       writer.println("WHISPER Sora Keep quiet");
-      telnetWhisperResponse = readLineAfterContains(reader, "You whisper to Sora, \"Keep quiet\"");
+      telnetWhisperResponse =
+          readLineAfterContains(reader, ChatTestFixtures.canonicalWhisperText());
       assertThat(SOCIAL_STUB.lastRequest())
           .hasValueSatisfying(
               request -> {
@@ -575,7 +574,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
               });
 
       writer.println("TELL Sora Meet me at the forge");
-      telnetTellResponse = readLineAfterContains(reader, "You tell Sora, \"Meet me at the forge\"");
+      telnetTellResponse = readLineAfterContains(reader, ChatTestFixtures.canonicalTellText());
     }
 
     assertThat(telnetWhisperResponse).contains(ChatTestFixtures.canonicalWhisperText());
@@ -666,9 +665,9 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
           screenBufferService,
           observerContext,
           ChatTestFixtures.canonicalWhisperObserverMetadataText());
-      assertThat(readLineAfterContains(actorReader, "You whisper to Sora, \"Keep quiet\""))
+      assertThat(readLineAfterContains(actorReader, ChatTestFixtures.canonicalWhisperText()))
           .contains(ChatTestFixtures.canonicalWhisperText());
-      assertThat(readLineAfterContains(targetReader, "Emberline whispers to you, \"Keep quiet\""))
+      assertThat(readLineAfterContains(targetReader, ChatTestFixtures.canonicalWhisperTargetText()))
           .contains(ChatTestFixtures.canonicalWhisperTargetText());
       assertThat(readLineAfterContains(observerReader, "Emberline whispers something to Sora."))
           .contains(ChatTestFixtures.canonicalWhisperObserverMetadataText());
@@ -727,10 +726,9 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
       actorWriter.println("TELL Sora Meet me at the forge");
       assertBufferedScreenEventuallyContains(
           screenBufferService, targetContext, ChatTestFixtures.canonicalTellTargetText());
-      assertThat(readLineAfterContains(actorReader, "You tell Sora, \"Meet me at the forge\""))
+      assertThat(readLineAfterContains(actorReader, ChatTestFixtures.canonicalTellText()))
           .contains(ChatTestFixtures.canonicalTellText());
-      assertThat(
-              readLineAfterContains(targetReader, "Emberline tells you, \"Meet me at the forge\""))
+      assertThat(readLineAfterContains(targetReader, ChatTestFixtures.canonicalTellTargetText()))
           .contains(ChatTestFixtures.canonicalTellTargetText());
     }
   }
@@ -871,7 +869,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     props.put("firemud.redis.port", String.valueOf(REDIS.getMappedPort(6379)));
     props.put("firemud.database.enabled", "true");
     props.put("spring.main.allow-bean-definition-overriding", "true");
-    props.put("firemud.auth.jwt-secret", "stub-secret");
+    props.put("firemud.auth.jwt-secret", "stub-secret-key-for-tests-1234567890");
     props.put("firemud.services.entityManagementService", "localhost:" + ENTITY_STUB.port());
     props.put(
         "management.endpoint.health.group.readiness.include",

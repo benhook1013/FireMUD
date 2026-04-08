@@ -20,6 +20,15 @@ public class TextCommandParser {
         switch (type) {
           case WORLDS ->
               new ParsedCommandData(List.of(), new TextCommandPayload.ViewRequest("WORLDS"));
+          case HELP -> parseHelp(tokens);
+          case WHO -> new ParsedCommandData(List.of(), new TextCommandPayload.ViewRequest("WHO"));
+          case INVENTORY ->
+              new ParsedCommandData(List.of(), new TextCommandPayload.ViewRequest("INVENTORY"));
+          case EQUIPMENT ->
+              new ParsedCommandData(List.of(), new TextCommandPayload.ViewRequest("EQUIPMENT"));
+          case CONTAINER -> parseContainerView(tokens);
+          case GET, DROP, WEAR, REMOVE -> parseItemReference(type, tokens);
+          case PUT, TAKE -> parseContainerTransfer(type, tokens);
           case LOOK -> new ParsedCommandData(List.of(), new TextCommandPayload.ViewRequest("LOOK"));
           case QUICKLOOK ->
               new ParsedCommandData(List.of(), new TextCommandPayload.ViewRequest("QUICKLOOK"));
@@ -53,6 +62,39 @@ public class TextCommandParser {
           new TextCommandPayload.Selection(args.get(0), args.size() > 1 ? args.get(1) : null));
     }
     return new ParsedCommandData(args, new TextCommandPayload.Tokens(args));
+  }
+
+  private ParsedCommandData parseHelp(String[] tokens) {
+    List<String> args = parseRemainingTokens(tokens);
+    if (args.isEmpty()) {
+      return new ParsedCommandData(args, new TextCommandPayload.None());
+    }
+    return new ParsedCommandData(args, new TextCommandPayload.Tokens(args));
+  }
+
+  private ParsedCommandData parseItemReference(TextCommandType type, String[] tokens) {
+    List<String> args = parseRemainingTokens(tokens);
+    if (args.isEmpty()) {
+      return new ParsedCommandData(args, new TextCommandPayload.Tokens(args));
+    }
+    return new ParsedCommandData(args, TextCommandPayload.fromLegacy(type, args));
+  }
+
+  private ParsedCommandData parseContainerTransfer(TextCommandType type, String[] tokens) {
+    List<String> args = parseRemainingTokens(tokens);
+    if (args.isEmpty()) {
+      return new ParsedCommandData(args, new TextCommandPayload.Tokens(args));
+    }
+    return new ParsedCommandData(args, TextCommandPayload.fromLegacy(type, args));
+  }
+
+  private ParsedCommandData parseContainerView(String[] tokens) {
+    List<String> args = parseRemainingTokens(tokens);
+    if (args.isEmpty()) {
+      return new ParsedCommandData(args, new TextCommandPayload.Tokens(args));
+    }
+    return new ParsedCommandData(
+        args, TextCommandPayload.fromLegacy(TextCommandType.CONTAINER, args));
   }
 
   private List<String> parseRemainingTokens(String[] tokens) {
@@ -118,15 +160,21 @@ public class TextCommandParser {
   private ParsedCommandData parseMove(String aliasUsed, String[] tokens) {
     List<String> args = extractMoveArguments(tokens);
     if (!args.isEmpty()) {
-      return new ParsedCommandData(args, new TextCommandPayload.Directional(args.get(0)));
-    }
-    if ("NORTH".equalsIgnoreCase(aliasUsed)
-        || "SOUTH".equalsIgnoreCase(aliasUsed)
-        || "EAST".equalsIgnoreCase(aliasUsed)
-        || "WEST".equalsIgnoreCase(aliasUsed)) {
+      String canonicalDirection = canonicalDirection(args.get(0));
+      List<String> canonicalArgs =
+          canonicalDirection.isEmpty() ? args : List.of(canonicalDirection);
       return new ParsedCommandData(
-          List.of(aliasUsed.trim().toLowerCase()),
-          new TextCommandPayload.Directional(aliasUsed.trim().toLowerCase()));
+          canonicalArgs,
+          new TextCommandPayload.Directional(
+              canonicalDirection.isEmpty()
+                  ? args.get(0).trim().toLowerCase()
+                  : canonicalDirection));
+    }
+    String canonicalAliasDirection = canonicalDirection(aliasUsed);
+    if (!canonicalAliasDirection.isEmpty()) {
+      return new ParsedCommandData(
+          List.of(canonicalAliasDirection),
+          new TextCommandPayload.Directional(canonicalAliasDirection));
     }
     return new ParsedCommandData(args, new TextCommandPayload.Tokens(args));
   }
@@ -137,12 +185,25 @@ public class TextCommandParser {
     }
     String verb = tokens[0];
     if (tokens.length == 1) {
-      return switch (verb.trim().toUpperCase()) {
-        case "NORTH", "SOUTH", "EAST", "WEST" -> List.of(verb.trim().toLowerCase());
-        default -> List.of();
-      };
+      String canonical = canonicalDirection(verb);
+      return canonical.isEmpty() ? List.of() : List.of(canonical);
     }
     return List.of(Arrays.copyOfRange(tokens, 1, tokens.length));
+  }
+
+  private String canonicalDirection(String token) {
+    if (token == null || token.isBlank()) {
+      return "";
+    }
+    return switch (token.trim().toUpperCase()) {
+      case "N", "NORTH" -> "north";
+      case "S", "SOUTH" -> "south";
+      case "E", "EAST" -> "east";
+      case "W", "WEST" -> "west";
+      case "U", "UP" -> "up";
+      case "D", "DOWN" -> "down";
+      default -> "";
+    };
   }
 
   private ParsedCommandData parseUnknown(String[] tokens) {

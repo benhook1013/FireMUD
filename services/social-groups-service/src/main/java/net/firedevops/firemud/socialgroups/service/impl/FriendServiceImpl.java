@@ -36,15 +36,15 @@ public class FriendServiceImpl implements FriendService {
         request.accountLevel());
     if (request.accountLevel()) {
       AccountFriendLink afl = new AccountFriendLink();
+      afl.setTenantId(request.tenantId());
       afl.setAccountId(request.accountId());
       afl.setFriendAccountId(request.friendAccountId());
       afl.setStatus("active");
       afl.setCreatedAt(Instant.now());
       accountFriendLinkRepository.save(afl);
-      // Map to existing DTO for simplicity
       FriendLink dto = new FriendLink();
       dto.setId(afl.getId());
-      dto.setTenantId(request.tenantId());
+      dto.setTenantId(afl.getTenantId());
       dto.setAccountId(afl.getAccountId());
       dto.setFriendAccountId(afl.getFriendAccountId());
       dto.setStatus(afl.getStatus());

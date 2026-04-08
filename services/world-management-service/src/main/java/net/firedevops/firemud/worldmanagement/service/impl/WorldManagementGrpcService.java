@@ -7,6 +7,8 @@ import io.micrometer.core.instrument.MeterRegistry;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
+import net.firedevops.firemud.common.security.AuthTokenInterceptor;
+import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.worldmanagement.dto.RoomDto;
 import net.firedevops.firemud.worldmanagement.dto.RoomSnapshotDto;
 import net.firedevops.firemud.worldmanagement.dto.RoomSnapshotDto.RoomExitSnapshotDto;
@@ -28,7 +30,7 @@ import tools.jackson.core.JacksonException;
 import tools.jackson.databind.ObjectMapper;
 
 /** gRPC endpoints for the World Management Service. */
-@GrpcService
+@GrpcService(interceptors = AuthTokenInterceptor.class)
 @RequiredArgsConstructor
 @SuppressFBWarnings(
     value = "EI_EXPOSE_REP2",
@@ -39,7 +41,7 @@ public class WorldManagementGrpcService
   private final PingService pingService;
   private final RoomService roomService;
   private final MeterRegistry meterRegistry;
-  private final ObjectMapper objectMapper = new ObjectMapper();
+  private final ObjectMapper objectMapper;
 
   @Override
   @Timed(value = "worldGrpc.ping")
@@ -74,6 +76,7 @@ public class WorldManagementGrpcService
     try {
       Long roomId = Long.valueOf(resolveRoomId(request));
       Long tenantId = Long.valueOf(resolveTenantId(request));
+      SessionContext.requireTenantAccess(tenantId);
       Optional<String> json =
           Optional.ofNullable(roomService.getRoom(tenantId, roomId)).map(this::toJson);
       if (json.isPresent()) {
@@ -125,6 +128,7 @@ public class WorldManagementGrpcService
     try {
       Long roomId = Long.valueOf(resolveRoomId(request));
       Long tenantId = Long.valueOf(resolveTenantId(request));
+      requireTenantAccessWhenPresent(tenantId);
       RoomSnapshotDto snapshot =
           roomService.getRoomSnapshot(tenantId, roomId, request.getPreferredLocale());
       GetRoomSnapshotResponse response =
@@ -242,5 +246,14 @@ public class WorldManagementGrpcService
 
   private String errorCodeFor(IllegalArgumentException ex) {
     return "Room not found".equals(ex.getMessage()) ? "NOT_FOUND" : "INVALID_ARGUMENT";
+  }
+
+  private void requireTenantAccessWhenPresent(Long tenantId) {
+    if (SessionContext.getAccountId() == null
+        && SessionContext.getGlobalRoles().isEmpty()
+        && SessionContext.getScopedRolesMap().isEmpty()) {
+      return;
+    }
+    SessionContext.requireTenantAccess(tenantId);
   }
 }

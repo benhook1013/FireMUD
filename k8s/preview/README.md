@@ -62,6 +62,28 @@ The next hosted preview milestone is:
 - real reviewer-accessible preview traffic
 - manual `LOGIN -> PLAY -> LOOK` proof over the TCP/Telnet path first
 
+## Current transport stance
+
+- Preview keeps the **target-state** service topology, auth/session model, and per-PR namespace isolation.
+- Preview currently uses a temporary plaintext internal gRPC exception while the Spring gRPC SSL-bundle migration is still being re-proven. That exception is preview-only, must remain documented here and in the transport-alignment slice, and must be removed once preview mTLS is validated end-to-end again.
+- The canonical non-local target state remains Spring Boot SSL bundles plus Spring gRPC server SSL-bundle binding for internal gRPC everywhere outside intentionally relaxed local development.
+- The explicit cleanup path is:
+  - keep preview transport expectations documented,
+  - migrate services away from legacy top-level `grpc.server.*` assumptions to `spring.grpc.server.ssl.*` with `spring.ssl.bundle.*`,
+  - add CI/static checks to prevent legacy server-TLS property drift,
+  - remove the temporary preview plaintext exception after preview mTLS is re-proved.
+
+## Current TCP bootstrap contract
+
+- Hosted preview TCP smoke and manual reviewer proof both assume a bootstrap gameplay session exists before `LOGIN`.
+- Preview currently creates that bootstrap state explicitly rather than deriving it from a hidden client-side convention:
+  - the preview workflow creates the smoke account in tenant `1`
+  - preview `tcp-proxy-service` is given preview-only default bootstrap metadata
+  - the smoke path expects the initial bootstrap session to resolve to session `1` in tenant `1`
+- That bootstrap contract is preview-only operational glue, not the long-term player-facing TCP contract.
+- The purpose of this explicit bootstrap state is to keep preview reviewer-usable while the actual gameplay admission path is still being hardened and documented.
+- The cleanup path for retiring or replacing this bootstrap contract is tracked in `02.15.5-task-list-preview-tcp-admission-cleanup-vertical-slice.md`.
+
 Preview TCP contract:
 
 - preview TCP uses a small reserved external port range `32000-32015`

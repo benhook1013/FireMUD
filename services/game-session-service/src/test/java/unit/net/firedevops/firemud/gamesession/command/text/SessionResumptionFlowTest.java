@@ -16,9 +16,11 @@ import net.firedevops.firemud.account.v1.AuthenticateResponse;
 import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
 import net.firedevops.firemud.cache.LookCacheService;
+import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.common.settings.ScopedSettingsSnapshot;
 import net.firedevops.firemud.gamelogic.v1.LookResult;
 import net.firedevops.firemud.gamesession.client.AccountClient;
+import net.firedevops.firemud.gamesession.client.EntityManagementClient;
 import net.firedevops.firemud.gamesession.client.GameLogicClient;
 import net.firedevops.firemud.gamesession.config.DevIsolatedProperties;
 import net.firedevops.firemud.gamesession.config.EffectiveSettingsResolver;
@@ -37,10 +39,12 @@ import net.firedevops.firemud.gamesession.presentation.TextPlayerOutputRenderer;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.CommandService;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
+import net.firedevops.firemud.gamesession.service.GameplayPresenceService;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.gamesession.service.devisolated.DevIsolatedGameInstanceRegistry;
+import net.firedevops.firemud.gamesession.service.impl.InMemoryGameplayPresenceService;
 import net.firedevops.firemud.shared.v1.RoomInstanceRef;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -57,6 +61,8 @@ class SessionResumptionFlowTest {
   private final GameInstanceRepository instanceRepository =
       Mockito.mock(GameInstanceRepository.class);
   private final AccountClient accountClient = Mockito.mock(AccountClient.class);
+  private final EntityManagementClient entityManagementClient =
+      Mockito.mock(EntityManagementClient.class);
   private final GameSessionProperties properties = new GameSessionProperties();
   private final GameplayWorldCatalog worldCatalog = new GameplayWorldCatalog(properties);
   private final DevIsolatedProperties devIsolatedProperties = new DevIsolatedProperties(false);
@@ -75,8 +81,12 @@ class SessionResumptionFlowTest {
       Mockito.mock(FirstPartyConnectContextRegistry.class);
   private PlayCommandHandler playHandler;
   private final MoveCommandHandler moveHandler = Mockito.mock(MoveCommandHandler.class);
+  private final HelpCommandHandler helpHandler = new HelpCommandHandler();
   private final CommunicationCommandHandler communicationHandler =
       Mockito.mock(CommunicationCommandHandler.class);
+  private final GameplayPresenceService gameplayPresenceService =
+      new InMemoryGameplayPresenceService(
+          new JwtUtil("testsecretkeytestsecretkeytest1234", 60_000L));
   private WorldsCommandHandler worldsHandler;
   private TextCommandInterpreter interpreter;
 
@@ -155,7 +165,7 @@ class SessionResumptionFlowTest {
             .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("1021").build())
             .build();
     when(gameLogicClient.resolveLook(
-            anyString(), anyString(), anyString(), anyString(), anyString()))
+            anyString(), anyString(), anyString(), anyString(), anyString(), anyString()))
         .thenReturn(lookResult);
     when(lookTextRenderer.toPlayerOutput(
             Mockito.eq(lookResult),
@@ -176,7 +186,9 @@ class SessionResumptionFlowTest {
             worldCatalog,
             gameLogicProperties,
             accountClient,
+            entityManagementClient,
             firstPartyConnectContextRegistry,
+            gameplayPresenceService,
             meterRegistry);
     worldsHandler = new WorldsCommandHandler(worldCatalog);
     interpreter =
@@ -186,6 +198,11 @@ class SessionResumptionFlowTest {
             loginHandler,
             playHandler,
             moveHandler,
+            helpHandler,
+            new WhoCommandHandler(gameplayPresenceService),
+            new InventoryCommandHandler(entityManagementClient),
+            new EquipmentCommandHandler(entityManagementClient),
+            new ContainerCommandHandler(entityManagementClient),
             sessionAuthenticationService,
             communicationHandler,
             worldsHandler,

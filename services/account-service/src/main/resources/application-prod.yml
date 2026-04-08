@@ -13,27 +13,31 @@ spring:
     properties:
       hibernate:
         default_schema: ${SERVICE_SCHEMA:public}
+  ssl:
+    bundle:
+      pem:
+        firemud-grpc:
+          keystore:
+            certificate: ${FIREMUD_GRPC_CERT_CHAIN_PATH:certs/client.crt}
+            private-key: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:certs/client.key}
+          truststore:
+            certificate: ${FIREMUD_GRPC_CA_CERT_PATH:certs/ca.crt}
+  grpc:
+    server:
+      port: 6565
+      shutdown-grace-period: 30s
+      keep-alive:
+        time: 30s
+        timeout: 5s
+        permit-without-calls: true
+      ssl:
+        bundle: firemud-grpc
+        client-auth: REQUIRE
   mail:
     host: ${SMTP_HOST:localhost}
     port: ${SMTP_PORT:1025}
     username: ${SMTP_USERNAME:}
     password: ${SMTP_PASSWORD:}
-grpc:
-  shutdownGrace: 30
-  server:
-    port: 6565
-    enableKeepAlive: true
-    keepAliveTime: 30s
-    keepAliveTimeout: 5s
-    permitKeepAliveWithoutCalls: true
-    compression: gzip
-    security:
-      enabled: true
-      certificateChainPath: ${FIREMUD_GRPC_CERT_CHAIN_PATH:certs/client.crt}
-      privateKeyPath: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:certs/client.key}
-      trustCertCollectionPath: ${FIREMUD_GRPC_CA_CERT_PATH:certs/ca.crt}
-      clientAuth: REQUIRE
-
 firemud:
   grpc:
     cert-chain: ${FIREMUD_GRPC_CERT_CHAIN_PATH:certs/client.crt}

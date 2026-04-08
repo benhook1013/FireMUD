@@ -24,6 +24,8 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /** Default implementation of {@link GameInstanceService}. */
 @SuppressFBWarnings(
@@ -122,7 +124,9 @@ public class GameInstanceServiceImpl implements GameInstanceService {
                   existing.getOwnerAccountId());
               existing.setStatus("STOPPED");
               repository.save(existing);
-              sessionStateService.deleteState(existing.getTenantId(), existing.getId());
+              runAfterCommit(
+                  "delete stopped session state",
+                  () -> sessionStateService.deleteState(existing.getTenantId(), existing.getId()));
             });
     GameInstance instance = new GameInstance();
     instance.setTenantId(request.tenantId());
@@ -142,15 +146,19 @@ public class GameInstanceServiceImpl implements GameInstanceService {
               .step("checkEntityService", () -> entityManagementClient.ping())
               .step("notifyGameLogic", () -> gameLogicClient.ping())
               .build();
-      try {
-        sagaRunner.run(saga);
-      } catch (SagaException e) {
-        logger.error("Saga failed during session start", e);
-        throw new IllegalStateException("Failed to start session", e);
-      }
+      runAfterCommit(
+          "validate session dependencies",
+          () -> {
+            try {
+              sagaRunner.run(saga);
+            } catch (SagaException e) {
+              logger.error("Saga failed during session start", e);
+              throw new IllegalStateException("Failed to start session", e);
+            }
+          });
     }
 
-    sessionStateService.saveState(dto);
+    runAfterCommit("save started session state", () -> sessionStateService.saveState(dto));
     meterRegistry
         .counter(
             "game_sessions_started_total",
@@ -185,14 +193,20 @@ public class GameInstanceServiceImpl implements GameInstanceService {
               .step("flushWorldService", () -> worldManagementClient.ping())
               .step("flushEntityService", () -> entityManagementClient.ping())
               .build();
-      try {
-        sagaRunner.run(saga);
-      } catch (SagaException e) {
-        logger.error("Saga failed during session stop", e);
-        throw new IllegalStateException("Failed to stop session", e);
-      }
+      runAfterCommit(
+          "validate session stop dependencies",
+          () -> {
+            try {
+              sagaRunner.run(saga);
+            } catch (SagaException e) {
+              logger.error("Saga failed during session stop", e);
+              throw new IllegalStateException("Failed to stop session", e);
+            }
+          });
     }
-    sessionStateService.deleteState(instance.getTenantId(), instance.getId());
+    runAfterCommit(
+        "delete stopped session state",
+        () -> sessionStateService.deleteState(instance.getTenantId(), instance.getId()));
     return mapper.toDto(saved);
   }
 
@@ -212,7 +226,29 @@ public class GameInstanceServiceImpl implements GameInstanceService {
     instance.setStatus("RUNNING");
     GameInstance saved = repository.save(instance);
     GameInstanceDto dto = mapper.toDto(saved);
-    sessionStateService.saveState(dto);
+    runAfterCommit("save restarted session state", () -> sessionStateService.saveState(dto));
     return dto;
+  }
+
+  private void runAfterCommit(String actionName, Runnable action) {
+    if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+      runSafely(actionName, action);
+      return;
+    }
+    TransactionSynchronizationManager.registerSynchronization(
+        new TransactionSynchronization() {
+          @Override
+          public void afterCommit() {
+            runSafely(actionName, action);
+          }
+        });
+  }
+
+  private void runSafely(String actionName, Runnable action) {
+    try {
+      action.run();
+    } catch (RuntimeException ex) {
+      logger.warn("Failed to {}", actionName, ex);
+    }
   }
 }

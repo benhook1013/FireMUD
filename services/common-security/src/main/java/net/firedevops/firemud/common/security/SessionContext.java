@@ -51,6 +51,12 @@ public final class SessionContext {
     return data.scopedRoles.getOrDefault(tenantId, Collections.emptyList());
   }
 
+  /** Returns the full scoped-role map or an empty map if not present. */
+  public static Map<String, List<String>> getScopedRolesMap() {
+    ClaimsData data = HOLDER.get();
+    return data == null || data.scopedRoles == null ? Map.of() : data.scopedRoles;
+  }
+
   /** Returns whether the current caller can act on the provided tenant. */
   public static boolean hasTenantAccess(Long tenantId) {
     if (tenantId == null) {

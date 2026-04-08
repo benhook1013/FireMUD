@@ -14,8 +14,9 @@ public interface CharacterRepository extends JpaRepository<Character, Long> {
   @EntityGraph(attributePaths = {"inventoryEntries", "inventoryEntries.item"})
   Optional<Character> findWithInventoryById(Long id);
 
-  /** Returns all characters owned by the given account across all tenants. */
-  Page<Character> findByAccountId(Long accountId, Pageable pageable);
+  Optional<Character> findByIdAndTenantId(Long id, Long tenantId);
+
+  Page<Character> findByTenantIdAndAccountId(Long tenantId, Long accountId, Pageable pageable);
 
   Optional<Character> findByTenantIdAndNameIgnoreCase(Long tenantId, String name);
 }

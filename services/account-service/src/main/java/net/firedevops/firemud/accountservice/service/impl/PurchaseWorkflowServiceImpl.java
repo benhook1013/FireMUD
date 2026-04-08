@@ -12,7 +12,6 @@ import net.firedevops.firemud.common.saga.SagaException;
 import net.firedevops.firemud.common.saga.SagaRunner;
 import org.slf4j.Logger;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 /** Implements purchase workflows using SagaRunner. */
 @Service
@@ -31,7 +30,6 @@ public class PurchaseWorkflowServiceImpl implements PurchaseWorkflowService {
   }
 
   @Override
-  @Transactional
   @Timed(value = "payment.purchase")
   public PaymentIntentDto processPurchase(PurchaseRequest request) {
     final PaymentIntentDto[] ref = new PaymentIntentDto[1];

@@ -23,6 +23,12 @@ class PlayerOutputTest {
         .isTrue();
     assertThat(
             PlayerOutput.view(
+                    new InventoryViewOutput(
+                        "Inventory:", java.util.List.of("- Torch x2 (A small torch)")))
+                .screenBufferEligible())
+        .isTrue();
+    assertThat(
+            PlayerOutput.view(
                     new WorldsViewOutput(
                         java.util.List.of(
                             new WorldsViewOutput.WorldEntry(1, "demo", "Demo World", 1L, false))))

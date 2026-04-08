@@ -16,6 +16,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.core.ReactiveStringRedisTemplate;
 import org.springframework.data.redis.core.ReactiveValueOperations;
 import org.springframework.http.HttpStatus;
+import org.springframework.mock.env.MockEnvironment;
 import org.springframework.mock.http.server.reactive.MockServerHttpRequest;
 import org.springframework.mock.web.server.MockServerWebExchange;
 import org.springframework.web.server.ServerWebExchange;
@@ -29,10 +30,20 @@ class GameplayHandshakeFilterTest {
       new RuntimeIdentity(
           "spring-cloud-gateway", "gateway-test", "localhost", Instant.EPOCH, null, null, null);
 
+  private static MockEnvironment environmentWithProfiles(String... profiles) {
+    MockEnvironment environment = new MockEnvironment();
+    environment.setActiveProfiles(profiles);
+    return environment;
+  }
+
   @Test
   void rejectsFirstPartyHandshakeWithoutConnectToken() {
     GameplayHandshakeFilter filter =
-        new GameplayHandshakeFilter(new JwtUtil(SECRET, 30_000L), TEST_RUNTIME_IDENTITY, null);
+        new GameplayHandshakeFilter(
+            new JwtUtil(SECRET, 30_000L),
+            TEST_RUNTIME_IDENTITY,
+            null,
+            environmentWithProfiles("test"));
 
     MockServerWebExchange exchange =
         MockServerWebExchange.from(MockServerHttpRequest.get("/ws/game/test").build());
@@ -47,7 +58,11 @@ class GameplayHandshakeFilterTest {
   @Test
   void rejectsScopeMismatchWhenRequestHeadersDisagreeWithTokenClaims() {
     GameplayHandshakeFilter filter =
-        new GameplayHandshakeFilter(new JwtUtil(SECRET, 30_000L), TEST_RUNTIME_IDENTITY, null);
+        new GameplayHandshakeFilter(
+            new JwtUtil(SECRET, 30_000L),
+            TEST_RUNTIME_IDENTITY,
+            null,
+            environmentWithProfiles("test"));
     String token =
         new JwtUtil(SECRET, 30_000L)
             .generateToken(
@@ -75,7 +90,11 @@ class GameplayHandshakeFilterTest {
   @Test
   void promotesFirstPartyHandshakeWithValidToken() {
     GameplayHandshakeFilter filter =
-        new GameplayHandshakeFilter(new JwtUtil(SECRET, 30_000L), TEST_RUNTIME_IDENTITY, null);
+        new GameplayHandshakeFilter(
+            new JwtUtil(SECRET, 30_000L),
+            TEST_RUNTIME_IDENTITY,
+            null,
+            environmentWithProfiles("test"));
     String token =
         new JwtUtil(SECRET, 30_000L)
             .generateToken(
@@ -116,7 +135,11 @@ class GameplayHandshakeFilterTest {
     props.getTcpProxy().setInsecureTrustedCidrs(java.util.List.of("10.0.0.0/8"));
     HeaderTrustFilter headerTrustFilter = new HeaderTrustFilter(props);
     GameplayHandshakeFilter filter =
-        new GameplayHandshakeFilter(new JwtUtil(SECRET, 30_000L), TEST_RUNTIME_IDENTITY, null);
+        new GameplayHandshakeFilter(
+            new JwtUtil(SECRET, 30_000L),
+            TEST_RUNTIME_IDENTITY,
+            null,
+            environmentWithProfiles("test"));
 
     MockServerHttpRequest request =
         MockServerHttpRequest.get("/ws/game/test")
@@ -138,7 +161,11 @@ class GameplayHandshakeFilterTest {
   @Test
   void rejectsExpiredConnectToken() {
     GameplayHandshakeFilter filter =
-        new GameplayHandshakeFilter(new JwtUtil(SECRET, 30_000L), TEST_RUNTIME_IDENTITY, null);
+        new GameplayHandshakeFilter(
+            new JwtUtil(SECRET, 30_000L),
+            TEST_RUNTIME_IDENTITY,
+            null,
+            environmentWithProfiles("test"));
     JwtUtil expiredJwtUtil = new JwtUtil(SECRET, -1L);
     String token =
         expiredJwtUtil.generateToken(
@@ -173,7 +200,10 @@ class GameplayHandshakeFilterTest {
         .thenReturn(Mono.just(true), Mono.just(false));
     GameplayHandshakeFilter filter =
         new GameplayHandshakeFilter(
-            new JwtUtil(SECRET, 30_000L), TEST_RUNTIME_IDENTITY, redisTemplate);
+            new JwtUtil(SECRET, 30_000L),
+            TEST_RUNTIME_IDENTITY,
+            redisTemplate,
+            environmentWithProfiles("test"));
     String token =
         new JwtUtil(SECRET, 30_000L)
             .generateToken(
@@ -201,6 +231,37 @@ class GameplayHandshakeFilterTest {
     assertThat(second.getResponse().getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
     assertThat(second.getResponse().getHeaders().getFirst("X-Firemud-Handshake-Error-Class"))
         .isEqualTo(GameplayHandshakeFilter.CONNECT_TOKEN_REPLAYED);
+  }
+
+  @Test
+  void rejectsWhenReplayProtectionStorageIsMissingOutsideDevOrTest() {
+    GameplayHandshakeFilter filter =
+        new GameplayHandshakeFilter(
+            new JwtUtil(SECRET, 30_000L),
+            TEST_RUNTIME_IDENTITY,
+            null,
+            environmentWithProfiles("prod"));
+    String token =
+        new JwtUtil(SECRET, 30_000L)
+            .generateToken(
+                "7",
+                Map.of(
+                    "accountId", "7",
+                    "tenantId", "1",
+                    "gameInstanceId", "42",
+                    "jti", "jti-no-redis"));
+
+    MockServerWebExchange exchange =
+        MockServerWebExchange.from(
+            MockServerHttpRequest.get("/ws/game/test")
+                .header(GameplayHandshakeFilter.CONNECT_TOKEN_HEADER, token)
+                .build());
+
+    filter.filter(exchange, e -> Mono.empty()).block();
+
+    assertThat(exchange.getResponse().getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+    assertThat(exchange.getResponse().getHeaders().getFirst("X-Firemud-Handshake-Error-Class"))
+        .isEqualTo(GameplayHandshakeFilter.CONNECT_REPLAY_PROTECTION_UNAVAILABLE);
   }
 
   private ServerWebExchange filterThroughChain(WebFilter filter, ServerWebExchange exchange) {

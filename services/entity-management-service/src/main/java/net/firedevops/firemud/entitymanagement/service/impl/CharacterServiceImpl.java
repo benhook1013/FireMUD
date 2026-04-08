@@ -99,8 +99,11 @@ public class CharacterServiceImpl implements CharacterService {
   @Override
   @Transactional(readOnly = true)
   @Timed(value = "character.listForAccount")
-  public Page<CharacterDto> listForAccount(Long accountId, Pageable pageable) {
-    return characterRepository.findByAccountId(accountId, pageable).map(characterMapper::toDto);
+  public Page<CharacterDto> listForTenantAndAccount(
+      Long tenantId, Long accountId, Pageable pageable) {
+    return characterRepository
+        .findByTenantIdAndAccountId(tenantId, accountId, pageable)
+        .map(characterMapper::toDto);
   }
 
   @Override

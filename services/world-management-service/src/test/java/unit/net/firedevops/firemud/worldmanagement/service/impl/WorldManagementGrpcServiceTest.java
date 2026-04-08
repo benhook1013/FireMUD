@@ -8,6 +8,7 @@ import io.micrometer.core.instrument.MeterRegistry;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
+import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.shared.v1.RoomInstanceRef;
 import net.firedevops.firemud.worldmanagement.dto.RoomSnapshotDto;
 import net.firedevops.firemud.worldmanagement.service.PingService;
@@ -18,8 +19,23 @@ import net.firedevops.firemud.worldmanagement.v1.PingRequest;
 import net.firedevops.firemud.worldmanagement.v1.PingResponse;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
+import tools.jackson.databind.ObjectMapper;
 
 class WorldManagementGrpcServiceTest {
+  private WorldManagementGrpcService newService(
+      PingService pingService, RoomService roomService, MeterRegistry meterRegistry) {
+    SessionContext.setContext("test-account", List.of("platformAdmin"), Map.of());
+    return new WorldManagementGrpcService(
+        pingService, roomService, meterRegistry, new ObjectMapper());
+  }
+
+  private WorldManagementGrpcService newServiceWithoutContext(
+      PingService pingService, RoomService roomService, MeterRegistry meterRegistry) {
+    SessionContext.clear();
+    return new WorldManagementGrpcService(
+        pingService, roomService, meterRegistry, new ObjectMapper());
+  }
+
   @Test
   void pingReturnsPong() {
     PingService pingService = Mockito.mock(PingService.class);
@@ -28,8 +44,7 @@ class WorldManagementGrpcServiceTest {
     MeterRegistry meterRegistry = Mockito.mock(MeterRegistry.class);
     Mockito.when(meterRegistry.counter(Mockito.anyString(), Mockito.any(String[].class)))
         .thenReturn(Mockito.mock(io.micrometer.core.instrument.Counter.class));
-    WorldManagementGrpcService service =
-        new WorldManagementGrpcService(pingService, roomService, meterRegistry);
+    WorldManagementGrpcService service = newService(pingService, roomService, meterRegistry);
 
     AtomicReference<PingResponse> ref = new AtomicReference<>();
     service.ping(
@@ -57,8 +72,7 @@ class WorldManagementGrpcServiceTest {
     MeterRegistry meterRegistry = Mockito.mock(MeterRegistry.class);
     Mockito.when(meterRegistry.counter(Mockito.anyString(), Mockito.any(String[].class)))
         .thenReturn(Mockito.mock(io.micrometer.core.instrument.Counter.class));
-    WorldManagementGrpcService service =
-        new WorldManagementGrpcService(pingService, roomService, meterRegistry);
+    WorldManagementGrpcService service = newService(pingService, roomService, meterRegistry);
 
     AtomicReference<net.firedevops.firemud.worldmanagement.v1.GetRoomResponse> ref =
         new AtomicReference<>();
@@ -90,8 +104,7 @@ class WorldManagementGrpcServiceTest {
     MeterRegistry meterRegistry = Mockito.mock(MeterRegistry.class);
     Mockito.when(meterRegistry.counter(Mockito.anyString(), Mockito.any(String[].class)))
         .thenReturn(Mockito.mock(io.micrometer.core.instrument.Counter.class));
-    WorldManagementGrpcService service =
-        new WorldManagementGrpcService(pingService, roomService, meterRegistry);
+    WorldManagementGrpcService service = newService(pingService, roomService, meterRegistry);
 
     AtomicReference<GetRoomSnapshotResponse> ref = new AtomicReference<>();
     service.getRoomSnapshot(
@@ -121,8 +134,7 @@ class WorldManagementGrpcServiceTest {
     MeterRegistry meterRegistry = Mockito.mock(MeterRegistry.class);
     Mockito.when(meterRegistry.counter(Mockito.anyString(), Mockito.any(String[].class)))
         .thenReturn(Mockito.mock(io.micrometer.core.instrument.Counter.class));
-    WorldManagementGrpcService service =
-        new WorldManagementGrpcService(pingService, roomService, meterRegistry);
+    WorldManagementGrpcService service = newService(pingService, roomService, meterRegistry);
 
     AtomicReference<GetRoomSnapshotResponse> ref = new AtomicReference<>();
     service.getRoomSnapshot(
@@ -161,14 +173,13 @@ class WorldManagementGrpcServiceTest {
                 "Seed room A",
                 List.of(
                     new RoomSnapshotDto.RoomExitSnapshotDto(
-                        1L, 2L, "Room B", "NORTH", "Room B", "Leads toward Room B", 1)),
+                        1L, 2L, "Room B", "NORTH", "NORTH", "Leads toward Room B", 1)),
                 Map.of("weather", "dim"),
                 List.of()));
     MeterRegistry meterRegistry = Mockito.mock(MeterRegistry.class);
     Mockito.when(meterRegistry.counter(Mockito.anyString(), Mockito.any(String[].class)))
         .thenReturn(Mockito.mock(io.micrometer.core.instrument.Counter.class));
-    WorldManagementGrpcService service =
-        new WorldManagementGrpcService(pingService, roomService, meterRegistry);
+    WorldManagementGrpcService service = newService(pingService, roomService, meterRegistry);
 
     AtomicReference<GetRoomSnapshotResponse> ref = new AtomicReference<>();
     AtomicReference<Throwable> error = new AtomicReference<>();
@@ -200,5 +211,44 @@ class WorldManagementGrpcServiceTest {
     assertEquals("2", ref.get().getSnapshot().getExits(0).getTargetRoomInstanceId());
     assertEquals("NORTH", ref.get().getSnapshot().getExits(0).getDirection());
     assertEquals("dim", ref.get().getSnapshot().getAmbientState().getWeather());
+  }
+
+  @Test
+  void getRoomSnapshotAllowsUnauthenticatedInternalReadPath() {
+    PingService pingService = Mockito.mock(PingService.class);
+    RoomService roomService = Mockito.mock(RoomService.class);
+    Mockito.when(roomService.getRoomSnapshot(1L, 1L, "fr"))
+        .thenReturn(
+            new RoomSnapshotDto(
+                1L, 1L, "Room A", "Seed room A", "Seed room A", List.of(), Map.of(), List.of()));
+    MeterRegistry meterRegistry = Mockito.mock(MeterRegistry.class);
+    Mockito.when(meterRegistry.counter(Mockito.anyString(), Mockito.any(String[].class)))
+        .thenReturn(Mockito.mock(io.micrometer.core.instrument.Counter.class));
+    WorldManagementGrpcService service =
+        newServiceWithoutContext(pingService, roomService, meterRegistry);
+
+    AtomicReference<GetRoomSnapshotResponse> ref = new AtomicReference<>();
+    service.getRoomSnapshot(
+        GetRoomSnapshotRequest.newBuilder()
+            .setTenantId("1")
+            .setPreferredLocale("fr")
+            .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("1").build())
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(GetRoomSnapshotResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(ref.get());
+    assertEquals(false, ref.get().hasError());
+    assertEquals("Room A", ref.get().getSnapshot().getRoomName());
   }
 }

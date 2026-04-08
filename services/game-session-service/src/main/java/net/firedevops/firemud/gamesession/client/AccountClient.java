@@ -19,6 +19,8 @@ import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.AbstractBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
+import net.firedevops.firemud.common.security.GrpcClientAuth;
+import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.gamesession.config.DevIsolatedProperties;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.slf4j.Logger;
@@ -33,14 +35,17 @@ public final class AccountClient
   private static final Logger logger = LoggingUtil.getLogger(AccountClient.class);
 
   private final DevIsolatedProperties devIsolatedProperties;
+  private final JwtUtil jwtUtil;
 
   public AccountClient(
       ServiceEndpointsProperties endpoints,
       CommonGrpcClientProperties tlsProps,
       DevIsolatedProperties devIsolatedProperties,
+      JwtUtil jwtUtil,
       GrpcChannelFactory channelFactory) {
     super(endpoints, tlsProps, channelFactory);
     this.devIsolatedProperties = devIsolatedProperties;
+    this.jwtUtil = jwtUtil;
   }
 
   @PostConstruct
@@ -213,7 +218,8 @@ public final class AccountClient
   @Override
   protected AccountServiceGrpc.AccountServiceBlockingStub buildStub(
       io.grpc.ManagedChannel channel) {
-    return AccountServiceGrpc.newBlockingStub(channel).withCompression("gzip");
+    return GrpcClientAuth.attach(
+        AccountServiceGrpc.newBlockingStub(channel).withCompression("gzip"), jwtUtil);
   }
 
   private AccountServiceGrpc.AccountServiceBlockingStub callStub() {

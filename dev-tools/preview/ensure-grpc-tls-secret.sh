@@ -8,13 +8,19 @@ fi
 
 namespace="$1"
 secret_name="${PREVIEW_GRPC_TLS_SECRET_NAME:-firemud-grpc-tls}"
-cert_dir="${PREVIEW_GRPC_TLS_CERT_DIR:-dev-tools/certs}"
+cert_dir="${PREVIEW_GRPC_TLS_CERT_DIR:-}"
 
-if [[ ! -f "${cert_dir}/ca.crt" || ! -f "${cert_dir}/client.crt" || ! -f "${cert_dir}/client.key" ]]; then
-  if [[ -x "dev-tools/generate-dev-certs.sh" ]]; then
-    mkdir -p "$cert_dir"
-    dev-tools/generate-dev-certs.sh "$cert_dir"
-  fi
+if [[ -z "$cert_dir" ]]; then
+  cert_dir="$(mktemp -d)"
+  trap 'rm -rf "$cert_dir"' EXIT
+fi
+
+if [[ -x "dev-tools/generate-dev-certs.sh" ]]; then
+  mkdir -p "$cert_dir"
+  rm -f "${cert_dir}/ca.crt" "${cert_dir}/client.crt" "${cert_dir}/client.key" \
+    "${cert_dir}/server.crt" "${cert_dir}/server.key" "${cert_dir}/dev-ca.pem" \
+    "${cert_dir}/dev-cert.pem" "${cert_dir}/dev-key.pem"
+  dev-tools/generate-dev-certs.sh "$cert_dir"
 fi
 
 for required_file in ca.crt client.crt client.key; do

@@ -3,15 +3,11 @@ package net.firedevops.firemud.gamedesign.service.impl;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.util.List;
 import java.util.Optional;
-import net.firedevops.firemud.common.saga.Saga;
-import net.firedevops.firemud.common.saga.SagaException;
-import net.firedevops.firemud.common.saga.SagaRunner;
 import net.firedevops.firemud.gamedesign.client.AutomationScriptingClient;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
 import net.firedevops.firemud.gamedesign.entity.Game;
@@ -30,7 +26,6 @@ class VersionServiceImplTest {
   @Mock private VersionRepository versionRepository;
   @Mock private GameRepository gameRepository;
   @Mock private AutomationScriptingClient scriptingClient;
-  @Mock private SagaRunner sagaRunner;
   @Mock private AssetExportService assetExportService;
 
   private VersionServiceImpl service;
@@ -39,26 +34,9 @@ class VersionServiceImplTest {
   void setup() throws Exception {
     MockitoAnnotations.openMocks(this);
     VersionMapper mapper = Mappers.getMapper(VersionMapper.class);
-    doAnswer(
-            invocation -> {
-              Saga saga = invocation.getArgument(0);
-              try {
-                saga.run();
-              } catch (SagaException ex) {
-                throw new RuntimeException(ex);
-              }
-              return null;
-            })
-        .when(sagaRunner)
-        .run(any(Saga.class));
     service =
         new VersionServiceImpl(
-            versionRepository,
-            gameRepository,
-            mapper,
-            scriptingClient,
-            sagaRunner,
-            assetExportService);
+            versionRepository, gameRepository, mapper, scriptingClient, assetExportService);
   }
 
   @Test
@@ -88,6 +66,36 @@ class VersionServiceImplTest {
     verify(gameRepository).findByTenantIdForUpdate("tenant-1");
     verify(versionRepository).findTopByTenantIdOrderByVersionNumberDesc("tenant-1");
     verify(versionRepository).save(any(Version.class));
+    verify(assetExportService).exportAssets("tenant-1", 8);
+  }
+
+  @Test
+  void publishScriptPatchVersionNotifiesAfterPersistingVersion() throws Exception {
+    Game game = new Game();
+    game.setId(1L);
+    game.setTenantId("tenant-1");
+    when(gameRepository.findByTenantIdForUpdate("tenant-1")).thenReturn(game);
+
+    Version latest = new Version();
+    latest.setId(9L);
+    latest.setTenantId("tenant-1");
+    latest.setVersionNumber(7);
+    when(versionRepository.findTopByTenantIdOrderByVersionNumberDesc("tenant-1"))
+        .thenReturn(Optional.of(latest));
+
+    Version saved = new Version();
+    saved.setId(11L);
+    saved.setTenantId("tenant-1");
+    saved.setVersionNumber(8);
+    saved.setScriptPatchVersion("patch-2");
+    saved.setNotes("notes");
+    when(versionRepository.save(any(Version.class))).thenReturn(saved);
+
+    VersionDto dto = service.publishScriptPatchVersion("tenant-1", 3L, "patch-2", "notes");
+
+    assertEquals(8, dto.versionNumber());
+    verify(versionRepository).save(any(Version.class));
+    verify(scriptingClient).notifyScriptVersionUpdate("tenant-1", "patch-2", java.util.List.of());
   }
 
   @Test

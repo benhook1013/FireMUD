@@ -25,13 +25,17 @@ public class AssetExportServiceImpl implements AssetExportService {
   private final S3Client s3Client;
 
   private final AssetStoreProperties properties;
-  private final ObjectMapper objectMapper = new ObjectMapper();
+  private final ObjectMapper objectMapper;
 
   public AssetExportServiceImpl(
-      GameAssetRepository repository, S3Client s3Client, AssetStoreProperties properties) {
+      GameAssetRepository repository,
+      S3Client s3Client,
+      AssetStoreProperties properties,
+      ObjectMapper objectMapper) {
     this.repository = repository;
     this.s3Client = s3Client;
     this.properties = copyProperties(properties);
+    this.objectMapper = objectMapper;
   }
 
   private static AssetStoreProperties copyProperties(AssetStoreProperties source) {

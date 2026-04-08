@@ -24,6 +24,7 @@ import org.mapstruct.factory.Mappers;
 import org.springframework.data.redis.RedisSystemException;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
+import tools.jackson.databind.ObjectMapper;
 
 class RoomServiceImplTest {
   private RoomRepository repository;
@@ -47,7 +48,13 @@ class RoomServiceImplTest {
         .thenReturn(Collections.emptyList());
     service =
         new RoomServiceImpl(
-            repository, mapper, redisTemplate, new SimpleMeterRegistry(), props, exitRepository);
+            repository,
+            mapper,
+            redisTemplate,
+            new SimpleMeterRegistry(),
+            props,
+            exitRepository,
+            new ObjectMapper());
     service.initMetrics();
   }
 
@@ -160,6 +167,7 @@ class RoomServiceImplTest {
     assertEquals("Des stalactites perlent le long du mur nord.", snapshot.longDescription());
     assertEquals("Des stalactites perlent le long du mur nord.", snapshot.shortDescription());
     assertEquals("Salle du Nord", snapshot.exits().get(0).targetRoomName());
+    assertEquals("NORTH", snapshot.exits().get(0).label());
     assertEquals("Leads toward Salle du Nord", snapshot.exits().get(0).description());
   }
 

@@ -113,6 +113,7 @@ class TelnetGatewayGameSessionCrossServiceIntegrationTest {
             new BufferedReader(
                 new InputStreamReader(socket.getInputStream(), StandardCharsets.ISO_8859_1))) {
       socket.setSoTimeout((int) COMMAND_WAIT.toMillis());
+      assertInitialGuidance(reader);
       writer.println("WORLDS");
       String worldsResponse = reader.readLine();
       assertThat(worldsResponse).isEqualTo("processed:WORLDS");
@@ -155,6 +156,7 @@ class TelnetGatewayGameSessionCrossServiceIntegrationTest {
             new BufferedReader(
                 new InputStreamReader(socket.getInputStream(), StandardCharsets.ISO_8859_1))) {
       socket.setSoTimeout((int) COMMAND_WAIT.toMillis());
+      assertInitialGuidance(reader);
       writer.println("WORLDS");
       telnetWorldsResponse = reader.readLine();
       assertThat(telnetWorldsResponse).isNotNull();
@@ -189,6 +191,7 @@ class TelnetGatewayGameSessionCrossServiceIntegrationTest {
             new BufferedReader(
                 new InputStreamReader(socket.getInputStream(), StandardCharsets.ISO_8859_1))) {
       socket.setSoTimeout((int) COMMAND_WAIT.toMillis());
+      assertInitialGuidance(reader);
       writer.println("LOGIN demo@example.com swordfish");
       assertThat(reader.readLine()).isEqualTo("processed:LOGIN demo@example.com swordfish");
 
@@ -217,6 +220,14 @@ class TelnetGatewayGameSessionCrossServiceIntegrationTest {
       }
     }
     assertThat(GAME_SESSION_STUB.stub().receivedCommands()).contains(expected);
+  }
+
+  private static void assertInitialGuidance(BufferedReader reader) throws IOException {
+    assertThat(reader.readLine()).isEqualTo("OK CONNECTED");
+    assertThat(reader.readLine()).isEqualTo("Type WORLDS to list available worlds.");
+    assertThat(reader.readLine()).isEqualTo("Type LOGIN <email> <password> to authenticate.");
+    assertThat(reader.readLine()).isEqualTo("Type PLAY <world> after LOGIN to enter a world.");
+    assertThat(reader.readLine()).isEqualTo("Type HELP for commands.");
   }
 
   private static synchronized void ensureTestServicesStarted() {

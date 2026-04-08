@@ -7,6 +7,8 @@ import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.AbstractReloadingBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
+import net.firedevops.firemud.common.security.GrpcClientAuth;
+import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.gamesession.v1.GameSessionServiceGrpc;
 import net.firedevops.firemud.gamesession.v1.PingRequest;
 import net.firedevops.firemud.gamesession.v1.PingResponse;
@@ -19,12 +21,15 @@ import org.springframework.stereotype.Component;
 public class GameSessionClient
     extends AbstractReloadingBlockingGrpcClient<
         GameSessionServiceGrpc.GameSessionServiceBlockingStub> {
+  private final JwtUtil jwtUtil;
 
   public GameSessionClient(
       ServiceEndpointsProperties endpoints,
       CommonGrpcClientProperties tlsProps,
+      JwtUtil jwtUtil,
       GrpcChannelFactory channelFactory) {
     super(endpoints, tlsProps, channelFactory, GameSessionClient.class);
+    this.jwtUtil = jwtUtil;
   }
 
   @PostConstruct
@@ -45,7 +50,8 @@ public class GameSessionClient
   @Override
   protected GameSessionServiceGrpc.GameSessionServiceBlockingStub buildStub(
       io.grpc.ManagedChannel channel) {
-    return GameSessionServiceGrpc.newBlockingStub(channel).withCompression("gzip");
+    return GrpcClientAuth.attach(
+        GameSessionServiceGrpc.newBlockingStub(channel).withCompression("gzip"), jwtUtil);
   }
 
   /** Simple ping to verify connectivity. */

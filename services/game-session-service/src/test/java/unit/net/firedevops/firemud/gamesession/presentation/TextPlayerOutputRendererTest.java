@@ -150,6 +150,144 @@ class TextPlayerOutputRendererTest {
   }
 
   @Test
+  void renderAllFormatsInventoryViewThroughNormalRendererPath() {
+    TextPlayerOutputRenderer renderer =
+        new TextPlayerOutputRenderer(
+            new PresentationProperties(
+                "en-NZ",
+                PresentationProperties.ColorMode.NONE,
+                false,
+                new PresentationProperties.Prompt(true, true, 150L)));
+
+    String rendered =
+        renderer.renderAll(
+            new TextCommand(TextCommandType.INVENTORY, List.of(), "INVENTORY"),
+            CommandEnqueueResult.success(),
+            List.of(
+                PlayerOutput.view(
+                    new InventoryViewOutput("Inventory:", List.of("- Torch x2 (A small torch)"))),
+                PlayerOutput.prompt("demo> ")));
+
+    assertThat(rendered)
+        .isEqualTo("OK INVENTORY\n" + "Inventory:\n" + "- Torch x2 (A small torch)\n\n" + "demo> ");
+  }
+
+  @Test
+  void renderAllFormatsEquipmentViewThroughNormalRendererPath() {
+    TextPlayerOutputRenderer renderer =
+        new TextPlayerOutputRenderer(
+            new PresentationProperties(
+                "en-NZ",
+                PresentationProperties.ColorMode.NONE,
+                false,
+                new PresentationProperties.Prompt(true, true, 150L)));
+
+    String rendered =
+        renderer.renderAll(
+            new TextCommand(TextCommandType.EQUIPMENT, List.of(), "EQUIPMENT"),
+            CommandEnqueueResult.success(),
+            List.of(
+                PlayerOutput.view(
+                    new InventoryViewOutput(
+                        "Equipment:", List.of("- HEAD: Leather Cap (A small cap)"))),
+                PlayerOutput.prompt("demo> ")));
+
+    assertThat(rendered)
+        .isEqualTo(
+            "OK EQUIPMENT\n" + "Equipment:\n" + "- HEAD: Leather Cap (A small cap)\n\n" + "demo> ");
+  }
+
+  @Test
+  void renderAllFormatsContainerViewThroughNormalRendererPath() {
+    TextPlayerOutputRenderer renderer =
+        new TextPlayerOutputRenderer(
+            new PresentationProperties(
+                "en-NZ",
+                PresentationProperties.ColorMode.NONE,
+                false,
+                new PresentationProperties.Prompt(true, true, 150L)));
+
+    String rendered =
+        renderer.renderAll(
+            new TextCommand(TextCommandType.CONTAINER, List.of("satchel"), "CONTAINER satchel"),
+            CommandEnqueueResult.success(),
+            List.of(
+                PlayerOutput.view(
+                    new InventoryViewOutput(
+                        "Container: Satchel", List.of("- Trail Ration x2 (A dry ration)"))),
+                PlayerOutput.prompt("demo> ")));
+
+    assertThat(rendered)
+        .isEqualTo(
+            "OK CONTAINER\n"
+                + "Container: Satchel\n"
+                + "- Trail Ration x2 (A dry ration)\n\n"
+                + "demo> ");
+  }
+
+  @Test
+  void renderAllFormatsPutResultWithContainerRefresh() {
+    TextPlayerOutputRenderer renderer =
+        new TextPlayerOutputRenderer(
+            new PresentationProperties(
+                "en-NZ",
+                PresentationProperties.ColorMode.NONE,
+                false,
+                new PresentationProperties.Prompt(true, true, 150L)));
+
+    String rendered =
+        renderer.renderAll(
+            new TextCommand(
+                TextCommandType.PUT, List.of("torch", "into", "satchel"), "PUT torch INTO satchel"),
+            CommandEnqueueResult.success(),
+            List.of(
+                PlayerOutput.message("You put Torch into Satchel."),
+                PlayerOutput.view(
+                    new InventoryViewOutput("Container: Satchel", List.of("It is empty."))),
+                PlayerOutput.prompt("demo> ")));
+
+    assertThat(rendered)
+        .isEqualTo(
+            "OK PUT\n"
+                + "You put Torch into Satchel.\n"
+                + "Container: Satchel\n"
+                + "It is empty.\n\n"
+                + "demo> ");
+  }
+
+  @Test
+  void renderAllFormatsTakeResultWithContainerRefresh() {
+    TextPlayerOutputRenderer renderer =
+        new TextPlayerOutputRenderer(
+            new PresentationProperties(
+                "en-NZ",
+                PresentationProperties.ColorMode.NONE,
+                false,
+                new PresentationProperties.Prompt(true, true, 150L)));
+
+    String rendered =
+        renderer.renderAll(
+            new TextCommand(
+                TextCommandType.TAKE,
+                List.of("torch", "from", "satchel"),
+                "TAKE torch FROM satchel"),
+            CommandEnqueueResult.success(),
+            List.of(
+                PlayerOutput.message("You take Torch from Satchel."),
+                PlayerOutput.view(
+                    new InventoryViewOutput("Container: Satchel", List.of("It is empty."))),
+                PlayerOutput.prompt("demo> ")));
+
+    assertThat(rendered)
+        .isEqualTo(
+            "OK TAKE\n"
+                + "You take Torch from Satchel.\n"
+                + "Container: Satchel\n"
+                + "It is empty.\n\n"
+                + "demo> ");
+  }
+
+  @Test
   void quickLookRenderingOmitsLongDescriptionWithoutGlobalBriefMode() {
     TextPlayerOutputRenderer renderer =
         new TextPlayerOutputRenderer(
@@ -175,6 +313,64 @@ class TextPlayerOutputRendererTest {
     assertThat(rendered).doesNotContain("Long:");
     assertThat(rendered).contains("Exits: SOUTH (stone arch)");
     assertThat(rendered).contains("PLAYER \"Sora\" (smith) [busy]");
+  }
+
+  @Test
+  void lookRenderingHighlightsRoomGroundItems() {
+    TextPlayerOutputRenderer renderer =
+        new TextPlayerOutputRenderer(
+            new PresentationProperties(
+                "en-NZ",
+                PresentationProperties.ColorMode.NONE,
+                false,
+                new PresentationProperties.Prompt(false, true, 150L)));
+
+    String rendered =
+        renderer.render(
+            PlayerOutput.view(
+                new LookViewOutput(
+                    "R-305",
+                    "Grounded Hall",
+                    "A torchlit hall with a loose key on the floor.",
+                    "A torchlit hall with a loose key on the floor and dust shifting in the corners.",
+                    true,
+                    List.of(),
+                    List.of(
+                        new LookViewEntity(
+                            "ITEM", "Rough Iron Key", "", List.of("room-ground"))))));
+
+    assertThat(rendered).contains("ITEM \"Rough Iron Key\" [room-ground]");
+  }
+
+  @Test
+  void lookRenderingSurfacesContainerAndWearableAffordancesClearly() {
+    TextPlayerOutputRenderer renderer =
+        new TextPlayerOutputRenderer(
+            new PresentationProperties(
+                "en-NZ",
+                PresentationProperties.ColorMode.NONE,
+                false,
+                new PresentationProperties.Prompt(false, true, 150L)));
+
+    String rendered =
+        renderer.render(
+            PlayerOutput.view(
+                new LookViewOutput(
+                    "R-306",
+                    "Tagged Hall",
+                    "A hall with a useful pack on the floor.",
+                    "A hall with a useful pack on the floor and a spare hook on the wall.",
+                    true,
+                    List.of(),
+                    List.of(
+                        new LookViewEntity(
+                            "ITEM",
+                            "Backpack",
+                            "",
+                            List.of("room-ground", "container", "wearable:BACK"))))));
+
+    assertThat(rendered)
+        .contains("ITEM \"Backpack\" [room-ground; affordances: container, wearable BACK]");
   }
 
   @Test
@@ -378,7 +574,29 @@ class TextPlayerOutputRendererTest {
             PlayerOutput.error(
                 "LOGIN_REQUIRED", "fallback", "error.login-required", java.util.Map.of()));
 
-    assertThat(rendered).isEqualTo("ERROR LOGIN_REQUIRED You must LOGIN before gameplay commands.");
+    assertThat(rendered)
+        .isEqualTo("ERROR LOGIN_REQUIRED You must LOGIN first. Use LOGIN <email> <password>.");
+  }
+
+  @Test
+  void localizedUnknownHelpTopicUsesConfiguredLocaleTemplate() {
+    TextPlayerOutputRenderer renderer =
+        new TextPlayerOutputRenderer(
+            new PresentationProperties(
+                "fr",
+                PresentationProperties.ColorMode.NONE,
+                false,
+                new PresentationProperties.Prompt(true, true, 150L)));
+
+    String rendered =
+        renderer.render(
+            PlayerOutput.error(
+                "HELP_UNKNOWN_TOPIC",
+                "fallback",
+                "error.help.unknown-topic",
+                java.util.Map.of("topic", "banane")));
+
+    assertThat(rendered).isEqualTo("ERROR HELP_UNKNOWN_TOPIC Sujet d'aide inconnu : banane");
   }
 
   @Test

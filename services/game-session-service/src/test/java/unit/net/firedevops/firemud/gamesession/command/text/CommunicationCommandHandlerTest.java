@@ -56,7 +56,7 @@ class CommunicationCommandHandlerTest {
     SendCommunicationResponse response =
         SendCommunicationResponse.newBuilder()
             .setSuccess(true)
-            .setMessage("Hello travelers")
+            .setMessage(" hello travelers ")
             .setSpeakerName("Emberline")
             .addDeliveredTo("Emberline")
             .addDeliveredTo("Sora")
@@ -79,13 +79,13 @@ class CommunicationCommandHandlerTest {
         handler.handle(
             sessionContext,
             new TextCommand(
-                TextCommandType.SAY, List.of("Hello travelers"), "SAY Hello travelers"));
+                TextCommandType.SAY, List.of("hello travelers"), "SAY hello travelers"));
 
     assertThat(result.commandResult().accepted()).isTrue();
     assertThat(result.outputs())
         .extracting(output -> output.kind())
         .containsExactly(PlayerOutputKind.MESSAGE);
-    assertThat(joinedOutputText(result.outputs())).isEqualTo("You say, \"Hello travelers\"");
+    assertThat(joinedOutputText(result.outputs())).isEqualTo("You say, \"Hello travelers.\"");
     Mockito.verify(gameLogicClient)
         .sendCommunication(
             "22",
@@ -96,7 +96,7 @@ class CommunicationCommandHandlerTest {
             "Emberline",
             "room-7",
             CommunicationType.SAY,
-            "Hello travelers",
+            "hello travelers",
             "",
             "");
   }

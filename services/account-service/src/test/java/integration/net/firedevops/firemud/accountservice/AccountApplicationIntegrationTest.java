@@ -3,11 +3,13 @@ package net.firedevops.firemud.accountservice;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import net.firedevops.firemud.accountservice.client.LoggingAdminClient;
+import net.firedevops.firemud.test.GatewayTestProperties;
 import net.firedevops.firemud.test.HttpTestSupport;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.boot.test.web.server.LocalServerPort;
+import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -20,7 +22,13 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 @SuppressWarnings("resource")
 @SpringBootTest(
     webEnvironment = WebEnvironment.RANDOM_PORT,
-    classes = AccountServiceApplication.class)
+    classes = AccountServiceApplication.class,
+    properties = {
+      GatewayTestProperties.SPRING_GRPC_SERVER_SSL_DISABLED,
+      GatewayTestProperties.FIREMUD_GRPC_CERT_CHAIN_PATH,
+      GatewayTestProperties.FIREMUD_GRPC_PRIVATE_KEY_PATH,
+      GatewayTestProperties.FIREMUD_GRPC_CA_CERT_PATH
+    })
 class AccountApplicationIntegrationTest {
 
   @Container
@@ -44,6 +52,7 @@ class AccountApplicationIntegrationTest {
   @LocalServerPort private int port;
 
   @MockitoBean private LoggingAdminClient loggingAdminClient;
+  @MockitoBean private JavaMailSender mailSender;
 
   @Test
   void pingEndpointReturnsPong() {
