@@ -263,7 +263,7 @@ public class InventoryCommandHandler {
     return entities.stream()
         .filter(entity -> entity.getEntityType() == EntityType.ITEM)
         .filter(entity -> entity.getStateFlagsList().contains("room-ground"))
-        .filter(entity -> entity.getDisplayName().equalsIgnoreCase(reference))
+        .filter(entity -> ContainerIdentitySupport.matchesReference(entity, reference))
         .findFirst()
         .map(
             entity ->

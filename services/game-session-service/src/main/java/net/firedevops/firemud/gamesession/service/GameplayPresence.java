@@ -1,5 +1,7 @@
 package net.firedevops.firemud.gamesession.service;
 
+import java.io.Serializable;
+
 /** Local gameplay presence record used by the first WHO implementation. */
 public record GameplayPresence(
     long sessionId,
@@ -8,4 +10,7 @@ public record GameplayPresence(
     long accountId,
     long characterId,
     String characterName,
-    GameplayPresenceRole role) {}
+    GameplayPresenceRole role)
+    implements Serializable {
+  private static final long serialVersionUID = 1L;
+}

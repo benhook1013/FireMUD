@@ -16,11 +16,13 @@ import net.firedevops.firemud.gamesession.service.GameplayPresenceRole;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import org.slf4j.Logger;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
 /** Local in-memory gameplay presence store for the first WHO implementation. */
 @Service
+@ConditionalOnProperty(name = "game-session.dev-isolated", havingValue = "true")
 public final class InMemoryGameplayPresenceService implements GameplayPresenceService {
   private static final Logger logger = LoggingUtil.getLogger(InMemoryGameplayPresenceService.class);
 

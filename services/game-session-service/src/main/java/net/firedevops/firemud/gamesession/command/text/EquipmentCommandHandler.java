@@ -97,7 +97,7 @@ public class EquipmentCommandHandler {
             Long.toString(context.characterId()),
             carried.getItemId());
     if (response.hasError()) {
-      return equipmentUnavailable(response.getError().getMessage());
+      return equipmentFailure(response.getError().getCode(), response.getError().getMessage());
     }
     if (!response.hasEquipmentItem()) {
       return equipmentUnavailable("Equipment service unavailable");
@@ -140,7 +140,7 @@ public class EquipmentCommandHandler {
             Long.toString(context.characterId()),
             worn.getSlot());
     if (response.hasError()) {
-      return equipmentUnavailable(response.getError().getMessage());
+      return equipmentFailure(response.getError().getCode(), response.getError().getMessage());
     }
     if (!response.hasEquipmentItem()) {
       return equipmentUnavailable("Equipment service unavailable");
@@ -161,6 +161,14 @@ public class EquipmentCommandHandler {
         List.of(
             PlayerOutput.error(
                 "EQUIPMENT_UNAVAILABLE", message, "error.equipment.unavailable", Map.of())));
+  }
+
+  private TextCommandInterpretationResult equipmentFailure(String errorCode, String reason) {
+    String code = StringUtils.hasText(errorCode) ? errorCode : "EQUIPMENT_UNAVAILABLE";
+    String message =
+        StringUtils.hasText(reason) ? reason : "Equipment action could not be completed";
+    return new TextCommandInterpretationResult(
+        CommandEnqueueResult.failure(code, message), List.of(PlayerOutput.error(code, message)));
   }
 
   private TextCommandInterpretationResult equipmentInvalidArgument(String verb, String reason) {

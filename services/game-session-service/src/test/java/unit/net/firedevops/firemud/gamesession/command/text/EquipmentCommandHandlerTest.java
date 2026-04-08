@@ -14,6 +14,7 @@ import net.firedevops.firemud.gamesession.client.EntityManagementClient;
 import net.firedevops.firemud.gamesession.presentation.InventoryViewOutput;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutputKind;
 import net.firedevops.firemud.gamesession.service.SessionContext;
+import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
@@ -177,5 +178,35 @@ class EquipmentCommandHandlerTest {
     assertThat(result.outputs()).hasSize(1);
     assertThat(result.outputs().get(0).kind()).isEqualTo(PlayerOutputKind.MESSAGE);
     assertThat(result.outputs().get(0).text()).isEqualTo("You remove Torch.");
+  }
+
+  @Test
+  void wearPreservesDomainErrorCodeFromBackend() {
+    when(entityManagementClient.queryInventory("22", "911"))
+        .thenReturn(
+            QueryInventoryResponse.newBuilder()
+                .addItems(
+                    InventoryItem.newBuilder()
+                        .setItemId("3")
+                        .setItemName("Torch")
+                        .setQuantity(1)
+                        .build())
+                .build());
+    when(entityManagementClient.wearEquipment("22", "911", "3"))
+        .thenReturn(
+            WearEquipmentItemResponse.newBuilder()
+                .setError(
+                    ErrorDetail.newBuilder()
+                        .setCode("SLOT_INCOMPATIBLE")
+                        .setMessage("Torch cannot be worn there"))
+                .build());
+
+    TextCommandInterpretationResult result =
+        handler.handle(
+            context, new TextCommand(TextCommandType.WEAR, List.of("Torch"), "WEAR Torch"));
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode()).isEqualTo("SLOT_INCOMPATIBLE");
+    assertThat(result.outputs().get(0).text()).contains("Torch cannot be worn there");
   }
 }

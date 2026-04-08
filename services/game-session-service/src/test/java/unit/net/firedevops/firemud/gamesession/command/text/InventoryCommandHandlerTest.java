@@ -167,6 +167,49 @@ class InventoryCommandHandlerTest {
   }
 
   @Test
+  void getMatchesExplicitRoomItemReference() {
+    when(entityManagementClient.listRoomEntities("22", "77", "room-7"))
+        .thenReturn(
+            ListRoomEntitiesResponse.newBuilder()
+                .addEntities(
+                    RoomEntity.newBuilder()
+                        .setEntityId("22:77:room-7:ITEM-009")
+                        .setDisplayName("Torch")
+                        .setEntityType(EntityType.ITEM)
+                        .addStateFlags("room-ground")
+                        .build())
+                .build());
+    when(entityManagementClient.pickupItemFromRoom(
+            "22", "911", "77", "room-7", "ITEM-009", "ITEM-009", 1))
+        .thenReturn(
+            PickupItemFromRoomResponse.newBuilder()
+                .setInventoryItem(
+                    InventoryItem.newBuilder()
+                        .setItemId("ITEM-009")
+                        .setItemName("Torch")
+                        .setQuantity(1)
+                        .build())
+                .build());
+    when(entityManagementClient.queryInventory("22", "911"))
+        .thenReturn(
+            QueryInventoryResponse.newBuilder()
+                .addItems(
+                    InventoryItem.newBuilder()
+                        .setItemId("ITEM-009")
+                        .setItemName("Torch")
+                        .setQuantity(1)
+                        .build())
+                .build());
+
+    InventoryCommandHandlingResult result =
+        handler.handle(
+            context, new TextCommand(TextCommandType.GET, List.of("ITEM-009"), "GET ITEM-009"));
+
+    assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
+    assertThat(result.outputs().get(0).text()).isEqualTo("You pick up Torch.");
+  }
+
+  @Test
   void dropWithItemReferenceCallsDropMutation() {
     when(entityManagementClient.queryInventory("22", "911"))
         .thenReturn(

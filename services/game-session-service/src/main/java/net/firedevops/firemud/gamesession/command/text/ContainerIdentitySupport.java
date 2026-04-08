@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamesession.command.text;
 
 import net.firedevops.firemud.entitymanagement.v1.EquipmentItem;
 import net.firedevops.firemud.entitymanagement.v1.InventoryItem;
+import net.firedevops.firemud.entitymanagement.v1.RoomEntity;
 import org.springframework.util.StringUtils;
 
 /** Utilities for resolving and forwarding durable container identities. */
@@ -29,6 +30,12 @@ public final class ContainerIdentitySupport {
         || matchesReference(item.getSlot(), reference);
   }
 
+  public static boolean matchesReference(RoomEntity entity, String reference) {
+    return matchesReference(parseItemId(entity.getEntityId()), reference)
+        || matchesReference(entity.getDisplayName(), reference)
+        || matchesReference(resolveContainerInstanceId(entity), reference);
+  }
+
   private static String resolveContainerInstanceId(String containerInstanceId, String fallback) {
     return StringUtils.hasText(containerInstanceId)
         ? containerInstanceId
@@ -39,5 +46,22 @@ public final class ContainerIdentitySupport {
     return StringUtils.hasText(candidate)
         && StringUtils.hasText(reference)
         && candidate.equalsIgnoreCase(reference);
+  }
+
+  private static String parseItemId(String entityId) {
+    if (!StringUtils.hasText(entityId)) {
+      return "";
+    }
+    int lastColon = entityId.lastIndexOf(':');
+    return lastColon < 0 ? entityId : entityId.substring(lastColon + 1);
+  }
+
+  private static String resolveContainerInstanceId(RoomEntity entity) {
+    return entity.getStateFlagsList().stream()
+        .filter(flag -> flag.startsWith("container-instance:"))
+        .map(flag -> flag.substring("container-instance:".length()))
+        .filter(StringUtils::hasText)
+        .findFirst()
+        .orElse(parseItemId(entity.getEntityId()));
   }
 }
