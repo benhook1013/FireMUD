@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -82,6 +83,7 @@ public class TickServiceImpl implements TickService {
   private RedisScript<Long> stageScript;
   private RedisScript<Long> commitScript;
   private RedisScript<Long> rollbackScript;
+  private RedisScript<Long> unlockScript;
   private final StringRedisSerializer scriptArgsSerializer = new StringRedisSerializer();
   private final GenericToStringSerializer<Long> scriptResultSerializer =
       new GenericToStringSerializer<>(Long.class);
@@ -131,9 +133,12 @@ public class TickServiceImpl implements TickService {
         new ResourceScriptSource(new ClassPathResource("redis/tick_stage.lua"));
     ResourceScriptSource rollbackSrc =
         new ResourceScriptSource(new ClassPathResource("redis/tick_rollback.lua"));
+    ResourceScriptSource unlockSrc =
+        new ResourceScriptSource(new ClassPathResource("redis/tick_unlock_if_owned.lua"));
     this.stageScript = RedisScript.of(stageSrc.getResource(), Long.class);
     this.commitScript = RedisScript.of(commitSrc.getResource(), Long.class);
     this.rollbackScript = RedisScript.of(rollbackSrc.getResource(), Long.class);
+    this.unlockScript = RedisScript.of(unlockSrc.getResource(), Long.class);
   }
 
   private void awaitReplication() {
@@ -200,8 +205,11 @@ public class TickServiceImpl implements TickService {
       }
       long start = System.nanoTime();
       String lockKey = lockKey(normalizedTenantId, normalizedQueueTargetId);
+      String lockToken = UUID.randomUUID().toString();
       Boolean acquired =
-          redisTemplate.opsForValue().setIfAbsent(lockKey, "1", Duration.ofMillis(tickDurationMs));
+          redisTemplate
+              .opsForValue()
+              .setIfAbsent(lockKey, lockToken, Duration.ofMillis(tickDurationMs));
       if (Boolean.FALSE.equals(acquired)) {
         lockContentionCounter.increment();
         conflictTracker.recordConflict(
@@ -280,7 +288,7 @@ public class TickServiceImpl implements TickService {
           budgetExceededCounter.increment();
           logger.debug("Tick budget exceeded: {} ms", elapsed);
         }
-        redisTemplate.delete(lockKey);
+        luaTimer.record(() -> executeScriptWithRetry(unlockScript, List.of(lockKey), lockToken));
         activeTicks.decrementAndGet();
       }
     }

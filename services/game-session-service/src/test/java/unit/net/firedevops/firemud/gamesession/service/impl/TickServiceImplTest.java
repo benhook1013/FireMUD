@@ -4,6 +4,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -88,6 +89,18 @@ class TickServiceImplTest {
     ArgumentCaptor<RedisScript<?>> scriptCaptor = redisScriptCaptor();
     verify(redisTemplate, org.mockito.Mockito.atLeastOnce())
         .execute(scriptCaptor.capture(), org.mockito.ArgumentMatchers.<String>anyList());
+  }
+
+  @Test
+  void processTickReleasesLockViaOwnershipCheckedScript() {
+    when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
+        .thenReturn(true);
+
+    service.processTick(1L, 2L);
+
+    verify(redisTemplate, never()).delete("tick:lock:1:2");
+    verify(redisTemplate, org.mockito.Mockito.atLeastOnce())
+        .execute(any(RedisScript.class), org.mockito.ArgumentMatchers.<String>anyList());
   }
 
   @Test

@@ -14,6 +14,7 @@ import org.springframework.cloud.gateway.filter.FilterDefinition;
 import org.springframework.cloud.gateway.handler.predicate.PredicateDefinition;
 import org.springframework.cloud.gateway.route.RouteDefinition;
 import org.springframework.cloud.gateway.route.RouteDefinitionWriter;
+import org.springframework.cloud.gateway.support.NotFoundException;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Mono;
@@ -66,18 +67,21 @@ public class GatewayRouteServiceImpl implements GatewayRouteService {
   public Mono<Boolean> remove(String routeId) {
     return writer
         .delete(Mono.just(routeId))
-        .onErrorResume(e -> Mono.empty())
         .doOnSuccess(ignored -> publisher.publishEvent(new RefreshRoutesEvent(this)))
-        .then(
-            Mono.fromSupplier(
-                () -> {
-                  boolean existed = routes.remove(routeId) != null;
-                  if (existed) {
-                    logger.info("Removed route {}", routeId);
-                  } else {
-                    logger.info("Route {} not found", routeId);
-                  }
-                  return existed;
-                }));
+        .thenReturn(true)
+        .doOnNext(
+            removed -> {
+              routes.remove(routeId);
+              logger.info("Removed route {}", routeId);
+            })
+        .onErrorResume(
+            NotFoundException.class,
+            ex ->
+                Mono.fromSupplier(
+                    () -> {
+                      routes.remove(routeId);
+                      logger.info("Route {} not found", routeId);
+                      return false;
+                    }));
   }
 }
