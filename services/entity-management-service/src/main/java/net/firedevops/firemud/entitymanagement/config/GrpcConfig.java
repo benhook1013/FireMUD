@@ -11,6 +11,9 @@ public class GrpcConfig {
   @Bean
   public AuthTokenInterceptor authTokenInterceptor(JwtUtil jwtUtil) {
     return new AuthTokenInterceptor(
-        jwtUtil, java.util.Set.of(EntityManagementServiceGrpc.getPingMethod().getFullMethodName()));
+        jwtUtil,
+        java.util.Set.of(
+            EntityManagementServiceGrpc.getPingMethod().getFullMethodName(),
+            EntityManagementServiceGrpc.getListRoomEntitiesMethod().getFullMethodName()));
   }
 }

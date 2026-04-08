@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.security.SessionContext;
+import net.firedevops.firemud.entitymanagement.dto.RoomEntityDto;
 import net.firedevops.firemud.entitymanagement.service.CharacterService;
 import net.firedevops.firemud.entitymanagement.service.ContainerService;
 import net.firedevops.firemud.entitymanagement.service.EquipmentService;
@@ -17,10 +18,13 @@ import net.firedevops.firemud.entitymanagement.service.RoomEntityService;
 import net.firedevops.firemud.entitymanagement.v1.ContainerItem;
 import net.firedevops.firemud.entitymanagement.v1.DropItemToRoomRequest;
 import net.firedevops.firemud.entitymanagement.v1.DropItemToRoomResponse;
+import net.firedevops.firemud.entitymanagement.v1.EntityType;
 import net.firedevops.firemud.entitymanagement.v1.ListContainerContentsRequest;
 import net.firedevops.firemud.entitymanagement.v1.ListContainerContentsResponse;
 import net.firedevops.firemud.entitymanagement.v1.ListEquipmentRequest;
 import net.firedevops.firemud.entitymanagement.v1.ListEquipmentResponse;
+import net.firedevops.firemud.entitymanagement.v1.ListRoomEntitiesRequest;
+import net.firedevops.firemud.entitymanagement.v1.ListRoomEntitiesResponse;
 import net.firedevops.firemud.entitymanagement.v1.PickupItemFromRoomRequest;
 import net.firedevops.firemud.entitymanagement.v1.PickupItemFromRoomResponse;
 import net.firedevops.firemud.entitymanagement.v1.PingRequest;
@@ -29,6 +33,7 @@ import net.firedevops.firemud.entitymanagement.v1.PutItemIntoContainerRequest;
 import net.firedevops.firemud.entitymanagement.v1.PutItemIntoContainerResponse;
 import net.firedevops.firemud.entitymanagement.v1.QueryInventoryRequest;
 import net.firedevops.firemud.entitymanagement.v1.QueryInventoryResponse;
+import net.firedevops.firemud.entitymanagement.v1.ReloadHint;
 import net.firedevops.firemud.entitymanagement.v1.RemoveEquipmentRequest;
 import net.firedevops.firemud.entitymanagement.v1.RemoveEquipmentResponse;
 import net.firedevops.firemud.entitymanagement.v1.TakeItemFromContainerRequest;
@@ -49,6 +54,25 @@ class EntityManagementGrpcServiceTest {
       io.micrometer.core.instrument.MeterRegistry meterRegistry) {
     SessionContext.setContext("test-account", List.of("platformAdmin"), Map.of());
     ContainerService containerService = Mockito.mock(ContainerService.class);
+    return new EntityManagementGrpcService(
+        pingService,
+        characterService,
+        equipmentService,
+        inventoryService,
+        containerService,
+        roomEntityService,
+        meterRegistry);
+  }
+
+  private EntityManagementGrpcService newServiceWithoutContext(
+      PingService pingService,
+      CharacterService characterService,
+      EquipmentService equipmentService,
+      InventoryService inventoryService,
+      ContainerService containerService,
+      RoomEntityService roomEntityService,
+      io.micrometer.core.instrument.MeterRegistry meterRegistry) {
+    SessionContext.clear();
     return new EntityManagementGrpcService(
         pingService,
         characterService,
@@ -282,6 +306,72 @@ class EntityManagementGrpcServiceTest {
         });
 
     assertEquals("Torch", ref.get().getInventoryItem().getItemName());
+  }
+
+  @Test
+  void listRoomEntitiesAllowsUnauthenticatedInternalReadPath() {
+    PingService pingService = Mockito.mock(PingService.class);
+    CharacterService characterService = Mockito.mock(CharacterService.class);
+    EquipmentService equipmentService = Mockito.mock(EquipmentService.class);
+    InventoryService inventoryService = Mockito.mock(InventoryService.class);
+    ContainerService containerService = Mockito.mock(ContainerService.class);
+    RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
+    io.micrometer.core.instrument.MeterRegistry meterRegistry =
+        Mockito.mock(io.micrometer.core.instrument.MeterRegistry.class);
+    io.micrometer.core.instrument.Counter counter =
+        Mockito.mock(io.micrometer.core.instrument.Counter.class);
+    Mockito.when(meterRegistry.counter(Mockito.anyString(), Mockito.any(String[].class)))
+        .thenReturn(counter);
+    Mockito.when(roomEntityService.listEntities("1", "2", "3"))
+        .thenReturn(
+            List.of(
+                new RoomEntityDto(
+                    "entity-1",
+                    "Lantern",
+                    EntityType.ITEM,
+                    null,
+                    List.of(),
+                    0,
+                    ReloadHint.STABLE,
+                    true)));
+    EntityManagementGrpcService service =
+        newServiceWithoutContext(
+            pingService,
+            characterService,
+            equipmentService,
+            inventoryService,
+            containerService,
+            roomEntityService,
+            meterRegistry);
+
+    AtomicReference<ListRoomEntitiesResponse> ref = new AtomicReference<>();
+    service.listRoomEntities(
+        ListRoomEntitiesRequest.newBuilder()
+            .setTenantId("1")
+            .setRoomInstance(
+                net.firedevops.firemud.shared.v1.RoomInstanceRef.newBuilder()
+                    .setTenantId("1")
+                    .setGameInstanceId("2")
+                    .setRoomInstanceId("3")
+                    .build())
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(ListRoomEntitiesResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(ref.get());
+    assertEquals(false, ref.get().hasError());
+    assertEquals(1, ref.get().getEntitiesCount());
+    assertEquals("Lantern", ref.get().getEntities(0).getDisplayName());
   }
 
   @Test

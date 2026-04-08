@@ -747,7 +747,7 @@ public class EntityManagementGrpcService
   public void listRoomEntities(
       ListRoomEntitiesRequest request, StreamObserver<ListRoomEntitiesResponse> responseObserver) {
     try {
-      SessionContext.requireTenantAccess(Long.parseLong(resolveTenantId(request)));
+      requireTenantAccessWhenPresent(Long.parseLong(resolveTenantId(request)));
       var entities =
           roomEntityService.listEntities(
               resolveTenantId(request), resolveGameInstanceId(request), resolveRoomId(request));
@@ -797,6 +797,15 @@ public class EntityManagementGrpcService
       throw new IllegalArgumentException("room_instance.game_instance_id is required");
     }
     return request.getRoomInstance().getGameInstanceId();
+  }
+
+  private void requireTenantAccessWhenPresent(Long tenantId) {
+    if (SessionContext.getAccountId() == null
+        && SessionContext.getGlobalRoles().isEmpty()
+        && SessionContext.getScopedRolesMap().isEmpty()) {
+      return;
+    }
+    SessionContext.requireTenantAccess(tenantId);
   }
 
   private Character toProto(CharacterDto dto) {
