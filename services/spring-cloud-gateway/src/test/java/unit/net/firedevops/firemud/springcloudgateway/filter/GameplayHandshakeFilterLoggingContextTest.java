@@ -8,6 +8,7 @@ import net.firedevops.firemud.common.security.JwtUtil;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.slf4j.MDC;
+import org.springframework.mock.env.MockEnvironment;
 import org.springframework.mock.http.server.reactive.MockServerHttpRequest;
 import org.springframework.mock.web.server.MockServerWebExchange;
 
@@ -26,7 +27,8 @@ class GameplayHandshakeFilterLoggingContextTest {
             new JwtUtil(SECRET, 30_000L),
             new RuntimeIdentity(
                 "spring-cloud-gateway", "gateway-test", null, Instant.EPOCH, null, null, null),
-            null);
+            null,
+            new MockEnvironment());
     MockServerWebExchange exchange =
         MockServerWebExchange.from(
             MockServerHttpRequest.get("/ws/game/test")

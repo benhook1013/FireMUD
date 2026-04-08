@@ -10,6 +10,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Arrays;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
@@ -19,6 +20,7 @@ import net.firedevops.firemud.common.security.JwtUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.Ordered;
+import org.springframework.core.env.Environment;
 import org.springframework.data.redis.core.ReactiveStringRedisTemplate;
 import org.springframework.http.HttpStatus;
 import org.springframework.lang.Nullable;
@@ -46,22 +48,30 @@ public class GameplayHandshakeFilter implements WebFilter, Ordered {
   static final String CONNECT_TOKEN_EXPIRED = "CONNECT_TOKEN_EXPIRED";
   static final String CONNECT_TOKEN_REPLAYED = "CONNECT_TOKEN_REPLAYED";
   static final String CONNECT_SCOPE_MISMATCH = "CONNECT_SCOPE_MISMATCH";
+  static final String CONNECT_REPLAY_PROTECTION_UNAVAILABLE =
+      "CONNECT_REPLAY_PROTECTION_UNAVAILABLE";
   private static final String REPLAY_CACHE_KEY_PREFIX = "gateway:connect-token:jti:";
   private static final Duration REPLAY_SKEW = Duration.ofSeconds(5);
 
   private final JwtUtil jwtUtil;
   private final RuntimeIdentity runtimeIdentity;
   @Nullable private final ReactiveStringRedisTemplate replayRedisTemplate;
+  private final boolean allowLocalReplayFallback;
   private final ConcurrentHashMap<String, Long> replayCache = new ConcurrentHashMap<>();
 
   public GameplayHandshakeFilter(
       JwtUtil jwtUtil,
       RuntimeIdentity runtimeIdentity,
-      @Nullable ReactiveStringRedisTemplate replayRedisTemplate) {
+      @Nullable ReactiveStringRedisTemplate replayRedisTemplate,
+      Environment environment) {
     this.jwtUtil = Objects.requireNonNull(jwtUtil, "jwtUtil must not be null");
     this.runtimeIdentity =
         Objects.requireNonNull(runtimeIdentity, "runtimeIdentity must not be null");
     this.replayRedisTemplate = replayRedisTemplate;
+    this.allowLocalReplayFallback =
+        Arrays.stream(environment.getActiveProfiles())
+            .map(String::toLowerCase)
+            .anyMatch(profile -> profile.equals("dev") || profile.equals("test"));
   }
 
   @Override
@@ -139,6 +149,18 @@ public class GameplayHandshakeFilter implements WebFilter, Ordered {
                     "Rejected replayed first-party gameplay handshake: {}",
                     ex.getMessage());
                 return reject(exchange, CONNECT_TOKEN_REPLAYED, "connect token replayed");
+              })
+          .onErrorResume(
+              ReplayProtectionUnavailableException.class,
+              ex -> {
+                logRejectedHandshake(
+                    exchange,
+                    "Rejected first-party gameplay handshake due to missing replay protection: {}",
+                    ex.getMessage());
+                return reject(
+                    exchange,
+                    CONNECT_REPLAY_PROTECTION_UNAVAILABLE,
+                    "connect replay protection unavailable");
               })
           .onErrorResume(
               RuntimeException.class,
@@ -227,6 +249,11 @@ public class GameplayHandshakeFilter implements WebFilter, Ordered {
                 return Mono.error(new ReplayRejectedException("connect token replayed"));
               });
     }
+    if (!allowLocalReplayFallback) {
+      return Mono.error(
+          new ReplayProtectionUnavailableException(
+              "cluster replay protection requires redis-backed storage"));
+    }
     return Mono.fromRunnable(() -> recordReplayLocally(jti, expiryMillis));
   }
 
@@ -266,6 +293,12 @@ public class GameplayHandshakeFilter implements WebFilter, Ordered {
 
   private static final class ReplayRejectedException extends RuntimeException {
     private ReplayRejectedException(String message) {
+      super(message);
+    }
+  }
+
+  private static final class ReplayProtectionUnavailableException extends RuntimeException {
+    private ReplayProtectionUnavailableException(String message) {
       super(message);
     }
   }
