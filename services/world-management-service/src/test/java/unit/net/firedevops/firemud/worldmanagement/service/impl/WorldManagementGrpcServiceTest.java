@@ -29,6 +29,13 @@ class WorldManagementGrpcServiceTest {
         pingService, roomService, meterRegistry, new ObjectMapper());
   }
 
+  private WorldManagementGrpcService newServiceWithoutContext(
+      PingService pingService, RoomService roomService, MeterRegistry meterRegistry) {
+    SessionContext.clear();
+    return new WorldManagementGrpcService(
+        pingService, roomService, meterRegistry, new ObjectMapper());
+  }
+
   @Test
   void pingReturnsPong() {
     PingService pingService = Mockito.mock(PingService.class);
@@ -204,5 +211,44 @@ class WorldManagementGrpcServiceTest {
     assertEquals("2", ref.get().getSnapshot().getExits(0).getTargetRoomInstanceId());
     assertEquals("NORTH", ref.get().getSnapshot().getExits(0).getDirection());
     assertEquals("dim", ref.get().getSnapshot().getAmbientState().getWeather());
+  }
+
+  @Test
+  void getRoomSnapshotAllowsUnauthenticatedInternalReadPath() {
+    PingService pingService = Mockito.mock(PingService.class);
+    RoomService roomService = Mockito.mock(RoomService.class);
+    Mockito.when(roomService.getRoomSnapshot(1L, 1L, "fr"))
+        .thenReturn(
+            new RoomSnapshotDto(
+                1L, 1L, "Room A", "Seed room A", "Seed room A", List.of(), Map.of(), List.of()));
+    MeterRegistry meterRegistry = Mockito.mock(MeterRegistry.class);
+    Mockito.when(meterRegistry.counter(Mockito.anyString(), Mockito.any(String[].class)))
+        .thenReturn(Mockito.mock(io.micrometer.core.instrument.Counter.class));
+    WorldManagementGrpcService service =
+        newServiceWithoutContext(pingService, roomService, meterRegistry);
+
+    AtomicReference<GetRoomSnapshotResponse> ref = new AtomicReference<>();
+    service.getRoomSnapshot(
+        GetRoomSnapshotRequest.newBuilder()
+            .setTenantId("1")
+            .setPreferredLocale("fr")
+            .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("1").build())
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(GetRoomSnapshotResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(ref.get());
+    assertEquals(false, ref.get().hasError());
+    assertEquals("Room A", ref.get().getSnapshot().getRoomName());
   }
 }

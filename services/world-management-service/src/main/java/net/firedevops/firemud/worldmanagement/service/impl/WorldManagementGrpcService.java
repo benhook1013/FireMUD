@@ -128,7 +128,7 @@ public class WorldManagementGrpcService
     try {
       Long roomId = Long.valueOf(resolveRoomId(request));
       Long tenantId = Long.valueOf(resolveTenantId(request));
-      SessionContext.requireTenantAccess(tenantId);
+      requireTenantAccessWhenPresent(tenantId);
       RoomSnapshotDto snapshot =
           roomService.getRoomSnapshot(tenantId, roomId, request.getPreferredLocale());
       GetRoomSnapshotResponse response =
@@ -246,5 +246,14 @@ public class WorldManagementGrpcService
 
   private String errorCodeFor(IllegalArgumentException ex) {
     return "Room not found".equals(ex.getMessage()) ? "NOT_FOUND" : "INVALID_ARGUMENT";
+  }
+
+  private void requireTenantAccessWhenPresent(Long tenantId) {
+    if (SessionContext.getAccountId() == null
+        && SessionContext.getGlobalRoles().isEmpty()
+        && SessionContext.getScopedRolesMap().isEmpty()) {
+      return;
+    }
+    SessionContext.requireTenantAccess(tenantId);
   }
 }
