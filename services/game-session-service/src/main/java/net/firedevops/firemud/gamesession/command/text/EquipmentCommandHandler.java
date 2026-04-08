@@ -208,6 +208,10 @@ public class EquipmentCommandHandler {
   private String formatEquipmentItem(EquipmentItem item) {
     StringBuilder line = new StringBuilder();
     line.append("- ").append(item.getSlot()).append(": ").append(item.getItemName());
+    String compactReference = ContainerIdentitySupport.compactReference(item);
+    if (StringUtils.hasText(compactReference)) {
+      line.append(" [").append(compactReference).append("]");
+    }
     if (StringUtils.hasText(item.getItemDescription())) {
       line.append(" (").append(item.getItemDescription()).append(")");
     }

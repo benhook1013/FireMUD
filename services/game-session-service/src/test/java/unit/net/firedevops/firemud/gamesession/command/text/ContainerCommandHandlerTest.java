@@ -64,7 +64,7 @@ class ContainerCommandHandlerTest {
     assertThat(result.outputs().get(0).kind()).isEqualTo(PlayerOutputKind.VIEW);
     assertThat(result.outputs().get(0).payload()).isInstanceOf(InventoryViewOutput.class);
     InventoryViewOutput view = (InventoryViewOutput) result.outputs().get(0).payload();
-    assertThat(view.title()).isEqualTo("Container: Old Chest");
+    assertThat(view.title()).isEqualTo("Container: Old Chest [oldchest10]");
     assertThat(view.lines()).containsExactly("- Torch x2 (A small torch)");
   }
 

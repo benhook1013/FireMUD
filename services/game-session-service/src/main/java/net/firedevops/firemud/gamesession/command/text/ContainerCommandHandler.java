@@ -247,7 +247,10 @@ public class ContainerCommandHandler {
         List.of(
             PlayerOutput.view(
                 new InventoryViewOutput(
-                    "Container: " + displayInventoryItemName(containerItem), lines))));
+                    "Container: "
+                        + displayInventoryItemName(containerItem)
+                        + compactReferenceSuffix(containerItem),
+                    lines))));
   }
 
   private InventoryResolution loadInventory(SessionContext context) {
@@ -300,6 +303,11 @@ public class ContainerCommandHandler {
 
   private String quantitySuffix(int quantity) {
     return quantity > 1 ? " x" + quantity : "";
+  }
+
+  private String compactReferenceSuffix(InventoryItem item) {
+    String compactReference = ContainerIdentitySupport.compactReference(item);
+    return StringUtils.hasText(compactReference) ? " [" + compactReference + "]" : "";
   }
 
   private String errorCode(String candidate) {

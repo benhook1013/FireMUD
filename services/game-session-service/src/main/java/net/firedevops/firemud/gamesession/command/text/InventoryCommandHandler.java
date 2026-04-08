@@ -85,6 +85,7 @@ public class InventoryCommandHandler {
   private String formatInventoryItem(InventoryItem item) {
     StringBuilder line = new StringBuilder();
     line.append("- ").append(item.getItemName());
+    appendCompactReference(line, ContainerIdentitySupport.compactReference(item));
     if (item.getQuantity() > 1) {
       line.append(" x").append(item.getQuantity());
     }
@@ -257,6 +258,12 @@ public class InventoryCommandHandler {
       return fallback;
     }
     return StringUtils.hasText(item.getItemName()) ? item.getItemName() : fallback;
+  }
+
+  private void appendCompactReference(StringBuilder line, String compactReference) {
+    if (StringUtils.hasText(compactReference)) {
+      line.append(" [").append(compactReference).append("]");
+    }
   }
 
   private Optional<ResolvedItem> findRoomGroundItem(List<RoomEntity> entities, String reference) {

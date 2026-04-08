@@ -22,14 +22,13 @@ public class TextCommandInterpreter {
   private final MoveCommandHandler moveHandler;
   private final HelpCommandHandler helpHandler;
   private final WhoCommandHandler whoHandler;
-  private final InventoryCommandHandler inventoryHandler;
-  private final EquipmentCommandHandler equipmentHandler;
-  private final ContainerCommandHandler containerHandler;
+  private final ItemCommandHandler itemHandler;
   private final SessionAuthenticationService sessionAuthenticationService;
   private final CommunicationCommandHandler communicationHandler;
   private final WorldsCommandHandler worldsHandler;
   private final PromptComposer promptComposer;
   private final TextCommandParser parser;
+  private final BuiltInTextCommandRegistry registry;
 
   @Autowired
   public TextCommandInterpreter(
@@ -55,14 +54,13 @@ public class TextCommandInterpreter {
         moveHandler,
         helpHandler,
         whoHandler,
-        inventoryHandler,
-        equipmentHandler,
-        containerHandler,
+        new ItemCommandHandler(inventoryHandler, equipmentHandler, containerHandler),
         sessionAuthenticationService,
         communicationHandler,
         worldsHandler,
         promptComposer,
-        new TextCommandParser());
+        new TextCommandParser(),
+        new BuiltInTextCommandRegistry());
   }
 
   TextCommandInterpreter(
@@ -81,6 +79,38 @@ public class TextCommandInterpreter {
       WorldsCommandHandler worldsHandler,
       PromptComposer promptComposer,
       TextCommandParser parser) {
+    this(
+        commandService,
+        lookHandler,
+        loginHandler,
+        playHandler,
+        moveHandler,
+        helpHandler,
+        whoHandler,
+        new ItemCommandHandler(inventoryHandler, equipmentHandler, containerHandler),
+        sessionAuthenticationService,
+        communicationHandler,
+        worldsHandler,
+        promptComposer,
+        parser,
+        new BuiltInTextCommandRegistry());
+  }
+
+  TextCommandInterpreter(
+      CommandService commandService,
+      LookCommandHandler lookHandler,
+      LoginCommandHandler loginHandler,
+      PlayCommandHandler playHandler,
+      MoveCommandHandler moveHandler,
+      HelpCommandHandler helpHandler,
+      WhoCommandHandler whoHandler,
+      ItemCommandHandler itemHandler,
+      SessionAuthenticationService sessionAuthenticationService,
+      CommunicationCommandHandler communicationHandler,
+      WorldsCommandHandler worldsHandler,
+      PromptComposer promptComposer,
+      TextCommandParser parser,
+      BuiltInTextCommandRegistry registry) {
     this.commandService = Objects.requireNonNull(commandService, "commandService must not be null");
     this.lookHandler = Objects.requireNonNull(lookHandler, "lookHandler must not be null");
     this.loginHandler = Objects.requireNonNull(loginHandler, "loginHandler must not be null");
@@ -88,12 +118,7 @@ public class TextCommandInterpreter {
     this.moveHandler = Objects.requireNonNull(moveHandler, "moveHandler must not be null");
     this.helpHandler = Objects.requireNonNull(helpHandler, "helpHandler must not be null");
     this.whoHandler = Objects.requireNonNull(whoHandler, "whoHandler must not be null");
-    this.inventoryHandler =
-        Objects.requireNonNull(inventoryHandler, "inventoryHandler must not be null");
-    this.equipmentHandler =
-        Objects.requireNonNull(equipmentHandler, "equipmentHandler must not be null");
-    this.containerHandler =
-        Objects.requireNonNull(containerHandler, "containerHandler must not be null");
+    this.itemHandler = Objects.requireNonNull(itemHandler, "itemHandler must not be null");
     this.sessionAuthenticationService =
         Objects.requireNonNull(
             sessionAuthenticationService, "sessionAuthenticationService must not be null");
@@ -102,6 +127,7 @@ public class TextCommandInterpreter {
     this.worldsHandler = Objects.requireNonNull(worldsHandler, "worldsHandler must not be null");
     this.promptComposer = Objects.requireNonNull(promptComposer, "promptComposer must not be null");
     this.parser = Objects.requireNonNull(parser, "parser must not be null");
+    this.registry = Objects.requireNonNull(registry, "registry must not be null");
   }
 
   public TextCommandInterpretationResult interpret(
@@ -111,6 +137,7 @@ public class TextCommandInterpreter {
 
   public TextCommandInterpretationResult interpret(
       String sessionId, TextCommand command, boolean requiresSoloTick) {
+    TextCommandDefinition definition = registry.definitionFor(command.type());
     if (command.type() == TextCommandType.NOOP) {
       return new TextCommandInterpretationResult(CommandEnqueueResult.success());
     }
@@ -121,187 +148,140 @@ public class TextCommandInterpreter {
           List.of(
               PlayerOutput.error("UNKNOWN_COMMAND", message, "error.unknown-command", Map.of())));
     }
-    if (command.viewRequestPayload().isPresent() && command.type() == TextCommandType.WORLDS) {
-      return new TextCommandInterpretationResult(
-          CommandEnqueueResult.success(), List.of(PlayerOutput.view(worldsHandler.browseView())));
-    }
-    if (command.type() == TextCommandType.LOGIN) {
-      LoginCommandHandlingResult loginResult =
-          loginHandler.handle(sessionId, command, requiresSoloTick);
-      return new TextCommandInterpretationResult(
-          loginResult.commandResult(), loginResult.outputs());
-    }
-
     Optional<net.firedevops.firemud.gamesession.service.SessionContext> maybeContext =
         sessionAuthenticationService.resolveSessionContext(sessionId);
     boolean hasLogin = maybeContext.isPresent();
     boolean hasPlay =
         maybeContext.isPresent() && StringUtils.hasText(maybeContext.get().roomInstanceId());
 
-    if (command.type() == TextCommandType.HELP) {
-      TextCommandInterpretationResult helpResult = helpHandler.handle(command);
-      List<PlayerOutput> outputs = helpResult.outputs();
-      if (helpResult.commandResult().accepted() && hasLogin) {
-        outputs = appendPrompt(maybeContext.get(), outputs);
-      }
-      return new TextCommandInterpretationResult(helpResult.commandResult(), outputs);
-    }
-
-    if (command.type() == TextCommandType.PLAY) {
-      if (!hasLogin) {
-        return stageFailure(
-            GameplayStageCommandConstants.LOGIN_REQUIRED_CODE,
-            GameplayStageCommandConstants.LOGIN_REQUIRED_MESSAGE);
-      }
-      PlayCommandHandlingResult playResult = playHandler.handle(sessionId, command);
-      List<PlayerOutput> outputs = playResult.outputs();
-      if (playResult.commandResult().accepted() && !playResult.reconnectRedrawRecommended()) {
-        outputs = appendPrompt(sessionId, outputs);
-      }
-      return new TextCommandInterpretationResult(
-          playResult.commandResult(), outputs, playResult.reconnectRedrawRecommended());
-    }
-
-    if (command.type() == TextCommandType.WHO) {
-      if (!hasLogin) {
-        return stageFailure(
-            GameplayStageCommandConstants.LOGIN_REQUIRED_CODE,
-            GameplayStageCommandConstants.LOGIN_REQUIRED_MESSAGE);
-      }
-      if (!hasPlay) {
-        return stageFailure(
-            GameplayStageCommandConstants.PLAY_REQUIRED_CODE,
-            GameplayStageCommandConstants.PLAY_REQUIRED_MESSAGE);
-      }
-      TextCommandInterpretationResult whoResult = whoHandler.handle(maybeContext.orElseThrow());
-      List<PlayerOutput> outputs = appendPrompt(maybeContext.orElseThrow(), whoResult.outputs());
-      return new TextCommandInterpretationResult(whoResult.commandResult(), outputs);
-    }
-
-    if (requiresGameplayAuthentication(command.type()) && !hasLogin) {
+    if (definition.stageRequirement() != TextCommandStageRequirement.NONE && !hasLogin) {
       return stageFailure(
           GameplayStageCommandConstants.LOGIN_REQUIRED_CODE,
           GameplayStageCommandConstants.LOGIN_REQUIRED_MESSAGE);
     }
-    if (requiresGameplayAuthentication(command.type()) && !hasPlay) {
+    if (definition.stageRequirement() == TextCommandStageRequirement.GAMEPLAY && !hasPlay) {
       return stageFailure(
           GameplayStageCommandConstants.PLAY_REQUIRED_CODE,
           GameplayStageCommandConstants.PLAY_REQUIRED_MESSAGE);
     }
 
-    if (isInventoryCommand(command.type())) {
-      InventoryCommandHandlingResult inventoryResult =
-          inventoryHandler.handle(maybeContext.orElseThrow(), command);
-      List<PlayerOutput> outputs = inventoryResult.outputs();
-      if (inventoryResult.commandResult().accepted()) {
-        outputs = appendPrompt(maybeContext.orElseThrow(), outputs);
+    return switch (definition.dispatchGroup()) {
+      case WORLDS ->
+          new TextCommandInterpretationResult(
+              CommandEnqueueResult.success(),
+              List.of(PlayerOutput.view(worldsHandler.browseView())));
+      case LOGIN -> {
+        LoginCommandHandlingResult loginResult =
+            loginHandler.handle(sessionId, command, requiresSoloTick);
+        yield new TextCommandInterpretationResult(
+            loginResult.commandResult(), loginResult.outputs());
       }
-      return new TextCommandInterpretationResult(inventoryResult.commandResult(), outputs);
-    }
+      case HELP ->
+          applyPromptPolicy(helpHandler.handle(command), definition.promptPolicy(), maybeContext);
+      case PLAY -> handlePlay(sessionId, command);
+      case WHO ->
+          applyPromptPolicy(
+              whoHandler.handle(maybeContext.orElseThrow()),
+              definition.promptPolicy(),
+              maybeContext);
+      case ITEM ->
+          applyPromptPolicy(
+              itemHandler.handle(maybeContext.orElseThrow(), command),
+              definition.promptPolicy(),
+              maybeContext);
+      case COMMUNICATION ->
+          applyPromptPolicy(
+              toInterpretationResult(
+                  communicationHandler.handle(maybeContext.orElseThrow(), command)),
+              definition.promptPolicy(),
+              maybeContext);
+      case MOVE -> handleMove(maybeContext.orElseThrow(), command, definition.promptPolicy());
+      case LOOK ->
+          handleLook(sessionId, command, requiresSoloTick, maybeContext, definition.promptPolicy());
+      case ENQUEUE_ONLY ->
+          new TextCommandInterpretationResult(
+              commandService.enqueue(sessionId, command.rawLine(), requiresSoloTick));
+    };
+  }
 
-    if (isEquipmentCommand(command.type())) {
-      TextCommandInterpretationResult equipmentResult =
-          equipmentHandler.handle(maybeContext.orElseThrow(), command);
-      List<PlayerOutput> outputs = equipmentResult.outputs();
-      if (equipmentResult.commandResult().accepted()) {
-        outputs = appendPrompt(maybeContext.orElseThrow(), outputs);
-      }
-      return new TextCommandInterpretationResult(equipmentResult.commandResult(), outputs);
+  private TextCommandInterpretationResult handlePlay(String sessionId, TextCommand command) {
+    PlayCommandHandlingResult playResult = playHandler.handle(sessionId, command);
+    List<PlayerOutput> outputs = playResult.outputs();
+    if (playResult.commandResult().accepted() && !playResult.reconnectRedrawRecommended()) {
+      outputs = appendPrompt(sessionId, outputs);
     }
+    return new TextCommandInterpretationResult(
+        playResult.commandResult(), outputs, playResult.reconnectRedrawRecommended());
+  }
 
-    if (isContainerCommand(command.type())) {
-      TextCommandInterpretationResult containerResult =
-          containerHandler.handle(maybeContext.orElseThrow(), command);
-      List<PlayerOutput> outputs = containerResult.outputs();
-      if (containerResult.commandResult().accepted()) {
-        outputs = appendPrompt(maybeContext.orElseThrow(), outputs);
-      }
-      return new TextCommandInterpretationResult(containerResult.commandResult(), outputs);
-    }
+  private TextCommandInterpretationResult handleMove(
+      net.firedevops.firemud.gamesession.service.SessionContext context,
+      TextCommand command,
+      TextCommandPromptPolicy promptPolicy) {
+    MoveCommandHandlingResult moveResult = moveHandler.handle(context, command);
+    List<PlayerOutput> outputs =
+        moveResult.responseOutput() == null ? List.of() : List.of(moveResult.responseOutput());
+    return applyPromptPolicy(
+        new TextCommandInterpretationResult(moveResult.commandResult(), outputs),
+        promptPolicy,
+        Optional.of(context));
+  }
 
-    if (isCommunicationCommand(command.type())) {
-      CommunicationCommandHandlingResult communicationResult =
-          communicationHandler.handle(maybeContext.orElseThrow(), command);
-      List<PlayerOutput> outputs = communicationResult.outputs();
-      if (communicationResult.commandResult().accepted()) {
-        outputs = appendPrompt(maybeContext.orElseThrow(), outputs);
-      }
-      return new TextCommandInterpretationResult(communicationResult.commandResult(), outputs);
-    }
-
-    if (command.type() == TextCommandType.MOVE) {
-      MoveCommandHandlingResult moveResult =
-          moveHandler.handle(maybeContext.orElseThrow(), command);
-      List<PlayerOutput> outputs =
-          moveResult.responseOutput() == null ? List.of() : List.of(moveResult.responseOutput());
-      if (moveResult.commandResult().accepted()) {
-        outputs = appendPrompt(maybeContext.orElseThrow(), outputs);
-      }
-      return new TextCommandInterpretationResult(moveResult.commandResult(), outputs);
-    }
-
+  private TextCommandInterpretationResult handleLook(
+      String sessionId,
+      TextCommand command,
+      boolean requiresSoloTick,
+      Optional<net.firedevops.firemud.gamesession.service.SessionContext> maybeContext,
+      TextCommandPromptPolicy promptPolicy) {
     CommandEnqueueResult enqueueResult =
         commandService.enqueue(sessionId, command.rawLine(), requiresSoloTick);
-    String response = null;
-    if (enqueueResult.accepted()
-        && command.viewRequestPayload().isPresent()
-        && isLookCommand(command.type())) {
-      PlayerOutput lookOutput =
-          lookHandler.describePlayerOutput(sessionId, command.type() != TextCommandType.QUICKLOOK);
-      if (lookOutput == null) {
-        return stageFailure(
-            GameplayStageCommandConstants.PLAY_REQUIRED_CODE,
-            GameplayStageCommandConstants.PLAY_REQUIRED_MESSAGE);
-      }
-      if (lookOutput.kind()
-              == net.firedevops.firemud.gamesession.presentation.PlayerOutputKind.ERROR
-          && lookOutput.payload()
-              instanceof net.firedevops.firemud.gamesession.presentation.ErrorOutput errorOutput) {
-        return new TextCommandInterpretationResult(
-            CommandEnqueueResult.failure(errorOutput.code(), errorOutput.message()),
-            List.of(lookOutput));
-      }
-      List<PlayerOutput> outputs = appendPrompt(maybeContext.orElseThrow(), List.of(lookOutput));
-      return new TextCommandInterpretationResult(enqueueResult, outputs);
+    if (!enqueueResult.accepted() || command.viewRequestPayload().isEmpty()) {
+      return new TextCommandInterpretationResult(enqueueResult);
     }
-    return new TextCommandInterpretationResult(enqueueResult);
+    PlayerOutput lookOutput =
+        lookHandler.describePlayerOutput(sessionId, command.type() != TextCommandType.QUICKLOOK);
+    if (lookOutput == null) {
+      return stageFailure(
+          GameplayStageCommandConstants.PLAY_REQUIRED_CODE,
+          GameplayStageCommandConstants.PLAY_REQUIRED_MESSAGE);
+    }
+    if (lookOutput.kind() == net.firedevops.firemud.gamesession.presentation.PlayerOutputKind.ERROR
+        && lookOutput.payload()
+            instanceof net.firedevops.firemud.gamesession.presentation.ErrorOutput errorOutput) {
+      return new TextCommandInterpretationResult(
+          CommandEnqueueResult.failure(errorOutput.code(), errorOutput.message()),
+          List.of(lookOutput));
+    }
+    return applyPromptPolicy(
+        new TextCommandInterpretationResult(enqueueResult, List.of(lookOutput)),
+        promptPolicy,
+        maybeContext);
   }
 
-  private static boolean requiresGameplayAuthentication(TextCommandType type) {
-    return isLookCommand(type)
-        || isCommunicationCommand(type)
-        || isInventoryCommand(type)
-        || isEquipmentCommand(type)
-        || isContainerCommand(type)
-        || type == TextCommandType.MOVE;
+  private TextCommandInterpretationResult applyPromptPolicy(
+      TextCommandInterpretationResult result,
+      TextCommandPromptPolicy promptPolicy,
+      Optional<net.firedevops.firemud.gamesession.service.SessionContext> maybeContext) {
+    if (!result.commandResult().accepted()) {
+      return result;
+    }
+    return switch (promptPolicy) {
+      case NEVER -> result;
+      case WHEN_LOGGED_IN, WHEN_GAMEPLAY ->
+          maybeContext
+              .map(
+                  context ->
+                      new TextCommandInterpretationResult(
+                          result.commandResult(),
+                          appendPrompt(context, result.outputs()),
+                          result.reconnectRedrawRecommended()))
+              .orElse(result);
+    };
   }
 
-  private static boolean isLookCommand(TextCommandType type) {
-    return type == TextCommandType.LOOK || type == TextCommandType.QUICKLOOK;
-  }
-
-  private static boolean isCommunicationCommand(TextCommandType type) {
-    return type == TextCommandType.SAY
-        || type == TextCommandType.WHISPER
-        || type == TextCommandType.TELL;
-  }
-
-  private static boolean isInventoryCommand(TextCommandType type) {
-    return type == TextCommandType.INVENTORY
-        || type == TextCommandType.GET
-        || type == TextCommandType.DROP;
-  }
-
-  private static boolean isEquipmentCommand(TextCommandType type) {
-    return type == TextCommandType.EQUIPMENT
-        || type == TextCommandType.WEAR
-        || type == TextCommandType.REMOVE;
-  }
-
-  private static boolean isContainerCommand(TextCommandType type) {
-    return type == TextCommandType.CONTAINER
-        || type == TextCommandType.PUT
-        || type == TextCommandType.TAKE;
+  private static TextCommandInterpretationResult toInterpretationResult(
+      CommunicationCommandHandlingResult result) {
+    return new TextCommandInterpretationResult(result.commandResult(), result.outputs());
   }
 
   private TextCommandInterpretationResult stageFailure(String code, String message) {
