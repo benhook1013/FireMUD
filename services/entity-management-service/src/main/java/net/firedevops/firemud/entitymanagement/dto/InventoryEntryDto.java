@@ -9,4 +9,5 @@ public record InventoryEntryDto(
     @NotNull String itemName,
     String itemDescription,
     int quantity,
+    Long itemInstanceId,
     Long containerInstanceId) {}

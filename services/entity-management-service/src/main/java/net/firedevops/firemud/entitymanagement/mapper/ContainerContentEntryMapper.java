@@ -13,5 +13,6 @@ public interface ContainerContentEntryMapper {
   @Mapping(target = "itemId", source = "item.id")
   @Mapping(target = "itemName", source = "item.name")
   @Mapping(target = "itemDescription", source = "item.description")
+  @Mapping(target = "itemInstanceId", ignore = true)
   ContainerContentEntryDto toDto(ContainerContentEntry entity);
 }

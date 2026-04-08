@@ -198,9 +198,12 @@ public class InventoryServiceImpl implements InventoryService {
 
   private InventoryEntryDto toDto(InventoryEntry entry) {
     if (entry.getItem() != null && entry.getItem().isContainer()) {
-      entry.setContainerInstanceId(
-          resolveCarriedContainerInstanceId(entry.getCharacter(), entry.getItem()));
+      Long itemInstanceId =
+          resolveCarriedContainerInstanceId(entry.getCharacter(), entry.getItem());
+      entry.setItemInstanceId(itemInstanceId);
+      entry.setContainerInstanceId(itemInstanceId);
     } else {
+      entry.setItemInstanceId(null);
       entry.setContainerInstanceId(null);
     }
     return inventoryMapper.toDto(entry);
@@ -208,13 +211,16 @@ public class InventoryServiceImpl implements InventoryService {
 
   private RoomGroundInventoryEntryDto toRoomGroundDto(RoomGroundInventoryEntry entry) {
     if (entry.getItem() != null && entry.getItem().isContainer()) {
-      entry.setContainerInstanceId(
+      Long itemInstanceId =
           resolveRoomContainerInstanceId(
               entry.getId().getTenantId(),
               entry.getId().getGameInstanceId(),
               entry.getId().getRoomInstanceId(),
-              entry.getItem()));
+              entry.getItem());
+      entry.setItemInstanceId(itemInstanceId);
+      entry.setContainerInstanceId(itemInstanceId);
     } else {
+      entry.setItemInstanceId(null);
       entry.setContainerInstanceId(null);
     }
     return roomGroundMapper.toDto(entry);

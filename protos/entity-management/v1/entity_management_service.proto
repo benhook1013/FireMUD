@@ -63,6 +63,7 @@ message InventoryItem {
   string item_description = 3;
   int32 quantity = 4;
   string container_instance_id = 5;
+  string item_instance_id = 6;
 }
 
 message EquipmentItem {
@@ -73,6 +74,7 @@ message EquipmentItem {
   string item_name = 5;
   string item_description = 6;
   string container_instance_id = 7;
+  string item_instance_id = 8;
 }
 
 message ListEquipmentRequest {
@@ -115,6 +117,7 @@ message ContainerItem {
   string item_name = 5;
   string item_description = 6;
   int32 quantity = 7;
+  string item_instance_id = 8;
 }
 
 message ListContainerContentsRequest {
@@ -163,6 +166,7 @@ message RoomGroundInventoryItem {
   string item_description = 6;
   int32 quantity = 7;
   string container_instance_id = 8;
+  string item_instance_id = 9;
 }
 
 message PickupItemFromRoomRequest {

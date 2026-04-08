@@ -163,7 +163,7 @@ class EntityManagementGrpcServiceTest {
             new org.springframework.data.domain.PageImpl<>(
                 java.util.List.of(
                     new net.firedevops.firemud.entitymanagement.dto.ContainerContentEntryDto(
-                        1L, 7L, 10L, 11L, "Torch", "A small torch", 2))));
+                        1L, 7L, 10L, 11L, "Torch", "A small torch", 2, null))));
     EntityManagementGrpcService service =
         newService(
             pingService,
@@ -216,7 +216,7 @@ class EntityManagementGrpcServiceTest {
     Mockito.when(containerService.putItemIntoContainer(1L, 7L, 10L, 11L, 2))
         .thenReturn(
             new net.firedevops.firemud.entitymanagement.dto.ContainerContentEntryDto(
-                1L, 7L, 10L, 11L, "Torch", "A small torch", 2));
+                1L, 7L, 10L, 11L, "Torch", "A small torch", 2, null));
     EntityManagementGrpcService service =
         newService(
             pingService,
@@ -272,7 +272,7 @@ class EntityManagementGrpcServiceTest {
     Mockito.when(containerService.takeItemFromContainer(1L, 7L, 10L, 11L, 1))
         .thenReturn(
             new net.firedevops.firemud.entitymanagement.dto.InventoryEntryDto(
-                1L, 7L, 11L, "Torch", "A small torch", 1, null));
+                1L, 7L, 11L, "Torch", "A small torch", 1, null, null));
     EntityManagementGrpcService service =
         newService(
             pingService,
@@ -607,7 +607,7 @@ class EntityManagementGrpcServiceTest {
     InventoryService inventoryService = Mockito.mock(InventoryService.class);
     var dto =
         new net.firedevops.firemud.entitymanagement.dto.InventoryEntryDto(
-            1L, 7L, 99L, "Torch", "A small torch", 2, 55L);
+            1L, 7L, 99L, "Torch", "A small torch", 2, 55L, 55L);
     Mockito.when(inventoryService.listInventory(1L, 7L, Pageable.unpaged()))
         .thenReturn(new org.springframework.data.domain.PageImpl<>(java.util.List.of(dto)));
     io.micrometer.core.instrument.MeterRegistry meterRegistry =
@@ -655,7 +655,7 @@ class EntityManagementGrpcServiceTest {
     InventoryService inventoryService = Mockito.mock(InventoryService.class);
     var dto =
         new net.firedevops.firemud.entitymanagement.dto.CharacterEquipmentEntryDto(
-            1L, 7L, "HEAD", 99L, "Leather Cap", "A small cap", 66L);
+            1L, 7L, "HEAD", 99L, "Leather Cap", "A small cap", 66L, 66L);
     Mockito.when(equipmentService.listEquipment(1L, 7L, Pageable.unpaged()))
         .thenReturn(new org.springframework.data.domain.PageImpl<>(java.util.List.of(dto)));
     io.micrometer.core.instrument.MeterRegistry meterRegistry =
@@ -703,7 +703,7 @@ class EntityManagementGrpcServiceTest {
     InventoryService inventoryService = Mockito.mock(InventoryService.class);
     var dto =
         new net.firedevops.firemud.entitymanagement.dto.CharacterEquipmentEntryDto(
-            1L, 7L, "HEAD", 99L, "Leather Cap", "A small cap", 66L);
+            1L, 7L, "HEAD", 99L, "Leather Cap", "A small cap", 66L, 66L);
     Mockito.when(equipmentService.wearItem(1L, 7L, 99L)).thenReturn(dto);
     io.micrometer.core.instrument.MeterRegistry meterRegistry =
         Mockito.mock(io.micrometer.core.instrument.MeterRegistry.class);
@@ -754,7 +754,7 @@ class EntityManagementGrpcServiceTest {
     InventoryService inventoryService = Mockito.mock(InventoryService.class);
     var dto =
         new net.firedevops.firemud.entitymanagement.dto.CharacterEquipmentEntryDto(
-            1L, 7L, "HEAD", 99L, "Leather Cap", "A small cap", 66L);
+            1L, 7L, "HEAD", 99L, "Leather Cap", "A small cap", 66L, 66L);
     Mockito.when(equipmentService.removeWornItem(1L, 7L, "HEAD")).thenReturn(dto);
     io.micrometer.core.instrument.MeterRegistry meterRegistry =
         Mockito.mock(io.micrometer.core.instrument.MeterRegistry.class);
@@ -805,7 +805,7 @@ class EntityManagementGrpcServiceTest {
     InventoryService inventoryService = Mockito.mock(InventoryService.class);
     var dto =
         new net.firedevops.firemud.entitymanagement.dto.InventoryEntryDto(
-            1L, 7L, 99L, "Torch", "A small torch", 2, null);
+            1L, 7L, 99L, "Torch", "A small torch", 2, null, null);
     Mockito.when(inventoryService.pickupItemFromRoom(1L, 7L, "GI-1", "R-1", 99L, "", 1))
         .thenReturn(dto);
     io.micrometer.core.instrument.MeterRegistry meterRegistry =
@@ -859,7 +859,7 @@ class EntityManagementGrpcServiceTest {
     InventoryService inventoryService = Mockito.mock(InventoryService.class);
     var dto =
         new net.firedevops.firemud.entitymanagement.dto.RoomGroundInventoryEntryDto(
-            1L, "GI-1", "R-1", 99L, "Torch", "A small torch", 1, null);
+            1L, "GI-1", "R-1", 99L, "Torch", "A small torch", 1, null, null);
     Mockito.when(inventoryService.dropItemToRoom(1L, 7L, "GI-1", "R-1", 99L, "", 1))
         .thenReturn(dto);
     io.micrometer.core.instrument.MeterRegistry meterRegistry =

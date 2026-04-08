@@ -832,6 +832,9 @@ public class EntityManagementGrpcService
             .setItemName(dto.itemName())
             .setItemDescription(dto.itemDescription() == null ? "" : dto.itemDescription())
             .setQuantity(dto.quantity());
+    if (dto.itemInstanceId() != null) {
+      builder.setItemInstanceId(String.valueOf(dto.itemInstanceId()));
+    }
     if (dto.containerInstanceId() != null) {
       builder.setContainerInstanceId(String.valueOf(dto.containerInstanceId()));
     }
@@ -847,6 +850,9 @@ public class EntityManagementGrpcService
             .setItemId(String.valueOf(dto.itemId()))
             .setItemName(dto.itemName())
             .setItemDescription(dto.itemDescription() == null ? "" : dto.itemDescription());
+    if (dto.itemInstanceId() != null) {
+      builder.setItemInstanceId(String.valueOf(dto.itemInstanceId()));
+    }
     if (dto.containerInstanceId() != null) {
       builder.setContainerInstanceId(String.valueOf(dto.containerInstanceId()));
     }
@@ -862,6 +868,7 @@ public class EntityManagementGrpcService
         .setItemName(dto.itemName())
         .setItemDescription(dto.itemDescription() == null ? "" : dto.itemDescription())
         .setQuantity(dto.quantity())
+        .setItemInstanceId(dto.itemInstanceId() == null ? "" : String.valueOf(dto.itemInstanceId()))
         .build();
   }
 
@@ -876,6 +883,9 @@ public class EntityManagementGrpcService
             .setItemName(dto.itemName())
             .setItemDescription(dto.itemDescription() == null ? "" : dto.itemDescription())
             .setQuantity(dto.quantity());
+    if (dto.itemInstanceId() != null) {
+      builder.setItemInstanceId(String.valueOf(dto.itemInstanceId()));
+    }
     if (dto.containerInstanceId() != null) {
       builder.setContainerInstanceId(String.valueOf(dto.containerInstanceId()));
     }

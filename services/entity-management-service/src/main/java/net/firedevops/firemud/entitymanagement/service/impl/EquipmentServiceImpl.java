@@ -138,10 +138,13 @@ public class EquipmentServiceImpl implements EquipmentService {
 
   private CharacterEquipmentEntryDto toDto(CharacterEquipmentEntry entry) {
     if (entry.getItem() != null && entry.getItem().isContainer()) {
-      entry.setContainerInstanceId(
+      Long itemInstanceId =
           resolveEquippedContainerInstanceId(
-              entry.getCharacter(), entry.getItem(), entry.getId().getSlot()));
+              entry.getCharacter(), entry.getItem(), entry.getId().getSlot());
+      entry.setItemInstanceId(itemInstanceId);
+      entry.setContainerInstanceId(itemInstanceId);
     } else {
+      entry.setItemInstanceId(null);
       entry.setContainerInstanceId(null);
     }
     return equipmentMapper.toDto(entry);
