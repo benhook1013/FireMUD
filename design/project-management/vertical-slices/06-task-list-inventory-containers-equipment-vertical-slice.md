@@ -8,6 +8,8 @@ This slice builds on the current authenticated gameplay path, authoritative room
 
 Scope note: this slice should establish the canonical container/equipment/audit model and prove the first player-facing item actions such as `INVENTORY`, `GET`, `DROP`, and one equipment action. It should not try to solve crafting, shops, banks, loot generation, or deep scripted item behaviors in the same change.
 
+Architectural note: inventory, equipment, room-ground items, and containers should remain one shared item-holder and transfer system with different holder kinds and presentation rules, not separate gameplay subsystems. The dedicated convergence follow-up is captured in `06.4-task-list-unified-item-holder-and-transfer-model-vertical-slice.md`.
+
 ## First Implementation Boundary
 
 The first narrow implementation for `06` should start from the authoritative runtime model, not from parser or transcript polish.
@@ -39,6 +41,7 @@ Equipment is still part of the overall `06` slice, but if it materially widens t
   - room-ground inventory is a room-attached container identified from authoritative room instance identity;
   - equipped items use first-class equipment bindings rather than "bag position with a flag";
   - slot definitions and body layouts are game-configured rather than platform-global enums.
+- [ ] Keep the design explicit that inventory, equipment, room-ground, and container contents are all holder kinds within one transfer model, not different item ontologies or unrelated command subsystems.
 - [ ] Decide and document the minimum player-facing protocol surface for the first inventory slice, including at least `INVENTORY`, `GET <item>`, `DROP <item>`, and one equipment action such as `WEAR` / `EQUIP` or `REMOVE`.
 - [ ] Explicitly document that the first MVP command loop is expected to land as:
   - `INVENTORY`
