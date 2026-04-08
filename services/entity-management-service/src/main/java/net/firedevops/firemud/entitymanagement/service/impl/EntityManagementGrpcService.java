@@ -6,6 +6,8 @@ import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.util.stream.Collectors;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
+import net.firedevops.firemud.common.security.AuthTokenInterceptor;
+import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.entitymanagement.dto.CharacterDto;
 import net.firedevops.firemud.entitymanagement.dto.CharacterEquipmentEntryDto;
 import net.firedevops.firemud.entitymanagement.dto.ContainerContentEntryDto;
@@ -59,7 +61,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.grpc.server.service.GrpcService;
 
 /** Simple gRPC service exposing the Ping RPC. */
-@GrpcService
+@GrpcService(interceptors = AuthTokenInterceptor.class)
 public class EntityManagementGrpcService
     extends EntityManagementServiceGrpc.EntityManagementServiceImplBase {
   private static final Logger logger = LoggerFactory.getLogger(EntityManagementGrpcService.class);
@@ -139,6 +141,7 @@ public class EntityManagementGrpcService
       StreamObserver<ListCharactersByAccountResponse> responseObserver) {
     try {
       long tenantId = Long.parseLong(request.getTenantId());
+      SessionContext.requireTenantAccess(tenantId);
       long accountId = Long.parseLong(request.getAccountId());
       var characters =
           characterService.listForTenantAndAccount(tenantId, accountId, Pageable.unpaged()).stream()
@@ -192,6 +195,7 @@ public class EntityManagementGrpcService
       StreamObserver<FindCharacterByNameResponse> responseObserver) {
     try {
       long tenantId = Long.parseLong(request.getTenantId());
+      SessionContext.requireTenantAccess(tenantId);
       FindCharacterByNameResponse.Builder builder = FindCharacterByNameResponse.newBuilder();
       characterService
           .findByTenantAndName(tenantId, request.getName())
@@ -241,6 +245,7 @@ public class EntityManagementGrpcService
       CreateCharacterRequest request, StreamObserver<CreateCharacterResponse> responseObserver) {
     try {
       long tenantId = Long.parseLong(request.getTenantId());
+      SessionContext.requireTenantAccess(tenantId);
       long accountId = Long.parseLong(request.getAccountId());
       CharacterDto dto =
           new CharacterDto(
@@ -308,6 +313,7 @@ public class EntityManagementGrpcService
       QueryInventoryRequest request, StreamObserver<QueryInventoryResponse> responseObserver) {
     try {
       long tenantId = Long.parseLong(request.getTenantId());
+      SessionContext.requireTenantAccess(tenantId);
       long characterId = Long.parseLong(request.getCharacterId());
       var entries =
           inventoryService.listInventory(tenantId, characterId, Pageable.unpaged()).getContent();
@@ -341,6 +347,7 @@ public class EntityManagementGrpcService
       ListEquipmentRequest request, StreamObserver<ListEquipmentResponse> responseObserver) {
     try {
       long tenantId = Long.parseLong(request.getTenantId());
+      SessionContext.requireTenantAccess(tenantId);
       long characterId = Long.parseLong(request.getCharacterId());
       var items = equipmentService.listEquipment(tenantId, characterId, Pageable.unpaged());
       ListEquipmentResponse response =
@@ -375,6 +382,7 @@ public class EntityManagementGrpcService
       StreamObserver<WearEquipmentItemResponse> responseObserver) {
     try {
       long tenantId = Long.parseLong(request.getTenantId());
+      SessionContext.requireTenantAccess(tenantId);
       long characterId = Long.parseLong(request.getCharacterId());
       long itemId = Long.parseLong(request.getItemId());
       CharacterEquipmentEntryDto dto = equipmentService.wearItem(tenantId, characterId, itemId);
@@ -416,6 +424,7 @@ public class EntityManagementGrpcService
       RemoveEquipmentRequest request, StreamObserver<RemoveEquipmentResponse> responseObserver) {
     try {
       long tenantId = Long.parseLong(request.getTenantId());
+      SessionContext.requireTenantAccess(tenantId);
       long characterId = Long.parseLong(request.getCharacterId());
       CharacterEquipmentEntryDto dto =
           equipmentService.removeWornItem(tenantId, characterId, request.getSlot());
@@ -466,6 +475,7 @@ public class EntityManagementGrpcService
       StreamObserver<ListContainerContentsResponse> responseObserver) {
     try {
       long tenantId = Long.parseLong(request.getTenantId());
+      SessionContext.requireTenantAccess(tenantId);
       long characterId = Long.parseLong(request.getCharacterId());
       long containerInstanceId = Long.parseLong(request.getContainerInstanceId());
       var items =
@@ -520,6 +530,7 @@ public class EntityManagementGrpcService
       StreamObserver<PutItemIntoContainerResponse> responseObserver) {
     try {
       long tenantId = Long.parseLong(request.getTenantId());
+      SessionContext.requireTenantAccess(tenantId);
       long characterId = Long.parseLong(request.getCharacterId());
       long containerInstanceId = Long.parseLong(request.getContainerInstanceId());
       long itemId = Long.parseLong(request.getItemId());
@@ -573,6 +584,7 @@ public class EntityManagementGrpcService
       StreamObserver<TakeItemFromContainerResponse> responseObserver) {
     try {
       long tenantId = Long.parseLong(request.getTenantId());
+      SessionContext.requireTenantAccess(tenantId);
       long characterId = Long.parseLong(request.getCharacterId());
       long containerInstanceId = Long.parseLong(request.getContainerInstanceId());
       long itemId = Long.parseLong(request.getItemId());
@@ -626,6 +638,7 @@ public class EntityManagementGrpcService
       StreamObserver<PickupItemFromRoomResponse> responseObserver) {
     try {
       long tenantId = Long.parseLong(request.getTenantId());
+      SessionContext.requireTenantAccess(tenantId);
       long characterId = Long.parseLong(request.getCharacterId());
       long itemId = Long.parseLong(request.getItemId());
       int quantity = request.getQuantity();
@@ -684,6 +697,7 @@ public class EntityManagementGrpcService
       DropItemToRoomRequest request, StreamObserver<DropItemToRoomResponse> responseObserver) {
     try {
       long tenantId = Long.parseLong(request.getTenantId());
+      SessionContext.requireTenantAccess(tenantId);
       long characterId = Long.parseLong(request.getCharacterId());
       long itemId = Long.parseLong(request.getItemId());
       int quantity = request.getQuantity();
@@ -733,6 +747,7 @@ public class EntityManagementGrpcService
   public void listRoomEntities(
       ListRoomEntitiesRequest request, StreamObserver<ListRoomEntitiesResponse> responseObserver) {
     try {
+      SessionContext.requireTenantAccess(Long.parseLong(resolveTenantId(request)));
       var entities =
           roomEntityService.listEntities(
               resolveTenantId(request), resolveGameInstanceId(request), resolveRoomId(request));

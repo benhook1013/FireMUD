@@ -2,6 +2,7 @@ package net.firedevops.firemud.worldmanagement.controller;
 
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.ApiResponse;
+import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.worldmanagement.dto.GenerationRuleDto;
 import net.firedevops.firemud.worldmanagement.service.GenerationRuleService;
 import org.springframework.data.domain.Page;
@@ -22,6 +23,7 @@ public class GenerationRuleController {
 
   @PostMapping
   public ResponseEntity<ApiResponse<GenerationRuleDto>> save(@RequestBody GenerationRuleDto dto) {
+    SessionContext.requireTenantAccess(dto.tenantId());
     GenerationRuleDto result = generationRuleService.saveRule(dto);
     return ResponseEntity.ok(ApiResponse.success(result));
   }
@@ -29,6 +31,7 @@ public class GenerationRuleController {
   @GetMapping
   public ResponseEntity<ApiResponse<Page<GenerationRuleDto>>> list(
       @RequestParam Long tenantId, Pageable pageable) {
+    SessionContext.requireTenantAccess(tenantId);
     Page<GenerationRuleDto> list = generationRuleService.listRules(tenantId, pageable);
     return ResponseEntity.ok(ApiResponse.success(list));
   }

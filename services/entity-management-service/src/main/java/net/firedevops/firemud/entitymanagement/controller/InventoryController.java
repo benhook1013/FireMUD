@@ -4,6 +4,7 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.ApiResponse;
+import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.entitymanagement.dto.AddInventoryItemRequest;
 import net.firedevops.firemud.entitymanagement.dto.InventoryEntryDto;
 import net.firedevops.firemud.entitymanagement.service.InventoryService;
@@ -25,6 +26,7 @@ public class InventoryController {
   @GetMapping
   public ResponseEntity<ApiResponse<Page<InventoryEntryDto>>> list(
       @PathVariable Long tenantId, @PathVariable Long characterId, Pageable pageable) {
+    SessionContext.requireTenantAccess(tenantId);
     Page<InventoryEntryDto> list = inventoryService.listInventory(tenantId, characterId, pageable);
     return ResponseEntity.ok(ApiResponse.success(list));
   }
@@ -34,6 +36,7 @@ public class InventoryController {
       @PathVariable Long tenantId,
       @PathVariable Long characterId,
       @Valid @RequestBody AddInventoryItemRequest request) {
+    SessionContext.requireTenantAccess(tenantId);
     InventoryEntryDto dto =
         inventoryService.addItem(tenantId, characterId, request.itemId(), request.quantity());
     return ResponseEntity.ok(ApiResponse.success(dto));
@@ -42,6 +45,7 @@ public class InventoryController {
   @DeleteMapping("/{itemId}")
   public ResponseEntity<ApiResponse<Void>> remove(
       @PathVariable Long tenantId, @PathVariable Long characterId, @PathVariable Long itemId) {
+    SessionContext.requireTenantAccess(tenantId);
     inventoryService.removeItem(tenantId, characterId, itemId);
     return ResponseEntity.ok(ApiResponse.success(null));
   }

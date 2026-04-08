@@ -8,6 +8,7 @@ import java.util.List;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.common.security.RequireAdminRole;
 import net.firedevops.firemud.loggingadmin.service.FeatureFlagService;
+import net.firedevops.firemud.loggingadmin.service.LogEventService;
 import net.firedevops.firemud.loggingadmin.service.LogQueryService;
 import net.firedevops.firemud.loggingadmin.service.ModerationService;
 import net.firedevops.firemud.loggingadmin.v1.*;
@@ -21,6 +22,7 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
 
   private final FeatureFlagService featureFlagService;
   private final LogQueryService logQueryService;
+  private final LogEventService logEventService;
   private final ModerationService moderationService;
 
   @SuppressFBWarnings(
@@ -31,10 +33,12 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
   public LoggingAdminGrpcService(
       FeatureFlagService featureFlagService,
       LogQueryService logQueryService,
+      LogEventService logEventService,
       ModerationService moderationService,
       MeterRegistry meterRegistry) {
     this.featureFlagService = featureFlagService;
     this.logQueryService = logQueryService;
+    this.logEventService = logEventService;
     this.moderationService = moderationService;
     this.meterRegistry = meterRegistry;
   }
@@ -112,6 +116,42 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
       QueryLogsResponse response =
           QueryLogsResponse.newBuilder()
               .setError(GrpcAppErrors.internal(meterRegistry, logger, "QueryLogs", ex))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    }
+  }
+
+  @Override
+  @Timed(value = "loggingadminGrpc.createLogEvent")
+  @RequireAdminRole
+  public void createLogEvent(
+      CreateLogEventRequest request, StreamObserver<CreateLogEventResponse> responseObserver) {
+    try {
+      var dto =
+          logEventService.createLogEvent(
+              new net.firedevops.firemud.loggingadmin.dto.CreateLogEventRequest(
+                  Long.valueOf(request.getTenantId()),
+                  request.getAccountId().isBlank() ? null : Long.valueOf(request.getAccountId()),
+                  request.getType(),
+                  request.getMessage()));
+      CreateLogEventResponse response =
+          CreateLogEventResponse.newBuilder().setLogEventId(String.valueOf(dto.id())).build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      CreateLogEventResponse response =
+          CreateLogEventResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry, logger, "CreateLogEvent", "INVALID_ARGUMENT", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      CreateLogEventResponse response =
+          CreateLogEventResponse.newBuilder()
+              .setError(GrpcAppErrors.internal(meterRegistry, logger, "CreateLogEvent", ex))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();

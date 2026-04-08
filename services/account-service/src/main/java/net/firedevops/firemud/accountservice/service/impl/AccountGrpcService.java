@@ -3,6 +3,7 @@ package net.firedevops.firemud.accountservice.service.impl;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
+import io.micrometer.core.instrument.MeterRegistry;
 import net.firedevops.firemud.account.v1.AccountServiceGrpc;
 import net.firedevops.firemud.account.v1.AuthenticateRequest;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
@@ -27,22 +28,35 @@ import net.firedevops.firemud.accountservice.dto.PasswordResetRequest;
 import net.firedevops.firemud.accountservice.service.AccountService;
 import net.firedevops.firemud.accountservice.service.PingService;
 import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
+import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.common.security.RequireAdminRole;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.grpc.server.service.GrpcService;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
 @GrpcService
 public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBase {
+  private static final Logger logger = LoggerFactory.getLogger(AccountGrpcService.class);
   private final PingService pingService;
   private final AccountService accountService;
+  private final MeterRegistry meterRegistry;
 
   @SuppressFBWarnings(
       value = "EI_EXPOSE_REP2",
       justification = "Services are injected and remain internal")
   public AccountGrpcService(PingService pingService, AccountService accountService) {
+    this(pingService, accountService, null);
+  }
+
+  @Autowired
+  public AccountGrpcService(
+      PingService pingService, AccountService accountService, MeterRegistry meterRegistry) {
     this.pingService = pingService;
     this.accountService = accountService;
+    this.meterRegistry = meterRegistry;
   }
 
   @Override
@@ -73,11 +87,7 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
     } catch (IllegalArgumentException ex) {
       responseObserver.onNext(
           CreateAccountResponse.newBuilder()
-              .setError(
-                  net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
-                      .setCode("INVALID_ARGUMENT")
-                      .setMessage(ex.getMessage())
-                      .build())
+              .setError(appError("CreateAccount", "INVALID_ARGUMENT", ex.getMessage()))
               .build());
       responseObserver.onCompleted();
     }
@@ -104,22 +114,14 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
     } catch (AuthenticationException ex) {
       AuthenticateResponse response =
           AuthenticateResponse.newBuilder()
-              .setError(
-                  net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
-                      .setCode(ex.getCode())
-                      .setMessage(ex.getMessage())
-                      .build())
+              .setError(appError("Authenticate", ex.getCode(), ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (IllegalArgumentException ex) {
       AuthenticateResponse response =
           AuthenticateResponse.newBuilder()
-              .setError(
-                  net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
-                      .setCode("UNAUTHENTICATED")
-                      .setMessage(ex.getMessage())
-                      .build())
+              .setError(appError("Authenticate", "UNAUTHENTICATED", ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -150,11 +152,7 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
     } catch (IllegalArgumentException ex) {
       GetTenantMembershipForRuntimeResponse response =
           GetTenantMembershipForRuntimeResponse.newBuilder()
-              .setError(
-                  net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
-                      .setCode("NOT_FOUND")
-                      .setMessage(ex.getMessage())
-                      .build())
+              .setError(appError("GetTenantMembershipForRuntime", "NOT_FOUND", ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -183,11 +181,7 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
     } catch (IllegalArgumentException ex) {
       GetTenantEntitlementsForRuntimeResponse response =
           GetTenantEntitlementsForRuntimeResponse.newBuilder()
-              .setError(
-                  net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
-                      .setCode("NOT_FOUND")
-                      .setMessage(ex.getMessage())
-                      .build())
+              .setError(appError("GetTenantEntitlementsForRuntime", "NOT_FOUND", ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -217,11 +211,7 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
     } catch (IllegalArgumentException ex) {
       GetProfileResponse response =
           GetProfileResponse.newBuilder()
-              .setError(
-                  net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
-                      .setCode("NOT_FOUND")
-                      .setMessage(ex.getMessage())
-                      .build())
+              .setError(appError("GetProfile", "NOT_FOUND", ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -249,11 +239,7 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       UpdateProfileResponse response =
           UpdateProfileResponse.newBuilder()
               .setSuccess(false)
-              .setError(
-                  net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
-                      .setCode("INVALID_ARGUMENT")
-                      .setMessage(ex.getMessage())
-                      .build())
+              .setError(appError("UpdateProfile", "INVALID_ARGUMENT", ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -281,11 +267,7 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
     } catch (Exception ex) {
       ExportAccountResponse response =
           ExportAccountResponse.newBuilder()
-              .setError(
-                  net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
-                      .setCode("NOT_FOUND")
-                      .setMessage(ex.getMessage())
-                      .build())
+              .setError(appError("ExportAccount", "NOT_FOUND", ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -307,11 +289,7 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       DeleteAccountResponse response =
           DeleteAccountResponse.newBuilder()
               .setSuccess(false)
-              .setError(
-                  net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
-                      .setCode("NOT_FOUND")
-                      .setMessage(ex.getMessage())
-                      .build())
+              .setError(appError("DeleteAccount", "NOT_FOUND", ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -337,11 +315,7 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       var response =
           net.firedevops.firemud.account.v1.RequestPasswordResetResponse.newBuilder()
               .setSuccess(false)
-              .setError(
-                  net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
-                      .setCode("INVALID_ARGUMENT")
-                      .setMessage(ex.getMessage())
-                      .build())
+              .setError(appError("RequestPasswordReset", "INVALID_ARGUMENT", ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -368,11 +342,7 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       var response =
           net.firedevops.firemud.account.v1.CompletePasswordResetResponse.newBuilder()
               .setSuccess(false)
-              .setError(
-                  net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
-                      .setCode("INVALID_ARGUMENT")
-                      .setMessage(ex.getMessage())
-                      .build())
+              .setError(appError("CompletePasswordReset", "INVALID_ARGUMENT", ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -402,11 +372,7 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       var response =
           net.firedevops.firemud.account.v1.LinkExternalAccountResponse.newBuilder()
               .setSuccess(false)
-              .setError(
-                  net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
-                      .setCode("INVALID_ARGUMENT")
-                      .setMessage(ex.getMessage())
-                      .build())
+              .setError(appError("LinkExternalAccount", "INVALID_ARGUMENT", ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -432,11 +398,7 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       var response =
           net.firedevops.firemud.account.v1.RequestEmailVerificationResponse.newBuilder()
               .setSuccess(false)
-              .setError(
-                  net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
-                      .setCode("INVALID_ARGUMENT")
-                      .setMessage(ex.getMessage())
-                      .build())
+              .setError(appError("RequestEmailVerification", "INVALID_ARGUMENT", ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -462,14 +424,20 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       var response =
           net.firedevops.firemud.account.v1.VerifyEmailResponse.newBuilder()
               .setSuccess(false)
-              .setError(
-                  net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
-                      .setCode("INVALID_ARGUMENT")
-                      .setMessage(ex.getMessage())
-                      .build())
+              .setError(appError("VerifyEmail", "INVALID_ARGUMENT", ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     }
+  }
+
+  private net.firedevops.firemud.shared.v1.ErrorDetail appError(
+      String operation, String code, String message) {
+    return meterRegistry == null
+        ? net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
+            .setCode(code)
+            .setMessage(message)
+            .build()
+        : GrpcAppErrors.error(meterRegistry, logger, operation, code, message);
   }
 }

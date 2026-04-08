@@ -4,7 +4,6 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
-import java.util.concurrent.CompletionException;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.common.security.RequireAdminRole;
 import net.firedevops.firemud.gateway.v1.GatewayManagementServiceGrpc;
@@ -51,7 +50,24 @@ public class GatewayManagementGrpcService
   @RequireAdminRole
   public void upsertRoute(
       UpsertRouteRequest request, StreamObserver<UpsertRouteResponse> responseObserver) {
-    respond(buildUpsertRouteResponse(request), responseObserver);
+    buildUpsertRouteResponse(request)
+        .toFuture()
+        .whenComplete(
+            (response, error) -> {
+              if (error != null) {
+                responseObserver.onNext(
+                    UpsertRouteResponse.newBuilder()
+                        .setSuccess(false)
+                        .setError(
+                            GrpcAppErrors.internal(
+                                meterRegistry, logger, "UpsertRoute", unwrap(error)))
+                        .build());
+                responseObserver.onCompleted();
+                return;
+              }
+              responseObserver.onNext(response);
+              responseObserver.onCompleted();
+            });
   }
 
   @Override
@@ -59,7 +75,24 @@ public class GatewayManagementGrpcService
   @RequireAdminRole
   public void removeRoute(
       RemoveRouteRequest request, StreamObserver<RemoveRouteResponse> responseObserver) {
-    respond(buildRemoveRouteResponse(request), responseObserver);
+    buildRemoveRouteResponse(request)
+        .toFuture()
+        .whenComplete(
+            (response, error) -> {
+              if (error != null) {
+                responseObserver.onNext(
+                    RemoveRouteResponse.newBuilder()
+                        .setSuccess(false)
+                        .setError(
+                            GrpcAppErrors.internal(
+                                meterRegistry, logger, "RemoveRoute", unwrap(error)))
+                        .build());
+                responseObserver.onCompleted();
+                return;
+              }
+              responseObserver.onNext(response);
+              responseObserver.onCompleted();
+            });
   }
 
   private Mono<UpsertRouteResponse> buildUpsertRouteResponse(UpsertRouteRequest request) {
@@ -154,22 +187,8 @@ public class GatewayManagementGrpcService
                         .build()));
   }
 
-  private <T> void respond(Mono<T> responseMono, StreamObserver<T> responseObserver) {
-    responseMono
-        .toFuture()
-        .whenComplete(
-            (response, error) -> {
-              if (error != null) {
-                responseObserver.onError(unwrapCompletionException(error));
-                return;
-              }
-              responseObserver.onNext(response);
-              responseObserver.onCompleted();
-            });
-  }
-
-  private Throwable unwrapCompletionException(Throwable error) {
-    if (error instanceof CompletionException completionException
+  private Throwable unwrap(Throwable error) {
+    if (error instanceof java.util.concurrent.CompletionException completionException
         && completionException.getCause() != null) {
       return completionException.getCause();
     }

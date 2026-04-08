@@ -869,7 +869,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     props.put("firemud.redis.port", String.valueOf(REDIS.getMappedPort(6379)));
     props.put("firemud.database.enabled", "true");
     props.put("spring.main.allow-bean-definition-overriding", "true");
-    props.put("firemud.auth.jwt-secret", "stub-secret");
+    props.put("firemud.auth.jwt-secret", "stub-secret-key-for-tests-1234567890");
     props.put("firemud.services.entityManagementService", "localhost:" + ENTITY_STUB.port());
     props.put(
         "management.endpoint.health.group.readiness.include",

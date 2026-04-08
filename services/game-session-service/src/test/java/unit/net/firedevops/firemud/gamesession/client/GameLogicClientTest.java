@@ -9,6 +9,7 @@ import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
+import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.gamelogic.v1.GameLogicServiceGrpc;
 import net.firedevops.firemud.gamelogic.v1.LookResult;
 import net.firedevops.firemud.gamelogic.v1.MoveResult;
@@ -16,6 +17,9 @@ import net.firedevops.firemud.shared.v1.RoomInstanceRef;
 import org.junit.jupiter.api.Test;
 
 class GameLogicClientTest {
+  private static final JwtUtil JWT_UTIL =
+      new JwtUtil("testsecretkeytestsecretkeytest1234", 60_000L);
+
   @Test
   void resolveLookForwardsGameInstanceIdIntoRoomInstance() throws Exception {
     GameLogicClient client = newClient();
@@ -83,6 +87,7 @@ class GameLogicClientTest {
     return new GameLogicClient(
         new ServiceEndpointsProperties(),
         new CommonGrpcClientProperties(),
+        JWT_UTIL,
         mock(GrpcChannelFactory.class));
   }
 

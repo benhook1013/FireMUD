@@ -7,6 +7,8 @@ import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.AbstractBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
+import net.firedevops.firemud.common.security.GrpcClientAuth;
+import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.worldmanagement.v1.PingRequest;
 import net.firedevops.firemud.worldmanagement.v1.PingResponse;
 import net.firedevops.firemud.worldmanagement.v1.WorldManagementServiceGrpc;
@@ -23,12 +25,15 @@ public final class WorldManagementClient
     extends AbstractBlockingGrpcClient<
         WorldManagementServiceGrpc.WorldManagementServiceBlockingStub> {
   private static final long CALL_DEADLINE_SECONDS = 5L;
+  private final JwtUtil jwtUtil;
 
   public WorldManagementClient(
       ServiceEndpointsProperties endpoints,
       CommonGrpcClientProperties tlsProps,
+      JwtUtil jwtUtil,
       GrpcChannelFactory channelFactory) {
     super(endpoints, tlsProps, channelFactory);
+    this.jwtUtil = jwtUtil;
   }
 
   @PostConstruct
@@ -49,7 +54,8 @@ public final class WorldManagementClient
   @Override
   protected WorldManagementServiceGrpc.WorldManagementServiceBlockingStub buildStub(
       io.grpc.ManagedChannel channel) {
-    return WorldManagementServiceGrpc.newBlockingStub(channel).withCompression("gzip");
+    return GrpcClientAuth.attach(
+        WorldManagementServiceGrpc.newBlockingStub(channel).withCompression("gzip"), jwtUtil);
   }
 
   /** Simple ping to verify connectivity. */

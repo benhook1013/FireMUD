@@ -8,6 +8,7 @@ import io.micrometer.core.instrument.MeterRegistry;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
+import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.shared.v1.RoomInstanceRef;
 import net.firedevops.firemud.worldmanagement.dto.RoomSnapshotDto;
 import net.firedevops.firemud.worldmanagement.service.PingService;
@@ -21,6 +22,12 @@ import org.mockito.Mockito;
 import tools.jackson.databind.ObjectMapper;
 
 class WorldManagementGrpcServiceTest {
+  private WorldManagementGrpcService newService(
+      PingService pingService, RoomService roomService, MeterRegistry meterRegistry) {
+    SessionContext.setContext("test-account", List.of("platformAdmin"), Map.of());
+    return new WorldManagementGrpcService(pingService, roomService, meterRegistry, new ObjectMapper());
+  }
+
   @Test
   void pingReturnsPong() {
     PingService pingService = Mockito.mock(PingService.class);
@@ -29,8 +36,7 @@ class WorldManagementGrpcServiceTest {
     MeterRegistry meterRegistry = Mockito.mock(MeterRegistry.class);
     Mockito.when(meterRegistry.counter(Mockito.anyString(), Mockito.any(String[].class)))
         .thenReturn(Mockito.mock(io.micrometer.core.instrument.Counter.class));
-    WorldManagementGrpcService service =
-        new WorldManagementGrpcService(pingService, roomService, meterRegistry, new ObjectMapper());
+    WorldManagementGrpcService service = newService(pingService, roomService, meterRegistry);
 
     AtomicReference<PingResponse> ref = new AtomicReference<>();
     service.ping(
@@ -58,8 +64,7 @@ class WorldManagementGrpcServiceTest {
     MeterRegistry meterRegistry = Mockito.mock(MeterRegistry.class);
     Mockito.when(meterRegistry.counter(Mockito.anyString(), Mockito.any(String[].class)))
         .thenReturn(Mockito.mock(io.micrometer.core.instrument.Counter.class));
-    WorldManagementGrpcService service =
-        new WorldManagementGrpcService(pingService, roomService, meterRegistry, new ObjectMapper());
+    WorldManagementGrpcService service = newService(pingService, roomService, meterRegistry);
 
     AtomicReference<net.firedevops.firemud.worldmanagement.v1.GetRoomResponse> ref =
         new AtomicReference<>();
@@ -91,8 +96,7 @@ class WorldManagementGrpcServiceTest {
     MeterRegistry meterRegistry = Mockito.mock(MeterRegistry.class);
     Mockito.when(meterRegistry.counter(Mockito.anyString(), Mockito.any(String[].class)))
         .thenReturn(Mockito.mock(io.micrometer.core.instrument.Counter.class));
-    WorldManagementGrpcService service =
-        new WorldManagementGrpcService(pingService, roomService, meterRegistry, new ObjectMapper());
+    WorldManagementGrpcService service = newService(pingService, roomService, meterRegistry);
 
     AtomicReference<GetRoomSnapshotResponse> ref = new AtomicReference<>();
     service.getRoomSnapshot(
@@ -122,8 +126,7 @@ class WorldManagementGrpcServiceTest {
     MeterRegistry meterRegistry = Mockito.mock(MeterRegistry.class);
     Mockito.when(meterRegistry.counter(Mockito.anyString(), Mockito.any(String[].class)))
         .thenReturn(Mockito.mock(io.micrometer.core.instrument.Counter.class));
-    WorldManagementGrpcService service =
-        new WorldManagementGrpcService(pingService, roomService, meterRegistry, new ObjectMapper());
+    WorldManagementGrpcService service = newService(pingService, roomService, meterRegistry);
 
     AtomicReference<GetRoomSnapshotResponse> ref = new AtomicReference<>();
     service.getRoomSnapshot(
@@ -168,8 +171,7 @@ class WorldManagementGrpcServiceTest {
     MeterRegistry meterRegistry = Mockito.mock(MeterRegistry.class);
     Mockito.when(meterRegistry.counter(Mockito.anyString(), Mockito.any(String[].class)))
         .thenReturn(Mockito.mock(io.micrometer.core.instrument.Counter.class));
-    WorldManagementGrpcService service =
-        new WorldManagementGrpcService(pingService, roomService, meterRegistry, new ObjectMapper());
+    WorldManagementGrpcService service = newService(pingService, roomService, meterRegistry);
 
     AtomicReference<GetRoomSnapshotResponse> ref = new AtomicReference<>();
     AtomicReference<Throwable> error = new AtomicReference<>();

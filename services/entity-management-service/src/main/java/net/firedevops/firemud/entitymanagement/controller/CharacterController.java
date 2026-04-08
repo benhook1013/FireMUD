@@ -2,6 +2,7 @@ package net.firedevops.firemud.entitymanagement.controller;
 
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.ApiResponse;
+import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.entitymanagement.dto.CharacterDto;
 import net.firedevops.firemud.entitymanagement.service.CharacterService;
 import org.springframework.data.domain.Page;
@@ -22,6 +23,7 @@ public class CharacterController {
   @GetMapping
   public ResponseEntity<ApiResponse<Page<CharacterDto>>> list(
       @PathVariable Long tenantId, @PathVariable Long accountId, Pageable pageable) {
+    SessionContext.requireTenantAccess(tenantId);
     Page<CharacterDto> list =
         characterService.listForTenantAndAccount(tenantId, accountId, pageable);
     return ResponseEntity.ok(ApiResponse.success(list));

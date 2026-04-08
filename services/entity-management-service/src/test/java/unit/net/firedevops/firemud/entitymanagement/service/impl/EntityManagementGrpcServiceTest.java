@@ -4,7 +4,10 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 import io.grpc.stub.StreamObserver;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
+import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.entitymanagement.service.CharacterService;
 import net.firedevops.firemud.entitymanagement.service.ContainerService;
 import net.firedevops.firemud.entitymanagement.service.EquipmentService;
@@ -44,6 +47,7 @@ class EntityManagementGrpcServiceTest {
       InventoryService inventoryService,
       RoomEntityService roomEntityService,
       io.micrometer.core.instrument.MeterRegistry meterRegistry) {
+    SessionContext.setContext("test-account", List.of("platformAdmin"), Map.of());
     ContainerService containerService = Mockito.mock(ContainerService.class);
     return new EntityManagementGrpcService(
         pingService,
@@ -63,6 +67,7 @@ class EntityManagementGrpcServiceTest {
       ContainerService containerService,
       RoomEntityService roomEntityService,
       io.micrometer.core.instrument.MeterRegistry meterRegistry) {
+    SessionContext.setContext("test-account", List.of("platformAdmin"), Map.of());
     return new EntityManagementGrpcService(
         pingService,
         characterService,
