@@ -13,6 +13,7 @@ import net.firedevops.firemud.gamesession.dto.GameInstanceDto;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.DisconnectDeduplicationService;
+import net.firedevops.firemud.gamesession.service.GameplayPresenceService;
 import net.firedevops.firemud.gamesession.service.PingService;
 import net.firedevops.firemud.gamesession.service.SessionStateService;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
@@ -41,6 +42,7 @@ public final class TcpProxyServiceImpl extends TcpProxyServiceGrpc.TcpProxyServi
   private final PingService pingService;
   private final DevIsolatedProperties devIsolatedProperties;
   private final DisconnectDeduplicationService disconnectDeduplicationService;
+  private final GameplayPresenceService gameplayPresenceService;
 
   @SuppressFBWarnings(
       value = "EI_EXPOSE_REP2",
@@ -51,13 +53,15 @@ public final class TcpProxyServiceImpl extends TcpProxyServiceGrpc.TcpProxyServi
       MeterRegistry meterRegistry,
       PingService pingService,
       DevIsolatedProperties devIsolatedProperties,
-      DisconnectDeduplicationService disconnectDeduplicationService) {
+      DisconnectDeduplicationService disconnectDeduplicationService,
+      GameplayPresenceService gameplayPresenceService) {
     this.repository = repository;
     this.sessionStateService = sessionStateService;
     this.meterRegistry = meterRegistry;
     this.pingService = pingService;
     this.devIsolatedProperties = devIsolatedProperties;
     this.disconnectDeduplicationService = disconnectDeduplicationService;
+    this.gameplayPresenceService = gameplayPresenceService;
   }
 
   @Override
@@ -105,6 +109,13 @@ public final class TcpProxyServiceImpl extends TcpProxyServiceGrpc.TcpProxyServi
     if (!StringUtils.hasText(gameInstanceIdText) || !StringUtils.hasText(request.getTenantId())) {
       meterRegistry.counter(MISSING_CONTEXT_METRIC).increment();
       return GrpcAppErrors.ok("Disconnect recorded (no proxy bootstrap metadata)");
+    }
+    if (StringUtils.hasText(request.getSessionId())) {
+      try {
+        gameplayPresenceService.removeBySessionId(Long.parseLong(request.getSessionId()));
+      } catch (NumberFormatException ignored) {
+        // best-effort advisory cleanup only
+      }
     }
     SessionValidationResult validation = validateSession(gameInstanceIdText, request.getTenantId());
     if (validation.hasError()) {

@@ -8,6 +8,7 @@ public enum TextCommandType {
   LOGIN,
   PLAY,
   HELP,
+  WHO,
   INVENTORY,
   EQUIPMENT,
   CONTAINER,
@@ -37,6 +38,7 @@ public enum TextCommandType {
       case "LOGIN", "LOGON" -> LOGIN;
       case "PLAY" -> PLAY;
       case "HELP" -> HELP;
+      case "WHO" -> WHO;
       case "INVENTORY", "INV", "I" -> INVENTORY;
       case "EQUIPMENT", "EQUIP", "EQ" -> EQUIPMENT;
       case "CONTAINER", "CONT" -> CONTAINER;

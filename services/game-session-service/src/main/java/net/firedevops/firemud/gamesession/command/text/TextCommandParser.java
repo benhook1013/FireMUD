@@ -21,6 +21,7 @@ public class TextCommandParser {
           case WORLDS ->
               new ParsedCommandData(List.of(), new TextCommandPayload.ViewRequest("WORLDS"));
           case HELP -> parseHelp(tokens);
+          case WHO -> new ParsedCommandData(List.of(), new TextCommandPayload.ViewRequest("WHO"));
           case INVENTORY ->
               new ParsedCommandData(List.of(), new TextCommandPayload.ViewRequest("INVENTORY"));
           case EQUIPMENT ->

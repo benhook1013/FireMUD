@@ -19,8 +19,26 @@ class HelpCommandHandlerTest {
     assertEquals(1, result.outputs().size());
     assertTrue(result.outputs().get(0).text().contains("HELP MOVEMENT"));
     assertTrue(result.outputs().get(0).text().contains("HELP SAY"));
+    assertTrue(result.outputs().get(0).text().contains("HELP WHO"));
     assertTrue(result.outputs().get(0).text().contains("HELP INVENTORY"));
     assertTrue(result.outputs().get(0).text().contains("HELP EQUIPMENT"));
+  }
+
+  @Test
+  void helpWhoTopicExplainsGameplayOnlyScope() {
+    TextCommandInterpretationResult result =
+        handler.handle(new TextCommand(TextCommandType.HELP, List.of("who"), "HELP who"));
+
+    assertTrue(result.commandResult().accepted());
+    assertTrue(result.outputs().get(0).text().contains("WHO"));
+    assertTrue(
+        result
+            .outputs()
+            .get(0)
+            .text()
+            .contains("List currently connected players in this game instance."));
+    assertTrue(result.outputs().get(0).text().contains("Gods appear first, then players."));
+    assertTrue(result.outputs().get(0).text().contains("You must already be in-world with PLAY."));
   }
 
   @Test

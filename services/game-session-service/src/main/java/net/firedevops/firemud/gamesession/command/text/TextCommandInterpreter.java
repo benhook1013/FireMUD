@@ -21,6 +21,7 @@ public class TextCommandInterpreter {
   private final PlayCommandHandler playHandler;
   private final MoveCommandHandler moveHandler;
   private final HelpCommandHandler helpHandler;
+  private final WhoCommandHandler whoHandler;
   private final InventoryCommandHandler inventoryHandler;
   private final EquipmentCommandHandler equipmentHandler;
   private final ContainerCommandHandler containerHandler;
@@ -38,6 +39,7 @@ public class TextCommandInterpreter {
       PlayCommandHandler playHandler,
       MoveCommandHandler moveHandler,
       HelpCommandHandler helpHandler,
+      WhoCommandHandler whoHandler,
       InventoryCommandHandler inventoryHandler,
       EquipmentCommandHandler equipmentHandler,
       ContainerCommandHandler containerHandler,
@@ -52,6 +54,7 @@ public class TextCommandInterpreter {
         playHandler,
         moveHandler,
         helpHandler,
+        whoHandler,
         inventoryHandler,
         equipmentHandler,
         containerHandler,
@@ -69,6 +72,7 @@ public class TextCommandInterpreter {
       PlayCommandHandler playHandler,
       MoveCommandHandler moveHandler,
       HelpCommandHandler helpHandler,
+      WhoCommandHandler whoHandler,
       InventoryCommandHandler inventoryHandler,
       EquipmentCommandHandler equipmentHandler,
       ContainerCommandHandler containerHandler,
@@ -83,6 +87,7 @@ public class TextCommandInterpreter {
     this.playHandler = Objects.requireNonNull(playHandler, "playHandler must not be null");
     this.moveHandler = Objects.requireNonNull(moveHandler, "moveHandler must not be null");
     this.helpHandler = Objects.requireNonNull(helpHandler, "helpHandler must not be null");
+    this.whoHandler = Objects.requireNonNull(whoHandler, "whoHandler must not be null");
     this.inventoryHandler =
         Objects.requireNonNull(inventoryHandler, "inventoryHandler must not be null");
     this.equipmentHandler =
@@ -155,6 +160,22 @@ public class TextCommandInterpreter {
       }
       return new TextCommandInterpretationResult(
           playResult.commandResult(), outputs, playResult.reconnectRedrawRecommended());
+    }
+
+    if (command.type() == TextCommandType.WHO) {
+      if (!hasLogin) {
+        return stageFailure(
+            GameplayStageCommandConstants.LOGIN_REQUIRED_CODE,
+            GameplayStageCommandConstants.LOGIN_REQUIRED_MESSAGE);
+      }
+      if (!hasPlay) {
+        return stageFailure(
+            GameplayStageCommandConstants.PLAY_REQUIRED_CODE,
+            GameplayStageCommandConstants.PLAY_REQUIRED_MESSAGE);
+      }
+      TextCommandInterpretationResult whoResult = whoHandler.handle(maybeContext.orElseThrow());
+      List<PlayerOutput> outputs = appendPrompt(maybeContext.orElseThrow(), whoResult.outputs());
+      return new TextCommandInterpretationResult(whoResult.commandResult(), outputs);
     }
 
     if (requiresGameplayAuthentication(command.type()) && !hasLogin) {

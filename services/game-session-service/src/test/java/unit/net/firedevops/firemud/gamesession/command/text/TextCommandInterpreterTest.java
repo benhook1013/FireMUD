@@ -20,6 +20,7 @@ import net.firedevops.firemud.account.v1.AuthenticateResponse;
 import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
 import net.firedevops.firemud.cache.LookCacheService;
+import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.common.settings.ScopedSettingsSnapshot;
 import net.firedevops.firemud.entitymanagement.v1.DropItemToRoomResponse;
 import net.firedevops.firemud.entitymanagement.v1.EntityType;
@@ -57,10 +58,12 @@ import net.firedevops.firemud.gamesession.presentation.TextPlayerOutputRenderer;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.CommandService;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
+import net.firedevops.firemud.gamesession.service.GameplayPresenceService;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.gamesession.service.devisolated.DevIsolatedGameInstanceRegistry;
+import net.firedevops.firemud.gamesession.service.impl.InMemoryGameplayPresenceService;
 import net.firedevops.firemud.shared.v1.RoomInstanceRef;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -105,6 +108,9 @@ class TextCommandInterpreterTest {
               PresentationProperties.ColorMode.NONE,
               false,
               new PresentationProperties.Prompt(true, true, 150L)));
+  private final GameplayPresenceService gameplayPresenceService =
+      new InMemoryGameplayPresenceService(
+          new JwtUtil("testsecretkeytestsecretkeytest1234", 60_000L));
   private TextCommandInterpreter interpreter;
 
   @BeforeEach
@@ -308,7 +314,9 @@ class TextCommandInterpreterTest {
             accountClient,
             entityManagementClient,
             firstPartyConnectContextRegistry,
+            gameplayPresenceService,
             meterRegistry);
+    WhoCommandHandler whoHandler = new WhoCommandHandler(gameplayPresenceService);
     LookCommandHandler lookHandler =
         new LookCommandHandler(
             gameLogicClient,
@@ -383,6 +391,7 @@ class TextCommandInterpreterTest {
             playHandler,
             moveHandler,
             helpHandler,
+            whoHandler,
             inventoryHandler,
             equipmentHandler,
             containerHandler,
@@ -429,6 +438,29 @@ class TextCommandInterpreterTest {
             + "Shorthand aliases: N, S, E, W, U, D\n"
             + "You can also type GO <direction>.\n\n",
         renderedResponse("HELP MOVE", interpretation));
+  }
+
+  @Test
+  void whoAfterPlayShowsCurrentPlayerList() {
+    interpreter.interpret("1", "LOGIN demo@example.com swordfish", false);
+    interpreter.interpret("1", "PLAY demo", false);
+
+    TextCommandInterpretationResult interpretation = interpreter.interpret("1", "WHO", false);
+
+    assertTrue(interpretation.commandResult().accepted());
+    assertEquals(
+        "OK WHO\nGods [0]: \nPlayers [1]: demo\n\n" + "demo> ",
+        renderedResponse("WHO", interpretation));
+  }
+
+  @Test
+  void whoBeforePlayReturnsPlayRequired() {
+    interpreter.interpret("1", "LOGIN demo@example.com swordfish", false);
+
+    TextCommandInterpretationResult interpretation = interpreter.interpret("1", "WHO", false);
+
+    assertFalse(interpretation.commandResult().accepted());
+    assertEquals("PLAY_REQUIRED", interpretation.commandResult().errorCode());
   }
 
   @Test

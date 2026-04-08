@@ -18,6 +18,7 @@ import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.presentation.TextPlayerOutputRenderer;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContext;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
+import net.firedevops.firemud.gamesession.service.GameplayPresenceService;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
@@ -35,6 +36,8 @@ class PlayCommandHandlerTest {
       Mockito.mock(EntityManagementClient.class);
   private final FirstPartyConnectContextRegistry firstPartyConnectContextRegistry =
       Mockito.mock(FirstPartyConnectContextRegistry.class);
+  private final GameplayPresenceService gameplayPresenceService =
+      Mockito.mock(GameplayPresenceService.class);
   private final GameLogicProperties gameLogicProperties = new GameLogicProperties();
   private final GameplayWorldCatalog worldCatalog =
       new GameplayWorldCatalog(new GameSessionProperties());
@@ -52,6 +55,7 @@ class PlayCommandHandlerTest {
             accountClient,
             entityManagementClient,
             firstPartyConnectContextRegistry,
+            gameplayPresenceService,
             meterRegistry);
     when(accountClient.getTenantMembershipForRuntime(
             Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
@@ -95,6 +99,19 @@ class PlayCommandHandlerTest {
     assertThat(joinedOutputText(result.outputs())).isEqualTo("Entered world: demo");
     Mockito.verify(sessionContextService)
         .save(
+            new SessionContext(
+                1L,
+                22L,
+                123L,
+                "demo@example.com",
+                7001L,
+                "demo",
+                1L,
+                gameLogicProperties.getDefaultRoomId(),
+                "jwt-token",
+                0L));
+    Mockito.verify(gameplayPresenceService)
+        .registerConnected(
             new SessionContext(
                 1L,
                 22L,

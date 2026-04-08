@@ -48,7 +48,7 @@ public sealed interface TextCommandPayload
     List<String> safeArgs = args == null ? List.of() : List.copyOf(args);
     return switch (type) {
       case NOOP -> new None();
-      case WORLDS, LOOK, QUICKLOOK, INVENTORY, EQUIPMENT -> new ViewRequest(type.name());
+      case WORLDS, LOOK, QUICKLOOK, WHO, INVENTORY, EQUIPMENT -> new ViewRequest(type.name());
       case HELP -> safeArgs.isEmpty() ? new None() : new Tokens(safeArgs);
       case GET, DROP ->
           parseQuantityAwareItemReference(safeArgs)

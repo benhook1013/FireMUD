@@ -23,6 +23,7 @@ import net.firedevops.firemud.gamesession.presentation.TextPlayerOutputRenderer;
 import net.firedevops.firemud.gamesession.service.ActiveTransportSessionRegistry;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextService;
+import net.firedevops.firemud.gamesession.service.GameplayPresenceService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import org.slf4j.Logger;
@@ -49,6 +50,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
   private final ActiveTransportSessionRegistry activeTransportSessionRegistry;
   private final FirstPartyConnectContextService firstPartyConnectContextService;
   private final FirstPartyConnectContextRegistry firstPartyConnectContextRegistry;
+  private final GameplayPresenceService gameplayPresenceService;
   private final ScreenBufferService screenBufferService;
   private final TextPlayerOutputRenderer outputRenderer;
   private final WebSocketOutputProjector outputProjector;
@@ -66,6 +68,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       ActiveTransportSessionRegistry activeTransportSessionRegistry,
       FirstPartyConnectContextService firstPartyConnectContextService,
       FirstPartyConnectContextRegistry firstPartyConnectContextRegistry,
+      GameplayPresenceService gameplayPresenceService,
       ScreenBufferService screenBufferService,
       TextPlayerOutputRenderer outputRenderer,
       WebSocketOutputProjector outputProjector,
@@ -79,6 +82,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     this.activeTransportSessionRegistry = activeTransportSessionRegistry;
     this.firstPartyConnectContextService = firstPartyConnectContextService;
     this.firstPartyConnectContextRegistry = firstPartyConnectContextRegistry;
+    this.gameplayPresenceService = gameplayPresenceService;
     this.screenBufferService = screenBufferService;
     this.outputRenderer = outputRenderer;
     this.outputProjector = outputProjector;
@@ -110,6 +114,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
               activeTransportSessionRegistry.unregister(sessionId, session);
               firstPartyConnectContextRegistry.unregister(sessionId);
               promptBurstCoordinator.evict(Long.toString(sessionId));
+              gameplayPresenceService.removeBySessionId(sessionId);
             });
   }
 

@@ -70,6 +70,19 @@ class TextCommandParserTest {
   }
 
   @Test
+  void parsesWhoAsViewRequest() {
+    TextCommand command = parser.parse("WHO");
+
+    assertEquals(TextCommandType.WHO, command.type());
+    assertEquals("WHO", command.aliasUsed());
+    assertTrue(command.args().isEmpty());
+    assertEquals("WHO", command.rawLine());
+    assertTrue(command.payload() instanceof TextCommandPayload.ViewRequest);
+    assertTrue(command.viewRequestPayload().isPresent());
+    assertEquals("WHO", command.viewRequestPayload().orElseThrow().viewName());
+  }
+
+  @Test
   void parsesInventoryAsViewRequest() {
     TextCommand command = parser.parse("inv");
 

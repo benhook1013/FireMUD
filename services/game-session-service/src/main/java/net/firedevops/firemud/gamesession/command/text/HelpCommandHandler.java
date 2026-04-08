@@ -34,6 +34,12 @@ public class HelpCommandHandler {
           success(
               "PLAY <world> [character]\n"
                   + "Select the world to enter and optional character name.");
+      case "WHO" ->
+          success(
+              "WHO\n"
+                  + "List currently connected players in this game instance.\n"
+                  + "Gods appear first, then players.\n"
+                  + "You must already be in-world with PLAY.");
       case "INVENTORY" ->
           success(
               "INVENTORY shows what you are carrying.\n"
@@ -132,6 +138,7 @@ public class HelpCommandHandler {
       case "HELP" -> "HELP";
       case "LOGIN", "LOGON" -> "LOGIN";
       case "PLAY" -> "PLAY";
+      case "WHO" -> "WHO";
       case "INVENTORY", "INV", "I" -> "INVENTORY";
       case "EQUIPMENT", "EQUIP", "EQ", "WEAR", "REMOVE" -> "EQUIPMENT";
       case "CONTAINER", "CONT" -> "CONTAINER";
@@ -152,6 +159,7 @@ public class HelpCommandHandler {
     return "Help topics:\n"
         + "- HELP LOGIN\n"
         + "- HELP PLAY\n"
+        + "- HELP WHO\n"
         + "- HELP INVENTORY\n"
         + "- HELP EQUIPMENT\n"
         + "- HELP CONTAINER\n"
