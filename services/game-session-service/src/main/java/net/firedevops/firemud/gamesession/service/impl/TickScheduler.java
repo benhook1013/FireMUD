@@ -37,6 +37,8 @@ public final class TickScheduler {
   private final Executor tickExecutor;
   private final Counter mergedCounter;
   private final Counter rejectedCounter;
+  private final Counter scheduledCounter;
+  private final Counter pausedCounter;
   private final Set<String> pendingOrRunningTicks = ConcurrentHashMap.newKeySet();
 
   public TickScheduler(
@@ -47,8 +49,10 @@ public final class TickScheduler {
     this.repository = repository;
     this.tickService = tickService;
     this.tickExecutor = tickExecutor;
+    this.scheduledCounter = meterRegistry.counter("game_session_tick_scheduler_scheduled_total");
     this.mergedCounter = meterRegistry.counter("game_session_tick_scheduler_merged_total");
     this.rejectedCounter = meterRegistry.counter("game_session_tick_scheduler_rejected_total");
+    this.pausedCounter = meterRegistry.counter("game_session_tick_scheduler_paused_total");
     Gauge.builder("game_session_tick_scheduler_pending_sessions", pendingOrRunningTicks, Set::size)
         .register(meterRegistry);
     if (tickExecutor instanceof ThreadPoolTaskExecutor threadPoolTaskExecutor) {
@@ -70,21 +74,44 @@ public final class TickScheduler {
   public void runTicks() {
     if (tickService.getTickStatus()
         == net.firedevops.firemud.gamesession.v1.TickStatus.TICK_STATUS_PAUSED) {
+      pausedCounter.increment();
       return;
     }
     List<GameInstance> running = repository.findByStatus("RUNNING");
+    int scheduled = 0;
+    int merged = 0;
+    int rejected = 0;
     for (GameInstance instance : running) {
-      scheduleTick(instance);
+      switch (scheduleTick(instance)) {
+        case SCHEDULED -> scheduled++;
+        case MERGED -> merged++;
+        case REJECTED -> rejected++;
+      }
+    }
+    if (rejected > 0) {
+      logger.warn(
+          "Tick scheduler under pressure: runningSessions={} scheduled={} merged={} rejected={}",
+          running.size(),
+          scheduled,
+          merged,
+          rejected);
+    } else if (merged > 0) {
+      logger.info(
+          "Tick scheduler merged overlapping work: runningSessions={} scheduled={} merged={}",
+          running.size(),
+          scheduled,
+          merged);
     }
   }
 
-  private void scheduleTick(GameInstance instance) {
+  private ScheduleOutcome scheduleTick(GameInstance instance) {
     String key = tickKey(instance.getTenantId(), instance.getId());
     if (!pendingOrRunningTicks.add(key)) {
       mergedCounter.increment();
-      return;
+      return ScheduleOutcome.MERGED;
     }
     try {
+      scheduledCounter.increment();
       tickExecutor.execute(
           () -> {
             try {
@@ -101,10 +128,18 @@ public final class TickScheduler {
           instance.getTenantId(),
           instance.getId(),
           ex);
+      return ScheduleOutcome.REJECTED;
     }
+    return ScheduleOutcome.SCHEDULED;
   }
 
   private String tickKey(Long tenantId, Long sessionId) {
     return tenantId + ":" + sessionId;
+  }
+
+  private enum ScheduleOutcome {
+    SCHEDULED,
+    MERGED,
+    REJECTED
   }
 }

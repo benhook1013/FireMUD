@@ -33,6 +33,8 @@ class TickSchedulerTest {
     scheduler.runTicks();
 
     assertThat(executor.queuedTasks()).isEqualTo(1);
+    assertThat(meterRegistry.get("game_session_tick_scheduler_scheduled_total").counter().count())
+        .isEqualTo(1.0);
     assertThat(meterRegistry.get("game_session_tick_scheduler_merged_total").counter().count())
         .isEqualTo(1.0);
 
@@ -58,7 +60,26 @@ class TickSchedulerTest {
 
     assertThat(meterRegistry.get("game_session_tick_scheduler_rejected_total").counter().count())
         .isEqualTo(1.0);
+    assertThat(meterRegistry.get("game_session_tick_scheduler_scheduled_total").counter().count())
+        .isEqualTo(1.0);
     verify(tickService, times(0)).processTick(1L, 2L);
+  }
+
+  @Test
+  void pausedSchedulerIncrementsPausedMetric() {
+    GameInstanceRepository repository = mock(GameInstanceRepository.class);
+    TickService tickService = mock(TickService.class);
+    Executor executor = command -> {};
+    SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+    TickScheduler scheduler = new TickScheduler(repository, tickService, executor, meterRegistry);
+    when(tickService.getTickStatus())
+        .thenReturn(net.firedevops.firemud.gamesession.v1.TickStatus.TICK_STATUS_PAUSED);
+
+    scheduler.runTicks();
+
+    assertThat(meterRegistry.get("game_session_tick_scheduler_paused_total").counter().count())
+        .isEqualTo(1.0);
+    verify(repository, times(0)).findByStatus("RUNNING");
   }
 
   private static GameInstance runningInstance(Long tenantId, Long id) {
