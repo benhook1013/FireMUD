@@ -57,6 +57,54 @@ class InventoryCommandHandlerTest {
   }
 
   @Test
+  void inventoryHereReturnsRoomGroundItemsWithVisibleRefs() {
+    when(entityManagementClient.listRoomEntities("22", "77", "room-7"))
+        .thenReturn(
+            ListRoomEntitiesResponse.newBuilder()
+                .addEntities(
+                    RoomEntity.newBuilder()
+                        .setEntityId("22:77:room-7:1001")
+                        .setEntityType(EntityType.ITEM)
+                        .setDisplayName("Torch")
+                        .setVisibleRef("torch3")
+                        .addStateFlags("room-ground")
+                        .build())
+                .addEntities(
+                    RoomEntity.newBuilder()
+                        .setEntityId("22:77:room-7:npc-1")
+                        .setEntityType(EntityType.NPC)
+                        .setDisplayName("Goblin")
+                        .build())
+                .build());
+
+    InventoryCommandHandlingResult result =
+        handler.handle(
+            context, new TextCommand(TextCommandType.INVENTORY, List.of("HERE"), "INV HERE"));
+
+    assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
+    assertThat(result.outputs())
+        .extracting(PlayerOutput::kind)
+        .containsExactly(PlayerOutputKind.VIEW);
+    InventoryViewOutput view = (InventoryViewOutput) result.outputs().get(0).payload();
+    assertThat(view.title()).isEqualTo("Room Inventory:");
+    assertThat(view.lines()).containsExactly("- Torch [torch3]");
+  }
+
+  @Test
+  void inventoryHereReturnsEmptyStateWhenNoRoomGroundItemsExist() {
+    when(entityManagementClient.listRoomEntities("22", "77", "room-7"))
+        .thenReturn(ListRoomEntitiesResponse.newBuilder().build());
+
+    InventoryCommandHandlingResult result =
+        handler.handle(
+            context, new TextCommand(TextCommandType.INVENTORY, List.of("HERE"), "INV HERE"));
+
+    assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
+    assertThat(((InventoryViewOutput) result.outputs().get(0).payload()).lines())
+        .containsExactly("There is nothing on the ground here.");
+  }
+
+  @Test
   void getWithoutItemReferenceFailsFast() {
     InventoryCommandHandlingResult result =
         handler.handle(context, new TextCommand(TextCommandType.GET, List.of(), "GET"));

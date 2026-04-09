@@ -59,6 +59,7 @@ class HelpCommandHandlerTest {
 
     assertTrue(result.commandResult().accepted());
     assertTrue(result.outputs().get(0).text().contains("INVENTORY shows what you are carrying."));
+    assertTrue(result.outputs().get(0).text().contains("INV HERE lists room-ground items"));
     assertTrue(
         result.outputs().get(0).text().contains("If nothing is listed, you are empty-handed."));
     assertTrue(

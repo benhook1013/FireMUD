@@ -35,7 +35,7 @@ public class InventoryCommandHandler {
     Objects.requireNonNull(command, "command must not be null");
 
     return switch (command.type()) {
-      case INVENTORY -> describeInventory(context);
+      case INVENTORY -> describeInventorySurface(context, command);
       case GET -> mutateItem(context, command, true);
       case DROP -> mutateItem(context, command, false);
       default ->
@@ -48,6 +48,14 @@ public class InventoryCommandHandler {
                       "error.inventory.invalid-command",
                       Map.of())));
     };
+  }
+
+  private InventoryCommandHandlingResult describeInventorySurface(
+      SessionContext context, TextCommand command) {
+    if (isRoomInventoryRequest(command)) {
+      return describeRoomInventory(context);
+    }
+    return describeInventory(context);
   }
 
   private InventoryCommandHandlingResult describeInventory(SessionContext context) {
@@ -75,11 +83,49 @@ public class InventoryCommandHandler {
     }
   }
 
+  private InventoryCommandHandlingResult describeRoomInventory(SessionContext context) {
+    try {
+      var response =
+          entityManagementClient.listRoomEntities(
+              Long.toString(context.tenantId()),
+              Long.toString(context.gameInstanceId()),
+              context.roomInstanceId());
+      if (response.hasError()) {
+        return inventoryUnavailable(
+            StringUtils.hasText(response.getError().getMessage())
+                ? response.getError().getMessage()
+                : "Room inventory unavailable");
+      }
+      List<String> lines = formatRoomInventoryLines(response.getEntitiesList());
+      return new InventoryCommandHandlingResult(
+          CommandEnqueueResult.success(),
+          List.of(PlayerOutput.view(new InventoryViewOutput("Room Inventory:", lines))));
+    } catch (RuntimeException ex) {
+      LOG.warn(
+          "Room inventory query failed tenantId={} gameInstanceId={} roomInstanceId={}",
+          context.tenantId(),
+          context.gameInstanceId(),
+          context.roomInstanceId(),
+          ex);
+      return inventoryUnavailable("Room inventory unavailable");
+    }
+  }
+
   private List<String> formatInventoryLines(List<InventoryItem> items) {
     if (items.isEmpty()) {
       return List.of("You are not carrying anything.");
     }
     return items.stream().map(this::formatInventoryItem).collect(Collectors.toList());
+  }
+
+  private List<String> formatRoomInventoryLines(List<RoomEntity> entities) {
+    List<String> lines =
+        entities.stream()
+            .filter(entity -> entity.getEntityType() == EntityType.ITEM)
+            .filter(entity -> entity.getStateFlagsList().contains("room-ground"))
+            .map(this::formatRoomInventoryItem)
+            .toList();
+    return lines.isEmpty() ? List.of("There is nothing on the ground here.") : lines;
   }
 
   private String formatInventoryItem(InventoryItem item) {
@@ -92,6 +138,13 @@ public class InventoryCommandHandler {
     if (StringUtils.hasText(item.getItemDescription())) {
       line.append(" (").append(item.getItemDescription()).append(")");
     }
+    return line.toString();
+  }
+
+  private String formatRoomInventoryItem(RoomEntity entity) {
+    StringBuilder line = new StringBuilder();
+    line.append("- ").append(entity.getDisplayName());
+    appendCompactReference(line, ContainerIdentitySupport.compactReference(entity));
     return line.toString();
   }
 
@@ -266,6 +319,10 @@ public class InventoryCommandHandler {
     if (StringUtils.hasText(compactReference)) {
       line.append(" [").append(compactReference).append("]");
     }
+  }
+
+  private boolean isRoomInventoryRequest(TextCommand command) {
+    return command.args().size() == 1 && "HERE".equalsIgnoreCase(command.args().get(0));
   }
 
   private Optional<ResolvedItem> findRoomGroundItem(List<RoomEntity> entities, String reference) {
