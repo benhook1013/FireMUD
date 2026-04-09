@@ -144,12 +144,10 @@ class TickServiceImplTest {
     when(repository.findById(2L)).thenReturn(java.util.Optional.of(instance));
     service.processTick(10L, 2L);
     org.junit.jupiter.api.Assertions.assertEquals(
-        3.0,
-        meterRegistry
-            .get("tick_retry_queue_depth")
-            .tags("tenantId", "10", "regionId", "2")
-            .gauge()
-            .value(),
+        3.0, meterRegistry.get("game_session_retry_queue_depth_total").gauge().value(), 0.001);
+    org.junit.jupiter.api.Assertions.assertEquals(
+        1.0,
+        meterRegistry.get("game_session_retry_queue_targets_with_pending").gauge().value(),
         0.001);
   }
 

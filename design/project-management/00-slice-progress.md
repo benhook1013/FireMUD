@@ -15,7 +15,7 @@ These are narrow enough to implement now and unblock the current runtime/platfor
 2. [02.18.2 Internal Blocking gRPC Auth Propagation](./vertical-slices/02.18.2-task-list-internal-grpc-auth-propagation-vertical-slice.md)
    Remaining: finish the caller-side auth propagation seam for secured internal blocking clients.
 3. [02.14.4 Metrics Cardinality and Label Policy Hardening](./vertical-slices/02.14.4-task-list-metrics-cardinality-and-label-policy-hardening-vertical-slice.md)
-   Remaining: continue the repo-wide audit and codify the canonical allowlist/denylist now that the first gameplay/session counters have been normalized.
+   Remaining: continue the repo-wide audit and codify the canonical allowlist/denylist now that the first gameplay/session counters and retry-queue gauges have been normalized.
 4. [06.4.1 Safe Item Transfer and Handoff Semantics](./vertical-slices/06.4.1-task-list-safe-item-transfer-and-handoff-semantics-vertical-slice.md)
    Remaining: turn the now-settled guarded handoff design into concrete transfer mutation rules and proofs.
 5. [06.3 Replace Aggregated Item Stacks With Distinct Item Instances](./vertical-slices/06.3-task-list-container-item-instance-identity-vertical-slice.md)
