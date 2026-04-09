@@ -12,6 +12,7 @@ FORBIDDEN_LABELS = {
     "tenantId",
     "accountId",
     "characterId",
+    "class",
     "sessionId",
     "gameInstanceId",
     "roomInstanceId",
