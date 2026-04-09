@@ -60,6 +60,46 @@ class InventoryServiceImplTest {
   }
 
   @Test
+  void listInventoryKeepsDuplicateNonStackableItemsSeparate() {
+    ItemInstanceRepository itemInstanceRepo = Mockito.mock(ItemInstanceRepository.class);
+    ContainerInstanceRepository containerInstanceRepo =
+        Mockito.mock(ContainerInstanceRepository.class);
+    CharacterRepository characterRepo = Mockito.mock(CharacterRepository.class);
+    ItemRepository itemRepo = Mockito.mock(ItemRepository.class);
+    ItemVisibleRefAllocator visibleRefAllocator = Mockito.mock(ItemVisibleRefAllocator.class);
+    InventoryServiceImpl service =
+        new InventoryServiceImpl(
+            itemInstanceRepo, containerInstanceRepo, characterRepo, itemRepo, visibleRefAllocator);
+
+    Character character = character(1L, 11L);
+    Item item = item(2L, 11L, "Torch", false, null);
+    ItemInstance first = itemInstance(501L, 11L, character, item, null, null, null);
+    first.setVisibleRef("torch1");
+    first.setVisibleRefToken("torch");
+    first.setVisibleRefSequence(1L);
+    ItemInstance second = itemInstance(502L, 11L, character, item, null, null, null);
+    second.setVisibleRef("torch2");
+    second.setVisibleRefToken("torch");
+    second.setVisibleRefSequence(2L);
+
+    when(characterRepo.findByIdAndTenantId(1L, 11L)).thenReturn(Optional.of(character));
+    when(itemInstanceRepo
+            .findByTenantIdAndCharacter_IdAndEquipmentSlotIsNullAndGameInstanceIdIsNullAndRoomInstanceIdIsNullOrderByIdAsc(
+                11L, 1L, Pageable.unpaged()))
+        .thenReturn(new PageImpl<>(List.of(first, second)));
+
+    var result = service.listInventory(11L, 1L, Pageable.unpaged());
+
+    assertEquals(2, result.getTotalElements());
+    assertEquals(501L, result.getContent().get(0).itemInstanceId());
+    assertEquals("torch1", result.getContent().get(0).visibleRef());
+    assertEquals(1, result.getContent().get(0).quantity());
+    assertEquals(502L, result.getContent().get(1).itemInstanceId());
+    assertEquals("torch2", result.getContent().get(1).visibleRef());
+    assertEquals(1, result.getContent().get(1).quantity());
+  }
+
+  @Test
   void addItemRejectsCrossTenantOwnership() {
     ItemInstanceRepository itemInstanceRepo = Mockito.mock(ItemInstanceRepository.class);
     ContainerInstanceRepository containerInstanceRepo =

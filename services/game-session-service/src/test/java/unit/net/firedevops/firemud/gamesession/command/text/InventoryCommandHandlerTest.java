@@ -57,6 +57,39 @@ class InventoryCommandHandlerTest {
   }
 
   @Test
+  void inventoryShowsDuplicateNonStackableItemsAsSeparateEntries() {
+    when(entityManagementClient.queryInventory("22", "911"))
+        .thenReturn(
+            QueryInventoryResponse.newBuilder()
+                .addItems(
+                    InventoryItem.newBuilder()
+                        .setItemId("7")
+                        .setItemInstanceId("101")
+                        .setItemName("Torch")
+                        .setItemDescription("A small torch")
+                        .setQuantity(1)
+                        .setVisibleRef("torch1")
+                        .build())
+                .addItems(
+                    InventoryItem.newBuilder()
+                        .setItemId("7")
+                        .setItemInstanceId("102")
+                        .setItemName("Torch")
+                        .setItemDescription("A small torch")
+                        .setQuantity(1)
+                        .setVisibleRef("torch2")
+                        .build())
+                .build());
+
+    InventoryCommandHandlingResult result =
+        handler.handle(context, new TextCommand(TextCommandType.INVENTORY, List.of(), "INVENTORY"));
+
+    assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
+    assertThat(((InventoryViewOutput) result.outputs().get(0).payload()).lines())
+        .containsExactly("- Torch [torch1] (A small torch)", "- Torch [torch2] (A small torch)");
+  }
+
+  @Test
   void inventoryHereReturnsRoomGroundItemsWithVisibleRefs() {
     when(entityManagementClient.listRoomEntities("22", "77", "room-7"))
         .thenReturn(
