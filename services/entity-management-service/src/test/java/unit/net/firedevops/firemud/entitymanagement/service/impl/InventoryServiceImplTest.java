@@ -244,6 +244,40 @@ class InventoryServiceImplTest {
         () -> service.pickupItemFromRoom(1L, 1L, "GI-1", "R-1", 2L, null, null, 1));
   }
 
+  @Test
+  void dropItemRejectsExplicitItemInstanceIdWithQuantityGreaterThanOne() {
+    ItemInstanceRepository itemInstanceRepo = Mockito.mock(ItemInstanceRepository.class);
+    ContainerInstanceRepository containerInstanceRepo =
+        Mockito.mock(ContainerInstanceRepository.class);
+    CharacterRepository characterRepo = Mockito.mock(CharacterRepository.class);
+    ItemRepository itemRepo = Mockito.mock(ItemRepository.class);
+    ItemVisibleRefAllocator visibleRefAllocator = Mockito.mock(ItemVisibleRefAllocator.class);
+    InventoryServiceImpl service =
+        new InventoryServiceImpl(
+            itemInstanceRepo,
+            containerInstanceRepo,
+            characterRepo,
+            itemRepo,
+            visibleRefAllocator,
+            new ItemTransferSupport(),
+            new ContainerHolderSyncSupport(containerInstanceRepo));
+
+    Character character = character(1L, 1L);
+    Item item = item(2L, 1L, "Torch", false, null);
+    ItemInstance first = itemInstance(41L, 1L, character, item, null, null, null);
+
+    when(characterRepo.findByIdAndTenantId(1L, 1L)).thenReturn(Optional.of(character));
+    when(itemRepo.findByIdAndTenantId(2L, 1L)).thenReturn(Optional.of(item));
+    when(itemInstanceRepo
+            .findByTenantIdAndCharacter_IdAndItem_IdAndEquipmentSlotIsNullAndGameInstanceIdIsNullAndRoomInstanceIdIsNullOrderByIdAsc(
+                1L, 1L, 2L))
+        .thenReturn(List.of(first));
+
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> service.dropItemToRoom(1L, 1L, "GI-1", "R-1", 2L, 41L, null, 2));
+  }
+
   private static Character character(Long id, Long tenantId) {
     Character character = new Character();
     character.setId(id);

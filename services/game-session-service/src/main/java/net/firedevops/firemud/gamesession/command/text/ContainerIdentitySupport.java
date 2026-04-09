@@ -21,6 +21,7 @@ public final class ContainerIdentitySupport {
   public static boolean matchesReference(InventoryItem item, String reference) {
     return matchesReference(item.getItemId(), reference)
         || matchesReference(item.getItemName(), reference)
+        || matchesReference(item.getItemInstanceId(), reference)
         || matchesReference(item.getVisibleRef(), reference)
         || matchesReference(resolveContainerInstanceId(item), reference)
         || matchesReference(compactReference(item), reference);
@@ -29,10 +30,30 @@ public final class ContainerIdentitySupport {
   public static boolean matchesReference(EquipmentItem item, String reference) {
     return matchesReference(item.getItemId(), reference)
         || matchesReference(item.getItemName(), reference)
+        || matchesReference(item.getItemInstanceId(), reference)
         || matchesReference(item.getVisibleRef(), reference)
         || matchesReference(resolveContainerInstanceId(item), reference)
         || matchesReference(compactReference(item), reference)
         || matchesReference(item.getSlot(), reference);
+  }
+
+  public static boolean matchesReference(ContainerItem item, String reference) {
+    return matchesReference(item.getItemId(), reference)
+        || matchesReference(item.getItemName(), reference)
+        || matchesReference(item.getItemInstanceId(), reference)
+        || matchesReference(item.getVisibleRef(), reference);
+  }
+
+  public static boolean matchesExplicitReference(InventoryItem item, String reference) {
+    return matchesReference(item.getItemInstanceId(), reference)
+        || matchesReference(item.getVisibleRef(), reference)
+        || matchesReference(resolveContainerInstanceId(item), reference)
+        || matchesReference(compactReference(item), reference);
+  }
+
+  public static boolean matchesExplicitReference(ContainerItem item, String reference) {
+    return matchesReference(item.getItemInstanceId(), reference)
+        || matchesReference(item.getVisibleRef(), reference);
   }
 
   public static boolean matchesReference(RoomEntity entity, String reference) {

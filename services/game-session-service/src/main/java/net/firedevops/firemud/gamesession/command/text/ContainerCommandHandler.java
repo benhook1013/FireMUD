@@ -114,7 +114,9 @@ public class ContainerCommandHandler {
             "No carried item matches \"" + transfer.itemReference() + "\"");
       }
       InventoryItem inventoryItem = resolvedItem.orElseThrow();
-      if (transfer.quantity() > 1 && !inventoryItem.getItemInstanceId().isBlank()) {
+      if (transfer.quantity() > 1
+          && ContainerIdentitySupport.matchesExplicitReference(
+              inventoryItem, transfer.itemReference())) {
         return containerInvalidArgument("Explicit item refs require quantity 1 for PUT");
       }
 
@@ -124,9 +126,11 @@ public class ContainerCommandHandler {
               Long.toString(context.characterId()),
               ContainerIdentitySupport.resolveContainerInstanceId(resolvedContainer.orElseThrow()),
               inventoryItem.getItemId(),
-              inventoryItem.getItemInstanceId().isBlank()
-                  ? null
-                  : inventoryItem.getItemInstanceId(),
+              ContainerIdentitySupport.matchesExplicitReference(
+                          inventoryItem, transfer.itemReference())
+                      && !inventoryItem.getItemInstanceId().isBlank()
+                  ? inventoryItem.getItemInstanceId()
+                  : null,
               transfer.quantity());
       if (response.hasError()) {
         return containerFailure(
@@ -199,7 +203,9 @@ public class ContainerCommandHandler {
             "No container item matches \"" + transfer.itemReference() + "\"");
       }
       ContainerItem containerItem = resolvedItem.orElseThrow();
-      if (transfer.quantity() > 1 && !containerItem.getItemInstanceId().isBlank()) {
+      if (transfer.quantity() > 1
+          && ContainerIdentitySupport.matchesExplicitReference(
+              containerItem, transfer.itemReference())) {
         return containerInvalidArgument("Explicit item refs require quantity 1 for TAKE");
       }
 
@@ -209,9 +215,11 @@ public class ContainerCommandHandler {
               Long.toString(context.characterId()),
               ContainerIdentitySupport.resolveContainerInstanceId(resolvedContainer.orElseThrow()),
               containerItem.getItemId(),
-              containerItem.getItemInstanceId().isBlank()
-                  ? null
-                  : containerItem.getItemInstanceId(),
+              ContainerIdentitySupport.matchesExplicitReference(
+                          containerItem, transfer.itemReference())
+                      && !containerItem.getItemInstanceId().isBlank()
+                  ? containerItem.getItemInstanceId()
+                  : null,
               transfer.quantity());
       if (response.hasError()) {
         return containerFailure(
@@ -288,11 +296,7 @@ public class ContainerCommandHandler {
 
   private Optional<ContainerItem> findContainerItem(List<ContainerItem> items, String reference) {
     return items.stream()
-        .filter(
-            item ->
-                item.getItemId().equalsIgnoreCase(reference)
-                    || item.getItemName().equalsIgnoreCase(reference)
-                    || item.getVisibleRef().equalsIgnoreCase(reference))
+        .filter(item -> ContainerIdentitySupport.matchesReference(item, reference))
         .findFirst();
   }
 

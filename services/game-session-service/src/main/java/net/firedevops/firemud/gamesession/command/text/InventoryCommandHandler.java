@@ -196,6 +196,12 @@ public class InventoryCommandHandler {
               "No room item matches \"" + itemReferenceValue + "\"");
         }
         ResolvedItem item = resolved.orElseThrow();
+        if (itemReference.quantity() > 1 && item.explicitReference()) {
+          return inventoryMutationFailure(
+              "INVALID_ARGUMENT",
+              itemReferenceValue,
+              "Explicit item refs require quantity 1 for GET");
+        }
         var response =
             entityManagementClient.pickupItemFromRoom(
                 Long.toString(context.tenantId()),
@@ -203,7 +209,7 @@ public class InventoryCommandHandler {
                 Long.toString(context.gameInstanceId()),
                 context.roomInstanceId(),
                 item.itemId(),
-                item.itemInstanceId(),
+                item.explicitReference() ? item.itemInstanceId() : null,
                 item.containerInstanceId(),
                 itemReference.quantity());
         if (response.hasError()) {
@@ -237,6 +243,12 @@ public class InventoryCommandHandler {
             "No carried item matches \"" + itemReferenceValue + "\"");
       }
       ResolvedItem item = resolved.orElseThrow();
+      if (itemReference.quantity() > 1 && item.explicitReference()) {
+        return inventoryMutationFailure(
+            "INVALID_ARGUMENT",
+            itemReferenceValue,
+            "Explicit item refs require quantity 1 for DROP");
+      }
       var response =
           entityManagementClient.dropItemToRoom(
               Long.toString(context.tenantId()),
@@ -244,7 +256,7 @@ public class InventoryCommandHandler {
               Long.toString(context.gameInstanceId()),
               context.roomInstanceId(),
               item.itemId(),
-              item.itemInstanceId(),
+              item.explicitReference() ? item.itemInstanceId() : null,
               item.containerInstanceId(),
               itemReference.quantity());
       if (response.hasError()) {
@@ -335,7 +347,8 @@ public class InventoryCommandHandler {
                     item.getItemId(),
                     item.getItemInstanceId(),
                     item.getItemName(),
-                    item.getContainerInstanceId()));
+                    item.getContainerInstanceId(),
+                    matchesExplicitReference(item, reference)));
   }
 
   private Optional<ResolvedItem> findCarriedItem(List<InventoryItem> items, String reference) {
@@ -348,13 +361,20 @@ public class InventoryCommandHandler {
                     item.getItemId(),
                     item.getItemInstanceId(),
                     item.getItemName(),
-                    ContainerIdentitySupport.resolveContainerInstanceId(item)));
+                    ContainerIdentitySupport.resolveContainerInstanceId(item),
+                    ContainerIdentitySupport.matchesExplicitReference(item, reference)));
   }
 
   private boolean matchesReference(RoomGroundInventoryItem item, String reference) {
     return matchesReference(item.getItemId(), reference)
         || matchesReference(item.getItemName(), reference)
         || matchesReference(item.getVisibleRef(), reference)
+        || matchesReference(item.getContainerInstanceId(), reference)
+        || matchesReference(item.getItemInstanceId(), reference);
+  }
+
+  private boolean matchesExplicitReference(RoomGroundInventoryItem item, String reference) {
+    return matchesReference(item.getVisibleRef(), reference)
         || matchesReference(item.getContainerInstanceId(), reference)
         || matchesReference(item.getItemInstanceId(), reference);
   }
@@ -370,5 +390,9 @@ public class InventoryCommandHandler {
   }
 
   private record ResolvedItem(
-      String itemId, String itemInstanceId, String itemName, String containerInstanceId) {}
+      String itemId,
+      String itemInstanceId,
+      String itemName,
+      String containerInstanceId,
+      boolean explicitReference) {}
 }

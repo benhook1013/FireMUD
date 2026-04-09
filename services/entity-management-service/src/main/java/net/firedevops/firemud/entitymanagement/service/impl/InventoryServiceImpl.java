@@ -211,6 +211,9 @@ public class InventoryServiceImpl implements InventoryService {
       int quantity,
       String notFoundMessage) {
     if (itemInstanceId != null) {
+      if (quantity != 1) {
+        throw new IllegalArgumentException("Explicit item_instance_id requires quantity 1");
+      }
       return candidates.stream()
           .filter(instance -> instance.getId().equals(itemInstanceId))
           .findFirst()
