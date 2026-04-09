@@ -1,49 +1,59 @@
 package net.firedevops.firemud.gamedesign.service.impl;
 
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 import io.grpc.stub.StreamObserver;
-import java.lang.reflect.Method;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.List;
-import net.firedevops.firemud.common.security.RequireAdminRole;
-import net.firedevops.firemud.gamedesign.v1.DeleteSettingsDomainOverrideRequest;
-import net.firedevops.firemud.gamedesign.v1.GetScopedSettingsOverridesRequest;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
+import net.firedevops.firemud.common.security.SessionContext;
+import net.firedevops.firemud.gamedesign.service.PingService;
+import net.firedevops.firemud.gamedesign.service.RevisionService;
+import net.firedevops.firemud.gamedesign.service.SettingsAuthorityService;
+import net.firedevops.firemud.gamedesign.service.VersionService;
 import net.firedevops.firemud.gamedesign.v1.ListVersionsRequest;
-import net.firedevops.firemud.gamedesign.v1.PublishScriptPatchVersionRequest;
-import net.firedevops.firemud.gamedesign.v1.PublishVersionRequest;
-import net.firedevops.firemud.gamedesign.v1.PutSettingsDomainOverrideRequest;
-import net.firedevops.firemud.gamedesign.v1.SaveRevisionRequest;
+import net.firedevops.firemud.gamedesign.v1.ListVersionsResponse;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
 
 class GameDesignGrpcServiceAuthTest {
+  @AfterEach
+  void tearDown() {
+    SessionContext.clear();
+  }
 
   @Test
-  void adminMethodsRequireAdminRole() throws Exception {
-    for (Method method :
-        List.of(
-            GameDesignGrpcService.class.getMethod(
-                "saveRevision", SaveRevisionRequest.class, StreamObserver.class),
-            GameDesignGrpcService.class.getMethod(
-                "publishVersion", PublishVersionRequest.class, StreamObserver.class),
-            GameDesignGrpcService.class.getMethod(
-                "publishScriptPatchVersion",
-                PublishScriptPatchVersionRequest.class,
-                StreamObserver.class),
-            GameDesignGrpcService.class.getMethod(
-                "listVersions", ListVersionsRequest.class, StreamObserver.class),
-            GameDesignGrpcService.class.getMethod(
-                "getScopedSettingsOverrides",
-                GetScopedSettingsOverridesRequest.class,
-                StreamObserver.class),
-            GameDesignGrpcService.class.getMethod(
-                "putSettingsDomainOverride",
-                PutSettingsDomainOverrideRequest.class,
-                StreamObserver.class),
-            GameDesignGrpcService.class.getMethod(
-                "deleteSettingsDomainOverride",
-                DeleteSettingsDomainOverrideRequest.class,
-                StreamObserver.class))) {
-      assertTrue(method.isAnnotationPresent(RequireAdminRole.class), method.getName());
-    }
+  void adminMethodsReturnPermissionDeniedErrorDetail() {
+    SessionContext.setContext("1", List.of("player"), Map.of());
+    GameDesignGrpcService service =
+        new GameDesignGrpcService(
+            Mockito.mock(PingService.class),
+            Mockito.mock(RevisionService.class),
+            Mockito.mock(VersionService.class),
+            Mockito.mock(SettingsAuthorityService.class),
+            new SimpleMeterRegistry());
+
+    AtomicReference<ListVersionsResponse> ref = new AtomicReference<>();
+    service.listVersions(
+        ListVersionsRequest.newBuilder().setTenantId("1").build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(ListVersionsResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(ref.get());
+    assertEquals("PERMISSION_DENIED", ref.get().getError().getCode());
+    assertEquals("Admin role required", ref.get().getError().getMessage());
   }
 }

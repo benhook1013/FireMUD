@@ -5,10 +5,10 @@ import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Instant;
-import java.util.List;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
+import net.firedevops.firemud.common.security.AdminAuthorizationException;
+import net.firedevops.firemud.common.security.AdminRoleGuard;
 import net.firedevops.firemud.common.security.AuthTokenInterceptor;
-import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.TickService;
@@ -79,13 +79,10 @@ public final class GameSessionControlPlaneGrpcService
   }
 
   private void requireAdminRole() {
-    List<String> roles = SessionContext.getGlobalRoles();
-    if (!roles.contains("platformAdmin") && !roles.contains("moderator")) {
-      throw new AuthorizationException("Admin role required");
-    }
+    AdminRoleGuard.requireAdminRole();
   }
 
-  private ErrorDetail authorizationError(String operation, AuthorizationException ex) {
+  private ErrorDetail authorizationError(String operation, AdminAuthorizationException ex) {
     return GrpcAppErrors.error(
         meterRegistry, logger, operation, "PERMISSION_DENIED", ex.getMessage());
   }
@@ -118,7 +115,7 @@ public final class GameSessionControlPlaneGrpcService
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
-    } catch (AuthorizationException ex) {
+    } catch (AdminAuthorizationException ex) {
       GetPinnedScriptPatchVersionResponse response =
           GetPinnedScriptPatchVersionResponse.newBuilder()
               .setError(authorizationError("GetPinnedScriptPatchVersion", ex))
@@ -173,7 +170,7 @@ public final class GameSessionControlPlaneGrpcService
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
-    } catch (AuthorizationException ex) {
+    } catch (AdminAuthorizationException ex) {
       SetPinnedScriptPatchVersionResponse response =
           SetPinnedScriptPatchVersionResponse.newBuilder()
               .setError(authorizationError("SetPinnedScriptPatchVersion", ex))
@@ -228,7 +225,7 @@ public final class GameSessionControlPlaneGrpcService
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
-    } catch (AuthorizationException ex) {
+    } catch (AdminAuthorizationException ex) {
       RollbackScriptPatchVersionResponse response =
           RollbackScriptPatchVersionResponse.newBuilder()
               .setError(authorizationError("RollbackScriptPatchVersion", ex))
@@ -274,7 +271,7 @@ public final class GameSessionControlPlaneGrpcService
           PauseTicksForScopeResponse.newBuilder().setSuccess(true).build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
-    } catch (AuthorizationException ex) {
+    } catch (AdminAuthorizationException ex) {
       PauseTicksForScopeResponse response =
           PauseTicksForScopeResponse.newBuilder()
               .setSuccess(false)
@@ -323,7 +320,7 @@ public final class GameSessionControlPlaneGrpcService
           ResumeTicksForScopeResponse.newBuilder().setSuccess(true).build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
-    } catch (AuthorizationException ex) {
+    } catch (AdminAuthorizationException ex) {
       ResumeTicksForScopeResponse response =
           ResumeTicksForScopeResponse.newBuilder()
               .setSuccess(false)
@@ -348,12 +345,6 @@ public final class GameSessionControlPlaneGrpcService
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
-    }
-  }
-
-  private static final class AuthorizationException extends RuntimeException {
-    private AuthorizationException(String message) {
-      super(message);
     }
   }
 }

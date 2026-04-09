@@ -5,6 +5,8 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.grpc.stub.StreamObserver;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.account.v1.AuthenticateRequest;
@@ -29,10 +31,17 @@ import net.firedevops.firemud.accountservice.dto.AccountDto;
 import net.firedevops.firemud.accountservice.service.AccountService;
 import net.firedevops.firemud.accountservice.service.PingService;
 import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
+import net.firedevops.firemud.common.security.SessionContext;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
 class AccountGrpcServiceTest {
+  @AfterEach
+  void tearDown() {
+    SessionContext.clear();
+  }
+
   @Test
   void pingReturnsPong() {
     PingService pingService = Mockito.mock(PingService.class);
@@ -337,6 +346,7 @@ class AccountGrpcServiceTest {
   void deleteAccountSuccess() {
     PingService pingService = Mockito.mock(PingService.class);
     AccountService accountService = Mockito.mock(AccountService.class);
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     AccountGrpcService service = new AccountGrpcService(pingService, accountService);
 
     AtomicReference<DeleteAccountResponse> ref = new AtomicReference<>();
@@ -389,5 +399,33 @@ class AccountGrpcServiceTest {
 
     assertNotNull(ref.get());
     assertTrue(ref.get().getSuccess());
+  }
+
+  @Test
+  void deleteAccountRequiresAdminRole() {
+    PingService pingService = Mockito.mock(PingService.class);
+    AccountService accountService = Mockito.mock(AccountService.class);
+    SessionContext.setContext("1", List.of("player"), Map.of());
+    AccountGrpcService service = new AccountGrpcService(pingService, accountService);
+
+    AtomicReference<DeleteAccountResponse> ref = new AtomicReference<>();
+    service.deleteAccount(
+        DeleteAccountRequest.newBuilder().setTenantId("1").setAccountId("2").build(),
+        new StreamObserver<DeleteAccountResponse>() {
+          @Override
+          public void onNext(DeleteAccountResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(ref.get());
+    assertEquals(false, ref.get().getSuccess());
+    assertEquals("PERMISSION_DENIED", ref.get().getError().getCode());
   }
 }
