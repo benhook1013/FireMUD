@@ -10,7 +10,12 @@ public interface ContainerService {
       Long tenantId, Long characterId, Long containerInstanceId, Pageable pageable);
 
   ContainerContentEntryDto putItemIntoContainer(
-      Long tenantId, Long characterId, Long containerInstanceId, Long itemId, int quantity);
+      Long tenantId,
+      Long characterId,
+      Long containerInstanceId,
+      Long itemId,
+      Long itemInstanceId,
+      int quantity);
 
   InventoryEntryDto takeItemFromContainer(
       Long tenantId, Long characterId, Long containerInstanceId, Long itemId, int quantity);

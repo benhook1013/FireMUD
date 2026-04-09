@@ -100,7 +100,7 @@ class ContainerServiceImplTest {
     when(itemInstanceRepo.save(any(ItemInstance.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
 
-    var stored = service.putItemIntoContainer(1L, 1L, 500L, 3L, 1);
+    var stored = service.putItemIntoContainer(1L, 1L, 500L, 3L, null, 1);
 
     assertEquals("Torch", stored.itemName());
     assertEquals(1, stored.quantity());
@@ -144,7 +144,91 @@ class ContainerServiceImplTest {
         .thenReturn(List.of(stale));
 
     assertThrows(
-        IllegalArgumentException.class, () -> service.putItemIntoContainer(1L, 1L, 500L, 3L, 1));
+        IllegalArgumentException.class,
+        () -> service.putItemIntoContainer(1L, 1L, 500L, 3L, null, 1));
+  }
+
+  @Test
+  void putItemIntoContainerUsesExplicitItemInstanceId() {
+    ContainerInstanceRepository containerInstanceRepo =
+        Mockito.mock(ContainerInstanceRepository.class);
+    ItemInstanceRepository itemInstanceRepo = Mockito.mock(ItemInstanceRepository.class);
+    CharacterRepository characterRepo = Mockito.mock(CharacterRepository.class);
+    ItemRepository itemRepo = Mockito.mock(ItemRepository.class);
+    ContainerServiceImpl service =
+        new ContainerServiceImpl(
+            containerInstanceRepo,
+            itemInstanceRepo,
+            characterRepo,
+            itemRepo,
+            new ItemTransferSupport());
+
+    Character character = character(1L, 1L);
+    Item container = item(2L, 1L, "Chest", true);
+    ContainerInstance containerInstance = new ContainerInstance();
+    containerInstance.setId(500L);
+    containerInstance.setTenantId(1L);
+    containerInstance.setCharacter(character);
+    containerInstance.setItem(container);
+    Item item = item(3L, 1L, "Torch", false);
+    ItemInstance first = itemInstance(41L, 1L, character, item);
+    ItemInstance second = itemInstance(42L, 1L, character, item);
+
+    when(characterRepo.findByIdAndTenantId(1L, 1L)).thenReturn(Optional.of(character));
+    when(containerInstanceRepo.findAccessibleByIdAndTenantIdAndCharacterId(500L, 1L, 1L))
+        .thenReturn(Optional.of(containerInstance));
+    when(itemRepo.findByIdAndTenantId(3L, 1L)).thenReturn(Optional.of(item));
+    when(itemInstanceRepo
+            .findByTenantIdAndCharacter_IdAndItem_IdAndEquipmentSlotIsNullAndGameInstanceIdIsNullAndRoomInstanceIdIsNullOrderByIdAsc(
+                1L, 1L, 3L))
+        .thenReturn(List.of(first, second));
+    when(itemInstanceRepo.save(any(ItemInstance.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    var stored = service.putItemIntoContainer(1L, 1L, 500L, 3L, 42L, 1);
+
+    assertEquals("Torch", stored.itemName());
+    assertEquals(containerInstance, second.getContainerInstance());
+    assertEquals(null, first.getContainerInstance());
+  }
+
+  @Test
+  void putItemIntoContainerRejectsExplicitItemInstanceIdWithQuantityGreaterThanOne() {
+    ContainerInstanceRepository containerInstanceRepo =
+        Mockito.mock(ContainerInstanceRepository.class);
+    ItemInstanceRepository itemInstanceRepo = Mockito.mock(ItemInstanceRepository.class);
+    CharacterRepository characterRepo = Mockito.mock(CharacterRepository.class);
+    ItemRepository itemRepo = Mockito.mock(ItemRepository.class);
+    ContainerServiceImpl service =
+        new ContainerServiceImpl(
+            containerInstanceRepo,
+            itemInstanceRepo,
+            characterRepo,
+            itemRepo,
+            new ItemTransferSupport());
+
+    Character character = character(1L, 1L);
+    Item container = item(2L, 1L, "Chest", true);
+    ContainerInstance containerInstance = new ContainerInstance();
+    containerInstance.setId(500L);
+    containerInstance.setTenantId(1L);
+    containerInstance.setCharacter(character);
+    containerInstance.setItem(container);
+    Item item = item(3L, 1L, "Torch", false);
+    ItemInstance first = itemInstance(41L, 1L, character, item);
+
+    when(characterRepo.findByIdAndTenantId(1L, 1L)).thenReturn(Optional.of(character));
+    when(containerInstanceRepo.findAccessibleByIdAndTenantIdAndCharacterId(500L, 1L, 1L))
+        .thenReturn(Optional.of(containerInstance));
+    when(itemRepo.findByIdAndTenantId(3L, 1L)).thenReturn(Optional.of(item));
+    when(itemInstanceRepo
+            .findByTenantIdAndCharacter_IdAndItem_IdAndEquipmentSlotIsNullAndGameInstanceIdIsNullAndRoomInstanceIdIsNullOrderByIdAsc(
+                1L, 1L, 3L))
+        .thenReturn(List.of(first));
+
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> service.putItemIntoContainer(1L, 1L, 500L, 3L, 41L, 2));
   }
 
   @Test

@@ -47,7 +47,12 @@ public class ContainerServiceImpl implements ContainerService {
   @Transactional
   @Timed(value = "container.put")
   public ContainerContentEntryDto putItemIntoContainer(
-      Long tenantId, Long characterId, Long containerInstanceId, Long itemId, int quantity) {
+      Long tenantId,
+      Long characterId,
+      Long containerInstanceId,
+      Long itemId,
+      Long itemInstanceId,
+      int quantity) {
     requirePositiveQuantity(quantity);
     Character character = requireCharacter(tenantId, characterId);
     ContainerInstance containerInstance =
@@ -68,10 +73,7 @@ public class ContainerServiceImpl implements ContainerService {
         itemInstanceRepository
             .findByTenantIdAndCharacter_IdAndItem_IdAndEquipmentSlotIsNullAndGameInstanceIdIsNullAndRoomInstanceIdIsNullOrderByIdAsc(
                 tenantId, characterId, itemId);
-    if (carried.size() < quantity) {
-      throw new IllegalArgumentException("Not enough quantity to put into container");
-    }
-    List<ItemInstance> moved = carried.subList(0, quantity);
+    List<ItemInstance> moved = selectCarriedInstances(carried, itemInstanceId, quantity);
     for (ItemInstance instance : moved) {
       itemTransferSupport.transfer(
           instance,
@@ -110,6 +112,25 @@ public class ContainerServiceImpl implements ContainerService {
       syncNestedContainerHolder(instance);
     }
     return toInventoryMutationDto(moved.get(0), quantity);
+  }
+
+  private List<ItemInstance> selectCarriedInstances(
+      List<ItemInstance> carried, Long itemInstanceId, int quantity) {
+    if (itemInstanceId != null) {
+      ItemInstance selected =
+          carried.stream()
+              .filter(instance -> instance.getId().equals(itemInstanceId))
+              .findFirst()
+              .orElseThrow(() -> new IllegalArgumentException("Inventory item not found"));
+      if (quantity != 1) {
+        throw new IllegalArgumentException("Explicit item_instance_id requires quantity 1");
+      }
+      return List.of(selected);
+    }
+    if (carried.size() < quantity) {
+      throw new IllegalArgumentException("Not enough quantity to put into container");
+    }
+    return carried.subList(0, quantity);
   }
 
   private Character requireCharacter(Long tenantId, Long characterId) {

@@ -541,9 +541,18 @@ public class EntityManagementGrpcService
       long characterId = Long.parseLong(request.getCharacterId());
       long containerInstanceId = Long.parseLong(request.getContainerInstanceId());
       long itemId = Long.parseLong(request.getItemId());
+      Long itemInstanceId =
+          request.getItemInstanceId().isBlank()
+              ? null
+              : Long.parseLong(request.getItemInstanceId());
       var dto =
           containerService.putItemIntoContainer(
-              tenantId, characterId, containerInstanceId, itemId, request.getQuantity());
+              tenantId,
+              characterId,
+              containerInstanceId,
+              itemId,
+              itemInstanceId,
+              request.getQuantity());
       PutItemIntoContainerResponse response =
           PutItemIntoContainerResponse.newBuilder().setContainerItem(toProto(dto)).build();
       responseObserver.onNext(response);
