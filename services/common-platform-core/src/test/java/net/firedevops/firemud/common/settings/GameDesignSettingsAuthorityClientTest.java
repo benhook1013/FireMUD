@@ -11,8 +11,10 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import javax.net.ssl.SSLException;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
+import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.gamedesign.v1.GameDesignServiceGrpc;
@@ -27,7 +29,8 @@ class GameDesignSettingsAuthorityClientTest {
     CommonGrpcClientProperties grpc = new CommonGrpcClientProperties();
     grpc.setCaCert("missing-ca.crt");
     GameDesignSettingsAuthorityClient client =
-        new GameDesignSettingsAuthorityClient(endpoints, grpc, new FailingGrpcChannelFactory());
+        new GameDesignSettingsAuthorityClient(
+            endpoints, grpc, new FailingGrpcChannelFactory(), BlockingGrpcStubCustomizer.noop());
 
     client.init();
 
@@ -80,7 +83,13 @@ class GameDesignSettingsAuthorityClientTest {
 
     GameDesignSettingsAuthorityClient client =
         new TestGameDesignSettingsAuthorityClient(
-            endpoints, grpc, new PassingGrpcChannelFactory(), clock, Duration.ofSeconds(5), stub);
+            endpoints,
+            grpc,
+            new PassingGrpcChannelFactory(),
+            clock,
+            Duration.ofSeconds(5),
+            BlockingGrpcStubCustomizer.noop(),
+            stub);
 
     client.init();
 
@@ -94,6 +103,38 @@ class GameDesignSettingsAuthorityClientTest {
     assertThat(cached).isEqualTo(first);
     assertThat(refreshed.tenantOverrides().movement().postMoveLookEnabled()).isFalse();
     assertThat(afterInvalidate.tenantOverrides().movement().postMoveLookEnabled()).isTrue();
+  }
+
+  @Test
+  void buildStubAppliesInjectedStubCustomizer() {
+    ServiceEndpointsProperties endpoints = new ServiceEndpointsProperties();
+    CommonGrpcClientProperties grpc = new CommonGrpcClientProperties();
+    grpc.setPlaintext(true);
+    GameDesignServiceGrpc.GameDesignServiceBlockingStub stub =
+        mock(GameDesignServiceGrpc.GameDesignServiceBlockingStub.class);
+    AtomicReference<GameDesignServiceGrpc.GameDesignServiceBlockingStub> customized =
+        new AtomicReference<>();
+    BlockingGrpcStubCustomizer stubCustomizer =
+        new BlockingGrpcStubCustomizer() {
+          @Override
+          public <T extends io.grpc.stub.AbstractStub<T>> T customize(T candidate) {
+            customized.set((GameDesignServiceGrpc.GameDesignServiceBlockingStub) candidate);
+            return candidate;
+          }
+        };
+    TestGameDesignSettingsAuthorityClient client =
+        new TestGameDesignSettingsAuthorityClient(
+            endpoints,
+            grpc,
+            new PassingGrpcChannelFactory(),
+            Clock.systemUTC(),
+            Duration.ofSeconds(5),
+            stubCustomizer,
+            stub);
+
+    client.buildStub(mock(ManagedChannel.class));
+
+    assertThat(customized.get()).isSameAs(stub);
   }
 
   private static final class FailingGrpcChannelFactory extends GrpcChannelFactory {
@@ -123,15 +164,16 @@ class GameDesignSettingsAuthorityClientTest {
         GrpcChannelFactory channelFactory,
         Clock clock,
         Duration cacheTtl,
+        BlockingGrpcStubCustomizer stubCustomizer,
         GameDesignServiceGrpc.GameDesignServiceBlockingStub stub) {
-      super(endpoints, tlsProps, channelFactory, clock, cacheTtl);
+      super(endpoints, tlsProps, channelFactory, stubCustomizer, clock, cacheTtl);
       this.stub = stub;
     }
 
     @Override
     protected GameDesignServiceGrpc.GameDesignServiceBlockingStub buildStub(
         ManagedChannel channel) {
-      return stub;
+      return applyStubCustomizer(stub);
     }
   }
 

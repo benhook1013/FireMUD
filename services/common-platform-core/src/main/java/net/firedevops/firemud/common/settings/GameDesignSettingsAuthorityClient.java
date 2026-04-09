@@ -10,6 +10,7 @@ import java.util.concurrent.TimeUnit;
 import javax.net.ssl.SSLException;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.AbstractReloadingBlockingGrpcClient;
+import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.gamedesign.v1.GameDesignServiceGrpc;
@@ -29,17 +30,24 @@ public class GameDesignSettingsAuthorityClient
   public GameDesignSettingsAuthorityClient(
       ServiceEndpointsProperties endpoints,
       CommonGrpcClientProperties tlsProps,
-      GrpcChannelFactory channelFactory) {
-    this(endpoints, tlsProps, channelFactory, Clock.systemUTC(), DEFAULT_CACHE_TTL);
+      GrpcChannelFactory channelFactory,
+      BlockingGrpcStubCustomizer stubCustomizer) {
+    this(endpoints, tlsProps, channelFactory, stubCustomizer, Clock.systemUTC(), DEFAULT_CACHE_TTL);
   }
 
   GameDesignSettingsAuthorityClient(
       ServiceEndpointsProperties endpoints,
       CommonGrpcClientProperties tlsProps,
       GrpcChannelFactory channelFactory,
+      BlockingGrpcStubCustomizer stubCustomizer,
       Clock clock,
       Duration cacheTtl) {
-    super(endpoints, tlsProps, channelFactory, GameDesignSettingsAuthorityClient.class);
+    super(
+        endpoints,
+        tlsProps,
+        channelFactory,
+        stubCustomizer,
+        GameDesignSettingsAuthorityClient.class);
     this.clock = clock;
     this.cacheTtl = cacheTtl;
   }
@@ -128,7 +136,8 @@ public class GameDesignSettingsAuthorityClient
   @Override
   protected GameDesignServiceGrpc.GameDesignServiceBlockingStub buildStub(
       io.grpc.ManagedChannel channel) {
-    return GameDesignServiceGrpc.newBlockingStub(channel).withCompression("gzip");
+    return applyStubCustomizer(
+        GameDesignServiceGrpc.newBlockingStub(channel).withCompression("gzip"));
   }
 
   private static Long normalizeGameInstanceId(Long gameInstanceId) {
