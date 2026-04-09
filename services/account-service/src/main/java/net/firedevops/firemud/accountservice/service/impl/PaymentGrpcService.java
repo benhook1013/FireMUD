@@ -18,6 +18,7 @@ import net.firedevops.firemud.accountservice.service.PaymentService;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.grpc.server.service.GrpcService;
 
 @GrpcService
@@ -30,6 +31,7 @@ public class PaymentGrpcService extends PaymentServiceGrpc.PaymentServiceImplBas
     this(paymentService, null);
   }
 
+  @Autowired
   public PaymentGrpcService(PaymentService paymentService, MeterRegistry meterRegistry) {
     this.paymentService = paymentService;
     this.meterRegistry = meterRegistry;

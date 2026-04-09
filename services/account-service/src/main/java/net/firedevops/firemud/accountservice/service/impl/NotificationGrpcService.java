@@ -12,6 +12,7 @@ import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.common.security.AdminRoleGuard;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.grpc.server.service.GrpcService;
 
 @GrpcService
@@ -24,6 +25,7 @@ public class NotificationGrpcService extends NotificationServiceGrpc.Notificatio
     this(notificationService, null);
   }
 
+  @Autowired
   public NotificationGrpcService(
       NotificationService notificationService, MeterRegistry meterRegistry) {
     this.notificationService = notificationService;

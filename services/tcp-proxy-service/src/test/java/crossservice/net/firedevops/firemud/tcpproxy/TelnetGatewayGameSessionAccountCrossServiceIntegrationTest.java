@@ -1233,7 +1233,8 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     GameInstanceService stubGameInstanceService() {
       return new GameInstanceService() {
         @Override
-        public GameInstanceDto startSession(StartSessionRequest request) {
+        public GameInstanceDto startSession(
+            StartSessionRequest request, boolean replaceExistingFirst) {
           return new GameInstanceDto(
               request.ownerAccountId(),
               request.tenantId(),

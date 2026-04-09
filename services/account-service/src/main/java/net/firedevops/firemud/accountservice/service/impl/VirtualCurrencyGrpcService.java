@@ -15,6 +15,7 @@ import net.firedevops.firemud.accountservice.service.VirtualCurrencyService;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.grpc.server.service.GrpcService;
 
 @GrpcService
@@ -33,6 +34,7 @@ public class VirtualCurrencyGrpcService
     this(currencyService, null);
   }
 
+  @Autowired
   public VirtualCurrencyGrpcService(
       VirtualCurrencyService currencyService, MeterRegistry meterRegistry) {
     this.currencyService = currencyService;
