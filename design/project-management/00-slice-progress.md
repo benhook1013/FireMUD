@@ -11,23 +11,23 @@ It intentionally omits completed slices and uses the individual slice docs as th
 These are narrow enough to implement now and unblock the current runtime/platform direction.
 
 1. [02.2.1 Session Start Admission Ordering and IP-Limit Safety](./vertical-slices/02.2.1-task-list-session-start-admission-ordering-and-ip-limit-safety-vertical-slice.md)
-   Remaining: decide whether any non-gRPC/operator path should ever become a separate canonical admission seam beyond the now-hardened gameplay gRPC path.
+   Remaining: finish the last admission-ordering edge cases so rejected replacement starts never tear down a still-valid live session.
 2. [02.18.2 Internal Blocking gRPC Auth Propagation](./vertical-slices/02.18.2-task-list-internal-grpc-auth-propagation-vertical-slice.md)
    Remaining: finish the caller-side auth propagation seam for secured internal blocking clients.
 3. [02.14.4 Metrics Cardinality and Label Policy Hardening](./vertical-slices/02.14.4-task-list-metrics-cardinality-and-label-policy-hardening-vertical-slice.md)
-   Remaining: continue the repo-wide audit and codify the canonical allowlist/denylist now that the first gameplay/session counters and retry-queue gauges have been normalized.
+   Remaining: continue the repo-wide audit and codify the canonical allowlist/denylist now that gameplay/session counters and retry-queue gauges have been normalized.
 4. [06.4.1 Safe Item Transfer and Handoff Semantics](./vertical-slices/06.4.1-task-list-safe-item-transfer-and-handoff-semantics-vertical-slice.md)
-   Remaining: turn the now-settled guarded handoff design into concrete transfer mutation rules and proofs.
+   Remaining: finish explicit guarded-handoff coverage and audit semantics across the remaining item-mutation paths.
 5. [06.3 Replace Aggregated Item Stacks With Distinct Item Instances](./vertical-slices/06.3-task-list-container-item-instance-identity-vertical-slice.md)
    Remaining: explicit authored stackability and stack-compatibility rules on top of the now-live item-instance model.
 6. [06.4 Unified Item Holder and Transfer Model](./vertical-slices/06.4-task-list-unified-item-holder-and-transfer-model-vertical-slice.md)
-   Remaining: finish the shared transfer contract and the remaining holder-policy cleanup.
+   Remaining: finish the shared transfer contract, shared transfer audit semantics, and the remaining holder-policy cleanup.
 7. [02.18.3 Workflow Transaction Boundary Hardening](./vertical-slices/02.18.3-task-list-workflow-transaction-boundary-hardening-vertical-slice.md)
    Remaining: reduce the remaining “hold DB transaction open across external calls” cases without regressing runtime-state safety.
 8. [02.18.5 gRPC App Error Consistency Hardening](./vertical-slices/02.18.5-task-list-grpc-app-error-consistency-hardening-vertical-slice.md)
    Remaining: finish the visible outliers so application failures consistently stay in-band as `ErrorDetail`.
 9. [02.18.6 Tick Scheduler Backpressure and Merge Semantics](./vertical-slices/02.18.6-task-list-tick-scheduler-backpressure-and-merge-semantics-vertical-slice.md)
-   Remaining: finish the observability and remaining merge/skip/rejection semantics on top of the newly bounded fan-out foundation.
+   Remaining: finish the observability, remaining merge/skip/rejection semantics, and keep Redis tick namespaces isolated across tick domains.
 
 ### 2. Active architecture follow-through
 

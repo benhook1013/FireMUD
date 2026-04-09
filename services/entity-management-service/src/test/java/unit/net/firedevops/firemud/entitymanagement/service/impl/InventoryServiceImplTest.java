@@ -36,7 +36,8 @@ class InventoryServiceImplTest {
             characterRepo,
             itemRepo,
             visibleRefAllocator,
-            new ItemTransferSupport());
+            new ItemTransferSupport(),
+            new ContainerHolderSyncSupport(containerInstanceRepo));
 
     Character character = character(1L, 11L);
     Item item = item(2L, 11L, "Torch", true, null);
@@ -79,7 +80,8 @@ class InventoryServiceImplTest {
             characterRepo,
             itemRepo,
             visibleRefAllocator,
-            new ItemTransferSupport());
+            new ItemTransferSupport(),
+            new ContainerHolderSyncSupport(containerInstanceRepo));
 
     Character character = character(1L, 11L);
     Item item = item(2L, 11L, "Torch", false, null);
@@ -124,7 +126,8 @@ class InventoryServiceImplTest {
             characterRepo,
             itemRepo,
             visibleRefAllocator,
-            new ItemTransferSupport());
+            new ItemTransferSupport(),
+            new ContainerHolderSyncSupport(containerInstanceRepo));
 
     when(characterRepo.findByIdAndTenantId(1L, 1L)).thenReturn(Optional.of(character(1L, 1L)));
     when(itemRepo.findByIdAndTenantId(2L, 1L)).thenReturn(Optional.empty());
@@ -147,7 +150,8 @@ class InventoryServiceImplTest {
             characterRepo,
             itemRepo,
             visibleRefAllocator,
-            new ItemTransferSupport());
+            new ItemTransferSupport(),
+            new ContainerHolderSyncSupport(containerInstanceRepo));
 
     Character character = character(1L, 1L);
     Item item = item(2L, 1L, "Torch", false, null);
@@ -186,7 +190,8 @@ class InventoryServiceImplTest {
             characterRepo,
             itemRepo,
             visibleRefAllocator,
-            new ItemTransferSupport());
+            new ItemTransferSupport(),
+            new ContainerHolderSyncSupport(containerInstanceRepo));
 
     Character character = character(1L, 1L);
     Item item = item(2L, 1L, "Torch", false, null);
@@ -219,7 +224,8 @@ class InventoryServiceImplTest {
             characterRepo,
             itemRepo,
             visibleRefAllocator,
-            new ItemTransferSupport());
+            new ItemTransferSupport(),
+            new ContainerHolderSyncSupport(containerInstanceRepo));
 
     Character character = character(1L, 1L);
     Item item = item(2L, 1L, "Torch", false, null);

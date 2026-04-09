@@ -29,6 +29,7 @@ public class InventoryServiceImpl implements InventoryService {
   private final ItemRepository itemRepository;
   private final ItemVisibleRefAllocator itemVisibleRefAllocator;
   private final ItemTransferSupport itemTransferSupport;
+  private final ContainerHolderSyncSupport containerHolderSyncSupport;
 
   @Override
   @Transactional(readOnly = true)
@@ -165,7 +166,7 @@ public class InventoryServiceImpl implements InventoryService {
       instance.setVisibleRef(visibleRef.value());
       ItemInstance saved = itemInstanceRepository.save(instance);
       if (item.isContainer()) {
-        createContainerInstance(saved);
+        containerHolderSyncSupport.ensureSynced(saved);
       }
       created.add(saved);
     }
@@ -244,7 +245,7 @@ public class InventoryServiceImpl implements InventoryService {
           itemTransferSupport.inventory(character.getTenantId(), character.getId()),
           itemTransferSupport.room(gameInstanceId, roomInstanceId));
       itemInstanceRepository.save(instance);
-      syncContainerHolder(instance);
+      containerHolderSyncSupport.ensureSynced(instance);
     }
   }
 
@@ -256,7 +257,7 @@ public class InventoryServiceImpl implements InventoryService {
               character.getTenantId(), instance.getGameInstanceId(), instance.getRoomInstanceId()),
           itemTransferSupport.inventory(character));
       itemInstanceRepository.save(instance);
-      syncContainerHolder(instance);
+      containerHolderSyncSupport.ensureSynced(instance);
     }
   }
 
@@ -267,36 +268,6 @@ public class InventoryServiceImpl implements InventoryService {
           .ifPresent(containerInstanceRepository::delete);
     }
     itemInstanceRepository.delete(instance);
-  }
-
-  private ContainerInstance createContainerInstance(ItemInstance itemInstance) {
-    ContainerInstance containerInstance = new ContainerInstance();
-    containerInstance.setTenantId(itemInstance.getTenantId());
-    containerInstance.setCharacter(itemInstance.getCharacter());
-    containerInstance.setEquipmentSlot(itemInstance.getEquipmentSlot());
-    containerInstance.setGameInstanceId(itemInstance.getGameInstanceId());
-    containerInstance.setRoomInstanceId(itemInstance.getRoomInstanceId());
-    containerInstance.setItem(itemInstance.getItem());
-    containerInstance.setItemInstance(itemInstance);
-    return containerInstanceRepository.save(containerInstance);
-  }
-
-  private void syncContainerHolder(ItemInstance itemInstance) {
-    if (itemInstance.getItem() == null || !itemInstance.getItem().isContainer()) {
-      return;
-    }
-    ContainerInstance containerInstance =
-        containerInstanceRepository
-            .findByItemInstance_Id(itemInstance.getId())
-            .orElseGet(() -> createContainerInstance(itemInstance));
-    containerInstance.setTenantId(itemInstance.getTenantId());
-    containerInstance.setCharacter(itemInstance.getCharacter());
-    containerInstance.setEquipmentSlot(itemInstance.getEquipmentSlot());
-    containerInstance.setGameInstanceId(itemInstance.getGameInstanceId());
-    containerInstance.setRoomInstanceId(itemInstance.getRoomInstanceId());
-    containerInstance.setItem(itemInstance.getItem());
-    containerInstance.setItemInstance(itemInstance);
-    containerInstanceRepository.save(containerInstance);
   }
 
   private boolean hasContainerInstanceId(ItemInstance itemInstance, long containerInstanceId) {

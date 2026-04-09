@@ -27,6 +27,7 @@ public class ContainerServiceImpl implements ContainerService {
   private final CharacterRepository characterRepository;
   private final ItemRepository itemRepository;
   private final ItemTransferSupport itemTransferSupport;
+  private final ContainerHolderSyncSupport containerHolderSyncSupport;
 
   @Override
   @Transactional(readOnly = true)
@@ -80,7 +81,7 @@ public class ContainerServiceImpl implements ContainerService {
           itemTransferSupport.inventory(tenantId, characterId),
           itemTransferSupport.container(containerInstance));
       itemInstanceRepository.save(instance);
-      syncNestedContainerHolder(instance);
+      containerHolderSyncSupport.requireExistingAndSync(instance);
     }
     return toMutationDto(moved.get(0), quantity);
   }
@@ -111,7 +112,7 @@ public class ContainerServiceImpl implements ContainerService {
           itemTransferSupport.container(tenantId, containerInstance.getId()),
           itemTransferSupport.inventory(character));
       itemInstanceRepository.save(instance);
-      syncNestedContainerHolder(instance);
+      containerHolderSyncSupport.requireExistingAndSync(instance);
     }
     return toInventoryMutationDto(moved.get(0), quantity);
   }
@@ -176,22 +177,6 @@ public class ContainerServiceImpl implements ContainerService {
       throw new IllegalArgumentException("Item is not a container");
     }
     return containerInstance;
-  }
-
-  private void syncNestedContainerHolder(ItemInstance itemInstance) {
-    if (itemInstance.getItem() == null || !itemInstance.getItem().isContainer()) {
-      return;
-    }
-    ContainerInstance nested =
-        containerInstanceRepository
-            .findByItemInstance_Id(itemInstance.getId())
-            .orElseThrow(() -> new IllegalArgumentException("Container instance not found"));
-    nested.setTenantId(itemInstance.getTenantId());
-    nested.setCharacter(itemInstance.getCharacter());
-    nested.setEquipmentSlot(itemInstance.getEquipmentSlot());
-    nested.setGameInstanceId(itemInstance.getGameInstanceId());
-    nested.setRoomInstanceId(itemInstance.getRoomInstanceId());
-    containerInstanceRepository.save(nested);
   }
 
   private ContainerContentEntryDto toDto(ItemInstance instance) {

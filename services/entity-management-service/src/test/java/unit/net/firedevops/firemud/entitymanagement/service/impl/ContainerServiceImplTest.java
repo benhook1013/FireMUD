@@ -34,7 +34,8 @@ class ContainerServiceImplTest {
             itemInstanceRepo,
             characterRepo,
             itemRepo,
-            new ItemTransferSupport());
+            new ItemTransferSupport(),
+            new ContainerHolderSyncSupport(containerInstanceRepo));
 
     Character character = character(7L, 1L);
     Item container = item(99L, 1L, "Old Chest", true);
@@ -76,7 +77,8 @@ class ContainerServiceImplTest {
             itemInstanceRepo,
             characterRepo,
             itemRepo,
-            new ItemTransferSupport());
+            new ItemTransferSupport(),
+            new ContainerHolderSyncSupport(containerInstanceRepo));
 
     Character character = character(1L, 1L);
     Item container = item(2L, 1L, "Chest", true);
@@ -120,7 +122,8 @@ class ContainerServiceImplTest {
             itemInstanceRepo,
             characterRepo,
             itemRepo,
-            new ItemTransferSupport());
+            new ItemTransferSupport(),
+            new ContainerHolderSyncSupport(containerInstanceRepo));
 
     Character character = character(1L, 1L);
     Item container = item(2L, 1L, "Chest", true);
@@ -161,7 +164,8 @@ class ContainerServiceImplTest {
             itemInstanceRepo,
             characterRepo,
             itemRepo,
-            new ItemTransferSupport());
+            new ItemTransferSupport(),
+            new ContainerHolderSyncSupport(containerInstanceRepo));
 
     Character character = character(1L, 1L);
     Item container = item(2L, 1L, "Chest", true);
@@ -205,7 +209,8 @@ class ContainerServiceImplTest {
             itemInstanceRepo,
             characterRepo,
             itemRepo,
-            new ItemTransferSupport());
+            new ItemTransferSupport(),
+            new ContainerHolderSyncSupport(containerInstanceRepo));
 
     Character character = character(1L, 1L);
     Item container = item(2L, 1L, "Chest", true);
@@ -244,7 +249,8 @@ class ContainerServiceImplTest {
             itemInstanceRepo,
             characterRepo,
             itemRepo,
-            new ItemTransferSupport());
+            new ItemTransferSupport(),
+            new ContainerHolderSyncSupport(containerInstanceRepo));
 
     Character character = character(1L, 1L);
     Item chest = item(2L, 1L, "Chest", true);
@@ -282,7 +288,8 @@ class ContainerServiceImplTest {
             itemInstanceRepo,
             characterRepo,
             itemRepo,
-            new ItemTransferSupport());
+            new ItemTransferSupport(),
+            new ContainerHolderSyncSupport(containerInstanceRepo));
 
     Character character = character(1L, 1L);
     Item chest = item(2L, 1L, "Chest", true);
@@ -326,7 +333,8 @@ class ContainerServiceImplTest {
             itemInstanceRepo,
             characterRepo,
             itemRepo,
-            new ItemTransferSupport());
+            new ItemTransferSupport(),
+            new ContainerHolderSyncSupport(containerInstanceRepo));
 
     Character character = character(1L, 1L);
     Item chest = item(2L, 1L, "Chest", true);

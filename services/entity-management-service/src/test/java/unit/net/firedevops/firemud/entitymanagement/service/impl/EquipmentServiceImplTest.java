@@ -30,7 +30,12 @@ class EquipmentServiceImplTest {
     ItemRepository itemRepo = Mockito.mock(ItemRepository.class);
     EquipmentServiceImpl service =
         new EquipmentServiceImpl(
-            itemInstanceRepo, containerInstanceRepo, charRepo, itemRepo, new ItemTransferSupport());
+            itemInstanceRepo,
+            containerInstanceRepo,
+            charRepo,
+            itemRepo,
+            new ItemTransferSupport(),
+            new ContainerHolderSyncSupport(containerInstanceRepo));
 
     Character character = character(1L, 11L);
     Item item = item(2L, 11L, "Leather Cap", true, "HEAD");
@@ -65,7 +70,12 @@ class EquipmentServiceImplTest {
     ItemRepository itemRepo = Mockito.mock(ItemRepository.class);
     EquipmentServiceImpl service =
         new EquipmentServiceImpl(
-            itemInstanceRepo, containerInstanceRepo, charRepo, itemRepo, new ItemTransferSupport());
+            itemInstanceRepo,
+            containerInstanceRepo,
+            charRepo,
+            itemRepo,
+            new ItemTransferSupport(),
+            new ContainerHolderSyncSupport(containerInstanceRepo));
 
     Character character = character(1L, 1L);
     Item item = item(2L, 1L, "Leather Cap", true, "head");
@@ -106,7 +116,12 @@ class EquipmentServiceImplTest {
     ItemRepository itemRepo = Mockito.mock(ItemRepository.class);
     EquipmentServiceImpl service =
         new EquipmentServiceImpl(
-            itemInstanceRepo, containerInstanceRepo, charRepo, itemRepo, new ItemTransferSupport());
+            itemInstanceRepo,
+            containerInstanceRepo,
+            charRepo,
+            itemRepo,
+            new ItemTransferSupport(),
+            new ContainerHolderSyncSupport(containerInstanceRepo));
 
     Character character = character(1L, 1L);
     Item item = item(2L, 1L, "Leather Cap", true, "head");
@@ -137,7 +152,12 @@ class EquipmentServiceImplTest {
     ItemRepository itemRepo = Mockito.mock(ItemRepository.class);
     EquipmentServiceImpl service =
         new EquipmentServiceImpl(
-            itemInstanceRepo, containerInstanceRepo, charRepo, itemRepo, new ItemTransferSupport());
+            itemInstanceRepo,
+            containerInstanceRepo,
+            charRepo,
+            itemRepo,
+            new ItemTransferSupport(),
+            new ContainerHolderSyncSupport(containerInstanceRepo));
 
     Character character = character(1L, 1L);
     Item item = item(2L, 1L, "Leather Cap", true, "HEAD");

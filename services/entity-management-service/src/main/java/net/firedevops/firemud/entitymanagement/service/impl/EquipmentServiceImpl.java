@@ -26,6 +26,7 @@ public class EquipmentServiceImpl implements EquipmentService {
   private final CharacterRepository characterRepository;
   private final ItemRepository itemRepository;
   private final ItemTransferSupport itemTransferSupport;
+  private final ContainerHolderSyncSupport containerHolderSyncSupport;
 
   @Override
   @Transactional(readOnly = true)
@@ -59,7 +60,7 @@ public class EquipmentServiceImpl implements EquipmentService {
         itemTransferSupport.inventory(tenantId, characterId),
         itemTransferSupport.equipment(character, slot));
     ItemInstance saved = itemInstanceRepository.save(instance);
-    syncContainerHolder(saved);
+    containerHolderSyncSupport.ensureSynced(saved);
     return toDto(saved);
   }
 
@@ -79,7 +80,7 @@ public class EquipmentServiceImpl implements EquipmentService {
         itemTransferSupport.equipment(tenantId, characterId, normalizedSlot),
         itemTransferSupport.inventory(character));
     ItemInstance saved = itemInstanceRepository.save(instance);
-    syncContainerHolder(saved);
+    containerHolderSyncSupport.ensureSynced(saved);
     return toDto(saved);
   }
 
@@ -97,31 +98,6 @@ public class EquipmentServiceImpl implements EquipmentService {
 
   private String requireWearableSlot(Item item) {
     return requireText(item.getEquipmentSlot(), "equipmentSlot");
-  }
-
-  private void syncContainerHolder(ItemInstance itemInstance) {
-    if (itemInstance.getItem() == null || !itemInstance.getItem().isContainer()) {
-      return;
-    }
-    ContainerInstance containerInstance =
-        containerInstanceRepository
-            .findByItemInstance_Id(itemInstance.getId())
-            .orElseGet(
-                () -> {
-                  ContainerInstance created = new ContainerInstance();
-                  created.setItem(itemInstance.getItem());
-                  created.setItemInstance(itemInstance);
-                  created.setTenantId(itemInstance.getTenantId());
-                  return created;
-                });
-    containerInstance.setTenantId(itemInstance.getTenantId());
-    containerInstance.setCharacter(itemInstance.getCharacter());
-    containerInstance.setEquipmentSlot(itemInstance.getEquipmentSlot());
-    containerInstance.setGameInstanceId(itemInstance.getGameInstanceId());
-    containerInstance.setRoomInstanceId(itemInstance.getRoomInstanceId());
-    containerInstance.setItem(itemInstance.getItem());
-    containerInstance.setItemInstance(itemInstance);
-    containerInstanceRepository.save(containerInstance);
   }
 
   private CharacterEquipmentEntryDto toDto(ItemInstance instance) {
