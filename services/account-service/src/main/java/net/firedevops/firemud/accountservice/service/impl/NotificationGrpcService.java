@@ -72,6 +72,14 @@ public class NotificationGrpcService extends NotificationServiceGrpc.Notificatio
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
+    } catch (Exception ex) {
+      SendNotificationResponse response =
+          SendNotificationResponse.newBuilder()
+              .setSuccess(false)
+              .setError(GrpcAppErrors.internal(meterRegistry, logger, "SendNotification", ex))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
     }
   }
 }

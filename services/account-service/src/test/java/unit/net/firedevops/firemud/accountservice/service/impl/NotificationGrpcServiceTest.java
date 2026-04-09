@@ -87,6 +87,40 @@ class NotificationGrpcServiceTest {
   }
 
   @Test
+  void sendNotificationRuntimeFailureReturnsInternalErrorDetail() {
+    NotificationService notificationService = Mockito.mock(NotificationService.class);
+    Mockito.doThrow(new IllegalStateException("boom"))
+        .when(notificationService)
+        .sendNotification(1L, 2L, "hi");
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    NotificationGrpcService service =
+        new NotificationGrpcService(notificationService, new SimpleMeterRegistry());
+
+    AtomicReference<SendNotificationResponse> ref = new AtomicReference<>();
+    service.sendNotification(
+        SendNotificationRequest.newBuilder()
+            .setTenantId("1")
+            .setAccountId("2")
+            .setMessage("hi")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(SendNotificationResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(ref.get());
+    assertEquals("INTERNAL", ref.get().getError().getCode());
+  }
+
+  @Test
   void sendNotificationRequiresAdminRole() {
     NotificationService notificationService = Mockito.mock(NotificationService.class);
     SessionContext.setContext("1", List.of("player"), Map.of());

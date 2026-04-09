@@ -2,6 +2,7 @@ package net.firedevops.firemud.accountservice.service.impl;
 
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
+import io.micrometer.core.instrument.MeterRegistry;
 import net.firedevops.firemud.account.v1.CreateDonationRequest;
 import net.firedevops.firemud.account.v1.CreateDonationResponse;
 import net.firedevops.firemud.account.v1.CreatePaymentIntentRequest;
@@ -14,14 +15,24 @@ import net.firedevops.firemud.account.v1.RefundPaymentResponse;
 import net.firedevops.firemud.accountservice.dto.PaymentIntentDto;
 import net.firedevops.firemud.accountservice.dto.SubscriptionDto;
 import net.firedevops.firemud.accountservice.service.PaymentService;
+import net.firedevops.firemud.common.grpc.GrpcAppErrors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.grpc.server.service.GrpcService;
 
 @GrpcService
 public class PaymentGrpcService extends PaymentServiceGrpc.PaymentServiceImplBase {
+  private static final Logger logger = LoggerFactory.getLogger(PaymentGrpcService.class);
   private final PaymentService paymentService;
+  private final MeterRegistry meterRegistry;
 
   public PaymentGrpcService(PaymentService paymentService) {
+    this(paymentService, null);
+  }
+
+  public PaymentGrpcService(PaymentService paymentService, MeterRegistry meterRegistry) {
     this.paymentService = paymentService;
+    this.meterRegistry = meterRegistry;
   }
 
   @Override
@@ -46,10 +57,19 @@ public class PaymentGrpcService extends PaymentServiceGrpc.PaymentServiceImplBas
       CreatePaymentIntentResponse response =
           CreatePaymentIntentResponse.newBuilder()
               .setError(
-                  net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
-                      .setCode("INVALID_ARGUMENT")
-                      .setMessage(ex.getMessage())
-                      .build())
+                  GrpcAppErrors.error(
+                      meterRegistry,
+                      logger,
+                      "CreatePaymentIntent",
+                      "INVALID_ARGUMENT",
+                      ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      CreatePaymentIntentResponse response =
+          CreatePaymentIntentResponse.newBuilder()
+              .setError(GrpcAppErrors.internal(meterRegistry, logger, "CreatePaymentIntent", ex))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -75,10 +95,19 @@ public class PaymentGrpcService extends PaymentServiceGrpc.PaymentServiceImplBas
       CreateSubscriptionResponse response =
           CreateSubscriptionResponse.newBuilder()
               .setError(
-                  net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
-                      .setCode("INVALID_ARGUMENT")
-                      .setMessage(ex.getMessage())
-                      .build())
+                  GrpcAppErrors.error(
+                      meterRegistry,
+                      logger,
+                      "CreateSubscription",
+                      "INVALID_ARGUMENT",
+                      ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      CreateSubscriptionResponse response =
+          CreateSubscriptionResponse.newBuilder()
+              .setError(GrpcAppErrors.internal(meterRegistry, logger, "CreateSubscription", ex))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -106,10 +135,15 @@ public class PaymentGrpcService extends PaymentServiceGrpc.PaymentServiceImplBas
       CreateDonationResponse response =
           CreateDonationResponse.newBuilder()
               .setError(
-                  net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
-                      .setCode("INVALID_ARGUMENT")
-                      .setMessage(ex.getMessage())
-                      .build())
+                  GrpcAppErrors.error(
+                      meterRegistry, logger, "CreateDonation", "INVALID_ARGUMENT", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      CreateDonationResponse response =
+          CreateDonationResponse.newBuilder()
+              .setError(GrpcAppErrors.internal(meterRegistry, logger, "CreateDonation", ex))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -131,10 +165,16 @@ public class PaymentGrpcService extends PaymentServiceGrpc.PaymentServiceImplBas
           RefundPaymentResponse.newBuilder()
               .setSuccess(false)
               .setError(
-                  net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
-                      .setCode("INVALID_ARGUMENT")
-                      .setMessage(ex.getMessage())
-                      .build())
+                  GrpcAppErrors.error(
+                      meterRegistry, logger, "RefundPayment", "INVALID_ARGUMENT", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      RefundPaymentResponse response =
+          RefundPaymentResponse.newBuilder()
+              .setSuccess(false)
+              .setError(GrpcAppErrors.internal(meterRegistry, logger, "RefundPayment", ex))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
