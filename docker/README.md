@@ -15,3 +15,11 @@ Stop and remove the stack with:
 ```bash
 docker compose -f docker/docker-compose.yml -f docker/docker-compose.override.yml down
 ```
+
+For canonical local smoke/bootstrap proof, prefer the repo scripts instead of ad hoc compose sequences:
+
+```bash
+dev-tools/verify-fresh-bootstrap.sh
+dev-tools/verify-restart-state.sh
+SMOKE_IMAGE_TAG=<tag> dev-tools/verify-smoke-images.sh
+```
