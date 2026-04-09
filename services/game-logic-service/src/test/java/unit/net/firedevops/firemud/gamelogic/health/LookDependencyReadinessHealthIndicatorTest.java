@@ -17,8 +17,8 @@ import org.springframework.boot.health.contributor.Health;
 import org.springframework.boot.health.contributor.Status;
 
 class LookDependencyReadinessHealthIndicatorTest {
-  private static final String PROBE_TENANT_ID = "__readiness__";
-  private static final String PROBE_ROOM_ID = "__readiness_room__";
+  private static final String PROBE_TENANT_ID = "0";
+  private static final String PROBE_ROOM_ID = "0";
 
   @Test
   void healthReturnsUpWhenLookDependenciesRespondToOperationShapedChecks() {

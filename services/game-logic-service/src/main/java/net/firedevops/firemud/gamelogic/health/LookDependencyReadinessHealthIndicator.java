@@ -11,8 +11,8 @@ import org.springframework.stereotype.Component;
 public class LookDependencyReadinessHealthIndicator implements HealthIndicator {
   private static final String COMPONENT = "game-logic-service";
   private static final String CONTRACT = "ResolveLook";
-  private static final String PROBE_TENANT_ID = "__readiness__";
-  private static final String PROBE_ROOM_ID = "__readiness_room__";
+  private static final String PROBE_TENANT_ID = "0";
+  private static final String PROBE_ROOM_ID = "0";
 
   private final ResolveLookPathProbe resolveLookPathProbe;
   private final ReadinessTransitionTracker readinessTransitionTracker;
