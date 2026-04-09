@@ -64,6 +64,7 @@ message InventoryItem {
   int32 quantity = 4;
   string container_instance_id = 5;
   string item_instance_id = 6;
+  string visible_ref = 7;
 }
 
 message EquipmentItem {
@@ -75,6 +76,7 @@ message EquipmentItem {
   string item_description = 6;
   string container_instance_id = 7;
   string item_instance_id = 8;
+  string visible_ref = 9;
 }
 
 message ListEquipmentRequest {
@@ -119,6 +121,7 @@ message ContainerItem {
   string item_description = 6;
   int32 quantity = 7;
   string item_instance_id = 8;
+  string visible_ref = 9;
 }
 
 message ListContainerContentsRequest {
@@ -169,6 +172,7 @@ message RoomGroundInventoryItem {
   int32 quantity = 7;
   string container_instance_id = 8;
   string item_instance_id = 9;
+  string visible_ref = 10;
 }
 
 message PickupItemFromRoomRequest {
@@ -268,6 +272,7 @@ message RoomEntity {
   int32 vision_priority = 6;
   ReloadHint reload_hint = 7;
   bool visible = 8;
+  string visible_ref = 9;
 }
 
 message ListRoomEntitiesResponse {

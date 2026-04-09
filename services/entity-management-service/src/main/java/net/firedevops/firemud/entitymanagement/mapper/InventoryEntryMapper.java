@@ -14,5 +14,6 @@ public interface InventoryEntryMapper {
   @Mapping(target = "itemDescription", source = "item.description")
   @Mapping(target = "itemInstanceId", source = "itemInstanceId")
   @Mapping(target = "containerInstanceId", source = "containerInstanceId")
+  @Mapping(target = "visibleRef", source = "visibleRef")
   InventoryEntryDto toDto(InventoryEntry entity);
 }

@@ -10,4 +10,5 @@ public record InventoryEntryDto(
     String itemDescription,
     int quantity,
     Long itemInstanceId,
-    Long containerInstanceId) {}
+    Long containerInstanceId,
+    String visibleRef) {}

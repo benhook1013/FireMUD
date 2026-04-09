@@ -849,6 +849,9 @@ public class EntityManagementGrpcService
     if (dto.containerInstanceId() != null) {
       builder.setContainerInstanceId(String.valueOf(dto.containerInstanceId()));
     }
+    if (dto.visibleRef() != null && !dto.visibleRef().isBlank()) {
+      builder.setVisibleRef(dto.visibleRef());
+    }
     return builder.build();
   }
 
@@ -867,6 +870,9 @@ public class EntityManagementGrpcService
     if (dto.containerInstanceId() != null) {
       builder.setContainerInstanceId(String.valueOf(dto.containerInstanceId()));
     }
+    if (dto.visibleRef() != null && !dto.visibleRef().isBlank()) {
+      builder.setVisibleRef(dto.visibleRef());
+    }
     return builder.build();
   }
 
@@ -880,6 +886,7 @@ public class EntityManagementGrpcService
         .setItemDescription(dto.itemDescription() == null ? "" : dto.itemDescription())
         .setQuantity(dto.quantity())
         .setItemInstanceId(dto.itemInstanceId() == null ? "" : String.valueOf(dto.itemInstanceId()))
+        .setVisibleRef(dto.visibleRef() == null ? "" : dto.visibleRef())
         .build();
   }
 
@@ -900,6 +907,9 @@ public class EntityManagementGrpcService
     if (dto.containerInstanceId() != null) {
       builder.setContainerInstanceId(String.valueOf(dto.containerInstanceId()));
     }
+    if (dto.visibleRef() != null && !dto.visibleRef().isBlank()) {
+      builder.setVisibleRef(dto.visibleRef());
+    }
     return builder.build();
   }
 
@@ -913,6 +923,7 @@ public class EntityManagementGrpcService
         .setVisionPriority(dto.visionPriority())
         .setReloadHint(dto.reloadHint())
         .setVisible(dto.visible())
+        .setVisibleRef(dto.visibleRef() == null ? "" : dto.visibleRef())
         .build();
   }
 }

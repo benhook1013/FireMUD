@@ -277,13 +277,15 @@ public class ContainerCommandHandler {
         .filter(
             item ->
                 item.getItemId().equalsIgnoreCase(reference)
-                    || item.getItemName().equalsIgnoreCase(reference))
+                    || item.getItemName().equalsIgnoreCase(reference)
+                    || item.getVisibleRef().equalsIgnoreCase(reference))
         .findFirst();
   }
 
   private String formatContainerItem(ContainerItem item) {
     StringBuilder line = new StringBuilder();
     line.append("- ").append(item.getItemName());
+    appendCompactReference(line, item.getVisibleRef());
     if (item.getQuantity() > 1) {
       line.append(" x").append(item.getQuantity());
     }
@@ -308,6 +310,12 @@ public class ContainerCommandHandler {
   private String compactReferenceSuffix(InventoryItem item) {
     String compactReference = ContainerIdentitySupport.compactReference(item);
     return StringUtils.hasText(compactReference) ? " [" + compactReference + "]" : "";
+  }
+
+  private void appendCompactReference(StringBuilder line, String compactReference) {
+    if (StringUtils.hasText(compactReference)) {
+      line.append(" [").append(compactReference).append("]");
+    }
   }
 
   private String errorCode(String candidate) {

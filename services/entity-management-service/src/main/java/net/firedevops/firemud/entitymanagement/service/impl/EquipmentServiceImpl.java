@@ -132,7 +132,8 @@ public class EquipmentServiceImpl implements EquipmentService {
         instance.getItem().getName(),
         instance.getItem().getDescription(),
         instance.getId(),
-        resolveContainerInstanceId(instance));
+        resolveContainerInstanceId(instance),
+        instance.getVisibleRef());
   }
 
   private Long resolveContainerInstanceId(ItemInstance itemInstance) {

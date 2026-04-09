@@ -53,13 +53,10 @@ class ContainerIdentitySupportTest {
   @Test
   void compactReferenceUsesNormalizedNameAndInstanceSuffix() {
     InventoryItem item =
-        InventoryItem.newBuilder()
-            .setItemName("Old Chest")
-            .setContainerInstanceId("container-42")
-            .build();
+        InventoryItem.newBuilder().setItemName("Old Chest").setVisibleRef("oldchest12").build();
 
-    assertThat(ContainerIdentitySupport.compactReference(item)).isEqualTo("oldchest42");
-    assertThat(ContainerIdentitySupport.matchesReference(item, "oldchest42")).isTrue();
+    assertThat(ContainerIdentitySupport.compactReference(item)).isEqualTo("oldchest12");
+    assertThat(ContainerIdentitySupport.matchesReference(item, "oldchest12")).isTrue();
   }
 
   @Test
@@ -68,10 +65,11 @@ class ContainerIdentitySupportTest {
         RoomEntity.newBuilder()
             .setEntityId("22:77:room-7:10")
             .setDisplayName("Old Chest")
+            .setVisibleRef("oldchest12")
             .addStateFlags("container-instance:container-42")
             .build();
 
-    assertThat(ContainerIdentitySupport.compactReference(entity)).isEqualTo("oldchest42");
-    assertThat(ContainerIdentitySupport.matchesReference(entity, "oldchest42")).isTrue();
+    assertThat(ContainerIdentitySupport.compactReference(entity)).isEqualTo("oldchest12");
+    assertThat(ContainerIdentitySupport.matchesReference(entity, "oldchest12")).isTrue();
   }
 }

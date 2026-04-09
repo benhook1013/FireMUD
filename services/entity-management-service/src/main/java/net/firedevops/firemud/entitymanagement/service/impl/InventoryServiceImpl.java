@@ -27,6 +27,7 @@ public class InventoryServiceImpl implements InventoryService {
   private final ContainerInstanceRepository containerInstanceRepository;
   private final CharacterRepository characterRepository;
   private final ItemRepository itemRepository;
+  private final ItemVisibleRefAllocator itemVisibleRefAllocator;
 
   @Override
   @Transactional(readOnly = true)
@@ -148,6 +149,8 @@ public class InventoryServiceImpl implements InventoryService {
       Character character, Item item, int quantity) {
     List<ItemInstance> created = new ArrayList<>();
     for (int i = 0; i < quantity; i++) {
+      ItemVisibleRefAllocator.VisibleRef visibleRef =
+          itemVisibleRefAllocator.allocate(character.getTenantId(), item);
       ItemInstance instance = new ItemInstance();
       instance.setTenantId(character.getTenantId());
       instance.setCharacter(character);
@@ -155,6 +158,9 @@ public class InventoryServiceImpl implements InventoryService {
       instance.setGameInstanceId(null);
       instance.setRoomInstanceId(null);
       instance.setItem(item);
+      instance.setVisibleRefToken(visibleRef.token());
+      instance.setVisibleRefSequence(visibleRef.sequence());
+      instance.setVisibleRef(visibleRef.value());
       ItemInstance saved = itemInstanceRepository.save(instance);
       if (item.isContainer()) {
         createContainerInstance(saved);
@@ -304,7 +310,8 @@ public class InventoryServiceImpl implements InventoryService {
         instance.getItem().getDescription(),
         1,
         instance.getId(),
-        resolveContainerInstanceId(instance));
+        resolveContainerInstanceId(instance),
+        instance.getVisibleRef());
   }
 
   private InventoryEntryDto inventoryDtoForMutation(ItemInstance instance, int quantity) {
@@ -316,7 +323,8 @@ public class InventoryServiceImpl implements InventoryService {
         instance.getItem().getDescription(),
         quantity,
         quantity == 1 ? instance.getId() : null,
-        quantity == 1 ? resolveContainerInstanceId(instance) : null);
+        quantity == 1 ? resolveContainerInstanceId(instance) : null,
+        quantity == 1 ? instance.getVisibleRef() : null);
   }
 
   private RoomGroundInventoryEntryDto toRoomGroundDto(ItemInstance instance) {
@@ -329,7 +337,8 @@ public class InventoryServiceImpl implements InventoryService {
         instance.getItem().getDescription(),
         1,
         instance.getId(),
-        resolveContainerInstanceId(instance));
+        resolveContainerInstanceId(instance),
+        instance.getVisibleRef());
   }
 
   private RoomGroundInventoryEntryDto roomGroundDtoForMutation(
@@ -343,7 +352,8 @@ public class InventoryServiceImpl implements InventoryService {
         instance.getItem().getDescription(),
         quantity,
         quantity == 1 ? instance.getId() : null,
-        quantity == 1 ? resolveContainerInstanceId(instance) : null);
+        quantity == 1 ? resolveContainerInstanceId(instance) : null,
+        quantity == 1 ? instance.getVisibleRef() : null);
   }
 
   private Long resolveContainerInstanceId(ItemInstance itemInstance) {

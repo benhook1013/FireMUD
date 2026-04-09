@@ -20,6 +20,7 @@ public class RoomGroundInventoryEntry {
 
   @Transient @EqualsAndHashCode.Exclude @ToString.Exclude private Long itemInstanceId;
   @Transient @EqualsAndHashCode.Exclude @ToString.Exclude private Long containerInstanceId;
+  @Transient @EqualsAndHashCode.Exclude @ToString.Exclude private String visibleRef;
 
   @Version private int version;
 

@@ -21,6 +21,7 @@ public final class ContainerIdentitySupport {
   public static boolean matchesReference(InventoryItem item, String reference) {
     return matchesReference(item.getItemId(), reference)
         || matchesReference(item.getItemName(), reference)
+        || matchesReference(item.getVisibleRef(), reference)
         || matchesReference(resolveContainerInstanceId(item), reference)
         || matchesReference(compactReference(item), reference);
   }
@@ -28,6 +29,7 @@ public final class ContainerIdentitySupport {
   public static boolean matchesReference(EquipmentItem item, String reference) {
     return matchesReference(item.getItemId(), reference)
         || matchesReference(item.getItemName(), reference)
+        || matchesReference(item.getVisibleRef(), reference)
         || matchesReference(resolveContainerInstanceId(item), reference)
         || matchesReference(compactReference(item), reference)
         || matchesReference(item.getSlot(), reference);
@@ -36,24 +38,25 @@ public final class ContainerIdentitySupport {
   public static boolean matchesReference(RoomEntity entity, String reference) {
     return matchesReference(parseItemId(entity.getEntityId()), reference)
         || matchesReference(entity.getDisplayName(), reference)
+        || matchesReference(entity.getVisibleRef(), reference)
         || matchesReference(resolveContainerInstanceId(entity), reference)
         || matchesReference(compactReference(entity), reference);
   }
 
   public static String compactReference(InventoryItem item) {
-    return compactReference(item.getItemName(), item.getContainerInstanceId());
+    return item.getVisibleRef();
   }
 
   public static String compactReference(EquipmentItem item) {
-    return compactReference(item.getItemName(), item.getContainerInstanceId());
+    return item.getVisibleRef();
   }
 
   public static String compactReference(RoomEntity entity) {
-    return compactReference(entity.getDisplayName(), extractContainerInstanceId(entity));
+    return entity.getVisibleRef();
   }
 
   public static String compactReference(ContainerItem item) {
-    return compactReference(item.getItemName(), item.getContainerInstanceId());
+    return item.getVisibleRef();
   }
 
   private static String resolveContainerInstanceId(String containerInstanceId, String fallback) {
@@ -74,45 +77,6 @@ public final class ContainerIdentitySupport {
     }
     int lastColon = entityId.lastIndexOf(':');
     return lastColon < 0 ? entityId : entityId.substring(lastColon + 1);
-  }
-
-  private static String compactReference(String itemName, String containerInstanceId) {
-    if (!StringUtils.hasText(itemName) || !StringUtils.hasText(containerInstanceId)) {
-      return "";
-    }
-    String normalizedName = normalizeReferenceToken(itemName);
-    if (!StringUtils.hasText(normalizedName)) {
-      return "";
-    }
-    String suffix = extractReferenceSuffix(containerInstanceId);
-    return StringUtils.hasText(suffix) ? normalizedName + suffix : "";
-  }
-
-  private static String extractReferenceSuffix(String containerInstanceId) {
-    String digits = trailingDigits(containerInstanceId);
-    if (StringUtils.hasText(digits)) {
-      return digits;
-    }
-    return normalizeReferenceToken(containerInstanceId);
-  }
-
-  private static String trailingDigits(String value) {
-    int start = value.length();
-    while (start > 0 && Character.isDigit(value.charAt(start - 1))) {
-      start--;
-    }
-    return start < value.length() ? value.substring(start) : "";
-  }
-
-  private static String normalizeReferenceToken(String value) {
-    StringBuilder normalized = new StringBuilder();
-    for (int i = 0; i < value.length(); i++) {
-      char ch = Character.toLowerCase(value.charAt(i));
-      if (Character.isLetterOrDigit(ch)) {
-        normalized.append(ch);
-      }
-    }
-    return normalized.toString();
   }
 
   private static String resolveContainerInstanceId(RoomEntity entity) {

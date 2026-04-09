@@ -15,5 +15,6 @@ public interface RoomGroundInventoryEntryMapper {
   @Mapping(target = "itemDescription", source = "item.description")
   @Mapping(target = "itemInstanceId", source = "itemInstanceId")
   @Mapping(target = "containerInstanceId", source = "containerInstanceId")
+  @Mapping(target = "visibleRef", source = "visibleRef")
   RoomGroundInventoryEntryDto toDto(RoomGroundInventoryEntry entity);
 }

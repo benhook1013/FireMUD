@@ -28,8 +28,10 @@ class InventoryServiceImplTest {
         Mockito.mock(ContainerInstanceRepository.class);
     CharacterRepository characterRepo = Mockito.mock(CharacterRepository.class);
     ItemRepository itemRepo = Mockito.mock(ItemRepository.class);
+    ItemVisibleRefAllocator visibleRefAllocator = Mockito.mock(ItemVisibleRefAllocator.class);
     InventoryServiceImpl service =
-        new InventoryServiceImpl(itemInstanceRepo, containerInstanceRepo, characterRepo, itemRepo);
+        new InventoryServiceImpl(
+            itemInstanceRepo, containerInstanceRepo, characterRepo, itemRepo, visibleRefAllocator);
 
     Character character = character(1L, 11L);
     Item item = item(2L, 11L, "Torch", true, null);
@@ -64,8 +66,10 @@ class InventoryServiceImplTest {
         Mockito.mock(ContainerInstanceRepository.class);
     CharacterRepository characterRepo = Mockito.mock(CharacterRepository.class);
     ItemRepository itemRepo = Mockito.mock(ItemRepository.class);
+    ItemVisibleRefAllocator visibleRefAllocator = Mockito.mock(ItemVisibleRefAllocator.class);
     InventoryServiceImpl service =
-        new InventoryServiceImpl(itemInstanceRepo, containerInstanceRepo, characterRepo, itemRepo);
+        new InventoryServiceImpl(
+            itemInstanceRepo, containerInstanceRepo, characterRepo, itemRepo, visibleRefAllocator);
 
     when(characterRepo.findByIdAndTenantId(1L, 1L)).thenReturn(Optional.of(character(1L, 1L)));
     when(itemRepo.findByIdAndTenantId(2L, 1L)).thenReturn(Optional.empty());
@@ -80,8 +84,10 @@ class InventoryServiceImplTest {
         Mockito.mock(ContainerInstanceRepository.class);
     CharacterRepository characterRepo = Mockito.mock(CharacterRepository.class);
     ItemRepository itemRepo = Mockito.mock(ItemRepository.class);
+    ItemVisibleRefAllocator visibleRefAllocator = Mockito.mock(ItemVisibleRefAllocator.class);
     InventoryServiceImpl service =
-        new InventoryServiceImpl(itemInstanceRepo, containerInstanceRepo, characterRepo, itemRepo);
+        new InventoryServiceImpl(
+            itemInstanceRepo, containerInstanceRepo, characterRepo, itemRepo, visibleRefAllocator);
 
     Character character = character(1L, 1L);
     Item item = item(2L, 1L, "Torch", false, null);
@@ -112,8 +118,10 @@ class InventoryServiceImplTest {
         Mockito.mock(ContainerInstanceRepository.class);
     CharacterRepository characterRepo = Mockito.mock(CharacterRepository.class);
     ItemRepository itemRepo = Mockito.mock(ItemRepository.class);
+    ItemVisibleRefAllocator visibleRefAllocator = Mockito.mock(ItemVisibleRefAllocator.class);
     InventoryServiceImpl service =
-        new InventoryServiceImpl(itemInstanceRepo, containerInstanceRepo, characterRepo, itemRepo);
+        new InventoryServiceImpl(
+            itemInstanceRepo, containerInstanceRepo, characterRepo, itemRepo, visibleRefAllocator);
 
     Character character = character(1L, 1L);
     Item item = item(2L, 1L, "Torch", false, null);
@@ -165,6 +173,9 @@ class InventoryServiceImplTest {
     instance.setEquipmentSlot(equipmentSlot);
     instance.setGameInstanceId(gameInstanceId);
     instance.setRoomInstanceId(roomInstanceId);
+    instance.setVisibleRef("item" + id);
+    instance.setVisibleRefToken("item");
+    instance.setVisibleRefSequence(id);
     return instance;
   }
 }

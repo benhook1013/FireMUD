@@ -5,7 +5,13 @@ import lombok.Data;
 
 @Data
 @Entity
-@Table(name = "item_instances")
+@Table(
+    name = "item_instances",
+    uniqueConstraints = {
+      @UniqueConstraint(
+          name = "ux_item_instances_visible_ref",
+          columnNames = {"tenant_id", "visible_ref"})
+    })
 public class ItemInstance {
   @Id
   @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -34,6 +40,15 @@ public class ItemInstance {
   @ManyToOne(fetch = FetchType.LAZY)
   @JoinColumn(name = "item_id", nullable = false)
   private Item item;
+
+  @Column(name = "visible_ref_token", nullable = false, length = 128)
+  private String visibleRefToken;
+
+  @Column(name = "visible_ref_sequence", nullable = false)
+  private Long visibleRefSequence;
+
+  @Column(name = "visible_ref", nullable = false, length = 160)
+  private String visibleRef;
 
   @Version private int version;
 }

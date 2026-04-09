@@ -162,7 +162,8 @@ public class ContainerServiceImpl implements ContainerService {
         instance.getItem().getName(),
         instance.getItem().getDescription(),
         1,
-        instance.getId());
+        instance.getId(),
+        instance.getVisibleRef());
   }
 
   private ContainerContentEntryDto toMutationDto(ItemInstance instance, int quantity) {
@@ -174,7 +175,8 @@ public class ContainerServiceImpl implements ContainerService {
         instance.getItem().getName(),
         instance.getItem().getDescription(),
         quantity,
-        quantity == 1 ? instance.getId() : null);
+        quantity == 1 ? instance.getId() : null,
+        quantity == 1 ? instance.getVisibleRef() : null);
   }
 
   private InventoryEntryDto toInventoryMutationDto(ItemInstance instance, int quantity) {
@@ -186,7 +188,8 @@ public class ContainerServiceImpl implements ContainerService {
         instance.getItem().getDescription(),
         quantity,
         quantity == 1 ? instance.getId() : null,
-        resolveContainerInstanceId(instance));
+        resolveContainerInstanceId(instance),
+        quantity == 1 ? instance.getVisibleRef() : null);
   }
 
   private Long resolveCharacterId(ContainerInstance containerInstance) {

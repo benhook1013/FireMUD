@@ -51,7 +51,8 @@ public class RoomEntityServiceImpl implements RoomEntityService {
                             entity.getStateFlags(),
                             entity.getVisionPriority(),
                             entity.getReloadHint(),
-                            entity.isVisible()))
+                            entity.isVisible(),
+                            null))
                 .toList();
     Page<ItemInstance> roomGroundPage =
         itemInstanceRepository
@@ -85,7 +86,8 @@ public class RoomEntityServiceImpl implements RoomEntityService {
         stateFlags,
         0,
         ReloadHint.STABLE,
-        true);
+        true,
+        entry.getVisibleRef());
   }
 
   private List<String> roomGroundAffordanceFlags(ItemInstance entry) {

@@ -10,4 +10,5 @@ public record ContainerContentEntryDto(
     @NotNull String itemName,
     String itemDescription,
     int quantity,
-    Long itemInstanceId) {}
+    Long itemInstanceId,
+    String visibleRef) {}

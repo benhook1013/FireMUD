@@ -36,6 +36,7 @@ class ContainerCommandHandlerTest {
                     InventoryItem.newBuilder()
                         .setItemId("10")
                         .setItemName("Old Chest")
+                        .setVisibleRef("oldchest10")
                         .setContainerInstanceId("container-10")
                         .setQuantity(1)
                         .build())
@@ -48,6 +49,7 @@ class ContainerCommandHandlerTest {
                         .setContainerInstanceId("container-10")
                         .setItemId("99")
                         .setItemName("Torch")
+                        .setVisibleRef("torch3")
                         .setItemDescription("A small torch")
                         .setQuantity(2)
                         .build())
@@ -65,7 +67,7 @@ class ContainerCommandHandlerTest {
     assertThat(result.outputs().get(0).payload()).isInstanceOf(InventoryViewOutput.class);
     InventoryViewOutput view = (InventoryViewOutput) result.outputs().get(0).payload();
     assertThat(view.title()).isEqualTo("Container: Old Chest [oldchest10]");
-    assertThat(view.lines()).containsExactly("- Torch x2 (A small torch)");
+    assertThat(view.lines()).containsExactly("- Torch [torch3] x2 (A small torch)");
   }
 
   @Test
@@ -77,9 +79,15 @@ class ContainerCommandHandlerTest {
                     InventoryItem.newBuilder()
                         .setItemId("10")
                         .setItemName("Old Chest")
+                        .setVisibleRef("oldchest10")
                         .setContainerInstanceId("container-10")
                         .build())
-                .addItems(InventoryItem.newBuilder().setItemId("99").setItemName("Torch").build())
+                .addItems(
+                    InventoryItem.newBuilder()
+                        .setItemId("99")
+                        .setItemName("Torch")
+                        .setVisibleRef("torch3")
+                        .build())
                 .build());
     when(entityManagementClient.putItemIntoContainer("22", "911", "container-10", "99", 1))
         .thenReturn(
@@ -89,6 +97,7 @@ class ContainerCommandHandlerTest {
                         .setContainerInstanceId("container-10")
                         .setItemId("99")
                         .setItemName("Torch")
+                        .setVisibleRef("torch3")
                         .setQuantity(1)
                         .build())
                 .build());
@@ -128,6 +137,7 @@ class ContainerCommandHandlerTest {
                     InventoryItem.newBuilder()
                         .setItemId("10")
                         .setItemName("Old Chest")
+                        .setVisibleRef("oldchest10")
                         .setContainerInstanceId("container-10")
                         .build())
                 .build());
@@ -139,6 +149,7 @@ class ContainerCommandHandlerTest {
                         .setContainerInstanceId("container-10")
                         .setItemId("99")
                         .setItemName("Torch")
+                        .setVisibleRef("torch3")
                         .setQuantity(2)
                         .build())
                 .build(),

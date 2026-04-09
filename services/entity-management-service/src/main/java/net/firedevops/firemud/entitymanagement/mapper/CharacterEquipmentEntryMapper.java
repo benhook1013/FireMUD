@@ -15,5 +15,6 @@ public interface CharacterEquipmentEntryMapper {
   @Mapping(target = "itemDescription", source = "item.description")
   @Mapping(target = "itemInstanceId", source = "itemInstanceId")
   @Mapping(target = "containerInstanceId", source = "containerInstanceId")
+  @Mapping(target = "visibleRef", source = "visibleRef")
   CharacterEquipmentEntryDto toDto(CharacterEquipmentEntry entity);
 }

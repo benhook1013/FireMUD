@@ -7,6 +7,9 @@ CREATE TABLE item_instances (
     room_instance_id VARCHAR(255),
     container_instance_id BIGINT REFERENCES container_instances(id),
     item_id BIGINT NOT NULL REFERENCES items(id),
+    visible_ref_token VARCHAR(128) NOT NULL,
+    visible_ref_sequence BIGINT NOT NULL,
+    visible_ref VARCHAR(160) NOT NULL,
     version INT NOT NULL DEFAULT 0
 );
 
@@ -24,6 +27,23 @@ CREATE INDEX idx_item_instances_container
 
 CREATE INDEX idx_item_instances_item
     ON item_instances(item_id);
+
+CREATE UNIQUE INDEX ux_item_instances_visible_ref
+    ON item_instances(tenant_id, visible_ref);
+
+CREATE UNIQUE INDEX ux_item_instances_visible_ref_sequence
+    ON item_instances(tenant_id, visible_ref_token, visible_ref_sequence);
+
+CREATE TABLE item_visible_ref_counters (
+    id BIGSERIAL PRIMARY KEY,
+    tenant_id BIGINT NOT NULL,
+    visible_ref_token VARCHAR(128) NOT NULL,
+    next_sequence BIGINT NOT NULL,
+    version INT NOT NULL DEFAULT 0
+);
+
+CREATE UNIQUE INDEX ux_item_visible_ref_counters_token
+    ON item_visible_ref_counters(tenant_id, visible_ref_token);
 
 ALTER TABLE container_instances
     ADD COLUMN item_instance_id BIGINT REFERENCES item_instances(id);

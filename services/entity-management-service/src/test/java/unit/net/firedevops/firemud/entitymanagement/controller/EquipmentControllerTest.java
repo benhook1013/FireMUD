@@ -53,7 +53,8 @@ class EquipmentControllerTest {
   @Test
   void listReturnsEquipment() throws Exception {
     CharacterEquipmentEntryDto dto =
-        new CharacterEquipmentEntryDto(1L, 2L, "HEAD", 3L, "Leather Cap", "A worn cap", null, null);
+        new CharacterEquipmentEntryDto(
+            1L, 2L, "HEAD", 3L, "Leather Cap", "A worn cap", null, null, null);
     when(equipmentService.listEquipment(eq(1L), eq(2L), any(Pageable.class)))
         .thenReturn(new PageImpl<>(List.of(dto)));
 
@@ -69,7 +70,8 @@ class EquipmentControllerTest {
   void wearAndRemoveUseTenantScopedPath() throws Exception {
     when(equipmentService.wearItem(eq(1L), eq(2L), eq(3L), eq(null)))
         .thenReturn(
-            new CharacterEquipmentEntryDto(1L, 2L, "HEAD", 3L, "Leather Cap", null, null, null));
+            new CharacterEquipmentEntryDto(
+                1L, 2L, "HEAD", 3L, "Leather Cap", null, null, null, null));
 
     mockMvc
         .perform(
@@ -82,7 +84,8 @@ class EquipmentControllerTest {
 
     when(equipmentService.removeWornItem(eq(1L), eq(2L), eq("HEAD")))
         .thenReturn(
-            new CharacterEquipmentEntryDto(1L, 2L, "HEAD", 3L, "Leather Cap", null, null, null));
+            new CharacterEquipmentEntryDto(
+                1L, 2L, "HEAD", 3L, "Leather Cap", null, null, null, null));
 
     mockMvc
         .perform(delete("/tenants/1/characters/2/equipment/HEAD"))
