@@ -6,10 +6,9 @@ import java.io.IOException;
 import javax.net.ssl.SSLException;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.AbstractReloadingBlockingGrpcClient;
+import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
-import net.firedevops.firemud.common.security.GrpcClientAuth;
-import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.gamedesign.v1.GameDesignServiceGrpc;
 import net.firedevops.firemud.gamedesign.v1.ListVersionsRequest;
 import net.firedevops.firemud.gamedesign.v1.ListVersionsResponse;
@@ -23,15 +22,12 @@ import org.springframework.stereotype.Component;
 public class GameDesignClient
     extends AbstractReloadingBlockingGrpcClient<
         GameDesignServiceGrpc.GameDesignServiceBlockingStub> {
-  private final JwtUtil jwtUtil;
-
   public GameDesignClient(
       ServiceEndpointsProperties endpoints,
       CommonGrpcClientProperties tlsProps,
-      JwtUtil jwtUtil,
-      GrpcChannelFactory channelFactory) {
-    super(endpoints, tlsProps, channelFactory, GameDesignClient.class);
-    this.jwtUtil = jwtUtil;
+      GrpcChannelFactory channelFactory,
+      BlockingGrpcStubCustomizer stubCustomizer) {
+    super(endpoints, tlsProps, channelFactory, stubCustomizer, GameDesignClient.class);
   }
 
   @PostConstruct
@@ -52,8 +48,8 @@ public class GameDesignClient
   @Override
   protected GameDesignServiceGrpc.GameDesignServiceBlockingStub buildStub(
       io.grpc.ManagedChannel channel) {
-    return GrpcClientAuth.attach(
-        GameDesignServiceGrpc.newBlockingStub(channel).withCompression("gzip"), jwtUtil);
+    return applyStubCustomizer(
+        GameDesignServiceGrpc.newBlockingStub(channel).withCompression("gzip"));
   }
 
   /** Returns published versions for the given tenant. */
