@@ -27,6 +27,8 @@ import net.firedevops.firemud.gamesession.v1.PauseTicksRequest;
 import net.firedevops.firemud.gamesession.v1.PauseTicksResponse;
 import net.firedevops.firemud.gamesession.v1.PingRequest;
 import net.firedevops.firemud.gamesession.v1.PingResponse;
+import net.firedevops.firemud.gamesession.v1.QueryStateRequest;
+import net.firedevops.firemud.gamesession.v1.QueryStateResponse;
 import net.firedevops.firemud.gamesession.v1.RestartSessionRequest;
 import net.firedevops.firemud.gamesession.v1.RestartSessionResponse;
 import net.firedevops.firemud.gamesession.v1.ResumeTicksRequest;
@@ -36,6 +38,8 @@ import net.firedevops.firemud.gamesession.v1.StartSessionResponse;
 import net.firedevops.firemud.gamesession.v1.StopSessionRequest;
 import net.firedevops.firemud.gamesession.v1.StopSessionResponse;
 import net.firedevops.firemud.gamesession.v1.TickStatus;
+import net.firedevops.firemud.gamesession.v1.ToggleFeatureFlagRequest;
+import net.firedevops.firemud.gamesession.v1.ToggleFeatureFlagResponse;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
@@ -835,6 +839,213 @@ class GameSessionGrpcServiceTest {
 
     assertEquals("RATE_LIMIT", ref.get().getError().getCode());
     assertFalse(ref.get().getAccepted());
+  }
+
+  @Test
+  void enqueueCommandRuntimeFailureReturnsInternalErrorDetail() {
+    PingService pingService = Mockito.mock(PingService.class);
+    GameInstanceService gameInstanceService = Mockito.mock(GameInstanceService.class);
+    FeatureFlagService featureFlagService = Mockito.mock(FeatureFlagService.class);
+    TextCommandInterpreter textCommandInterpreter = Mockito.mock(TextCommandInterpreter.class);
+    GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
+    TickService tickService = Mockito.mock(TickService.class);
+    IpConnectionLimiter ipLimiter = Mockito.mock(IpConnectionLimiter.class);
+    GameInstance instance = new GameInstance();
+    instance.setId(99L);
+    instance.setTenantId(9L);
+    instance.setOwnerAccountId(42L);
+    instance.setRuntimeVersion("v1");
+    instance.setStatus("RUNNING");
+    Mockito.when(gameInstanceRepository.findById(99L)).thenReturn(java.util.Optional.of(instance));
+    SessionContext.setContext("42", List.of(), Map.of());
+    Mockito.when(
+            textCommandInterpreter.interpret(
+                Mockito.anyString(), Mockito.anyString(), Mockito.anyBoolean()))
+        .thenThrow(new IllegalStateException("boom"));
+    SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+    GameSessionGrpcService service =
+        new GameSessionGrpcService(
+            pingService,
+            gameInstanceService,
+            featureFlagService,
+            textCommandInterpreter,
+            gameInstanceRepository,
+            tickService,
+            meterRegistry,
+            ipLimiter);
+
+    AtomicReference<net.firedevops.firemud.gamesession.v1.EnqueueCommandResponse> ref =
+        new AtomicReference<>();
+    service.enqueueCommand(
+        net.firedevops.firemud.gamesession.v1.EnqueueCommandRequest.newBuilder()
+            .setSessionId("99")
+            .setCommand("look")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(net.firedevops.firemud.gamesession.v1.EnqueueCommandResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {
+            fail(t);
+          }
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertFalse(ref.get().getAccepted());
+    assertEquals("INTERNAL", ref.get().getError().getCode());
+  }
+
+  @Test
+  void queryStateRuntimeFailureReturnsInternalErrorDetail() {
+    PingService pingService = Mockito.mock(PingService.class);
+    GameInstanceService gameInstanceService = Mockito.mock(GameInstanceService.class);
+    FeatureFlagService featureFlagService = Mockito.mock(FeatureFlagService.class);
+    TextCommandInterpreter textCommandInterpreter = Mockito.mock(TextCommandInterpreter.class);
+    GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
+    TickService tickService = Mockito.mock(TickService.class);
+    IpConnectionLimiter ipLimiter = Mockito.mock(IpConnectionLimiter.class);
+    GameInstance instance = new GameInstance();
+    instance.setId(7L);
+    instance.setTenantId(9L);
+    instance.setOwnerAccountId(42L);
+    instance.setRuntimeVersion("v1");
+    instance.setStatus("RUNNING");
+    Mockito.when(gameInstanceRepository.findById(7L)).thenReturn(java.util.Optional.of(instance));
+    SessionContext.setContext("42", List.of(), Map.of("9", List.of("admin")));
+    Mockito.when(tickService.queryState(7L)).thenThrow(new IllegalStateException("boom"));
+    SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+    GameSessionGrpcService service =
+        new GameSessionGrpcService(
+            pingService,
+            gameInstanceService,
+            featureFlagService,
+            textCommandInterpreter,
+            gameInstanceRepository,
+            tickService,
+            meterRegistry,
+            ipLimiter);
+
+    AtomicReference<QueryStateResponse> ref = new AtomicReference<>();
+    service.queryState(
+        QueryStateRequest.newBuilder().setSessionId("7").build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(QueryStateResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {
+            fail(t);
+          }
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertEquals("INTERNAL", ref.get().getError().getCode());
+  }
+
+  @Test
+  void toggleFeatureFlagRuntimeFailureReturnsInternalErrorDetail() {
+    PingService pingService = Mockito.mock(PingService.class);
+    GameInstanceService gameInstanceService = Mockito.mock(GameInstanceService.class);
+    FeatureFlagService featureFlagService = Mockito.mock(FeatureFlagService.class);
+    TextCommandInterpreter textCommandInterpreter = Mockito.mock(TextCommandInterpreter.class);
+    GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
+    TickService tickService = Mockito.mock(TickService.class);
+    IpConnectionLimiter ipLimiter = Mockito.mock(IpConnectionLimiter.class);
+    SessionContext.setContext("42", List.of(), Map.of("9", List.of("admin")));
+    Mockito.doThrow(new IllegalStateException("boom"))
+        .when(featureFlagService)
+        .toggleFlag(
+            Mockito.any(net.firedevops.firemud.gamesession.dto.ToggleFeatureFlagRequest.class));
+    SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+    GameSessionGrpcService service =
+        new GameSessionGrpcService(
+            pingService,
+            gameInstanceService,
+            featureFlagService,
+            textCommandInterpreter,
+            gameInstanceRepository,
+            tickService,
+            meterRegistry,
+            ipLimiter);
+
+    AtomicReference<ToggleFeatureFlagResponse> ref = new AtomicReference<>();
+    service.toggleFeatureFlag(
+        ToggleFeatureFlagRequest.newBuilder()
+            .setTenantId("9")
+            .setName("x")
+            .setEnabled(true)
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(ToggleFeatureFlagResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {
+            fail(t);
+          }
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertFalse(ref.get().getSuccess());
+    assertEquals("INTERNAL", ref.get().getError().getCode());
+  }
+
+  @Test
+  void pauseTicksRuntimeFailureReturnsInternalErrorDetail() {
+    PingService pingService = Mockito.mock(PingService.class);
+    GameInstanceService gameInstanceService = Mockito.mock(GameInstanceService.class);
+    FeatureFlagService featureFlagService = Mockito.mock(FeatureFlagService.class);
+    TextCommandInterpreter textCommandInterpreter = Mockito.mock(TextCommandInterpreter.class);
+    GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
+    TickService tickService = Mockito.mock(TickService.class);
+    IpConnectionLimiter ipLimiter = Mockito.mock(IpConnectionLimiter.class);
+    SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    Mockito.doThrow(new IllegalStateException("boom")).when(tickService).pauseTicks("backup");
+    GameSessionGrpcService service =
+        new GameSessionGrpcService(
+            pingService,
+            gameInstanceService,
+            featureFlagService,
+            textCommandInterpreter,
+            gameInstanceRepository,
+            tickService,
+            meterRegistry,
+            ipLimiter);
+
+    AtomicReference<PauseTicksResponse> ref = new AtomicReference<>();
+    service.pauseTicks(
+        PauseTicksRequest.newBuilder().setReason("backup").build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(PauseTicksResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {
+            fail(t);
+          }
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertFalse(ref.get().getSuccess());
+    assertEquals("INTERNAL", ref.get().getError().getCode());
   }
 
   @Test

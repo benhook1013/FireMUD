@@ -328,6 +328,14 @@ public final class GameSessionGrpcService
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
+    } catch (Exception ex) {
+      EnqueueCommandResponse response =
+          EnqueueCommandResponse.newBuilder()
+              .setAccepted(false)
+              .setError(GrpcAppErrors.internal(meterRegistry, LOG, "EnqueueCommand", ex))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
     }
   }
 
@@ -353,6 +361,13 @@ public final class GameSessionGrpcService
       QueryStateResponse response =
           QueryStateResponse.newBuilder()
               .setError(GrpcAppErrors.error(meterRegistry, "PERMISSION_DENIED", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      QueryStateResponse response =
+          QueryStateResponse.newBuilder()
+              .setError(GrpcAppErrors.internal(meterRegistry, LOG, "QueryState", ex))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -389,6 +404,14 @@ public final class GameSessionGrpcService
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
+    } catch (Exception ex) {
+      ToggleFeatureFlagResponse response =
+          ToggleFeatureFlagResponse.newBuilder()
+              .setSuccess(false)
+              .setError(GrpcAppErrors.internal(meterRegistry, LOG, "ToggleFeatureFlag", ex))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
     }
   }
 
@@ -410,6 +433,14 @@ public final class GameSessionGrpcService
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
+    } catch (Exception ex) {
+      PauseTicksResponse response =
+          PauseTicksResponse.newBuilder()
+              .setSuccess(false)
+              .setError(GrpcAppErrors.internal(meterRegistry, LOG, "PauseTicks", ex))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
     }
   }
 
@@ -428,6 +459,14 @@ public final class GameSessionGrpcService
           ResumeTicksResponse.newBuilder()
               .setSuccess(false)
               .setError(GrpcAppErrors.error(meterRegistry, "PERMISSION_DENIED", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      ResumeTicksResponse response =
+          ResumeTicksResponse.newBuilder()
+              .setSuccess(false)
+              .setError(GrpcAppErrors.internal(meterRegistry, LOG, "ResumeTicks", ex))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();

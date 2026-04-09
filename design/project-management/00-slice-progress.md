@@ -24,9 +24,7 @@ These are narrow enough to implement now and unblock the current runtime/platfor
    Remaining: finish the shared transfer contract, shared transfer audit semantics, and the remaining holder-policy cleanup.
 7. [02.18.3 Workflow Transaction Boundary Hardening](./vertical-slices/02.18.3-task-list-workflow-transaction-boundary-hardening-vertical-slice.md)
    Remaining: reduce the remaining “hold DB transaction open across external calls” cases without regressing runtime-state safety.
-8. [02.18.5 gRPC App Error Consistency Hardening](./vertical-slices/02.18.5-task-list-grpc-app-error-consistency-hardening-vertical-slice.md)
-   Remaining: finish the visible outliers so application failures consistently stay in-band as `ErrorDetail`.
-9. [02.18.6 Tick Scheduler Backpressure and Merge Semantics](./vertical-slices/02.18.6-task-list-tick-scheduler-backpressure-and-merge-semantics-vertical-slice.md)
+8. [02.18.6 Tick Scheduler Backpressure and Merge Semantics](./vertical-slices/02.18.6-task-list-tick-scheduler-backpressure-and-merge-semantics-vertical-slice.md)
    Remaining: finish the observability, remaining merge/skip/rejection semantics, and keep Redis tick namespaces isolated across tick domains.
 
 ### 2. Active architecture follow-through
@@ -42,7 +40,7 @@ These are already partly real in code and should continue after the immediate ru
 4. [06.3.1 Stable Item Instance Visible Ref Allocation](./vertical-slices/06.3.1-task-list-item-instance-visible-ref-allocation-vertical-slice.md)
     Remaining: decide whether and where ordinary prose views ever expose refs beyond management surfaces.
 5. [02.18 Service Boundary and Audit Hardening](./vertical-slices/02.18-task-list-service-boundary-and-audit-hardening-vertical-slice.md)
-    Remaining: complete the remaining `02.18.2`, `02.18.3`, `02.18.5`, and `02.18.6` follow-ups.
+    Remaining: complete the remaining `02.18.2`, `02.18.3`, and `02.18.6` follow-ups.
 6. [02.18.1 Audit Log and Moderation Separation](./vertical-slices/02.18.1-task-list-audit-log-and-moderation-separation-vertical-slice.md)
     Remaining: finish the separation so harmless audit traffic and destructive moderation traffic cannot blur again.
 7. [02.18.4 World and Entity Service Boundary Auth](./vertical-slices/02.18.4-task-list-world-and-entity-service-boundary-auth-vertical-slice.md)
