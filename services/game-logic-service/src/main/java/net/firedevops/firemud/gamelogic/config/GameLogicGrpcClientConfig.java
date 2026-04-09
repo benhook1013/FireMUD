@@ -5,6 +5,7 @@ import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
+import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.entitymanagement.v1.EntityManagementServiceGrpc;
@@ -12,6 +13,7 @@ import net.firedevops.firemud.entitymanagement.v1.EntityManagementServiceGrpc.En
 import net.firedevops.firemud.socialgroups.v1.SocialGroupsServiceGrpc;
 import net.firedevops.firemud.worldmanagement.v1.WorldManagementServiceGrpc;
 import net.firedevops.firemud.worldmanagement.v1.WorldManagementServiceGrpc.WorldManagementServiceBlockingStub;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Lazy;
@@ -22,6 +24,7 @@ public class GameLogicGrpcClientConfig {
   private final ServiceEndpointsProperties endpoints;
   private final CommonGrpcClientProperties grpcClientProperties;
   private final GrpcChannelFactory channelFactory;
+  private final ObjectProvider<BlockingGrpcStubCustomizer> stubCustomizerProvider;
 
   private ManagedChannel worldChannel;
   private ManagedChannel entityChannel;
@@ -56,18 +59,27 @@ public class GameLogicGrpcClientConfig {
   @Bean
   @Lazy(false)
   public WorldManagementServiceBlockingStub worldManagementStub() {
-    return WorldManagementServiceGrpc.newBlockingStub(worldChannel).withCompression("gzip");
+    return customize(
+        WorldManagementServiceGrpc.newBlockingStub(worldChannel).withCompression("gzip"));
   }
 
   @Bean
   @Lazy(false)
   public EntityManagementServiceBlockingStub entityManagementStub() {
-    return EntityManagementServiceGrpc.newBlockingStub(entityChannel).withCompression("gzip");
+    return customize(
+        EntityManagementServiceGrpc.newBlockingStub(entityChannel).withCompression("gzip"));
   }
 
   @Bean
   @Lazy(false)
   public SocialGroupsServiceGrpc.SocialGroupsServiceBlockingStub socialGroupsStub() {
-    return SocialGroupsServiceGrpc.newBlockingStub(socialChannel).withCompression("gzip");
+    return customize(
+        SocialGroupsServiceGrpc.newBlockingStub(socialChannel).withCompression("gzip"));
+  }
+
+  private <T extends io.grpc.stub.AbstractStub<T>> T customize(T stub) {
+    BlockingGrpcStubCustomizer customizer =
+        stubCustomizerProvider.getIfAvailable(BlockingGrpcStubCustomizer::noop);
+    return customizer.customize(stub);
   }
 }
