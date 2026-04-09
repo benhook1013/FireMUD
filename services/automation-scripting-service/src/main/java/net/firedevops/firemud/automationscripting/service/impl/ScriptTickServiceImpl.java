@@ -228,15 +228,15 @@ public class ScriptTickServiceImpl implements ScriptTickService {
   }
 
   private String queueKey(Long tenantId, Long scriptId) {
-    return "tick:queue:" + tenantId + ":" + scriptId;
+    return "automation:tick:queue:" + tenantId + ":" + scriptId;
   }
 
   private String lockKey(Long tenantId, Long scriptId) {
-    return "tick:lock:" + tenantId + ":" + scriptId;
+    return "automation:tick:lock:" + tenantId + ":" + scriptId;
   }
 
   private String pendingKey(Long tenantId, Long scriptId) {
-    return "tick:pending:" + tenantId + ":" + scriptId;
+    return "automation:tick:pending:" + tenantId + ":" + scriptId;
   }
 
   private String lockToken(Long tenantId, Long scriptId) {

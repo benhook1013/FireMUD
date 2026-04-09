@@ -60,7 +60,7 @@ class TickServiceImplTest {
   @Test
   void enqueueCommandPushesToQueue() {
     service.enqueueCommand(1L, 2L, "look", false);
-    verify(listOps).rightPush(eq("tick:queue:1:2"), any(Object.class));
+    verify(listOps).rightPush(eq("gamesession:tick:queue:1:2"), any(Object.class));
   }
 
   @Test
@@ -98,7 +98,7 @@ class TickServiceImplTest {
 
     service.processTick(1L, 2L);
 
-    verify(redisTemplate, never()).delete("tick:lock:1:2");
+    verify(redisTemplate, never()).delete("gamesession:tick:lock:1:2");
     verify(redisTemplate, org.mockito.Mockito.atLeastOnce())
         .execute(any(RedisScript.class), org.mockito.ArgumentMatchers.<String>anyList());
   }

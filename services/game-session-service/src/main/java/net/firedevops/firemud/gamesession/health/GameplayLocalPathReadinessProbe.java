@@ -22,7 +22,7 @@ public final class GameplayLocalPathReadinessProbe {
   private static final long PROBE_GAME_INSTANCE_ID = 0L;
   private static final String PROBE_ROOM_INSTANCE_ID = "readiness-room";
   private static final String PROBE_JWT = "readiness-probe";
-  private static final String QUEUE_PREFIX = "tick:queue:";
+  private static final String QUEUE_PREFIX = "gamesession:tick:queue:";
 
   private final SessionContextService sessionContextService;
   private final RedisTemplate<String, Object> redisTemplate;

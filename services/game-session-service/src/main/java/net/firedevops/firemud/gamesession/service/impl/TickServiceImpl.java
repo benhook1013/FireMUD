@@ -36,7 +36,6 @@ import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.data.redis.serializer.GenericToStringSerializer;
 import org.springframework.data.redis.serializer.StringRedisSerializer;
-import org.springframework.scheduling.annotation.Async;
 import org.springframework.scripting.support.ResourceScriptSource;
 import org.springframework.stereotype.Service;
 
@@ -185,7 +184,6 @@ public class TickServiceImpl implements TickService {
 
   @Override
   @Timed(value = "gamesession.tick.process")
-  @Async("tickExecutor")
   public void processTick(Long tenantId, Long queueTargetId) {
     Long normalizedTenantId = tenantId != null ? tenantId : 0L;
     Long normalizedQueueTargetId = queueTargetId != null ? queueTargetId : 0L;
@@ -375,11 +373,11 @@ public class TickServiceImpl implements TickService {
   }
 
   private String queueKey(Long tenantId, Long sessionId) {
-    return "tick:queue:" + tenantId + ":" + sessionId;
+    return "gamesession:tick:queue:" + tenantId + ":" + sessionId;
   }
 
   private String lockKey(Long tenantId, Long sessionId) {
-    return "tick:lock:" + tenantId + ":" + sessionId;
+    return "gamesession:tick:lock:" + tenantId + ":" + sessionId;
   }
 
   private String stateKey(Long tenantId, Long sessionId) {
@@ -387,6 +385,6 @@ public class TickServiceImpl implements TickService {
   }
 
   private String pendingKey(Long tenantId, Long sessionId) {
-    return "tick:pending:" + tenantId + ":" + sessionId;
+    return "gamesession:tick:pending:" + tenantId + ":" + sessionId;
   }
 }
