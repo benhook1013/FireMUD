@@ -2,7 +2,16 @@ CREATE TABLE characters (
     id BIGSERIAL PRIMARY KEY,
     account_id BIGINT NOT NULL,
     name VARCHAR(100) NOT NULL,
-    tenant_id BIGINT NOT NULL
+    tenant_id BIGINT NOT NULL,
+    level INT NOT NULL DEFAULT 0,
+    experience INT NOT NULL DEFAULT 0,
+    strength INT NOT NULL DEFAULT 0,
+    agility INT NOT NULL DEFAULT 0,
+    intelligence INT NOT NULL DEFAULT 0,
+    stamina INT NOT NULL DEFAULT 0,
+    health INT NOT NULL DEFAULT 0,
+    mana INT NOT NULL DEFAULT 0,
+    last_login_at TIMESTAMP NULL
 );
 
 CREATE TABLE npcs (
