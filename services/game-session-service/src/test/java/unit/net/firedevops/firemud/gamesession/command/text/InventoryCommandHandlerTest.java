@@ -5,12 +5,10 @@ import static org.mockito.Mockito.when;
 
 import java.util.List;
 import net.firedevops.firemud.entitymanagement.v1.DropItemToRoomResponse;
-import net.firedevops.firemud.entitymanagement.v1.EntityType;
 import net.firedevops.firemud.entitymanagement.v1.InventoryItem;
-import net.firedevops.firemud.entitymanagement.v1.ListRoomEntitiesResponse;
+import net.firedevops.firemud.entitymanagement.v1.ListRoomGroundInventoryResponse;
 import net.firedevops.firemud.entitymanagement.v1.PickupItemFromRoomResponse;
 import net.firedevops.firemud.entitymanagement.v1.QueryInventoryResponse;
-import net.firedevops.firemud.entitymanagement.v1.RoomEntity;
 import net.firedevops.firemud.entitymanagement.v1.RoomGroundInventoryItem;
 import net.firedevops.firemud.gamesession.client.EntityManagementClient;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
@@ -91,22 +89,15 @@ class InventoryCommandHandlerTest {
 
   @Test
   void inventoryHereReturnsRoomGroundItemsWithVisibleRefs() {
-    when(entityManagementClient.listRoomEntities("22", "77", "room-7"))
+    when(entityManagementClient.listRoomGroundInventory("22", "77", "room-7"))
         .thenReturn(
-            ListRoomEntitiesResponse.newBuilder()
-                .addEntities(
-                    RoomEntity.newBuilder()
-                        .setEntityId("22:77:room-7:1001")
-                        .setEntityType(EntityType.ITEM)
-                        .setDisplayName("Torch")
+            ListRoomGroundInventoryResponse.newBuilder()
+                .addItems(
+                    RoomGroundInventoryItem.newBuilder()
+                        .setItemId("1001")
+                        .setItemName("Torch")
+                        .setItemDescription("A small torch")
                         .setVisibleRef("torch3")
-                        .addStateFlags("room-ground")
-                        .build())
-                .addEntities(
-                    RoomEntity.newBuilder()
-                        .setEntityId("22:77:room-7:npc-1")
-                        .setEntityType(EntityType.NPC)
-                        .setDisplayName("Goblin")
                         .build())
                 .build());
 
@@ -120,13 +111,13 @@ class InventoryCommandHandlerTest {
         .containsExactly(PlayerOutputKind.VIEW);
     InventoryViewOutput view = (InventoryViewOutput) result.outputs().get(0).payload();
     assertThat(view.title()).isEqualTo("Room Inventory:");
-    assertThat(view.lines()).containsExactly("- Torch [torch3]");
+    assertThat(view.lines()).containsExactly("- Torch [torch3] (A small torch)");
   }
 
   @Test
   void inventoryHereReturnsEmptyStateWhenNoRoomGroundItemsExist() {
-    when(entityManagementClient.listRoomEntities("22", "77", "room-7"))
-        .thenReturn(ListRoomEntitiesResponse.newBuilder().build());
+    when(entityManagementClient.listRoomGroundInventory("22", "77", "room-7"))
+        .thenReturn(ListRoomGroundInventoryResponse.newBuilder().build());
 
     InventoryCommandHandlingResult result =
         handler.handle(
@@ -150,18 +141,17 @@ class InventoryCommandHandlerTest {
 
   @Test
   void getWithItemReferenceCallsPickupMutation() {
-    when(entityManagementClient.listRoomEntities("22", "77", "room-7"))
+    when(entityManagementClient.listRoomGroundInventory("22", "77", "room-7"))
         .thenReturn(
-            ListRoomEntitiesResponse.newBuilder()
-                .addEntities(
-                    RoomEntity.newBuilder()
-                        .setEntityId("22:77:room-7:7")
-                        .setDisplayName("Rough Iron Key")
-                        .setEntityType(EntityType.ITEM)
-                        .addStateFlags("room-ground")
+            ListRoomGroundInventoryResponse.newBuilder()
+                .addItems(
+                    RoomGroundInventoryItem.newBuilder()
+                        .setItemId("7")
+                        .setItemInstanceId("7")
+                        .setItemName("Rough Iron Key")
                         .build())
                 .build());
-    when(entityManagementClient.pickupItemFromRoom("22", "911", "77", "room-7", "7", "7", "7", 1))
+    when(entityManagementClient.pickupItemFromRoom("22", "911", "77", "room-7", "7", "7", "", 1))
         .thenReturn(
             PickupItemFromRoomResponse.newBuilder()
                 .setInventoryItem(
@@ -200,18 +190,17 @@ class InventoryCommandHandlerTest {
 
   @Test
   void getWithQuantityCallsPickupMutation() {
-    when(entityManagementClient.listRoomEntities("22", "77", "room-7"))
+    when(entityManagementClient.listRoomGroundInventory("22", "77", "room-7"))
         .thenReturn(
-            ListRoomEntitiesResponse.newBuilder()
-                .addEntities(
-                    RoomEntity.newBuilder()
-                        .setEntityId("22:77:room-7:7")
-                        .setDisplayName("Torch")
-                        .setEntityType(EntityType.ITEM)
-                        .addStateFlags("room-ground")
+            ListRoomGroundInventoryResponse.newBuilder()
+                .addItems(
+                    RoomGroundInventoryItem.newBuilder()
+                        .setItemId("7")
+                        .setItemInstanceId("7")
+                        .setItemName("Torch")
                         .build())
                 .build());
-    when(entityManagementClient.pickupItemFromRoom("22", "911", "77", "room-7", "7", "7", "7", 2))
+    when(entityManagementClient.pickupItemFromRoom("22", "911", "77", "room-7", "7", "7", "", 2))
         .thenReturn(
             PickupItemFromRoomResponse.newBuilder()
                 .setInventoryItem(
@@ -249,19 +238,18 @@ class InventoryCommandHandlerTest {
 
   @Test
   void getMatchesExplicitRoomItemReference() {
-    when(entityManagementClient.listRoomEntities("22", "77", "room-7"))
+    when(entityManagementClient.listRoomGroundInventory("22", "77", "room-7"))
         .thenReturn(
-            ListRoomEntitiesResponse.newBuilder()
-                .addEntities(
-                    RoomEntity.newBuilder()
-                        .setEntityId("22:77:room-7:ITEM-009")
-                        .setDisplayName("Torch")
-                        .setEntityType(EntityType.ITEM)
-                        .addStateFlags("room-ground")
+            ListRoomGroundInventoryResponse.newBuilder()
+                .addItems(
+                    RoomGroundInventoryItem.newBuilder()
+                        .setItemId("ITEM-009")
+                        .setItemInstanceId("ITEM-009")
+                        .setItemName("Torch")
                         .build())
                 .build());
     when(entityManagementClient.pickupItemFromRoom(
-            "22", "911", "77", "room-7", "ITEM-009", "ITEM-009", "ITEM-009", 1))
+            "22", "911", "77", "room-7", "ITEM-009", "ITEM-009", "", 1))
         .thenReturn(
             PickupItemFromRoomResponse.newBuilder()
                 .setInventoryItem(

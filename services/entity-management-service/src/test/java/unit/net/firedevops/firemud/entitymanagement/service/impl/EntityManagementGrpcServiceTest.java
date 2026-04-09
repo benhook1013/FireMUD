@@ -25,6 +25,8 @@ import net.firedevops.firemud.entitymanagement.v1.ListEquipmentRequest;
 import net.firedevops.firemud.entitymanagement.v1.ListEquipmentResponse;
 import net.firedevops.firemud.entitymanagement.v1.ListRoomEntitiesRequest;
 import net.firedevops.firemud.entitymanagement.v1.ListRoomEntitiesResponse;
+import net.firedevops.firemud.entitymanagement.v1.ListRoomGroundInventoryRequest;
+import net.firedevops.firemud.entitymanagement.v1.ListRoomGroundInventoryResponse;
 import net.firedevops.firemud.entitymanagement.v1.PickupItemFromRoomRequest;
 import net.firedevops.firemud.entitymanagement.v1.PickupItemFromRoomResponse;
 import net.firedevops.firemud.entitymanagement.v1.PingRequest;
@@ -197,6 +199,59 @@ class EntityManagementGrpcServiceTest {
     assertEquals(1, ref.get().getItemsCount());
     assertEquals("Torch", ref.get().getItems(0).getItemName());
     assertEquals("10", ref.get().getItems(0).getContainerInstanceId());
+  }
+
+  @Test
+  void listRoomGroundInventoryReturnsMappedItems() {
+    PingService pingService = Mockito.mock(PingService.class);
+    CharacterService characterService = Mockito.mock(CharacterService.class);
+    EquipmentService equipmentService = Mockito.mock(EquipmentService.class);
+    InventoryService inventoryService = Mockito.mock(InventoryService.class);
+    io.micrometer.core.instrument.MeterRegistry meterRegistry =
+        Mockito.mock(io.micrometer.core.instrument.MeterRegistry.class);
+    io.micrometer.core.instrument.Counter counter =
+        Mockito.mock(io.micrometer.core.instrument.Counter.class);
+    Mockito.when(meterRegistry.counter(Mockito.anyString(), Mockito.any(String[].class)))
+        .thenReturn(counter);
+    RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
+    Mockito.when(inventoryService.listRoomGroundItems(1L, "GI-1", "R-1", Pageable.unpaged()))
+        .thenReturn(
+            new org.springframework.data.domain.PageImpl<>(
+                java.util.List.of(
+                    new net.firedevops.firemud.entitymanagement.dto.RoomGroundInventoryEntryDto(
+                        1L, "GI-1", "R-1", 11L, "Torch", "A small torch", 2, null, null, null))));
+    EntityManagementGrpcService service =
+        newService(
+            pingService,
+            characterService,
+            equipmentService,
+            inventoryService,
+            roomEntityService,
+            meterRegistry);
+
+    AtomicReference<ListRoomGroundInventoryResponse> ref = new AtomicReference<>();
+    service.listRoomGroundInventory(
+        ListRoomGroundInventoryRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("GI-1")
+            .setRoomInstanceId("R-1")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(ListRoomGroundInventoryResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertEquals(1, ref.get().getItemsCount());
+    assertEquals("Torch", ref.get().getItems(0).getItemName());
+    assertEquals(2, ref.get().getItems(0).getQuantity());
   }
 
   @Test

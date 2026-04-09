@@ -37,6 +37,8 @@ import net.firedevops.firemud.entitymanagement.v1.ListEquipmentRequest;
 import net.firedevops.firemud.entitymanagement.v1.ListEquipmentResponse;
 import net.firedevops.firemud.entitymanagement.v1.ListRoomEntitiesRequest;
 import net.firedevops.firemud.entitymanagement.v1.ListRoomEntitiesResponse;
+import net.firedevops.firemud.entitymanagement.v1.ListRoomGroundInventoryRequest;
+import net.firedevops.firemud.entitymanagement.v1.ListRoomGroundInventoryResponse;
 import net.firedevops.firemud.entitymanagement.v1.PickupItemFromRoomRequest;
 import net.firedevops.firemud.entitymanagement.v1.PickupItemFromRoomResponse;
 import net.firedevops.firemud.entitymanagement.v1.PingRequest;
@@ -630,6 +632,63 @@ public class EntityManagementGrpcService
       TakeItemFromContainerResponse response =
           TakeItemFromContainerResponse.newBuilder()
               .setError(GrpcAppErrors.internal(meterRegistry, logger, "TakeItemFromContainer", ex))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    }
+  }
+
+  @Override
+  @Timed(value = "entityGrpc.listRoomGroundInventory")
+  public void listRoomGroundInventory(
+      ListRoomGroundInventoryRequest request,
+      StreamObserver<ListRoomGroundInventoryResponse> responseObserver) {
+    try {
+      long tenantId = Long.parseLong(request.getTenantId());
+      SessionContext.requireTenantAccess(tenantId);
+      var items =
+          inventoryService.listRoomGroundItems(
+              tenantId,
+              request.getGameInstanceId(),
+              request.getRoomInstanceId(),
+              Pageable.unpaged());
+      ListRoomGroundInventoryResponse response =
+          ListRoomGroundInventoryResponse.newBuilder()
+              .addAllItems(items.stream().map(this::toProto).toList())
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (NumberFormatException ex) {
+      ListRoomGroundInventoryResponse response =
+          ListRoomGroundInventoryResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry,
+                      logger,
+                      "ListRoomGroundInventory",
+                      "INVALID_ARGUMENT",
+                      ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      ListRoomGroundInventoryResponse response =
+          ListRoomGroundInventoryResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry,
+                      logger,
+                      "ListRoomGroundInventory",
+                      "INVALID_ARGUMENT",
+                      ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      ListRoomGroundInventoryResponse response =
+          ListRoomGroundInventoryResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.internal(meterRegistry, logger, "ListRoomGroundInventory", ex))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();

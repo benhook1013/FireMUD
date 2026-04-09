@@ -19,6 +19,8 @@ service EntityManagementService {
   rpc ListContainerContents(ListContainerContentsRequest) returns (ListContainerContentsResponse);
   rpc PutItemIntoContainer(PutItemIntoContainerRequest) returns (PutItemIntoContainerResponse);
   rpc TakeItemFromContainer(TakeItemFromContainerRequest) returns (TakeItemFromContainerResponse);
+  rpc ListRoomGroundInventory(ListRoomGroundInventoryRequest)
+      returns (ListRoomGroundInventoryResponse);
   rpc PickupItemFromRoom(PickupItemFromRoomRequest) returns (PickupItemFromRoomResponse);
   rpc DropItemToRoom(DropItemToRoomRequest) returns (DropItemToRoomResponse);
   rpc ListCharactersByAccount(ListCharactersByAccountRequest) returns (ListCharactersByAccountResponse);
@@ -173,6 +175,17 @@ message RoomGroundInventoryItem {
   string container_instance_id = 8;
   string item_instance_id = 9;
   string visible_ref = 10;
+}
+
+message ListRoomGroundInventoryRequest {
+  string tenant_id = 1;
+  string game_instance_id = 2;
+  string room_instance_id = 3;
+}
+
+message ListRoomGroundInventoryResponse {
+  repeated RoomGroundInventoryItem items = 1;
+  shared.v1.ErrorDetail error = 2;
 }
 
 message PickupItemFromRoomRequest {

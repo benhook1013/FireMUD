@@ -24,6 +24,8 @@ import net.firedevops.firemud.entitymanagement.v1.ListEquipmentRequest;
 import net.firedevops.firemud.entitymanagement.v1.ListEquipmentResponse;
 import net.firedevops.firemud.entitymanagement.v1.ListRoomEntitiesRequest;
 import net.firedevops.firemud.entitymanagement.v1.ListRoomEntitiesResponse;
+import net.firedevops.firemud.entitymanagement.v1.ListRoomGroundInventoryRequest;
+import net.firedevops.firemud.entitymanagement.v1.ListRoomGroundInventoryResponse;
 import net.firedevops.firemud.entitymanagement.v1.PickupItemFromRoomRequest;
 import net.firedevops.firemud.entitymanagement.v1.PickupItemFromRoomResponse;
 import net.firedevops.firemud.entitymanagement.v1.PingRequest;
@@ -220,6 +222,43 @@ public final class EntityManagementClient
             ErrorDetail.newBuilder()
                 .setCode("CONTAINER_UNAVAILABLE")
                 .setMessage("Container service unavailable"))
+        .build();
+  }
+
+  public ListRoomGroundInventoryResponse listRoomGroundInventory(
+      String tenantId, String gameInstanceId, String roomInstanceId) {
+    ListRoomGroundInventoryRequest request =
+        ListRoomGroundInventoryRequest.newBuilder()
+            .setTenantId(tenantId)
+            .setGameInstanceId(gameInstanceId)
+            .setRoomInstanceId(roomInstanceId)
+            .build();
+    try {
+      return callStub().listRoomGroundInventory(request);
+    } catch (StatusRuntimeException ex) {
+      if (ex.getStatus().getCode() == Status.Code.UNAVAILABLE) {
+        logger.warn(
+            "Entity Management Service unavailable; rebuilding channel and retrying room inventory query",
+            ex);
+        try {
+          initClient();
+          return callStub().listRoomGroundInventory(request);
+        } catch (Exception retryEx) {
+          logger.warn(
+              "Failed to retry Entity Management room inventory query after channel reload",
+              retryEx);
+        }
+      } else {
+        logger.warn("Failed to call Entity Management room inventory query endpoint", ex);
+      }
+    } catch (Exception ex) {
+      logger.warn("Failed to call Entity Management room inventory query endpoint", ex);
+    }
+    return ListRoomGroundInventoryResponse.newBuilder()
+        .setError(
+            ErrorDetail.newBuilder()
+                .setCode("INVENTORY_UNAVAILABLE")
+                .setMessage("Room inventory unavailable"))
         .build();
   }
 

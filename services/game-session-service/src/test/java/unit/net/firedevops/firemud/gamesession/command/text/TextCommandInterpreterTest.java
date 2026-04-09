@@ -23,17 +23,15 @@ import net.firedevops.firemud.cache.LookCacheService;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.common.settings.ScopedSettingsSnapshot;
 import net.firedevops.firemud.entitymanagement.v1.DropItemToRoomResponse;
-import net.firedevops.firemud.entitymanagement.v1.EntityType;
 import net.firedevops.firemud.entitymanagement.v1.EquipmentItem;
 import net.firedevops.firemud.entitymanagement.v1.InventoryItem;
 import net.firedevops.firemud.entitymanagement.v1.ListContainerContentsResponse;
 import net.firedevops.firemud.entitymanagement.v1.ListEquipmentResponse;
-import net.firedevops.firemud.entitymanagement.v1.ListRoomEntitiesResponse;
+import net.firedevops.firemud.entitymanagement.v1.ListRoomGroundInventoryResponse;
 import net.firedevops.firemud.entitymanagement.v1.PickupItemFromRoomResponse;
 import net.firedevops.firemud.entitymanagement.v1.PutItemIntoContainerResponse;
 import net.firedevops.firemud.entitymanagement.v1.QueryInventoryResponse;
 import net.firedevops.firemud.entitymanagement.v1.RemoveEquipmentResponse;
-import net.firedevops.firemud.entitymanagement.v1.RoomEntity;
 import net.firedevops.firemud.entitymanagement.v1.RoomGroundInventoryItem;
 import net.firedevops.firemud.entitymanagement.v1.TakeItemFromContainerResponse;
 import net.firedevops.firemud.entitymanagement.v1.WearEquipmentItemResponse;
@@ -153,16 +151,15 @@ class TextCommandInterpreterTest {
                         .setQuantity(2)
                         .build())
                 .build());
-    when(entityManagementClient.listRoomEntities(
+    when(entityManagementClient.listRoomGroundInventory(
             Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
-            ListRoomEntitiesResponse.newBuilder()
-                .addEntities(
-                    RoomEntity.newBuilder()
-                        .setEntityId("22:77:room-7:ITEM-009")
-                        .setDisplayName("Torch")
-                        .setEntityType(EntityType.ITEM)
-                        .addStateFlags("room-ground")
+            ListRoomGroundInventoryResponse.newBuilder()
+                .addItems(
+                    RoomGroundInventoryItem.newBuilder()
+                        .setItemId("ITEM-009")
+                        .setItemInstanceId("ITEM-009")
+                        .setItemName("Torch")
                         .build())
                 .build());
     when(entityManagementClient.pickupItemFromRoom(
