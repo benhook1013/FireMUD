@@ -64,6 +64,19 @@ class TickServiceImplTest {
   }
 
   @Test
+  void processTickUsesGameplayNamespacedLockAndPendingKeys() {
+    when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
+        .thenReturn(true);
+
+    service.processTick(1L, 2L);
+
+    verify(valueOps)
+        .setIfAbsent(eq("gamesession:tick:lock:1:2"), any(Object.class), any(Duration.class));
+    verify(listOps).size("gamesession:tick:pending:1:2");
+    verify(listOps).index("gamesession:tick:queue:1:2", 0);
+  }
+
+  @Test
   void enqueueCommandAddsGameplayLoggingContextWhenSessionIsBound() {
     when(listOps.rightPush(any(String.class), any(Object.class)))
         .thenAnswer(

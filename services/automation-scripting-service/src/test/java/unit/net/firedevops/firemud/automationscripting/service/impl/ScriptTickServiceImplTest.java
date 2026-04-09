@@ -1,6 +1,7 @@
 package net.firedevops.firemud.automationscripting.service.impl;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -46,7 +47,7 @@ class ScriptTickServiceImplTest {
   @Test
   void enqueueEventPushesToQueue() {
     service.enqueueEvent(1L, 2L, "evt");
-    verify(listOps).rightPush(any(String.class), any(Object.class));
+    verify(listOps).rightPush("automation:tick:queue:1:2", "evt");
     verify(quotaService).tryAcquire(1L, 2L);
   }
 
@@ -66,6 +67,18 @@ class ScriptTickServiceImplTest {
     verify(redisTemplate, org.mockito.Mockito.atLeastOnce())
         .execute(scriptCaptor.capture(), org.mockito.ArgumentMatchers.<String>anyList());
     verify(redisTemplate, never()).delete(any(String.class));
+  }
+
+  @Test
+  void processTickUsesAutomationNamespacedKeys() {
+    when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
+        .thenReturn(true);
+
+    service.processTick(1L, 2L);
+
+    verify(valueOps)
+        .setIfAbsent(eq("automation:tick:lock:1:2"), any(Object.class), any(Duration.class));
+    verify(listOps).size("automation:tick:pending:1:2");
   }
 
   @Test
