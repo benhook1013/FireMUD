@@ -113,13 +113,20 @@ public class ContainerCommandHandler {
         return containerInvalidArgument(
             "No carried item matches \"" + transfer.itemReference() + "\"");
       }
+      InventoryItem inventoryItem = resolvedItem.orElseThrow();
+      if (transfer.quantity() > 1 && !inventoryItem.getItemInstanceId().isBlank()) {
+        return containerInvalidArgument("Explicit item refs require quantity 1 for PUT");
+      }
 
       var response =
           entityManagementClient.putItemIntoContainer(
               Long.toString(context.tenantId()),
               Long.toString(context.characterId()),
               ContainerIdentitySupport.resolveContainerInstanceId(resolvedContainer.orElseThrow()),
-              resolvedItem.orElseThrow().getItemId(),
+              inventoryItem.getItemId(),
+              inventoryItem.getItemInstanceId().isBlank()
+                  ? null
+                  : inventoryItem.getItemInstanceId(),
               transfer.quantity());
       if (response.hasError()) {
         return containerFailure(

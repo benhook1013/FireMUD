@@ -89,7 +89,7 @@ class ContainerCommandHandlerTest {
                         .setVisibleRef("torch3")
                         .build())
                 .build());
-    when(entityManagementClient.putItemIntoContainer("22", "911", "container-10", "99", 1))
+    when(entityManagementClient.putItemIntoContainer("22", "911", "container-10", "99", null, 1))
         .thenReturn(
             PutItemIntoContainerResponse.newBuilder()
                 .setContainerItem(
@@ -126,6 +126,42 @@ class ContainerCommandHandlerTest {
     assertThat(result.outputs().get(0).kind()).isEqualTo(PlayerOutputKind.MESSAGE);
     assertThat(result.outputs().get(0).text()).isEqualTo("You put Torch into Old Chest.");
     assertThat(result.outputs().get(1).kind()).isEqualTo(PlayerOutputKind.VIEW);
+  }
+
+  @Test
+  void putIntoContainerRejectsExplicitRefWithQuantityGreaterThanOne() {
+    when(entityManagementClient.queryInventory("22", "911"))
+        .thenReturn(
+            QueryInventoryResponse.newBuilder()
+                .addItems(
+                    InventoryItem.newBuilder()
+                        .setItemId("10")
+                        .setItemName("Old Chest")
+                        .setVisibleRef("oldchest10")
+                        .setContainerInstanceId("container-10")
+                        .build())
+                .addItems(
+                    InventoryItem.newBuilder()
+                        .setItemId("99")
+                        .setItemInstanceId("44")
+                        .setItemName("Torch")
+                        .setVisibleRef("torch3")
+                        .setQuantity(2)
+                        .build())
+                .build());
+
+    TextCommandInterpretationResult result =
+        handler.handle(
+            context,
+            new TextCommand(
+                TextCommandType.PUT,
+                List.of("2", "torch3", "INTO", "old", "chest"),
+                "PUT 2 torch3 INTO old chest"));
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.outputs())
+        .singleElement()
+        .satisfies(output -> assertThat(output.text()).contains("quantity 1"));
   }
 
   @Test

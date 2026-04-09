@@ -253,6 +253,7 @@ class TextCommandInterpreterTest {
             Mockito.anyString(),
             Mockito.anyString(),
             Mockito.anyString(),
+            Mockito.any(),
             Mockito.anyInt()))
         .thenReturn(PutItemIntoContainerResponse.newBuilder().build());
     when(entityManagementClient.takeItemFromContainer(
