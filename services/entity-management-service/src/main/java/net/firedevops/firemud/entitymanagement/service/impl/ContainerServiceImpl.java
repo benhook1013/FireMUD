@@ -1,7 +1,8 @@
 package net.firedevops.firemud.entitymanagement.service.impl;
 
 import io.micrometer.core.annotation.Timed;
-import java.util.function.Supplier;
+import java.util.ArrayList;
+import java.util.List;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.entitymanagement.dto.ContainerContentEntryDto;
 import net.firedevops.firemud.entitymanagement.dto.InventoryEntryDto;
@@ -9,15 +10,13 @@ import net.firedevops.firemud.entitymanagement.entity.Character;
 import net.firedevops.firemud.entitymanagement.entity.ContainerContentEntry;
 import net.firedevops.firemud.entitymanagement.entity.ContainerContentKey;
 import net.firedevops.firemud.entitymanagement.entity.ContainerInstance;
-import net.firedevops.firemud.entitymanagement.entity.InventoryEntry;
-import net.firedevops.firemud.entitymanagement.entity.InventoryKey;
 import net.firedevops.firemud.entitymanagement.entity.Item;
+import net.firedevops.firemud.entitymanagement.entity.ItemInstance;
 import net.firedevops.firemud.entitymanagement.mapper.ContainerContentEntryMapper;
-import net.firedevops.firemud.entitymanagement.mapper.InventoryEntryMapper;
 import net.firedevops.firemud.entitymanagement.repository.CharacterRepository;
 import net.firedevops.firemud.entitymanagement.repository.ContainerContentRepository;
 import net.firedevops.firemud.entitymanagement.repository.ContainerInstanceRepository;
-import net.firedevops.firemud.entitymanagement.repository.InventoryEntryRepository;
+import net.firedevops.firemud.entitymanagement.repository.ItemInstanceRepository;
 import net.firedevops.firemud.entitymanagement.repository.ItemRepository;
 import net.firedevops.firemud.entitymanagement.service.ContainerService;
 import org.springframework.data.domain.Page;
@@ -31,8 +30,7 @@ public class ContainerServiceImpl implements ContainerService {
   private final ContainerContentRepository containerContentRepository;
   private final ContainerContentEntryMapper containerContentMapper;
   private final ContainerInstanceRepository containerInstanceRepository;
-  private final InventoryEntryRepository inventoryRepository;
-  private final InventoryEntryMapper inventoryMapper;
+  private final ItemInstanceRepository itemInstanceRepository;
   private final CharacterRepository characterRepository;
   private final ItemRepository itemRepository;
 
@@ -71,11 +69,14 @@ public class ContainerServiceImpl implements ContainerService {
     if (containerItem.getId().equals(itemId)) {
       throw new IllegalArgumentException("Item cannot be placed into itself");
     }
-    InventoryEntry carried = requireInventoryEntry(character.getId(), itemId);
-    if (carried.getQuantity() < quantity) {
+    List<ItemInstance> carried =
+        itemInstanceRepository
+            .findByTenantIdAndCharacter_IdAndItem_IdAndEquipmentSlotIsNullAndGameInstanceIdIsNullAndRoomInstanceIdIsNullOrderByIdAsc(
+                tenantId, characterId, itemId);
+    if (carried.size() < quantity) {
       throw new IllegalArgumentException("Not enough quantity to put into container");
     }
-    adjustInventoryQuantity(carried, -quantity);
+    carried.subList(0, quantity).forEach(itemInstanceRepository::delete);
     ContainerContentEntry entry = upsertContainerContentEntry(containerInstance, item, quantity);
     return containerContentMapper.toDto(entry);
   }
@@ -97,8 +98,17 @@ public class ContainerServiceImpl implements ContainerService {
       throw new IllegalArgumentException("Not enough quantity in container");
     }
     adjustContainerContentQuantity(entry, -quantity);
-    InventoryEntry carried = upsertInventoryEntry(character, item, quantity);
-    return inventoryMapper.toDto(carried);
+    List<ItemInstance> created = createCarriedItemInstances(character, item, quantity);
+    ItemInstance representative = created.get(0);
+    return new InventoryEntryDto(
+        representative.getTenantId(),
+        representative.getCharacter().getId(),
+        representative.getItem().getId(),
+        representative.getItem().getName(),
+        representative.getItem().getDescription(),
+        quantity,
+        quantity == 1 ? representative.getId() : null,
+        null);
   }
 
   private Character requireCharacter(Long tenantId, Long characterId) {
@@ -126,12 +136,6 @@ public class ContainerServiceImpl implements ContainerService {
     return containerInstance;
   }
 
-  private InventoryEntry requireInventoryEntry(Long characterId, Long itemId) {
-    return inventoryRepository
-        .findById(inventoryKey(characterId, itemId))
-        .orElseThrow(() -> new IllegalArgumentException("Inventory item not found"));
-  }
-
   private ContainerContentEntry requireContainerContentEntry(
       Long tenantId, Long containerInstanceId, Long itemId) {
     return containerContentRepository
@@ -139,19 +143,20 @@ public class ContainerServiceImpl implements ContainerService {
         .orElseThrow(() -> new IllegalArgumentException("Container item not found"));
   }
 
-  private InventoryEntry upsertInventoryEntry(Character character, Item item, int quantity) {
-    InventoryKey key = inventoryKey(character.getId(), item.getId());
-    InventoryEntry entry = inventoryRepository.findById(key).orElse(null);
-    if (entry == null) {
-      entry = new InventoryEntry();
-      entry.setId(key);
-      entry.setCharacter(character);
-      entry.setItem(item);
-      entry.setQuantity(quantity);
-    } else {
-      entry.setQuantity(entry.getQuantity() + quantity);
+  private List<ItemInstance> createCarriedItemInstances(
+      Character character, Item item, int quantity) {
+    List<ItemInstance> created = new ArrayList<>();
+    for (int i = 0; i < quantity; i++) {
+      ItemInstance instance = new ItemInstance();
+      instance.setTenantId(character.getTenantId());
+      instance.setCharacter(character);
+      instance.setEquipmentSlot(null);
+      instance.setGameInstanceId(null);
+      instance.setRoomInstanceId(null);
+      instance.setItem(item);
+      created.add(itemInstanceRepository.save(instance));
     }
-    return inventoryRepository.save(entry);
+    return created;
   }
 
   private ContainerContentEntry upsertContainerContentEntry(
@@ -172,54 +177,23 @@ public class ContainerServiceImpl implements ContainerService {
     return containerContentRepository.save(entry);
   }
 
-  private void adjustInventoryQuantity(InventoryEntry entry, int delta) {
-    adjustQuantity(
-        () -> entry.getQuantity(),
-        quantity -> {
-          entry.setQuantity(quantity);
-          if (quantity == 0) {
-            inventoryRepository.delete(entry);
-          } else {
-            inventoryRepository.save(entry);
-          }
-        },
-        delta);
-  }
-
   private void adjustContainerContentQuantity(ContainerContentEntry entry, int delta) {
-    adjustQuantity(
-        () -> entry.getQuantity(),
-        quantity -> {
-          entry.setQuantity(quantity);
-          if (quantity == 0) {
-            containerContentRepository.delete(entry);
-          } else {
-            containerContentRepository.save(entry);
-          }
-        },
-        delta);
-  }
-
-  private void adjustQuantity(
-      Supplier<Integer> currentQuantity, java.util.function.IntConsumer quantityWriter, int delta) {
-    int nextQuantity = currentQuantity.get() + delta;
+    int nextQuantity = entry.getQuantity() + delta;
     if (nextQuantity < 0) {
       throw new IllegalArgumentException("Quantity cannot go negative");
     }
-    quantityWriter.accept(nextQuantity);
+    entry.setQuantity(nextQuantity);
+    if (nextQuantity == 0) {
+      containerContentRepository.delete(entry);
+    } else {
+      containerContentRepository.save(entry);
+    }
   }
 
   private void requirePositiveQuantity(int quantity) {
     if (quantity <= 0) {
       throw new IllegalArgumentException("quantity must be positive");
     }
-  }
-
-  private InventoryKey inventoryKey(Long characterId, Long itemId) {
-    InventoryKey key = new InventoryKey();
-    key.setCharacterId(characterId);
-    key.setItemId(itemId);
-    return key;
   }
 
   private ContainerContentKey containerContentKey(

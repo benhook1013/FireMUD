@@ -31,6 +31,10 @@ public class ContainerInstance {
   @JoinColumn(name = "item_id", nullable = false)
   private Item item;
 
+  @OneToOne(fetch = FetchType.LAZY)
+  @JoinColumn(name = "item_instance_id")
+  private ItemInstance itemInstance;
+
   @Version private int version;
 
   public Character getCharacter() {

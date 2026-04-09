@@ -385,7 +385,12 @@ public class EntityManagementGrpcService
       SessionContext.requireTenantAccess(tenantId);
       long characterId = Long.parseLong(request.getCharacterId());
       long itemId = Long.parseLong(request.getItemId());
-      CharacterEquipmentEntryDto dto = equipmentService.wearItem(tenantId, characterId, itemId);
+      Long itemInstanceId =
+          request.getItemInstanceId().isBlank()
+              ? null
+              : Long.parseLong(request.getItemInstanceId());
+      CharacterEquipmentEntryDto dto =
+          equipmentService.wearItem(tenantId, characterId, itemId, itemInstanceId);
       WearEquipmentItemResponse response =
           WearEquipmentItemResponse.newBuilder().setEquipmentItem(toProto(dto)).build();
       responseObserver.onNext(response);
@@ -649,6 +654,9 @@ public class EntityManagementGrpcService
               request.getGameInstanceId(),
               request.getRoomInstanceId(),
               itemId,
+              request.getItemInstanceId().isBlank()
+                  ? null
+                  : Long.parseLong(request.getItemInstanceId()),
               request.getContainerInstanceId(),
               quantity);
       PickupItemFromRoomResponse response =
@@ -708,6 +716,9 @@ public class EntityManagementGrpcService
               request.getGameInstanceId(),
               request.getRoomInstanceId(),
               itemId,
+              request.getItemInstanceId().isBlank()
+                  ? null
+                  : Long.parseLong(request.getItemInstanceId()),
               request.getContainerInstanceId(),
               quantity);
       DropItemToRoomResponse response =

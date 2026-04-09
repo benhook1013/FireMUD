@@ -8,7 +8,8 @@ public interface EquipmentService {
   Page<CharacterEquipmentEntryDto> listEquipment(
       Long tenantId, Long characterId, Pageable pageable);
 
-  CharacterEquipmentEntryDto wearItem(Long tenantId, Long characterId, Long itemId);
+  CharacterEquipmentEntryDto wearItem(
+      Long tenantId, Long characterId, Long itemId, Long itemInstanceId);
 
   CharacterEquipmentEntryDto removeWornItem(Long tenantId, Long characterId, String slot);
 }

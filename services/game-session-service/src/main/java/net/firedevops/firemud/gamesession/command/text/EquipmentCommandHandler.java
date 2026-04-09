@@ -95,7 +95,8 @@ public class EquipmentCommandHandler {
         entityManagementClient.wearEquipment(
             Long.toString(context.tenantId()),
             Long.toString(context.characterId()),
-            carried.getItemId());
+            carried.getItemId(),
+            carried.getItemInstanceId());
     if (response.hasError()) {
       return equipmentFailure(response.getError().getCode(), response.getError().getMessage());
     }

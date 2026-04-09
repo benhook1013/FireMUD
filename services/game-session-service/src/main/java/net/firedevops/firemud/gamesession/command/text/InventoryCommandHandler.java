@@ -151,6 +151,7 @@ public class InventoryCommandHandler {
                 Long.toString(context.gameInstanceId()),
                 context.roomInstanceId(),
                 item.itemId(),
+                item.itemInstanceId(),
                 item.containerInstanceId(),
                 itemReference.quantity());
         if (response.hasError()) {
@@ -191,6 +192,7 @@ public class InventoryCommandHandler {
               Long.toString(context.gameInstanceId()),
               context.roomInstanceId(),
               item.itemId(),
+              item.itemInstanceId(),
               item.containerInstanceId(),
               itemReference.quantity());
       if (response.hasError()) {
@@ -276,6 +278,7 @@ public class InventoryCommandHandler {
             entity ->
                 new ResolvedItem(
                     parseItemId(entity.getEntityId()),
+                    parseItemInstanceId(entity.getEntityId()),
                     entity.getDisplayName(),
                     parseContainerInstanceId(entity)));
   }
@@ -288,6 +291,7 @@ public class InventoryCommandHandler {
             item ->
                 new ResolvedItem(
                     item.getItemId(),
+                    item.getItemInstanceId(),
                     item.getItemName(),
                     ContainerIdentitySupport.resolveContainerInstanceId(item)));
   }
@@ -298,6 +302,10 @@ public class InventoryCommandHandler {
     }
     int lastColon = entityId.lastIndexOf(':');
     return lastColon < 0 ? entityId : entityId.substring(lastColon + 1);
+  }
+
+  private String parseItemInstanceId(String entityId) {
+    return parseItemId(entityId);
   }
 
   private String parseContainerInstanceId(RoomEntity entity) {
@@ -313,5 +321,6 @@ public class InventoryCommandHandler {
     return StringUtils.hasText(errorCode) ? errorCode : "INVENTORY_UNAVAILABLE";
   }
 
-  private record ResolvedItem(String itemId, String itemName, String containerInstanceId) {}
+  private record ResolvedItem(
+      String itemId, String itemInstanceId, String itemName, String containerInstanceId) {}
 }

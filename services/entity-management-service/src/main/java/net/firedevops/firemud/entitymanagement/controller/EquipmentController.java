@@ -39,7 +39,7 @@ public class EquipmentController {
       @Valid @RequestBody WearEquipmentItemRequest request) {
     SessionContext.requireTenantAccess(tenantId);
     CharacterEquipmentEntryDto dto =
-        equipmentService.wearItem(tenantId, characterId, request.itemId());
+        equipmentService.wearItem(tenantId, characterId, request.itemId(), null);
     return ResponseEntity.ok(ApiResponse.success(dto));
   }
 

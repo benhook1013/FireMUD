@@ -67,7 +67,7 @@ class EquipmentControllerTest {
 
   @Test
   void wearAndRemoveUseTenantScopedPath() throws Exception {
-    when(equipmentService.wearItem(eq(1L), eq(2L), eq(3L)))
+    when(equipmentService.wearItem(eq(1L), eq(2L), eq(3L), eq(null)))
         .thenReturn(
             new CharacterEquipmentEntryDto(1L, 2L, "HEAD", 3L, "Leather Cap", null, null, null));
 

@@ -172,6 +172,7 @@ class TextCommandInterpreterTest {
             Mockito.anyString(),
             Mockito.anyString(),
             Mockito.anyString(),
+            Mockito.anyString(),
             Mockito.eq(1)))
         .thenReturn(
             PickupItemFromRoomResponse.newBuilder()
@@ -184,6 +185,7 @@ class TextCommandInterpreterTest {
                         .build())
                 .build());
     when(entityManagementClient.dropItemToRoom(
+            Mockito.anyString(),
             Mockito.anyString(),
             Mockito.anyString(),
             Mockito.anyString(),
@@ -213,7 +215,7 @@ class TextCommandInterpreterTest {
                         .build())
                 .build());
     when(entityManagementClient.wearEquipment(
-            Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+            Mockito.anyString(), Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
             WearEquipmentItemResponse.newBuilder()
                 .setEquipmentItem(

@@ -224,15 +224,17 @@ public final class EntityManagementClient
   }
 
   public WearEquipmentItemResponse wearEquipment(
-      String tenantId, String characterId, String itemId) {
-    WearEquipmentItemRequest request =
+      String tenantId, String characterId, String itemId, String itemInstanceId) {
+    WearEquipmentItemRequest.Builder request =
         WearEquipmentItemRequest.newBuilder()
             .setTenantId(tenantId)
             .setCharacterId(characterId)
-            .setItemId(itemId)
-            .build();
+            .setItemId(itemId);
+    if (StringUtils.hasText(itemInstanceId)) {
+      request.setItemInstanceId(itemInstanceId);
+    }
     try {
-      return callStub().wearEquipment(request);
+      return callStub().wearEquipment(request.build());
     } catch (StatusRuntimeException ex) {
       if (ex.getStatus().getCode() == Status.Code.UNAVAILABLE) {
         logger.warn(
@@ -240,7 +242,7 @@ public final class EntityManagementClient
             ex);
         try {
           initClient();
-          return callStub().wearEquipment(request);
+          return callStub().wearEquipment(request.build());
         } catch (Exception retryEx) {
           logger.warn(
               "Failed to retry Entity Management equipment wear after channel reload", retryEx);
@@ -257,6 +259,11 @@ public final class EntityManagementClient
                 .setCode("EQUIPMENT_UNAVAILABLE")
                 .setMessage("Equipment service unavailable"))
         .build();
+  }
+
+  public WearEquipmentItemResponse wearEquipment(
+      String tenantId, String characterId, String itemId) {
+    return wearEquipment(tenantId, characterId, itemId, null);
   }
 
   public RemoveEquipmentResponse removeEquipment(String tenantId, String characterId, String slot) {
@@ -424,6 +431,7 @@ public final class EntityManagementClient
       String gameInstanceId,
       String roomInstanceId,
       String itemId,
+      String itemInstanceId,
       String containerInstanceId,
       int quantity) {
     PickupItemFromRoomRequest.Builder request =
@@ -436,6 +444,9 @@ public final class EntityManagementClient
             .setQuantity(quantity);
     if (StringUtils.hasText(containerInstanceId)) {
       request.setContainerInstanceId(containerInstanceId);
+    }
+    if (StringUtils.hasText(itemInstanceId)) {
+      request.setItemInstanceId(itemInstanceId);
     }
     try {
       return callStub().pickupItemFromRoom(request.build());
@@ -465,12 +476,32 @@ public final class EntityManagementClient
         .build();
   }
 
+  public PickupItemFromRoomResponse pickupItemFromRoom(
+      String tenantId,
+      String characterId,
+      String gameInstanceId,
+      String roomInstanceId,
+      String itemId,
+      String containerInstanceId,
+      int quantity) {
+    return pickupItemFromRoom(
+        tenantId,
+        characterId,
+        gameInstanceId,
+        roomInstanceId,
+        itemId,
+        null,
+        containerInstanceId,
+        quantity);
+  }
+
   public DropItemToRoomResponse dropItemToRoom(
       String tenantId,
       String characterId,
       String gameInstanceId,
       String roomInstanceId,
       String itemId,
+      String itemInstanceId,
       String containerInstanceId,
       int quantity) {
     DropItemToRoomRequest.Builder request =
@@ -483,6 +514,9 @@ public final class EntityManagementClient
             .setQuantity(quantity);
     if (StringUtils.hasText(containerInstanceId)) {
       request.setContainerInstanceId(containerInstanceId);
+    }
+    if (StringUtils.hasText(itemInstanceId)) {
+      request.setItemInstanceId(itemInstanceId);
     }
     try {
       return callStub().dropItemToRoom(request.build());
@@ -510,6 +544,25 @@ public final class EntityManagementClient
                 .setCode("INVENTORY_UNAVAILABLE")
                 .setMessage("Inventory service unavailable"))
         .build();
+  }
+
+  public DropItemToRoomResponse dropItemToRoom(
+      String tenantId,
+      String characterId,
+      String gameInstanceId,
+      String roomInstanceId,
+      String itemId,
+      String containerInstanceId,
+      int quantity) {
+    return dropItemToRoom(
+        tenantId,
+        characterId,
+        gameInstanceId,
+        roomInstanceId,
+        itemId,
+        null,
+        containerInstanceId,
+        quantity);
   }
 
   private EntityManagementServiceGrpc.EntityManagementServiceBlockingStub callStub() {
