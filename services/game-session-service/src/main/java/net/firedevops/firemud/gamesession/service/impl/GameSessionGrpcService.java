@@ -106,15 +106,38 @@ public final class GameSessionGrpcService
       long tenantId = Long.parseLong(request.getTenantId());
       long ownerAccountId = parseOwnerAccountId(request.getOwnerAccountId());
       requireTenantAndOwnerAccess(tenantId, ownerAccountId);
+      GameInstance existingRunningSession =
+          gameInstanceRepository
+              .findFirstByTenantIdAndOwnerAccountIdAndStatus(tenantId, ownerAccountId, "RUNNING")
+              .orElse(null);
+      if (clientIp != null
+          && !clientIp.isBlank()
+          && !ipConnectionLimiter.canAccept(
+              clientIp, existingRunningSession != null ? existingRunningSession.getId() : null)) {
+        StartSessionResponse response =
+            StartSessionResponse.newBuilder()
+                .setError(
+                    GrpcAppErrors.error(
+                        meterRegistry, "CONNECTION_LIMIT", "Too many connections from IP"))
+                .build();
+        responseObserver.onNext(response);
+        responseObserver.onCompleted();
+        return;
+      }
       StartSessionRequest dto =
           new StartSessionRequest(
               tenantId,
               request.getRuntimeVersion(),
               request.getScriptPatchVersion(),
               ownerAccountId);
-      GameInstanceDto instance = gameInstanceService.startSession(dto);
+      GameInstanceDto instance = gameInstanceService.startSession(dto, false);
+      boolean transferredRegistration = false;
       if (clientIp != null && !clientIp.isBlank()) {
-        if (!ipConnectionLimiter.tryRegister(clientIp, instance.id())) {
+        transferredRegistration =
+            existingRunningSession != null
+                && ipConnectionLimiter.transferRegistration(
+                    clientIp, existingRunningSession.getId(), instance.id());
+        if (!transferredRegistration && !ipConnectionLimiter.tryRegister(clientIp, instance.id())) {
           gameInstanceService.stopSession(instance.id());
           StartSessionResponse response =
               StartSessionResponse.newBuilder()
@@ -126,6 +149,12 @@ public final class GameSessionGrpcService
           responseObserver.onCompleted();
           return;
         }
+      }
+      if (existingRunningSession != null) {
+        if (!transferredRegistration) {
+          ipConnectionLimiter.release(existingRunningSession.getId());
+        }
+        gameInstanceService.stopSession(existingRunningSession.getId());
       }
       StartSessionResponse response =
           StartSessionResponse.newBuilder().setSessionId(instance.id().toString()).build();

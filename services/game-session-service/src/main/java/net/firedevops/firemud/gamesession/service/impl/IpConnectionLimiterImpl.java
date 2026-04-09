@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamesession.service.impl;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Duration;
+import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.common.redis.RedisAtomicOperations;
 import net.firedevops.firemud.gamesession.config.DevIsolatedProperties;
 import net.firedevops.firemud.gamesession.service.IpConnectionLimiter;
@@ -51,6 +52,18 @@ public class IpConnectionLimiterImpl implements IpConnectionLimiter {
   }
 
   @Override
+  public boolean canAccept(String ip, Long replacingSessionId) {
+    if (canAccept(ip)) {
+      return true;
+    }
+    if (replacingSessionId == null || devIsolatedProperties.isDevIsolated()) {
+      return false;
+    }
+    String currentIp = redisTemplate.opsForValue().get(sessionKey(replacingSessionId));
+    return ip.equals(currentIp);
+  }
+
+  @Override
   public boolean tryRegister(String ip, long sessionId) {
     if (devIsolatedProperties.isDevIsolated()) {
       return true;
@@ -58,6 +71,25 @@ public class IpConnectionLimiterImpl implements IpConnectionLimiter {
 
     return RedisAtomicOperations.reserveBoundedCounter(
         redisTemplate, ipKey(ip), sessionKey(sessionId), maxConnectionsPerIp, entryTtl, ip);
+  }
+
+  @Override
+  public boolean transferRegistration(String ip, long previousSessionId, long newSessionId) {
+    if (devIsolatedProperties.isDevIsolated()) {
+      return true;
+    }
+
+    String previousSessionKey = sessionKey(previousSessionId);
+    String currentIp = redisTemplate.opsForValue().get(previousSessionKey);
+    if (!ip.equals(currentIp)) {
+      return false;
+    }
+
+    Long ttlMs = redisTemplate.getExpire(previousSessionKey, TimeUnit.MILLISECONDS);
+    Duration ttl = ttlMs != null && ttlMs > 0 ? Duration.ofMillis(ttlMs) : entryTtl;
+    redisTemplate.opsForValue().set(sessionKey(newSessionId), ip, ttl);
+    redisTemplate.delete(previousSessionKey);
+    return true;
   }
 
   @Override

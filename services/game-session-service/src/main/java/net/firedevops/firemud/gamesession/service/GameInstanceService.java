@@ -5,7 +5,11 @@ import net.firedevops.firemud.gamesession.dto.StartSessionRequest;
 
 /** Service handling game instance lifecycle operations. */
 public interface GameInstanceService {
-  GameInstanceDto startSession(StartSessionRequest request);
+  default GameInstanceDto startSession(StartSessionRequest request) {
+    return startSession(request, true);
+  }
+
+  GameInstanceDto startSession(StartSessionRequest request, boolean replaceExistingFirst);
 
   GameInstanceDto stopSession(long sessionId);
 

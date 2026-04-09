@@ -97,6 +97,26 @@ class GameInstanceServiceImplTest {
   }
 
   @Test
+  void startSessionWithoutReplacementLeavesExistingSessionRunning() {
+    StartSessionRequest request = new StartSessionRequest(2L, "v1", null, 42L);
+    GameInstance entity = new GameInstance();
+    entity.setId(10L);
+    entity.setTenantId(2L);
+    entity.setRuntimeVersion("v1");
+    entity.setOwnerAccountId(42L);
+    entity.setStatus("RUNNING");
+
+    when(repository.save(org.mockito.ArgumentMatchers.any(GameInstance.class))).thenReturn(entity);
+    GameInstanceDto dto = new GameInstanceDto(10L, 2L, "v1", null, 42L, "RUNNING");
+    when(mapper.toDto(entity)).thenReturn(dto);
+
+    service.startSession(request, false);
+
+    verify(repository, never()).findFirstByTenantIdAndOwnerAccountIdAndStatus(2L, 42L, "RUNNING");
+    verify(stateService).saveState(dto);
+  }
+
+  @Test
   void stopSessionDeletesState() {
     GameInstance entity = new GameInstance();
     entity.setId(10L);

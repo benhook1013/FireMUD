@@ -26,7 +26,7 @@ public class DevIsolatedGameInstanceService implements GameInstanceService {
   }
 
   @Override
-  public GameInstanceDto startSession(StartSessionRequest request) {
+  public GameInstanceDto startSession(StartSessionRequest request, boolean replaceExistingFirst) {
     long sessionId = registry.nextSessionId();
     GameInstance instance = new GameInstance();
     instance.setId(sessionId);
