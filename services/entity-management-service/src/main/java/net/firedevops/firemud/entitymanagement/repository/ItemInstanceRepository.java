@@ -50,6 +50,14 @@ public interface ItemInstanceRepository extends JpaRepository<ItemInstance, Long
   List<ItemInstance> findByTenantIdAndCharacter_IdAndItem_IdOrderByIdAsc(
       Long tenantId, Long characterId, Long itemId);
 
+  @EntityGraph(attributePaths = {"character", "item", "containerInstance"})
+  Page<ItemInstance> findByTenantIdAndContainerInstance_IdOrderByIdAsc(
+      Long tenantId, Long containerInstanceId, Pageable pageable);
+
+  @EntityGraph(attributePaths = {"character", "item", "containerInstance"})
+  List<ItemInstance> findByTenantIdAndContainerInstance_IdAndItem_IdOrderByIdAsc(
+      Long tenantId, Long containerInstanceId, Long itemId);
+
   @EntityGraph(attributePaths = {"character", "item"})
   Optional<ItemInstance> findByIdAndTenantId(Long id, Long tenantId);
 }

@@ -28,6 +28,10 @@ public class ItemInstance {
   private String roomInstanceId;
 
   @ManyToOne(fetch = FetchType.LAZY)
+  @JoinColumn(name = "container_instance_id")
+  private ContainerInstance containerInstance;
+
+  @ManyToOne(fetch = FetchType.LAZY)
   @JoinColumn(name = "item_id", nullable = false)
   private Item item;
 

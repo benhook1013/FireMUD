@@ -5,6 +5,7 @@ CREATE TABLE item_instances (
     equipment_slot VARCHAR(64),
     game_instance_id VARCHAR(255),
     room_instance_id VARCHAR(255),
+    container_instance_id BIGINT REFERENCES container_instances(id),
     item_id BIGINT NOT NULL REFERENCES items(id),
     version INT NOT NULL DEFAULT 0
 );
@@ -17,6 +18,9 @@ CREATE INDEX idx_item_instances_tenant_equipment
 
 CREATE INDEX idx_item_instances_room
     ON item_instances(tenant_id, game_instance_id, room_instance_id);
+
+CREATE INDEX idx_item_instances_container
+    ON item_instances(tenant_id, container_instance_id);
 
 CREATE INDEX idx_item_instances_item
     ON item_instances(item_id);
@@ -31,3 +35,5 @@ CREATE UNIQUE INDEX ux_container_instances_item_instance
 DROP INDEX IF EXISTS ux_container_instances_inventory;
 DROP INDEX IF EXISTS ux_container_instances_equipment;
 DROP INDEX IF EXISTS ux_container_instances_room;
+
+DROP TABLE IF EXISTS container_contents;

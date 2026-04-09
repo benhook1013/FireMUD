@@ -1,20 +1,15 @@
 package net.firedevops.firemud.entitymanagement.service.impl;
 
 import io.micrometer.core.annotation.Timed;
-import java.util.ArrayList;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.entitymanagement.dto.ContainerContentEntryDto;
 import net.firedevops.firemud.entitymanagement.dto.InventoryEntryDto;
 import net.firedevops.firemud.entitymanagement.entity.Character;
-import net.firedevops.firemud.entitymanagement.entity.ContainerContentEntry;
-import net.firedevops.firemud.entitymanagement.entity.ContainerContentKey;
 import net.firedevops.firemud.entitymanagement.entity.ContainerInstance;
 import net.firedevops.firemud.entitymanagement.entity.Item;
 import net.firedevops.firemud.entitymanagement.entity.ItemInstance;
-import net.firedevops.firemud.entitymanagement.mapper.ContainerContentEntryMapper;
 import net.firedevops.firemud.entitymanagement.repository.CharacterRepository;
-import net.firedevops.firemud.entitymanagement.repository.ContainerContentRepository;
 import net.firedevops.firemud.entitymanagement.repository.ContainerInstanceRepository;
 import net.firedevops.firemud.entitymanagement.repository.ItemInstanceRepository;
 import net.firedevops.firemud.entitymanagement.repository.ItemRepository;
@@ -27,8 +22,6 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 @RequiredArgsConstructor
 public class ContainerServiceImpl implements ContainerService {
-  private final ContainerContentRepository containerContentRepository;
-  private final ContainerContentEntryMapper containerContentMapper;
   private final ContainerInstanceRepository containerInstanceRepository;
   private final ItemInstanceRepository itemInstanceRepository;
   private final CharacterRepository characterRepository;
@@ -43,9 +36,10 @@ public class ContainerServiceImpl implements ContainerService {
     ContainerInstance containerInstance =
         requireContainerInstanceAccessibleToCharacter(
             character.getId(), tenantId, containerInstanceId);
-    return containerContentRepository
-        .findByIdTenantIdAndIdContainerInstanceId(tenantId, containerInstance.getId(), pageable)
-        .map(containerContentMapper::toDto);
+    return itemInstanceRepository
+        .findByTenantIdAndContainerInstance_IdOrderByIdAsc(
+            tenantId, containerInstance.getId(), pageable)
+        .map(this::toDto);
   }
 
   @Override
@@ -76,9 +70,17 @@ public class ContainerServiceImpl implements ContainerService {
     if (carried.size() < quantity) {
       throw new IllegalArgumentException("Not enough quantity to put into container");
     }
-    carried.subList(0, quantity).forEach(itemInstanceRepository::delete);
-    ContainerContentEntry entry = upsertContainerContentEntry(containerInstance, item, quantity);
-    return containerContentMapper.toDto(entry);
+    List<ItemInstance> moved = carried.subList(0, quantity);
+    for (ItemInstance instance : moved) {
+      instance.setCharacter(null);
+      instance.setEquipmentSlot(null);
+      instance.setGameInstanceId(null);
+      instance.setRoomInstanceId(null);
+      instance.setContainerInstance(containerInstance);
+      itemInstanceRepository.save(instance);
+      syncNestedContainerHolder(instance);
+    }
+    return toMutationDto(moved.get(0), quantity);
   }
 
   @Override
@@ -92,23 +94,23 @@ public class ContainerServiceImpl implements ContainerService {
         requireContainerInstanceAccessibleToCharacter(
             character.getId(), tenantId, containerInstanceId);
     Item item = requireItem(tenantId, itemId);
-    ContainerContentEntry entry =
-        requireContainerContentEntry(tenantId, containerInstance.getId(), itemId);
-    if (entry.getQuantity() < quantity) {
+    List<ItemInstance> contained =
+        itemInstanceRepository.findByTenantIdAndContainerInstance_IdAndItem_IdOrderByIdAsc(
+            tenantId, containerInstance.getId(), itemId);
+    if (contained.size() < quantity) {
       throw new IllegalArgumentException("Not enough quantity in container");
     }
-    adjustContainerContentQuantity(entry, -quantity);
-    List<ItemInstance> created = createCarriedItemInstances(character, item, quantity);
-    ItemInstance representative = created.get(0);
-    return new InventoryEntryDto(
-        representative.getTenantId(),
-        representative.getCharacter().getId(),
-        representative.getItem().getId(),
-        representative.getItem().getName(),
-        representative.getItem().getDescription(),
-        quantity,
-        quantity == 1 ? representative.getId() : null,
-        null);
+    List<ItemInstance> moved = contained.subList(0, quantity);
+    for (ItemInstance instance : moved) {
+      instance.setCharacter(character);
+      instance.setEquipmentSlot(null);
+      instance.setGameInstanceId(null);
+      instance.setRoomInstanceId(null);
+      instance.setContainerInstance(null);
+      itemInstanceRepository.save(instance);
+      syncNestedContainerHolder(instance);
+    }
+    return toInventoryMutationDto(moved.get(0), quantity);
   }
 
   private Character requireCharacter(Long tenantId, Long characterId) {
@@ -129,79 +131,83 @@ public class ContainerServiceImpl implements ContainerService {
         containerInstanceRepository
             .findAccessibleByIdAndTenantIdAndCharacterId(containerInstanceId, tenantId, characterId)
             .orElseThrow(() -> new IllegalArgumentException("Container instance not found"));
-    Item containerItem = containerInstance.getItem();
-    if (!containerItem.isContainer()) {
+    if (!containerInstance.getItem().isContainer()) {
       throw new IllegalArgumentException("Item is not a container");
     }
     return containerInstance;
   }
 
-  private ContainerContentEntry requireContainerContentEntry(
-      Long tenantId, Long containerInstanceId, Long itemId) {
-    return containerContentRepository
-        .findByIdTenantIdAndIdContainerInstanceIdAndIdItemId(tenantId, containerInstanceId, itemId)
-        .orElseThrow(() -> new IllegalArgumentException("Container item not found"));
+  private void syncNestedContainerHolder(ItemInstance itemInstance) {
+    if (itemInstance.getItem() == null || !itemInstance.getItem().isContainer()) {
+      return;
+    }
+    ContainerInstance nested =
+        containerInstanceRepository
+            .findByItemInstance_Id(itemInstance.getId())
+            .orElseThrow(() -> new IllegalArgumentException("Container instance not found"));
+    nested.setTenantId(itemInstance.getTenantId());
+    nested.setCharacter(itemInstance.getCharacter());
+    nested.setEquipmentSlot(itemInstance.getEquipmentSlot());
+    nested.setGameInstanceId(itemInstance.getGameInstanceId());
+    nested.setRoomInstanceId(itemInstance.getRoomInstanceId());
+    containerInstanceRepository.save(nested);
   }
 
-  private List<ItemInstance> createCarriedItemInstances(
-      Character character, Item item, int quantity) {
-    List<ItemInstance> created = new ArrayList<>();
-    for (int i = 0; i < quantity; i++) {
-      ItemInstance instance = new ItemInstance();
-      instance.setTenantId(character.getTenantId());
-      instance.setCharacter(character);
-      instance.setEquipmentSlot(null);
-      instance.setGameInstanceId(null);
-      instance.setRoomInstanceId(null);
-      instance.setItem(item);
-      created.add(itemInstanceRepository.save(instance));
-    }
-    return created;
+  private ContainerContentEntryDto toDto(ItemInstance instance) {
+    return new ContainerContentEntryDto(
+        instance.getTenantId(),
+        resolveCharacterId(instance.getContainerInstance()),
+        instance.getContainerInstance().getId(),
+        instance.getItem().getId(),
+        instance.getItem().getName(),
+        instance.getItem().getDescription(),
+        1,
+        instance.getId());
   }
 
-  private ContainerContentEntry upsertContainerContentEntry(
-      ContainerInstance containerInstance, Item item, int quantity) {
-    ContainerContentKey key =
-        containerContentKey(
-            containerInstance.getTenantId(), containerInstance.getId(), item.getId());
-    ContainerContentEntry entry = containerContentRepository.findById(key).orElse(null);
-    if (entry == null) {
-      entry = new ContainerContentEntry();
-      entry.setId(key);
-      entry.setContainerInstance(containerInstance);
-      entry.setItem(item);
-      entry.setQuantity(quantity);
-    } else {
-      entry.setQuantity(entry.getQuantity() + quantity);
-    }
-    return containerContentRepository.save(entry);
+  private ContainerContentEntryDto toMutationDto(ItemInstance instance, int quantity) {
+    return new ContainerContentEntryDto(
+        instance.getTenantId(),
+        resolveCharacterId(instance.getContainerInstance()),
+        instance.getContainerInstance().getId(),
+        instance.getItem().getId(),
+        instance.getItem().getName(),
+        instance.getItem().getDescription(),
+        quantity,
+        quantity == 1 ? instance.getId() : null);
   }
 
-  private void adjustContainerContentQuantity(ContainerContentEntry entry, int delta) {
-    int nextQuantity = entry.getQuantity() + delta;
-    if (nextQuantity < 0) {
-      throw new IllegalArgumentException("Quantity cannot go negative");
+  private InventoryEntryDto toInventoryMutationDto(ItemInstance instance, int quantity) {
+    return new InventoryEntryDto(
+        instance.getTenantId(),
+        instance.getCharacter().getId(),
+        instance.getItem().getId(),
+        instance.getItem().getName(),
+        instance.getItem().getDescription(),
+        quantity,
+        quantity == 1 ? instance.getId() : null,
+        resolveContainerInstanceId(instance));
+  }
+
+  private Long resolveCharacterId(ContainerInstance containerInstance) {
+    return containerInstance.getCharacter() == null
+        ? null
+        : containerInstance.getCharacter().getId();
+  }
+
+  private Long resolveContainerInstanceId(ItemInstance itemInstance) {
+    if (itemInstance.getItem() == null || !itemInstance.getItem().isContainer()) {
+      return null;
     }
-    entry.setQuantity(nextQuantity);
-    if (nextQuantity == 0) {
-      containerContentRepository.delete(entry);
-    } else {
-      containerContentRepository.save(entry);
-    }
+    return containerInstanceRepository
+        .findByItemInstance_Id(itemInstance.getId())
+        .map(ContainerInstance::getId)
+        .orElse(null);
   }
 
   private void requirePositiveQuantity(int quantity) {
     if (quantity <= 0) {
       throw new IllegalArgumentException("quantity must be positive");
     }
-  }
-
-  private ContainerContentKey containerContentKey(
-      Long tenantId, Long containerInstanceId, Long itemId) {
-    ContainerContentKey key = new ContainerContentKey();
-    key.setTenantId(tenantId);
-    key.setContainerInstanceId(containerInstanceId);
-    key.setItemId(itemId);
-    return key;
   }
 }
