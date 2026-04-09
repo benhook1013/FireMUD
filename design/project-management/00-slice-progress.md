@@ -11,7 +11,7 @@ It intentionally omits completed slices and uses the individual slice docs as th
 These are narrow enough to implement now and unblock the current runtime/platform direction.
 
 1. [02.2.1 Session Start Admission Ordering and IP-Limit Safety](./vertical-slices/02.2.1-task-list-session-start-admission-ordering-and-ip-limit-safety-vertical-slice.md)
-   Remaining: finish the last replacement/teardown semantics and align every canonical session-start path with the safer admission ordering.
+   Remaining: decide whether any non-gRPC/operator path should ever become a separate canonical admission seam beyond the now-hardened gameplay gRPC path.
 2. [02.18.2 Internal Blocking gRPC Auth Propagation](./vertical-slices/02.18.2-task-list-internal-grpc-auth-propagation-vertical-slice.md)
    Remaining: finish the caller-side auth propagation seam for secured internal blocking clients.
 3. [02.14.4 Metrics Cardinality and Label Policy Hardening](./vertical-slices/02.14.4-task-list-metrics-cardinality-and-label-policy-hardening-vertical-slice.md)

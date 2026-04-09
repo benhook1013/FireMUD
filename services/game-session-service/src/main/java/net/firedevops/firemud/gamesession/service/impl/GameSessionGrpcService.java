@@ -40,6 +40,8 @@ import net.firedevops.firemud.gamesession.v1.StopSessionResponse;
 import net.firedevops.firemud.gamesession.v1.TickStatus;
 import net.firedevops.firemud.gamesession.v1.ToggleFeatureFlagRequest;
 import net.firedevops.firemud.gamesession.v1.ToggleFeatureFlagResponse;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.grpc.server.service.GrpcService;
 
 /** gRPC endpoints for the Game Session Service. */
@@ -49,6 +51,7 @@ import org.springframework.grpc.server.service.GrpcService;
     justification = "Injected service collaborators are framework-managed and retained internally")
 public final class GameSessionGrpcService
     extends GameSessionServiceGrpc.GameSessionServiceImplBase {
+  private static final Logger LOG = LoggerFactory.getLogger(GameSessionGrpcService.class);
   private final PingService pingService;
   private final GameInstanceService gameInstanceService;
   private final FeatureFlagService featureFlagService;
@@ -154,7 +157,15 @@ public final class GameSessionGrpcService
         if (!transferredRegistration) {
           ipConnectionLimiter.release(existingRunningSession.getId());
         }
-        gameInstanceService.stopSession(existingRunningSession.getId());
+        try {
+          gameInstanceService.stopSession(existingRunningSession.getId());
+        } catch (IllegalStateException ex) {
+          LOG.warn(
+              "Replacement session {} admitted, but teardown of previous session {} failed",
+              instance.id(),
+              existingRunningSession.getId(),
+              ex);
+        }
       }
       StartSessionResponse response =
           StartSessionResponse.newBuilder().setSessionId(instance.id().toString()).build();
