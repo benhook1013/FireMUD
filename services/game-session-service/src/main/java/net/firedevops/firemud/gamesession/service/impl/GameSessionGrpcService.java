@@ -145,6 +145,13 @@ public final class GameSessionGrpcService
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
+    } catch (IllegalStateException ex) {
+      StartSessionResponse response =
+          StartSessionResponse.newBuilder()
+              .setError(GrpcAppErrors.error(meterRegistry, "INTERNAL", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
     }
   }
 
@@ -195,6 +202,14 @@ public final class GameSessionGrpcService
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
+    } catch (IllegalStateException ex) {
+      StopSessionResponse response =
+          StopSessionResponse.newBuilder()
+              .setSuccess(false)
+              .setError(GrpcAppErrors.error(meterRegistry, "INTERNAL", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
     }
   }
 
@@ -223,6 +238,14 @@ public final class GameSessionGrpcService
           RestartSessionResponse.newBuilder()
               .setSuccess(false)
               .setError(GrpcAppErrors.error(meterRegistry, "PERMISSION_DENIED", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (IllegalStateException ex) {
+      RestartSessionResponse response =
+          RestartSessionResponse.newBuilder()
+              .setSuccess(false)
+              .setError(GrpcAppErrors.error(meterRegistry, "INTERNAL", ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
