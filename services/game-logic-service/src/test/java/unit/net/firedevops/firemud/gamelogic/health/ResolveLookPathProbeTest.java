@@ -39,7 +39,7 @@ class ResolveLookPathProbeTest {
 
     ResolveLookPathProbe probe = new ResolveLookPathProbe(worldStub, entityStub);
 
-    ProbeResult result = probe.probe("0", "0");
+    ProbeResult result = probe.probe("0", "0", "0");
 
     assertTrue(result.ready());
     @SuppressWarnings("unchecked")
@@ -65,7 +65,7 @@ class ResolveLookPathProbeTest {
     ResolveLookPathProbe probe =
         new ResolveLookPathProbe(worldStub, mock(EntityManagementServiceBlockingStub.class));
 
-    ProbeResult result = probe.probe("0", "0");
+    ProbeResult result = probe.probe("0", "0", "0");
 
     assertEquals(false, result.ready());
     assertEquals("worldManagementService", result.failingDependency());

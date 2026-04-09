@@ -12,6 +12,7 @@ public class LookDependencyReadinessHealthIndicator implements HealthIndicator {
   private static final String COMPONENT = "game-logic-service";
   private static final String CONTRACT = "ResolveLook";
   private static final String PROBE_TENANT_ID = "0";
+  private static final String PROBE_GAME_INSTANCE_ID = "0";
   private static final String PROBE_ROOM_ID = "0";
 
   private final ResolveLookPathProbe resolveLookPathProbe;
@@ -26,7 +27,8 @@ public class LookDependencyReadinessHealthIndicator implements HealthIndicator {
 
   @Override
   public org.springframework.boot.health.contributor.Health health() {
-    ProbeResult probeResult = resolveLookPathProbe.probe(PROBE_TENANT_ID, PROBE_ROOM_ID);
+    ProbeResult probeResult =
+        resolveLookPathProbe.probe(PROBE_TENANT_ID, PROBE_GAME_INSTANCE_ID, PROBE_ROOM_ID);
     if (!probeResult.ready()) {
       return DependencyReadinessSupport.recordOutOfService(
           readinessTransitionTracker,
