@@ -90,7 +90,7 @@ public class PlayCommandHandler {
         sessionAuthenticationService.resolveSessionContext(sessionId);
     String tenantTag =
         maybeContext.map(context -> Long.toString(context.tenantId())).orElse("unknown");
-    meterRegistry.counter(INVOCATIONS_METRIC, "tenantId", tenantTag).increment();
+    meterRegistry.counter(INVOCATIONS_METRIC).increment();
 
     if (maybeContext.isEmpty()) {
       return failure(
@@ -183,7 +183,6 @@ public class PlayCommandHandler {
               && Objects.equals(
                   normalizeName(context.characterName()), normalizeName(characterName))) {
             resumeCounter.increment();
-            meterRegistry.counter(RESUME_METRIC, "tenantId", tenantTag).increment();
             LOG.debug(
                 "PLAY resumed existing gameplay binding for tenant {} gameInstance {} character {} on session {}",
                 context.tenantId(),
@@ -198,7 +197,7 @@ public class PlayCommandHandler {
 
           boolean freshEntryFallback =
               maybeRecordFreshEntryFallback(
-                  context, selectedWorld, character, gameInstanceId, characterId, tenantTag);
+                  context, selectedWorld, character, gameInstanceId, characterId);
 
           Optional<SessionContext> existingBinding =
               sessionContextService.findByGameplayIdentity(
@@ -271,7 +270,7 @@ public class PlayCommandHandler {
       String gameInstanceTag,
       String characterTag,
       RuntimeException ex) {
-    meterRegistry.counter(FAILURES_METRIC, "tenantId", tenantTag, "error", errorCode).increment();
+    meterRegistry.counter(FAILURES_METRIC, "error", errorCode).increment();
     if (ex == null) {
       LOG.warn(
           "PLAY failed tenantId={} gameInstanceId={} characterId={} error={} reason={}",
@@ -342,9 +341,6 @@ public class PlayCommandHandler {
       SessionContext incoming, SessionContext existing, long gameInstanceId, long characterId) {
     if (existing.sessionId() == incoming.sessionId()) {
       resumeCounter.increment();
-      meterRegistry
-          .counter(RESUME_METRIC, "tenantId", Long.toString(incoming.tenantId()))
-          .increment();
       LOG.debug(
           "PLAY resumed gameplay binding for tenant {} gameInstance {} character {} on session {}",
           incoming.tenantId(),
@@ -355,9 +351,6 @@ public class PlayCommandHandler {
     }
 
     takeoverCounter.increment();
-    meterRegistry
-        .counter(TAKEOVER_METRIC, "tenantId", Long.toString(incoming.tenantId()))
-        .increment();
     LOG.info(
         "PLAY taking over gameplay binding tenant {} gameInstance {} character {} from session {} to {}",
         incoming.tenantId(),
@@ -542,8 +535,7 @@ public class PlayCommandHandler {
       GameSessionProperties.WorldOption selectedWorld,
       String requestedCharacter,
       long requestedGameInstanceId,
-      long requestedCharacterId,
-      String tenantTag) {
+      long requestedCharacterId) {
     if (context.gameInstanceId() != requestedGameInstanceId
         || context.characterId() != requestedCharacterId) {
       return false;
@@ -555,12 +547,7 @@ public class PlayCommandHandler {
       return false;
     }
     meterRegistry
-        .counter(
-            FRESH_ENTRY_FALLBACK_METRIC,
-            "tenantId",
-            tenantTag,
-            "reason",
-            "stale_or_missing_context")
+        .counter(FRESH_ENTRY_FALLBACK_METRIC, "reason", "stale_or_missing_context")
         .increment();
     LOG.info(
         "PLAY falling back to fresh entry for tenant {} gameInstance {} character {} on session {} because resumable context was stale or incomplete",
@@ -581,8 +568,6 @@ public class PlayCommandHandler {
         || context.characterId() != requestedCharacterId) {
       return;
     }
-    meterRegistry
-        .counter(RESUME_DENIED_METRIC, "tenantId", tenantTag, "reason", reason)
-        .increment();
+    meterRegistry.counter(RESUME_DENIED_METRIC, "reason", reason).increment();
   }
 }

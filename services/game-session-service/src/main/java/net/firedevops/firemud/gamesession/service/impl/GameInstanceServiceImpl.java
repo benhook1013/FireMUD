@@ -177,12 +177,7 @@ public class GameInstanceServiceImpl implements GameInstanceService {
           "save started session state",
           () -> sessionStateService.saveState(dto),
           () -> sessionStateService.deleteState(dto.tenantId(), dto.id()));
-      meterRegistry
-          .counter(
-              "game_sessions_started_total",
-              "script_patch_version",
-              request.scriptPatchVersion() == null ? "none" : request.scriptPatchVersion())
-          .increment();
+      meterRegistry.counter("game_sessions_started_total").increment();
       return dto;
     } catch (RuntimeException ex) {
       if (instance != null && instance.getId() != null) {

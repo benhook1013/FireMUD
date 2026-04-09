@@ -113,8 +113,7 @@ class LookCommandHandlerTest {
     PlayerOutput output = handler.describePlayerOutput("123", true);
 
     assertThat(output.payload()).isInstanceOf(LookViewOutput.class);
-    Counter invocations =
-        meterRegistry.get("gamesession.command.look.invocations").tag("tenantId", "22").counter();
+    Counter invocations = meterRegistry.get("gamesession.command.look.invocations").counter();
     assertEquals(1.0, invocations.count());
   }
 
@@ -139,7 +138,6 @@ class LookCommandHandlerTest {
     Counter failures =
         meterRegistry
             .get("gamesession.command.look.failures")
-            .tag("tenantId", "22")
             .tag("error", "WORLD_UNAVAILABLE")
             .counter();
     assertEquals(1.0, failures.count());

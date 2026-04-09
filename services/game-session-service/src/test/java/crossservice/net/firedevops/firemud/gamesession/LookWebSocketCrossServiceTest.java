@@ -122,9 +122,8 @@ class LookWebSocketCrossServiceTest {
     assertThat(responses.get(3).trim()).isEqualTo(canonicalLookWithPrompt());
     assertThat(responses.get(4)).startsWith("ERROR ROOM_NOT_FOUND");
 
-    assertMetricEventually("gamesession.command.look.invocations", 2.0, "tenantId", "1");
-    assertMetricEventually(
-        "gamesession.command.look.failures", 1.0, "tenantId", "1", "error", "ROOM_NOT_FOUND");
+    assertMetricEventually("gamesession.command.look.invocations", 2.0);
+    assertMetricEventually("gamesession.command.look.failures", 1.0, "error", "ROOM_NOT_FOUND");
   }
 
   @Test
@@ -208,7 +207,7 @@ class LookWebSocketCrossServiceTest {
 
       first.sendAndAwait("LOOK", 4);
       assertThat(first.responses().get(3)).startsWith("ERROR LOGIN_REQUIRED");
-      assertMetricEventually("gamesession.session.takeover", 1.0, "tenantId", "1");
+      assertMetricEventually("gamesession.session.takeover", 1.0);
     }
   }
 
