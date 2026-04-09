@@ -2,13 +2,31 @@
 
 ## Goal and Status
 
-Goal: extend the current playable loop beyond `LOOK`, `SAY`, and movement so players can inspect and manipulate items through a unified container model, with room-ground inventory, hidden character inventory containers, first-class equipment bindings, richer inventory queries, and auditable transfer history. Status: planned; design direction has been agreed, but implementation has not started.
+Goal: extend the current playable loop beyond `LOOK`, `SAY`, and movement so players can inspect and manipulate items through a unified item-holder model, with room-ground inventory, first-class item instances, equipment bindings, richer management queries, and later auditable transfer history. Status: partially implemented.
 
-This slice builds on the current authenticated gameplay path, authoritative room state, and movement support. It is intended to become the first real item-interaction slice rather than a broad item-system rewrite.
+This slice builds on the current authenticated gameplay path, authoritative room state, and movement support. It has already delivered the first real item-interaction loop rather than remaining a purely planned item-system rewrite.
 
 Scope note: this slice should establish the canonical container/equipment/audit model and prove the first player-facing item actions such as `INVENTORY`, `GET`, `DROP`, and one equipment action. It should not try to solve crafting, shops, banks, loot generation, or deep scripted item behaviors in the same change.
 
 Architectural note: inventory, equipment, room-ground items, and containers should remain one shared item-holder and transfer system with different holder kinds and presentation rules, not separate gameplay subsystems. The dedicated convergence follow-up is captured in `06.4-task-list-unified-item-holder-and-transfer-model-vertical-slice.md`.
+
+## Implementation Notes
+
+The current branch state is materially ahead of the original `06` plan:
+
+- `INVENTORY`, `GET`, `DROP`, `EQUIPMENT`, `WEAR`, `REMOVE`, `CONTAINER`, `PUT`, and `TAKE` all exist as live gameplay command paths;
+- room-ground management is now surfaced through `INV HERE` rather than forcing room prose to carry management semantics;
+- inventory, equipment, room-ground items, and container contents are now backed by persisted `item_instances`;
+- stable compact visible refs such as `satchel12` are now allocated and surfaced through management views and exact-item matching;
+- the gameplay command layer has its first bounded unification pass through `ItemCommandHandler`;
+- the remaining work under `06` is no longer "start item interactions", but tightening the canonical holder/transfer contract, adding explicit authored stackability, and aligning audit/validation semantics.
+
+The most important remaining design work in this slice family is:
+
+- make the canonical transfer contract explicit;
+- decide whether the direct holder fields on `item_instances` are the canonical runtime model or only an implementation step toward a more abstract holder contract;
+- tighten shared transfer-audit and validation language across all holder kinds;
+- finish the explicit authored stackability follow-up on top of the now-stable item-instance truth.
 
 ## First Implementation Boundary
 
@@ -25,13 +43,12 @@ Recommended first order:
 4. add presentation/help coverage for that loop
 5. defer general named containers, nested containers, and full equipment/body-layout behavior until the runtime path is solid
 
-This means the first implementation should treat:
+This ordering is now historical context rather than future plan:
 
-- hidden/internal character inventory containers as implementation-owned storage, not direct player-addressable containers;
-- room-ground storage as the first visible transfer target/source;
-- `LOOK` as room-context output, not a replacement for inventory/equipment queries.
-
-Equipment is still part of the overall `06` slice, but if it materially widens the first runtime loop it should follow immediately after the room-ground inventory proof rather than blocking it.
+- room-ground storage did become the first visible transfer target/source;
+- `LOOK` remains room-context output rather than a replacement for inventory/equipment queries;
+- equipment and named containers are already in the live `06` command surface;
+- the active follow-up work has moved from MVP verb enablement to architectural convergence and instance identity.
 
 ## 1. Design Alignment for Containment, Equipment, and Audit
 

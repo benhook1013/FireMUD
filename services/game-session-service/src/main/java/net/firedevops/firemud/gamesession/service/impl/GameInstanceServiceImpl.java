@@ -122,11 +122,13 @@ public class GameInstanceServiceImpl implements GameInstanceService {
                   existing.getId(),
                   existing.getTenantId(),
                   existing.getOwnerAccountId());
+              GameInstanceDto existingState = snapshot(existing);
               existing.setStatus("STOPPED");
               repository.save(existing);
-              runAfterCommit(
+              runBeforeCommit(
                   "delete stopped session state",
-                  () -> sessionStateService.deleteState(existing.getTenantId(), existing.getId()));
+                  () -> sessionStateService.deleteState(existing.getTenantId(), existing.getId()),
+                  () -> sessionStateService.saveState(existingState));
             });
     GameInstance instance = new GameInstance();
     instance.setTenantId(request.tenantId());
@@ -146,7 +148,7 @@ public class GameInstanceServiceImpl implements GameInstanceService {
               .step("checkEntityService", () -> entityManagementClient.ping())
               .step("notifyGameLogic", () -> gameLogicClient.ping())
               .build();
-      runAfterCommit(
+      runBeforeCommit(
           "validate session dependencies",
           () -> {
             try {
@@ -155,10 +157,14 @@ public class GameInstanceServiceImpl implements GameInstanceService {
               logger.error("Saga failed during session start", e);
               throw new IllegalStateException("Failed to start session", e);
             }
-          });
+          },
+          null);
     }
 
-    runAfterCommit("save started session state", () -> sessionStateService.saveState(dto));
+    runBeforeCommit(
+        "save started session state",
+        () -> sessionStateService.saveState(dto),
+        () -> sessionStateService.deleteState(dto.tenantId(), dto.id()));
     meterRegistry
         .counter(
             "game_sessions_started_total",
@@ -181,6 +187,7 @@ public class GameInstanceServiceImpl implements GameInstanceService {
         repository
             .findById(sessionId)
             .orElseThrow(() -> new IllegalArgumentException("Session not found"));
+    GameInstanceDto runningState = snapshot(instance);
     instance.setStatus("STOPPED");
     GameInstance saved = repository.save(instance);
     if (gameLogicClient != null
@@ -193,7 +200,7 @@ public class GameInstanceServiceImpl implements GameInstanceService {
               .step("flushWorldService", () -> worldManagementClient.ping())
               .step("flushEntityService", () -> entityManagementClient.ping())
               .build();
-      runAfterCommit(
+      runBeforeCommit(
           "validate session stop dependencies",
           () -> {
             try {
@@ -202,11 +209,13 @@ public class GameInstanceServiceImpl implements GameInstanceService {
               logger.error("Saga failed during session stop", e);
               throw new IllegalStateException("Failed to stop session", e);
             }
-          });
+          },
+          null);
     }
-    runAfterCommit(
+    runBeforeCommit(
         "delete stopped session state",
-        () -> sessionStateService.deleteState(instance.getTenantId(), instance.getId()));
+        () -> sessionStateService.deleteState(instance.getTenantId(), instance.getId()),
+        () -> sessionStateService.saveState(runningState));
     return mapper.toDto(saved);
   }
 
@@ -226,29 +235,59 @@ public class GameInstanceServiceImpl implements GameInstanceService {
     instance.setStatus("RUNNING");
     GameInstance saved = repository.save(instance);
     GameInstanceDto dto = mapper.toDto(saved);
-    runAfterCommit("save restarted session state", () -> sessionStateService.saveState(dto));
+    runBeforeCommit(
+        "save restarted session state",
+        () -> sessionStateService.saveState(dto),
+        () -> sessionStateService.deleteState(dto.tenantId(), dto.id()));
     return dto;
   }
 
-  private void runAfterCommit(String actionName, Runnable action) {
+  private GameInstanceDto snapshot(GameInstance instance) {
+    return new GameInstanceDto(
+        instance.getId(),
+        instance.getTenantId(),
+        instance.getRuntimeVersion(),
+        instance.getScriptPatchVersion(),
+        instance.getOwnerAccountId(),
+        instance.getStatus());
+  }
+
+  private void runBeforeCommit(
+      String actionName, Runnable action, @Nullable Runnable rollbackAction) {
     if (!TransactionSynchronizationManager.isSynchronizationActive()) {
-      runSafely(actionName, action);
+      runOrThrow(actionName, action);
       return;
     }
     TransactionSynchronizationManager.registerSynchronization(
         new TransactionSynchronization() {
           @Override
-          public void afterCommit() {
-            runSafely(actionName, action);
+          public void beforeCommit(boolean readOnly) {
+            runOrThrow(actionName, action);
+          }
+
+          @Override
+          public void afterCompletion(int status) {
+            if (status == TransactionSynchronization.STATUS_ROLLED_BACK && rollbackAction != null) {
+              runRollbackSafely(actionName, rollbackAction);
+            }
           }
         });
   }
 
-  private void runSafely(String actionName, Runnable action) {
+  private void runOrThrow(String actionName, Runnable action) {
     try {
       action.run();
     } catch (RuntimeException ex) {
       logger.warn("Failed to {}", actionName, ex);
+      throw ex;
+    }
+  }
+
+  private void runRollbackSafely(String actionName, Runnable rollbackAction) {
+    try {
+      rollbackAction.run();
+    } catch (RuntimeException ex) {
+      logger.warn("Failed to roll back {}", actionName, ex);
     }
   }
 }

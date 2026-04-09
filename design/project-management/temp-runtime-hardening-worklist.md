@@ -12,9 +12,10 @@ Created to track the current audit batch while the bounded fixes land and the br
 ## Next
 
 - [ ] Convert admin gRPC authorization failures from transport `PERMISSION_DENIED` exceptions into normal response `ErrorDetail` payloads with the usual metrics/logging/span path.
-- [ ] Rework session lifecycle/runtime-state writes so `RUNNING` and `STOPPED` are not committed as best-effort DB truth while Redis/runtime side effects can silently fail afterward.
+- [x] Rework session lifecycle/runtime-state writes so `RUNNING` and `STOPPED` are not committed as best-effort DB truth while Redis/runtime side effects can silently fail afterward.
 - [ ] Add rejection handling/metrics/backpressure for tick scheduling fan-out versus the bounded async executor.
 
 ## Notes
 
+- `GameSessionControlPlaneGrpcService` now keeps admin authorization failures on the normal response channel, but the broader shared/admin gRPC auth cleanup is still not complete while `RequireAdminRoleAspect` and other transport-failure paths remain.
 - The remaining unchecked `./gradlew check` failure on this branch is the pre-existing `:game-session-service:crossServiceTest` Testcontainers startup issue, not part of this runtime hardening batch.

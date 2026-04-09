@@ -1,6 +1,8 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -15,6 +17,7 @@ import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.SessionStateService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentMatchers;
 
 class GameInstanceServiceImplTest {
   private GameInstanceRepository repository;
@@ -109,5 +112,50 @@ class GameInstanceServiceImplTest {
     service.stopSession(10L);
 
     verify(stateService).deleteState(1L, 10L);
+  }
+
+  @Test
+  void startSessionFailsFastWhenStateSaveFails() {
+    StartSessionRequest request = new StartSessionRequest(1L, "v1", null, 42L);
+    GameInstance entity = new GameInstance();
+    entity.setId(10L);
+    entity.setTenantId(1L);
+    entity.setRuntimeVersion("v1");
+    entity.setOwnerAccountId(42L);
+    entity.setStatus("RUNNING");
+
+    when(repository.save(ArgumentMatchers.any(GameInstance.class))).thenReturn(entity);
+    GameInstanceDto dto = new GameInstanceDto(10L, 1L, "v1", null, 42L, "RUNNING");
+    when(mapper.toDto(entity)).thenReturn(dto);
+    org.mockito.Mockito.doThrow(new IllegalStateException("redis down"))
+        .when(stateService)
+        .saveState(dto);
+
+    assertThrows(IllegalStateException.class, () -> service.startSession(request));
+
+    verify(stateService).saveState(dto);
+    verify(stateService, never()).deleteState(1L, 10L);
+  }
+
+  @Test
+  void stopSessionFailsFastWhenStateDeleteFails() {
+    GameInstance entity = new GameInstance();
+    entity.setId(10L);
+    entity.setTenantId(1L);
+    entity.setRuntimeVersion("v1");
+    entity.setOwnerAccountId(42L);
+    entity.setStatus("RUNNING");
+
+    when(repository.findById(10L)).thenReturn(Optional.of(entity));
+    when(repository.save(entity)).thenReturn(entity);
+    when(mapper.toDto(entity)).thenReturn(new GameInstanceDto(10L, 1L, "v1", null, 42L, "STOPPED"));
+    org.mockito.Mockito.doThrow(new IllegalStateException("redis down"))
+        .when(stateService)
+        .deleteState(1L, 10L);
+
+    assertThrows(IllegalStateException.class, () -> service.stopSession(10L));
+
+    verify(stateService).deleteState(1L, 10L);
+    verify(stateService, never()).saveState(ArgumentMatchers.any(GameInstanceDto.class));
   }
 }

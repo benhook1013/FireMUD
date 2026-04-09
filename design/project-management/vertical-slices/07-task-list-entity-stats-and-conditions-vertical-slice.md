@@ -94,6 +94,10 @@ Examples of game-authored values built from those primitives:
 - The model should remain typed enough that services can validate definitions and produce deterministic effective-state evaluations.
 - Presentation should consume evaluated state; it should not reverse-engineer effective gameplay state from ad hoc transcript text.
 - The first implementation should preserve raw source/state identity so later debugging and audit work can answer why a final effective value exists.
+- Entity Management should own canonical persisted actor gameplay state.
+- Game Logic should own gameplay-rule orchestration and requests that apply, expire, consume, or evaluate that state.
+- Active conditions and transient action states should both be treated as actor state rather than split across unrelated service-owned stores.
+- Cooldowns should remain in the same broad timed-runtime family, but as a sibling timed-state type rather than being forced to masquerade as a condition or action stance.
 
 ## First Implementation Boundary
 
