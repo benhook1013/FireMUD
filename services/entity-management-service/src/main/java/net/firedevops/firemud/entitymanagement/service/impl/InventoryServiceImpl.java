@@ -28,6 +28,7 @@ public class InventoryServiceImpl implements InventoryService {
   private final CharacterRepository characterRepository;
   private final ItemRepository itemRepository;
   private final ItemVisibleRefAllocator itemVisibleRefAllocator;
+  private final ItemTransferSupport itemTransferSupport;
 
   @Override
   @Transactional(readOnly = true)
@@ -99,7 +100,8 @@ public class InventoryServiceImpl implements InventoryService {
     List<ItemInstance> selected =
         requireCarriedItemInstances(
             character, item, itemInstanceId, normalizeOptionalText(containerInstanceId), quantity);
-    moveItemInstancesToRoom(selected, normalizedGameInstanceId, normalizedRoomInstanceId);
+    moveItemInstancesToRoom(
+        character, selected, normalizedGameInstanceId, normalizedRoomInstanceId);
     return roomGroundDtoForMutation(selected.get(0), quantity);
   }
 
@@ -232,12 +234,15 @@ public class InventoryServiceImpl implements InventoryService {
   }
 
   private void moveItemInstancesToRoom(
-      List<ItemInstance> instances, String gameInstanceId, String roomInstanceId) {
+      Character character,
+      List<ItemInstance> instances,
+      String gameInstanceId,
+      String roomInstanceId) {
     for (ItemInstance instance : instances) {
-      instance.setCharacter(null);
-      instance.setEquipmentSlot(null);
-      instance.setGameInstanceId(gameInstanceId);
-      instance.setRoomInstanceId(roomInstanceId);
+      itemTransferSupport.transfer(
+          instance,
+          itemTransferSupport.inventory(character.getTenantId(), character.getId()),
+          itemTransferSupport.room(gameInstanceId, roomInstanceId));
       itemInstanceRepository.save(instance);
       syncContainerHolder(instance);
     }
@@ -245,10 +250,11 @@ public class InventoryServiceImpl implements InventoryService {
 
   private void moveItemInstancesToInventory(Character character, List<ItemInstance> instances) {
     for (ItemInstance instance : instances) {
-      instance.setCharacter(character);
-      instance.setEquipmentSlot(null);
-      instance.setGameInstanceId(null);
-      instance.setRoomInstanceId(null);
+      itemTransferSupport.transfer(
+          instance,
+          itemTransferSupport.room(
+              character.getTenantId(), instance.getGameInstanceId(), instance.getRoomInstanceId()),
+          itemTransferSupport.inventory(character));
       itemInstanceRepository.save(instance);
       syncContainerHolder(instance);
     }

@@ -29,7 +29,8 @@ class EquipmentServiceImplTest {
     CharacterRepository charRepo = Mockito.mock(CharacterRepository.class);
     ItemRepository itemRepo = Mockito.mock(ItemRepository.class);
     EquipmentServiceImpl service =
-        new EquipmentServiceImpl(itemInstanceRepo, containerInstanceRepo, charRepo, itemRepo);
+        new EquipmentServiceImpl(
+            itemInstanceRepo, containerInstanceRepo, charRepo, itemRepo, new ItemTransferSupport());
 
     Character character = character(1L, 11L);
     Item item = item(2L, 11L, "Leather Cap", true, "HEAD");
@@ -63,7 +64,8 @@ class EquipmentServiceImplTest {
     CharacterRepository charRepo = Mockito.mock(CharacterRepository.class);
     ItemRepository itemRepo = Mockito.mock(ItemRepository.class);
     EquipmentServiceImpl service =
-        new EquipmentServiceImpl(itemInstanceRepo, containerInstanceRepo, charRepo, itemRepo);
+        new EquipmentServiceImpl(
+            itemInstanceRepo, containerInstanceRepo, charRepo, itemRepo, new ItemTransferSupport());
 
     Character character = character(1L, 1L);
     Item item = item(2L, 1L, "Leather Cap", true, "head");
@@ -96,20 +98,59 @@ class EquipmentServiceImplTest {
   }
 
   @Test
-  void wearItemRejectsMissingEquipmentSlot() {
+  void wearItemRejectsStaleSourceMismatch() {
     ItemInstanceRepository itemInstanceRepo = Mockito.mock(ItemInstanceRepository.class);
     ContainerInstanceRepository containerInstanceRepo =
         Mockito.mock(ContainerInstanceRepository.class);
     CharacterRepository charRepo = Mockito.mock(CharacterRepository.class);
     ItemRepository itemRepo = Mockito.mock(ItemRepository.class);
     EquipmentServiceImpl service =
-        new EquipmentServiceImpl(itemInstanceRepo, containerInstanceRepo, charRepo, itemRepo);
+        new EquipmentServiceImpl(
+            itemInstanceRepo, containerInstanceRepo, charRepo, itemRepo, new ItemTransferSupport());
 
-    when(charRepo.findByIdAndTenantId(1L, 1L)).thenReturn(Optional.of(character(1L, 1L)));
-    when(itemRepo.findByIdAndTenantId(2L, 1L))
-        .thenReturn(Optional.of(item(2L, 1L, "Torch", false, null)));
+    Character character = character(1L, 1L);
+    Item item = item(2L, 1L, "Leather Cap", true, "head");
+    ItemInstance stale = itemInstance(701L, 1L, character, item, null);
+    stale.setGameInstanceId("GI-1");
+    stale.setRoomInstanceId("R-1");
+
+    when(charRepo.findByIdAndTenantId(1L, 1L)).thenReturn(Optional.of(character));
+    when(itemRepo.findByIdAndTenantId(2L, 1L)).thenReturn(Optional.of(item));
+    when(itemInstanceRepo
+            .existsByTenantIdAndCharacter_IdAndEquipmentSlotAndGameInstanceIdIsNullAndRoomInstanceIdIsNull(
+                1L, 1L, "HEAD"))
+        .thenReturn(false);
+    when(itemInstanceRepo
+            .findByTenantIdAndCharacter_IdAndItem_IdAndEquipmentSlotIsNullAndGameInstanceIdIsNullAndRoomInstanceIdIsNullOrderByIdAsc(
+                1L, 1L, 2L))
+        .thenReturn(List.of(stale));
 
     assertThrows(IllegalArgumentException.class, () -> service.wearItem(1L, 1L, 2L, null));
+  }
+
+  @Test
+  void removeWornItemRejectsStaleEquippedSourceMismatch() {
+    ItemInstanceRepository itemInstanceRepo = Mockito.mock(ItemInstanceRepository.class);
+    ContainerInstanceRepository containerInstanceRepo =
+        Mockito.mock(ContainerInstanceRepository.class);
+    CharacterRepository charRepo = Mockito.mock(CharacterRepository.class);
+    ItemRepository itemRepo = Mockito.mock(ItemRepository.class);
+    EquipmentServiceImpl service =
+        new EquipmentServiceImpl(
+            itemInstanceRepo, containerInstanceRepo, charRepo, itemRepo, new ItemTransferSupport());
+
+    Character character = character(1L, 1L);
+    Item item = item(2L, 1L, "Leather Cap", true, "HEAD");
+    ItemInstance stale = itemInstance(701L, 1L, character, item, "HEAD");
+    stale.setContainerInstance(new ContainerInstance());
+
+    when(charRepo.findByIdAndTenantId(1L, 1L)).thenReturn(Optional.of(character));
+    when(itemInstanceRepo
+            .findByTenantIdAndCharacter_IdAndEquipmentSlotAndGameInstanceIdIsNullAndRoomInstanceIdIsNull(
+                1L, 1L, "HEAD"))
+        .thenReturn(Optional.of(stale));
+
+    assertThrows(IllegalArgumentException.class, () -> service.removeWornItem(1L, 1L, "HEAD"));
   }
 
   private static Character character(Long id, Long tenantId) {

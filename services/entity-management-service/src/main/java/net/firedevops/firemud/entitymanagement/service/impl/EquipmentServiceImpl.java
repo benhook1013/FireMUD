@@ -25,6 +25,7 @@ public class EquipmentServiceImpl implements EquipmentService {
   private final ContainerInstanceRepository containerInstanceRepository;
   private final CharacterRepository characterRepository;
   private final ItemRepository itemRepository;
+  private final ItemTransferSupport itemTransferSupport;
 
   @Override
   @Transactional(readOnly = true)
@@ -53,10 +54,10 @@ public class EquipmentServiceImpl implements EquipmentService {
     }
     ItemInstance instance =
         resolveWearableItemInstance(tenantId, characterId, itemId, itemInstanceId);
-    instance.setCharacter(character);
-    instance.setEquipmentSlot(slot);
-    instance.setGameInstanceId(null);
-    instance.setRoomInstanceId(null);
+    itemTransferSupport.transfer(
+        instance,
+        itemTransferSupport.inventory(tenantId, characterId),
+        itemTransferSupport.equipment(character, slot));
     ItemInstance saved = itemInstanceRepository.save(instance);
     syncContainerHolder(saved);
     return toDto(saved);
@@ -73,10 +74,10 @@ public class EquipmentServiceImpl implements EquipmentService {
             .findByTenantIdAndCharacter_IdAndEquipmentSlotAndGameInstanceIdIsNullAndRoomInstanceIdIsNull(
                 tenantId, characterId, normalizedSlot)
             .orElseThrow(() -> new IllegalArgumentException("Equipment slot is empty"));
-    instance.setCharacter(character);
-    instance.setEquipmentSlot(null);
-    instance.setGameInstanceId(null);
-    instance.setRoomInstanceId(null);
+    itemTransferSupport.transfer(
+        instance,
+        itemTransferSupport.equipment(tenantId, characterId, normalizedSlot),
+        itemTransferSupport.inventory(character));
     ItemInstance saved = itemInstanceRepository.save(instance);
     syncContainerHolder(saved);
     return toDto(saved);

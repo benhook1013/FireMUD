@@ -31,7 +31,12 @@ class InventoryServiceImplTest {
     ItemVisibleRefAllocator visibleRefAllocator = Mockito.mock(ItemVisibleRefAllocator.class);
     InventoryServiceImpl service =
         new InventoryServiceImpl(
-            itemInstanceRepo, containerInstanceRepo, characterRepo, itemRepo, visibleRefAllocator);
+            itemInstanceRepo,
+            containerInstanceRepo,
+            characterRepo,
+            itemRepo,
+            visibleRefAllocator,
+            new ItemTransferSupport());
 
     Character character = character(1L, 11L);
     Item item = item(2L, 11L, "Torch", true, null);
@@ -69,7 +74,12 @@ class InventoryServiceImplTest {
     ItemVisibleRefAllocator visibleRefAllocator = Mockito.mock(ItemVisibleRefAllocator.class);
     InventoryServiceImpl service =
         new InventoryServiceImpl(
-            itemInstanceRepo, containerInstanceRepo, characterRepo, itemRepo, visibleRefAllocator);
+            itemInstanceRepo,
+            containerInstanceRepo,
+            characterRepo,
+            itemRepo,
+            visibleRefAllocator,
+            new ItemTransferSupport());
 
     Character character = character(1L, 11L);
     Item item = item(2L, 11L, "Torch", false, null);
@@ -109,7 +119,12 @@ class InventoryServiceImplTest {
     ItemVisibleRefAllocator visibleRefAllocator = Mockito.mock(ItemVisibleRefAllocator.class);
     InventoryServiceImpl service =
         new InventoryServiceImpl(
-            itemInstanceRepo, containerInstanceRepo, characterRepo, itemRepo, visibleRefAllocator);
+            itemInstanceRepo,
+            containerInstanceRepo,
+            characterRepo,
+            itemRepo,
+            visibleRefAllocator,
+            new ItemTransferSupport());
 
     when(characterRepo.findByIdAndTenantId(1L, 1L)).thenReturn(Optional.of(character(1L, 1L)));
     when(itemRepo.findByIdAndTenantId(2L, 1L)).thenReturn(Optional.empty());
@@ -127,7 +142,12 @@ class InventoryServiceImplTest {
     ItemVisibleRefAllocator visibleRefAllocator = Mockito.mock(ItemVisibleRefAllocator.class);
     InventoryServiceImpl service =
         new InventoryServiceImpl(
-            itemInstanceRepo, containerInstanceRepo, characterRepo, itemRepo, visibleRefAllocator);
+            itemInstanceRepo,
+            containerInstanceRepo,
+            characterRepo,
+            itemRepo,
+            visibleRefAllocator,
+            new ItemTransferSupport());
 
     Character character = character(1L, 1L);
     Item item = item(2L, 1L, "Torch", false, null);
@@ -161,17 +181,57 @@ class InventoryServiceImplTest {
     ItemVisibleRefAllocator visibleRefAllocator = Mockito.mock(ItemVisibleRefAllocator.class);
     InventoryServiceImpl service =
         new InventoryServiceImpl(
-            itemInstanceRepo, containerInstanceRepo, characterRepo, itemRepo, visibleRefAllocator);
+            itemInstanceRepo,
+            containerInstanceRepo,
+            characterRepo,
+            itemRepo,
+            visibleRefAllocator,
+            new ItemTransferSupport());
 
     Character character = character(1L, 1L);
     Item item = item(2L, 1L, "Torch", false, null);
+    ItemInstance stale = itemInstance(41L, 1L, character, item, null, "GI-OLD", "R-OLD");
+
+    when(characterRepo.findByIdAndTenantId(1L, 1L)).thenReturn(Optional.of(character));
+    when(itemRepo.findByIdAndTenantId(2L, 1L)).thenReturn(Optional.of(item));
+    when(itemInstanceRepo
+            .findByTenantIdAndCharacter_IdAndItem_IdAndEquipmentSlotIsNullAndGameInstanceIdIsNullAndRoomInstanceIdIsNullOrderByIdAsc(
+                1L, 1L, 2L))
+        .thenReturn(List.of(stale));
+
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> service.dropItemToRoom(1L, 1L, "GI-1", "R-1", 2L, null, null, 1));
+  }
+
+  @Test
+  void pickupItemRejectsStaleSourceMismatch() {
+    ItemInstanceRepository itemInstanceRepo = Mockito.mock(ItemInstanceRepository.class);
+    ContainerInstanceRepository containerInstanceRepo =
+        Mockito.mock(ContainerInstanceRepository.class);
+    CharacterRepository characterRepo = Mockito.mock(CharacterRepository.class);
+    ItemRepository itemRepo = Mockito.mock(ItemRepository.class);
+    ItemVisibleRefAllocator visibleRefAllocator = Mockito.mock(ItemVisibleRefAllocator.class);
+    InventoryServiceImpl service =
+        new InventoryServiceImpl(
+            itemInstanceRepo,
+            containerInstanceRepo,
+            characterRepo,
+            itemRepo,
+            visibleRefAllocator,
+            new ItemTransferSupport());
+
+    Character character = character(1L, 1L);
+    Item item = item(2L, 1L, "Torch", false, null);
+    ItemInstance stale = itemInstance(41L, 1L, null, item, null, null, null);
+    stale.setCharacter(character);
 
     when(characterRepo.findByIdAndTenantId(1L, 1L)).thenReturn(Optional.of(character));
     when(itemRepo.findByIdAndTenantId(2L, 1L)).thenReturn(Optional.of(item));
     when(itemInstanceRepo
             .findByTenantIdAndGameInstanceIdAndRoomInstanceIdAndItem_IdAndCharacterIsNullAndEquipmentSlotIsNullOrderByIdAsc(
                 1L, "GI-1", "R-1", 2L))
-        .thenReturn(List.of());
+        .thenReturn(List.of(stale));
 
     assertThrows(
         IllegalArgumentException.class,

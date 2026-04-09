@@ -26,6 +26,7 @@ public class ContainerServiceImpl implements ContainerService {
   private final ItemInstanceRepository itemInstanceRepository;
   private final CharacterRepository characterRepository;
   private final ItemRepository itemRepository;
+  private final ItemTransferSupport itemTransferSupport;
 
   @Override
   @Transactional(readOnly = true)
@@ -72,11 +73,10 @@ public class ContainerServiceImpl implements ContainerService {
     }
     List<ItemInstance> moved = carried.subList(0, quantity);
     for (ItemInstance instance : moved) {
-      instance.setCharacter(null);
-      instance.setEquipmentSlot(null);
-      instance.setGameInstanceId(null);
-      instance.setRoomInstanceId(null);
-      instance.setContainerInstance(containerInstance);
+      itemTransferSupport.transfer(
+          instance,
+          itemTransferSupport.inventory(tenantId, characterId),
+          itemTransferSupport.container(containerInstance));
       itemInstanceRepository.save(instance);
       syncNestedContainerHolder(instance);
     }
@@ -102,11 +102,10 @@ public class ContainerServiceImpl implements ContainerService {
     }
     List<ItemInstance> moved = contained.subList(0, quantity);
     for (ItemInstance instance : moved) {
-      instance.setCharacter(character);
-      instance.setEquipmentSlot(null);
-      instance.setGameInstanceId(null);
-      instance.setRoomInstanceId(null);
-      instance.setContainerInstance(null);
+      itemTransferSupport.transfer(
+          instance,
+          itemTransferSupport.container(tenantId, containerInstance.getId()),
+          itemTransferSupport.inventory(character));
       itemInstanceRepository.save(instance);
       syncNestedContainerHolder(instance);
     }
