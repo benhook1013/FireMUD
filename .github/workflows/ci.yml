@@ -211,6 +211,21 @@ jobs:
           fi
           python3 -m py_compile "${python_files[@]}"
 
+  metrics-cardinality-check:
+    name: Metrics Cardinality Policy Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: ⬇️ Checkout Code
+        uses: actions/checkout@v6
+
+      - name: 🐍 Set Up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - name: 📏 Validate metric label policy
+        run: python3 dev-tools/observability/check-metrics-cardinality.py
+
   flyway-migration-sanity-checks:
     name: Flyway Migration Sanity Checks
     runs-on: ubuntu-latest
