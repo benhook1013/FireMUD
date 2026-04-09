@@ -1,16 +1,32 @@
 package net.firedevops.firemud.entitymanagement.service.impl;
 
+import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.entitymanagement.entity.Character;
 import net.firedevops.firemud.entitymanagement.entity.ContainerInstance;
 import net.firedevops.firemud.entitymanagement.entity.ItemInstance;
+import org.slf4j.Logger;
 import org.springframework.stereotype.Component;
 
 /** Applies guarded handoff semantics to item-instance holder mutations. */
 @Component
 final class ItemTransferSupport {
+  private static final Logger LOG = LoggingUtil.getLogger(ItemTransferSupport.class);
 
   void transfer(ItemInstance instance, ExpectedSource expectedSource, Destination destination) {
-    requireExpectedSource(instance, expectedSource);
+    try {
+      requireExpectedSource(instance, expectedSource);
+    } catch (IllegalArgumentException ex) {
+      LOG.warn(
+          "Rejected item transfer itemInstanceId={} itemId={} tenantId={} expectedSource={} currentHolder={} destination={}",
+          instance.getId(),
+          instance.getItem() != null ? instance.getItem().getId() : null,
+          instance.getTenantId(),
+          describeExpectedSource(expectedSource),
+          describeCurrentHolder(instance),
+          describeDestination(destination),
+          ex);
+      throw ex;
+    }
     applyDestination(instance, destination);
   }
 
@@ -142,6 +158,79 @@ final class ItemTransferSupport {
         || !instance.getContainerInstance().getId().equals(containerInstanceId)) {
       throw new IllegalArgumentException("Item no longer in expected container source");
     }
+  }
+
+  private String describeExpectedSource(ExpectedSource expectedSource) {
+    return switch (expectedSource.kind()) {
+      case INVENTORY -> "inventory(characterId=" + expectedSource.characterId() + ")";
+      case ROOM_GROUND ->
+          "room(gameInstanceId="
+              + expectedSource.gameInstanceId()
+              + ", roomInstanceId="
+              + expectedSource.roomInstanceId()
+              + ")";
+      case EQUIPMENT ->
+          "equipment(characterId="
+              + expectedSource.characterId()
+              + ", slot="
+              + expectedSource.equipmentSlot()
+              + ")";
+      case CONTAINER ->
+          "container(containerInstanceId=" + expectedSource.containerInstanceId() + ")";
+    };
+  }
+
+  private String describeDestination(Destination destination) {
+    return switch (destination.kind()) {
+      case INVENTORY ->
+          "inventory(characterId=" + requireCharacterId(destination.character()) + ")";
+      case ROOM_GROUND ->
+          "room(gameInstanceId="
+              + destination.gameInstanceId()
+              + ", roomInstanceId="
+              + destination.roomInstanceId()
+              + ")";
+      case EQUIPMENT ->
+          "equipment(characterId="
+              + requireCharacterId(destination.character())
+              + ", slot="
+              + destination.equipmentSlot()
+              + ")";
+      case CONTAINER ->
+          "container(containerInstanceId="
+              + (destination.containerInstance() != null
+                  ? destination.containerInstance().getId()
+                  : null)
+              + ")";
+    };
+  }
+
+  private String describeCurrentHolder(ItemInstance instance) {
+    if (instance.getContainerInstance() != null) {
+      return "container(containerInstanceId=" + instance.getContainerInstance().getId() + ")";
+    }
+    if (instance.getCharacter() != null && instance.getEquipmentSlot() != null) {
+      return "equipment(characterId="
+          + instance.getCharacter().getId()
+          + ", slot="
+          + instance.getEquipmentSlot()
+          + ")";
+    }
+    if (instance.getCharacter() != null) {
+      return "inventory(characterId=" + instance.getCharacter().getId() + ")";
+    }
+    if (instance.getGameInstanceId() != null || instance.getRoomInstanceId() != null) {
+      return "room(gameInstanceId="
+          + instance.getGameInstanceId()
+          + ", roomInstanceId="
+          + instance.getRoomInstanceId()
+          + ")";
+    }
+    return "unbound";
+  }
+
+  private Long requireCharacterId(Character character) {
+    return character != null ? character.getId() : null;
   }
 
   private enum HolderKind {
