@@ -1,13 +1,16 @@
 package net.firedevops.firemud.common.grpc;
 
 import io.grpc.ManagedChannel;
+import io.grpc.stub.AbstractStub;
 import javax.net.ssl.SSLException;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 
-public abstract class AbstractBlockingGrpcClient<TStub> implements AutoCloseable {
+public abstract class AbstractBlockingGrpcClient<TStub extends AbstractStub<TStub>>
+    implements AutoCloseable {
   private final ServiceEndpointsProperties endpoints;
   private final CommonGrpcClientProperties tlsProps;
   private final GrpcChannelFactory channelFactory;
+  private final BlockingGrpcStubCustomizer stubCustomizer;
 
   private ManagedChannel channel;
   private TStub stub;
@@ -16,9 +19,18 @@ public abstract class AbstractBlockingGrpcClient<TStub> implements AutoCloseable
       ServiceEndpointsProperties endpoints,
       CommonGrpcClientProperties tlsProps,
       GrpcChannelFactory channelFactory) {
+    this(endpoints, tlsProps, channelFactory, BlockingGrpcStubCustomizer.noop());
+  }
+
+  protected AbstractBlockingGrpcClient(
+      ServiceEndpointsProperties endpoints,
+      CommonGrpcClientProperties tlsProps,
+      GrpcChannelFactory channelFactory,
+      BlockingGrpcStubCustomizer stubCustomizer) {
     this.endpoints = endpoints.copy();
     this.tlsProps = tlsProps.copy();
     this.channelFactory = channelFactory;
+    this.stubCustomizer = stubCustomizer;
   }
 
   protected final synchronized void initClient() throws SSLException {
@@ -38,6 +50,10 @@ public abstract class AbstractBlockingGrpcClient<TStub> implements AutoCloseable
 
   protected final TStub stub() {
     return stub;
+  }
+
+  protected final TStub applyStubCustomizer(TStub stub) {
+    return stubCustomizer.customize(stub);
   }
 
   protected int defaultPort() {

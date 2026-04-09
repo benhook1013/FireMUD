@@ -7,9 +7,9 @@ import static org.mockito.Mockito.when;
 import java.lang.reflect.Field;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
+import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
-import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.entitymanagement.v1.ContainerItem;
 import net.firedevops.firemud.entitymanagement.v1.DropItemToRoomResponse;
 import net.firedevops.firemud.entitymanagement.v1.EntityManagementServiceGrpc;
@@ -22,9 +22,6 @@ import net.firedevops.firemud.entitymanagement.v1.TakeItemFromContainerResponse;
 import org.junit.jupiter.api.Test;
 
 class EntityManagementClientTest {
-  private static final JwtUtil JWT_UTIL =
-      new JwtUtil("testsecretkeytestsecretkeytest1234", 60_000L);
-
   @Test
   void pickupItemFromRoomForwardsRequestAndReturnsInventoryItem() throws Exception {
     EntityManagementClient client = newClient();
@@ -197,8 +194,8 @@ class EntityManagementClientTest {
     return new EntityManagementClient(
         new ServiceEndpointsProperties(),
         new CommonGrpcClientProperties(),
-        JWT_UTIL,
-        mock(GrpcChannelFactory.class));
+        mock(GrpcChannelFactory.class),
+        BlockingGrpcStubCustomizer.noop());
   }
 
   private static void setStub(EntityManagementClient client, Object stub) throws Exception {

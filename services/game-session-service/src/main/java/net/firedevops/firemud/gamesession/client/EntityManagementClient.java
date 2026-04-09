@@ -8,10 +8,9 @@ import java.util.concurrent.TimeUnit;
 import javax.net.ssl.SSLException;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.AbstractBlockingGrpcClient;
+import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
-import net.firedevops.firemud.common.security.GrpcClientAuth;
-import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.entitymanagement.v1.Character;
 import net.firedevops.firemud.entitymanagement.v1.DropItemToRoomRequest;
 import net.firedevops.firemud.entitymanagement.v1.DropItemToRoomResponse;
@@ -60,15 +59,13 @@ public final class EntityManagementClient
   private static final Logger logger = LoggerFactory.getLogger(EntityManagementClient.class);
   private static final long CALL_DEADLINE_SECONDS = 5L;
   private static final long FIND_CHARACTER_DEADLINE_MILLIS = 500L;
-  private final JwtUtil jwtUtil;
 
   public EntityManagementClient(
       ServiceEndpointsProperties endpoints,
       CommonGrpcClientProperties tlsProps,
-      JwtUtil jwtUtil,
-      GrpcChannelFactory channelFactory) {
-    super(endpoints, tlsProps, channelFactory);
-    this.jwtUtil = jwtUtil;
+      GrpcChannelFactory channelFactory,
+      BlockingGrpcStubCustomizer stubCustomizer) {
+    super(endpoints, tlsProps, channelFactory, stubCustomizer);
   }
 
   @PostConstruct
@@ -89,8 +86,8 @@ public final class EntityManagementClient
   @Override
   protected EntityManagementServiceGrpc.EntityManagementServiceBlockingStub buildStub(
       io.grpc.ManagedChannel channel) {
-    return GrpcClientAuth.attach(
-        EntityManagementServiceGrpc.newBlockingStub(channel).withCompression("gzip"), jwtUtil);
+    return applyStubCustomizer(
+        EntityManagementServiceGrpc.newBlockingStub(channel).withCompression("gzip"));
   }
 
   /** Simple ping to verify connectivity. */
