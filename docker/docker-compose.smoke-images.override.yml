@@ -19,6 +19,11 @@ services:
     image: ghcr.io/benhook1013/game-session-service:${SMOKE_IMAGE_TAG}
     pull_policy: always
 
+  logging-admin-service:
+    build: null
+    image: ghcr.io/benhook1013/logging-admin-service:${SMOKE_IMAGE_TAG}
+    pull_policy: always
+
   gateway:
     build: null
     image: ghcr.io/benhook1013/spring-cloud-gateway:${SMOKE_IMAGE_TAG}
