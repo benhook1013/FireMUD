@@ -191,13 +191,20 @@ public class ContainerCommandHandler {
         return containerInvalidArgument(
             "No container item matches \"" + transfer.itemReference() + "\"");
       }
+      ContainerItem containerItem = resolvedItem.orElseThrow();
+      if (transfer.quantity() > 1 && !containerItem.getItemInstanceId().isBlank()) {
+        return containerInvalidArgument("Explicit item refs require quantity 1 for TAKE");
+      }
 
       var response =
           entityManagementClient.takeItemFromContainer(
               Long.toString(context.tenantId()),
               Long.toString(context.characterId()),
               ContainerIdentitySupport.resolveContainerInstanceId(resolvedContainer.orElseThrow()),
-              resolvedItem.orElseThrow().getItemId(),
+              containerItem.getItemId(),
+              containerItem.getItemInstanceId().isBlank()
+                  ? null
+                  : containerItem.getItemInstanceId(),
               transfer.quantity());
       if (response.hasError()) {
         return containerFailure(

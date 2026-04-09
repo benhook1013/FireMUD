@@ -157,6 +157,7 @@ message TakeItemFromContainerRequest {
   string container_instance_id = 3;
   string item_id = 4;
   int32 quantity = 5;
+  string item_instance_id = 6;
 }
 
 message TakeItemFromContainerResponse {

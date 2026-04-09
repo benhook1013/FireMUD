@@ -387,17 +387,20 @@ public final class EntityManagementClient
       String characterId,
       String containerInstanceId,
       String itemId,
+      String itemInstanceId,
       int quantity) {
-    TakeItemFromContainerRequest request =
+    TakeItemFromContainerRequest.Builder request =
         TakeItemFromContainerRequest.newBuilder()
             .setTenantId(tenantId)
             .setCharacterId(characterId)
             .setContainerInstanceId(containerInstanceId)
             .setItemId(itemId)
-            .setQuantity(quantity)
-            .build();
+            .setQuantity(quantity);
+    if (itemInstanceId != null && !itemInstanceId.isBlank()) {
+      request.setItemInstanceId(itemInstanceId);
+    }
     try {
-      return callStub().takeItemFromContainer(request);
+      return callStub().takeItemFromContainer(request.build());
     } catch (StatusRuntimeException ex) {
       if (ex.getStatus().getCode() == Status.Code.UNAVAILABLE) {
         logger.warn(
@@ -405,7 +408,7 @@ public final class EntityManagementClient
             ex);
         try {
           initClient();
-          return callStub().takeItemFromContainer(request);
+          return callStub().takeItemFromContainer(request.build());
         } catch (Exception retryEx) {
           logger.warn(
               "Failed to retry Entity Management container take after channel reload", retryEx);

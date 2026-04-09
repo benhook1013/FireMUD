@@ -154,7 +154,7 @@ class ContainerCommandHandlerTest {
                         .build())
                 .build(),
             ListContainerContentsResponse.newBuilder().build());
-    when(entityManagementClient.takeItemFromContainer("22", "911", "container-10", "99", 2))
+    when(entityManagementClient.takeItemFromContainer("22", "911", "container-10", "99", null, 2))
         .thenReturn(
             TakeItemFromContainerResponse.newBuilder()
                 .setInventoryItem(
@@ -178,6 +178,48 @@ class ContainerCommandHandlerTest {
     assertThat(result.outputs().get(0).text()).isEqualTo("You take Torch x2 from Old Chest.");
     InventoryViewOutput view = (InventoryViewOutput) result.outputs().get(1).payload();
     assertThat(view.lines()).containsExactly("It is empty.");
-    verify(entityManagementClient).takeItemFromContainer("22", "911", "container-10", "99", 2);
+    verify(entityManagementClient)
+        .takeItemFromContainer("22", "911", "container-10", "99", null, 2);
+  }
+
+  @Test
+  void takeFromContainerRejectsExplicitRefWithQuantityGreaterThanOne() {
+    when(entityManagementClient.queryInventory("22", "911"))
+        .thenReturn(
+            QueryInventoryResponse.newBuilder()
+                .addItems(
+                    InventoryItem.newBuilder()
+                        .setContainerInstanceId("container-10")
+                        .setItemId("50")
+                        .setItemName("Old Chest")
+                        .setVisibleRef("oldchest10")
+                        .build())
+                .build());
+    when(entityManagementClient.listContainerContents("22", "911", "container-10"))
+        .thenReturn(
+            ListContainerContentsResponse.newBuilder()
+                .addItems(
+                    ContainerItem.newBuilder()
+                        .setContainerInstanceId("container-10")
+                        .setItemId("99")
+                        .setItemInstanceId("44")
+                        .setItemName("Torch")
+                        .setVisibleRef("torch3")
+                        .setQuantity(2)
+                        .build())
+                .build());
+
+    TextCommandInterpretationResult result =
+        handler.handle(
+            context,
+            new TextCommand(
+                TextCommandType.TAKE,
+                List.of("2", "torch3", "FROM", "old", "chest"),
+                "TAKE 2 torch3 FROM old chest"));
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.outputs())
+        .singleElement()
+        .satisfies(output -> assertThat(output.text()).contains("quantity 1"));
   }
 }

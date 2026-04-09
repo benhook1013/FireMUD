@@ -18,5 +18,10 @@ public interface ContainerService {
       int quantity);
 
   InventoryEntryDto takeItemFromContainer(
-      Long tenantId, Long characterId, Long containerInstanceId, Long itemId, int quantity);
+      Long tenantId,
+      Long characterId,
+      Long containerInstanceId,
+      Long itemId,
+      Long itemInstanceId,
+      int quantity);
 }

@@ -170,6 +170,7 @@ class EntityManagementClientTest {
                 .setCharacterId("7")
                 .setContainerInstanceId("99")
                 .setItemId("100")
+                .setItemInstanceId("200")
                 .setQuantity(1)
                 .build()))
         .thenReturn(
@@ -183,7 +184,8 @@ class EntityManagementClientTest {
                 .build());
     setStub(client, stub);
 
-    TakeItemFromContainerResponse response = client.takeItemFromContainer("1", "7", "99", "100", 1);
+    TakeItemFromContainerResponse response =
+        client.takeItemFromContainer("1", "7", "99", "100", "200", 1);
 
     assertThat(response.getInventoryItem().getItemName()).isEqualTo("Torch");
     assertThat(response.getInventoryItem().getQuantity()).isEqualTo(1);

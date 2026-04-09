@@ -89,7 +89,12 @@ public class ContainerServiceImpl implements ContainerService {
   @Transactional
   @Timed(value = "container.take")
   public InventoryEntryDto takeItemFromContainer(
-      Long tenantId, Long characterId, Long containerInstanceId, Long itemId, int quantity) {
+      Long tenantId,
+      Long characterId,
+      Long containerInstanceId,
+      Long itemId,
+      Long itemInstanceId,
+      int quantity) {
     requirePositiveQuantity(quantity);
     Character character = requireCharacter(tenantId, characterId);
     ContainerInstance containerInstance =
@@ -99,10 +104,7 @@ public class ContainerServiceImpl implements ContainerService {
     List<ItemInstance> contained =
         itemInstanceRepository.findByTenantIdAndContainerInstance_IdAndItem_IdOrderByIdAsc(
             tenantId, containerInstance.getId(), itemId);
-    if (contained.size() < quantity) {
-      throw new IllegalArgumentException("Not enough quantity in container");
-    }
-    List<ItemInstance> moved = contained.subList(0, quantity);
+    List<ItemInstance> moved = selectContainedInstances(contained, itemInstanceId, quantity);
     for (ItemInstance instance : moved) {
       itemTransferSupport.transfer(
           instance,
@@ -112,6 +114,25 @@ public class ContainerServiceImpl implements ContainerService {
       syncNestedContainerHolder(instance);
     }
     return toInventoryMutationDto(moved.get(0), quantity);
+  }
+
+  private List<ItemInstance> selectContainedInstances(
+      List<ItemInstance> contained, Long itemInstanceId, int quantity) {
+    if (itemInstanceId != null) {
+      ItemInstance selected =
+          contained.stream()
+              .filter(instance -> instance.getId().equals(itemInstanceId))
+              .findFirst()
+              .orElseThrow(() -> new IllegalArgumentException("Container item not found"));
+      if (quantity != 1) {
+        throw new IllegalArgumentException("Explicit item_instance_id requires quantity 1");
+      }
+      return List.of(selected);
+    }
+    if (contained.size() < quantity) {
+      throw new IllegalArgumentException("Not enough quantity in container");
+    }
+    return contained.subList(0, quantity);
   }
 
   private List<ItemInstance> selectCarriedInstances(

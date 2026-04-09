@@ -265,7 +265,90 @@ class ContainerServiceImplTest {
         .thenReturn(List.of(stale));
 
     assertThrows(
-        IllegalArgumentException.class, () -> service.takeItemFromContainer(1L, 1L, 500L, 3L, 1));
+        IllegalArgumentException.class,
+        () -> service.takeItemFromContainer(1L, 1L, 500L, 3L, null, 1));
+  }
+
+  @Test
+  void takeItemFromContainerUsesExplicitItemInstanceId() {
+    ContainerInstanceRepository containerInstanceRepo =
+        Mockito.mock(ContainerInstanceRepository.class);
+    ItemInstanceRepository itemInstanceRepo = Mockito.mock(ItemInstanceRepository.class);
+    CharacterRepository characterRepo = Mockito.mock(CharacterRepository.class);
+    ItemRepository itemRepo = Mockito.mock(ItemRepository.class);
+    ContainerServiceImpl service =
+        new ContainerServiceImpl(
+            containerInstanceRepo,
+            itemInstanceRepo,
+            characterRepo,
+            itemRepo,
+            new ItemTransferSupport());
+
+    Character character = character(1L, 1L);
+    Item chest = item(2L, 1L, "Chest", true);
+    ContainerInstance containerInstance = new ContainerInstance();
+    containerInstance.setId(500L);
+    containerInstance.setTenantId(1L);
+    containerInstance.setCharacter(character);
+    containerInstance.setItem(chest);
+    Item item = item(3L, 1L, "Torch", false);
+    ItemInstance first = itemInstance(41L, 1L, null, item);
+    first.setContainerInstance(containerInstance);
+    ItemInstance second = itemInstance(42L, 1L, null, item);
+    second.setContainerInstance(containerInstance);
+
+    when(characterRepo.findByIdAndTenantId(1L, 1L)).thenReturn(Optional.of(character));
+    when(containerInstanceRepo.findAccessibleByIdAndTenantIdAndCharacterId(500L, 1L, 1L))
+        .thenReturn(Optional.of(containerInstance));
+    when(itemRepo.findByIdAndTenantId(3L, 1L)).thenReturn(Optional.of(item));
+    when(itemInstanceRepo.findByTenantIdAndContainerInstance_IdAndItem_IdOrderByIdAsc(1L, 500L, 3L))
+        .thenReturn(List.of(first, second));
+    when(itemInstanceRepo.save(any(ItemInstance.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    var taken = service.takeItemFromContainer(1L, 1L, 500L, 3L, 42L, 1);
+
+    assertEquals("Torch", taken.itemName());
+    assertEquals(character, second.getCharacter());
+    assertEquals(null, first.getCharacter());
+  }
+
+  @Test
+  void takeItemFromContainerRejectsExplicitItemInstanceIdWithQuantityGreaterThanOne() {
+    ContainerInstanceRepository containerInstanceRepo =
+        Mockito.mock(ContainerInstanceRepository.class);
+    ItemInstanceRepository itemInstanceRepo = Mockito.mock(ItemInstanceRepository.class);
+    CharacterRepository characterRepo = Mockito.mock(CharacterRepository.class);
+    ItemRepository itemRepo = Mockito.mock(ItemRepository.class);
+    ContainerServiceImpl service =
+        new ContainerServiceImpl(
+            containerInstanceRepo,
+            itemInstanceRepo,
+            characterRepo,
+            itemRepo,
+            new ItemTransferSupport());
+
+    Character character = character(1L, 1L);
+    Item chest = item(2L, 1L, "Chest", true);
+    ContainerInstance containerInstance = new ContainerInstance();
+    containerInstance.setId(500L);
+    containerInstance.setTenantId(1L);
+    containerInstance.setCharacter(character);
+    containerInstance.setItem(chest);
+    Item item = item(3L, 1L, "Torch", false);
+    ItemInstance first = itemInstance(41L, 1L, null, item);
+    first.setContainerInstance(containerInstance);
+
+    when(characterRepo.findByIdAndTenantId(1L, 1L)).thenReturn(Optional.of(character));
+    when(containerInstanceRepo.findAccessibleByIdAndTenantIdAndCharacterId(500L, 1L, 1L))
+        .thenReturn(Optional.of(containerInstance));
+    when(itemRepo.findByIdAndTenantId(3L, 1L)).thenReturn(Optional.of(item));
+    when(itemInstanceRepo.findByTenantIdAndContainerInstance_IdAndItem_IdOrderByIdAsc(1L, 500L, 3L))
+        .thenReturn(List.of(first));
+
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> service.takeItemFromContainer(1L, 1L, 500L, 3L, 41L, 2));
   }
 
   private static Character character(Long id, Long tenantId) {

@@ -381,7 +381,7 @@ class EntityManagementGrpcServiceTest {
     Mockito.when(meterRegistry.counter(Mockito.anyString(), Mockito.any(String[].class)))
         .thenReturn(counter);
     RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
-    Mockito.when(containerService.takeItemFromContainer(1L, 7L, 10L, 11L, 1))
+    Mockito.when(containerService.takeItemFromContainer(1L, 7L, 10L, 11L, null, 1))
         .thenReturn(
             new net.firedevops.firemud.entitymanagement.dto.InventoryEntryDto(
                 1L, 7L, 11L, "Torch", "A small torch", 1, null, null, null));
@@ -418,6 +418,62 @@ class EntityManagementGrpcServiceTest {
         });
 
     assertEquals("Torch", ref.get().getInventoryItem().getItemName());
+  }
+
+  @Test
+  void takeItemFromContainerPassesExplicitItemInstanceId() {
+    PingService pingService = Mockito.mock(PingService.class);
+    CharacterService characterService = Mockito.mock(CharacterService.class);
+    EquipmentService equipmentService = Mockito.mock(EquipmentService.class);
+    InventoryService inventoryService = Mockito.mock(InventoryService.class);
+    ContainerService containerService = Mockito.mock(ContainerService.class);
+    io.micrometer.core.instrument.MeterRegistry meterRegistry =
+        Mockito.mock(io.micrometer.core.instrument.MeterRegistry.class);
+    io.micrometer.core.instrument.Counter counter =
+        Mockito.mock(io.micrometer.core.instrument.Counter.class);
+    Mockito.when(meterRegistry.counter(Mockito.anyString(), Mockito.any(String[].class)))
+        .thenReturn(counter);
+    RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
+    Mockito.when(containerService.takeItemFromContainer(1L, 7L, 10L, 11L, 44L, 1))
+        .thenReturn(
+            new net.firedevops.firemud.entitymanagement.dto.InventoryEntryDto(
+                1L, 7L, 11L, "Torch", "A small torch", 1, 44L, null, "torch44"));
+    EntityManagementGrpcService service =
+        newService(
+            pingService,
+            characterService,
+            equipmentService,
+            inventoryService,
+            containerService,
+            roomEntityService,
+            meterRegistry);
+
+    AtomicReference<TakeItemFromContainerResponse> ref = new AtomicReference<>();
+    service.takeItemFromContainer(
+        TakeItemFromContainerRequest.newBuilder()
+            .setTenantId("1")
+            .setCharacterId("7")
+            .setContainerInstanceId("10")
+            .setItemId("11")
+            .setItemInstanceId("44")
+            .setQuantity(1)
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(TakeItemFromContainerResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertEquals("Torch", ref.get().getInventoryItem().getItemName());
+    assertEquals("44", ref.get().getInventoryItem().getItemInstanceId());
+    assertEquals("torch44", ref.get().getInventoryItem().getVisibleRef());
   }
 
   @Test

@@ -260,6 +260,7 @@ class TextCommandInterpreterTest {
             Mockito.anyString(),
             Mockito.anyString(),
             Mockito.anyString(),
+            Mockito.any(),
             Mockito.anyInt()))
         .thenReturn(
             TakeItemFromContainerResponse.newBuilder()
