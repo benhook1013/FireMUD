@@ -22,7 +22,13 @@ import org.slf4j.Logger;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
-/** gRPC client used to notify the Game Session Service about Telnet events. */
+/**
+ * gRPC client used to notify the Game Session Service about Telnet events.
+ *
+ * <p>This remains an intentional raw-stub outlier from the normal internal auth-propagation seam:
+ * it acts as an ingress-side event bridge rather than a secured internal business client carrying a
+ * trusted service identity into protected downstream RPCs.
+ */
 @Component
 public class TcpProxyEventClient implements AutoCloseable {
   private static final Logger logger = LoggingUtil.getLogger(TcpProxyEventClient.class);

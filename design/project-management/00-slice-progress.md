@@ -12,19 +12,17 @@ These are narrow enough to implement now and unblock the current runtime/platfor
 
 1. [02.2.1 Session Start Admission Ordering and IP-Limit Safety](./vertical-slices/02.2.1-task-list-session-start-admission-ordering-and-ip-limit-safety-vertical-slice.md)
    Remaining: audit and clean up any lingering non-canonical session-start entry paths.
-2. [02.18.2 Internal Blocking gRPC Auth Propagation](./vertical-slices/02.18.2-task-list-internal-grpc-auth-propagation-vertical-slice.md)
-   Remaining: document or clean up the remaining intentional raw-stub outliers now that the canonical seam is locked.
-3. [06.4.1 Safe Item Transfer and Handoff Semantics](./vertical-slices/06.4.1-task-list-safe-item-transfer-and-handoff-semantics-vertical-slice.md)
-   Remaining: implement the locked failure/audit policy for already-moved or replayed item moves.
-4. [06.3 Replace Aggregated Item Stacks With Distinct Item Instances](./vertical-slices/06.3-task-list-container-item-instance-identity-vertical-slice.md)
+2. [06.4.1 Safe Item Transfer and Handoff Semantics](./vertical-slices/06.4.1-task-list-safe-item-transfer-and-handoff-semantics-vertical-slice.md)
+   Remaining: finish sweeping any lingering ad hoc item-holder rewrites and keep replay/idempotency explicitly out of scope until a caller needs it.
+3. [06.3 Replace Aggregated Item Stacks With Distinct Item Instances](./vertical-slices/06.3-task-list-container-item-instance-identity-vertical-slice.md)
    Remaining: explicit authored stackability and stack-compatibility rules on top of the now-live item-instance model.
-5. [06.4 Unified Item Holder and Transfer Model](./vertical-slices/06.4-task-list-unified-item-holder-and-transfer-model-vertical-slice.md)
+4. [06.4 Unified Item Holder and Transfer Model](./vertical-slices/06.4-task-list-unified-item-holder-and-transfer-model-vertical-slice.md)
    Remaining: finish the shared transfer contract, shared transfer audit semantics, and the remaining holder-policy cleanup.
-6. [02.18.3 Workflow Transaction Boundary Hardening](./vertical-slices/02.18.3-task-list-workflow-transaction-boundary-hardening-vertical-slice.md)
+5. [02.18.3 Workflow Transaction Boundary Hardening](./vertical-slices/02.18.3-task-list-workflow-transaction-boundary-hardening-vertical-slice.md)
    Remaining: reduce the remaining “hold DB transaction open across external calls” cases without regressing runtime-state safety.
-7. [02.18.6 Tick Scheduler Backpressure and Merge Semantics](./vertical-slices/02.18.6-task-list-tick-scheduler-backpressure-and-merge-semantics-vertical-slice.md)
+6. [02.18.6 Tick Scheduler Backpressure and Merge Semantics](./vertical-slices/02.18.6-task-list-tick-scheduler-backpressure-and-merge-semantics-vertical-slice.md)
    Remaining: decide whether pressure ever feeds back into gameplay timing policy beyond observability, and set any explicit alert thresholds.
-8. [02.14.4 Metrics Cardinality and Label Policy Hardening](./vertical-slices/02.14.4-task-list-metrics-cardinality-and-label-policy-hardening-vertical-slice.md)
+7. [02.14.4 Metrics Cardinality and Label Policy Hardening](./vertical-slices/02.14.4-task-list-metrics-cardinality-and-label-policy-hardening-vertical-slice.md)
    Remaining: continue the repo-wide manual audit for subtler dynamic-label patterns that even the stronger CI checker will not catch.
 
 ### 2. Active architecture follow-through
@@ -40,7 +38,7 @@ These are already partly real in code and should continue after the immediate ru
 4. [06.3.1 Stable Item Instance Visible Ref Allocation](./vertical-slices/06.3.1-task-list-item-instance-visible-ref-allocation-vertical-slice.md)
    Remaining: decide whether and where ordinary prose views ever expose refs beyond management surfaces.
 5. [02.18 Service Boundary and Audit Hardening](./vertical-slices/02.18-task-list-service-boundary-and-audit-hardening-vertical-slice.md)
-   Remaining: complete the remaining `02.18.2`, `02.18.3`, and `02.18.6` follow-ups.
+   Remaining: complete the remaining `02.18.3` and `02.18.6` follow-ups after the auth-propagation seam work.
 6. [02.18.1 Audit Log and Moderation Separation](./vertical-slices/02.18.1-task-list-audit-log-and-moderation-separation-vertical-slice.md)
    Remaining: finish the separation so harmless audit traffic and destructive moderation traffic cannot blur again.
 7. [02.18.4 World and Entity Service Boundary Auth](./vertical-slices/02.18.4-task-list-world-and-entity-service-boundary-auth-vertical-slice.md)
@@ -93,5 +91,5 @@ These are not major design problems, but they are not fully closed.
 If you want the clearest immediate path, do these next:
 
 1. `06.4.1` already-moved failure/audit implementation
-2. `02.18.2` raw-stub outlier cleanup/documentation
-3. `02.2.1` lingering non-canonical admission-path cleanup
+2. `02.2.1` lingering non-canonical admission-path cleanup
+3. `06.3` authored stackability rule pass

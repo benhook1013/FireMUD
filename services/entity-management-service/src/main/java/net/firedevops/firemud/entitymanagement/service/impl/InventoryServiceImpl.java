@@ -246,7 +246,8 @@ public class InventoryServiceImpl implements InventoryService {
       itemTransferSupport.transfer(
           instance,
           itemTransferSupport.inventory(character.getTenantId(), character.getId()),
-          itemTransferSupport.room(gameInstanceId, roomInstanceId));
+          itemTransferSupport.room(gameInstanceId, roomInstanceId),
+          itemTransferSupport.audit("DROP", character.getId()));
       itemInstanceRepository.save(instance);
       containerHolderSyncSupport.ensureSynced(instance);
     }
@@ -258,7 +259,8 @@ public class InventoryServiceImpl implements InventoryService {
           instance,
           itemTransferSupport.room(
               character.getTenantId(), instance.getGameInstanceId(), instance.getRoomInstanceId()),
-          itemTransferSupport.inventory(character));
+          itemTransferSupport.inventory(character),
+          itemTransferSupport.audit("GET", character.getId()));
       itemInstanceRepository.save(instance);
       containerHolderSyncSupport.ensureSynced(instance);
     }

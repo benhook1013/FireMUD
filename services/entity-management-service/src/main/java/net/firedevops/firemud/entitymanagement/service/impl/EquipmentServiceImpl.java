@@ -58,7 +58,8 @@ public class EquipmentServiceImpl implements EquipmentService {
     itemTransferSupport.transfer(
         instance,
         itemTransferSupport.inventory(tenantId, characterId),
-        itemTransferSupport.equipment(character, slot));
+        itemTransferSupport.equipment(character, slot),
+        itemTransferSupport.audit("WEAR", characterId));
     ItemInstance saved = itemInstanceRepository.save(instance);
     containerHolderSyncSupport.ensureSynced(saved);
     return toDto(saved);
@@ -78,7 +79,8 @@ public class EquipmentServiceImpl implements EquipmentService {
     itemTransferSupport.transfer(
         instance,
         itemTransferSupport.equipment(tenantId, characterId, normalizedSlot),
-        itemTransferSupport.inventory(character));
+        itemTransferSupport.inventory(character),
+        itemTransferSupport.audit("REMOVE", characterId));
     ItemInstance saved = itemInstanceRepository.save(instance);
     containerHolderSyncSupport.ensureSynced(saved);
     return toDto(saved);

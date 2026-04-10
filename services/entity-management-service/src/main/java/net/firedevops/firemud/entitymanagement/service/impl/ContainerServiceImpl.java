@@ -79,7 +79,8 @@ public class ContainerServiceImpl implements ContainerService {
       itemTransferSupport.transfer(
           instance,
           itemTransferSupport.inventory(tenantId, characterId),
-          itemTransferSupport.container(containerInstance));
+          itemTransferSupport.container(containerInstance),
+          itemTransferSupport.audit("PUT", characterId));
       itemInstanceRepository.save(instance);
       containerHolderSyncSupport.requireExistingAndSync(instance);
     }
@@ -110,7 +111,8 @@ public class ContainerServiceImpl implements ContainerService {
       itemTransferSupport.transfer(
           instance,
           itemTransferSupport.container(tenantId, containerInstance.getId()),
-          itemTransferSupport.inventory(character));
+          itemTransferSupport.inventory(character),
+          itemTransferSupport.audit("TAKE", characterId));
       itemInstanceRepository.save(instance);
       containerHolderSyncSupport.requireExistingAndSync(instance);
     }

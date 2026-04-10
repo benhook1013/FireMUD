@@ -245,6 +245,44 @@ class InventoryServiceImplTest {
   }
 
   @Test
+  void dropItemRejectsAlreadyMovedToDestination() {
+    ItemInstanceRepository itemInstanceRepo = Mockito.mock(ItemInstanceRepository.class);
+    ContainerInstanceRepository containerInstanceRepo =
+        Mockito.mock(ContainerInstanceRepository.class);
+    CharacterRepository characterRepo = Mockito.mock(CharacterRepository.class);
+    ItemRepository itemRepo = Mockito.mock(ItemRepository.class);
+    ItemVisibleRefAllocator visibleRefAllocator = Mockito.mock(ItemVisibleRefAllocator.class);
+    InventoryServiceImpl service =
+        new InventoryServiceImpl(
+            itemInstanceRepo,
+            containerInstanceRepo,
+            characterRepo,
+            itemRepo,
+            visibleRefAllocator,
+            new ItemTransferSupport(),
+            new ContainerHolderSyncSupport(containerInstanceRepo));
+
+    Character character = character(1L, 1L);
+    Item item = item(2L, 1L, "Torch", false, null);
+    ItemInstance stale = itemInstance(41L, 1L, character, item, null, "GI-1", "R-1");
+    stale.setCharacter(null);
+
+    when(characterRepo.findByIdAndTenantId(1L, 1L)).thenReturn(Optional.of(character));
+    when(itemRepo.findByIdAndTenantId(2L, 1L)).thenReturn(Optional.of(item));
+    when(itemInstanceRepo
+            .findByTenantIdAndCharacter_IdAndItem_IdAndEquipmentSlotIsNullAndGameInstanceIdIsNullAndRoomInstanceIdIsNullOrderByIdAsc(
+                1L, 1L, 2L))
+        .thenReturn(List.of(stale));
+
+    IllegalArgumentException ex =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> service.dropItemToRoom(1L, 1L, "GI-1", "R-1", 2L, null, null, 1));
+
+    assertEquals("Item already at destination", ex.getMessage());
+  }
+
+  @Test
   void dropItemRejectsExplicitItemInstanceIdWithQuantityGreaterThanOne() {
     ItemInstanceRepository itemInstanceRepo = Mockito.mock(ItemInstanceRepository.class);
     ContainerInstanceRepository containerInstanceRepo =

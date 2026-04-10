@@ -13,11 +13,22 @@ final class ItemTransferSupport {
   private static final Logger LOG = LoggingUtil.getLogger(ItemTransferSupport.class);
 
   void transfer(ItemInstance instance, ExpectedSource expectedSource, Destination destination) {
+    transfer(instance, expectedSource, destination, TransferAuditContext.unknown());
+  }
+
+  void transfer(
+      ItemInstance instance,
+      ExpectedSource expectedSource,
+      Destination destination,
+      TransferAuditContext auditContext) {
     try {
+      requireNotAlreadyAtDestination(instance, destination);
       requireExpectedSource(instance, expectedSource);
     } catch (IllegalArgumentException ex) {
       LOG.warn(
-          "Rejected item transfer itemInstanceId={} itemId={} tenantId={} expectedSource={} currentHolder={} destination={}",
+          "Rejected item transfer verb={} actorCharacterId={} itemInstanceId={} itemId={} tenantId={} expectedSource={} currentHolder={} destination={}",
+          auditContext.verb(),
+          auditContext.actorCharacterId(),
           instance.getId(),
           instance.getItem() != null ? instance.getItem().getId() : null,
           instance.getTenantId(),
@@ -28,6 +39,10 @@ final class ItemTransferSupport {
       throw ex;
     }
     applyDestination(instance, destination);
+  }
+
+  TransferAuditContext audit(String verb, Long actorCharacterId) {
+    return new TransferAuditContext(verb, actorCharacterId);
   }
 
   ExpectedSource inventory(Long tenantId, Long characterId) {
@@ -79,6 +94,12 @@ final class ItemTransferSupport {
           requireEquipmentSource(
               instance, expectedSource.characterId(), expectedSource.equipmentSlot());
       case CONTAINER -> requireContainerSource(instance, expectedSource.containerInstanceId());
+    }
+  }
+
+  private void requireNotAlreadyAtDestination(ItemInstance instance, Destination destination) {
+    if (matchesDestination(instance, destination)) {
+      throw new IllegalArgumentException("Item already at destination");
     }
   }
 
@@ -158,6 +179,47 @@ final class ItemTransferSupport {
         || !instance.getContainerInstance().getId().equals(containerInstanceId)) {
       throw new IllegalArgumentException("Item no longer in expected container source");
     }
+  }
+
+  private boolean matchesDestination(ItemInstance instance, Destination destination) {
+    return switch (destination.kind()) {
+      case INVENTORY ->
+          instance.getCharacter() != null
+              && destination.character() != null
+              && instance.getCharacter().getId().equals(destination.character().getId())
+              && instance.getEquipmentSlot() == null
+              && instance.getGameInstanceId() == null
+              && instance.getRoomInstanceId() == null
+              && instance.getContainerInstance() == null;
+      case ROOM_GROUND ->
+          instance.getCharacter() == null
+              && instance.getEquipmentSlot() == null
+              && instance.getContainerInstance() == null
+              && destination.gameInstanceId() != null
+              && destination.roomInstanceId() != null
+              && destination.gameInstanceId().equals(instance.getGameInstanceId())
+              && destination.roomInstanceId().equals(instance.getRoomInstanceId());
+      case EQUIPMENT ->
+          instance.getCharacter() != null
+              && destination.character() != null
+              && instance.getCharacter().getId().equals(destination.character().getId())
+              && destination.equipmentSlot() != null
+              && destination.equipmentSlot().equals(instance.getEquipmentSlot())
+              && instance.getGameInstanceId() == null
+              && instance.getRoomInstanceId() == null
+              && instance.getContainerInstance() == null;
+      case CONTAINER ->
+          instance.getCharacter() == null
+              && instance.getEquipmentSlot() == null
+              && instance.getGameInstanceId() == null
+              && instance.getRoomInstanceId() == null
+              && instance.getContainerInstance() != null
+              && destination.containerInstance() != null
+              && instance
+                  .getContainerInstance()
+                  .getId()
+                  .equals(destination.containerInstance().getId());
+    };
   }
 
   private String describeExpectedSource(ExpectedSource expectedSource) {
@@ -256,4 +318,10 @@ final class ItemTransferSupport {
       String gameInstanceId,
       String roomInstanceId,
       ContainerInstance containerInstance) {}
+
+  record TransferAuditContext(String verb, Long actorCharacterId) {
+    static TransferAuditContext unknown() {
+      return new TransferAuditContext("UNKNOWN", null);
+    }
+  }
 }
