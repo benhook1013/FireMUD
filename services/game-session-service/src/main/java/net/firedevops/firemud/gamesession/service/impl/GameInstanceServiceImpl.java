@@ -125,13 +125,13 @@ public class GameInstanceServiceImpl implements GameInstanceService {
                 .orElse(null);
         if (existingRunning != null) {
           GameInstance existingToStop = existingRunning;
+          existingRunningState = snapshot(existingRunning);
           GameInstanceDto existingToRestore = existingRunningState;
           logger.info(
               "Stopping existing session {} for tenant {} owner {}",
               existingRunning.getId(),
               existingRunning.getTenantId(),
               existingRunning.getOwnerAccountId());
-          existingRunningState = snapshot(existingRunning);
           existingRunning.setStatus("STOPPED");
           repository.save(existingRunning);
           runBeforeCommit(

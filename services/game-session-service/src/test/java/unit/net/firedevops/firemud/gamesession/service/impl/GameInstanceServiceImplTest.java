@@ -1,8 +1,10 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -155,6 +157,42 @@ class GameInstanceServiceImplTest {
 
     verify(stateService).saveState(dto);
     verify(stateService, never()).deleteState(1L, 10L);
+  }
+
+  @Test
+  void startSessionWithReplacementRestoresExistingRunningStateWhenNewStateSaveFails() {
+    StartSessionRequest request = new StartSessionRequest(2L, "v1", null, 42L);
+    GameInstance existing = new GameInstance();
+    existing.setId(7L);
+    existing.setTenantId(2L);
+    existing.setRuntimeVersion("v1");
+    existing.setOwnerAccountId(42L);
+    existing.setStatus("RUNNING");
+
+    when(repository.findFirstByTenantIdAndOwnerAccountIdAndStatus(2L, 42L, "RUNNING"))
+        .thenReturn(Optional.of(existing));
+    when(repository.save(any(GameInstance.class)))
+        .thenAnswer(
+            invocation -> {
+              GameInstance saved = invocation.getArgument(0);
+              if (saved.getId() == null) {
+                saved.setId(10L);
+              }
+              return saved;
+            });
+    GameInstanceDto dto = new GameInstanceDto(10L, 2L, "v1", null, 42L, "RUNNING");
+    when(mapper.toDto(any(GameInstance.class))).thenReturn(dto);
+    org.mockito.Mockito.doThrow(new IllegalStateException("redis down"))
+        .when(stateService)
+        .saveState(dto);
+
+    assertThrows(IllegalStateException.class, () -> service.startSession(request, true));
+
+    verify(repository, times(3)).save(any(GameInstance.class));
+    verify(stateService).saveState(dto);
+    verify(stateService, never())
+        .saveState(new GameInstanceDto(7L, 2L, "v1", null, 42L, "RUNNING"));
+    org.junit.jupiter.api.Assertions.assertEquals("RUNNING", existing.getStatus());
   }
 
   @Test

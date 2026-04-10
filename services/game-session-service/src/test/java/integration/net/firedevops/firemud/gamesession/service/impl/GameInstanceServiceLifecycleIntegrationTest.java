@@ -176,6 +176,35 @@ class GameInstanceServiceLifecycleIntegrationTest {
     verify(sessionStateService).saveState(any());
   }
 
+  @Test
+  void replacingExistingSessionRestoresPriorRunningSessionWhenNewStartFails() {
+    GameInstance existing = new GameInstance();
+    existing.setTenantId(42L);
+    existing.setRuntimeVersion("1.0.0");
+    existing.setScriptPatchVersion("patch-1");
+    existing.setOwnerAccountId(100L);
+    existing.setStatus("RUNNING");
+    existing = repository.saveAndFlush(existing);
+    long existingId = existing.getId();
+
+    doThrow(new IllegalStateException("state propagation failed"))
+        .when(sessionStateService)
+        .saveState(any());
+
+    assertThatThrownBy(
+            () ->
+                service.startSession(new StartSessionRequest(42L, "1.0.1", "patch-2", 100L), true))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("state propagation failed");
+
+    assertThat(repository.findAll()).hasSize(1);
+    GameInstance restored = repository.findById(existingId).orElseThrow();
+    assertThat(restored.getStatus()).isEqualTo("RUNNING");
+    assertThat(restored.getRuntimeVersion()).isEqualTo("1.0.0");
+    assertThat(restored.getScriptPatchVersion()).isEqualTo("patch-1");
+    assertThat(restored.getOwnerAccountId()).isEqualTo(100L);
+  }
+
   @TestConfiguration
   static class Config {
     @Bean
