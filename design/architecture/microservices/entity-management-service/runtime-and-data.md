@@ -203,7 +203,8 @@ The current minimal `QueryInventory -> item_ids[]` shape is only sufficient for 
 Current `06.3` note:
 
 - the live runtime model already treats ordinary items as distinct `item_instances`;
-- authored stackability is a later explicit capability, not an implied consequence of item-definition sameness;
+- item definitions now already expose an explicit authored `stackable` capability flag, defaulting to non-stackable;
+- authored stackability still remains a later holder/query behavior, not an implied consequence of item-definition sameness;
 - until that authored seam exists, same-definition items should remain separate physical instances rather than silently merging into aggregate quantity state.
 
 This richer query model is required both for player actions and for future clients with multiple inventory panes, filtered item grids, equipment screens, contextual loot UIs, or admin/operator tooling.

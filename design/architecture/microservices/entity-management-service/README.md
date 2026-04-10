@@ -13,6 +13,8 @@ The target-state model is container-first:
 - future inventory queries must support structural filtering plus game-defined item types/tags for both gameplay commands and richer GUIs;
 - `LOOK` and similar room-view commands should expose visible room-ground items from that room-attached container as a distinct room-view section, but should not automatically expand nested container contents inline.
 
+Item definitions now also expose an explicit authored `stackable` capability. That field only declares whether a template is eligible for later fungible stack behavior; it does not replace the current item-instance model. Until `06.3.2` lands, ordinary runtime handling still treats physical items as distinct instances, and non-stackable remains the safe default for equipment, containers, and other stateful items.
+
 Inventory and equipment mutations are also intended to be auditable through a canonical transfer log so item duplication or invalid movement bugs can be investigated later.
 
 Character ownership is tenant-scoped, but Entity Management must support both tenant-shared and instance-local playable state depending on the resolved realm policy. In practice this means a character may remain owned by the same `{accountId, tenantId}` while some associated gameplay state, such as copied fork-local progression, seeded/sample-state inventory, or fresh standalone realm-local records, is isolated to a specific `gameInstanceId`.

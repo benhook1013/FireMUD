@@ -10,6 +10,12 @@ Game creators use these interfaces to craft rooms, items and NPCs without modify
 - **Entity Designer** – define NPCs, items and equipment with validation rules. Entities are stored as versioned records in the Entity Management Service and associated with draft or published versions by `version_id` during design and publish workflows.
 - **Import/Export (deferred)** – bulk JSON import/export is not part of the canonical initial slice. Designers edit drafts through the web UI and service-owned design APIs; any future import/export contract must be specified explicitly before the docs present it as a supported capability.
 
+Current item-authoring note:
+
+- item templates now carry an explicit `stackable` authored capability;
+- this is only the authoring seam for future fungible quantity behavior, not live runtime merge/split behavior;
+- equipment, containers, and other stateful items should remain authored non-stackable unless a later slice deliberately proves they are safe to treat as fungible.
+
 Illustrative generation/revision sequence:
 
 1. Create or update a generation revision for a declared target scope.
