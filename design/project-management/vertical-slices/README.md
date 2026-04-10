@@ -1,9 +1,5 @@
 # Vertical Slice Design Docs
 
-This directory tracks vertical slice plans for major end-to-end features in the FireMUD platform.
-
-Each document describes a narrowly scoped slice of functionality, covering user experience, architecture, testing strategy, and incremental rollout steps so the feature can be delivered and validated in stages.
-
 ## Documents
 
 - [00-slice-ideas.md](./00-slice-ideas.md) – Brainstormed candidate slices and prioritization notes.
