@@ -36,7 +36,7 @@ These are already partly real in code and should continue after the immediate ru
 5. [02.18 Service Boundary and Audit Hardening](./vertical-slices/02.18-task-list-service-boundary-and-audit-hardening-vertical-slice.md)
    Remaining: complete the remaining `02.18.3` and `02.18.6` follow-ups after the auth-propagation seam work.
 6. [02.18.1 Audit Log and Moderation Separation](./vertical-slices/02.18.1-task-list-audit-log-and-moderation-separation-vertical-slice.md)
-   Remaining: finish the separation so harmless audit traffic and destructive moderation traffic cannot blur again.
+   Remaining: keep future callers on the dedicated log-event path; the current account/logging-admin separation is now in place and covered.
 7. [02.18.4 World and Entity Service Boundary Auth](./vertical-slices/02.18.4-task-list-world-and-entity-service-boundary-auth-vertical-slice.md)
    Remaining: finish the remaining service-boundary/auth alignment as those read/write paths harden.
 
