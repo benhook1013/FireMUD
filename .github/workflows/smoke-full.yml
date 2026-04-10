@@ -105,6 +105,7 @@ jobs:
             gateway \
             game-logic-service \
             game-session-service \
+            logging-admin-service \
             tcp-proxy-service \
             world-management-service
 

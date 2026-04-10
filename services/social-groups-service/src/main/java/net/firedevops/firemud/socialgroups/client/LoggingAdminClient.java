@@ -5,10 +5,9 @@ import java.io.IOException;
 import javax.net.ssl.SSLException;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.AbstractReloadingBlockingGrpcClient;
+import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
-import net.firedevops.firemud.common.security.GrpcClientAuth;
-import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.loggingadmin.v1.CreateReportRequest;
 import net.firedevops.firemud.loggingadmin.v1.ReportServiceGrpc;
 import org.springframework.stereotype.Component;
@@ -17,15 +16,12 @@ import org.springframework.stereotype.Component;
 @Component
 public class LoggingAdminClient
     extends AbstractReloadingBlockingGrpcClient<ReportServiceGrpc.ReportServiceBlockingStub> {
-  private final JwtUtil jwtUtil;
-
   public LoggingAdminClient(
       ServiceEndpointsProperties endpoints,
       CommonGrpcClientProperties tlsProps,
-      JwtUtil jwtUtil,
-      GrpcChannelFactory channelFactory) {
-    super(endpoints, tlsProps, channelFactory, LoggingAdminClient.class);
-    this.jwtUtil = jwtUtil;
+      GrpcChannelFactory channelFactory,
+      BlockingGrpcStubCustomizer stubCustomizer) {
+    super(endpoints, tlsProps, channelFactory, stubCustomizer, LoggingAdminClient.class);
   }
 
   @PostConstruct
@@ -45,8 +41,7 @@ public class LoggingAdminClient
 
   @Override
   protected ReportServiceGrpc.ReportServiceBlockingStub buildStub(io.grpc.ManagedChannel channel) {
-    return GrpcClientAuth.attach(
-        ReportServiceGrpc.newBlockingStub(channel).withCompression("gzip"), jwtUtil);
+    return applyStubCustomizer(ReportServiceGrpc.newBlockingStub(channel).withCompression("gzip"));
   }
 
   /**

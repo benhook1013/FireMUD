@@ -95,7 +95,8 @@ public class EquipmentCommandHandler {
         entityManagementClient.wearEquipment(
             Long.toString(context.tenantId()),
             Long.toString(context.characterId()),
-            carried.getItemId());
+            carried.getItemId(),
+            carried.getItemInstanceId());
     if (response.hasError()) {
       return equipmentFailure(response.getError().getCode(), response.getError().getMessage());
     }
@@ -208,6 +209,10 @@ public class EquipmentCommandHandler {
   private String formatEquipmentItem(EquipmentItem item) {
     StringBuilder line = new StringBuilder();
     line.append("- ").append(item.getSlot()).append(": ").append(item.getItemName());
+    String compactReference = ContainerIdentitySupport.compactReference(item);
+    if (StringUtils.hasText(compactReference)) {
+      line.append(" [").append(compactReference).append("]");
+    }
     if (StringUtils.hasText(item.getItemDescription())) {
       line.append(" (").append(item.getItemDescription()).append(")");
     }

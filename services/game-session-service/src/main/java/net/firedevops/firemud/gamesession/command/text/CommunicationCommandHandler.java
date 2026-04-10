@@ -50,12 +50,8 @@ public class CommunicationCommandHandler {
     try (GameplayLoggingContext ignored = GameplayLoggingContext.from(context)) {
       String tenantTag = Long.toString(context.tenantId());
       String typeTag = command.type().name().toLowerCase(Locale.ROOT);
-      meterRegistry
-          .counter(COMMUNICATION_INVOCATIONS_METRIC, "tenantId", tenantTag, "type", typeTag)
-          .increment();
-      meterRegistry
-          .counter(metricPrefix(command.type()) + ".invocations", "tenantId", tenantTag)
-          .increment();
+      meterRegistry.counter(COMMUNICATION_INVOCATIONS_METRIC, "type", typeTag).increment();
+      meterRegistry.counter(metricPrefix(command.type()) + ".invocations").increment();
 
       ParsedCommunication parsed = parseCommunication(context, command);
       if (!parsed.valid()) {
@@ -212,18 +208,9 @@ public class CommunicationCommandHandler {
       RuntimeException ex) {
     String typeTag = commandType.name().toLowerCase(Locale.ROOT);
     meterRegistry
-        .counter(
-            COMMUNICATION_FAILURES_METRIC,
-            "tenantId",
-            tenantTag,
-            "type",
-            typeTag,
-            "error",
-            errorTag)
+        .counter(COMMUNICATION_FAILURES_METRIC, "type", typeTag, "error", errorTag)
         .increment();
-    meterRegistry
-        .counter(metricPrefix(commandType) + ".failures", "tenantId", tenantTag, "error", errorTag)
-        .increment();
+    meterRegistry.counter(metricPrefix(commandType) + ".failures", "error", errorTag).increment();
     if (ex == null) {
       LOG.warn(
           "Communication failed tenantId={} gameInstanceId={} characterId={} type={} error={} reason={}",

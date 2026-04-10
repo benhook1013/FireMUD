@@ -60,7 +60,20 @@ class TickServiceImplTest {
   @Test
   void enqueueCommandPushesToQueue() {
     service.enqueueCommand(1L, 2L, "look", false);
-    verify(listOps).rightPush(eq("tick:queue:1:2"), any(Object.class));
+    verify(listOps).rightPush(eq("gamesession:tick:queue:1:2"), any(Object.class));
+  }
+
+  @Test
+  void processTickUsesGameplayNamespacedLockAndPendingKeys() {
+    when(valueOps.setIfAbsent(any(String.class), any(Object.class), any(Duration.class)))
+        .thenReturn(true);
+
+    service.processTick(1L, 2L);
+
+    verify(valueOps)
+        .setIfAbsent(eq("gamesession:tick:lock:1:2"), any(Object.class), any(Duration.class));
+    verify(listOps).size("gamesession:tick:pending:1:2");
+    verify(listOps).index("gamesession:tick:queue:1:2", 0);
   }
 
   @Test
@@ -98,7 +111,7 @@ class TickServiceImplTest {
 
     service.processTick(1L, 2L);
 
-    verify(redisTemplate, never()).delete("tick:lock:1:2");
+    verify(redisTemplate, never()).delete("gamesession:tick:lock:1:2");
     verify(redisTemplate, org.mockito.Mockito.atLeastOnce())
         .execute(any(RedisScript.class), org.mockito.ArgumentMatchers.<String>anyList());
   }
@@ -144,12 +157,10 @@ class TickServiceImplTest {
     when(repository.findById(2L)).thenReturn(java.util.Optional.of(instance));
     service.processTick(10L, 2L);
     org.junit.jupiter.api.Assertions.assertEquals(
-        3.0,
-        meterRegistry
-            .get("tick_retry_queue_depth")
-            .tags("tenantId", "10", "regionId", "2")
-            .gauge()
-            .value(),
+        3.0, meterRegistry.get("game_session_retry_queue_depth_total").gauge().value(), 0.001);
+    org.junit.jupiter.api.Assertions.assertEquals(
+        1.0,
+        meterRegistry.get("game_session_retry_queue_targets_with_pending").gauge().value(),
         0.001);
   }
 

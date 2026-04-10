@@ -12,6 +12,9 @@ Use this file as the canonical AI instruction source for this repository.
 - After `spotlessApply`, run the relevant `spotlessCheck` or `spotlessJavaCheck` task for touched services when formatting-sensitive files changed.
 - For markdown or design-document changes (especially under `design/`), run `./gradlew linkCheck lintMarkdown` before hand-off.
 - Treat `./gradlew linkCheck lintMarkdown` as mandatory hygiene when editing files: if these checks fail, fix the reported issues before hand-off even when the failures were pre-existing and not introduced by your change.
+- When fixing smoke-specific failures, do not rely only on targeted tests. Run the canonical local smoke proof for the path you changed:
+  - source-built stack: `dev-tools/verify-fresh-bootstrap.sh` or `dev-tools/verify-restart-state.sh`
+  - image-tag smoke: `SMOKE_IMAGE_TAG=<tag> dev-tools/verify-smoke-images.sh`
 
 ## Execution Style
 
@@ -87,3 +90,9 @@ FireMUD is in initial development. Optimize for direct convergence to a clean ca
 ## Hetzner Preview Host
 
 - Preview host: `77.42.29.156`; normal SSH user: `firemud`; current self-hosted runner label: `preview`. Treat it as preview infrastructure first, and check live host/runner state before using it for anything heavier.
+
+## Local Smoke Workflow
+
+- Prefer the canonical smoke-proof scripts under `dev-tools/` over ad hoc `docker compose build/up --wait` debugging loops.
+- The smoke-image override flow should be driven by `SMOKE_IMAGE_TAG=<tag> dev-tools/verify-smoke-images.sh`, which writes `docker/.env`, validates compose resolution, boots the stack, and runs both gameplay smoke proofs.
+- The source-built local stack should be validated through `dev-tools/verify-fresh-bootstrap.sh` or `dev-tools/verify-restart-state.sh` rather than hand-rolled compose sequences when the goal is smoke/bootstrap proof.

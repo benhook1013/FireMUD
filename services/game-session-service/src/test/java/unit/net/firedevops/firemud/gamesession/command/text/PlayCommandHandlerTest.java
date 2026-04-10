@@ -258,12 +258,7 @@ class PlayCommandHandlerTest {
     assertThat(result.commandResult().errorCode()).isEqualTo("WORLD_ACCESS_DENIED");
     assertThat(
             meterRegistry
-                .counter(
-                    "gamesession.session.resume_denied",
-                    "tenantId",
-                    "22",
-                    "reason",
-                    "access_denied")
+                .counter("gamesession.session.resume_denied", "reason", "access_denied")
                 .count())
         .isEqualTo(1.0);
   }
@@ -291,12 +286,7 @@ class PlayCommandHandlerTest {
     assertThat(result.commandResult().errorCode()).isEqualTo("TENANT_BILLING_BLOCKED");
     assertThat(
             meterRegistry
-                .counter(
-                    "gamesession.session.resume_denied",
-                    "tenantId",
-                    "22",
-                    "reason",
-                    "tenant_unavailable")
+                .counter("gamesession.session.resume_denied", "reason", "tenant_unavailable")
                 .count())
         .isEqualTo(1.0);
   }
@@ -324,12 +314,7 @@ class PlayCommandHandlerTest {
     assertThat(result.commandResult().errorCode()).isEqualTo("MEMBERSHIP_AUTH_UNAVAILABLE");
     assertThat(
             meterRegistry
-                .counter(
-                    "gamesession.session.resume_denied",
-                    "tenantId",
-                    "22",
-                    "reason",
-                    "authority_unavailable")
+                .counter("gamesession.session.resume_denied", "reason", "authority_unavailable")
                 .count())
         .isEqualTo(1.0);
   }
@@ -362,8 +347,6 @@ class PlayCommandHandlerTest {
             meterRegistry
                 .counter(
                     "gamesession.session.fresh_entry_fallback",
-                    "tenantId",
-                    "22",
                     "reason",
                     "stale_or_missing_context")
                 .count())

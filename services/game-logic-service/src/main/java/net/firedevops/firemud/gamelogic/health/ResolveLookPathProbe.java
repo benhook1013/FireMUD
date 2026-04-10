@@ -30,10 +30,14 @@ public final class ResolveLookPathProbe {
     this.entityStub = entityStub;
   }
 
-  public ProbeResult probe(String tenantId, String roomId) {
+  public ProbeResult probe(String tenantId, String gameInstanceId, String roomId) {
     Map<String, Object> dependencies = new LinkedHashMap<>();
     RoomInstanceRef roomInstance =
-        RoomInstanceRef.newBuilder().setTenantId(tenantId).setRoomInstanceId(roomId).build();
+        RoomInstanceRef.newBuilder()
+            .setTenantId(tenantId)
+            .setGameInstanceId(gameInstanceId)
+            .setRoomInstanceId(roomId)
+            .build();
 
     try {
       GetRoomSnapshotResponse response =

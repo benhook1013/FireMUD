@@ -113,13 +113,24 @@ public class ContainerCommandHandler {
         return containerInvalidArgument(
             "No carried item matches \"" + transfer.itemReference() + "\"");
       }
+      InventoryItem inventoryItem = resolvedItem.orElseThrow();
+      if (transfer.quantity() > 1
+          && ContainerIdentitySupport.matchesExplicitReference(
+              inventoryItem, transfer.itemReference())) {
+        return containerInvalidArgument("Explicit item refs require quantity 1 for PUT");
+      }
 
       var response =
           entityManagementClient.putItemIntoContainer(
               Long.toString(context.tenantId()),
               Long.toString(context.characterId()),
               ContainerIdentitySupport.resolveContainerInstanceId(resolvedContainer.orElseThrow()),
-              resolvedItem.orElseThrow().getItemId(),
+              inventoryItem.getItemId(),
+              ContainerIdentitySupport.matchesExplicitReference(
+                          inventoryItem, transfer.itemReference())
+                      && !inventoryItem.getItemInstanceId().isBlank()
+                  ? inventoryItem.getItemInstanceId()
+                  : null,
               transfer.quantity());
       if (response.hasError()) {
         return containerFailure(
@@ -191,13 +202,24 @@ public class ContainerCommandHandler {
         return containerInvalidArgument(
             "No container item matches \"" + transfer.itemReference() + "\"");
       }
+      ContainerItem containerItem = resolvedItem.orElseThrow();
+      if (transfer.quantity() > 1
+          && ContainerIdentitySupport.matchesExplicitReference(
+              containerItem, transfer.itemReference())) {
+        return containerInvalidArgument("Explicit item refs require quantity 1 for TAKE");
+      }
 
       var response =
           entityManagementClient.takeItemFromContainer(
               Long.toString(context.tenantId()),
               Long.toString(context.characterId()),
               ContainerIdentitySupport.resolveContainerInstanceId(resolvedContainer.orElseThrow()),
-              resolvedItem.orElseThrow().getItemId(),
+              containerItem.getItemId(),
+              ContainerIdentitySupport.matchesExplicitReference(
+                          containerItem, transfer.itemReference())
+                      && !containerItem.getItemInstanceId().isBlank()
+                  ? containerItem.getItemInstanceId()
+                  : null,
               transfer.quantity());
       if (response.hasError()) {
         return containerFailure(
@@ -247,7 +269,10 @@ public class ContainerCommandHandler {
         List.of(
             PlayerOutput.view(
                 new InventoryViewOutput(
-                    "Container: " + displayInventoryItemName(containerItem), lines))));
+                    "Container: "
+                        + displayInventoryItemName(containerItem)
+                        + compactReferenceSuffix(containerItem),
+                    lines))));
   }
 
   private InventoryResolution loadInventory(SessionContext context) {
@@ -271,16 +296,14 @@ public class ContainerCommandHandler {
 
   private Optional<ContainerItem> findContainerItem(List<ContainerItem> items, String reference) {
     return items.stream()
-        .filter(
-            item ->
-                item.getItemId().equalsIgnoreCase(reference)
-                    || item.getItemName().equalsIgnoreCase(reference))
+        .filter(item -> ContainerIdentitySupport.matchesReference(item, reference))
         .findFirst();
   }
 
   private String formatContainerItem(ContainerItem item) {
     StringBuilder line = new StringBuilder();
     line.append("- ").append(item.getItemName());
+    appendCompactReference(line, item.getVisibleRef());
     if (item.getQuantity() > 1) {
       line.append(" x").append(item.getQuantity());
     }
@@ -300,6 +323,17 @@ public class ContainerCommandHandler {
 
   private String quantitySuffix(int quantity) {
     return quantity > 1 ? " x" + quantity : "";
+  }
+
+  private String compactReferenceSuffix(InventoryItem item) {
+    String compactReference = ContainerIdentitySupport.compactReference(item);
+    return StringUtils.hasText(compactReference) ? " [" + compactReference + "]" : "";
+  }
+
+  private void appendCompactReference(StringBuilder line, String compactReference) {
+    if (StringUtils.hasText(compactReference)) {
+      line.append(" [").append(compactReference).append("]");
+    }
   }
 
   private String errorCode(String candidate) {

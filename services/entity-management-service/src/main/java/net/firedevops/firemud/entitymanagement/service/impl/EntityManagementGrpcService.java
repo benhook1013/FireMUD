@@ -37,6 +37,8 @@ import net.firedevops.firemud.entitymanagement.v1.ListEquipmentRequest;
 import net.firedevops.firemud.entitymanagement.v1.ListEquipmentResponse;
 import net.firedevops.firemud.entitymanagement.v1.ListRoomEntitiesRequest;
 import net.firedevops.firemud.entitymanagement.v1.ListRoomEntitiesResponse;
+import net.firedevops.firemud.entitymanagement.v1.ListRoomGroundInventoryRequest;
+import net.firedevops.firemud.entitymanagement.v1.ListRoomGroundInventoryResponse;
 import net.firedevops.firemud.entitymanagement.v1.PickupItemFromRoomRequest;
 import net.firedevops.firemud.entitymanagement.v1.PickupItemFromRoomResponse;
 import net.firedevops.firemud.entitymanagement.v1.PingRequest;
@@ -385,7 +387,12 @@ public class EntityManagementGrpcService
       SessionContext.requireTenantAccess(tenantId);
       long characterId = Long.parseLong(request.getCharacterId());
       long itemId = Long.parseLong(request.getItemId());
-      CharacterEquipmentEntryDto dto = equipmentService.wearItem(tenantId, characterId, itemId);
+      Long itemInstanceId =
+          request.getItemInstanceId().isBlank()
+              ? null
+              : Long.parseLong(request.getItemInstanceId());
+      CharacterEquipmentEntryDto dto =
+          equipmentService.wearItem(tenantId, characterId, itemId, itemInstanceId);
       WearEquipmentItemResponse response =
           WearEquipmentItemResponse.newBuilder().setEquipmentItem(toProto(dto)).build();
       responseObserver.onNext(response);
@@ -534,9 +541,18 @@ public class EntityManagementGrpcService
       long characterId = Long.parseLong(request.getCharacterId());
       long containerInstanceId = Long.parseLong(request.getContainerInstanceId());
       long itemId = Long.parseLong(request.getItemId());
+      Long itemInstanceId =
+          request.getItemInstanceId().isBlank()
+              ? null
+              : Long.parseLong(request.getItemInstanceId());
       var dto =
           containerService.putItemIntoContainer(
-              tenantId, characterId, containerInstanceId, itemId, request.getQuantity());
+              tenantId,
+              characterId,
+              containerInstanceId,
+              itemId,
+              itemInstanceId,
+              request.getQuantity());
       PutItemIntoContainerResponse response =
           PutItemIntoContainerResponse.newBuilder().setContainerItem(toProto(dto)).build();
       responseObserver.onNext(response);
@@ -588,9 +604,18 @@ public class EntityManagementGrpcService
       long characterId = Long.parseLong(request.getCharacterId());
       long containerInstanceId = Long.parseLong(request.getContainerInstanceId());
       long itemId = Long.parseLong(request.getItemId());
+      Long itemInstanceId =
+          request.getItemInstanceId().isBlank()
+              ? null
+              : Long.parseLong(request.getItemInstanceId());
       var dto =
           containerService.takeItemFromContainer(
-              tenantId, characterId, containerInstanceId, itemId, request.getQuantity());
+              tenantId,
+              characterId,
+              containerInstanceId,
+              itemId,
+              itemInstanceId,
+              request.getQuantity());
       TakeItemFromContainerResponse response =
           TakeItemFromContainerResponse.newBuilder().setInventoryItem(toProto(dto)).build();
       responseObserver.onNext(response);
@@ -632,6 +657,63 @@ public class EntityManagementGrpcService
   }
 
   @Override
+  @Timed(value = "entityGrpc.listRoomGroundInventory")
+  public void listRoomGroundInventory(
+      ListRoomGroundInventoryRequest request,
+      StreamObserver<ListRoomGroundInventoryResponse> responseObserver) {
+    try {
+      long tenantId = Long.parseLong(request.getTenantId());
+      SessionContext.requireTenantAccess(tenantId);
+      var items =
+          inventoryService.listRoomGroundItems(
+              tenantId,
+              request.getGameInstanceId(),
+              request.getRoomInstanceId(),
+              Pageable.unpaged());
+      ListRoomGroundInventoryResponse response =
+          ListRoomGroundInventoryResponse.newBuilder()
+              .addAllItems(items.stream().map(this::toProto).toList())
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (NumberFormatException ex) {
+      ListRoomGroundInventoryResponse response =
+          ListRoomGroundInventoryResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry,
+                      logger,
+                      "ListRoomGroundInventory",
+                      "INVALID_ARGUMENT",
+                      ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      ListRoomGroundInventoryResponse response =
+          ListRoomGroundInventoryResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry,
+                      logger,
+                      "ListRoomGroundInventory",
+                      "INVALID_ARGUMENT",
+                      ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      ListRoomGroundInventoryResponse response =
+          ListRoomGroundInventoryResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.internal(meterRegistry, logger, "ListRoomGroundInventory", ex))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    }
+  }
+
+  @Override
   @Timed(value = "entityGrpc.pickupItemFromRoom")
   public void pickupItemFromRoom(
       PickupItemFromRoomRequest request,
@@ -649,6 +731,9 @@ public class EntityManagementGrpcService
               request.getGameInstanceId(),
               request.getRoomInstanceId(),
               itemId,
+              request.getItemInstanceId().isBlank()
+                  ? null
+                  : Long.parseLong(request.getItemInstanceId()),
               request.getContainerInstanceId(),
               quantity);
       PickupItemFromRoomResponse response =
@@ -708,6 +793,9 @@ public class EntityManagementGrpcService
               request.getGameInstanceId(),
               request.getRoomInstanceId(),
               itemId,
+              request.getItemInstanceId().isBlank()
+                  ? null
+                  : Long.parseLong(request.getItemInstanceId()),
               request.getContainerInstanceId(),
               quantity);
       DropItemToRoomResponse response =
@@ -832,8 +920,14 @@ public class EntityManagementGrpcService
             .setItemName(dto.itemName())
             .setItemDescription(dto.itemDescription() == null ? "" : dto.itemDescription())
             .setQuantity(dto.quantity());
+    if (dto.itemInstanceId() != null) {
+      builder.setItemInstanceId(String.valueOf(dto.itemInstanceId()));
+    }
     if (dto.containerInstanceId() != null) {
       builder.setContainerInstanceId(String.valueOf(dto.containerInstanceId()));
+    }
+    if (dto.visibleRef() != null && !dto.visibleRef().isBlank()) {
+      builder.setVisibleRef(dto.visibleRef());
     }
     return builder.build();
   }
@@ -847,8 +941,14 @@ public class EntityManagementGrpcService
             .setItemId(String.valueOf(dto.itemId()))
             .setItemName(dto.itemName())
             .setItemDescription(dto.itemDescription() == null ? "" : dto.itemDescription());
+    if (dto.itemInstanceId() != null) {
+      builder.setItemInstanceId(String.valueOf(dto.itemInstanceId()));
+    }
     if (dto.containerInstanceId() != null) {
       builder.setContainerInstanceId(String.valueOf(dto.containerInstanceId()));
+    }
+    if (dto.visibleRef() != null && !dto.visibleRef().isBlank()) {
+      builder.setVisibleRef(dto.visibleRef());
     }
     return builder.build();
   }
@@ -862,6 +962,8 @@ public class EntityManagementGrpcService
         .setItemName(dto.itemName())
         .setItemDescription(dto.itemDescription() == null ? "" : dto.itemDescription())
         .setQuantity(dto.quantity())
+        .setItemInstanceId(dto.itemInstanceId() == null ? "" : String.valueOf(dto.itemInstanceId()))
+        .setVisibleRef(dto.visibleRef() == null ? "" : dto.visibleRef())
         .build();
   }
 
@@ -876,8 +978,14 @@ public class EntityManagementGrpcService
             .setItemName(dto.itemName())
             .setItemDescription(dto.itemDescription() == null ? "" : dto.itemDescription())
             .setQuantity(dto.quantity());
+    if (dto.itemInstanceId() != null) {
+      builder.setItemInstanceId(String.valueOf(dto.itemInstanceId()));
+    }
     if (dto.containerInstanceId() != null) {
       builder.setContainerInstanceId(String.valueOf(dto.containerInstanceId()));
+    }
+    if (dto.visibleRef() != null && !dto.visibleRef().isBlank()) {
+      builder.setVisibleRef(dto.visibleRef());
     }
     return builder.build();
   }
@@ -892,6 +1000,7 @@ public class EntityManagementGrpcService
         .setVisionPriority(dto.visionPriority())
         .setReloadHint(dto.reloadHint())
         .setVisible(dto.visible())
+        .setVisibleRef(dto.visibleRef() == null ? "" : dto.visibleRef())
         .build();
   }
 }

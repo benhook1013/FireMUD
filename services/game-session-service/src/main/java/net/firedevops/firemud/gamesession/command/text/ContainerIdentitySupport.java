@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamesession.command.text;
 
+import net.firedevops.firemud.entitymanagement.v1.ContainerItem;
 import net.firedevops.firemud.entitymanagement.v1.EquipmentItem;
 import net.firedevops.firemud.entitymanagement.v1.InventoryItem;
 import net.firedevops.firemud.entitymanagement.v1.RoomEntity;
@@ -20,20 +21,63 @@ public final class ContainerIdentitySupport {
   public static boolean matchesReference(InventoryItem item, String reference) {
     return matchesReference(item.getItemId(), reference)
         || matchesReference(item.getItemName(), reference)
-        || matchesReference(resolveContainerInstanceId(item), reference);
+        || matchesReference(item.getItemInstanceId(), reference)
+        || matchesReference(item.getVisibleRef(), reference)
+        || matchesReference(resolveContainerInstanceId(item), reference)
+        || matchesReference(compactReference(item), reference);
   }
 
   public static boolean matchesReference(EquipmentItem item, String reference) {
     return matchesReference(item.getItemId(), reference)
         || matchesReference(item.getItemName(), reference)
+        || matchesReference(item.getItemInstanceId(), reference)
+        || matchesReference(item.getVisibleRef(), reference)
         || matchesReference(resolveContainerInstanceId(item), reference)
+        || matchesReference(compactReference(item), reference)
         || matchesReference(item.getSlot(), reference);
+  }
+
+  public static boolean matchesReference(ContainerItem item, String reference) {
+    return matchesReference(item.getItemId(), reference)
+        || matchesReference(item.getItemName(), reference)
+        || matchesReference(item.getItemInstanceId(), reference)
+        || matchesReference(item.getVisibleRef(), reference);
+  }
+
+  public static boolean matchesExplicitReference(InventoryItem item, String reference) {
+    return matchesReference(item.getItemInstanceId(), reference)
+        || matchesReference(item.getVisibleRef(), reference)
+        || matchesReference(resolveContainerInstanceId(item), reference)
+        || matchesReference(compactReference(item), reference);
+  }
+
+  public static boolean matchesExplicitReference(ContainerItem item, String reference) {
+    return matchesReference(item.getItemInstanceId(), reference)
+        || matchesReference(item.getVisibleRef(), reference);
   }
 
   public static boolean matchesReference(RoomEntity entity, String reference) {
     return matchesReference(parseItemId(entity.getEntityId()), reference)
         || matchesReference(entity.getDisplayName(), reference)
-        || matchesReference(resolveContainerInstanceId(entity), reference);
+        || matchesReference(entity.getVisibleRef(), reference)
+        || matchesReference(resolveContainerInstanceId(entity), reference)
+        || matchesReference(compactReference(entity), reference);
+  }
+
+  public static String compactReference(InventoryItem item) {
+    return item.getVisibleRef();
+  }
+
+  public static String compactReference(EquipmentItem item) {
+    return item.getVisibleRef();
+  }
+
+  public static String compactReference(RoomEntity entity) {
+    return entity.getVisibleRef();
+  }
+
+  public static String compactReference(ContainerItem item) {
+    return item.getVisibleRef();
   }
 
   private static String resolveContainerInstanceId(String containerInstanceId, String fallback) {
@@ -57,11 +101,17 @@ public final class ContainerIdentitySupport {
   }
 
   private static String resolveContainerInstanceId(RoomEntity entity) {
+    return StringUtils.hasText(extractContainerInstanceId(entity))
+        ? extractContainerInstanceId(entity)
+        : parseItemId(entity.getEntityId());
+  }
+
+  private static String extractContainerInstanceId(RoomEntity entity) {
     return entity.getStateFlagsList().stream()
         .filter(flag -> flag.startsWith("container-instance:"))
         .map(flag -> flag.substring("container-instance:".length()))
         .filter(StringUtils::hasText)
         .findFirst()
-        .orElse(parseItemId(entity.getEntityId()));
+        .orElse("");
   }
 }

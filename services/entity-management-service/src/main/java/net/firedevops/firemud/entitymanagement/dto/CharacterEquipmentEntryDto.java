@@ -9,4 +9,6 @@ public record CharacterEquipmentEntryDto(
     @NotNull Long itemId,
     @NotNull String itemName,
     String itemDescription,
-    Long containerInstanceId) {}
+    Long itemInstanceId,
+    Long containerInstanceId,
+    String visibleRef) {}

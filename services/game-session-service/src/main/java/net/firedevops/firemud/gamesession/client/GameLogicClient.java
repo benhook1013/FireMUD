@@ -4,10 +4,9 @@ import jakarta.annotation.PostConstruct;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.AbstractBlockingGrpcClient;
+import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
-import net.firedevops.firemud.common.security.GrpcClientAuth;
-import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.gamelogic.v1.CommunicationTargetKind;
 import net.firedevops.firemud.gamelogic.v1.CommunicationType;
 import net.firedevops.firemud.gamelogic.v1.GameLogicServiceGrpc;
@@ -27,15 +26,13 @@ public class GameLogicClient
     extends AbstractBlockingGrpcClient<GameLogicServiceGrpc.GameLogicServiceBlockingStub> {
   private static final long CALL_DEADLINE_SECONDS = 5L;
   private static final long READINESS_DEADLINE_SECONDS = 2L;
-  private final JwtUtil jwtUtil;
 
   public GameLogicClient(
       ServiceEndpointsProperties endpoints,
       CommonGrpcClientProperties grpcClientProperties,
-      JwtUtil jwtUtil,
-      GrpcChannelFactory channelFactory) {
-    super(endpoints, grpcClientProperties, channelFactory);
-    this.jwtUtil = jwtUtil;
+      GrpcChannelFactory channelFactory,
+      BlockingGrpcStubCustomizer stubCustomizer) {
+    super(endpoints, grpcClientProperties, channelFactory, stubCustomizer);
   }
 
   @PostConstruct
@@ -56,8 +53,8 @@ public class GameLogicClient
   @Override
   protected GameLogicServiceGrpc.GameLogicServiceBlockingStub buildStub(
       io.grpc.ManagedChannel channel) {
-    return GrpcClientAuth.attach(
-        GameLogicServiceGrpc.newBlockingStub(channel).withCompression("gzip"), jwtUtil);
+    return applyStubCustomizer(
+        GameLogicServiceGrpc.newBlockingStub(channel).withCompression("gzip"));
   }
 
   public LookResult resolveLook(

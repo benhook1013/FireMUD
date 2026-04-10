@@ -68,4 +68,60 @@ class IpConnectionLimiterImplTest {
     limiter.release(1L);
     assertTrue(limiter.canAccept("1.2.3.4"));
   }
+
+  @Test
+  void canAcceptReplacementWhenExistingSessionAlreadyOwnsSameIp() {
+    ConcurrentMap<String, String> store = new ConcurrentHashMap<>();
+    StringRedisTemplate redis = mock(StringRedisTemplate.class);
+    ValueOperations<String, String> ops = mock(ValueOperations.class);
+    org.mockito.Mockito.when(redis.opsForValue()).thenReturn(ops);
+    org.mockito.Mockito.when(ops.get(anyString()))
+        .thenAnswer(inv -> store.get(inv.getArgument(0, String.class)));
+
+    store.put("ipconn:1.2.3.4", "1");
+    store.put("sessionip:9", "1.2.3.4");
+
+    IpConnectionLimiterImpl limiter =
+        new IpConnectionLimiterImpl(redis, 1, 60, new DevIsolatedProperties(false));
+
+    assertTrue(limiter.canAccept("1.2.3.4", 9L));
+    assertFalse(limiter.canAccept("1.2.3.4", 10L));
+  }
+
+  @Test
+  void transferRegistrationMovesSessionReservationWithoutChangingCounter() {
+    ConcurrentMap<String, String> store = new ConcurrentHashMap<>();
+    StringRedisTemplate redis = mock(StringRedisTemplate.class);
+    ValueOperations<String, String> ops = mock(ValueOperations.class);
+    org.mockito.Mockito.when(redis.opsForValue()).thenReturn(ops);
+    org.mockito.Mockito.when(ops.get(anyString()))
+        .thenAnswer(inv -> store.get(inv.getArgument(0, String.class)));
+    org.mockito.Mockito.when(redis.getExpire(anyString(), org.mockito.ArgumentMatchers.any()))
+        .thenReturn(30_000L);
+    doAnswer(
+            inv -> {
+              store.put(inv.getArgument(0), inv.getArgument(1));
+              return null;
+            })
+        .when(ops)
+        .set(anyString(), anyString(), org.mockito.ArgumentMatchers.any());
+    doAnswer(
+            inv -> {
+              store.remove(inv.getArgument(0));
+              return null;
+            })
+        .when(redis)
+        .delete(anyString());
+
+    store.put("ipconn:1.2.3.4", "1");
+    store.put("sessionip:9", "1.2.3.4");
+
+    IpConnectionLimiterImpl limiter =
+        new IpConnectionLimiterImpl(redis, 1, 60, new DevIsolatedProperties(false));
+
+    assertTrue(limiter.transferRegistration("1.2.3.4", 9L, 10L));
+    assertFalse(store.containsKey("sessionip:9"));
+    assertTrue("1.2.3.4".equals(store.get("sessionip:10")));
+    assertTrue("1".equals(store.get("ipconn:1.2.3.4")));
+  }
 }

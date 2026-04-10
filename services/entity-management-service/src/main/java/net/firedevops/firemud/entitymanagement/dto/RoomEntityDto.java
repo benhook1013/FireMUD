@@ -12,4 +12,5 @@ public record RoomEntityDto(
     List<String> stateFlags,
     int visionPriority,
     ReloadHint reloadHint,
-    boolean visible) {}
+    boolean visible,
+    String visibleRef) {}

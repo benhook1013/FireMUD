@@ -1,11 +1,9 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.fail;
 
-import io.grpc.Status;
-import io.grpc.StatusRuntimeException;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Instant;
@@ -18,6 +16,7 @@ import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.TickService;
 import net.firedevops.firemud.gamesession.v1.GetPinnedScriptPatchVersionRequest;
+import net.firedevops.firemud.gamesession.v1.GetPinnedScriptPatchVersionResponse;
 import net.firedevops.firemud.gamesession.v1.SetPinnedScriptPatchVersionRequest;
 import net.firedevops.firemud.gamesession.v1.SetPinnedScriptPatchVersionResponse;
 import org.junit.jupiter.api.AfterEach;
@@ -33,25 +32,33 @@ class GameSessionControlPlaneGrpcServiceTest {
   @Test
   void setPinnedScriptPatchVersionRejectsNonAdminCaller() {
     SessionContext.setContext("1", List.of("player"), Map.of());
+    SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     GameSessionControlPlaneGrpcService service =
-        newService(Mockito.mock(GameInstanceRepository.class));
+        newService(Mockito.mock(GameInstanceRepository.class), meterRegistry);
 
-    StatusRuntimeException ex =
-        assertThrows(
-            StatusRuntimeException.class,
-            () ->
-                service.setPinnedScriptPatchVersion(
-                    SetPinnedScriptPatchVersionRequest.newBuilder()
-                        .setTenantId("1")
-                        .setGameInstanceId("7")
-                        .setTargetScriptPatchVersion("patch-2")
-                        .setActorPrincipal("tester")
-                        .setReason("test")
-                        .setControlPlaneRequestId("req-1")
-                        .build(),
-                    new NoopObserver<>()));
+    AtomicReference<SetPinnedScriptPatchVersionResponse> responseRef = new AtomicReference<>();
+    service.setPinnedScriptPatchVersion(
+        SetPinnedScriptPatchVersionRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("7")
+            .setTargetScriptPatchVersion("patch-2")
+            .setActorPrincipal("tester")
+            .setReason("test")
+            .setControlPlaneRequestId("req-1")
+            .build(),
+        new NoopObserver<>() {
+          @Override
+          public void onNext(SetPinnedScriptPatchVersionResponse value) {
+            responseRef.set(value);
+          }
+        });
 
-    assertEquals(Status.PERMISSION_DENIED.getCode(), ex.getStatus().getCode());
+    assertNotNull(responseRef.get());
+    assertEquals("PERMISSION_DENIED", responseRef.get().getError().getCode());
+    assertEquals("Admin role required", responseRef.get().getError().getMessage());
+    assertEquals(
+        1.0,
+        meterRegistry.get("grpc.app_error").tag("code", "PERMISSION_DENIED").counter().count());
   }
 
   @Test
@@ -96,26 +103,40 @@ class GameSessionControlPlaneGrpcServiceTest {
 
   @Test
   void getPinnedScriptPatchVersionRequiresAuthenticatedCaller() {
+    SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     GameSessionControlPlaneGrpcService service =
-        newService(Mockito.mock(GameInstanceRepository.class));
+        newService(Mockito.mock(GameInstanceRepository.class), meterRegistry);
 
-    StatusRuntimeException ex =
-        assertThrows(
-            StatusRuntimeException.class,
-            () ->
-                service.getPinnedScriptPatchVersion(
-                    GetPinnedScriptPatchVersionRequest.newBuilder()
-                        .setTenantId("1")
-                        .setGameInstanceId("7")
-                        .build(),
-                    new NoopObserver<>()));
+    AtomicReference<GetPinnedScriptPatchVersionResponse> responseRef = new AtomicReference<>();
+    service.getPinnedScriptPatchVersion(
+        GetPinnedScriptPatchVersionRequest.newBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("7")
+            .build(),
+        new NoopObserver<>() {
+          @Override
+          public void onNext(GetPinnedScriptPatchVersionResponse value) {
+            responseRef.set(value);
+          }
+        });
 
-    assertEquals(Status.PERMISSION_DENIED.getCode(), ex.getStatus().getCode());
+    assertNotNull(responseRef.get());
+    assertEquals("", responseRef.get().getPinnedScriptPatchVersion());
+    assertEquals("PERMISSION_DENIED", responseRef.get().getError().getCode());
+    assertEquals("Admin role required", responseRef.get().getError().getMessage());
+    assertEquals(
+        1.0,
+        meterRegistry.get("grpc.app_error").tag("code", "PERMISSION_DENIED").counter().count());
   }
 
   private static GameSessionControlPlaneGrpcService newService(GameInstanceRepository repository) {
+    return newService(repository, new SimpleMeterRegistry());
+  }
+
+  private static GameSessionControlPlaneGrpcService newService(
+      GameInstanceRepository repository, SimpleMeterRegistry meterRegistry) {
     return new GameSessionControlPlaneGrpcService(
-        repository, Mockito.mock(TickService.class), new SimpleMeterRegistry());
+        repository, Mockito.mock(TickService.class), meterRegistry);
   }
 
   private static class NoopObserver<T> implements StreamObserver<T> {

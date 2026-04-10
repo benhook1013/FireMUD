@@ -19,6 +19,8 @@ service EntityManagementService {
   rpc ListContainerContents(ListContainerContentsRequest) returns (ListContainerContentsResponse);
   rpc PutItemIntoContainer(PutItemIntoContainerRequest) returns (PutItemIntoContainerResponse);
   rpc TakeItemFromContainer(TakeItemFromContainerRequest) returns (TakeItemFromContainerResponse);
+  rpc ListRoomGroundInventory(ListRoomGroundInventoryRequest)
+      returns (ListRoomGroundInventoryResponse);
   rpc PickupItemFromRoom(PickupItemFromRoomRequest) returns (PickupItemFromRoomResponse);
   rpc DropItemToRoom(DropItemToRoomRequest) returns (DropItemToRoomResponse);
   rpc ListCharactersByAccount(ListCharactersByAccountRequest) returns (ListCharactersByAccountResponse);
@@ -63,6 +65,8 @@ message InventoryItem {
   string item_description = 3;
   int32 quantity = 4;
   string container_instance_id = 5;
+  string item_instance_id = 6;
+  string visible_ref = 7;
 }
 
 message EquipmentItem {
@@ -73,6 +77,8 @@ message EquipmentItem {
   string item_name = 5;
   string item_description = 6;
   string container_instance_id = 7;
+  string item_instance_id = 8;
+  string visible_ref = 9;
 }
 
 message ListEquipmentRequest {
@@ -89,6 +95,7 @@ message WearEquipmentItemRequest {
   string tenant_id = 1;
   string character_id = 2;
   string item_id = 3;
+  string item_instance_id = 4;
 }
 
 message WearEquipmentItemResponse {
@@ -115,6 +122,8 @@ message ContainerItem {
   string item_name = 5;
   string item_description = 6;
   int32 quantity = 7;
+  string item_instance_id = 8;
+  string visible_ref = 9;
 }
 
 message ListContainerContentsRequest {
@@ -134,6 +143,7 @@ message PutItemIntoContainerRequest {
   string container_instance_id = 3;
   string item_id = 4;
   int32 quantity = 5;
+  string item_instance_id = 6;
 }
 
 message PutItemIntoContainerResponse {
@@ -147,6 +157,7 @@ message TakeItemFromContainerRequest {
   string container_instance_id = 3;
   string item_id = 4;
   int32 quantity = 5;
+  string item_instance_id = 6;
 }
 
 message TakeItemFromContainerResponse {
@@ -163,6 +174,19 @@ message RoomGroundInventoryItem {
   string item_description = 6;
   int32 quantity = 7;
   string container_instance_id = 8;
+  string item_instance_id = 9;
+  string visible_ref = 10;
+}
+
+message ListRoomGroundInventoryRequest {
+  string tenant_id = 1;
+  string game_instance_id = 2;
+  string room_instance_id = 3;
+}
+
+message ListRoomGroundInventoryResponse {
+  repeated RoomGroundInventoryItem items = 1;
+  shared.v1.ErrorDetail error = 2;
 }
 
 message PickupItemFromRoomRequest {
@@ -173,6 +197,7 @@ message PickupItemFromRoomRequest {
   string item_id = 5;
   int32 quantity = 6;
   string container_instance_id = 7;
+  string item_instance_id = 8;
 }
 
 message PickupItemFromRoomResponse {
@@ -189,6 +214,7 @@ message DropItemToRoomRequest {
   string item_id = 5;
   int32 quantity = 6;
   string container_instance_id = 7;
+  string item_instance_id = 8;
 }
 
 message DropItemToRoomResponse {
@@ -260,6 +286,7 @@ message RoomEntity {
   int32 vision_priority = 6;
   ReloadHint reload_hint = 7;
   bool visible = 8;
+  string visible_ref = 9;
 }
 
 message ListRoomEntitiesResponse {

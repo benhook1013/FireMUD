@@ -703,7 +703,7 @@ public class TelnetServerHandler extends SimpleChannelInboundHandler<String> {
   }
 
   private void recordBridgeShutdown(String shutdownClass) {
-    meterRegistry.counter("tcpproxy.bridge.shutdown", "class", shutdownClass).increment();
+    meterRegistry.counter("tcpproxy.bridge.shutdown", "classification", shutdownClass).increment();
   }
 
   private void cancelOutstandingSends() {

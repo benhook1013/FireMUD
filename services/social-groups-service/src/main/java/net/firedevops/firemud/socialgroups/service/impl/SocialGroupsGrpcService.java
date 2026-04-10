@@ -83,6 +83,14 @@ public class SocialGroupsGrpcService extends SocialGroupsServiceGrpc.SocialGroup
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
+    } catch (Exception ex) {
+      SendMessageResponse response =
+          SendMessageResponse.newBuilder()
+              .setSuccess(false)
+              .setError(internal("SendMessage", ex))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
     }
   }
 
@@ -123,6 +131,11 @@ public class SocialGroupsGrpcService extends SocialGroupsServiceGrpc.SocialGroup
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
+    } catch (Exception ex) {
+      CreateGuildResponse response =
+          CreateGuildResponse.newBuilder().setError(internal("CreateGuild", ex)).build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
     }
   }
 
@@ -147,6 +160,14 @@ public class SocialGroupsGrpcService extends SocialGroupsServiceGrpc.SocialGroup
           AddFriendResponse.newBuilder()
               .setSuccess(false)
               .setError(invalidArgument("AddFriend", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      AddFriendResponse response =
+          AddFriendResponse.newBuilder()
+              .setSuccess(false)
+              .setError(internal("AddFriend", ex))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -178,11 +199,23 @@ public class SocialGroupsGrpcService extends SocialGroupsServiceGrpc.SocialGroup
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
+    } catch (Exception ex) {
+      SendMailResponse response =
+          SendMailResponse.newBuilder()
+              .setSuccess(false)
+              .setError(internal("SendMail", ex))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
     }
   }
 
   private net.firedevops.firemud.shared.v1.ErrorDetail invalidArgument(
       String operation, String message) {
     return GrpcAppErrors.error(meterRegistry, logger, operation, "INVALID_ARGUMENT", message);
+  }
+
+  private net.firedevops.firemud.shared.v1.ErrorDetail internal(String operation, Exception ex) {
+    return GrpcAppErrors.internal(meterRegistry, logger, operation, ex);
   }
 }

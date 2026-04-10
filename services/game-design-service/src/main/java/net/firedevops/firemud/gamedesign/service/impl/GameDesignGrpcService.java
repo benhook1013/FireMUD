@@ -6,7 +6,8 @@ import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
-import net.firedevops.firemud.common.security.RequireAdminRole;
+import net.firedevops.firemud.common.security.AdminAuthorizationException;
+import net.firedevops.firemud.common.security.AdminRoleGuard;
 import net.firedevops.firemud.common.settings.GameDesignSettingsProtoMapper;
 import net.firedevops.firemud.gamedesign.dto.RevisionDto;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
@@ -59,16 +60,20 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
 
   @Override
   @Timed(value = "gamedesignGrpc.saveRevision")
-  @RequireAdminRole
   public void saveRevision(
       SaveRevisionRequest request, StreamObserver<SaveRevisionResponse> responseObserver) {
     SaveRevisionResponse.Builder builder = SaveRevisionResponse.newBuilder();
     try {
+      AdminRoleGuard.requireAdminRole();
       RevisionDto dto =
           new RevisionDto(
               null, request.getTenantId(), request.getAuthorAccountId(), request.getData(), null);
       RevisionDto saved = revisionService.saveRevision(dto);
       builder.setRevisionId(saved.id());
+    } catch (AdminAuthorizationException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry, logger, "SaveRevision", "PERMISSION_DENIED", ex.getMessage()));
     } catch (IllegalArgumentException ex) {
       builder.setError(
           GrpcAppErrors.error(
@@ -82,13 +87,17 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
 
   @Override
   @Timed(value = "gamedesignGrpc.publishVersion")
-  @RequireAdminRole
   public void publishVersion(
       PublishVersionRequest request, StreamObserver<PublishVersionResponse> responseObserver) {
     PublishVersionResponse.Builder builder = PublishVersionResponse.newBuilder();
     try {
+      AdminRoleGuard.requireAdminRole();
       VersionDto version = versionService.publishVersion(request.getTenantId(), request.getNotes());
       builder.setVersionId(version.id());
+    } catch (AdminAuthorizationException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry, logger, "PublishVersion", "PERMISSION_DENIED", ex.getMessage()));
     } catch (IllegalArgumentException ex) {
       builder.setError(
           GrpcAppErrors.error(
@@ -102,13 +111,13 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
 
   @Override
   @Timed(value = "gamedesignGrpc.publishScriptPatchVersion")
-  @RequireAdminRole
   public void publishScriptPatchVersion(
       PublishScriptPatchVersionRequest request,
       StreamObserver<PublishScriptPatchVersionResponse> responseObserver) {
     PublishScriptPatchVersionResponse.Builder builder =
         PublishScriptPatchVersionResponse.newBuilder();
     try {
+      AdminRoleGuard.requireAdminRole();
       VersionDto version =
           versionService.publishScriptPatchVersion(
               request.getTenantId(),
@@ -116,6 +125,14 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
               request.getScriptPatchVersion(),
               request.getNotes());
       builder.setVersionId(version.id());
+    } catch (AdminAuthorizationException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry,
+              logger,
+              "PublishScriptPatchVersion",
+              "PERMISSION_DENIED",
+              ex.getMessage()));
     } catch (IllegalArgumentException ex) {
       builder.setError(
           GrpcAppErrors.error(
@@ -134,11 +151,11 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
 
   @Override
   @Timed(value = "gamedesignGrpc.listVersions")
-  @RequireAdminRole
   public void listVersions(
       ListVersionsRequest request, StreamObserver<ListVersionsResponse> responseObserver) {
     ListVersionsResponse.Builder builder = ListVersionsResponse.newBuilder();
     try {
+      AdminRoleGuard.requireAdminRole();
       var versions = versionService.listVersions(request.getTenantId());
       versions.forEach(
           v ->
@@ -151,6 +168,10 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
                       .setIsScriptOnly(v.scriptOnly())
                       .setNotes(v.notes() == null ? "" : v.notes())
                       .build()));
+    } catch (AdminAuthorizationException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry, logger, "ListVersions", "PERMISSION_DENIED", ex.getMessage()));
     } catch (IllegalArgumentException ex) {
       builder.setError(
           GrpcAppErrors.error(
@@ -164,13 +185,13 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
 
   @Override
   @Timed(value = "gamedesignGrpc.getScopedSettingsOverrides")
-  @RequireAdminRole
   public void getScopedSettingsOverrides(
       GetScopedSettingsOverridesRequest request,
       StreamObserver<GetScopedSettingsOverridesResponse> responseObserver) {
     GetScopedSettingsOverridesResponse.Builder builder =
         GetScopedSettingsOverridesResponse.newBuilder();
     try {
+      AdminRoleGuard.requireAdminRole();
       var snapshot =
           settingsAuthorityService.getScopedOverrides(
               request.getTenantId(),
@@ -183,6 +204,14 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
         builder.setGameInstanceOverrides(
             GameDesignSettingsProtoMapper.toProto(snapshot.gameInstanceOverrides()));
       }
+    } catch (AdminAuthorizationException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry,
+              logger,
+              "GetScopedSettingsOverrides",
+              "PERMISSION_DENIED",
+              ex.getMessage()));
     } catch (IllegalArgumentException ex) {
       builder.setError(
           GrpcAppErrors.error(
@@ -201,18 +230,26 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
 
   @Override
   @Timed(value = "gamedesignGrpc.putSettingsDomainOverride")
-  @RequireAdminRole
   public void putSettingsDomainOverride(
       PutSettingsDomainOverrideRequest request,
       StreamObserver<PutSettingsDomainOverrideResponse> responseObserver) {
     PutSettingsDomainOverrideResponse.Builder builder =
         PutSettingsDomainOverrideResponse.newBuilder();
     try {
+      AdminRoleGuard.requireAdminRole();
       settingsAuthorityService.putDomainOverride(
           request.getTenantId(),
           request.hasGameInstanceId() ? request.getGameInstanceId() : null,
           GameDesignSettingsProtoMapper.fromProto(request.getDomain()),
           GameDesignSettingsProtoMapper.fromProto(request.getOverrides()));
+    } catch (AdminAuthorizationException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry,
+              logger,
+              "PutSettingsDomainOverride",
+              "PERMISSION_DENIED",
+              ex.getMessage()));
     } catch (IllegalArgumentException ex) {
       builder.setError(
           GrpcAppErrors.error(
@@ -231,17 +268,25 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
 
   @Override
   @Timed(value = "gamedesignGrpc.deleteSettingsDomainOverride")
-  @RequireAdminRole
   public void deleteSettingsDomainOverride(
       DeleteSettingsDomainOverrideRequest request,
       StreamObserver<DeleteSettingsDomainOverrideResponse> responseObserver) {
     DeleteSettingsDomainOverrideResponse.Builder builder =
         DeleteSettingsDomainOverrideResponse.newBuilder();
     try {
+      AdminRoleGuard.requireAdminRole();
       settingsAuthorityService.deleteDomainOverride(
           request.getTenantId(),
           request.hasGameInstanceId() ? request.getGameInstanceId() : null,
           GameDesignSettingsProtoMapper.fromProto(request.getDomain()));
+    } catch (AdminAuthorizationException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry,
+              logger,
+              "DeleteSettingsDomainOverride",
+              "PERMISSION_DENIED",
+              ex.getMessage()));
     } catch (IllegalArgumentException ex) {
       builder.setError(
           GrpcAppErrors.error(

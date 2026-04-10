@@ -41,4 +41,7 @@ public interface ContainerInstanceRepository extends JpaRepository<ContainerInst
 
   @EntityGraph(attributePaths = {"character", "item"})
   Optional<ContainerInstance> findByTenantIdAndItem_Id(Long tenantId, Long itemId);
+
+  @EntityGraph(attributePaths = {"character", "item", "itemInstance"})
+  Optional<ContainerInstance> findByItemInstance_Id(Long itemInstanceId);
 }

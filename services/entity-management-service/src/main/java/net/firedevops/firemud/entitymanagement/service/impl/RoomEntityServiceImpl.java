@@ -8,9 +8,9 @@ import net.firedevops.firemud.entitymanagement.config.LookProperties;
 import net.firedevops.firemud.entitymanagement.dto.RoomEntityDto;
 import net.firedevops.firemud.entitymanagement.entity.ContainerInstance;
 import net.firedevops.firemud.entitymanagement.entity.Item;
-import net.firedevops.firemud.entitymanagement.entity.RoomGroundInventoryEntry;
+import net.firedevops.firemud.entitymanagement.entity.ItemInstance;
 import net.firedevops.firemud.entitymanagement.repository.ContainerInstanceRepository;
-import net.firedevops.firemud.entitymanagement.repository.RoomGroundInventoryRepository;
+import net.firedevops.firemud.entitymanagement.repository.ItemInstanceRepository;
 import net.firedevops.firemud.entitymanagement.service.RoomEntityService;
 import net.firedevops.firemud.entitymanagement.v1.EntityType;
 import net.firedevops.firemud.entitymanagement.v1.ReloadHint;
@@ -21,15 +21,15 @@ import org.springframework.stereotype.Service;
 @Service
 public class RoomEntityServiceImpl implements RoomEntityService {
   private final LookProperties lookProperties;
-  private final RoomGroundInventoryRepository roomGroundInventoryRepository;
+  private final ItemInstanceRepository itemInstanceRepository;
   private final ContainerInstanceRepository containerInstanceRepository;
 
   public RoomEntityServiceImpl(
       LookProperties lookProperties,
-      RoomGroundInventoryRepository roomGroundInventoryRepository,
+      ItemInstanceRepository itemInstanceRepository,
       ContainerInstanceRepository containerInstanceRepository) {
     this.lookProperties = lookProperties;
-    this.roomGroundInventoryRepository = roomGroundInventoryRepository;
+    this.itemInstanceRepository = itemInstanceRepository;
     this.containerInstanceRepository = containerInstanceRepository;
   }
 
@@ -51,11 +51,13 @@ public class RoomEntityServiceImpl implements RoomEntityService {
                             entity.getStateFlags(),
                             entity.getVisionPriority(),
                             entity.getReloadHint(),
-                            entity.isVisible()))
+                            entity.isVisible(),
+                            null))
                 .toList();
-    Page<RoomGroundInventoryEntry> roomGroundPage =
-        roomGroundInventoryRepository.findByIdTenantIdAndIdGameInstanceIdAndIdRoomInstanceId(
-            Long.parseLong(tenantId), gameInstanceId, roomId, Pageable.unpaged());
+    Page<ItemInstance> roomGroundPage =
+        itemInstanceRepository
+            .findByTenantIdAndGameInstanceIdAndRoomInstanceIdAndCharacterIsNullAndEquipmentSlotIsNullOrderByIdAsc(
+                Long.parseLong(tenantId), gameInstanceId, roomId, Pageable.unpaged());
     List<RoomEntityDto> roomGroundEntities =
         roomGroundPage == null
             ? Collections.emptyList()
@@ -73,11 +75,8 @@ public class RoomEntityServiceImpl implements RoomEntityService {
     return tenantId + ":" + roomId;
   }
 
-  private RoomEntityDto toRoomGroundEntity(RoomGroundInventoryEntry entry) {
+  private RoomEntityDto toRoomGroundEntity(ItemInstance entry) {
     String displayName = entry.getItem().getName();
-    if (entry.getQuantity() > 1) {
-      displayName = displayName + " x" + entry.getQuantity();
-    }
     List<String> stateFlags = roomGroundAffordanceFlags(entry);
     return new RoomEntityDto(
         roomGroundEntityId(entry),
@@ -87,21 +86,17 @@ public class RoomEntityServiceImpl implements RoomEntityService {
         stateFlags,
         0,
         ReloadHint.STABLE,
-        true);
+        true,
+        entry.getVisibleRef());
   }
 
-  private List<String> roomGroundAffordanceFlags(RoomGroundInventoryEntry entry) {
+  private List<String> roomGroundAffordanceFlags(ItemInstance entry) {
     Item item = entry.getItem();
     List<String> flags = new java.util.ArrayList<>();
     flags.add("room-ground");
     if (item.isContainer()) {
       flags.add("container");
-      Long containerInstanceId =
-          resolveRoomContainerInstanceId(
-              entry.getId().getTenantId(),
-              entry.getId().getGameInstanceId(),
-              entry.getId().getRoomInstanceId(),
-              item.getId());
+      Long containerInstanceId = resolveRoomContainerInstanceId(entry.getId());
       if (containerInstanceId != null) {
         flags.add("container-instance:" + containerInstanceId);
       }
@@ -113,20 +108,18 @@ public class RoomEntityServiceImpl implements RoomEntityService {
     return List.copyOf(flags);
   }
 
-  private String roomGroundEntityId(RoomGroundInventoryEntry entry) {
+  private String roomGroundEntityId(ItemInstance entry) {
     return String.join(
         ":",
-        String.valueOf(entry.getId().getTenantId()),
-        entry.getId().getGameInstanceId(),
-        entry.getId().getRoomInstanceId(),
-        String.valueOf(entry.getId().getItemId()));
+        String.valueOf(entry.getTenantId()),
+        entry.getGameInstanceId(),
+        entry.getRoomInstanceId(),
+        String.valueOf(entry.getId()));
   }
 
-  private Long resolveRoomContainerInstanceId(
-      Long tenantId, String gameInstanceId, String roomInstanceId, Long itemId) {
+  private Long resolveRoomContainerInstanceId(Long itemInstanceId) {
     return containerInstanceRepository
-        .findByTenantIdAndGameInstanceIdAndRoomInstanceIdAndItem_IdAndCharacterIsNullAndEquipmentSlotIsNull(
-            tenantId, gameInstanceId, roomInstanceId, itemId)
+        .findByItemInstance_Id(itemInstanceId)
         .map(ContainerInstance::getId)
         .orElse(null);
   }

@@ -149,11 +149,7 @@ class MultiplayerLoadProofCrossServiceTest {
                 });
       }
 
-      assertMetricEventually(
-          "gamesession.command.look.invocations",
-          CLIENT_COUNT,
-          "tenantId",
-          Long.toString(TENANT_ID));
+      assertMetricEventually("gamesession.command.look.invocations", CLIENT_COUNT);
     } finally {
       executor.shutdownNow();
       executor.awaitTermination(5, TimeUnit.SECONDS);

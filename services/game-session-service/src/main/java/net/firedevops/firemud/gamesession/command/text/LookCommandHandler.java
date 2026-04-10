@@ -77,13 +77,13 @@ public final class LookCommandHandler {
     Optional<SessionContext> maybeContext =
         sessionAuthenticationService.resolveSessionContext(sessionId);
     if (maybeContext.isEmpty()) {
-      meterRegistry.counter(INVOCATIONS_METRIC, "tenantId", "unknown").increment();
+      meterRegistry.counter(INVOCATIONS_METRIC).increment();
       return null;
     }
     SessionContext context = maybeContext.get();
     try (GameplayLoggingContext ignored = GameplayLoggingContext.from(context)) {
       String tenantTag = Long.toString(context.tenantId());
-      meterRegistry.counter(INVOCATIONS_METRIC, "tenantId", tenantTag).increment();
+      meterRegistry.counter(INVOCATIONS_METRIC).increment();
       if (devIsolatedProperties.isDevIsolated()) {
         return PlayerOutput.message(LookCommandConstants.ROOM_DESCRIPTION);
       }
@@ -205,7 +205,7 @@ public final class LookCommandHandler {
 
   private void recordFailure(
       SessionContext context, String tenantTag, String errorTag, RuntimeException ex) {
-    meterRegistry.counter(FAILURES_METRIC, "tenantId", tenantTag, "error", errorTag).increment();
+    meterRegistry.counter(FAILURES_METRIC, "error", errorTag).increment();
     LOG.warn(
         "LOOK failed tenantId={} gameInstanceId={} characterId={} error={} reason={}",
         tenantTag,

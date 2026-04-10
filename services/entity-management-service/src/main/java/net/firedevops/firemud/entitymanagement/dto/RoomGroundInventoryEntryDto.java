@@ -10,4 +10,6 @@ public record RoomGroundInventoryEntryDto(
     @NotNull String itemName,
     String itemDescription,
     int quantity,
-    Long containerInstanceId) {}
+    Long itemInstanceId,
+    Long containerInstanceId,
+    String visibleRef) {}

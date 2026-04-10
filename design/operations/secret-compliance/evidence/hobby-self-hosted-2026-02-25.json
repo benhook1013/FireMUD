@@ -1,9 +1,9 @@
 {
   "environment": "hobby-self-hosted",
-  "generatedAt": "2026-03-13T00:00:00Z",
+  "generatedAt": "2026-04-10T00:33:33Z",
   "records": {
     "jwt-signing-keys-jwks": {
-      "immutableArtifactId": "operator-note:hobby-rotation-2026-03-08:sha256:9c6a2be1",
+      "immutableArtifactId": "operator-note:hobby-rotation-2026-04-10:sha256:5af82d41",
       "source": "operator-notes",
       "recordedBy": "operator"
     },

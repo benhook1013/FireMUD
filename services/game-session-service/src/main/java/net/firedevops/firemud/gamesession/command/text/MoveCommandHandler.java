@@ -41,7 +41,7 @@ public class MoveCommandHandler {
 
     String tenantTag = Long.toString(context.tenantId());
     try (GameplayLoggingContext ignored = GameplayLoggingContext.from(context)) {
-      meterRegistry.counter(INVOCATIONS_METRIC, "tenantId", tenantTag).increment();
+      meterRegistry.counter(INVOCATIONS_METRIC).increment();
       String direction = extractDirection(command);
       if (!StringUtils.hasText(direction)) {
         return failure(
@@ -157,7 +157,7 @@ public class MoveCommandHandler {
       String gameInstanceTag,
       String characterTag,
       RuntimeException ex) {
-    meterRegistry.counter(FAILURES_METRIC, "tenantId", tenantTag, "error", errorCode).increment();
+    meterRegistry.counter(FAILURES_METRIC, "error", errorCode).increment();
     if (ex == null) {
       LOG.warn(
           "MOVE failed tenantId={} gameInstanceId={} characterId={} error={} reason={}",

@@ -8,10 +8,9 @@ import java.util.concurrent.TimeUnit;
 import javax.net.ssl.SSLException;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.AbstractBlockingGrpcClient;
+import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
-import net.firedevops.firemud.common.security.GrpcClientAuth;
-import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.entitymanagement.v1.Character;
 import net.firedevops.firemud.entitymanagement.v1.DropItemToRoomRequest;
 import net.firedevops.firemud.entitymanagement.v1.DropItemToRoomResponse;
@@ -24,6 +23,8 @@ import net.firedevops.firemud.entitymanagement.v1.ListEquipmentRequest;
 import net.firedevops.firemud.entitymanagement.v1.ListEquipmentResponse;
 import net.firedevops.firemud.entitymanagement.v1.ListRoomEntitiesRequest;
 import net.firedevops.firemud.entitymanagement.v1.ListRoomEntitiesResponse;
+import net.firedevops.firemud.entitymanagement.v1.ListRoomGroundInventoryRequest;
+import net.firedevops.firemud.entitymanagement.v1.ListRoomGroundInventoryResponse;
 import net.firedevops.firemud.entitymanagement.v1.PickupItemFromRoomRequest;
 import net.firedevops.firemud.entitymanagement.v1.PickupItemFromRoomResponse;
 import net.firedevops.firemud.entitymanagement.v1.PingRequest;
@@ -58,15 +59,13 @@ public final class EntityManagementClient
   private static final Logger logger = LoggerFactory.getLogger(EntityManagementClient.class);
   private static final long CALL_DEADLINE_SECONDS = 5L;
   private static final long FIND_CHARACTER_DEADLINE_MILLIS = 500L;
-  private final JwtUtil jwtUtil;
 
   public EntityManagementClient(
       ServiceEndpointsProperties endpoints,
       CommonGrpcClientProperties tlsProps,
-      JwtUtil jwtUtil,
-      GrpcChannelFactory channelFactory) {
-    super(endpoints, tlsProps, channelFactory);
-    this.jwtUtil = jwtUtil;
+      GrpcChannelFactory channelFactory,
+      BlockingGrpcStubCustomizer stubCustomizer) {
+    super(endpoints, tlsProps, channelFactory, stubCustomizer);
   }
 
   @PostConstruct
@@ -87,8 +86,8 @@ public final class EntityManagementClient
   @Override
   protected EntityManagementServiceGrpc.EntityManagementServiceBlockingStub buildStub(
       io.grpc.ManagedChannel channel) {
-    return GrpcClientAuth.attach(
-        EntityManagementServiceGrpc.newBlockingStub(channel).withCompression("gzip"), jwtUtil);
+    return applyStubCustomizer(
+        EntityManagementServiceGrpc.newBlockingStub(channel).withCompression("gzip"));
   }
 
   /** Simple ping to verify connectivity. */
@@ -223,16 +222,55 @@ public final class EntityManagementClient
         .build();
   }
 
+  public ListRoomGroundInventoryResponse listRoomGroundInventory(
+      String tenantId, String gameInstanceId, String roomInstanceId) {
+    ListRoomGroundInventoryRequest request =
+        ListRoomGroundInventoryRequest.newBuilder()
+            .setTenantId(tenantId)
+            .setGameInstanceId(gameInstanceId)
+            .setRoomInstanceId(roomInstanceId)
+            .build();
+    try {
+      return callStub().listRoomGroundInventory(request);
+    } catch (StatusRuntimeException ex) {
+      if (ex.getStatus().getCode() == Status.Code.UNAVAILABLE) {
+        logger.warn(
+            "Entity Management Service unavailable; rebuilding channel and retrying room inventory query",
+            ex);
+        try {
+          initClient();
+          return callStub().listRoomGroundInventory(request);
+        } catch (Exception retryEx) {
+          logger.warn(
+              "Failed to retry Entity Management room inventory query after channel reload",
+              retryEx);
+        }
+      } else {
+        logger.warn("Failed to call Entity Management room inventory query endpoint", ex);
+      }
+    } catch (Exception ex) {
+      logger.warn("Failed to call Entity Management room inventory query endpoint", ex);
+    }
+    return ListRoomGroundInventoryResponse.newBuilder()
+        .setError(
+            ErrorDetail.newBuilder()
+                .setCode("INVENTORY_UNAVAILABLE")
+                .setMessage("Room inventory unavailable"))
+        .build();
+  }
+
   public WearEquipmentItemResponse wearEquipment(
-      String tenantId, String characterId, String itemId) {
-    WearEquipmentItemRequest request =
+      String tenantId, String characterId, String itemId, String itemInstanceId) {
+    WearEquipmentItemRequest.Builder request =
         WearEquipmentItemRequest.newBuilder()
             .setTenantId(tenantId)
             .setCharacterId(characterId)
-            .setItemId(itemId)
-            .build();
+            .setItemId(itemId);
+    if (StringUtils.hasText(itemInstanceId)) {
+      request.setItemInstanceId(itemInstanceId);
+    }
     try {
-      return callStub().wearEquipment(request);
+      return callStub().wearEquipment(request.build());
     } catch (StatusRuntimeException ex) {
       if (ex.getStatus().getCode() == Status.Code.UNAVAILABLE) {
         logger.warn(
@@ -240,7 +278,7 @@ public final class EntityManagementClient
             ex);
         try {
           initClient();
-          return callStub().wearEquipment(request);
+          return callStub().wearEquipment(request.build());
         } catch (Exception retryEx) {
           logger.warn(
               "Failed to retry Entity Management equipment wear after channel reload", retryEx);
@@ -257,6 +295,11 @@ public final class EntityManagementClient
                 .setCode("EQUIPMENT_UNAVAILABLE")
                 .setMessage("Equipment service unavailable"))
         .build();
+  }
+
+  public WearEquipmentItemResponse wearEquipment(
+      String tenantId, String characterId, String itemId) {
+    return wearEquipment(tenantId, characterId, itemId, null);
   }
 
   public RemoveEquipmentResponse removeEquipment(String tenantId, String characterId, String slot) {
@@ -299,17 +342,20 @@ public final class EntityManagementClient
       String characterId,
       String containerInstanceId,
       String itemId,
+      String itemInstanceId,
       int quantity) {
-    PutItemIntoContainerRequest request =
+    PutItemIntoContainerRequest.Builder request =
         PutItemIntoContainerRequest.newBuilder()
             .setTenantId(tenantId)
             .setCharacterId(characterId)
             .setContainerInstanceId(containerInstanceId)
             .setItemId(itemId)
-            .setQuantity(quantity)
-            .build();
+            .setQuantity(quantity);
+    if (itemInstanceId != null && !itemInstanceId.isBlank()) {
+      request.setItemInstanceId(itemInstanceId);
+    }
     try {
-      return callStub().putItemIntoContainer(request);
+      return callStub().putItemIntoContainer(request.build());
     } catch (StatusRuntimeException ex) {
       if (ex.getStatus().getCode() == Status.Code.UNAVAILABLE) {
         logger.warn(
@@ -317,7 +363,7 @@ public final class EntityManagementClient
             ex);
         try {
           initClient();
-          return callStub().putItemIntoContainer(request);
+          return callStub().putItemIntoContainer(request.build());
         } catch (Exception retryEx) {
           logger.warn(
               "Failed to retry Entity Management container put after channel reload", retryEx);
@@ -341,17 +387,20 @@ public final class EntityManagementClient
       String characterId,
       String containerInstanceId,
       String itemId,
+      String itemInstanceId,
       int quantity) {
-    TakeItemFromContainerRequest request =
+    TakeItemFromContainerRequest.Builder request =
         TakeItemFromContainerRequest.newBuilder()
             .setTenantId(tenantId)
             .setCharacterId(characterId)
             .setContainerInstanceId(containerInstanceId)
             .setItemId(itemId)
-            .setQuantity(quantity)
-            .build();
+            .setQuantity(quantity);
+    if (itemInstanceId != null && !itemInstanceId.isBlank()) {
+      request.setItemInstanceId(itemInstanceId);
+    }
     try {
-      return callStub().takeItemFromContainer(request);
+      return callStub().takeItemFromContainer(request.build());
     } catch (StatusRuntimeException ex) {
       if (ex.getStatus().getCode() == Status.Code.UNAVAILABLE) {
         logger.warn(
@@ -359,7 +408,7 @@ public final class EntityManagementClient
             ex);
         try {
           initClient();
-          return callStub().takeItemFromContainer(request);
+          return callStub().takeItemFromContainer(request.build());
         } catch (Exception retryEx) {
           logger.warn(
               "Failed to retry Entity Management container take after channel reload", retryEx);
@@ -424,6 +473,7 @@ public final class EntityManagementClient
       String gameInstanceId,
       String roomInstanceId,
       String itemId,
+      String itemInstanceId,
       String containerInstanceId,
       int quantity) {
     PickupItemFromRoomRequest.Builder request =
@@ -436,6 +486,9 @@ public final class EntityManagementClient
             .setQuantity(quantity);
     if (StringUtils.hasText(containerInstanceId)) {
       request.setContainerInstanceId(containerInstanceId);
+    }
+    if (StringUtils.hasText(itemInstanceId)) {
+      request.setItemInstanceId(itemInstanceId);
     }
     try {
       return callStub().pickupItemFromRoom(request.build());
@@ -465,12 +518,32 @@ public final class EntityManagementClient
         .build();
   }
 
+  public PickupItemFromRoomResponse pickupItemFromRoom(
+      String tenantId,
+      String characterId,
+      String gameInstanceId,
+      String roomInstanceId,
+      String itemId,
+      String containerInstanceId,
+      int quantity) {
+    return pickupItemFromRoom(
+        tenantId,
+        characterId,
+        gameInstanceId,
+        roomInstanceId,
+        itemId,
+        null,
+        containerInstanceId,
+        quantity);
+  }
+
   public DropItemToRoomResponse dropItemToRoom(
       String tenantId,
       String characterId,
       String gameInstanceId,
       String roomInstanceId,
       String itemId,
+      String itemInstanceId,
       String containerInstanceId,
       int quantity) {
     DropItemToRoomRequest.Builder request =
@@ -483,6 +556,9 @@ public final class EntityManagementClient
             .setQuantity(quantity);
     if (StringUtils.hasText(containerInstanceId)) {
       request.setContainerInstanceId(containerInstanceId);
+    }
+    if (StringUtils.hasText(itemInstanceId)) {
+      request.setItemInstanceId(itemInstanceId);
     }
     try {
       return callStub().dropItemToRoom(request.build());
@@ -510,6 +586,25 @@ public final class EntityManagementClient
                 .setCode("INVENTORY_UNAVAILABLE")
                 .setMessage("Inventory service unavailable"))
         .build();
+  }
+
+  public DropItemToRoomResponse dropItemToRoom(
+      String tenantId,
+      String characterId,
+      String gameInstanceId,
+      String roomInstanceId,
+      String itemId,
+      String containerInstanceId,
+      int quantity) {
+    return dropItemToRoom(
+        tenantId,
+        characterId,
+        gameInstanceId,
+        roomInstanceId,
+        itemId,
+        null,
+        containerInstanceId,
+        quantity);
   }
 
   private EntityManagementServiceGrpc.EntityManagementServiceBlockingStub callStub() {

@@ -19,7 +19,9 @@ public class CharacterEquipmentEntry {
   @JoinColumn(name = "item_id", nullable = false)
   private Item item;
 
+  @Transient @EqualsAndHashCode.Exclude @ToString.Exclude private Long itemInstanceId;
   @Transient @EqualsAndHashCode.Exclude @ToString.Exclude private Long containerInstanceId;
+  @Transient @EqualsAndHashCode.Exclude @ToString.Exclude private String visibleRef;
 
   @Version private int version;
 

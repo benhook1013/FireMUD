@@ -43,6 +43,7 @@ public class HelpCommandHandler {
       case "INVENTORY" ->
           success(
               "INVENTORY shows what you are carrying.\n"
+                  + "INV HERE lists room-ground items in the current room with management refs.\n"
                   + "If nothing is listed, you are empty-handed.\n"
                   + "GET <item> picks up a matching room-ground item and refreshes your inventory.\n"
                   + "GET <count> <item> picks up that many matching room-ground items.\n"

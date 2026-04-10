@@ -6,7 +6,8 @@ import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.util.List;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
-import net.firedevops.firemud.common.security.RequireAdminRole;
+import net.firedevops.firemud.common.security.AdminAuthorizationException;
+import net.firedevops.firemud.common.security.AdminRoleGuard;
 import net.firedevops.firemud.loggingadmin.service.FeatureFlagService;
 import net.firedevops.firemud.loggingadmin.service.LogEventService;
 import net.firedevops.firemud.loggingadmin.service.LogQueryService;
@@ -53,16 +54,30 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
 
   @Override
   @Timed(value = "loggingadminGrpc.toggleFeatureFlag")
-  @RequireAdminRole
   public void toggleFeatureFlag(
       ToggleFeatureFlagRequest request,
       StreamObserver<ToggleFeatureFlagResponse> responseObserver) {
     try {
+      AdminRoleGuard.requireAdminRole();
       featureFlagService.toggleFlag(
           new net.firedevops.firemud.loggingadmin.dto.ToggleFeatureFlagRequest(
               Long.valueOf(request.getTenantId()), request.getName(), request.getEnabled()));
       ToggleFeatureFlagResponse response =
           ToggleFeatureFlagResponse.newBuilder().setSuccess(true).build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (AdminAuthorizationException ex) {
+      ToggleFeatureFlagResponse response =
+          ToggleFeatureFlagResponse.newBuilder()
+              .setSuccess(false)
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry,
+                      logger,
+                      "ToggleFeatureFlag",
+                      "PERMISSION_DENIED",
+                      ex.getMessage()))
+              .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (IllegalArgumentException ex) {
@@ -92,15 +107,24 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
 
   @Override
   @Timed(value = "loggingadminGrpc.queryLogs")
-  @RequireAdminRole
   public void queryLogs(
       QueryLogsRequest request, StreamObserver<QueryLogsResponse> responseObserver) {
     try {
+      AdminRoleGuard.requireAdminRole();
       List<String> entries =
           logQueryService.queryLogs(
               new net.firedevops.firemud.loggingadmin.dto.QueryLogsRequest(
                   Long.valueOf(request.getTenantId()), request.getFilter()));
       QueryLogsResponse response = QueryLogsResponse.newBuilder().addAllEntries(entries).build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (AdminAuthorizationException ex) {
+      QueryLogsResponse response =
+          QueryLogsResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry, logger, "QueryLogs", "PERMISSION_DENIED", ex.getMessage()))
+              .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (IllegalArgumentException ex) {
@@ -124,10 +148,10 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
 
   @Override
   @Timed(value = "loggingadminGrpc.createLogEvent")
-  @RequireAdminRole
   public void createLogEvent(
       CreateLogEventRequest request, StreamObserver<CreateLogEventResponse> responseObserver) {
     try {
+      AdminRoleGuard.requireAdminRole();
       var dto =
           logEventService.createLogEvent(
               new net.firedevops.firemud.loggingadmin.dto.CreateLogEventRequest(
@@ -137,6 +161,19 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
                   request.getMessage()));
       CreateLogEventResponse response =
           CreateLogEventResponse.newBuilder().setLogEventId(String.valueOf(dto.id())).build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (AdminAuthorizationException ex) {
+      CreateLogEventResponse response =
+          CreateLogEventResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry,
+                      logger,
+                      "CreateLogEvent",
+                      "PERMISSION_DENIED",
+                      ex.getMessage()))
+              .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (IllegalArgumentException ex) {
@@ -160,11 +197,11 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
 
   @Override
   @Timed(value = "loggingadminGrpc.applyModerationAction")
-  @RequireAdminRole
   public void applyModerationAction(
       ApplyModerationActionRequest request,
       StreamObserver<ApplyModerationActionResponse> responseObserver) {
     try {
+      AdminRoleGuard.requireAdminRole();
       moderationService.applyAction(
           new net.firedevops.firemud.loggingadmin.dto.ApplyModerationActionRequest(
               Long.valueOf(request.getTenantId()),
@@ -174,6 +211,20 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
               request.getReason()));
       ApplyModerationActionResponse response =
           ApplyModerationActionResponse.newBuilder().setSuccess(true).build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (AdminAuthorizationException ex) {
+      ApplyModerationActionResponse response =
+          ApplyModerationActionResponse.newBuilder()
+              .setSuccess(false)
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry,
+                      logger,
+                      "ApplyModerationAction",
+                      "PERMISSION_DENIED",
+                      ex.getMessage()))
+              .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (IllegalArgumentException ex) {

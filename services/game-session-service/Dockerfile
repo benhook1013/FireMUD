@@ -1,7 +1,13 @@
 ARG BASE_IMAGE=ghcr.io/benhook1013/firemud-base:latest
 FROM ${BASE_IMAGE}
+USER root
 WORKDIR /app
-COPY services/game-session-service/build/libs/*.jar app.jar
+COPY services/game-session-service/build/libs/*.jar /app/
+RUN set -e; \
+    jar="$(find /app -maxdepth 1 -type f -name 'game-session-service-*.jar' ! -name '*-plain.jar' ! -name '*-test-fixtures.jar' | head -n 1)"; \
+    test -n "${jar}"; \
+    mv "${jar}" /app/app.jar; \
+    find /app -maxdepth 1 -type f -name '*.jar' ! -name 'app.jar' -delete
 COPY --chmod=755 dev-tools/wait-for-it.sh /usr/local/bin/wait-for-it.sh
 COPY --chmod=755 docker/start-service.sh /usr/local/bin/start-service.sh
 ENTRYPOINT ["/usr/local/bin/start-service.sh"]

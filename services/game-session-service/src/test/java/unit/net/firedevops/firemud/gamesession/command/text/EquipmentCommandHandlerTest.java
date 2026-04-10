@@ -89,11 +89,12 @@ class EquipmentCommandHandlerTest {
                 .addItems(
                     InventoryItem.newBuilder()
                         .setItemId("3")
+                        .setItemInstanceId("3")
                         .setItemName("Torch")
                         .setQuantity(1)
                         .build())
                 .build());
-    when(entityManagementClient.wearEquipment("22", "911", "3"))
+    when(entityManagementClient.wearEquipment("22", "911", "3", "3"))
         .thenReturn(
             WearEquipmentItemResponse.newBuilder()
                 .setEquipmentItem(
@@ -122,11 +123,12 @@ class EquipmentCommandHandlerTest {
                 .addItems(
                     InventoryItem.newBuilder()
                         .setItemId("5")
+                        .setItemInstanceId("5")
                         .setItemName("Satchel")
                         .setQuantity(1)
                         .build())
                 .build());
-    when(entityManagementClient.wearEquipment("22", "911", "5"))
+    when(entityManagementClient.wearEquipment("22", "911", "5", "5"))
         .thenReturn(
             WearEquipmentItemResponse.newBuilder()
                 .setEquipmentItem(
@@ -188,11 +190,12 @@ class EquipmentCommandHandlerTest {
                 .addItems(
                     InventoryItem.newBuilder()
                         .setItemId("3")
+                        .setItemInstanceId("3")
                         .setItemName("Torch")
                         .setQuantity(1)
                         .build())
                 .build());
-    when(entityManagementClient.wearEquipment("22", "911", "3"))
+    when(entityManagementClient.wearEquipment("22", "911", "3", "3"))
         .thenReturn(
             WearEquipmentItemResponse.newBuilder()
                 .setError(

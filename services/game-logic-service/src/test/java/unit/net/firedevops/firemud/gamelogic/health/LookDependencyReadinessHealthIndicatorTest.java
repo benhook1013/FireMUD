@@ -17,13 +17,14 @@ import org.springframework.boot.health.contributor.Health;
 import org.springframework.boot.health.contributor.Status;
 
 class LookDependencyReadinessHealthIndicatorTest {
-  private static final String PROBE_TENANT_ID = "__readiness__";
-  private static final String PROBE_ROOM_ID = "__readiness_room__";
+  private static final String PROBE_TENANT_ID = "0";
+  private static final String PROBE_GAME_INSTANCE_ID = "0";
+  private static final String PROBE_ROOM_ID = "0";
 
   @Test
   void healthReturnsUpWhenLookDependenciesRespondToOperationShapedChecks() {
     ResolveLookPathProbe resolveLookPathProbe = mock(ResolveLookPathProbe.class);
-    when(resolveLookPathProbe.probe(PROBE_TENANT_ID, PROBE_ROOM_ID))
+    when(resolveLookPathProbe.probe(PROBE_TENANT_ID, PROBE_GAME_INSTANCE_ID, PROBE_ROOM_ID))
         .thenReturn(
             ProbeResult.up(
                 Map.of(
@@ -62,7 +63,7 @@ class LookDependencyReadinessHealthIndicatorTest {
             "getRoomSnapshot", "grpc:WorldManagementService#GetRoomSnapshot", "world down"));
     LookDependencyReadinessHealthIndicator indicator =
         new LookDependencyReadinessHealthIndicator(resolveLookPathProbe, tracker());
-    when(resolveLookPathProbe.probe(PROBE_TENANT_ID, PROBE_ROOM_ID))
+    when(resolveLookPathProbe.probe(PROBE_TENANT_ID, PROBE_GAME_INSTANCE_ID, PROBE_ROOM_ID))
         .thenReturn(ProbeResult.outOfService("worldManagementService", probeDependencies));
 
     Health health = indicator.health();
@@ -91,7 +92,7 @@ class LookDependencyReadinessHealthIndicatorTest {
             "listRoomEntities", "grpc:EntityManagementService#ListRoomEntities", "entity down"));
     LookDependencyReadinessHealthIndicator indicator =
         new LookDependencyReadinessHealthIndicator(resolveLookPathProbe, tracker());
-    when(resolveLookPathProbe.probe(PROBE_TENANT_ID, PROBE_ROOM_ID))
+    when(resolveLookPathProbe.probe(PROBE_TENANT_ID, PROBE_GAME_INSTANCE_ID, PROBE_ROOM_ID))
         .thenReturn(ProbeResult.outOfService("entityManagementService", probeDependencies));
 
     Health health = indicator.health();

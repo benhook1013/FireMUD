@@ -6,6 +6,9 @@ import static org.mockito.Mockito.when;
 
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.util.List;
+import java.util.Map;
+import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.common.settings.ScopedSettingsOverrides;
 import net.firedevops.firemud.common.settings.ScopedSettingsSnapshot;
 import net.firedevops.firemud.gamedesign.service.PingService;
@@ -20,6 +23,7 @@ import net.firedevops.firemud.gamedesign.v1.PutSettingsDomainOverrideRequest;
 import net.firedevops.firemud.gamedesign.v1.PutSettingsDomainOverrideResponse;
 import net.firedevops.firemud.gamedesign.v1.SettingsDomain;
 import net.firedevops.firemud.gamedesign.v1.SettingsOverrides;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
@@ -35,6 +39,7 @@ class GameDesignGrpcServiceSettingsAuthorityTest {
 
   @BeforeEach
   void setUp() {
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     grpcService =
         new GameDesignGrpcService(
             pingService,
@@ -42,6 +47,11 @@ class GameDesignGrpcServiceSettingsAuthorityTest {
             versionService,
             settingsAuthorityService,
             new SimpleMeterRegistry());
+  }
+
+  @AfterEach
+  void tearDown() {
+    SessionContext.clear();
   }
 
   @Test

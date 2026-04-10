@@ -2,6 +2,7 @@ package net.firedevops.firemud.common.config;
 
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.CommonGrpcServerConfiguration;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
@@ -109,9 +110,13 @@ public class CommonCoreAutoConfiguration {
   public SharedSettingsAuthorityReader sharedSettingsAuthorityReader(
       ServiceEndpointsProperties endpoints,
       CommonGrpcClientProperties grpcClientProperties,
-      GrpcChannelFactory grpcChannelFactory) {
+      GrpcChannelFactory grpcChannelFactory,
+      ObjectProvider<BlockingGrpcStubCustomizer> stubCustomizer) {
     return new GameDesignSettingsAuthorityClient(
-        endpoints, grpcClientProperties, grpcChannelFactory);
+        endpoints,
+        grpcClientProperties,
+        grpcChannelFactory,
+        stubCustomizer.getIfAvailable(BlockingGrpcStubCustomizer::noop));
   }
 
   @Bean

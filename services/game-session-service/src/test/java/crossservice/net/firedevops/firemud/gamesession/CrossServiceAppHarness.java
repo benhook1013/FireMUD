@@ -174,7 +174,8 @@ public final class CrossServiceAppHarness {
     GameInstanceService gameInstanceService() {
       return new GameInstanceService() {
         @Override
-        public GameInstanceDto startSession(StartSessionRequest request) {
+        public GameInstanceDto startSession(
+            StartSessionRequest request, boolean replaceExistingFirst) {
           return new GameInstanceDto(
               -1L,
               request.tenantId(),

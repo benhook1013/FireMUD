@@ -9,4 +9,6 @@ public record InventoryEntryDto(
     @NotNull String itemName,
     String itemDescription,
     int quantity,
-    Long containerInstanceId) {}
+    Long itemInstanceId,
+    Long containerInstanceId,
+    String visibleRef) {}

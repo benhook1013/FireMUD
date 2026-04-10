@@ -36,7 +36,6 @@ import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.data.redis.serializer.GenericToStringSerializer;
 import org.springframework.data.redis.serializer.StringRedisSerializer;
-import org.springframework.scheduling.annotation.Async;
 import org.springframework.scripting.support.ResourceScriptSource;
 import org.springframework.stereotype.Service;
 
@@ -90,7 +89,9 @@ public class TickServiceImpl implements TickService {
   private final AtomicBoolean pauseRequested = new AtomicBoolean(false);
   private final Set<Long> pausedGameInstances = ConcurrentHashMap.newKeySet();
   private final AtomicInteger activeTicks = new AtomicInteger();
-  private final Map<String, AtomicLong> retryQueueDepthGauges = new ConcurrentHashMap<>();
+  private final Map<String, Long> retryQueueDepthByTarget = new ConcurrentHashMap<>();
+  private final AtomicLong retryQueueDepthTotal = new AtomicLong();
+  private final AtomicInteger retryQueueTargetsWithPending = new AtomicInteger();
 
   private Long executeScriptWithRetry(RedisScript<Long> script, List<String> keys, Object... args) {
     int attempts = 0;
@@ -127,6 +128,9 @@ public class TickServiceImpl implements TickService {
     this.requeuedActionCounter =
         meterRegistry.counter("tick_requeued_action_total", "source", "player");
     this.retryBackoffCounter = meterRegistry.counter("tick_retry_backoff_count_total");
+    meterRegistry.gauge("game_session_retry_queue_depth_total", retryQueueDepthTotal);
+    meterRegistry.gauge(
+        "game_session_retry_queue_targets_with_pending", retryQueueTargetsWithPending);
     ResourceScriptSource commitSrc =
         new ResourceScriptSource(new ClassPathResource("redis/tick_commit.lua"));
     ResourceScriptSource stageSrc =
@@ -185,7 +189,6 @@ public class TickServiceImpl implements TickService {
 
   @Override
   @Timed(value = "gamesession.tick.process")
-  @Async("tickExecutor")
   public void processTick(Long tenantId, Long queueTargetId) {
     Long normalizedTenantId = tenantId != null ? tenantId : 0L;
     Long normalizedQueueTargetId = queueTargetId != null ? queueTargetId : 0L;
@@ -226,7 +229,7 @@ public class TickServiceImpl implements TickService {
                 .opsForList()
                 .size(pendingKey(normalizedTenantId, normalizedQueueTargetId));
         long depth = pending != null ? pending : 0L;
-        retryQueueDepthGauge(normalizedTenantId, normalizedQueueTargetId).set(depth);
+        updateRetryQueueDepth(normalizedTenantId, normalizedQueueTargetId, depth);
         if (pending != null && pending > 0) {
           logger.info("Replaying {} pending commands for {}", pending, normalizedQueueTargetId);
           tickTimer.record(
@@ -294,16 +297,20 @@ public class TickServiceImpl implements TickService {
     }
   }
 
-  private AtomicLong retryQueueDepthGauge(Long tenantId, Long queueTargetId) {
+  private void updateRetryQueueDepth(Long tenantId, Long queueTargetId, long depth) {
     String gaugeKey = tenantId + ":" + queueTargetId;
-    return retryQueueDepthGauges.computeIfAbsent(
+    retryQueueDepthByTarget.compute(
         gaugeKey,
-        ignored ->
-            meterRegistry.gauge(
-                "tick_retry_queue_depth",
-                io.micrometer.core.instrument.Tags.of(
-                    "tenantId", tenantId.toString(), "regionId", queueTargetId.toString()),
-                new AtomicLong()));
+        (ignored, previousDepth) -> {
+          long prior = previousDepth != null ? previousDepth : 0L;
+          retryQueueDepthTotal.addAndGet(depth - prior);
+          if (prior == 0L && depth > 0L) {
+            retryQueueTargetsWithPending.incrementAndGet();
+          } else if (prior > 0L && depth == 0L) {
+            retryQueueTargetsWithPending.decrementAndGet();
+          }
+          return depth > 0L ? depth : null;
+        });
   }
 
   @Override
@@ -375,11 +382,11 @@ public class TickServiceImpl implements TickService {
   }
 
   private String queueKey(Long tenantId, Long sessionId) {
-    return "tick:queue:" + tenantId + ":" + sessionId;
+    return "gamesession:tick:queue:" + tenantId + ":" + sessionId;
   }
 
   private String lockKey(Long tenantId, Long sessionId) {
-    return "tick:lock:" + tenantId + ":" + sessionId;
+    return "gamesession:tick:lock:" + tenantId + ":" + sessionId;
   }
 
   private String stateKey(Long tenantId, Long sessionId) {
@@ -387,6 +394,6 @@ public class TickServiceImpl implements TickService {
   }
 
   private String pendingKey(Long tenantId, Long sessionId) {
-    return "tick:pending:" + tenantId + ":" + sessionId;
+    return "gamesession:tick:pending:" + tenantId + ":" + sessionId;
   }
 }

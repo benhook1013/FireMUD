@@ -22,7 +22,9 @@ public class InventoryEntry {
   @Column(nullable = false)
   private int quantity;
 
+  @Transient @EqualsAndHashCode.Exclude @ToString.Exclude private Long itemInstanceId;
   @Transient @EqualsAndHashCode.Exclude @ToString.Exclude private Long containerInstanceId;
+  @Transient @EqualsAndHashCode.Exclude @ToString.Exclude private String visibleRef;
 
   @Version private int version;
 

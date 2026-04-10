@@ -2,6 +2,7 @@ package net.firedevops.firemud.common.grpc;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.ManagedChannel;
+import io.grpc.stub.AbstractStub;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.List;
@@ -13,10 +14,12 @@ import org.slf4j.Logger;
 @SuppressFBWarnings(
     value = "EI_EXPOSE_REP2",
     justification = "Configuration and channel references remain internal to the client")
-public abstract class AbstractReloadingBlockingGrpcClient<TStub> implements AutoCloseable {
+public abstract class AbstractReloadingBlockingGrpcClient<TStub extends AbstractStub<TStub>>
+    implements AutoCloseable {
   private final ServiceEndpointsProperties endpoints;
   private final CommonGrpcClientProperties tlsProps;
   private final GrpcChannelFactory channelFactory;
+  private final BlockingGrpcStubCustomizer stubCustomizer;
   private final Logger logger;
 
   private ManagedChannel channel;
@@ -28,9 +31,19 @@ public abstract class AbstractReloadingBlockingGrpcClient<TStub> implements Auto
       CommonGrpcClientProperties tlsProps,
       GrpcChannelFactory channelFactory,
       Class<?> loggerClass) {
+    this(endpoints, tlsProps, channelFactory, BlockingGrpcStubCustomizer.noop(), loggerClass);
+  }
+
+  protected AbstractReloadingBlockingGrpcClient(
+      ServiceEndpointsProperties endpoints,
+      CommonGrpcClientProperties tlsProps,
+      GrpcChannelFactory channelFactory,
+      BlockingGrpcStubCustomizer stubCustomizer,
+      Class<?> loggerClass) {
     this.endpoints = endpoints.copy();
     this.tlsProps = tlsProps.copy();
     this.channelFactory = channelFactory;
+    this.stubCustomizer = stubCustomizer;
     this.logger = LoggingUtil.getLogger(loggerClass);
   }
 
@@ -76,6 +89,10 @@ public abstract class AbstractReloadingBlockingGrpcClient<TStub> implements Auto
 
   protected Logger logger() {
     return logger;
+  }
+
+  protected final TStub applyStubCustomizer(TStub stub) {
+    return stubCustomizer.customize(stub);
   }
 
   protected abstract String configuredTarget(ServiceEndpointsProperties endpoints);

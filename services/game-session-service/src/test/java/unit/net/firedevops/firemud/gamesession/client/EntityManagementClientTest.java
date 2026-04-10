@@ -7,9 +7,9 @@ import static org.mockito.Mockito.when;
 import java.lang.reflect.Field;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
+import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
-import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.entitymanagement.v1.ContainerItem;
 import net.firedevops.firemud.entitymanagement.v1.DropItemToRoomResponse;
 import net.firedevops.firemud.entitymanagement.v1.EntityManagementServiceGrpc;
@@ -22,9 +22,6 @@ import net.firedevops.firemud.entitymanagement.v1.TakeItemFromContainerResponse;
 import org.junit.jupiter.api.Test;
 
 class EntityManagementClientTest {
-  private static final JwtUtil JWT_UTIL =
-      new JwtUtil("testsecretkeytestsecretkeytest1234", 60_000L);
-
   @Test
   void pickupItemFromRoomForwardsRequestAndReturnsInventoryItem() throws Exception {
     EntityManagementClient client = newClient();
@@ -53,7 +50,7 @@ class EntityManagementClientTest {
     setStub(client, stub);
 
     PickupItemFromRoomResponse response =
-        client.pickupItemFromRoom("1", "7", "GI-1", "R-1", "99", null, 2);
+        client.pickupItemFromRoom("1", "7", "GI-1", "R-1", "99", null, null, 2);
 
     assertThat(response.getInventoryItem().getItemName()).isEqualTo("Torch");
     assertThat(response.getInventoryItem().getQuantity()).isEqualTo(2);
@@ -89,7 +86,8 @@ class EntityManagementClientTest {
                 .build());
     setStub(client, stub);
 
-    DropItemToRoomResponse response = client.dropItemToRoom("1", "7", "GI-1", "R-1", "99", null, 1);
+    DropItemToRoomResponse response =
+        client.dropItemToRoom("1", "7", "GI-1", "R-1", "99", null, null, 1);
 
     assertThat(response.getRoomGroundItem().getItemName()).isEqualTo("Torch");
     assertThat(response.getRoomGroundItem().getQuantity()).isEqualTo(1);
@@ -137,6 +135,7 @@ class EntityManagementClientTest {
                 .setCharacterId("7")
                 .setContainerInstanceId("99")
                 .setItemId("100")
+                .setItemInstanceId("200")
                 .setQuantity(1)
                 .build()))
         .thenReturn(
@@ -151,7 +150,8 @@ class EntityManagementClientTest {
                 .build());
     setStub(client, stub);
 
-    PutItemIntoContainerResponse response = client.putItemIntoContainer("1", "7", "99", "100", 1);
+    PutItemIntoContainerResponse response =
+        client.putItemIntoContainer("1", "7", "99", "100", "200", 1);
 
     assertThat(response.getContainerItem().getItemName()).isEqualTo("Torch");
     assertThat(response.getContainerItem().getQuantity()).isEqualTo(1);
@@ -169,6 +169,7 @@ class EntityManagementClientTest {
                 .setCharacterId("7")
                 .setContainerInstanceId("99")
                 .setItemId("100")
+                .setItemInstanceId("200")
                 .setQuantity(1)
                 .build()))
         .thenReturn(
@@ -182,7 +183,8 @@ class EntityManagementClientTest {
                 .build());
     setStub(client, stub);
 
-    TakeItemFromContainerResponse response = client.takeItemFromContainer("1", "7", "99", "100", 1);
+    TakeItemFromContainerResponse response =
+        client.takeItemFromContainer("1", "7", "99", "100", "200", 1);
 
     assertThat(response.getInventoryItem().getItemName()).isEqualTo("Torch");
     assertThat(response.getInventoryItem().getQuantity()).isEqualTo(1);
@@ -192,8 +194,8 @@ class EntityManagementClientTest {
     return new EntityManagementClient(
         new ServiceEndpointsProperties(),
         new CommonGrpcClientProperties(),
-        JWT_UTIL,
-        mock(GrpcChannelFactory.class));
+        mock(GrpcChannelFactory.class),
+        BlockingGrpcStubCustomizer.noop());
   }
 
   private static void setStub(EntityManagementClient client, Object stub) throws Exception {

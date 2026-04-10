@@ -8,10 +8,9 @@ import net.firedevops.firemud.automationscripting.v1.AutomationScriptingServiceG
 import net.firedevops.firemud.automationscripting.v1.NotifyScriptVersionUpdateRequest;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.AbstractReloadingBlockingGrpcClient;
+import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
-import net.firedevops.firemud.common.security.GrpcClientAuth;
-import net.firedevops.firemud.common.security.JwtUtil;
 import org.springframework.stereotype.Component;
 
 /** gRPC client for Automation & Scripting Service. */
@@ -19,15 +18,12 @@ import org.springframework.stereotype.Component;
 public class AutomationScriptingClient
     extends AbstractReloadingBlockingGrpcClient<
         AutomationScriptingServiceGrpc.AutomationScriptingServiceBlockingStub> {
-  private final JwtUtil jwtUtil;
-
   public AutomationScriptingClient(
       ServiceEndpointsProperties endpoints,
       CommonGrpcClientProperties tlsProps,
-      JwtUtil jwtUtil,
-      GrpcChannelFactory channelFactory) {
-    super(endpoints, tlsProps, channelFactory, AutomationScriptingClient.class);
-    this.jwtUtil = jwtUtil;
+      GrpcChannelFactory channelFactory,
+      BlockingGrpcStubCustomizer stubCustomizer) {
+    super(endpoints, tlsProps, channelFactory, stubCustomizer, AutomationScriptingClient.class);
   }
 
   @PostConstruct
@@ -48,8 +44,8 @@ public class AutomationScriptingClient
   @Override
   protected AutomationScriptingServiceGrpc.AutomationScriptingServiceBlockingStub buildStub(
       io.grpc.ManagedChannel channel) {
-    return GrpcClientAuth.attach(
-        AutomationScriptingServiceGrpc.newBlockingStub(channel).withCompression("gzip"), jwtUtil);
+    return applyStubCustomizer(
+        AutomationScriptingServiceGrpc.newBlockingStub(channel).withCompression("gzip"));
   }
 
   /** Notify the Automation service that a new script patch version is active. */

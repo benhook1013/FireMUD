@@ -29,7 +29,8 @@ import net.firedevops.firemud.accountservice.service.AccountService;
 import net.firedevops.firemud.accountservice.service.PingService;
 import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
-import net.firedevops.firemud.common.security.RequireAdminRole;
+import net.firedevops.firemud.common.security.AdminAuthorizationException;
+import net.firedevops.firemud.common.security.AdminRoleGuard;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -275,14 +276,22 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
   }
 
   @Override
-  @RequireAdminRole
   @Timed(value = "accountGrpc.deleteAccount")
   public void deleteAccount(
       DeleteAccountRequest request, StreamObserver<DeleteAccountResponse> responseObserver) {
     try {
+      AdminRoleGuard.requireAdminRole();
       accountService.deleteAccount(
           Long.valueOf(request.getTenantId()), Long.valueOf(request.getAccountId()));
       DeleteAccountResponse response = DeleteAccountResponse.newBuilder().setSuccess(true).build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (AdminAuthorizationException ex) {
+      DeleteAccountResponse response =
+          DeleteAccountResponse.newBuilder()
+              .setSuccess(false)
+              .setError(appError("DeleteAccount", "PERMISSION_DENIED", ex.getMessage()))
+              .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (Exception ex) {

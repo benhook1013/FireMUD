@@ -21,6 +21,7 @@ public interface InventoryService {
       String gameInstanceId,
       String roomInstanceId,
       Long itemId,
+      Long itemInstanceId,
       String containerInstanceId,
       int quantity);
 
@@ -30,6 +31,7 @@ public interface InventoryService {
       String gameInstanceId,
       String roomInstanceId,
       Long itemId,
+      Long itemInstanceId,
       String containerInstanceId,
       int quantity);
 }

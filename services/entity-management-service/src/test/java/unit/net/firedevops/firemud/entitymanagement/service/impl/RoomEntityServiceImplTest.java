@@ -7,10 +7,9 @@ import java.util.List;
 import net.firedevops.firemud.entitymanagement.config.LookProperties;
 import net.firedevops.firemud.entitymanagement.dto.RoomEntityDto;
 import net.firedevops.firemud.entitymanagement.entity.ContainerInstance;
-import net.firedevops.firemud.entitymanagement.entity.RoomGroundInventoryEntry;
-import net.firedevops.firemud.entitymanagement.entity.RoomGroundInventoryKey;
+import net.firedevops.firemud.entitymanagement.entity.ItemInstance;
 import net.firedevops.firemud.entitymanagement.repository.ContainerInstanceRepository;
-import net.firedevops.firemud.entitymanagement.repository.RoomGroundInventoryRepository;
+import net.firedevops.firemud.entitymanagement.repository.ItemInstanceRepository;
 import net.firedevops.firemud.entitymanagement.v1.EntityType;
 import net.firedevops.firemud.entitymanagement.v1.ReloadHint;
 import org.junit.jupiter.api.BeforeEach;
@@ -21,18 +20,16 @@ import org.springframework.data.domain.Pageable;
 
 class RoomEntityServiceImplTest {
   private LookProperties props;
-  private RoomGroundInventoryRepository roomGroundInventoryRepository;
+  private ItemInstanceRepository itemInstanceRepository;
   private ContainerInstanceRepository containerInstanceRepository;
   private RoomEntityServiceImpl service;
 
   @BeforeEach
   void setup() {
     props = new LookProperties();
-    roomGroundInventoryRepository = Mockito.mock(RoomGroundInventoryRepository.class);
+    itemInstanceRepository = Mockito.mock(ItemInstanceRepository.class);
     containerInstanceRepository = Mockito.mock(ContainerInstanceRepository.class);
-    service =
-        new RoomEntityServiceImpl(
-            props, roomGroundInventoryRepository, containerInstanceRepository);
+    service = new RoomEntityServiceImpl(props, itemInstanceRepository, containerInstanceRepository);
   }
 
   @Test
@@ -63,16 +60,12 @@ class RoomEntityServiceImplTest {
     item.setContainer(true);
     item.setEquipmentSlot("back");
 
-    var key = new RoomGroundInventoryKey();
-    key.setTenantId(1L);
-    key.setGameInstanceId("game-1");
-    key.setRoomInstanceId("R-1021");
-    key.setItemId(9L);
-
-    var entry = new RoomGroundInventoryEntry();
-    entry.setId(key);
+    var entry = new ItemInstance();
+    entry.setId(77L);
+    entry.setTenantId(1L);
+    entry.setGameInstanceId("game-1");
+    entry.setRoomInstanceId("R-1021");
     entry.setItem(item);
-    entry.setQuantity(2);
 
     ContainerInstance instance = new ContainerInstance();
     instance.setId(42L);
@@ -80,21 +73,20 @@ class RoomEntityServiceImplTest {
     instance.setGameInstanceId("game-1");
     instance.setRoomInstanceId("R-1021");
     instance.setItem(item);
+    instance.setItemInstance(entry);
 
     Mockito.when(
-            roomGroundInventoryRepository.findByIdTenantIdAndIdGameInstanceIdAndIdRoomInstanceId(
-                1L, "game-1", "R-1021", Pageable.unpaged()))
+            itemInstanceRepository
+                .findByTenantIdAndGameInstanceIdAndRoomInstanceIdAndCharacterIsNullAndEquipmentSlotIsNullOrderByIdAsc(
+                    1L, "game-1", "R-1021", Pageable.unpaged()))
         .thenReturn(new PageImpl<>(List.of(entry)));
-    Mockito.when(
-            containerInstanceRepository
-                .findByTenantIdAndGameInstanceIdAndRoomInstanceIdAndItem_IdAndCharacterIsNullAndEquipmentSlotIsNull(
-                    1L, "game-1", "R-1021", 9L))
+    Mockito.when(containerInstanceRepository.findByItemInstance_Id(77L))
         .thenReturn(java.util.Optional.of(instance));
 
     List<RoomEntityDto> listed = service.listEntities("1", "game-1", "R-1021");
     assertEquals(1, listed.size());
     assertEquals(EntityType.ITEM, listed.get(0).entityType());
-    assertEquals("Backpack x2", listed.get(0).displayName());
+    assertEquals("Backpack", listed.get(0).displayName());
     assertEquals(
         List.of("room-ground", "container", "container-instance:42", "wearable:BACK"),
         listed.get(0).stateFlags());

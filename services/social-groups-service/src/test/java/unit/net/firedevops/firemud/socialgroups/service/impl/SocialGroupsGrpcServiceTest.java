@@ -88,6 +88,41 @@ class SocialGroupsGrpcServiceTest {
   }
 
   @Test
+  void createGuildRuntimeFailureReturnsInternalErrorDetail() {
+    PingService ping = Mockito.mock(PingService.class);
+    ChatService chat = Mockito.mock(ChatService.class);
+    GuildService guild = Mockito.mock(GuildService.class);
+    Mockito.when(guild.createGuild(Mockito.any())).thenThrow(new IllegalStateException("boom"));
+    FriendService friend = Mockito.mock(FriendService.class);
+    MailService mail = Mockito.mock(MailService.class);
+    SocialGroupsGrpcService service =
+        new SocialGroupsGrpcService(ping, chat, guild, friend, mail, new SimpleMeterRegistry());
+
+    AtomicReference<CreateGuildResponse> ref = new AtomicReference<>();
+    service.createGuild(
+        net.firedevops.firemud.socialgroups.v1.CreateGuildRequest.newBuilder()
+            .setTenantId("1")
+            .setOwnerAccountId("2")
+            .setName("test")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(CreateGuildResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(ref.get());
+    assertEquals("INTERNAL", ref.get().getError().getCode());
+  }
+
+  @Test
   void sendMessageMapsWhisperProtoToDomainEnum() {
     PingService ping = Mockito.mock(PingService.class);
     ChatService chat = Mockito.mock(ChatService.class);

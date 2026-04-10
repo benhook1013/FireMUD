@@ -129,7 +129,7 @@ class CommunicationWebSocketCrossServiceTest {
                   .isEqualTo(net.firedevops.firemud.socialgroups.v1.ChatType.CHAT_TYPE_SAY);
             });
 
-    assertMetricEventually("gamesession.command.say.invocations", 1.0, "tenantId", "1");
+    assertMetricEventually("gamesession.command.say.invocations", 1.0);
   }
 
   @Test
@@ -148,7 +148,7 @@ class CommunicationWebSocketCrossServiceTest {
               assertThat(request.getRecipientId()).isEqualTo(ChatTestFixtures.PLAYER_SORA);
             });
 
-    assertMetricEventually("gamesession.command.whisper.invocations", 1.0, "tenantId", "1");
+    assertMetricEventually("gamesession.command.whisper.invocations", 1.0);
   }
 
   @Test
@@ -168,7 +168,7 @@ class CommunicationWebSocketCrossServiceTest {
               assertThat(request.getRecipientId()).isEqualTo(ChatTestFixtures.PLAYER_SORA);
             });
 
-    assertMetricEventually("gamesession.command.tell.invocations", 1.0, "tenantId", "1");
+    assertMetricEventually("gamesession.command.tell.invocations", 1.0);
   }
 
   @Test

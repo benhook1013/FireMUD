@@ -8,9 +8,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
-import net.firedevops.firemud.entitymanagement.v1.EntityType;
 import net.firedevops.firemud.entitymanagement.v1.InventoryItem;
-import net.firedevops.firemud.entitymanagement.v1.RoomEntity;
 import net.firedevops.firemud.entitymanagement.v1.RoomGroundInventoryItem;
 import net.firedevops.firemud.gamesession.client.EntityManagementClient;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
@@ -35,7 +33,7 @@ public class InventoryCommandHandler {
     Objects.requireNonNull(command, "command must not be null");
 
     return switch (command.type()) {
-      case INVENTORY -> describeInventory(context);
+      case INVENTORY -> describeInventorySurface(context, command);
       case GET -> mutateItem(context, command, true);
       case DROP -> mutateItem(context, command, false);
       default ->
@@ -48,6 +46,14 @@ public class InventoryCommandHandler {
                       "error.inventory.invalid-command",
                       Map.of())));
     };
+  }
+
+  private InventoryCommandHandlingResult describeInventorySurface(
+      SessionContext context, TextCommand command) {
+    if (isRoomInventoryRequest(command)) {
+      return describeRoomInventory(context);
+    }
+    return describeInventory(context);
   }
 
   private InventoryCommandHandlingResult describeInventory(SessionContext context) {
@@ -75,6 +81,34 @@ public class InventoryCommandHandler {
     }
   }
 
+  private InventoryCommandHandlingResult describeRoomInventory(SessionContext context) {
+    try {
+      var response =
+          entityManagementClient.listRoomGroundInventory(
+              Long.toString(context.tenantId()),
+              Long.toString(context.gameInstanceId()),
+              context.roomInstanceId());
+      if (response.hasError()) {
+        return inventoryUnavailable(
+            StringUtils.hasText(response.getError().getMessage())
+                ? response.getError().getMessage()
+                : "Room inventory unavailable");
+      }
+      List<String> lines = formatRoomInventoryLines(response.getItemsList());
+      return new InventoryCommandHandlingResult(
+          CommandEnqueueResult.success(),
+          List.of(PlayerOutput.view(new InventoryViewOutput("Room Inventory:", lines))));
+    } catch (RuntimeException ex) {
+      LOG.warn(
+          "Room inventory query failed tenantId={} gameInstanceId={} roomInstanceId={}",
+          context.tenantId(),
+          context.gameInstanceId(),
+          context.roomInstanceId(),
+          ex);
+      return inventoryUnavailable("Room inventory unavailable");
+    }
+  }
+
   private List<String> formatInventoryLines(List<InventoryItem> items) {
     if (items.isEmpty()) {
       return List.of("You are not carrying anything.");
@@ -82,9 +116,28 @@ public class InventoryCommandHandler {
     return items.stream().map(this::formatInventoryItem).collect(Collectors.toList());
   }
 
+  private List<String> formatRoomInventoryLines(List<RoomGroundInventoryItem> items) {
+    List<String> lines = items.stream().map(this::formatRoomInventoryItem).toList();
+    return lines.isEmpty() ? List.of("There is nothing on the ground here.") : lines;
+  }
+
   private String formatInventoryItem(InventoryItem item) {
     StringBuilder line = new StringBuilder();
     line.append("- ").append(item.getItemName());
+    appendCompactReference(line, ContainerIdentitySupport.compactReference(item));
+    if (item.getQuantity() > 1) {
+      line.append(" x").append(item.getQuantity());
+    }
+    if (StringUtils.hasText(item.getItemDescription())) {
+      line.append(" (").append(item.getItemDescription()).append(")");
+    }
+    return line.toString();
+  }
+
+  private String formatRoomInventoryItem(RoomGroundInventoryItem item) {
+    StringBuilder line = new StringBuilder();
+    line.append("- ").append(item.getItemName());
+    appendCompactReference(line, item.getVisibleRef());
     if (item.getQuantity() > 1) {
       line.append(" x").append(item.getQuantity());
     }
@@ -124,7 +177,7 @@ public class InventoryCommandHandler {
     try {
       if (pickup) {
         var roomEntities =
-            entityManagementClient.listRoomEntities(
+            entityManagementClient.listRoomGroundInventory(
                 Long.toString(context.tenantId()),
                 Long.toString(context.gameInstanceId()),
                 context.roomInstanceId());
@@ -135,7 +188,7 @@ public class InventoryCommandHandler {
                   : "Room entities unavailable");
         }
         Optional<ResolvedItem> resolved =
-            findRoomGroundItem(roomEntities.getEntitiesList(), itemReferenceValue);
+            findRoomGroundItem(roomEntities.getItemsList(), itemReferenceValue);
         if (resolved.isEmpty()) {
           return inventoryMutationFailure(
               "INVALID_ARGUMENT",
@@ -143,6 +196,12 @@ public class InventoryCommandHandler {
               "No room item matches \"" + itemReferenceValue + "\"");
         }
         ResolvedItem item = resolved.orElseThrow();
+        if (itemReference.quantity() > 1 && item.explicitReference()) {
+          return inventoryMutationFailure(
+              "INVALID_ARGUMENT",
+              itemReferenceValue,
+              "Explicit item refs require quantity 1 for GET");
+        }
         var response =
             entityManagementClient.pickupItemFromRoom(
                 Long.toString(context.tenantId()),
@@ -150,6 +209,7 @@ public class InventoryCommandHandler {
                 Long.toString(context.gameInstanceId()),
                 context.roomInstanceId(),
                 item.itemId(),
+                item.explicitReference() ? item.itemInstanceId() : null,
                 item.containerInstanceId(),
                 itemReference.quantity());
         if (response.hasError()) {
@@ -183,6 +243,12 @@ public class InventoryCommandHandler {
             "No carried item matches \"" + itemReferenceValue + "\"");
       }
       ResolvedItem item = resolved.orElseThrow();
+      if (itemReference.quantity() > 1 && item.explicitReference()) {
+        return inventoryMutationFailure(
+            "INVALID_ARGUMENT",
+            itemReferenceValue,
+            "Explicit item refs require quantity 1 for DROP");
+      }
       var response =
           entityManagementClient.dropItemToRoom(
               Long.toString(context.tenantId()),
@@ -190,6 +256,7 @@ public class InventoryCommandHandler {
               Long.toString(context.gameInstanceId()),
               context.roomInstanceId(),
               item.itemId(),
+              item.explicitReference() ? item.itemInstanceId() : null,
               item.containerInstanceId(),
               itemReference.quantity());
       if (response.hasError()) {
@@ -259,18 +326,29 @@ public class InventoryCommandHandler {
     return StringUtils.hasText(item.getItemName()) ? item.getItemName() : fallback;
   }
 
-  private Optional<ResolvedItem> findRoomGroundItem(List<RoomEntity> entities, String reference) {
-    return entities.stream()
-        .filter(entity -> entity.getEntityType() == EntityType.ITEM)
-        .filter(entity -> entity.getStateFlagsList().contains("room-ground"))
-        .filter(entity -> ContainerIdentitySupport.matchesReference(entity, reference))
+  private void appendCompactReference(StringBuilder line, String compactReference) {
+    if (StringUtils.hasText(compactReference)) {
+      line.append(" [").append(compactReference).append("]");
+    }
+  }
+
+  private boolean isRoomInventoryRequest(TextCommand command) {
+    return command.args().size() == 1 && "HERE".equalsIgnoreCase(command.args().get(0));
+  }
+
+  private Optional<ResolvedItem> findRoomGroundItem(
+      List<RoomGroundInventoryItem> items, String reference) {
+    return items.stream()
+        .filter(item -> matchesReference(item, reference))
         .findFirst()
         .map(
-            entity ->
+            item ->
                 new ResolvedItem(
-                    parseItemId(entity.getEntityId()),
-                    entity.getDisplayName(),
-                    parseContainerInstanceId(entity)));
+                    item.getItemId(),
+                    item.getItemInstanceId(),
+                    item.getItemName(),
+                    item.getContainerInstanceId(),
+                    matchesExplicitReference(item, reference)));
   }
 
   private Optional<ResolvedItem> findCarriedItem(List<InventoryItem> items, String reference) {
@@ -281,30 +359,40 @@ public class InventoryCommandHandler {
             item ->
                 new ResolvedItem(
                     item.getItemId(),
+                    item.getItemInstanceId(),
                     item.getItemName(),
-                    ContainerIdentitySupport.resolveContainerInstanceId(item)));
+                    ContainerIdentitySupport.resolveContainerInstanceId(item),
+                    ContainerIdentitySupport.matchesExplicitReference(item, reference)));
   }
 
-  private String parseItemId(String entityId) {
-    if (!StringUtils.hasText(entityId)) {
-      return "";
-    }
-    int lastColon = entityId.lastIndexOf(':');
-    return lastColon < 0 ? entityId : entityId.substring(lastColon + 1);
+  private boolean matchesReference(RoomGroundInventoryItem item, String reference) {
+    return matchesReference(item.getItemId(), reference)
+        || matchesReference(item.getItemName(), reference)
+        || matchesReference(item.getVisibleRef(), reference)
+        || matchesReference(item.getContainerInstanceId(), reference)
+        || matchesReference(item.getItemInstanceId(), reference);
   }
 
-  private String parseContainerInstanceId(RoomEntity entity) {
-    return entity.getStateFlagsList().stream()
-        .filter(flag -> flag.startsWith("container-instance:"))
-        .map(flag -> flag.substring("container-instance:".length()))
-        .filter(StringUtils::hasText)
-        .findFirst()
-        .orElse(parseItemId(entity.getEntityId()));
+  private boolean matchesExplicitReference(RoomGroundInventoryItem item, String reference) {
+    return matchesReference(item.getVisibleRef(), reference)
+        || matchesReference(item.getContainerInstanceId(), reference)
+        || matchesReference(item.getItemInstanceId(), reference);
+  }
+
+  private boolean matchesReference(String candidate, String reference) {
+    return StringUtils.hasText(candidate)
+        && StringUtils.hasText(reference)
+        && candidate.equalsIgnoreCase(reference);
   }
 
   private String errorCode(String errorCode) {
     return StringUtils.hasText(errorCode) ? errorCode : "INVENTORY_UNAVAILABLE";
   }
 
-  private record ResolvedItem(String itemId, String itemName, String containerInstanceId) {}
+  private record ResolvedItem(
+      String itemId,
+      String itemInstanceId,
+      String itemName,
+      String containerInstanceId,
+      boolean explicitReference) {}
 }

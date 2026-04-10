@@ -5,7 +5,10 @@ import static org.mockito.Mockito.*;
 
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
+import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.gateway.v1.PingRequest;
 import net.firedevops.firemud.gateway.v1.PingResponse;
 import net.firedevops.firemud.gateway.v1.RemoveRouteRequest;
@@ -14,10 +17,22 @@ import net.firedevops.firemud.gateway.v1.UpsertRouteRequest;
 import net.firedevops.firemud.gateway.v1.UpsertRouteResponse;
 import net.firedevops.firemud.springcloudgateway.service.GatewayRoute;
 import net.firedevops.firemud.springcloudgateway.service.GatewayRouteService;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import reactor.core.publisher.Mono;
 
 class GatewayManagementGrpcServiceTest {
+
+  @BeforeEach
+  void setUp() {
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+  }
+
+  @AfterEach
+  void tearDown() {
+    SessionContext.clear();
+  }
 
   @Test
   void pingReturnsPong() {

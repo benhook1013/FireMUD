@@ -5,7 +5,8 @@ import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
-import net.firedevops.firemud.common.security.RequireAdminRole;
+import net.firedevops.firemud.common.security.AdminAuthorizationException;
+import net.firedevops.firemud.common.security.AdminRoleGuard;
 import net.firedevops.firemud.gateway.v1.GatewayManagementServiceGrpc;
 import net.firedevops.firemud.gateway.v1.PingRequest;
 import net.firedevops.firemud.gateway.v1.PingResponse;
@@ -47,9 +48,21 @@ public class GatewayManagementGrpcService
 
   @Override
   @Timed(value = "gatewayGrpc.upsertRoute")
-  @RequireAdminRole
   public void upsertRoute(
       UpsertRouteRequest request, StreamObserver<UpsertRouteResponse> responseObserver) {
+    try {
+      AdminRoleGuard.requireAdminRole();
+    } catch (AdminAuthorizationException ex) {
+      responseObserver.onNext(
+          UpsertRouteResponse.newBuilder()
+              .setSuccess(false)
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry, logger, "UpsertRoute", "PERMISSION_DENIED", ex.getMessage()))
+              .build());
+      responseObserver.onCompleted();
+      return;
+    }
     buildUpsertRouteResponse(request)
         .toFuture()
         .whenComplete(
@@ -72,9 +85,21 @@ public class GatewayManagementGrpcService
 
   @Override
   @Timed(value = "gatewayGrpc.removeRoute")
-  @RequireAdminRole
   public void removeRoute(
       RemoveRouteRequest request, StreamObserver<RemoveRouteResponse> responseObserver) {
+    try {
+      AdminRoleGuard.requireAdminRole();
+    } catch (AdminAuthorizationException ex) {
+      responseObserver.onNext(
+          RemoveRouteResponse.newBuilder()
+              .setSuccess(false)
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry, logger, "RemoveRoute", "PERMISSION_DENIED", ex.getMessage()))
+              .build());
+      responseObserver.onCompleted();
+      return;
+    }
     buildRemoveRouteResponse(request)
         .toFuture()
         .whenComplete(

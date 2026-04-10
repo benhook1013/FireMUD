@@ -9,4 +9,5 @@ public record ItemDto(
     @NotNull @Size(max = 100) String name,
     String description,
     String equipmentSlot,
-    boolean container) {}
+    boolean container,
+    boolean stackable) {}

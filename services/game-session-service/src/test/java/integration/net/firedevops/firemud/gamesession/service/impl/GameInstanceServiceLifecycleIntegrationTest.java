@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doThrow;
@@ -113,20 +114,22 @@ class GameInstanceServiceLifecycleIntegrationTest {
   }
 
   @Test
-  void startSessionCommitsWhenStatePropagationFails() {
+  void startSessionRollsBackWhenStatePropagationFails() {
     doThrow(new IllegalStateException("state propagation failed"))
         .when(sessionStateService)
         .saveState(any());
 
-    service.startSession(new StartSessionRequest(42L, "1.0.0", "patch-1", 100L));
+    assertThatThrownBy(
+            () -> service.startSession(new StartSessionRequest(42L, "1.0.0", "patch-1", 100L)))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("state propagation failed");
 
-    assertThat(repository.findAll()).hasSize(1);
-    assertThat(repository.findAll().get(0).getStatus()).isEqualTo("RUNNING");
+    assertThat(repository.findAll()).isEmpty();
     verify(sessionStateService).saveState(any());
   }
 
   @Test
-  void stopSessionCommitsWhenStatePropagationFails() {
+  void stopSessionRollsBackWhenStatePropagationFails() {
     GameInstance instance = new GameInstance();
     instance.setTenantId(42L);
     instance.setRuntimeVersion("1.0.0");
@@ -140,15 +143,17 @@ class GameInstanceServiceLifecycleIntegrationTest {
         .when(sessionStateService)
         .deleteState(42L, instanceId);
 
-    service.stopSession(instanceId);
+    assertThatThrownBy(() -> service.stopSession(instanceId))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("state propagation failed");
 
     assertThat(repository.findById(instanceId)).isPresent();
-    assertThat(repository.findById(instanceId).orElseThrow().getStatus()).isEqualTo("STOPPED");
+    assertThat(repository.findById(instanceId).orElseThrow().getStatus()).isEqualTo("RUNNING");
     verify(sessionStateService).deleteState(42L, instanceId);
   }
 
   @Test
-  void restartSessionCommitsWhenStatePropagationFails() {
+  void restartSessionRollsBackWhenStatePropagationFails() {
     GameInstance instance = new GameInstance();
     instance.setTenantId(42L);
     instance.setRuntimeVersion("1.0.0");
@@ -162,11 +167,42 @@ class GameInstanceServiceLifecycleIntegrationTest {
         .when(sessionStateService)
         .saveState(any());
 
-    service.restartSession(instanceId);
+    assertThatThrownBy(() -> service.restartSession(instanceId))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("state propagation failed");
 
     assertThat(repository.findById(instanceId)).isPresent();
-    assertThat(repository.findById(instanceId).orElseThrow().getStatus()).isEqualTo("RUNNING");
+    assertThat(repository.findById(instanceId).orElseThrow().getStatus()).isEqualTo("STOPPED");
     verify(sessionStateService).saveState(any());
+  }
+
+  @Test
+  void replacingExistingSessionRestoresPriorRunningSessionWhenNewStartFails() {
+    GameInstance existing = new GameInstance();
+    existing.setTenantId(42L);
+    existing.setRuntimeVersion("1.0.0");
+    existing.setScriptPatchVersion("patch-1");
+    existing.setOwnerAccountId(100L);
+    existing.setStatus("RUNNING");
+    existing = repository.saveAndFlush(existing);
+    long existingId = existing.getId();
+
+    doThrow(new IllegalStateException("state propagation failed"))
+        .when(sessionStateService)
+        .saveState(any());
+
+    assertThatThrownBy(
+            () ->
+                service.startSession(new StartSessionRequest(42L, "1.0.1", "patch-2", 100L), true))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("state propagation failed");
+
+    assertThat(repository.findAll()).hasSize(1);
+    GameInstance restored = repository.findById(existingId).orElseThrow();
+    assertThat(restored.getStatus()).isEqualTo("RUNNING");
+    assertThat(restored.getRuntimeVersion()).isEqualTo("1.0.0");
+    assertThat(restored.getScriptPatchVersion()).isEqualTo("patch-1");
+    assertThat(restored.getOwnerAccountId()).isEqualTo(100L);
   }
 
   @TestConfiguration
