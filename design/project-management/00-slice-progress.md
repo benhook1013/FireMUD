@@ -23,7 +23,7 @@ These are narrow enough to implement now and unblock the current runtime/platfor
 6. [02.18.6 Tick Scheduler Backpressure and Merge Semantics](./vertical-slices/02.18.6-task-list-tick-scheduler-backpressure-and-merge-semantics-vertical-slice.md)
    Remaining: decide whether pressure ever feeds back into gameplay timing policy beyond observability, and set any explicit alert thresholds.
 7. [02.14.4 Metrics Cardinality and Label Policy Hardening](./vertical-slices/02.14.4-task-list-metrics-cardinality-and-label-policy-hardening-vertical-slice.md)
-   Remaining: continue the repo-wide manual audit for subtler dynamic-label patterns that even the stronger CI checker will not catch.
+   Remaining: continue the broader repo-wide manual audit outside the already-reviewed gameplay/runtime hot paths for subtler dynamic-label patterns that even the stronger CI checker will not catch.
 
 ### 2. Active architecture follow-through
 
@@ -90,6 +90,6 @@ These are not major design problems, but they are not fully closed.
 
 If you want the clearest immediate path, do these next:
 
-1. `06.4.1` already-moved failure/audit implementation
-2. `02.2.1` lingering non-canonical admission-path cleanup
-3. `06.3` authored stackability rule pass
+1. `06.3` authored stackability rule pass
+2. `06.4` shared transfer-contract and holder-policy cleanup
+3. `02.18.3` remaining workflow transaction-boundary hardening
