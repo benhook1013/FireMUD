@@ -29,11 +29,13 @@ These are already partly real in code and should continue after the immediate ru
    Remaining: complete the remaining `06.3` follow-through and later authored stackability.
 4. [06.3.1 Stable Item Instance Visible Ref Allocation](./vertical-slices/06.3.1-task-list-item-instance-visible-ref-allocation-vertical-slice.md)
    Remaining: decide whether and where ordinary prose views ever expose refs beyond management surfaces.
-5. [02.18 Service Boundary and Audit Hardening](./vertical-slices/02.18-task-list-service-boundary-and-audit-hardening-vertical-slice.md)
+5. [06.3.2 Authored Stackability and Fungibility](./vertical-slices/06.3.2-task-list-authored-stackability-and-fungibility-vertical-slice.md)
+   Remaining: add the explicit authored stackability seam and stack-compatibility model before any quantity-bearing merge behavior is implemented.
+6. [02.18 Service Boundary and Audit Hardening](./vertical-slices/02.18-task-list-service-boundary-and-audit-hardening-vertical-slice.md)
    Remaining: complete the remaining `02.18.6` follow-up after the auth-propagation seam work.
-6. [02.18.1 Audit Log and Moderation Separation](./vertical-slices/02.18.1-task-list-audit-log-and-moderation-separation-vertical-slice.md)
+7. [02.18.1 Audit Log and Moderation Separation](./vertical-slices/02.18.1-task-list-audit-log-and-moderation-separation-vertical-slice.md)
    Remaining: keep future callers on the dedicated log-event path; the current account/logging-admin separation is now in place and covered.
-7. [02.18.4 World and Entity Service Boundary Auth](./vertical-slices/02.18.4-task-list-world-and-entity-service-boundary-auth-vertical-slice.md)
+8. [02.18.4 World and Entity Service Boundary Auth](./vertical-slices/02.18.4-task-list-world-and-entity-service-boundary-auth-vertical-slice.md)
    Remaining: finish the remaining service-boundary/auth alignment as those read/write paths harden.
 
 ### 3. Design settled enough, but not started or only placeholder-level

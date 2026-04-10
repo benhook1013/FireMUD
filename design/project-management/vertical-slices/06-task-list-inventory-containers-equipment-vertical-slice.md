@@ -20,6 +20,7 @@ The current branch state is materially ahead of the original `06` plan:
 - stable compact visible refs such as `satchel12` are now allocated and surfaced through management views and exact-item matching;
 - the gameplay command layer has its first bounded unification pass through `ItemCommandHandler`;
 - the remaining work under `06` is no longer "start item interactions", but tightening the canonical holder/transfer contract, adding explicit authored stackability, and aligning audit/validation semantics.
+- the authored stackability/fungibility follow-up is now tracked explicitly in `06.3.2-task-list-authored-stackability-and-fungibility-vertical-slice.md`.
 
 The most important remaining design work in this slice family is:
 
