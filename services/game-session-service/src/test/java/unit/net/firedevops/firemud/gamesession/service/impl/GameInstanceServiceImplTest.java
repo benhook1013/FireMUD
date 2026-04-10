@@ -61,7 +61,7 @@ class GameInstanceServiceImplTest {
 
     service.startSession(request);
 
-    verify(repository).findFirstByTenantIdAndOwnerAccountIdAndStatus(1L, 42L, "RUNNING");
+    verify(repository, never()).findFirstByTenantIdAndOwnerAccountIdAndStatus(1L, 42L, "RUNNING");
     verify(stateService).saveState(dto);
   }
 
@@ -89,7 +89,7 @@ class GameInstanceServiceImplTest {
     GameInstanceDto dto = new GameInstanceDto(10L, 2L, "v1", null, 42L, "RUNNING");
     when(mapper.toDto(org.mockito.ArgumentMatchers.any(GameInstance.class))).thenReturn(dto);
 
-    service.startSession(request);
+    service.startSession(request, true);
 
     verify(repository).findFirstByTenantIdAndOwnerAccountIdAndStatus(2L, 42L, "RUNNING");
     verify(repository).save(existing);
