@@ -28,6 +28,24 @@ public class ContainerServiceImpl implements ContainerService {
   private final ItemRepository itemRepository;
   private final ItemTransferSupport itemTransferSupport;
   private final ContainerHolderSyncSupport containerHolderSyncSupport;
+  private final ContainerHolderPolicySupport containerHolderPolicySupport;
+
+  ContainerServiceImpl(
+      ContainerInstanceRepository containerInstanceRepository,
+      ItemInstanceRepository itemInstanceRepository,
+      CharacterRepository characterRepository,
+      ItemRepository itemRepository,
+      ItemTransferSupport itemTransferSupport,
+      ContainerHolderSyncSupport containerHolderSyncSupport) {
+    this(
+        containerInstanceRepository,
+        itemInstanceRepository,
+        characterRepository,
+        itemRepository,
+        itemTransferSupport,
+        containerHolderSyncSupport,
+        new ContainerHolderPolicySupport(containerInstanceRepository));
+  }
 
   @Override
   @Transactional(readOnly = true)
@@ -36,8 +54,8 @@ public class ContainerServiceImpl implements ContainerService {
       Long tenantId, Long characterId, Long containerInstanceId, Pageable pageable) {
     Character character = requireCharacter(tenantId, characterId);
     ContainerInstance containerInstance =
-        requireContainerInstanceAccessibleToCharacter(
-            character.getId(), tenantId, containerInstanceId);
+        containerHolderPolicySupport.requireAccessibleContainer(
+            tenantId, character.getId(), containerInstanceId);
     return itemInstanceRepository
         .findByTenantIdAndContainerInstance_IdOrderByIdAsc(
             tenantId, containerInstance.getId(), pageable)
@@ -57,19 +75,10 @@ public class ContainerServiceImpl implements ContainerService {
     requirePositiveQuantity(quantity);
     Character character = requireCharacter(tenantId, characterId);
     ContainerInstance containerInstance =
-        requireContainerInstanceAccessibleToCharacter(
-            character.getId(), tenantId, containerInstanceId);
-    Item containerItem = containerInstance.getItem();
+        containerHolderPolicySupport.requireAccessibleContainer(
+            tenantId, character.getId(), containerInstanceId);
     Item item = requireItem(tenantId, itemId);
-    if (!containerItem.isContainer()) {
-      throw new IllegalArgumentException("Item is not a container");
-    }
-    if (item.isContainer()) {
-      throw new IllegalArgumentException("Nested containers are not supported");
-    }
-    if (containerItem.getId().equals(itemId)) {
-      throw new IllegalArgumentException("Item cannot be placed into itself");
-    }
+    containerHolderPolicySupport.requireCanContainItem(containerInstance, item);
     List<ItemInstance> carried =
         itemInstanceRepository
             .findByTenantIdAndCharacter_IdAndItem_IdAndEquipmentSlotIsNullAndGameInstanceIdIsNullAndRoomInstanceIdIsNullOrderByIdAsc(
@@ -100,8 +109,8 @@ public class ContainerServiceImpl implements ContainerService {
     requirePositiveQuantity(quantity);
     Character character = requireCharacter(tenantId, characterId);
     ContainerInstance containerInstance =
-        requireContainerInstanceAccessibleToCharacter(
-            character.getId(), tenantId, containerInstanceId);
+        containerHolderPolicySupport.requireAccessibleContainer(
+            tenantId, character.getId(), containerInstanceId);
     Item item = requireItem(tenantId, itemId);
     List<ItemInstance> contained =
         itemInstanceRepository.findByTenantIdAndContainerInstance_IdAndItem_IdOrderByIdAsc(
@@ -167,18 +176,6 @@ public class ContainerServiceImpl implements ContainerService {
     return itemRepository
         .findByIdAndTenantId(itemId, tenantId)
         .orElseThrow(() -> new IllegalArgumentException("Item not found for tenant"));
-  }
-
-  private ContainerInstance requireContainerInstanceAccessibleToCharacter(
-      Long characterId, Long tenantId, Long containerInstanceId) {
-    ContainerInstance containerInstance =
-        containerInstanceRepository
-            .findAccessibleByIdAndTenantIdAndCharacterId(containerInstanceId, tenantId, characterId)
-            .orElseThrow(() -> new IllegalArgumentException("Container instance not found"));
-    if (!containerInstance.getItem().isContainer()) {
-      throw new IllegalArgumentException("Item is not a container");
-    }
-    return containerInstance;
   }
 
   private ContainerContentEntryDto toDto(ItemInstance instance) {

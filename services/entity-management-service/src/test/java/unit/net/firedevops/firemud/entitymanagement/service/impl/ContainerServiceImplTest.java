@@ -403,6 +403,44 @@ class ContainerServiceImplTest {
         () -> service.takeItemFromContainer(1L, 1L, 500L, 3L, 41L, 2));
   }
 
+  @Test
+  void putItemIntoContainerRejectsNestedContainerViaSharedHolderPolicy() {
+    ContainerInstanceRepository containerInstanceRepo =
+        Mockito.mock(ContainerInstanceRepository.class);
+    ItemInstanceRepository itemInstanceRepo = Mockito.mock(ItemInstanceRepository.class);
+    CharacterRepository characterRepo = Mockito.mock(CharacterRepository.class);
+    ItemRepository itemRepo = Mockito.mock(ItemRepository.class);
+    ContainerServiceImpl service =
+        new ContainerServiceImpl(
+            containerInstanceRepo,
+            itemInstanceRepo,
+            characterRepo,
+            itemRepo,
+            new ItemTransferSupport(),
+            new ContainerHolderSyncSupport(containerInstanceRepo));
+
+    Character character = character(1L, 1L);
+    Item container = item(2L, 1L, "Chest", true);
+    ContainerInstance containerInstance = new ContainerInstance();
+    containerInstance.setId(500L);
+    containerInstance.setTenantId(1L);
+    containerInstance.setCharacter(character);
+    containerInstance.setItem(container);
+    Item nestedContainer = item(3L, 1L, "Pouch", true);
+
+    when(characterRepo.findByIdAndTenantId(1L, 1L)).thenReturn(Optional.of(character));
+    when(containerInstanceRepo.findAccessibleByIdAndTenantIdAndCharacterId(500L, 1L, 1L))
+        .thenReturn(Optional.of(containerInstance));
+    when(itemRepo.findByIdAndTenantId(3L, 1L)).thenReturn(Optional.of(nestedContainer));
+
+    IllegalArgumentException ex =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> service.putItemIntoContainer(1L, 1L, 500L, 3L, null, 1));
+
+    assertEquals("Nested containers are not supported", ex.getMessage());
+  }
+
   private static Character character(Long id, Long tenantId) {
     Character character = new Character();
     character.setId(id);
