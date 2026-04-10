@@ -11,9 +11,9 @@ It intentionally omits completed slices and uses the individual slice docs as th
 These are narrow enough to implement now and unblock the current runtime/platform direction.
 
 1. [06.3 Replace Aggregated Item Stacks With Distinct Item Instances](./vertical-slices/06.3-task-list-container-item-instance-identity-vertical-slice.md)
-   Remaining: finish stack-compatibility rules and quantity-bearing merge behavior on top of the now-live item-instance model and explicit `stackable` authored seam, which still needs a concrete merge/quantity decision.
+   Remaining: implement the now-decided strict stack-compatibility and holder-local quantity-bearing merge model on top of the explicit `stackable` authored seam.
 2. [02.18.6 Tick Scheduler Backpressure and Merge Semantics](./vertical-slices/02.18.6-task-list-tick-scheduler-backpressure-and-merge-semantics-vertical-slice.md)
-   Remaining: decide whether pressure ever feeds back into gameplay timing policy beyond observability, and set any explicit alert thresholds.
+   Remaining: keep the observability-first pressure model and turn it into explicit threshold/alert implementation plus later operator proof.
 3. [02.14.4 Metrics Cardinality and Label Policy Hardening](./vertical-slices/02.14.4-task-list-metrics-cardinality-and-label-policy-hardening-vertical-slice.md)
    Remaining: continue only opportunistic audit tail work; the currently reviewed gameplay, runtime, gateway, shared gRPC, proxy, and common-runtime hot paths are already clean.
 
