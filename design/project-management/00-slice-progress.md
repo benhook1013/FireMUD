@@ -19,7 +19,7 @@ These are narrow enough to implement now and unblock the current runtime/platfor
 4. [06.4 Unified Item Holder and Transfer Model](./vertical-slices/06.4-task-list-unified-item-holder-and-transfer-model-vertical-slice.md)
    Remaining: finish the exact guarded-handoff contract for duplicate execution and retry semantics now that the shared transfer audit and holder-policy seams are in place.
 5. [02.18.3 Workflow Transaction Boundary Hardening](./vertical-slices/02.18.3-task-list-workflow-transaction-boundary-hardening-vertical-slice.md)
-   Remaining: reduce the remaining “hold DB transaction open across external calls” cases without regressing runtime-state safety.
+   Remaining: decide whether the current explicit saga-step orchestration is sufficient for purchase/moderation, or whether any paths still deserve a stricter post-commit seam.
 6. [02.18.6 Tick Scheduler Backpressure and Merge Semantics](./vertical-slices/02.18.6-task-list-tick-scheduler-backpressure-and-merge-semantics-vertical-slice.md)
    Remaining: decide whether pressure ever feeds back into gameplay timing policy beyond observability, and set any explicit alert thresholds.
 7. [02.14.4 Metrics Cardinality and Label Policy Hardening](./vertical-slices/02.14.4-task-list-metrics-cardinality-and-label-policy-hardening-vertical-slice.md)
