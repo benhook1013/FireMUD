@@ -34,6 +34,12 @@ Cross-service references to item and equipment templates follow the normalized i
 - World layouts, loot tables, and procedural generation rules refer to items and equipment only via stable template identifiers owned by the Entity Management Service, always scoped by `(tenantId, versionId)`.
 - Balancing tools do not create separate, competing representations of item stats in Game Design Service; they operate directly on the versioned templates in Entity Management via design-time APIs and record provenance in Game Design history.
 
+Current `06.3` / item-instance note:
+
+- item templates now expose an explicit authored `stackable` capability rather than relying on implicit "same item means same stack" behavior;
+- this only defines author intent for later fungibility work, and does not yet enable runtime stack merge on its own;
+- non-stackable remains the safe default for ordinary physical items, especially equipment, containers, and other stateful items.
+
 ## Related Documentation
 
 - [Game Design Service Architecture](README.md)
