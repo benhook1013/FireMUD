@@ -26,5 +26,8 @@ public class Item {
   @Column(name = "is_container", nullable = false)
   private boolean container;
 
+  @Column(name = "is_stackable", nullable = false)
+  private boolean stackable;
+
   @Version private int version;
 }
