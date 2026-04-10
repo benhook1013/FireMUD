@@ -22,7 +22,7 @@ These are narrow enough to implement now and unblock the current runtime/platfor
 These are already partly real in code and should continue after the immediate runtime fixes.
 
 1. [02.13.8 Built-In Command Registry and Dispatch Rollout](./vertical-slices/02.13.8-task-list-built-in-command-registry-and-dispatch-rollout-vertical-slice.md)
-   Remaining: finish the richer command-definition seam, especially action classification and ownership metadata.
+   Remaining: prove ongoing built-in growth goes through registry plus family-handler extension, and carry the richer command-definition seam forward into later authored-command registration.
 2. [02.1.3 Session Activity and WHO Presence](./vertical-slices/02.1.3-task-list-session-activity-and-who-presence-vertical-slice.md)
    Remaining: grow from the current bounded `WHO` implementation into the fuller activity model when that work becomes active.
 3. [06 Task List Inventory, Containers, Equipment](./vertical-slices/06-task-list-inventory-containers-equipment-vertical-slice.md)

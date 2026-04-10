@@ -14,36 +14,42 @@ final class BuiltInTextCommandRegistry {
         TextCommandType.WORLDS,
         TextCommandDispatchGroup.WORLDS,
         TextCommandStageRequirement.NONE,
-        TextCommandPromptPolicy.NEVER);
+        TextCommandPromptPolicy.NEVER,
+        TextCommandActionCategory.META);
     register(
         definitions,
         TextCommandType.LOGIN,
         TextCommandDispatchGroup.LOGIN,
         TextCommandStageRequirement.NONE,
-        TextCommandPromptPolicy.NEVER);
+        TextCommandPromptPolicy.NEVER,
+        TextCommandActionCategory.META);
     register(
         definitions,
         TextCommandType.HELP,
         TextCommandDispatchGroup.HELP,
         TextCommandStageRequirement.NONE,
-        TextCommandPromptPolicy.WHEN_LOGGED_IN);
+        TextCommandPromptPolicy.WHEN_LOGGED_IN,
+        TextCommandActionCategory.META);
     register(
         definitions,
         TextCommandType.PLAY,
         TextCommandDispatchGroup.PLAY,
         TextCommandStageRequirement.LOGIN,
-        TextCommandPromptPolicy.WHEN_GAMEPLAY);
+        TextCommandPromptPolicy.WHEN_GAMEPLAY,
+        TextCommandActionCategory.META);
     register(
         definitions,
         TextCommandType.WHO,
         TextCommandDispatchGroup.WHO,
         TextCommandStageRequirement.GAMEPLAY,
-        TextCommandPromptPolicy.WHEN_GAMEPLAY);
+        TextCommandPromptPolicy.WHEN_GAMEPLAY,
+        TextCommandActionCategory.META);
     registerGroup(
         definitions,
         TextCommandDispatchGroup.ITEM,
         TextCommandStageRequirement.GAMEPLAY,
         TextCommandPromptPolicy.WHEN_GAMEPLAY,
+        TextCommandActionCategory.GAMEPLAY,
         TextCommandType.INVENTORY,
         TextCommandType.GET,
         TextCommandType.DROP);
@@ -52,6 +58,7 @@ final class BuiltInTextCommandRegistry {
         TextCommandDispatchGroup.ITEM,
         TextCommandStageRequirement.GAMEPLAY,
         TextCommandPromptPolicy.WHEN_GAMEPLAY,
+        TextCommandActionCategory.GAMEPLAY,
         TextCommandType.EQUIPMENT,
         TextCommandType.WEAR,
         TextCommandType.REMOVE);
@@ -60,6 +67,7 @@ final class BuiltInTextCommandRegistry {
         TextCommandDispatchGroup.ITEM,
         TextCommandStageRequirement.GAMEPLAY,
         TextCommandPromptPolicy.WHEN_GAMEPLAY,
+        TextCommandActionCategory.GAMEPLAY,
         TextCommandType.CONTAINER,
         TextCommandType.PUT,
         TextCommandType.TAKE);
@@ -68,6 +76,7 @@ final class BuiltInTextCommandRegistry {
         TextCommandDispatchGroup.COMMUNICATION,
         TextCommandStageRequirement.GAMEPLAY,
         TextCommandPromptPolicy.WHEN_GAMEPLAY,
+        TextCommandActionCategory.SOCIAL,
         TextCommandType.SAY,
         TextCommandType.WHISPER,
         TextCommandType.TELL);
@@ -76,12 +85,14 @@ final class BuiltInTextCommandRegistry {
         TextCommandType.MOVE,
         TextCommandDispatchGroup.MOVE,
         TextCommandStageRequirement.GAMEPLAY,
-        TextCommandPromptPolicy.WHEN_GAMEPLAY);
+        TextCommandPromptPolicy.WHEN_GAMEPLAY,
+        TextCommandActionCategory.GAMEPLAY);
     registerGroup(
         definitions,
         TextCommandDispatchGroup.LOOK,
         TextCommandStageRequirement.GAMEPLAY,
         TextCommandPromptPolicy.WHEN_GAMEPLAY,
+        TextCommandActionCategory.META,
         TextCommandType.LOOK,
         TextCommandType.QUICKLOOK);
     this.definitions = Map.copyOf(definitions);
@@ -94,7 +105,9 @@ final class BuiltInTextCommandRegistry {
             type,
             TextCommandDispatchGroup.ENQUEUE_ONLY,
             TextCommandStageRequirement.NONE,
-            TextCommandPromptPolicy.NEVER));
+            TextCommandPromptPolicy.NEVER,
+            TextCommandActionCategory.SYSTEM,
+            TextCommandSource.EXTENSION));
   }
 
   private static void registerGroup(
@@ -102,9 +115,10 @@ final class BuiltInTextCommandRegistry {
       TextCommandDispatchGroup dispatchGroup,
       TextCommandStageRequirement stageRequirement,
       TextCommandPromptPolicy promptPolicy,
+      TextCommandActionCategory actionCategory,
       TextCommandType... types) {
     for (TextCommandType type : types) {
-      register(definitions, type, dispatchGroup, stageRequirement, promptPolicy);
+      register(definitions, type, dispatchGroup, stageRequirement, promptPolicy, actionCategory);
     }
   }
 
@@ -113,8 +127,16 @@ final class BuiltInTextCommandRegistry {
       TextCommandType type,
       TextCommandDispatchGroup dispatchGroup,
       TextCommandStageRequirement stageRequirement,
-      TextCommandPromptPolicy promptPolicy) {
+      TextCommandPromptPolicy promptPolicy,
+      TextCommandActionCategory actionCategory) {
     definitions.put(
-        type, new TextCommandDefinition(type, dispatchGroup, stageRequirement, promptPolicy));
+        type,
+        new TextCommandDefinition(
+            type,
+            dispatchGroup,
+            stageRequirement,
+            promptPolicy,
+            actionCategory,
+            TextCommandSource.PLATFORM_BUILT_IN));
   }
 }
