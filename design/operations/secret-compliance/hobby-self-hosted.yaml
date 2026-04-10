@@ -1,11 +1,11 @@
 {
   "environment": "hobby-self-hosted",
-  "generatedAt": "2026-03-13T00:00:00Z",
+  "generatedAt": "2026-04-10T00:33:33Z",
   "credentialClasses": {
     "jwt-signing-keys-jwks": {
       "owner": "operator",
       "maxAgeDays": 30,
-      "lastRotationAt": "2026-03-08T00:00:00Z",
+      "lastRotationAt": "2026-04-10T00:00:00Z",
       "alertRuleId": "hobby.jwt.rotation.age",
       "evidenceRef": "design/operations/secret-compliance/evidence/hobby-self-hosted-2026-02-25.json",
       "evidenceKey": "jwt-signing-keys-jwks"
