@@ -12,11 +12,9 @@ These are narrow enough to implement now and unblock the current runtime/platfor
 
 1. [06.3 Replace Aggregated Item Stacks With Distinct Item Instances](./vertical-slices/06.3-task-list-container-item-instance-identity-vertical-slice.md)
    Remaining: explicit authored stackability and stack-compatibility rules on top of the now-live item-instance model.
-2. [02.18.3 Workflow Transaction Boundary Hardening](./vertical-slices/02.18.3-task-list-workflow-transaction-boundary-hardening-vertical-slice.md)
-   Remaining: decide whether Game Session lifecycle should keep the current `beforeCommit` runtime-state/dependency coupling, or move to a stricter architecture that preserves truthful committed state without open-transaction external calls.
-3. [02.18.6 Tick Scheduler Backpressure and Merge Semantics](./vertical-slices/02.18.6-task-list-tick-scheduler-backpressure-and-merge-semantics-vertical-slice.md)
+2. [02.18.6 Tick Scheduler Backpressure and Merge Semantics](./vertical-slices/02.18.6-task-list-tick-scheduler-backpressure-and-merge-semantics-vertical-slice.md)
    Remaining: decide whether pressure ever feeds back into gameplay timing policy beyond observability, and set any explicit alert thresholds.
-4. [02.14.4 Metrics Cardinality and Label Policy Hardening](./vertical-slices/02.14.4-task-list-metrics-cardinality-and-label-policy-hardening-vertical-slice.md)
+3. [02.14.4 Metrics Cardinality and Label Policy Hardening](./vertical-slices/02.14.4-task-list-metrics-cardinality-and-label-policy-hardening-vertical-slice.md)
    Remaining: continue the repo-wide audit for subtler future dynamic-label patterns, but the currently reviewed gameplay, runtime, gateway, and common-runtime hot paths are already clean.
 
 ### 2. Active architecture follow-through
@@ -32,7 +30,7 @@ These are already partly real in code and should continue after the immediate ru
 4. [06.3.1 Stable Item Instance Visible Ref Allocation](./vertical-slices/06.3.1-task-list-item-instance-visible-ref-allocation-vertical-slice.md)
    Remaining: decide whether and where ordinary prose views ever expose refs beyond management surfaces.
 5. [02.18 Service Boundary and Audit Hardening](./vertical-slices/02.18-task-list-service-boundary-and-audit-hardening-vertical-slice.md)
-   Remaining: complete the remaining `02.18.3` and `02.18.6` follow-ups after the auth-propagation seam work.
+   Remaining: complete the remaining `02.18.6` follow-up after the auth-propagation seam work.
 6. [02.18.1 Audit Log and Moderation Separation](./vertical-slices/02.18.1-task-list-audit-log-and-moderation-separation-vertical-slice.md)
    Remaining: keep future callers on the dedicated log-event path; the current account/logging-admin separation is now in place and covered.
 7. [02.18.4 World and Entity Service Boundary Auth](./vertical-slices/02.18.4-task-list-world-and-entity-service-boundary-auth-vertical-slice.md)
@@ -85,5 +83,5 @@ These are not major design problems, but they are not fully closed.
 If you want the clearest immediate path, do these next:
 
 1. `06.3` authored stackability rule pass
-2. `02.18.3` game-session lifecycle transaction-boundary follow-up
-3. `02.18.6` tick scheduler pressure-policy follow-up
+2. `02.18.6` tick scheduler pressure-policy follow-up
+3. `02.14.4` metrics-cardinality audit follow-through

@@ -23,10 +23,11 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-import org.springframework.transaction.interceptor.TransactionAspectSupport;
-import org.springframework.transaction.support.TransactionSynchronization;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.SimpleTransactionStatus;
+import org.springframework.transaction.support.TransactionCallback;
+import org.springframework.transaction.support.TransactionOperations;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /** Default implementation of {@link GameInstanceService}. */
 @SuppressFBWarnings(
@@ -39,6 +40,10 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
     matchIfMissing = false)
 public class GameInstanceServiceImpl implements GameInstanceService {
   private static final Logger logger = LoggingUtil.getLogger(GameInstanceServiceImpl.class);
+  private static final String STATUS_STARTING = "STARTING";
+  private static final String STATUS_RUNNING = "RUNNING";
+  private static final String STATUS_STOPPING = "STOPPING";
+  private static final String STATUS_STOPPED = "STOPPED";
 
   private final GameInstanceRepository repository;
   private final GameInstanceMapper mapper;
@@ -49,6 +54,7 @@ public class GameInstanceServiceImpl implements GameInstanceService {
   private final SagaRunner sagaRunner;
   private final MeterRegistry meterRegistry;
   private final DevIsolatedProperties devIsolatedProperties;
+  private final TransactionOperations transactionOperations;
 
   @Autowired
   public GameInstanceServiceImpl(
@@ -60,7 +66,32 @@ public class GameInstanceServiceImpl implements GameInstanceService {
       EntityManagementClient entityManagementClient,
       @Nullable SagaRunner sagaRunner,
       MeterRegistry meterRegistry,
-      DevIsolatedProperties devIsolatedProperties) {
+      DevIsolatedProperties devIsolatedProperties,
+      PlatformTransactionManager transactionManager) {
+    this(
+        repository,
+        mapper,
+        sessionStateService,
+        gameLogicClient,
+        worldManagementClient,
+        entityManagementClient,
+        sagaRunner,
+        meterRegistry,
+        devIsolatedProperties,
+        new TransactionTemplate(transactionManager));
+  }
+
+  GameInstanceServiceImpl(
+      GameInstanceRepository repository,
+      GameInstanceMapper mapper,
+      SessionStateService sessionStateService,
+      GameLogicClient gameLogicClient,
+      WorldManagementClient worldManagementClient,
+      EntityManagementClient entityManagementClient,
+      @Nullable SagaRunner sagaRunner,
+      MeterRegistry meterRegistry,
+      DevIsolatedProperties devIsolatedProperties,
+      TransactionOperations transactionOperations) {
     this.repository = repository;
     this.mapper = mapper;
     this.sessionStateService = sessionStateService;
@@ -70,6 +101,7 @@ public class GameInstanceServiceImpl implements GameInstanceService {
     this.sagaRunner = sagaRunner;
     this.meterRegistry = meterRegistry;
     this.devIsolatedProperties = devIsolatedProperties;
+    this.transactionOperations = transactionOperations;
   }
 
   // Constructor used in unit tests
@@ -86,12 +118,12 @@ public class GameInstanceServiceImpl implements GameInstanceService {
         null,
         null,
         new io.micrometer.core.instrument.simple.SimpleMeterRegistry(),
-        new DevIsolatedProperties(false));
+        new DevIsolatedProperties(false),
+        immediateTransactionOperations());
   }
 
   @Override
   @Timed(value = "gamesession.start")
-  @Transactional
   public GameInstanceDto startSession(StartSessionRequest request, boolean replaceExistingFirst) {
     if (devIsolatedProperties.isDevIsolated()) {
       logger.info(
@@ -105,7 +137,7 @@ public class GameInstanceServiceImpl implements GameInstanceService {
           request.runtimeVersion(),
           request.scriptPatchVersion(),
           request.ownerAccountId(),
-          "RUNNING");
+          STATUS_RUNNING);
     }
 
     logger.info(
@@ -113,158 +145,260 @@ public class GameInstanceServiceImpl implements GameInstanceService {
         request.tenantId(),
         request.runtimeVersion(),
         request.scriptPatchVersion());
-    GameInstance existingRunning = null;
-    GameInstanceDto existingRunningState = null;
-    GameInstance instance = null;
-    try {
-      if (replaceExistingFirst) {
-        existingRunning =
-            repository
-                .findFirstByTenantIdAndOwnerAccountIdAndStatus(
-                    request.tenantId(), request.ownerAccountId(), "RUNNING")
-                .orElse(null);
-        if (existingRunning != null) {
-          GameInstance existingToStop = existingRunning;
-          existingRunningState = snapshot(existingRunning);
-          GameInstanceDto existingToRestore = existingRunningState;
-          logger.info(
-              "Stopping existing session {} for tenant {} owner {}",
-              existingRunning.getId(),
-              existingRunning.getTenantId(),
-              existingRunning.getOwnerAccountId());
-          existingRunning.setStatus("STOPPED");
-          repository.save(existingRunning);
-          runBeforeCommit(
-              "delete stopped session state",
-              () ->
-                  sessionStateService.deleteState(
-                      existingToStop.getTenantId(), existingToStop.getId()),
-              () -> sessionStateService.saveState(existingToRestore));
-        }
-      }
-      instance = new GameInstance();
-      instance.setTenantId(request.tenantId());
-      instance.setRuntimeVersion(request.runtimeVersion());
-      instance.setScriptPatchVersion(request.scriptPatchVersion());
-      instance.setOwnerAccountId(request.ownerAccountId());
-      instance.setStatus("RUNNING");
-      instance = repository.save(instance);
-      GameInstanceDto dto = mapper.toDto(instance);
-      if (gameLogicClient != null
-          && worldManagementClient != null
-          && entityManagementClient != null
-          && sagaRunner != null) {
-        var saga =
-            new SagaBuilder("startSession")
-                .step("checkWorldService", () -> worldManagementClient.ping())
-                .step("checkEntityService", () -> entityManagementClient.ping())
-                .step("notifyGameLogic", () -> gameLogicClient.ping())
-                .build();
-        runBeforeCommit(
-            "validate session dependencies",
-            () -> {
-              try {
-                sagaRunner.run(saga);
-              } catch (SagaException e) {
-                logger.error("Saga failed during session start", e);
-                throw new IllegalStateException("Failed to start session", e);
-              }
-            },
-            null);
-      }
 
-      runBeforeCommit(
-          "save started session state",
-          () -> sessionStateService.saveState(dto),
-          () -> sessionStateService.deleteState(dto.tenantId(), dto.id()));
-      meterRegistry.counter("game_sessions_started_total").increment();
-      return dto;
-    } catch (RuntimeException ex) {
-      if (instance != null && instance.getId() != null) {
-        repository.delete(instance);
+    StartSessionStage stage =
+        inTransaction(
+            () -> stageStartSession(request, replaceExistingFirst), "stage session start");
+    GameInstanceDto runtimeState = withStatus(stage.startingState(), STATUS_RUNNING);
+    boolean newStateSaved = false;
+    boolean oldStateDeleted = false;
+    try {
+      validateStartDependencies();
+      sessionStateService.saveState(runtimeState);
+      newStateSaved = true;
+      if (stage.existingRunningState() != null) {
+        sessionStateService.deleteState(
+            stage.existingRunningState().tenantId(), stage.existingRunningState().id());
+        oldStateDeleted = true;
       }
-      restoreExistingSession(existingRunning, existingRunningState);
+      GameInstanceDto finalized =
+          inTransaction(() -> finalizeStartedSession(stage), "finalize session start");
+      meterRegistry.counter("game_sessions_started_total").increment();
+      return finalized;
+    } catch (RuntimeException ex) {
+      compensateStartFailure(stage, runtimeState, newStateSaved, oldStateDeleted);
       throw ex;
     }
   }
 
   @Override
   @Timed(value = "gamesession.stop")
-  @Transactional
   public GameInstanceDto stopSession(long sessionId) {
     if (devIsolatedProperties.isDevIsolated()) {
       logger.info("Dev-isolated mode enabled; acknowledging stop for session {}", sessionId);
-      return new GameInstanceDto(sessionId, 0L, "dev-isolated", null, 0L, "STOPPED");
+      return new GameInstanceDto(sessionId, 0L, "dev-isolated", null, 0L, STATUS_STOPPED);
     }
 
-    GameInstance instance =
-        repository
-            .findById(sessionId)
-            .orElseThrow(() -> new IllegalArgumentException("Session not found"));
-    GameInstanceDto runningState = snapshot(instance);
+    GameInstanceDto runningState = inTransaction(() -> stageStopSession(sessionId), "stage stop");
+    boolean stateDeleted = false;
     try {
-      instance.setStatus("STOPPED");
-      GameInstance saved = repository.save(instance);
-      if (gameLogicClient != null
-          && worldManagementClient != null
-          && entityManagementClient != null
-          && sagaRunner != null) {
-        var saga =
-            new SagaBuilder("stopSession")
-                .step("notifyGameLogic", () -> gameLogicClient.ping())
-                .step("flushWorldService", () -> worldManagementClient.ping())
-                .step("flushEntityService", () -> entityManagementClient.ping())
-                .build();
-        runBeforeCommit(
-            "validate session stop dependencies",
-            () -> {
-              try {
-                sagaRunner.run(saga);
-              } catch (SagaException e) {
-                logger.error("Saga failed during session stop", e);
-                throw new IllegalStateException("Failed to stop session", e);
-              }
-            },
-            null);
-      }
-      runBeforeCommit(
-          "delete stopped session state",
-          () -> sessionStateService.deleteState(instance.getTenantId(), instance.getId()),
-          () -> sessionStateService.saveState(runningState));
-      return mapper.toDto(saved);
+      validateStopDependencies();
+      sessionStateService.deleteState(runningState.tenantId(), runningState.id());
+      stateDeleted = true;
+      return inTransaction(() -> finalizeStoppedSession(sessionId), "finalize stop");
     } catch (RuntimeException ex) {
-      restoreSessionSnapshot(instance, runningState);
+      compensateStopFailure(runningState, stateDeleted);
       throw ex;
     }
   }
 
   @Override
   @Timed(value = "gamesession.restart")
-  @Transactional
   public GameInstanceDto restartSession(long sessionId) {
     if (devIsolatedProperties.isDevIsolated()) {
       logger.info("Dev-isolated mode enabled; acknowledging restart for session {}", sessionId);
-      return new GameInstanceDto(sessionId, 0L, "dev-isolated", null, 0L, "RUNNING");
+      return new GameInstanceDto(sessionId, 0L, "dev-isolated", null, 0L, STATUS_RUNNING);
     }
 
+    GameInstanceDto previousState =
+        inTransaction(() -> stageRestartSession(sessionId), "stage restart");
+    GameInstanceDto runtimeState = withStatus(previousState, STATUS_RUNNING);
+    boolean stateSaved = false;
+    try {
+      sessionStateService.saveState(runtimeState);
+      stateSaved = true;
+      return inTransaction(() -> finalizeRestartedSession(sessionId), "finalize restart");
+    } catch (RuntimeException ex) {
+      compensateRestartFailure(previousState, stateSaved);
+      throw ex;
+    }
+  }
+
+  private StartSessionStage stageStartSession(
+      StartSessionRequest request, boolean replaceExistingFirst) {
+    GameInstanceDto existingRunningState = null;
+    if (replaceExistingFirst) {
+      existingRunningState =
+          repository
+              .findFirstByTenantIdAndOwnerAccountIdAndStatus(
+                  request.tenantId(), request.ownerAccountId(), STATUS_RUNNING)
+              .map(this::snapshot)
+              .orElse(null);
+    }
+    GameInstance instance = new GameInstance();
+    instance.setTenantId(request.tenantId());
+    instance.setRuntimeVersion(request.runtimeVersion());
+    instance.setScriptPatchVersion(request.scriptPatchVersion());
+    instance.setOwnerAccountId(request.ownerAccountId());
+    instance.setStatus(STATUS_STARTING);
+    return new StartSessionStage(snapshot(repository.save(instance)), existingRunningState);
+  }
+
+  private GameInstanceDto finalizeStartedSession(StartSessionStage stage) {
+    if (stage.existingRunningState() != null) {
+      GameInstance existingRunning =
+          repository
+              .findById(stage.existingRunningState().id())
+              .orElseThrow(() -> new IllegalArgumentException("Session not found"));
+      existingRunning.setStatus(STATUS_STOPPED);
+      repository.save(existingRunning);
+    }
+    GameInstance instance =
+        repository
+            .findById(stage.startingState().id())
+            .orElseThrow(() -> new IllegalArgumentException("Session not found"));
+    instance.setStatus(STATUS_RUNNING);
+    return mapper.toDto(repository.save(instance));
+  }
+
+  private GameInstanceDto stageStopSession(long sessionId) {
+    GameInstance instance =
+        repository
+            .findById(sessionId)
+            .orElseThrow(() -> new IllegalArgumentException("Session not found"));
+    GameInstanceDto runningState = snapshot(instance);
+    instance.setStatus(STATUS_STOPPING);
+    repository.save(instance);
+    return runningState;
+  }
+
+  private GameInstanceDto finalizeStoppedSession(long sessionId) {
+    GameInstance instance =
+        repository
+            .findById(sessionId)
+            .orElseThrow(() -> new IllegalArgumentException("Session not found"));
+    instance.setStatus(STATUS_STOPPED);
+    return mapper.toDto(repository.save(instance));
+  }
+
+  private GameInstanceDto stageRestartSession(long sessionId) {
     GameInstance instance =
         repository
             .findById(sessionId)
             .orElseThrow(() -> new IllegalArgumentException("Session not found"));
     GameInstanceDto previousState = snapshot(instance);
-    try {
-      instance.setStatus("RUNNING");
-      GameInstance saved = repository.save(instance);
-      GameInstanceDto dto = mapper.toDto(saved);
-      runBeforeCommit(
-          "save restarted session state",
-          () -> sessionStateService.saveState(dto),
-          () -> sessionStateService.deleteState(dto.tenantId(), dto.id()));
-      return dto;
-    } catch (RuntimeException ex) {
-      restoreSessionSnapshot(instance, previousState);
-      throw ex;
+    instance.setStatus(STATUS_STARTING);
+    repository.save(instance);
+    return previousState;
+  }
+
+  private GameInstanceDto finalizeRestartedSession(long sessionId) {
+    GameInstance instance =
+        repository
+            .findById(sessionId)
+            .orElseThrow(() -> new IllegalArgumentException("Session not found"));
+    instance.setStatus(STATUS_RUNNING);
+    return mapper.toDto(repository.save(instance));
+  }
+
+  private void validateStartDependencies() {
+    if (gameLogicClient == null
+        || worldManagementClient == null
+        || entityManagementClient == null
+        || sagaRunner == null) {
+      return;
     }
+    var saga =
+        new SagaBuilder("startSession")
+            .step("checkWorldService", () -> worldManagementClient.ping())
+            .step("checkEntityService", () -> entityManagementClient.ping())
+            .step("notifyGameLogic", () -> gameLogicClient.ping())
+            .build();
+    try {
+      sagaRunner.run(saga);
+    } catch (SagaException e) {
+      logger.error("Saga failed during session start", e);
+      throw new IllegalStateException("Failed to start session", e);
+    }
+  }
+
+  private void validateStopDependencies() {
+    if (gameLogicClient == null
+        || worldManagementClient == null
+        || entityManagementClient == null
+        || sagaRunner == null) {
+      return;
+    }
+    var saga =
+        new SagaBuilder("stopSession")
+            .step("notifyGameLogic", () -> gameLogicClient.ping())
+            .step("flushWorldService", () -> worldManagementClient.ping())
+            .step("flushEntityService", () -> entityManagementClient.ping())
+            .build();
+    try {
+      sagaRunner.run(saga);
+    } catch (SagaException e) {
+      logger.error("Saga failed during session stop", e);
+      throw new IllegalStateException("Failed to stop session", e);
+    }
+  }
+
+  private void compensateStartFailure(
+      StartSessionStage stage,
+      GameInstanceDto runtimeState,
+      boolean newStateSaved,
+      boolean oldStateDeleted) {
+    if (newStateSaved) {
+      runRollbackSafely(
+          "delete failed started session state",
+          () -> sessionStateService.deleteState(runtimeState.tenantId(), runtimeState.id()));
+    }
+    if (oldStateDeleted && stage.existingRunningState() != null) {
+      runRollbackSafely(
+          "restore replaced session state",
+          () -> sessionStateService.saveState(stage.existingRunningState()));
+    }
+    runRollbackSafely(
+        "delete failed starting session row",
+        () ->
+            inTransaction(
+                () -> {
+                  repository.deleteById(stage.startingState().id());
+                  return null;
+                },
+                "delete failed starting session row"));
+  }
+
+  private void compensateStopFailure(GameInstanceDto runningState, boolean stateDeleted) {
+    if (stateDeleted) {
+      runRollbackSafely(
+          "restore stopped session runtime state",
+          () -> sessionStateService.saveState(runningState));
+    }
+    runRollbackSafely(
+        "restore stopping session row",
+        () ->
+            inTransaction(
+                () -> {
+                  GameInstance instance =
+                      repository
+                          .findById(runningState.id())
+                          .orElseThrow(() -> new IllegalArgumentException("Session not found"));
+                  restoreSessionSnapshot(instance, runningState);
+                  return null;
+                },
+                "restore stopping session row"));
+  }
+
+  private void compensateRestartFailure(GameInstanceDto previousState, boolean stateSaved) {
+    if (stateSaved) {
+      runRollbackSafely(
+          "delete restarted session state",
+          () -> sessionStateService.deleteState(previousState.tenantId(), previousState.id()));
+    }
+    runRollbackSafely(
+        "restore restarted session row",
+        () ->
+            inTransaction(
+                () -> {
+                  GameInstance instance =
+                      repository
+                          .findById(previousState.id())
+                          .orElseThrow(() -> new IllegalArgumentException("Session not found"));
+                  restoreSessionSnapshot(instance, previousState);
+                  return null;
+                },
+                "restore restarted session row"));
   }
 
   private GameInstanceDto snapshot(GameInstance instance) {
@@ -277,33 +411,23 @@ public class GameInstanceServiceImpl implements GameInstanceService {
         instance.getStatus());
   }
 
-  private void runBeforeCommit(
-      String actionName, Runnable action, @Nullable Runnable rollbackAction) {
-    runOrThrow(actionName, action);
-    if (!TransactionSynchronizationManager.isSynchronizationActive() || rollbackAction == null) {
-      return;
-    }
-    TransactionSynchronizationManager.registerSynchronization(
-        new TransactionSynchronization() {
-          @Override
-          public void afterCompletion(int status) {
-            if (status == TransactionSynchronization.STATUS_ROLLED_BACK) {
-              runRollbackSafely(actionName, rollbackAction);
-            }
-          }
-        });
+  private void restoreSessionSnapshot(GameInstance instance, GameInstanceDto snapshot) {
+    instance.setStatus(snapshot.status());
+    instance.setRuntimeVersion(snapshot.runtimeVersion());
+    instance.setScriptPatchVersion(snapshot.scriptPatchVersion());
+    instance.setOwnerAccountId(snapshot.ownerAccountId());
+    instance.setTenantId(snapshot.tenantId());
+    repository.save(instance);
   }
 
-  private void runOrThrow(String actionName, Runnable action) {
-    try {
-      action.run();
-    } catch (RuntimeException ex) {
-      logger.warn("Failed to {}", actionName, ex);
-      if (TransactionSynchronizationManager.isActualTransactionActive()) {
-        TransactionAspectSupport.currentTransactionStatus().setRollbackOnly();
-      }
-      throw ex;
-    }
+  private GameInstanceDto withStatus(GameInstanceDto snapshot, String status) {
+    return new GameInstanceDto(
+        snapshot.id(),
+        snapshot.tenantId(),
+        snapshot.runtimeVersion(),
+        snapshot.scriptPatchVersion(),
+        snapshot.ownerAccountId(),
+        status);
   }
 
   private void runRollbackSafely(String actionName, Runnable rollbackAction) {
@@ -314,19 +438,29 @@ public class GameInstanceServiceImpl implements GameInstanceService {
     }
   }
 
-  private void restoreExistingSession(
-      @Nullable GameInstance existingRunning, @Nullable GameInstanceDto existingRunningState) {
-    if (existingRunning != null && existingRunningState != null) {
-      restoreSessionSnapshot(existingRunning, existingRunningState);
+  private <T> T inTransaction(TransactionSupplier<T> supplier, String actionName) {
+    try {
+      return transactionOperations.execute(status -> supplier.get());
+    } catch (RuntimeException ex) {
+      logger.warn("Failed to {}", actionName, ex);
+      throw ex;
     }
   }
 
-  private void restoreSessionSnapshot(GameInstance instance, GameInstanceDto snapshot) {
-    instance.setStatus(snapshot.status());
-    instance.setRuntimeVersion(snapshot.runtimeVersion());
-    instance.setScriptPatchVersion(snapshot.scriptPatchVersion());
-    instance.setOwnerAccountId(snapshot.ownerAccountId());
-    instance.setTenantId(snapshot.tenantId());
-    repository.save(instance);
+  private static TransactionOperations immediateTransactionOperations() {
+    return new TransactionOperations() {
+      @Override
+      public <T> T execute(TransactionCallback<T> action) {
+        return action.doInTransaction(new SimpleTransactionStatus());
+      }
+    };
   }
+
+  @FunctionalInterface
+  private interface TransactionSupplier<T> {
+    T get();
+  }
+
+  private record StartSessionStage(
+      GameInstanceDto startingState, @Nullable GameInstanceDto existingRunningState) {}
 }
