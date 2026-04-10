@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamesession.command.text;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 
 import org.junit.jupiter.api.Test;
 
@@ -44,6 +45,19 @@ class BuiltInTextCommandRegistryTest {
     assertEquals(TextCommandDispatchGroup.ENQUEUE_ONLY, definition.dispatchGroup());
     assertEquals(TextCommandActionCategory.SYSTEM, definition.actionCategory());
     assertEquals(TextCommandSource.EXTENSION, definition.source());
+  }
+
+  @Test
+  void activeBuiltInCommandSurfaceIsExplicitlyRegistered() {
+    for (TextCommandType type : TextCommandType.values()) {
+      if (type == TextCommandType.NOOP || type == TextCommandType.UNKNOWN) {
+        continue;
+      }
+      TextCommandDefinition definition = registry.definitionFor(type);
+
+      assertEquals(TextCommandSource.PLATFORM_BUILT_IN, definition.source(), type.name());
+      assertNotEquals(TextCommandDispatchGroup.ENQUEUE_ONLY, definition.dispatchGroup(), type.name());
+    }
   }
 
   private void assertDefinition(
