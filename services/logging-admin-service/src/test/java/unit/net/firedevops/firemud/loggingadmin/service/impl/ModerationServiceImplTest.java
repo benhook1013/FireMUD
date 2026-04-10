@@ -1,8 +1,10 @@
 package net.firedevops.firemud.loggingadmin.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -57,6 +59,34 @@ class ModerationServiceImplTest {
 
     assertEquals(dto, result);
     verify(repository).save(any(ModerationAction.class));
+    verify(gameSessionClient).stopSession(9L);
+  }
+
+  @Test
+  void applyActionDeletesRecordedActionWhenSessionStopFails() throws Exception {
+    ApplyModerationActionRequest req = new ApplyModerationActionRequest(1L, 2L, 9L, "ban", "test");
+    ModerationAction saved = new ModerationAction();
+    saved.setId(1L);
+    saved.setCreatedAt(Instant.now());
+    when(repository.save(any())).thenReturn(saved);
+    doThrow(new RuntimeException("session service unavailable"))
+        .when(gameSessionClient)
+        .stopSession(9L);
+    doAnswer(
+            inv -> {
+              ((net.firedevops.firemud.common.saga.Saga) inv.getArgument(0)).run();
+              return null;
+            })
+        .when(sagaRunner)
+        .run(any());
+
+    IllegalStateException ex =
+        assertThrows(IllegalStateException.class, () -> service.applyAction(req));
+
+    assertEquals("Moderation action failed", ex.getMessage());
+    verify(repository).save(any(ModerationAction.class));
+    verify(repository).delete(saved);
+    verify(accountClient).deleteAccount(1L, 2L);
     verify(gameSessionClient).stopSession(9L);
   }
 }
