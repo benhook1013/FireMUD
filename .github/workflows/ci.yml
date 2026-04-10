@@ -27,7 +27,7 @@ jobs:
     steps:
       - name: Compute affected jobs
         id: compute
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             const allServices = [
@@ -498,7 +498,7 @@ jobs:
     if: github.event_name == 'pull_request' && always()
     steps:
       - name: 💬 Publish Validation Summary Comment
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             const statusIcon = (result) => {
