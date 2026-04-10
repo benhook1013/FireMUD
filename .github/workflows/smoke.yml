@@ -23,7 +23,7 @@ jobs:
     steps:
       - name: Compute smoke scope
         id: compute
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             const files = await github.paginate(
@@ -154,7 +154,7 @@ jobs:
     if: ${{ always() }}
     steps:
       - name: 💬 Publish Smoke Summary Comment
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             const liteEnabled = "${{ needs.changes.outputs.run_smoke_lite }}" === "true";
@@ -226,7 +226,7 @@ jobs:
 
       - name: Wait for full smoke dispatch result
         if: ${{ needs.changes.outputs.run_smoke_full == 'true' }}
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             const owner = context.repo.owner;
