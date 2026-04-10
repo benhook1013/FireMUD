@@ -2,7 +2,6 @@ package net.firedevops.firemud.entitymanagement.service.impl;
 
 import io.micrometer.core.annotation.Timed;
 import java.util.List;
-import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.entitymanagement.dto.ContainerContentEntryDto;
 import net.firedevops.firemud.entitymanagement.dto.InventoryEntryDto;
 import net.firedevops.firemud.entitymanagement.entity.Character;
@@ -14,13 +13,13 @@ import net.firedevops.firemud.entitymanagement.repository.ContainerInstanceRepos
 import net.firedevops.firemud.entitymanagement.repository.ItemInstanceRepository;
 import net.firedevops.firemud.entitymanagement.repository.ItemRepository;
 import net.firedevops.firemud.entitymanagement.service.ContainerService;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
-@RequiredArgsConstructor
 public class ContainerServiceImpl implements ContainerService {
   private final ContainerInstanceRepository containerInstanceRepository;
   private final ItemInstanceRepository itemInstanceRepository;
@@ -29,6 +28,24 @@ public class ContainerServiceImpl implements ContainerService {
   private final ItemTransferSupport itemTransferSupport;
   private final ContainerHolderSyncSupport containerHolderSyncSupport;
   private final ContainerHolderPolicySupport containerHolderPolicySupport;
+
+  @Autowired
+  public ContainerServiceImpl(
+      ContainerInstanceRepository containerInstanceRepository,
+      ItemInstanceRepository itemInstanceRepository,
+      CharacterRepository characterRepository,
+      ItemRepository itemRepository,
+      ItemTransferSupport itemTransferSupport,
+      ContainerHolderSyncSupport containerHolderSyncSupport,
+      ContainerHolderPolicySupport containerHolderPolicySupport) {
+    this.containerInstanceRepository = containerInstanceRepository;
+    this.itemInstanceRepository = itemInstanceRepository;
+    this.characterRepository = characterRepository;
+    this.itemRepository = itemRepository;
+    this.itemTransferSupport = itemTransferSupport;
+    this.containerHolderSyncSupport = containerHolderSyncSupport;
+    this.containerHolderPolicySupport = containerHolderPolicySupport;
+  }
 
   ContainerServiceImpl(
       ContainerInstanceRepository containerInstanceRepository,
@@ -111,7 +128,7 @@ public class ContainerServiceImpl implements ContainerService {
     ContainerInstance containerInstance =
         containerHolderPolicySupport.requireAccessibleContainer(
             tenantId, character.getId(), containerInstanceId);
-    Item item = requireItem(tenantId, itemId);
+    requireItem(tenantId, itemId);
     List<ItemInstance> contained =
         itemInstanceRepository.findByTenantIdAndContainerInstance_IdAndItem_IdOrderByIdAsc(
             tenantId, containerInstance.getId(), itemId);

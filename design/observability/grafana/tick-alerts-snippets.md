@@ -100,7 +100,7 @@ Example alerts for the bounded fan-out scheduler's merge and rejection pressure:
     service: game-session-service
     severity: P1
     owner: gameplay
-    runbook: design/architecture/system-architecture-tick-incident-runbook.md#tick-scheduler-pressure
+    runbook: design/architecture/system-architecture-tick-incident-runbook.md#stalled-tick-region
   annotations:
     summary: Tick scheduler is rejecting session work
     description: The bounded tick scheduler has rejected one or more session submissions for at least 10 minutes. Investigate executor saturation, queue depth, and session count before gameplay timing starts degrading materially.
@@ -112,7 +112,7 @@ Example alerts for the bounded fan-out scheduler's merge and rejection pressure:
     service: game-session-service
     severity: P2
     owner: gameplay
-    runbook: design/architecture/system-architecture-tick-incident-runbook.md#tick-scheduler-pressure
+    runbook: design/architecture/system-architecture-tick-incident-runbook.md#stalled-tick-region
   annotations:
     summary: Tick scheduler executor queue depth is persistently high
     description: The bounded executor behind the tick scheduler is spending sustained time near queue saturation. Investigate recent merge/rejection rates and the number of active sessions.
@@ -122,9 +122,9 @@ Example alerts for the bounded fan-out scheduler's merge and rejection pressure:
   for: 15m
   labels:
     service: game-session-service
-    severity: P3
+    severity: P2
     owner: gameplay
-    runbook: design/architecture/system-architecture-tick-incident-runbook.md#tick-scheduler-pressure
+    runbook: design/architecture/system-architecture-tick-incident-runbook.md#stalled-tick-region
   annotations:
     summary: Tick scheduler is merging overlapping work heavily
     description: The bounded fan-out scheduler is repeatedly merging overlapping pulses instead of scheduling fresh work. This is expected under moderate pressure, but sustained elevated merges indicate the runtime is running close to its scheduling budget.
