@@ -10,9 +10,7 @@ It intentionally omits completed slices and uses the individual slice docs as th
 
 These are narrow enough to implement now and unblock the current runtime/platform direction.
 
-1. [02.14.4 Metrics Cardinality and Label Policy Hardening](./vertical-slices/02.14.4-task-list-metrics-cardinality-and-label-policy-hardening-vertical-slice.md)
-   Remaining: continue only opportunistic audit tail work; the currently reviewed gameplay, runtime, gateway, shared gRPC, proxy, and common-runtime hot paths are already clean.
-2. [06.3 Replace Aggregated Item Stacks With Distinct Item Instances](./vertical-slices/06.3-task-list-container-item-instance-identity-vertical-slice.md)
+1. [06.3 Replace Aggregated Item Stacks With Distinct Item Instances](./vertical-slices/06.3-task-list-container-item-instance-identity-vertical-slice.md)
    Remaining: extend the now-live first strict stack model with richer authored compatibility fingerprints beyond definition-level sameness.
 
 ### 2. Active architecture follow-through
@@ -78,11 +76,13 @@ These are not major design problems, but they are not fully closed.
 4. [02.8 Game Logic Restart Invisibility](./vertical-slices/02.8-task-list-game-logic-restart-invisibility-vertical-slice.md)
 5. [02.18.6 Tick Scheduler Backpressure and Merge Semantics](./vertical-slices/02.18.6-task-list-tick-scheduler-backpressure-and-merge-semantics-vertical-slice.md)
    Remaining: operator-proof the chosen alert thresholds in preview/prod-like runs.
+6. [02.14.4 Metrics Cardinality and Label Policy Hardening](./vertical-slices/02.14.4-task-list-metrics-cardinality-and-label-policy-hardening-vertical-slice.md)
+   Remaining: only opportunistic audit tail work and later policy wording cleanup.
 
 ## Practical Next Three
 
 If you want the clearest immediate path, do these next:
 
-1. `02.14.4` metrics-cardinality audit follow-through
-2. `06.3.2` richer authored compatibility-fingerprint follow-up
-3. `02.18.6` operator-proof the chosen scheduler thresholds
+1. `06.3.2` richer authored compatibility-fingerprint follow-up
+2. `02.18.6` operator-proof the chosen scheduler thresholds
+3. `02.14.4` opportunistic metrics-cardinality tail only
