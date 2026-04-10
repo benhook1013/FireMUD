@@ -45,7 +45,7 @@ Service definitions reside in [../../../../protos/game-session/v1](../../../../p
 ### REST endpoints
 
 - `GET /ping` – basic health check returning `"pong"`.
-- `POST /sessions` – create a new game instance from a published version.
+- `POST /sessions` – operator/bootstrap convenience for creating a new game instance from a published version. This is not the canonical player gameplay-admission seam and does not apply the full gRPC `StartSession` admission policy surface.
 - `POST /sessions/{id}/stop` – stop a running session.
 - `POST /sessions/{id}/restart` – restart a stopped session.
 - `POST /sessions/{id}/refresh-roles` – refresh the player's roles for an active session.

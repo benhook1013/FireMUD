@@ -12,7 +12,12 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-/** REST endpoints for managing game instances. */
+/**
+ * REST endpoints for managing game instances.
+ *
+ * <p>These routes are an operator/bootstrap convenience, not the canonical gameplay admission seam.
+ * Player-facing admission policy lives on the gRPC `StartSession` path.
+ */
 @RestController
 @RequestMapping("/sessions")
 public class GameInstanceController {
@@ -25,7 +30,7 @@ public class GameInstanceController {
   @PostMapping
   public ResponseEntity<ApiResponse<GameInstanceDto>> startSession(
       @Valid @RequestBody StartSessionRequest request) {
-    GameInstanceDto dto = gameInstanceService.startSession(request);
+    GameInstanceDto dto = gameInstanceService.startSession(request, false);
     return ResponseEntity.ok(ApiResponse.success(dto));
   }
 

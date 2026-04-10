@@ -41,7 +41,8 @@ class GameInstanceControllerTest {
     GameInstanceDto dto = new GameInstanceDto(1L, 1L, "v1", null, 1L, "RUNNING");
     org.mockito.Mockito.when(
             gameInstanceService.startSession(
-                org.mockito.ArgumentMatchers.any(StartSessionRequest.class)))
+                org.mockito.ArgumentMatchers.any(StartSessionRequest.class),
+                org.mockito.ArgumentMatchers.eq(false)))
         .thenReturn(dto);
     StartSessionRequest request = new StartSessionRequest(1L, "v1", null, 1L);
     mockMvc
