@@ -1,6 +1,7 @@
 package net.firedevops.firemud.entitymanagement.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
@@ -11,10 +12,12 @@ import net.firedevops.firemud.entitymanagement.entity.Character;
 import net.firedevops.firemud.entitymanagement.entity.ContainerInstance;
 import net.firedevops.firemud.entitymanagement.entity.Item;
 import net.firedevops.firemud.entitymanagement.entity.ItemInstance;
+import net.firedevops.firemud.entitymanagement.entity.ItemStack;
 import net.firedevops.firemud.entitymanagement.repository.CharacterRepository;
 import net.firedevops.firemud.entitymanagement.repository.ContainerInstanceRepository;
 import net.firedevops.firemud.entitymanagement.repository.ItemInstanceRepository;
 import net.firedevops.firemud.entitymanagement.repository.ItemRepository;
+import net.firedevops.firemud.entitymanagement.repository.ItemStackRepository;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.springframework.data.domain.PageImpl;
@@ -28,24 +31,26 @@ class ContainerServiceImplTest {
     ItemInstanceRepository itemInstanceRepo = Mockito.mock(ItemInstanceRepository.class);
     CharacterRepository characterRepo = Mockito.mock(CharacterRepository.class);
     ItemRepository itemRepo = Mockito.mock(ItemRepository.class);
+    ItemStackRepository itemStackRepo = Mockito.mock(ItemStackRepository.class);
     ContainerServiceImpl service =
         new ContainerServiceImpl(
             containerInstanceRepo,
             itemInstanceRepo,
             characterRepo,
             itemRepo,
+            itemStackRepo,
             new ItemTransferSupport(),
             new ContainerHolderSyncSupport(containerInstanceRepo));
 
     Character character = character(7L, 1L);
-    Item container = item(99L, 1L, "Old Chest", true);
+    Item container = item(99L, 1L, "Old Chest", true, false);
     ContainerInstance containerInstance = new ContainerInstance();
     containerInstance.setId(500L);
     containerInstance.setTenantId(1L);
     containerInstance.setCharacter(character);
     containerInstance.setItem(container);
 
-    Item item = item(100L, 1L, "Torch", false);
+    Item item = item(100L, 1L, "Torch", false, false);
     ItemInstance contained = itemInstance(300L, 1L, null, item);
     contained.setContainerInstance(containerInstance);
 
@@ -55,6 +60,9 @@ class ContainerServiceImplTest {
     when(itemInstanceRepo.findByTenantIdAndContainerInstance_IdOrderByIdAsc(
             1L, 500L, Pageable.unpaged()))
         .thenReturn(new PageImpl<>(List.of(contained)));
+    when(itemStackRepo.findByTenantIdAndContainerInstance_IdOrderByIdAsc(
+            1L, 500L, Pageable.unpaged()))
+        .thenReturn(new PageImpl<>(List.of()));
 
     var result = service.listContainerContents(1L, 7L, 500L, Pageable.unpaged());
 
@@ -65,29 +73,83 @@ class ContainerServiceImplTest {
   }
 
   @Test
-  void putItemIntoContainerMovesSelectedInstancesIntoContainer() {
+  void listContainerContentsReturnsStackBackedDtos() {
     ContainerInstanceRepository containerInstanceRepo =
         Mockito.mock(ContainerInstanceRepository.class);
     ItemInstanceRepository itemInstanceRepo = Mockito.mock(ItemInstanceRepository.class);
     CharacterRepository characterRepo = Mockito.mock(CharacterRepository.class);
     ItemRepository itemRepo = Mockito.mock(ItemRepository.class);
+    ItemStackRepository itemStackRepo = Mockito.mock(ItemStackRepository.class);
     ContainerServiceImpl service =
         new ContainerServiceImpl(
             containerInstanceRepo,
             itemInstanceRepo,
             characterRepo,
             itemRepo,
+            itemStackRepo,
             new ItemTransferSupport(),
             new ContainerHolderSyncSupport(containerInstanceRepo));
 
-    Character character = character(1L, 1L);
-    Item container = item(2L, 1L, "Chest", true);
+    Character character = character(7L, 1L);
+    Item container = item(99L, 1L, "Old Chest", true, false);
     ContainerInstance containerInstance = new ContainerInstance();
     containerInstance.setId(500L);
     containerInstance.setTenantId(1L);
     containerInstance.setCharacter(character);
     containerInstance.setItem(container);
-    Item item = item(3L, 1L, "Torch", false);
+
+    Item arrows = item(100L, 1L, "Arrows", false, true);
+    ItemStack stack = new ItemStack();
+    stack.setId(301L);
+    stack.setTenantId(1L);
+    stack.setContainerInstance(containerInstance);
+    stack.setItem(arrows);
+    stack.setCompatibilityFingerprint("item-definition:100");
+    stack.setQuantity(4);
+
+    when(characterRepo.findByIdAndTenantId(7L, 1L)).thenReturn(Optional.of(character));
+    when(containerInstanceRepo.findAccessibleByIdAndTenantIdAndCharacterId(500L, 1L, 7L))
+        .thenReturn(Optional.of(containerInstance));
+    when(itemInstanceRepo.findByTenantIdAndContainerInstance_IdOrderByIdAsc(
+            1L, 500L, Pageable.unpaged()))
+        .thenReturn(new PageImpl<>(List.of()));
+    when(itemStackRepo.findByTenantIdAndContainerInstance_IdOrderByIdAsc(
+            1L, 500L, Pageable.unpaged()))
+        .thenReturn(new PageImpl<>(List.of(stack)));
+
+    var result = service.listContainerContents(1L, 7L, 500L, Pageable.unpaged());
+
+    assertEquals(1, result.getTotalElements());
+    assertEquals(4, result.getContent().get(0).quantity());
+    assertNull(result.getContent().get(0).itemInstanceId());
+  }
+
+  @Test
+  void putItemIntoContainerMovesSelectedInstancesIntoContainer() {
+    ContainerInstanceRepository containerInstanceRepo =
+        Mockito.mock(ContainerInstanceRepository.class);
+    ItemInstanceRepository itemInstanceRepo = Mockito.mock(ItemInstanceRepository.class);
+    CharacterRepository characterRepo = Mockito.mock(CharacterRepository.class);
+    ItemRepository itemRepo = Mockito.mock(ItemRepository.class);
+    ItemStackRepository itemStackRepo = Mockito.mock(ItemStackRepository.class);
+    ContainerServiceImpl service =
+        new ContainerServiceImpl(
+            containerInstanceRepo,
+            itemInstanceRepo,
+            characterRepo,
+            itemRepo,
+            itemStackRepo,
+            new ItemTransferSupport(),
+            new ContainerHolderSyncSupport(containerInstanceRepo));
+
+    Character character = character(1L, 1L);
+    Item container = item(2L, 1L, "Chest", true, false);
+    ContainerInstance containerInstance = new ContainerInstance();
+    containerInstance.setId(500L);
+    containerInstance.setTenantId(1L);
+    containerInstance.setCharacter(character);
+    containerInstance.setItem(container);
+    Item item = item(3L, 1L, "Torch", false, false);
     ItemInstance first = itemInstance(41L, 1L, character, item);
     ItemInstance second = itemInstance(42L, 1L, character, item);
 
@@ -110,213 +172,58 @@ class ContainerServiceImplTest {
   }
 
   @Test
-  void putItemIntoContainerRejectsStaleSourceMismatch() {
+  void putItemIntoContainerMovesStackQuantity() {
     ContainerInstanceRepository containerInstanceRepo =
         Mockito.mock(ContainerInstanceRepository.class);
     ItemInstanceRepository itemInstanceRepo = Mockito.mock(ItemInstanceRepository.class);
     CharacterRepository characterRepo = Mockito.mock(CharacterRepository.class);
     ItemRepository itemRepo = Mockito.mock(ItemRepository.class);
+    ItemStackRepository itemStackRepo = Mockito.mock(ItemStackRepository.class);
     ContainerServiceImpl service =
         new ContainerServiceImpl(
             containerInstanceRepo,
             itemInstanceRepo,
             characterRepo,
             itemRepo,
+            itemStackRepo,
             new ItemTransferSupport(),
             new ContainerHolderSyncSupport(containerInstanceRepo));
 
     Character character = character(1L, 1L);
-    Item container = item(2L, 1L, "Chest", true);
+    Item container = item(2L, 1L, "Chest", true, false);
     ContainerInstance containerInstance = new ContainerInstance();
     containerInstance.setId(500L);
     containerInstance.setTenantId(1L);
     containerInstance.setCharacter(character);
     containerInstance.setItem(container);
-    Item item = item(3L, 1L, "Torch", false);
-    ItemInstance stale = itemInstance(41L, 1L, character, item);
-    stale.setGameInstanceId("GI-1");
-    stale.setRoomInstanceId("R-1");
+    Item arrows = item(3L, 1L, "Arrows", false, true);
+    ItemStack inventoryStack = new ItemStack();
+    inventoryStack.setId(41L);
+    inventoryStack.setTenantId(1L);
+    inventoryStack.setCharacter(character);
+    inventoryStack.setItem(arrows);
+    inventoryStack.setCompatibilityFingerprint("item-definition:3");
+    inventoryStack.setQuantity(5);
 
     when(characterRepo.findByIdAndTenantId(1L, 1L)).thenReturn(Optional.of(character));
     when(containerInstanceRepo.findAccessibleByIdAndTenantIdAndCharacterId(500L, 1L, 1L))
         .thenReturn(Optional.of(containerInstance));
-    when(itemRepo.findByIdAndTenantId(3L, 1L)).thenReturn(Optional.of(item));
-    when(itemInstanceRepo
-            .findByTenantIdAndCharacter_IdAndItem_IdAndEquipmentSlotIsNullAndGameInstanceIdIsNullAndRoomInstanceIdIsNullOrderByIdAsc(
-                1L, 1L, 3L))
-        .thenReturn(List.of(stale));
-
-    assertThrows(
-        IllegalArgumentException.class,
-        () -> service.putItemIntoContainer(1L, 1L, 500L, 3L, null, 1));
-  }
-
-  @Test
-  void putItemIntoContainerRejectsAlreadyMovedToDestination() {
-    ContainerInstanceRepository containerInstanceRepo =
-        Mockito.mock(ContainerInstanceRepository.class);
-    ItemInstanceRepository itemInstanceRepo = Mockito.mock(ItemInstanceRepository.class);
-    CharacterRepository characterRepo = Mockito.mock(CharacterRepository.class);
-    ItemRepository itemRepo = Mockito.mock(ItemRepository.class);
-    ContainerServiceImpl service =
-        new ContainerServiceImpl(
-            containerInstanceRepo,
-            itemInstanceRepo,
-            characterRepo,
-            itemRepo,
-            new ItemTransferSupport(),
-            new ContainerHolderSyncSupport(containerInstanceRepo));
-
-    Character character = character(1L, 1L);
-    Item container = item(2L, 1L, "Chest", true);
-    ContainerInstance containerInstance = new ContainerInstance();
-    containerInstance.setId(500L);
-    containerInstance.setTenantId(1L);
-    containerInstance.setCharacter(character);
-    containerInstance.setItem(container);
-    Item item = item(3L, 1L, "Torch", false);
-    ItemInstance stale = itemInstance(41L, 1L, null, item);
-    stale.setContainerInstance(containerInstance);
-
-    when(characterRepo.findByIdAndTenantId(1L, 1L)).thenReturn(Optional.of(character));
-    when(containerInstanceRepo.findAccessibleByIdAndTenantIdAndCharacterId(500L, 1L, 1L))
-        .thenReturn(Optional.of(containerInstance));
-    when(itemRepo.findByIdAndTenantId(3L, 1L)).thenReturn(Optional.of(item));
-    when(itemInstanceRepo
-            .findByTenantIdAndCharacter_IdAndItem_IdAndEquipmentSlotIsNullAndGameInstanceIdIsNullAndRoomInstanceIdIsNullOrderByIdAsc(
-                1L, 1L, 3L))
-        .thenReturn(List.of(stale));
-
-    IllegalArgumentException ex =
-        assertThrows(
-            IllegalArgumentException.class,
-            () -> service.putItemIntoContainer(1L, 1L, 500L, 3L, null, 1));
-
-    assertEquals("Item already at destination", ex.getMessage());
-  }
-
-  @Test
-  void putItemIntoContainerUsesExplicitItemInstanceId() {
-    ContainerInstanceRepository containerInstanceRepo =
-        Mockito.mock(ContainerInstanceRepository.class);
-    ItemInstanceRepository itemInstanceRepo = Mockito.mock(ItemInstanceRepository.class);
-    CharacterRepository characterRepo = Mockito.mock(CharacterRepository.class);
-    ItemRepository itemRepo = Mockito.mock(ItemRepository.class);
-    ContainerServiceImpl service =
-        new ContainerServiceImpl(
-            containerInstanceRepo,
-            itemInstanceRepo,
-            characterRepo,
-            itemRepo,
-            new ItemTransferSupport(),
-            new ContainerHolderSyncSupport(containerInstanceRepo));
-
-    Character character = character(1L, 1L);
-    Item container = item(2L, 1L, "Chest", true);
-    ContainerInstance containerInstance = new ContainerInstance();
-    containerInstance.setId(500L);
-    containerInstance.setTenantId(1L);
-    containerInstance.setCharacter(character);
-    containerInstance.setItem(container);
-    Item item = item(3L, 1L, "Torch", false);
-    ItemInstance first = itemInstance(41L, 1L, character, item);
-    ItemInstance second = itemInstance(42L, 1L, character, item);
-
-    when(characterRepo.findByIdAndTenantId(1L, 1L)).thenReturn(Optional.of(character));
-    when(containerInstanceRepo.findAccessibleByIdAndTenantIdAndCharacterId(500L, 1L, 1L))
-        .thenReturn(Optional.of(containerInstance));
-    when(itemRepo.findByIdAndTenantId(3L, 1L)).thenReturn(Optional.of(item));
-    when(itemInstanceRepo
-            .findByTenantIdAndCharacter_IdAndItem_IdAndEquipmentSlotIsNullAndGameInstanceIdIsNullAndRoomInstanceIdIsNullOrderByIdAsc(
-                1L, 1L, 3L))
-        .thenReturn(List.of(first, second));
-    when(itemInstanceRepo.save(any(ItemInstance.class)))
+    when(itemRepo.findByIdAndTenantId(3L, 1L)).thenReturn(Optional.of(arrows));
+    when(itemStackRepo
+            .findByTenantIdAndCharacter_IdAndEquipmentSlotIsNullAndGameInstanceIdIsNullAndRoomInstanceIdIsNullAndContainerInstanceIsNullAndItem_IdAndCompatibilityFingerprint(
+                1L, 1L, 3L, "item-definition:3"))
+        .thenReturn(Optional.of(inventoryStack));
+    when(itemStackRepo.findByTenantIdAndContainerInstance_IdAndItem_IdAndCompatibilityFingerprint(
+            1L, 500L, 3L, "item-definition:3"))
+        .thenReturn(Optional.empty());
+    when(itemStackRepo.save(any(ItemStack.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
 
-    var stored = service.putItemIntoContainer(1L, 1L, 500L, 3L, 42L, 1);
+    var stored = service.putItemIntoContainer(1L, 1L, 500L, 3L, null, 2);
 
-    assertEquals("Torch", stored.itemName());
-    assertEquals(containerInstance, second.getContainerInstance());
-    assertEquals(null, first.getContainerInstance());
-  }
-
-  @Test
-  void putItemIntoContainerRejectsExplicitItemInstanceIdWithQuantityGreaterThanOne() {
-    ContainerInstanceRepository containerInstanceRepo =
-        Mockito.mock(ContainerInstanceRepository.class);
-    ItemInstanceRepository itemInstanceRepo = Mockito.mock(ItemInstanceRepository.class);
-    CharacterRepository characterRepo = Mockito.mock(CharacterRepository.class);
-    ItemRepository itemRepo = Mockito.mock(ItemRepository.class);
-    ContainerServiceImpl service =
-        new ContainerServiceImpl(
-            containerInstanceRepo,
-            itemInstanceRepo,
-            characterRepo,
-            itemRepo,
-            new ItemTransferSupport(),
-            new ContainerHolderSyncSupport(containerInstanceRepo));
-
-    Character character = character(1L, 1L);
-    Item container = item(2L, 1L, "Chest", true);
-    ContainerInstance containerInstance = new ContainerInstance();
-    containerInstance.setId(500L);
-    containerInstance.setTenantId(1L);
-    containerInstance.setCharacter(character);
-    containerInstance.setItem(container);
-    Item item = item(3L, 1L, "Torch", false);
-    ItemInstance first = itemInstance(41L, 1L, character, item);
-
-    when(characterRepo.findByIdAndTenantId(1L, 1L)).thenReturn(Optional.of(character));
-    when(containerInstanceRepo.findAccessibleByIdAndTenantIdAndCharacterId(500L, 1L, 1L))
-        .thenReturn(Optional.of(containerInstance));
-    when(itemRepo.findByIdAndTenantId(3L, 1L)).thenReturn(Optional.of(item));
-    when(itemInstanceRepo
-            .findByTenantIdAndCharacter_IdAndItem_IdAndEquipmentSlotIsNullAndGameInstanceIdIsNullAndRoomInstanceIdIsNullOrderByIdAsc(
-                1L, 1L, 3L))
-        .thenReturn(List.of(first));
-
-    assertThrows(
-        IllegalArgumentException.class,
-        () -> service.putItemIntoContainer(1L, 1L, 500L, 3L, 41L, 2));
-  }
-
-  @Test
-  void takeItemFromContainerRejectsStaleSourceMismatch() {
-    ContainerInstanceRepository containerInstanceRepo =
-        Mockito.mock(ContainerInstanceRepository.class);
-    ItemInstanceRepository itemInstanceRepo = Mockito.mock(ItemInstanceRepository.class);
-    CharacterRepository characterRepo = Mockito.mock(CharacterRepository.class);
-    ItemRepository itemRepo = Mockito.mock(ItemRepository.class);
-    ContainerServiceImpl service =
-        new ContainerServiceImpl(
-            containerInstanceRepo,
-            itemInstanceRepo,
-            characterRepo,
-            itemRepo,
-            new ItemTransferSupport(),
-            new ContainerHolderSyncSupport(containerInstanceRepo));
-
-    Character character = character(1L, 1L);
-    Item chest = item(2L, 1L, "Chest", true);
-    ContainerInstance containerInstance = new ContainerInstance();
-    containerInstance.setId(500L);
-    containerInstance.setTenantId(1L);
-    containerInstance.setCharacter(character);
-    containerInstance.setItem(chest);
-    Item item = item(3L, 1L, "Torch", false);
-    ItemInstance stale = itemInstance(41L, 1L, character, item);
-    stale.setContainerInstance(null);
-
-    when(characterRepo.findByIdAndTenantId(1L, 1L)).thenReturn(Optional.of(character));
-    when(containerInstanceRepo.findAccessibleByIdAndTenantIdAndCharacterId(500L, 1L, 1L))
-        .thenReturn(Optional.of(containerInstance));
-    when(itemRepo.findByIdAndTenantId(3L, 1L)).thenReturn(Optional.of(item));
-    when(itemInstanceRepo.findByTenantIdAndContainerInstance_IdAndItem_IdOrderByIdAsc(1L, 500L, 3L))
-        .thenReturn(List.of(stale));
-
-    assertThrows(
-        IllegalArgumentException.class,
-        () -> service.takeItemFromContainer(1L, 1L, 500L, 3L, null, 1));
+    assertEquals(2, stored.quantity());
+    assertEquals(3, inventoryStack.getQuantity());
+    assertNull(stored.itemInstanceId());
   }
 
   @Test
@@ -326,23 +233,25 @@ class ContainerServiceImplTest {
     ItemInstanceRepository itemInstanceRepo = Mockito.mock(ItemInstanceRepository.class);
     CharacterRepository characterRepo = Mockito.mock(CharacterRepository.class);
     ItemRepository itemRepo = Mockito.mock(ItemRepository.class);
+    ItemStackRepository itemStackRepo = Mockito.mock(ItemStackRepository.class);
     ContainerServiceImpl service =
         new ContainerServiceImpl(
             containerInstanceRepo,
             itemInstanceRepo,
             characterRepo,
             itemRepo,
+            itemStackRepo,
             new ItemTransferSupport(),
             new ContainerHolderSyncSupport(containerInstanceRepo));
 
     Character character = character(1L, 1L);
-    Item chest = item(2L, 1L, "Chest", true);
+    Item chest = item(2L, 1L, "Chest", true, false);
     ContainerInstance containerInstance = new ContainerInstance();
     containerInstance.setId(500L);
     containerInstance.setTenantId(1L);
     containerInstance.setCharacter(character);
     containerInstance.setItem(chest);
-    Item item = item(3L, 1L, "Torch", false);
+    Item item = item(3L, 1L, "Torch", false, false);
     ItemInstance first = itemInstance(41L, 1L, null, item);
     first.setContainerInstance(containerInstance);
     ItemInstance second = itemInstance(42L, 1L, null, item);
@@ -361,46 +270,7 @@ class ContainerServiceImplTest {
 
     assertEquals("Torch", taken.itemName());
     assertEquals(character, second.getCharacter());
-    assertEquals(null, first.getCharacter());
-  }
-
-  @Test
-  void takeItemFromContainerRejectsExplicitItemInstanceIdWithQuantityGreaterThanOne() {
-    ContainerInstanceRepository containerInstanceRepo =
-        Mockito.mock(ContainerInstanceRepository.class);
-    ItemInstanceRepository itemInstanceRepo = Mockito.mock(ItemInstanceRepository.class);
-    CharacterRepository characterRepo = Mockito.mock(CharacterRepository.class);
-    ItemRepository itemRepo = Mockito.mock(ItemRepository.class);
-    ContainerServiceImpl service =
-        new ContainerServiceImpl(
-            containerInstanceRepo,
-            itemInstanceRepo,
-            characterRepo,
-            itemRepo,
-            new ItemTransferSupport(),
-            new ContainerHolderSyncSupport(containerInstanceRepo));
-
-    Character character = character(1L, 1L);
-    Item chest = item(2L, 1L, "Chest", true);
-    ContainerInstance containerInstance = new ContainerInstance();
-    containerInstance.setId(500L);
-    containerInstance.setTenantId(1L);
-    containerInstance.setCharacter(character);
-    containerInstance.setItem(chest);
-    Item item = item(3L, 1L, "Torch", false);
-    ItemInstance first = itemInstance(41L, 1L, null, item);
-    first.setContainerInstance(containerInstance);
-
-    when(characterRepo.findByIdAndTenantId(1L, 1L)).thenReturn(Optional.of(character));
-    when(containerInstanceRepo.findAccessibleByIdAndTenantIdAndCharacterId(500L, 1L, 1L))
-        .thenReturn(Optional.of(containerInstance));
-    when(itemRepo.findByIdAndTenantId(3L, 1L)).thenReturn(Optional.of(item));
-    when(itemInstanceRepo.findByTenantIdAndContainerInstance_IdAndItem_IdOrderByIdAsc(1L, 500L, 3L))
-        .thenReturn(List.of(first));
-
-    assertThrows(
-        IllegalArgumentException.class,
-        () -> service.takeItemFromContainer(1L, 1L, 500L, 3L, 41L, 2));
+    assertNull(first.getCharacter());
   }
 
   @Test
@@ -410,23 +280,25 @@ class ContainerServiceImplTest {
     ItemInstanceRepository itemInstanceRepo = Mockito.mock(ItemInstanceRepository.class);
     CharacterRepository characterRepo = Mockito.mock(CharacterRepository.class);
     ItemRepository itemRepo = Mockito.mock(ItemRepository.class);
+    ItemStackRepository itemStackRepo = Mockito.mock(ItemStackRepository.class);
     ContainerServiceImpl service =
         new ContainerServiceImpl(
             containerInstanceRepo,
             itemInstanceRepo,
             characterRepo,
             itemRepo,
+            itemStackRepo,
             new ItemTransferSupport(),
             new ContainerHolderSyncSupport(containerInstanceRepo));
 
     Character character = character(1L, 1L);
-    Item container = item(2L, 1L, "Chest", true);
+    Item container = item(2L, 1L, "Chest", true, false);
     ContainerInstance containerInstance = new ContainerInstance();
     containerInstance.setId(500L);
     containerInstance.setTenantId(1L);
     containerInstance.setCharacter(character);
     containerInstance.setItem(container);
-    Item nestedContainer = item(3L, 1L, "Pouch", true);
+    Item nestedContainer = item(3L, 1L, "Pouch", true, false);
 
     when(characterRepo.findByIdAndTenantId(1L, 1L)).thenReturn(Optional.of(character));
     when(containerInstanceRepo.findAccessibleByIdAndTenantIdAndCharacterId(500L, 1L, 1L))
@@ -448,13 +320,15 @@ class ContainerServiceImplTest {
     return character;
   }
 
-  private static Item item(Long id, Long tenantId, String name, boolean container) {
+  private static Item item(
+      Long id, Long tenantId, String name, boolean container, boolean stackable) {
     Item item = new Item();
     item.setId(id);
     item.setTenantId(tenantId);
     item.setName(name);
     item.setDescription(name + " desc");
     item.setContainer(container);
+    item.setStackable(stackable);
     return item;
   }
 

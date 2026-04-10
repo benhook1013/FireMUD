@@ -1,6 +1,7 @@
 package net.firedevops.firemud.entitymanagement.service.impl;
 
 import io.micrometer.core.annotation.Timed;
+import java.util.ArrayList;
 import java.util.List;
 import net.firedevops.firemud.entitymanagement.dto.ContainerContentEntryDto;
 import net.firedevops.firemud.entitymanagement.dto.InventoryEntryDto;
@@ -8,13 +9,16 @@ import net.firedevops.firemud.entitymanagement.entity.Character;
 import net.firedevops.firemud.entitymanagement.entity.ContainerInstance;
 import net.firedevops.firemud.entitymanagement.entity.Item;
 import net.firedevops.firemud.entitymanagement.entity.ItemInstance;
+import net.firedevops.firemud.entitymanagement.entity.ItemStack;
 import net.firedevops.firemud.entitymanagement.repository.CharacterRepository;
 import net.firedevops.firemud.entitymanagement.repository.ContainerInstanceRepository;
 import net.firedevops.firemud.entitymanagement.repository.ItemInstanceRepository;
 import net.firedevops.firemud.entitymanagement.repository.ItemRepository;
+import net.firedevops.firemud.entitymanagement.repository.ItemStackRepository;
 import net.firedevops.firemud.entitymanagement.service.ContainerService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -25,9 +29,11 @@ public class ContainerServiceImpl implements ContainerService {
   private final ItemInstanceRepository itemInstanceRepository;
   private final CharacterRepository characterRepository;
   private final ItemRepository itemRepository;
+  private final ItemStackRepository itemStackRepository;
   private final ItemTransferSupport itemTransferSupport;
   private final ContainerHolderSyncSupport containerHolderSyncSupport;
   private final ContainerHolderPolicySupport containerHolderPolicySupport;
+  private final StackableItemSupport stackableItemSupport;
 
   @Autowired
   public ContainerServiceImpl(
@@ -35,16 +41,20 @@ public class ContainerServiceImpl implements ContainerService {
       ItemInstanceRepository itemInstanceRepository,
       CharacterRepository characterRepository,
       ItemRepository itemRepository,
+      ItemStackRepository itemStackRepository,
       ItemTransferSupport itemTransferSupport,
       ContainerHolderSyncSupport containerHolderSyncSupport,
-      ContainerHolderPolicySupport containerHolderPolicySupport) {
+      ContainerHolderPolicySupport containerHolderPolicySupport,
+      StackableItemSupport stackableItemSupport) {
     this.containerInstanceRepository = containerInstanceRepository;
     this.itemInstanceRepository = itemInstanceRepository;
     this.characterRepository = characterRepository;
     this.itemRepository = itemRepository;
+    this.itemStackRepository = itemStackRepository;
     this.itemTransferSupport = itemTransferSupport;
     this.containerHolderSyncSupport = containerHolderSyncSupport;
     this.containerHolderPolicySupport = containerHolderPolicySupport;
+    this.stackableItemSupport = stackableItemSupport;
   }
 
   ContainerServiceImpl(
@@ -52,6 +62,7 @@ public class ContainerServiceImpl implements ContainerService {
       ItemInstanceRepository itemInstanceRepository,
       CharacterRepository characterRepository,
       ItemRepository itemRepository,
+      ItemStackRepository itemStackRepository,
       ItemTransferSupport itemTransferSupport,
       ContainerHolderSyncSupport containerHolderSyncSupport) {
     this(
@@ -59,9 +70,11 @@ public class ContainerServiceImpl implements ContainerService {
         itemInstanceRepository,
         characterRepository,
         itemRepository,
+        itemStackRepository,
         itemTransferSupport,
         containerHolderSyncSupport,
-        new ContainerHolderPolicySupport(containerInstanceRepository));
+        new ContainerHolderPolicySupport(containerInstanceRepository),
+        new StackableItemSupport());
   }
 
   @Override
@@ -73,10 +86,20 @@ public class ContainerServiceImpl implements ContainerService {
     ContainerInstance containerInstance =
         containerHolderPolicySupport.requireAccessibleContainer(
             tenantId, character.getId(), containerInstanceId);
-    return itemInstanceRepository
-        .findByTenantIdAndContainerInstance_IdOrderByIdAsc(
-            tenantId, containerInstance.getId(), pageable)
-        .map(this::toDto);
+    List<ContainerContentEntryDto> entries = new ArrayList<>();
+    entries.addAll(
+        itemInstanceRepository
+            .findByTenantIdAndContainerInstance_IdOrderByIdAsc(
+                tenantId, containerInstance.getId(), Pageable.unpaged())
+            .map(this::toDto)
+            .getContent());
+    entries.addAll(
+        itemStackRepository
+            .findByTenantIdAndContainerInstance_IdOrderByIdAsc(
+                tenantId, containerInstance.getId(), Pageable.unpaged())
+            .map(this::toDto)
+            .getContent());
+    return page(entries, pageable);
   }
 
   @Override
@@ -96,6 +119,10 @@ public class ContainerServiceImpl implements ContainerService {
             tenantId, character.getId(), containerInstanceId);
     Item item = requireItem(tenantId, itemId);
     containerHolderPolicySupport.requireCanContainItem(containerInstance, item);
+    if (stackableItemSupport.usesStackStorage(item)) {
+      moveInventoryStackToContainer(tenantId, characterId, containerInstance, item, quantity);
+      return toStackMutationDto(containerInstance, item, quantity);
+    }
     List<ItemInstance> carried =
         itemInstanceRepository
             .findByTenantIdAndCharacter_IdAndItem_IdAndEquipmentSlotIsNullAndGameInstanceIdIsNullAndRoomInstanceIdIsNullOrderByIdAsc(
@@ -128,7 +155,11 @@ public class ContainerServiceImpl implements ContainerService {
     ContainerInstance containerInstance =
         containerHolderPolicySupport.requireAccessibleContainer(
             tenantId, character.getId(), containerInstanceId);
-    requireItem(tenantId, itemId);
+    Item item = requireItem(tenantId, itemId);
+    if (stackableItemSupport.usesStackStorage(item)) {
+      moveContainerStackToInventory(tenantId, character, containerInstance, item, quantity);
+      return toInventoryStackMutationDto(character, item, quantity);
+    }
     List<ItemInstance> contained =
         itemInstanceRepository.findByTenantIdAndContainerInstance_IdAndItem_IdOrderByIdAsc(
             tenantId, containerInstance.getId(), itemId);
@@ -208,6 +239,19 @@ public class ContainerServiceImpl implements ContainerService {
         instance.getVisibleRef());
   }
 
+  private ContainerContentEntryDto toDto(ItemStack stack) {
+    return new ContainerContentEntryDto(
+        stack.getTenantId(),
+        resolveCharacterId(stack.getContainerInstance()),
+        stack.getContainerInstance().getId(),
+        stack.getItem().getId(),
+        stack.getItem().getName(),
+        stack.getItem().getDescription(),
+        stack.getQuantity(),
+        null,
+        null);
+  }
+
   private ContainerContentEntryDto toMutationDto(ItemInstance instance, int quantity) {
     return new ContainerContentEntryDto(
         instance.getTenantId(),
@@ -221,6 +265,20 @@ public class ContainerServiceImpl implements ContainerService {
         quantity == 1 ? instance.getVisibleRef() : null);
   }
 
+  private ContainerContentEntryDto toStackMutationDto(
+      ContainerInstance containerInstance, Item item, int quantity) {
+    return new ContainerContentEntryDto(
+        containerInstance.getTenantId(),
+        resolveCharacterId(containerInstance),
+        containerInstance.getId(),
+        item.getId(),
+        item.getName(),
+        item.getDescription(),
+        quantity,
+        null,
+        null);
+  }
+
   private InventoryEntryDto toInventoryMutationDto(ItemInstance instance, int quantity) {
     return new InventoryEntryDto(
         instance.getTenantId(),
@@ -232,6 +290,85 @@ public class ContainerServiceImpl implements ContainerService {
         quantity == 1 ? instance.getId() : null,
         resolveContainerInstanceId(instance),
         quantity == 1 ? instance.getVisibleRef() : null);
+  }
+
+  private InventoryEntryDto toInventoryStackMutationDto(
+      Character character, Item item, int quantity) {
+    return new InventoryEntryDto(
+        character.getTenantId(),
+        character.getId(),
+        item.getId(),
+        item.getName(),
+        item.getDescription(),
+        quantity,
+        null,
+        null,
+        null);
+  }
+
+  private void moveInventoryStackToContainer(
+      Long tenantId,
+      Long characterId,
+      ContainerInstance containerInstance,
+      Item item,
+      int quantity) {
+    String compatibilityFingerprint = stackableItemSupport.compatibilityFingerprint(item);
+    ItemStack source =
+        itemStackRepository
+            .findByTenantIdAndCharacter_IdAndEquipmentSlotIsNullAndGameInstanceIdIsNullAndRoomInstanceIdIsNullAndContainerInstanceIsNullAndItem_IdAndCompatibilityFingerprint(
+                tenantId, characterId, item.getId(), compatibilityFingerprint)
+            .orElseThrow(
+                () -> new IllegalArgumentException("Not enough quantity to put into container"));
+    requireStackQuantity(source, quantity, "Not enough quantity to put into container");
+    decrementOrDelete(source, quantity);
+    ItemStack destination =
+        itemStackRepository
+            .findByTenantIdAndContainerInstance_IdAndItem_IdAndCompatibilityFingerprint(
+                tenantId, containerInstance.getId(), item.getId(), compatibilityFingerprint)
+            .orElseGet(
+                () -> {
+                  ItemStack created = new ItemStack();
+                  created.setTenantId(tenantId);
+                  created.setContainerInstance(containerInstance);
+                  created.setItem(item);
+                  created.setCompatibilityFingerprint(compatibilityFingerprint);
+                  created.setQuantity(0);
+                  return created;
+                });
+    destination.setQuantity(destination.getQuantity() + quantity);
+    itemStackRepository.save(destination);
+  }
+
+  private void moveContainerStackToInventory(
+      Long tenantId,
+      Character character,
+      ContainerInstance containerInstance,
+      Item item,
+      int quantity) {
+    String compatibilityFingerprint = stackableItemSupport.compatibilityFingerprint(item);
+    ItemStack source =
+        itemStackRepository
+            .findByTenantIdAndContainerInstance_IdAndItem_IdAndCompatibilityFingerprint(
+                tenantId, containerInstance.getId(), item.getId(), compatibilityFingerprint)
+            .orElseThrow(() -> new IllegalArgumentException("Not enough quantity in container"));
+    requireStackQuantity(source, quantity, "Not enough quantity in container");
+    decrementOrDelete(source, quantity);
+    ItemStack destination =
+        itemStackRepository
+            .findByTenantIdAndCharacter_IdAndEquipmentSlotIsNullAndGameInstanceIdIsNullAndRoomInstanceIdIsNullAndContainerInstanceIsNullAndItem_IdAndCompatibilityFingerprint(
+                tenantId, character.getId(), item.getId(), compatibilityFingerprint)
+            .orElseGet(
+                () -> {
+                  ItemStack created = new ItemStack();
+                  created.setTenantId(tenantId);
+                  created.setCharacter(character);
+                  created.setItem(item);
+                  created.setCompatibilityFingerprint(compatibilityFingerprint);
+                  created.setQuantity(0);
+                  return created;
+                });
+    destination.setQuantity(destination.getQuantity() + quantity);
+    itemStackRepository.save(destination);
   }
 
   private Long resolveCharacterId(ContainerInstance containerInstance) {
@@ -254,5 +391,33 @@ public class ContainerServiceImpl implements ContainerService {
     if (quantity <= 0) {
       throw new IllegalArgumentException("quantity must be positive");
     }
+  }
+
+  private void requireStackQuantity(ItemStack stack, int quantity, String message) {
+    if (stack.getQuantity() < quantity) {
+      throw new IllegalArgumentException(message);
+    }
+  }
+
+  private void decrementOrDelete(ItemStack stack, int quantity) {
+    int remaining = stack.getQuantity() - quantity;
+    if (remaining <= 0) {
+      itemStackRepository.delete(stack);
+      return;
+    }
+    stack.setQuantity(remaining);
+    itemStackRepository.save(stack);
+  }
+
+  private <T> Page<T> page(List<T> entries, Pageable pageable) {
+    if (pageable.isUnpaged()) {
+      return new PageImpl<>(entries);
+    }
+    int start = Math.toIntExact(pageable.getOffset());
+    if (start >= entries.size()) {
+      return new PageImpl<>(List.of(), pageable, entries.size());
+    }
+    int end = Math.min(start + pageable.getPageSize(), entries.size());
+    return new PageImpl<>(entries.subList(start, end), pageable, entries.size());
   }
 }

@@ -11,7 +11,7 @@ It intentionally omits completed slices and uses the individual slice docs as th
 These are narrow enough to implement now and unblock the current runtime/platform direction.
 
 1. [06.3 Replace Aggregated Item Stacks With Distinct Item Instances](./vertical-slices/06.3-task-list-container-item-instance-identity-vertical-slice.md)
-   Remaining: implement the now-decided strict stack-compatibility and holder-local quantity-bearing merge model on top of the explicit `stackable` authored seam.
+   Remaining: extend the now-live first strict stack model with richer authored compatibility fingerprints beyond definition-level sameness.
 2. [02.18.6 Tick Scheduler Backpressure and Merge Semantics](./vertical-slices/02.18.6-task-list-tick-scheduler-backpressure-and-merge-semantics-vertical-slice.md)
    Remaining: keep the observability-first pressure model and turn it into explicit threshold/alert implementation plus later operator proof.
 3. [02.14.4 Metrics Cardinality and Label Policy Hardening](./vertical-slices/02.14.4-task-list-metrics-cardinality-and-label-policy-hardening-vertical-slice.md)
@@ -30,7 +30,7 @@ These are already partly real in code and should continue after the immediate ru
 4. [06.3.1 Stable Item Instance Visible Ref Allocation](./vertical-slices/06.3.1-task-list-item-instance-visible-ref-allocation-vertical-slice.md)
    Remaining: decide whether and where ordinary prose views ever expose refs beyond management surfaces.
 5. [06.3.2 Authored Stackability and Fungibility](./vertical-slices/06.3.2-task-list-authored-stackability-and-fungibility-vertical-slice.md)
-   Remaining: build stack-compatibility and quantity-bearing merge behavior on top of the now-live explicit authored `stackable` seam.
+   Remaining: add richer authored compatibility/fingerprint variants and prove incompatible stack rows stay separate.
 6. [02.18 Service Boundary and Audit Hardening](./vertical-slices/02.18-task-list-service-boundary-and-audit-hardening-vertical-slice.md)
    Remaining: complete the remaining `02.18.6` follow-up after the auth-propagation seam work.
 7. [02.18.1 Audit Log and Moderation Separation](./vertical-slices/02.18.1-task-list-audit-log-and-moderation-separation-vertical-slice.md)
@@ -83,6 +83,6 @@ These are not major design problems, but they are not fully closed.
 
 If you want the clearest immediate path, do these next:
 
-1. `06.3` stack-compatibility and merge-model pass
-2. `02.18.6` tick scheduler pressure-policy follow-up
-3. `02.14.4` metrics-cardinality audit follow-through
+1. `02.18.6` tick scheduler pressure-policy follow-up
+2. `02.14.4` metrics-cardinality audit follow-through
+3. `06.3.2` richer authored compatibility-fingerprint follow-up

@@ -8,8 +8,10 @@ import net.firedevops.firemud.entitymanagement.config.LookProperties;
 import net.firedevops.firemud.entitymanagement.dto.RoomEntityDto;
 import net.firedevops.firemud.entitymanagement.entity.ContainerInstance;
 import net.firedevops.firemud.entitymanagement.entity.ItemInstance;
+import net.firedevops.firemud.entitymanagement.entity.ItemStack;
 import net.firedevops.firemud.entitymanagement.repository.ContainerInstanceRepository;
 import net.firedevops.firemud.entitymanagement.repository.ItemInstanceRepository;
+import net.firedevops.firemud.entitymanagement.repository.ItemStackRepository;
 import net.firedevops.firemud.entitymanagement.v1.EntityType;
 import net.firedevops.firemud.entitymanagement.v1.ReloadHint;
 import org.junit.jupiter.api.BeforeEach;
@@ -21,6 +23,7 @@ import org.springframework.data.domain.Pageable;
 class RoomEntityServiceImplTest {
   private LookProperties props;
   private ItemInstanceRepository itemInstanceRepository;
+  private ItemStackRepository itemStackRepository;
   private ContainerInstanceRepository containerInstanceRepository;
   private RoomEntityServiceImpl service;
 
@@ -28,8 +31,11 @@ class RoomEntityServiceImplTest {
   void setup() {
     props = new LookProperties();
     itemInstanceRepository = Mockito.mock(ItemInstanceRepository.class);
+    itemStackRepository = Mockito.mock(ItemStackRepository.class);
     containerInstanceRepository = Mockito.mock(ContainerInstanceRepository.class);
-    service = new RoomEntityServiceImpl(props, itemInstanceRepository, containerInstanceRepository);
+    service =
+        new RoomEntityServiceImpl(
+            props, itemInstanceRepository, itemStackRepository, containerInstanceRepository);
   }
 
   @Test
@@ -80,6 +86,11 @@ class RoomEntityServiceImplTest {
                 .findByTenantIdAndGameInstanceIdAndRoomInstanceIdAndCharacterIsNullAndEquipmentSlotIsNullOrderByIdAsc(
                     1L, "game-1", "R-1021", Pageable.unpaged()))
         .thenReturn(new PageImpl<>(List.of(entry)));
+    Mockito.when(
+            itemStackRepository
+                .findByTenantIdAndGameInstanceIdAndRoomInstanceIdAndCharacterIsNullAndEquipmentSlotIsNullAndContainerInstanceIsNullOrderByIdAsc(
+                    1L, "game-1", "R-1021", Pageable.unpaged()))
+        .thenReturn(new PageImpl<>(List.of()));
     Mockito.when(containerInstanceRepository.findByItemInstance_Id(77L))
         .thenReturn(java.util.Optional.of(instance));
 
@@ -90,6 +101,42 @@ class RoomEntityServiceImplTest {
     assertEquals(
         List.of("room-ground", "container", "container-instance:42", "wearable:BACK"),
         listed.get(0).stateFlags());
+  }
+
+  @Test
+  void includesRoomGroundStacksAsVisibleItemEntities() {
+    var item = new net.firedevops.firemud.entitymanagement.entity.Item();
+    item.setId(9L);
+    item.setTenantId(1L);
+    item.setName("Arrows");
+    item.setDescription("A bundle of arrows");
+    item.setStackable(true);
+
+    ItemStack stack = new ItemStack();
+    stack.setId(88L);
+    stack.setTenantId(1L);
+    stack.setGameInstanceId("game-1");
+    stack.setRoomInstanceId("R-1021");
+    stack.setItem(item);
+    stack.setCompatibilityFingerprint("item-definition:9");
+    stack.setQuantity(5);
+
+    Mockito.when(
+            itemInstanceRepository
+                .findByTenantIdAndGameInstanceIdAndRoomInstanceIdAndCharacterIsNullAndEquipmentSlotIsNullOrderByIdAsc(
+                    1L, "game-1", "R-1021", Pageable.unpaged()))
+        .thenReturn(new PageImpl<>(List.of()));
+    Mockito.when(
+            itemStackRepository
+                .findByTenantIdAndGameInstanceIdAndRoomInstanceIdAndCharacterIsNullAndEquipmentSlotIsNullAndContainerInstanceIsNullOrderByIdAsc(
+                    1L, "game-1", "R-1021", Pageable.unpaged()))
+        .thenReturn(new PageImpl<>(List.of(stack)));
+
+    List<RoomEntityDto> listed = service.listEntities("1", "game-1", "R-1021");
+
+    assertEquals(1, listed.size());
+    assertEquals("Arrows", listed.get(0).displayName());
+    assertEquals(List.of("room-ground"), listed.get(0).stateFlags());
   }
 
   private LookProperties.LookEntity entity(
