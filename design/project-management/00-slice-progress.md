@@ -17,7 +17,7 @@ These are narrow enough to implement now and unblock the current runtime/platfor
 3. [06.3 Replace Aggregated Item Stacks With Distinct Item Instances](./vertical-slices/06.3-task-list-container-item-instance-identity-vertical-slice.md)
    Remaining: explicit authored stackability and stack-compatibility rules on top of the now-live item-instance model.
 4. [06.4 Unified Item Holder and Transfer Model](./vertical-slices/06.4-task-list-unified-item-holder-and-transfer-model-vertical-slice.md)
-   Remaining: finish the shared transfer contract, shared transfer audit semantics, and the remaining holder-policy cleanup.
+   Remaining: finish the exact guarded-handoff contract for duplicate execution and retry semantics now that the shared transfer audit and holder-policy seams are in place.
 5. [02.18.3 Workflow Transaction Boundary Hardening](./vertical-slices/02.18.3-task-list-workflow-transaction-boundary-hardening-vertical-slice.md)
    Remaining: reduce the remaining “hold DB transaction open across external calls” cases without regressing runtime-state safety.
 6. [02.18.6 Tick Scheduler Backpressure and Merge Semantics](./vertical-slices/02.18.6-task-list-tick-scheduler-backpressure-and-merge-semantics-vertical-slice.md)
