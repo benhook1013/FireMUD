@@ -11,11 +11,11 @@ It intentionally omits completed slices and uses the individual slice docs as th
 These are narrow enough to implement now and unblock the current runtime/platform direction.
 
 1. [02.2.1 Session Start Admission Ordering and IP-Limit Safety](./vertical-slices/02.2.1-task-list-session-start-admission-ordering-and-ip-limit-safety-vertical-slice.md)
-   Remaining: only the non-gRPC/operator-path policy question is still open.
+   Remaining: audit and clean up any lingering non-canonical session-start entry paths.
 2. [02.18.2 Internal Blocking gRPC Auth Propagation](./vertical-slices/02.18.2-task-list-internal-grpc-auth-propagation-vertical-slice.md)
-   Remaining: decide whether the remaining intentional raw-stub outliers should adopt the same seam or stay distinct later.
+   Remaining: document or clean up the remaining intentional raw-stub outliers now that the canonical seam is locked.
 3. [06.4.1 Safe Item Transfer and Handoff Semantics](./vertical-slices/06.4.1-task-list-safe-item-transfer-and-handoff-semantics-vertical-slice.md)
-   Remaining: finish retry/idempotency policy and the canonical transfer-audit shape for already-moved or replayed item moves.
+   Remaining: implement the locked failure/audit policy for already-moved or replayed item moves.
 4. [06.3 Replace Aggregated Item Stacks With Distinct Item Instances](./vertical-slices/06.3-task-list-container-item-instance-identity-vertical-slice.md)
    Remaining: explicit authored stackability and stack-compatibility rules on top of the now-live item-instance model.
 5. [06.4 Unified Item Holder and Transfer Model](./vertical-slices/06.4-task-list-unified-item-holder-and-transfer-model-vertical-slice.md)
@@ -92,6 +92,6 @@ These are not major design problems, but they are not fully closed.
 
 If you want the clearest immediate path, do these next:
 
-1. `06.4.1` retry/idempotency and transfer-audit policy
-2. `02.18.2` raw-stub outlier decision
-3. `02.14.4` repo-wide dynamic-label audit
+1. `06.4.1` already-moved failure/audit implementation
+2. `02.18.2` raw-stub outlier cleanup/documentation
+3. `02.2.1` lingering non-canonical admission-path cleanup
