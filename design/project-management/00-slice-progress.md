@@ -46,23 +46,22 @@ These are not broad audit topics anymore; they are real future slices with known
 2. [02.1.2 Logout and Session Termination](./vertical-slices/02.1.2-task-list-logout-and-session-termination-vertical-slice.md)
 3. [02.1.4 Cross-Game Social Presence and Friend Activity](./vertical-slices/02.1.4-task-list-cross-game-social-presence-and-friend-activity-vertical-slice.md)
 4. [02.1.5 Admin and God Capability and Visibility](./vertical-slices/02.1.5-task-list-admin-god-capability-and-visibility-vertical-slice.md)
-5. [02.13.7 Action Classification and Activity Semantics](./vertical-slices/02.13.7-task-list-action-classification-and-activity-semantics-vertical-slice.md)
-6. [02.13.9 Authored Action Definition and Execution Model](./vertical-slices/02.13.9-task-list-authored-action-definition-and-execution-model-vertical-slice.md)
-7. [02.13.10 Structured Transcript and Replay End State](./vertical-slices/02.13.10-task-list-structured-transcript-and-replay-end-state-vertical-slice.md)
-8. [02.13.11 Shared Time, Duration, and Scheduler Semantics](./vertical-slices/02.13.11-task-list-shared-time-duration-and-scheduler-semantics-vertical-slice.md)
-9. [07 Entity Stats and Conditions](./vertical-slices/07-task-list-entity-stats-and-conditions-vertical-slice.md)
-10. [07.1 Shared Effect Engine](./vertical-slices/07.1-task-list-shared-effect-engine-vertical-slice.md)
-11. [07.2 Equipment and Action-State Contributions](./vertical-slices/07.2-task-list-equipment-and-action-state-contributions-vertical-slice.md)
-12. [07.3 Damage and Mitigation Resolution](./vertical-slices/07.3-task-list-damage-and-mitigation-resolution-vertical-slice.md)
-13. [07.4 Unified Actor Model](./vertical-slices/07.4-task-list-unified-actor-model-vertical-slice.md)
+5. [02.1.4.1 Account Versus Character Social Scope](./vertical-slices/02.1.4.1-task-list-account-vs-character-social-scope-vertical-slice.md)
+6. [02.1.5.1 Hidden Staff Modes and Capability Bundles](./vertical-slices/02.1.5.1-task-list-hidden-staff-modes-and-capability-bundles-vertical-slice.md)
+7. [02.13.7 Action Classification and Activity Semantics](./vertical-slices/02.13.7-task-list-action-classification-and-activity-semantics-vertical-slice.md)
+8. [02.13.9 Authored Action Definition and Execution Model](./vertical-slices/02.13.9-task-list-authored-action-definition-and-execution-model-vertical-slice.md)
+9. [02.13.10 Structured Transcript and Replay End State](./vertical-slices/02.13.10-task-list-structured-transcript-and-replay-end-state-vertical-slice.md)
+10. [02.13.10.1 Structured Transcript Persistence and Replay Storage](./vertical-slices/02.13.10.1-task-list-structured-transcript-persistence-and-replay-storage-vertical-slice.md)
+11. [02.13.11 Shared Time, Duration, and Scheduler Semantics](./vertical-slices/02.13.11-task-list-shared-time-duration-and-scheduler-semantics-vertical-slice.md)
+12. [07.4 Unified Actor Model](./vertical-slices/07.4-task-list-unified-actor-model-vertical-slice.md)
+13. [07 Entity Stats and Conditions](./vertical-slices/07-task-list-entity-stats-and-conditions-vertical-slice.md)
+14. [07.1 Shared Effect Engine](./vertical-slices/07.1-task-list-shared-effect-engine-vertical-slice.md)
+15. [07.2 Equipment and Action-State Contributions](./vertical-slices/07.2-task-list-equipment-and-action-state-contributions-vertical-slice.md)
+16. [07.3 Damage and Mitigation Resolution](./vertical-slices/07.3-task-list-damage-and-mitigation-resolution-vertical-slice.md)
 
 ### 4. Discussion-gated follow-ups
 
-These are intentionally parked until the narrower unresolved design questions are revisited.
-
-1. [02.1.4.1 Account Versus Character Social Scope](./vertical-slices/02.1.4.1-task-list-account-vs-character-social-scope-vertical-slice.md)
-2. [02.1.5.1 Hidden Staff Modes and Capability Bundles](./vertical-slices/02.1.5.1-task-list-hidden-staff-modes-and-capability-bundles-vertical-slice.md)
-3. [02.13.10.1 Structured Transcript Persistence and Replay Storage](./vertical-slices/02.13.10.1-task-list-structured-transcript-persistence-and-replay-storage-vertical-slice.md)
+No immediate discussion-gated follow-ups remain in the currently active queue. Park new items here only when a slice still needs a deliberate design pass before implementation can safely start.
 
 ### 5. Lower-priority platform/settings expansion
 
