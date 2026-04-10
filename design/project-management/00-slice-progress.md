@@ -10,12 +10,10 @@ It intentionally omits completed slices and uses the individual slice docs as th
 
 These are narrow enough to implement now and unblock the current runtime/platform direction.
 
-1. [06.3 Replace Aggregated Item Stacks With Distinct Item Instances](./vertical-slices/06.3-task-list-container-item-instance-identity-vertical-slice.md)
-   Remaining: extend the now-live first strict stack model with richer authored compatibility fingerprints beyond definition-level sameness.
-2. [02.18.6 Tick Scheduler Backpressure and Merge Semantics](./vertical-slices/02.18.6-task-list-tick-scheduler-backpressure-and-merge-semantics-vertical-slice.md)
-   Remaining: keep the observability-first pressure model and turn it into explicit threshold/alert implementation plus later operator proof.
-3. [02.14.4 Metrics Cardinality and Label Policy Hardening](./vertical-slices/02.14.4-task-list-metrics-cardinality-and-label-policy-hardening-vertical-slice.md)
+1. [02.14.4 Metrics Cardinality and Label Policy Hardening](./vertical-slices/02.14.4-task-list-metrics-cardinality-and-label-policy-hardening-vertical-slice.md)
    Remaining: continue only opportunistic audit tail work; the currently reviewed gameplay, runtime, gateway, shared gRPC, proxy, and common-runtime hot paths are already clean.
+2. [06.3 Replace Aggregated Item Stacks With Distinct Item Instances](./vertical-slices/06.3-task-list-container-item-instance-identity-vertical-slice.md)
+   Remaining: extend the now-live first strict stack model with richer authored compatibility fingerprints beyond definition-level sameness.
 
 ### 2. Active architecture follow-through
 
@@ -32,7 +30,7 @@ These are already partly real in code and should continue after the immediate ru
 5. [06.3.2 Authored Stackability and Fungibility](./vertical-slices/06.3.2-task-list-authored-stackability-and-fungibility-vertical-slice.md)
    Remaining: add richer authored compatibility/fingerprint variants and prove incompatible stack rows stay separate.
 6. [02.18 Service Boundary and Audit Hardening](./vertical-slices/02.18-task-list-service-boundary-and-audit-hardening-vertical-slice.md)
-   Remaining: complete the remaining `02.18.6` follow-up after the auth-propagation seam work.
+   Remaining: keep `02.18.6` at operator-proof level and continue any later hardening only if real-load evidence justifies it.
 7. [02.18.1 Audit Log and Moderation Separation](./vertical-slices/02.18.1-task-list-audit-log-and-moderation-separation-vertical-slice.md)
    Remaining: keep future callers on the dedicated log-event path; the current account/logging-admin separation is now in place and covered.
 8. [02.18.4 World and Entity Service Boundary Auth](./vertical-slices/02.18.4-task-list-world-and-entity-service-boundary-auth-vertical-slice.md)
@@ -78,11 +76,13 @@ These are not major design problems, but they are not fully closed.
 2. [02.4 First-Party Reconnect Parity](./vertical-slices/02.4-task-list-first-party-reconnect-parity-vertical-slice.md)
 3. [02.5 Non-Edge Failover Invisibility](./vertical-slices/02.5-task-list-non-edge-failover-invisibility-vertical-slice.md)
 4. [02.8 Game Logic Restart Invisibility](./vertical-slices/02.8-task-list-game-logic-restart-invisibility-vertical-slice.md)
+5. [02.18.6 Tick Scheduler Backpressure and Merge Semantics](./vertical-slices/02.18.6-task-list-tick-scheduler-backpressure-and-merge-semantics-vertical-slice.md)
+   Remaining: operator-proof the chosen alert thresholds in preview/prod-like runs.
 
 ## Practical Next Three
 
 If you want the clearest immediate path, do these next:
 
-1. `02.18.6` tick scheduler pressure-policy follow-up
-2. `02.14.4` metrics-cardinality audit follow-through
-3. `06.3.2` richer authored compatibility-fingerprint follow-up
+1. `02.14.4` metrics-cardinality audit follow-through
+2. `06.3.2` richer authored compatibility-fingerprint follow-up
+3. `02.18.6` operator-proof the chosen scheduler thresholds

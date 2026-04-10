@@ -56,7 +56,8 @@ class BuiltInTextCommandRegistryTest {
       TextCommandDefinition definition = registry.definitionFor(type);
 
       assertEquals(TextCommandSource.PLATFORM_BUILT_IN, definition.source(), type.name());
-      assertNotEquals(TextCommandDispatchGroup.ENQUEUE_ONLY, definition.dispatchGroup(), type.name());
+      assertNotEquals(
+          TextCommandDispatchGroup.ENQUEUE_ONLY, definition.dispatchGroup(), type.name());
     }
   }
 
