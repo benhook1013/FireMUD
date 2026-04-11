@@ -58,6 +58,53 @@ This model underpins both authentication and authorization:
   - public-production discovery for tenants whose default production realm is live and gameplay-admissible.
   Worlds that fail both visibility sources, or fail entitlement checks, must not appear in discovery responses.
 
+### Realm Catalog and Admission-Pointer Contract
+
+Realm routing is a control-plane/runtime contract, not merely a lobby rendering concern.
+
+The platform distinguishes between:
+
+- a **realm catalog** describing which realms are player-addressable for one tenant; and
+- an **admission pointer** describing which concrete `gameInstanceId` is currently admissible for one `{tenantId, realmSlug}` target.
+
+Minimum realm-catalog facts for one visible realm are:
+
+- `tenantId`
+- `tenantSlug`
+- `realmSlug`
+- bounded player-facing display metadata
+- whether the realm is the default public production realm
+- whether the realm is public-production or explicit-grant-only
+- whether the realm uses shared-state or isolated-state gameplay policy
+
+Minimum admission-pointer facts for one resolved realm are:
+
+- `tenantId`
+- `realmSlug`
+- `admissibleGameInstanceId`
+- `pointerVersion`
+- `updatedAt`
+
+Contract rules:
+
+- `REALMS`, `CHARS`, `PLAY`, bootstrap discovery, connect-token issuance, and reconnect validation must all consume the same realm-catalog and admission-pointer truth.
+- Clients never select raw `gameInstanceId` values directly. They select a world and optional realm, and the server resolves that choice to the current admissible runtime target.
+- Each player-addressable realm resolves to exactly one admissible `gameInstanceId` at a time.
+- If no admissible target exists for a realm, the realm may remain visible for operator/debug surfaces, but ordinary gameplay admission must fail closed rather than guessing a replacement target.
+
+Required read contract:
+
+- `GetAdmissionPointer(tenantId, realmSlug, requestId)` is the authoritative gameplay-admission lookup.
+- The authoritative owner of this pointer contract is the Game Session control plane.
+- Callers must treat missing pointer fields, ambiguous results, or stale pointer state as contract failures rather than inferring defaults.
+
+Pointer freshness and cutover rules:
+
+- `pointerVersion` is monotonic per `{tenantId, realmSlug}`.
+- Any change that can affect which instance is admissible for gameplay admission must advance `pointerVersion`.
+- Connect-token issuance and other admission-critical flows must fail closed if the selected realm target no longer resolves to the same admissible pointer version they were issued against.
+- Realm cutover must therefore look like a control-plane pointer move, not a client-side reinterpretation of slugs or instance names.
+
 ## Account-to-Game Relationships
 
 - Players have a **single platform account** managed by the **Account Service**.

@@ -107,6 +107,8 @@ Runtime caller contract:
 - `GetAdmissionPointer(tenantId, realmSlug)` is the authoritative gameplay-admissible-instance lookup owned by Game Session.
   - Minimum request fields: `tenantId`, `realmSlug`, `requestId`.
   - Minimum response fields: `tenantId`, `realmSlug`, `admissibleGameInstanceId`, `pointerVersion`, `updatedAt`.
+  - `pointerVersion` is monotonic per `{tenantId, realmSlug}` and is the freshness token callers must use when proving they are still binding against the same realm target they previously resolved.
+  - Account bootstrap discovery, in-band `PLAY`, connect-token issuance, and reconnect validation must all consume this same pointer contract rather than maintaining separate realm-to-instance routing rules.
 - `IssueConnectToken` / `POST /auth/connect-token` is the authoritative gameplay bootstrap token-issuance surface.
   - Minimum request fields: `connectScopeId`, `requestId`.
   - Minimum response fields: `connectToken`, `expiresAt`, `accountId`, `tenantId`, `realmSlug`, `gameInstanceId`, `jti`, `issuedAt`.

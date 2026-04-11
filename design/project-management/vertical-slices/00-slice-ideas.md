@@ -8,3 +8,8 @@
 - **Shout and Communication Scope Settings** - Add `shout` as a future built-in only after the game-settings/configuration model can express topology-dependent propagation such as region-wide versus map-wide delivery when regions are absent or disabled.
 
 Note: After choosing the next slice, add a corresponding numbered task list file, update this index, and reconcile any duplicated items in the existing per-service status docs and design docs.
+
+## Promoted Into Numbered Slice Families
+
+- `08` Game Design Publishing and Runtime Activation now captures the publish/version/asset/launch control-plane domain that previously existed mostly as architecture-only planning.
+- `09` Multi-Tenancy, Realm Routing, and Runtime Boundaries now captures the tenant/realm/runtime-boundary domain that previously existed mostly as architecture and adjacent admission/reconnect notes.

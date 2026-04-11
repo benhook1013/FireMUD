@@ -187,6 +187,12 @@ Telnet-specific smart-client attach hints, if they return later, should travel t
 
 Any future hidden attach hints may include a target `{gameInstanceId, tenantId}` for advanced clients, but the canonical source of gameplay target selection remains the authenticated lobby/admission flow. Clients must not rely on unauthenticated transport hints to bypass membership, entitlement, or world-visibility checks.
 
+Admission-routing convergence rule:
+
+- `REALMS`, `CHARS`, `PLAY`, bootstrap discovery, `POST /auth/connect-token`, and reconnect validation must all consume the same authoritative realm-catalog and `GetAdmissionPointer(tenantId, realmSlug, requestId)` contract described in [Multi-Tenancy](./system-architecture-multi-tenancy.md#realm-catalog-and-admission-pointer-contract).
+- Those surfaces may expose different projections of the same routing truth, but they must not maintain separate interpretation rules for which realm maps to which admissible `gameInstanceId`.
+- If pointer state is missing, ambiguous, or no longer matches the selected realm target, the flow fails closed with admission-routing errors such as `ADMISSION_POINTER_UNAVAILABLE` or `CONNECT_SCOPE_MISMATCH` rather than silently rebinding the player to a different runtime target.
+
 ### WebSocket Connect Token Contract (`/ws/game/**`)
 
 For first-party WebSocket clients, the control plane issues a short-lived connect token used only for handshake-time edge policy (for example tenant-aware rate limiting before `LOGIN` completes).
@@ -464,6 +470,8 @@ Realm discovery and routing contract:
 - Additional realms are access-controlled in v1. Unauthorized or hidden realms must not appear in discovery, and non-production realms such as playtest forks require explicit access grants.
 - Explicit access grants for non-public realms are sourced from Account Service runtime grant authority, not from Game Session-local configuration or frontend-cached state.
 - Connect-token issuance, `REALMS`, `CHARS`, and `PLAY` must all consume the same realm-routing state so clients never infer realm identity from transport-side hints alone.
+- Realm-routing state is split into the visible realm catalog plus the current admission pointer for one `{tenantId, realmSlug}` target. The realm catalog answers "is this realm visible and selectable for this caller?" while the admission pointer answers "which exact `gameInstanceId` is currently admissible for that realm?".
+- Clients may cache visible realm choices for presentation, but admission-critical flows must re-read current pointer truth before binding or minting connect scope.
 
 Lobby discovery source-of-truth contract:
 
@@ -472,6 +480,7 @@ Lobby discovery source-of-truth contract:
 - `WORLDS` discovery does not need to reuse the full 15-second admission SLA verbatim, but it must still be based on entitlement state fresh enough to avoid exposing worlds that are no longer gameplay-available. If that freshness bar cannot be met safely, discovery fails closed with `ENTITLEMENT_UNAVAILABLE`.
 - `REALMS <world>` must distinguish between public-production visibility and explicit realm grants. Only the default production realm may be visible through public discovery in v1.
 - Bootstrap discovery, `REALMS`, `POST /auth/connect-token`, and `PLAY` must all consume the same Account Service-owned realm-access-grant authority for non-public realms so visibility and admission cannot drift by surface.
+- Losing realm visibility or realm-grant authority must fail admission before gameplay binding; clients must not remain eligible for a non-public realm only because they still hold a stale discovery response.
 - `CHARS <world> [realm]` must be sourced from the authoritative character store for the resolved `{tenantId, gameInstanceId}` target and filtered to the caller's valid character choices for that realm. Shared-state realms may surface the tenant's normal live characters, while isolated realms may surface copied, seeded, or otherwise instance-local character state for the same account.
 - `WORLDS` and `CHARS` responses must not leak inaccessible tenants or characters; unresolved selectors return canonical errors (`WORLD_NOT_FOUND`, `WORLD_ACCESS_DENIED`, `CHARACTER_NOT_FOUND`, `CHARACTER_ACCESS_DENIED`) without exposing whether a hidden tenant exists.
 
