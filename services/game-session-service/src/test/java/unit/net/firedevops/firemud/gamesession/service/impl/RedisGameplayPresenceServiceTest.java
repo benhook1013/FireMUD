@@ -105,6 +105,19 @@ class RedisGameplayPresenceServiceTest {
   }
 
   @Test
+  void findConnectedBySessionIdReadsPresenceRecordDirectly() {
+    when(valueOperations.get("gameplaypresence:session:4"))
+        .thenReturn(
+            new net.firedevops.firemud.gamesession.service.GameplayPresence(
+                4L, 22L, 7L, 2L, 102L, "Ben", GameplayPresenceRole.PLAYER, 70L, null, null, null));
+
+    var presence = service.findConnectedBySessionId(4L);
+
+    assertEquals(true, presence.isPresent());
+    assertEquals(4L, presence.get().sessionId());
+  }
+
+  @Test
   void recordCommandActivityRefreshesPresenceAndMeaningfulTimestampOnlyWhenRequested() {
     AtomicLong now = new AtomicLong(100L);
     service = new RedisGameplayPresenceService(redisTemplate, jwtUtil, TTL.toMillis(), now::get);

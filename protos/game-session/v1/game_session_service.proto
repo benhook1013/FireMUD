@@ -14,6 +14,7 @@ service GameSessionService {
   rpc RestartSession(RestartSessionRequest) returns (RestartSessionResponse);
   rpc EnqueueCommand(EnqueueCommandRequest) returns (EnqueueCommandResponse);
   rpc QueryState(QueryStateRequest) returns (QueryStateResponse);
+  rpc QueryAccountPresence(QueryAccountPresenceRequest) returns (QueryAccountPresenceResponse);
   rpc ToggleFeatureFlag(ToggleFeatureFlagRequest) returns (ToggleFeatureFlagResponse);
   // Pause tick execution so a consistent pg_dump can be taken.
   rpc PauseTicks(PauseTicksRequest) returns (PauseTicksResponse);
@@ -90,6 +91,33 @@ message QueryStateRequest {
 
 message QueryStateResponse {
   string state_json = 1;
+  shared.v1.ErrorDetail error = 2;
+}
+
+message QueryAccountPresenceRequest {
+  string tenant_id = 1;
+  string viewer_account_id = 2;
+  repeated string account_ids = 3;
+}
+
+enum AccountPresenceActivityState {
+  ACCOUNT_PRESENCE_ACTIVITY_STATE_UNSPECIFIED = 0;
+  ACCOUNT_PRESENCE_ACTIVITY_STATE_ACTIVE = 1;
+  ACCOUNT_PRESENCE_ACTIVITY_STATE_AUTO_AFK = 2;
+  ACCOUNT_PRESENCE_ACTIVITY_STATE_EXPLICIT_AFK = 3;
+}
+
+message AccountPresenceEntry {
+  string account_id = 1;
+  bool online = 2;
+  string game_instance_id = 3;
+  string character_id = 4;
+  string character_name = 5;
+  AccountPresenceActivityState activity_state = 6;
+}
+
+message QueryAccountPresenceResponse {
+  repeated AccountPresenceEntry presences = 1;
   shared.v1.ErrorDetail error = 2;
 }
 

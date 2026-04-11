@@ -1,0 +1,80 @@
+package net.firedevops.firemud.gamesession.service.impl;
+
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import net.firedevops.firemud.gamesession.entity.GameInstance;
+import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
+import net.firedevops.firemud.gamesession.service.AccountPresenceQueryService;
+import net.firedevops.firemud.gamesession.service.AccountPresenceSnapshot;
+import net.firedevops.firemud.gamesession.service.GameplayPresence;
+import net.firedevops.firemud.gamesession.service.GameplayPresenceActivityResolver;
+import net.firedevops.firemud.gamesession.service.GameplayPresenceActivityState;
+import net.firedevops.firemud.gamesession.service.GameplayPresenceService;
+import org.springframework.stereotype.Service;
+
+@Service
+public class AccountPresenceQueryServiceImpl implements AccountPresenceQueryService {
+  private final GameInstanceRepository gameInstanceRepository;
+  private final GameplayPresenceService gameplayPresenceService;
+  private final GameplayPresenceActivityResolver gameplayPresenceActivityResolver;
+
+  public AccountPresenceQueryServiceImpl(
+      GameInstanceRepository gameInstanceRepository,
+      GameplayPresenceService gameplayPresenceService,
+      GameplayPresenceActivityResolver gameplayPresenceActivityResolver) {
+    this.gameInstanceRepository = gameInstanceRepository;
+    this.gameplayPresenceService = gameplayPresenceService;
+    this.gameplayPresenceActivityResolver = gameplayPresenceActivityResolver;
+  }
+
+  @Override
+  public List<AccountPresenceSnapshot> queryAccountPresence(
+      long tenantId, long viewerAccountId, List<Long> accountIds) {
+    Objects.requireNonNull(accountIds, "accountIds");
+    LinkedHashSet<Long> requestedIds = new LinkedHashSet<>();
+    for (Long accountId : accountIds) {
+      if (accountId != null && accountId > 0) {
+        requestedIds.add(accountId);
+      }
+    }
+    if (requestedIds.isEmpty()) {
+      return List.of();
+    }
+
+    Map<Long, AccountPresenceSnapshot> results = new LinkedHashMap<>();
+    for (Long accountId : requestedIds) {
+      results.put(accountId, offline(accountId));
+    }
+
+    List<GameInstance> runningInstances =
+        gameInstanceRepository.findByTenantIdAndOwnerAccountIdInAndStatus(
+            tenantId, requestedIds, "RUNNING");
+    for (GameInstance instance : runningInstances) {
+      GameplayPresence presence =
+          gameplayPresenceService.findConnectedBySessionId(instance.getId()).orElse(null);
+      if (presence == null) {
+        continue;
+      }
+      GameplayPresenceActivityState activityState =
+          gameplayPresenceActivityResolver.resolve(presence);
+      results.put(
+          instance.getOwnerAccountId(),
+          new AccountPresenceSnapshot(
+              instance.getOwnerAccountId(),
+              true,
+              presence.gameInstanceId(),
+              presence.characterId(),
+              presence.characterName(),
+              activityState));
+    }
+    return List.copyOf(new ArrayList<>(results.values()));
+  }
+
+  private AccountPresenceSnapshot offline(long accountId) {
+    return new AccountPresenceSnapshot(accountId, false, null, null, null, null);
+  }
+}

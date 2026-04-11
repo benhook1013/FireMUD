@@ -16,6 +16,8 @@ import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.dto.GameInstanceDto;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
+import net.firedevops.firemud.gamesession.service.AccountPresenceQueryService;
+import net.firedevops.firemud.gamesession.service.AccountPresenceSnapshot;
 import net.firedevops.firemud.gamesession.service.FeatureFlagService;
 import net.firedevops.firemud.gamesession.service.GameInstanceService;
 import net.firedevops.firemud.gamesession.service.IpConnectionLimiter;
@@ -27,6 +29,8 @@ import net.firedevops.firemud.gamesession.v1.PauseTicksRequest;
 import net.firedevops.firemud.gamesession.v1.PauseTicksResponse;
 import net.firedevops.firemud.gamesession.v1.PingRequest;
 import net.firedevops.firemud.gamesession.v1.PingResponse;
+import net.firedevops.firemud.gamesession.v1.QueryAccountPresenceRequest;
+import net.firedevops.firemud.gamesession.v1.QueryAccountPresenceResponse;
 import net.firedevops.firemud.gamesession.v1.QueryStateRequest;
 import net.firedevops.firemud.gamesession.v1.QueryStateResponse;
 import net.firedevops.firemud.gamesession.v1.RestartSessionRequest;
@@ -93,6 +97,70 @@ class GameSessionGrpcServiceTest {
     assertEquals("pong", ref.get().getMessage());
     assertEquals("OK", ref.get().getError().getCode());
     assertEquals("pong", ref.get().getError().getMessage());
+  }
+
+  @Test
+  void queryAccountPresenceReturnsMappedSnapshots() {
+    PingService pingService = Mockito.mock(PingService.class);
+    GameInstanceService gameInstanceService = Mockito.mock(GameInstanceService.class);
+    FeatureFlagService featureFlagService = Mockito.mock(FeatureFlagService.class);
+    TextCommandInterpreter textCommandInterpreter = Mockito.mock(TextCommandInterpreter.class);
+    GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
+    AccountPresenceQueryService accountPresenceQueryService =
+        Mockito.mock(AccountPresenceQueryService.class);
+    TickService tickService = Mockito.mock(TickService.class);
+    IpConnectionLimiter ipLimiter = Mockito.mock(IpConnectionLimiter.class);
+    SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+    SessionContext.setContext("42", List.of(), Map.of());
+    Mockito.when(accountPresenceQueryService.queryAccountPresence(1L, 42L, List.of(7L)))
+        .thenReturn(
+            List.of(
+                new AccountPresenceSnapshot(
+                    7L,
+                    true,
+                    9L,
+                    99L,
+                    "Ben",
+                    net.firedevops.firemud.gamesession.service.GameplayPresenceActivityState
+                        .EXPLICIT_AFK)));
+    GameSessionGrpcService service =
+        new GameSessionGrpcService(
+            pingService,
+            gameInstanceService,
+            featureFlagService,
+            textCommandInterpreter,
+            gameInstanceRepository,
+            accountPresenceQueryService,
+            tickService,
+            meterRegistry,
+            ipLimiter);
+
+    AtomicReference<QueryAccountPresenceResponse> ref = new AtomicReference<>();
+    service.queryAccountPresence(
+        QueryAccountPresenceRequest.newBuilder()
+            .setTenantId("1")
+            .setViewerAccountId("42")
+            .addAccountIds("7")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(QueryAccountPresenceResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {
+            fail(t);
+          }
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertEquals(1, ref.get().getPresencesCount());
+    assertEquals("7", ref.get().getPresences(0).getAccountId());
+    assertEquals(true, ref.get().getPresences(0).getOnline());
+    assertEquals("Ben", ref.get().getPresences(0).getCharacterName());
   }
 
   @Test

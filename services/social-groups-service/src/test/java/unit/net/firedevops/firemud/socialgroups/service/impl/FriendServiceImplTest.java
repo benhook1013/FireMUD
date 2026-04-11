@@ -6,8 +6,14 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 
 import java.time.Instant;
+import java.util.List;
+import net.firedevops.firemud.gamesession.v1.AccountPresenceActivityState;
+import net.firedevops.firemud.gamesession.v1.AccountPresenceEntry;
+import net.firedevops.firemud.gamesession.v1.QueryAccountPresenceResponse;
+import net.firedevops.firemud.socialgroups.client.GameSessionClient;
 import net.firedevops.firemud.socialgroups.dto.AddFriendRequest;
 import net.firedevops.firemud.socialgroups.dto.FriendLinkDto;
+import net.firedevops.firemud.socialgroups.dto.FriendPresenceActivityState;
 import net.firedevops.firemud.socialgroups.entity.AccountFriendLink;
 import net.firedevops.firemud.socialgroups.entity.FriendLink;
 import net.firedevops.firemud.socialgroups.mapper.FriendLinkMapper;
@@ -21,14 +27,16 @@ import org.mockito.Mockito;
 class FriendServiceImplTest {
   private FriendLinkRepository repository;
   private AccountFriendLinkRepository accountRepository;
+  private GameSessionClient gameSessionClient;
   private FriendServiceImpl service;
 
   @BeforeEach
   void setUp() {
     repository = Mockito.mock(FriendLinkRepository.class);
     accountRepository = Mockito.mock(AccountFriendLinkRepository.class);
+    gameSessionClient = Mockito.mock(GameSessionClient.class);
     FriendLinkMapper mapper = Mappers.getMapper(FriendLinkMapper.class);
-    service = new FriendServiceImpl(repository, accountRepository, mapper);
+    service = new FriendServiceImpl(repository, accountRepository, mapper, gameSessionClient);
   }
 
   @Test
@@ -65,5 +73,37 @@ class FriendServiceImplTest {
     assertEquals(2L, result.accountId());
     assertEquals(3L, result.friendAccountId());
     assertNotNull(result.createdAt());
+  }
+
+  @Test
+  void listFriendPresenceReturnsOrderedSnapshotsFromGameSession() {
+    AccountFriendLink link = new AccountFriendLink();
+    link.setTenantId(11L);
+    link.setAccountId(2L);
+    link.setFriendAccountId(3L);
+    link.setStatus("active");
+    when(accountRepository.findByTenantIdAndAccountIdAndStatus(11L, 2L, "active"))
+        .thenReturn(List.of(link));
+    when(gameSessionClient.queryAccountPresence(11L, 2L, List.of(3L)))
+        .thenReturn(
+            QueryAccountPresenceResponse.newBuilder()
+                .addPresences(
+                    AccountPresenceEntry.newBuilder()
+                        .setAccountId("3")
+                        .setOnline(true)
+                        .setGameInstanceId("9")
+                        .setCharacterId("99")
+                        .setCharacterName("Ben")
+                        .setActivityState(
+                            AccountPresenceActivityState.ACCOUNT_PRESENCE_ACTIVITY_STATE_AUTO_AFK)
+                        .build())
+                .build());
+
+    var result = service.listFriendPresence(11L, 2L);
+
+    assertEquals(1, result.size());
+    assertEquals(3L, result.get(0).friendAccountId());
+    assertEquals(true, result.get(0).online());
+    assertEquals(FriendPresenceActivityState.AUTO_AFK, result.get(0).activityState());
   }
 }

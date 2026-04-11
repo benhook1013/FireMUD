@@ -6,15 +6,19 @@ import static org.mockito.Mockito.verify;
 
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
+import net.firedevops.firemud.socialgroups.dto.FriendPresenceDto;
 import net.firedevops.firemud.socialgroups.dto.SendMessageRequestDto;
 import net.firedevops.firemud.socialgroups.enums.ChatType;
+import net.firedevops.firemud.socialgroups.security.SocialAccessGuard;
 import net.firedevops.firemud.socialgroups.service.ChatService;
 import net.firedevops.firemud.socialgroups.service.FriendService;
 import net.firedevops.firemud.socialgroups.service.GuildService;
 import net.firedevops.firemud.socialgroups.service.MailService;
 import net.firedevops.firemud.socialgroups.service.PingService;
 import net.firedevops.firemud.socialgroups.v1.CreateGuildResponse;
+import net.firedevops.firemud.socialgroups.v1.ListFriendPresenceResponse;
 import net.firedevops.firemud.socialgroups.v1.PingRequest;
 import net.firedevops.firemud.socialgroups.v1.PingResponse;
 import net.firedevops.firemud.socialgroups.v1.SendMessageResponse;
@@ -30,8 +34,10 @@ class SocialGroupsGrpcServiceTest {
     GuildService guild = Mockito.mock(GuildService.class);
     FriendService friend = Mockito.mock(FriendService.class);
     MailService mail = Mockito.mock(MailService.class);
+    SocialAccessGuard accessGuard = Mockito.mock(SocialAccessGuard.class);
     SocialGroupsGrpcService service =
-        new SocialGroupsGrpcService(ping, chat, guild, friend, mail, new SimpleMeterRegistry());
+        new SocialGroupsGrpcService(
+            ping, chat, guild, friend, mail, accessGuard, new SimpleMeterRegistry());
 
     AtomicReference<PingResponse> ref = new AtomicReference<>();
     service.ping(
@@ -60,8 +66,11 @@ class SocialGroupsGrpcServiceTest {
     Mockito.when(guild.createGuild(Mockito.any())).thenThrow(new IllegalArgumentException("bad"));
     FriendService friend = Mockito.mock(FriendService.class);
     MailService mail = Mockito.mock(MailService.class);
+    SocialAccessGuard accessGuard = Mockito.mock(SocialAccessGuard.class);
+    Mockito.when(accessGuard.hasAccountAccess(1L, 2L)).thenReturn(true);
     SocialGroupsGrpcService service =
-        new SocialGroupsGrpcService(ping, chat, guild, friend, mail, new SimpleMeterRegistry());
+        new SocialGroupsGrpcService(
+            ping, chat, guild, friend, mail, accessGuard, new SimpleMeterRegistry());
 
     AtomicReference<CreateGuildResponse> ref = new AtomicReference<>();
     service.createGuild(
@@ -95,8 +104,11 @@ class SocialGroupsGrpcServiceTest {
     Mockito.when(guild.createGuild(Mockito.any())).thenThrow(new IllegalStateException("boom"));
     FriendService friend = Mockito.mock(FriendService.class);
     MailService mail = Mockito.mock(MailService.class);
+    SocialAccessGuard accessGuard = Mockito.mock(SocialAccessGuard.class);
+    Mockito.when(accessGuard.hasAccountAccess(1L, 2L)).thenReturn(true);
     SocialGroupsGrpcService service =
-        new SocialGroupsGrpcService(ping, chat, guild, friend, mail, new SimpleMeterRegistry());
+        new SocialGroupsGrpcService(
+            ping, chat, guild, friend, mail, accessGuard, new SimpleMeterRegistry());
 
     AtomicReference<CreateGuildResponse> ref = new AtomicReference<>();
     service.createGuild(
@@ -129,8 +141,11 @@ class SocialGroupsGrpcServiceTest {
     GuildService guild = Mockito.mock(GuildService.class);
     FriendService friend = Mockito.mock(FriendService.class);
     MailService mail = Mockito.mock(MailService.class);
+    SocialAccessGuard accessGuard = Mockito.mock(SocialAccessGuard.class);
+    Mockito.when(accessGuard.hasAccountAccess(1L, 2L)).thenReturn(true);
     SocialGroupsGrpcService service =
-        new SocialGroupsGrpcService(ping, chat, guild, friend, mail, new SimpleMeterRegistry());
+        new SocialGroupsGrpcService(
+            ping, chat, guild, friend, mail, accessGuard, new SimpleMeterRegistry());
 
     AtomicReference<SendMessageResponse> ref = new AtomicReference<>();
     service.sendMessage(
@@ -159,5 +174,45 @@ class SocialGroupsGrpcServiceTest {
             new SendMessageRequestDto(1L, 2L, ChatType.WHISPER, "", 7L, null, null, "quiet"));
     assertNotNull(ref.get());
     assertEquals(true, ref.get().getSuccess());
+  }
+
+  @Test
+  void listFriendPresenceMapsDtosToProtoEntries() {
+    PingService ping = Mockito.mock(PingService.class);
+    ChatService chat = Mockito.mock(ChatService.class);
+    GuildService guild = Mockito.mock(GuildService.class);
+    FriendService friend = Mockito.mock(FriendService.class);
+    MailService mail = Mockito.mock(MailService.class);
+    SocialAccessGuard accessGuard = Mockito.mock(SocialAccessGuard.class);
+    Mockito.when(accessGuard.hasAccountAccess(1L, 2L)).thenReturn(true);
+    Mockito.when(friend.listFriendPresence(1L, 2L))
+        .thenReturn(List.of(new FriendPresenceDto(3L, true, 9L, 99L, "Ben", null, null)));
+    SocialGroupsGrpcService service =
+        new SocialGroupsGrpcService(
+            ping, chat, guild, friend, mail, accessGuard, new SimpleMeterRegistry());
+
+    AtomicReference<ListFriendPresenceResponse> ref = new AtomicReference<>();
+    service.listFriendPresence(
+        net.firedevops.firemud.socialgroups.v1.ListFriendPresenceRequest.newBuilder()
+            .setTenantId("1")
+            .setAccountId("2")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(ListFriendPresenceResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(ref.get());
+    assertEquals(1, ref.get().getPresencesCount());
+    assertEquals("3", ref.get().getPresences(0).getFriendAccountId());
+    assertEquals(true, ref.get().getPresences(0).getOnline());
   }
 }

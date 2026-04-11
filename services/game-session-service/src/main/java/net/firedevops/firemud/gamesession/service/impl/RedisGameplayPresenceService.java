@@ -9,6 +9,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.function.LongSupplier;
 import net.firedevops.firemud.common.LoggingUtil;
@@ -208,6 +209,15 @@ public final class RedisGameplayPresenceService implements GameplayPresenceServi
             .thenComparingLong(GameplayPresence::sessionId);
     matches.sort(ordering);
     return List.copyOf(matches);
+  }
+
+  @Override
+  public Optional<GameplayPresence> findConnectedBySessionId(long sessionId) {
+    ValueOperations<String, Object> valueOps = redisTemplate.opsForValue();
+    if (valueOps == null) {
+      return Optional.empty();
+    }
+    return Optional.ofNullable((GameplayPresence) valueOps.get(presenceKey(sessionId)));
   }
 
   private String presenceKey(long sessionId) {

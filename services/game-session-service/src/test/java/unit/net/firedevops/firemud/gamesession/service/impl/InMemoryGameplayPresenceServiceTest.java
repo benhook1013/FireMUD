@@ -52,8 +52,10 @@ class InMemoryGameplayPresenceServiceTest {
     service.registerConnected(
         new SessionContext(2L, 22L, 2L, "player@example.com", 102L, "Ben", 7L, "R-1", null));
 
+    assertEquals(true, service.findConnectedBySessionId(2L).isPresent());
     service.removeBySessionId(2L);
 
+    assertEquals(false, service.findConnectedBySessionId(2L).isPresent());
     assertEquals(List.of(), service.listConnectedByGameInstance(22L, 7L));
   }
 

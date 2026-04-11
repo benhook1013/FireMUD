@@ -7,6 +7,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.function.LongSupplier;
@@ -127,6 +128,11 @@ public final class InMemoryGameplayPresenceService implements GameplayPresenceSe
     }
     matches.sort(ordering);
     return List.copyOf(matches);
+  }
+
+  @Override
+  public Optional<GameplayPresence> findConnectedBySessionId(long sessionId) {
+    return Optional.ofNullable(presences.get(sessionId));
   }
 
   private GameplayPresenceRole classifyRole(SessionContext context) {

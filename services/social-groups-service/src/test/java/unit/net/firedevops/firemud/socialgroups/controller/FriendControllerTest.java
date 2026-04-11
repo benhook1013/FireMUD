@@ -1,6 +1,7 @@
 package net.firedevops.firemud.socialgroups.controller;
 
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -12,7 +13,9 @@ import net.firedevops.firemud.socialgroups.config.AuthConfig;
 import net.firedevops.firemud.socialgroups.config.WebConfig;
 import net.firedevops.firemud.socialgroups.dto.AddFriendRequest;
 import net.firedevops.firemud.socialgroups.dto.FriendLinkDto;
+import net.firedevops.firemud.socialgroups.dto.FriendPresenceDto;
 import net.firedevops.firemud.socialgroups.security.JwtAuthInterceptor;
+import net.firedevops.firemud.socialgroups.security.SocialAccessGuard;
 import net.firedevops.firemud.socialgroups.service.FriendService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -39,6 +42,7 @@ class FriendControllerTest {
   private final ObjectMapper objectMapper = new ObjectMapper();
 
   @MockitoBean private FriendService friendService;
+  @MockitoBean private SocialAccessGuard socialAccessGuard;
 
   @Test
   void addFriendReturnsDto() throws Exception {
@@ -46,7 +50,7 @@ class FriendControllerTest {
     FriendLinkDto response = new FriendLinkDto(1L, 1L, 2L, 3L, "active", null);
     when(friendService.addFriend(request)).thenReturn(response);
 
-    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+    String token = jwtUtil.generateToken("2", Map.of("accountId", "2", "globalRoles", List.of()));
     mockMvc
         .perform(
             post("/friends")
@@ -56,5 +60,23 @@ class FriendControllerTest {
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("SUCCESS"))
         .andExpect(jsonPath("$.data.accountId").value(2L));
+  }
+
+  @Test
+  void listFriendPresenceReturnsPresenceList() throws Exception {
+    when(friendService.listFriendPresence(1L, 2L))
+        .thenReturn(List.of(new FriendPresenceDto(3L, true, 9L, 99L, "Ben", null, null)));
+
+    String token = jwtUtil.generateToken("2", Map.of("accountId", "2", "globalRoles", List.of()));
+    mockMvc
+        .perform(
+            get("/friends/presence")
+                .param("tenantId", "1")
+                .param("accountId", "2")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.status").value("SUCCESS"))
+        .andExpect(jsonPath("$.data[0].friendAccountId").value(3L))
+        .andExpect(jsonPath("$.data[0].online").value(true));
   }
 }

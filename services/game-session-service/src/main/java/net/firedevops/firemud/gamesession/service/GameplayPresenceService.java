@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamesession.service;
 
 import java.util.List;
+import java.util.Optional;
 
 /** Tracks currently connected in-world gameplay presences on the current runtime. */
 public interface GameplayPresenceService {
@@ -13,4 +14,6 @@ public interface GameplayPresenceService {
   void removeBySessionId(long sessionId);
 
   List<GameplayPresence> listConnectedByGameInstance(long tenantId, long gameInstanceId);
+
+  Optional<GameplayPresence> findConnectedBySessionId(long sessionId);
 }
