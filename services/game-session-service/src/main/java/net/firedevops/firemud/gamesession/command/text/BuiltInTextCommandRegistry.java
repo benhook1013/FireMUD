@@ -2,8 +2,11 @@ package net.firedevops.firemud.gamesession.command.text;
 
 import java.util.EnumMap;
 import java.util.Map;
+import java.util.Optional;
+import org.springframework.stereotype.Component;
 
-final class BuiltInTextCommandRegistry {
+@Component
+final class BuiltInTextCommandRegistry implements TextCommandRegistry {
   private final Map<TextCommandType, TextCommandDefinition> definitions;
 
   BuiltInTextCommandRegistry() {
@@ -98,16 +101,9 @@ final class BuiltInTextCommandRegistry {
     this.definitions = Map.copyOf(definitions);
   }
 
-  TextCommandDefinition definitionFor(TextCommandType type) {
-    return definitions.getOrDefault(
-        type,
-        new TextCommandDefinition(
-            type,
-            TextCommandDispatchGroup.ENQUEUE_ONLY,
-            TextCommandStageRequirement.NONE,
-            TextCommandPromptPolicy.NEVER,
-            TextCommandActionCategory.SYSTEM,
-            TextCommandSource.EXTENSION));
+  @Override
+  public Optional<TextCommandDefinition> findDefinition(TextCommandType type) {
+    return Optional.ofNullable(definitions.get(type));
   }
 
   private static void registerGroup(

@@ -17,4 +17,14 @@ record TextCommandDefinition(
     Objects.requireNonNull(actionCategory, "actionCategory must not be null");
     Objects.requireNonNull(source, "source must not be null");
   }
+
+  static TextCommandDefinition extensionDefinition(TextCommandType type) {
+    return new TextCommandDefinition(
+        type,
+        TextCommandDispatchGroup.ENQUEUE_ONLY,
+        TextCommandStageRequirement.NONE,
+        TextCommandPromptPolicy.NEVER,
+        TextCommandActionCategory.SYSTEM,
+        TextCommandSource.EXTENSION);
+  }
 }

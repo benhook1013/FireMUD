@@ -28,7 +28,7 @@ public class TextCommandInterpreter {
   private final WorldsCommandHandler worldsHandler;
   private final PromptComposer promptComposer;
   private final TextCommandParser parser;
-  private final BuiltInTextCommandRegistry registry;
+  private final TextCommandRegistry registry;
 
   @Autowired
   public TextCommandInterpreter(
@@ -45,7 +45,8 @@ public class TextCommandInterpreter {
       SessionAuthenticationService sessionAuthenticationService,
       CommunicationCommandHandler communicationHandler,
       WorldsCommandHandler worldsHandler,
-      PromptComposer promptComposer) {
+      PromptComposer promptComposer,
+      BuiltInTextCommandRegistry registry) {
     this(
         commandService,
         lookHandler,
@@ -60,7 +61,7 @@ public class TextCommandInterpreter {
         worldsHandler,
         promptComposer,
         new TextCommandParser(),
-        new BuiltInTextCommandRegistry());
+        registry);
   }
 
   TextCommandInterpreter(
@@ -110,7 +111,7 @@ public class TextCommandInterpreter {
       WorldsCommandHandler worldsHandler,
       PromptComposer promptComposer,
       TextCommandParser parser,
-      BuiltInTextCommandRegistry registry) {
+      TextCommandRegistry registry) {
     this.commandService = Objects.requireNonNull(commandService, "commandService must not be null");
     this.lookHandler = Objects.requireNonNull(lookHandler, "lookHandler must not be null");
     this.loginHandler = Objects.requireNonNull(loginHandler, "loginHandler must not be null");
@@ -137,7 +138,10 @@ public class TextCommandInterpreter {
 
   public TextCommandInterpretationResult interpret(
       String sessionId, TextCommand command, boolean requiresSoloTick) {
-    TextCommandDefinition definition = registry.definitionFor(command.type());
+    TextCommandDefinition definition =
+        registry
+            .findDefinition(command.type())
+            .orElseGet(() -> TextCommandDefinition.extensionDefinition(command.type()));
     if (command.type() == TextCommandType.NOOP) {
       return new TextCommandInterpretationResult(CommandEnqueueResult.success());
     }

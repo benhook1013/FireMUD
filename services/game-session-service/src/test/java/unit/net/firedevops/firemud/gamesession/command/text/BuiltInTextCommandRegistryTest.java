@@ -1,7 +1,9 @@
 package net.firedevops.firemud.gamesession.command.text;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.junit.jupiter.api.Test;
 
@@ -39,12 +41,10 @@ class BuiltInTextCommandRegistryTest {
   }
 
   @Test
-  void unregisteredCommandFallsBackToExtensionMetadata() {
-    TextCommandDefinition definition = registry.definitionFor(TextCommandType.NOOP);
-
-    assertEquals(TextCommandDispatchGroup.ENQUEUE_ONLY, definition.dispatchGroup());
-    assertEquals(TextCommandActionCategory.SYSTEM, definition.actionCategory());
-    assertEquals(TextCommandSource.EXTENSION, definition.source());
+  void builtInRegistryOnlyOwnsExplicitPlatformCommands() {
+    assertFalse(registry.findDefinition(TextCommandType.NOOP).isPresent());
+    assertFalse(registry.findDefinition(TextCommandType.UNKNOWN).isPresent());
+    assertTrue(registry.findDefinition(TextCommandType.LOGIN).isPresent());
   }
 
   @Test
@@ -53,7 +53,7 @@ class BuiltInTextCommandRegistryTest {
       if (type == TextCommandType.NOOP || type == TextCommandType.UNKNOWN) {
         continue;
       }
-      TextCommandDefinition definition = registry.definitionFor(type);
+      TextCommandDefinition definition = registry.findDefinition(type).orElseThrow();
 
       assertEquals(TextCommandSource.PLATFORM_BUILT_IN, definition.source(), type.name());
       assertNotEquals(
@@ -66,7 +66,7 @@ class BuiltInTextCommandRegistryTest {
       TextCommandDispatchGroup expectedGroup,
       TextCommandActionCategory expectedCategory,
       TextCommandSource expectedSource) {
-    TextCommandDefinition definition = registry.definitionFor(type);
+    TextCommandDefinition definition = registry.findDefinition(type).orElseThrow();
 
     assertEquals(expectedGroup, definition.dispatchGroup());
     assertEquals(expectedCategory, definition.actionCategory());

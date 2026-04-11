@@ -399,7 +399,8 @@ class TextCommandInterpreterTest {
             sessionAuthenticationService,
             communicationHandler,
             worldsHandler,
-            new PromptComposer());
+            new PromptComposer(),
+            new BuiltInTextCommandRegistry());
   }
 
   @Test

@@ -206,7 +206,8 @@ class SessionResumptionFlowTest {
             sessionAuthenticationService,
             communicationHandler,
             worldsHandler,
-            new PromptComposer());
+            new PromptComposer(),
+            new BuiltInTextCommandRegistry());
   }
 
   @Test
