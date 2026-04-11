@@ -52,6 +52,12 @@ If mismatches are detected, Game Design fails the relevant design-time operation
 
 In both cases, runtime handlers therefore never execute against missing or incompatible abilities.
 
+Required publication/readiness separation:
+
+- Game Design must expose immutable design-time read surfaces for these artifacts (for example `GetPublishedScriptPatchVersion` and `GetPublishedPluginVersion`) that report design acceptance state, `baseVersionId`, and `abilitySchemaDigest`.
+- Automation & Scripting runtime reads (`GetScriptPatchStatus`, `GetPluginStatus`) remain separate and must report tenant readiness / instance activation state rather than re-encoding design-time acceptance.
+- Operator and creator tooling that needs a complete picture must join the design-time publication read with the runtime readiness/activation read instead of inventing a single blended status field.
+
 From an observability perspective, script and plugin invocations that exercise abilities are recorded in `script_event_audit` with a `scriptEventId` that you can use to correlate designer-facing events with logs/traces and downstream tick effects; aggregate automation metrics should be used at the `scriptId` / `eventType` / `tenantId` level rather than per `scriptEventId`, following the patterns in `design/architecture/system-architecture-scripting-quotas-and-operations.md`.
 
 ## Capabilities
