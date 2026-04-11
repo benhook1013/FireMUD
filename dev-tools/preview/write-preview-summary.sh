@@ -17,7 +17,7 @@ failure_stage="${7:-}"
 case "$mode" in
   target)
     cat <<EOF
-## Preview Target
+## 🔵 Preview Target
 
 - PR: #${pr_number}
 - Head SHA: \`${head_sha}\`
@@ -28,7 +28,7 @@ EOF
     ;;
   success)
     cat <<EOF
-## Preview Ready
+## 🟢 Preview Ready
 
 - PR: #${pr_number}
 - Head SHA: \`${head_sha}\`
@@ -39,7 +39,7 @@ EOF
     ;;
   failure)
     cat <<EOF
-## Preview Failed
+## 🔴 Preview Failed
 
 - PR: #${pr_number}
 - Head SHA: \`${head_sha}\`

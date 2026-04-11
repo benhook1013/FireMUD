@@ -600,10 +600,11 @@ jobs:
             }
 
             const summaryText = execFileSync("bash", args, { encoding: "utf8" });
-            const body =
-              mode === "success"
-                ? `${summaryText}\n- Demo login: demo@example.com / swordfish\n`
-                : `${summaryText}\n`;
+            const bodyLines = ["### Preview Summary", "", summaryText.trimEnd()];
+            if (mode === "success") {
+              bodyLines.push("- Demo login: demo@example.com / swordfish");
+            }
+            const body = `${bodyLines.join("\n")}\n`;
 
             const { data: comments } = await github.rest.issues.listComments({
               ...context.repo,
