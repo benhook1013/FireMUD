@@ -22,7 +22,10 @@ The authoritative REST schema source lives in [../../../../services/account-serv
 - `ListBootstrapRealms` – list caller-visible realms for a selected world during first-party gameplay bootstrap.
 - `ListBootstrapCharacters` – list caller-visible characters for a selected world/realm during first-party gameplay bootstrap.
 - `IssueConnectToken` – issue short-lived gameplay connect token for `/ws/game/**` handshake policy after resolving discovery `connectScopeId`, validating live membership/public admission, runtime entitlements, and the current admission pointer for the target `{tenantId, realmSlug, gameInstanceId}`.
+  - Required behavior: `connectScopeId` is an opaque short-lived selector for one caller-visible realm target, must be revalidated against current visibility/grant state and current admission-pointer state at issuance time, and must fail closed with `CONNECT_SCOPE_MISMATCH` or `ADMISSION_POINTER_UNAVAILABLE` when the earlier discovery target is no longer admissible.
 - `EnsurePublicProductionPlayerMembership` – idempotently create or return the caller's `player` membership for first admission through the default public production realm and return the resulting `membershipVersion`.
+  - Required behavior: valid only for the tenant's current default public production realm, must fail closed for non-production realms, must be idempotent for `{accountId, tenantId, realmSlug}`, and must emit one durable audit/event record on successful first-join creation.
+  - Required failure codes at minimum: `PUBLIC_PRODUCTION_ADMISSION_DENIED`, `ADMISSION_POINTER_UNAVAILABLE`, `TENANT_BILLING_BLOCKED`.
 - `GetCallerTenantMembership` – return authoritative caller-bound account-tenant membership and roles for billing-safe mutation checks.
 - `GetTenantMembershipForAccount` – cross-tenant membership lookup for billing/reporting workflows (`billingAdmin`/`platformAdmin` only).
 - `GetTenantMembershipForRuntime` – authoritative internal membership read for gameplay admission, reconnect/resume, and membership-gap reconciliation.

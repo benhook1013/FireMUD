@@ -118,6 +118,10 @@ Runtime caller contract:
   - It is valid only for the default public production realm and only when the caller satisfies the public-production admission policy.
   - It must be idempotent for `{accountId, tenantId, realmSlug}` and return the resulting `membershipVersion`.
   - The resulting membership must be immediately visible to `GetTenantMembershipForRuntime`.
+  - Minimum preconditions: the selected realm is still the tenant's default public production realm, it remains publicly visible to the caller, current runtime entitlements still allow gameplay admission, and current admission-pointer state resolves unambiguously for that realm.
+  - Concurrency rule: racing first-join requests must create at most one membership row and all successful callers must observe the same resulting membership identity/version.
+  - Audit rule: successful first-join creation must emit one durable audit/event record carrying at minimum `accountId`, `tenantId`, `realmSlug`, `membershipVersion`, and `requestId`.
+  - Required failure codes at minimum: `PUBLIC_PRODUCTION_ADMISSION_DENIED`, `ADMISSION_POINTER_UNAVAILABLE`, and `TENANT_BILLING_BLOCKED`.
 - Runtime callers must treat missing required fields as contract failure and fail closed rather than inferring defaults.
 
 Membership-change producer contract:
