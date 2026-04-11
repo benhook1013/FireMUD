@@ -656,6 +656,8 @@ class GameSessionWebSocketHandlerIntegrationTest {
     WebSocketSession firstSession = firstFuture.get(5, TimeUnit.SECONDS);
     assertThat(firstResponseLatch.await(10, TimeUnit.SECONDS)).isTrue();
     firstSession.close();
+    assertThat(waitForPresenceCount(22L, 1L, 0)).isTrue();
+    assertThat(sessionContextService.findByTenantAndSessionId(22L, 41L)).isPresent();
 
     WebSocketHttpHeaders secondHeaders = new WebSocketHttpHeaders();
     secondHeaders.add("X-Game-Instance-Id", "42");
@@ -682,10 +684,12 @@ class GameSessionWebSocketHandlerIntegrationTest {
 
     WebSocketSession secondSession = secondFuture.get(5, TimeUnit.SECONDS);
     assertThat(secondResponseLatch.await(10, TimeUnit.SECONDS)).isTrue();
-    secondSession.close();
-
     assertThat(secondPayloads).anyMatch(payload -> payload.contains("RECONNECT REPLAY APPEARS"));
     assertThat(secondPayloads).anyMatch(payload -> payload.startsWith("OK PLAY"));
+    assertThat(waitForPresenceCount(22L, 1L, 1)).isTrue();
+    assertThat(gameplayPresenceService.listConnectedByGameInstance(22L, 1L))
+        .anySatisfy(presence -> assertThat(presence.sessionId()).isEqualTo(42L));
+    secondSession.close();
     verify(screenBufferService).get(22L, 1L, 123L);
     verify(screenBufferService, never()).clear(22L, 1L, 123L);
   }
@@ -1365,5 +1369,19 @@ class GameSessionWebSocketHandlerIntegrationTest {
       }
     }
     return false;
+  }
+
+  private boolean waitForPresenceCount(long tenantId, long gameInstanceId, int expectedCount)
+      throws InterruptedException {
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+    while (System.nanoTime() < deadline) {
+      if (gameplayPresenceService.listConnectedByGameInstance(tenantId, gameInstanceId).size()
+          == expectedCount) {
+        return true;
+      }
+      Thread.sleep(25L);
+    }
+    return gameplayPresenceService.listConnectedByGameInstance(tenantId, gameInstanceId).size()
+        == expectedCount;
   }
 }

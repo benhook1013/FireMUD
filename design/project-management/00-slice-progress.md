@@ -13,7 +13,7 @@ These are narrow enough to implement now and unblock the current runtime/platfor
 1. [02.1.2 Logout and Session Termination](./vertical-slices/02.1.2-task-list-logout-and-session-termination-vertical-slice.md)
    Remaining: mostly closed; the remaining tail is broader reconnect/recent-presence lifecycle proof rather than more logout-path semantics.
 2. [02.1.3 Session Activity and WHO Presence](./vertical-slices/02.1.3-task-list-session-activity-and-who-presence-vertical-slice.md)
-   Remaining: build on the now-live activity and AFK substrate with richer lifecycle proofs, recent-presence policy, and later `WHO` presentation consumers.
+   Remaining: build on the now-live activity, AFK, and disconnect/reconnect lifecycle substrate with recent-presence policy and later `WHO` presentation consumers.
 3. [06.3 Replace Aggregated Item Stacks With Distinct Item Instances](./vertical-slices/06.3-task-list-container-item-instance-identity-vertical-slice.md)
    Remaining: extend the now-live first strict stack model with bounded authored compatibility modes beyond definition-level sameness, but only after a real per-source variant substrate exists for anything beyond the current definition-level fingerprint.
 
