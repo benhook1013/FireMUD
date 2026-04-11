@@ -24,6 +24,11 @@ class BuiltInTextCommandRegistryTest {
         TextCommandActionCategory.META,
         TextCommandSource.PLATFORM_BUILT_IN);
     assertDefinition(
+        TextCommandType.AFK,
+        TextCommandDispatchGroup.ACTIVITY,
+        TextCommandActionCategory.META,
+        TextCommandSource.PLATFORM_BUILT_IN);
+    assertDefinition(
         TextCommandType.WHO,
         TextCommandDispatchGroup.WHO,
         TextCommandActionCategory.META,

@@ -60,7 +60,27 @@ public final class InMemoryGameplayPresenceService implements GameplayPresenceSe
             classifyRole(context),
             now,
             null,
+            null,
             null));
+  }
+
+  @Override
+  public void setExplicitAfk(long sessionId, boolean explicitAfk) {
+    presences.computeIfPresent(
+        sessionId,
+        (ignored, existing) ->
+            new GameplayPresence(
+                existing.sessionId(),
+                existing.tenantId(),
+                existing.gameInstanceId(),
+                existing.accountId(),
+                existing.characterId(),
+                existing.characterName(),
+                existing.role(),
+                existing.connectedAtEpochMs(),
+                explicitAfk ? Long.valueOf(currentTimeMillisSupplier.getAsLong()) : null,
+                existing.lastAcceptedCommandAtEpochMs(),
+                existing.lastMeaningfulActivityAtEpochMs()));
   }
 
   @Override
@@ -78,6 +98,7 @@ public final class InMemoryGameplayPresenceService implements GameplayPresenceSe
               existing.characterName(),
               existing.role(),
               existing.connectedAtEpochMs(),
+              existing.explicitAfkSinceEpochMs(),
               Long.valueOf(now),
               meaningfulGameplayActivity
                   ? Long.valueOf(now)

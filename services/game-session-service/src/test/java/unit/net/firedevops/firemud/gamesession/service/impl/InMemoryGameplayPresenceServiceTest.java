@@ -82,4 +82,23 @@ class InMemoryGameplayPresenceServiceTest {
     assertEquals(Long.valueOf(150L), afterGameplay.lastAcceptedCommandAtEpochMs());
     assertEquals(Long.valueOf(150L), afterGameplay.lastMeaningfulActivityAtEpochMs());
   }
+
+  @Test
+  void setExplicitAfkTracksAndClearsExplicitAfkTimestamp() {
+    AtomicLong now = new AtomicLong(100L);
+    InMemoryGameplayPresenceService service =
+        new InMemoryGameplayPresenceService(jwtUtil, now::get);
+    service.registerConnected(
+        new SessionContext(2L, 22L, 2L, "player@example.com", 102L, "Ben", 7L, "R-1", null));
+
+    now.set(120L);
+    service.setExplicitAfk(2L, true);
+    GameplayPresence afk = service.listConnectedByGameInstance(22L, 7L).get(0);
+    assertEquals(Long.valueOf(120L), afk.explicitAfkSinceEpochMs());
+
+    now.set(130L);
+    service.setExplicitAfk(2L, false);
+    GameplayPresence cleared = service.listConnectedByGameInstance(22L, 7L).get(0);
+    assertNull(cleared.explicitAfkSinceEpochMs());
+  }
 }

@@ -12,6 +12,7 @@ public record GameplayPresence(
     String characterName,
     GameplayPresenceRole role,
     long connectedAtEpochMs,
+    Long explicitAfkSinceEpochMs,
     Long lastAcceptedCommandAtEpochMs,
     Long lastMeaningfulActivityAtEpochMs)
     implements Serializable {

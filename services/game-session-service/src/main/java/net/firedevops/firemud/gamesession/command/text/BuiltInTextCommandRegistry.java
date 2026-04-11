@@ -42,6 +42,13 @@ final class BuiltInTextCommandRegistry implements TextCommandRegistry {
         TextCommandActionCategory.META);
     register(
         definitions,
+        TextCommandType.AFK,
+        TextCommandDispatchGroup.ACTIVITY,
+        TextCommandStageRequirement.GAMEPLAY,
+        TextCommandPromptPolicy.WHEN_GAMEPLAY,
+        TextCommandActionCategory.META);
+    register(
+        definitions,
         TextCommandType.PLAY,
         TextCommandDispatchGroup.SESSION,
         TextCommandStageRequirement.LOGIN,

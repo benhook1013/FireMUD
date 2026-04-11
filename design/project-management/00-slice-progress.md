@@ -13,7 +13,7 @@ These are narrow enough to implement now and unblock the current runtime/platfor
 1. [02.1.2 Logout and Session Termination](./vertical-slices/02.1.2-task-list-logout-and-session-termination-vertical-slice.md)
    Remaining: finish the follow-through proofs so fresh post-logout login is proven distinct from reconnect recovery and takeover, then align any remaining transport variants on the same deliberate close behavior.
 2. [02.1.3 Session Activity and WHO Presence](./vertical-slices/02.1.3-task-list-session-activity-and-who-presence-vertical-slice.md)
-   Remaining: build on the now-live activity timestamps with explicit AFK/auto-AFK, richer lifecycle proofs, and later `WHO` presentation consumers.
+   Remaining: build on the now-live activity and AFK substrate with richer lifecycle proofs, recent-presence policy, and later `WHO` presentation consumers.
 3. [06.3 Replace Aggregated Item Stacks With Distinct Item Instances](./vertical-slices/06.3-task-list-container-item-instance-identity-vertical-slice.md)
    Remaining: extend the now-live first strict stack model with bounded authored compatibility modes beyond definition-level sameness, but only after a real per-source variant substrate exists for anything beyond the current definition-level fingerprint.
 
@@ -26,7 +26,7 @@ These are already partly real in code and should continue after the immediate ru
 2. [02.13.7 Action Classification and Activity Semantics](./vertical-slices/02.13.7-task-list-action-classification-and-activity-semantics-vertical-slice.md)
    Remaining: extend the current primary-category plus timestamp consumer into optional tags/facets and later scripting/policy consumers.
 3. [02.1.3 Session Activity and WHO Presence](./vertical-slices/02.1.3-task-list-session-activity-and-who-presence-vertical-slice.md)
-   Remaining: grow from the current bounded `WHO` implementation into the fuller activity model when that work becomes active.
+   Remaining: grow from the current bounded `WHO` plus explicit/auto-AFK substrate into the fuller activity model when that work becomes active.
 4. [06 Task List Inventory, Containers, Equipment](./vertical-slices/06-task-list-inventory-containers-equipment-vertical-slice.md)
    Remaining: complete the remaining `06.3` follow-through and later authored stackability.
 5. [06.3.1 Stable Item Instance Visible Ref Allocation](./vertical-slices/06.3.1-task-list-item-instance-visible-ref-allocation-vertical-slice.md)
@@ -90,7 +90,7 @@ If you want the clearest immediate path, do these next:
 1. `02.1.2` logout and deliberate session termination
    Best next runtime batch because the core logout command is now live and the remaining work is proof/alignment across reconnect and transport variants rather than fresh design.
 2. `02.1.3` presence/WHO follow-through
-   Best next gameplay-runtime batch because the activity timestamp substrate is now live and the remaining work is explicit AFK/lifecycle behavior rather than vague design.
+   Best next gameplay-runtime batch because the activity and AFK substrate is now live and the remaining work is lifecycle proof, recent-presence policy, and later `WHO` presentation rather than vague design.
 3. `06.3.2` bounded authored compatibility-mode follow-up
    Best next item-model batch once a real variant discriminator substrate exists; do not fake it locally.
 

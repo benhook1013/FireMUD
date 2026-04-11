@@ -9,6 +9,7 @@ public enum TextCommandType {
   LOGOUT,
   PLAY,
   HELP,
+  AFK,
   WHO,
   INVENTORY,
   EQUIPMENT,
@@ -40,6 +41,7 @@ public enum TextCommandType {
       case "LOGOUT", "LOGOFF", "QUIT" -> LOGOUT;
       case "PLAY" -> PLAY;
       case "HELP" -> HELP;
+      case "AFK", "BRB" -> AFK;
       case "WHO" -> WHO;
       case "INVENTORY", "INV", "I" -> INVENTORY;
       case "EQUIPMENT", "EQUIP", "EQ" -> EQUIPMENT;

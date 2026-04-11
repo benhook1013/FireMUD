@@ -195,6 +195,8 @@ class SessionResumptionFlowTest {
             gameplayPresenceService,
             meterRegistry);
     worldsHandler = new WorldsCommandHandler(worldCatalog);
+    AfkCommandHandler afkHandler =
+        new AfkCommandHandler(sessionAuthenticationService, gameplayPresenceService);
     interpreter =
         new TextCommandInterpreter(
             commandService,
@@ -209,6 +211,7 @@ class SessionResumptionFlowTest {
                 screenBufferService),
             playHandler,
             moveHandler,
+            afkHandler,
             helpHandler,
             new WhoCommandHandler(gameplayPresenceService),
             new InventoryCommandHandler(entityManagementClient),

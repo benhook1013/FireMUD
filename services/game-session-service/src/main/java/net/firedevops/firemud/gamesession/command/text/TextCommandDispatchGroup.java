@@ -5,6 +5,7 @@ enum TextCommandDispatchGroup {
   WORLDS,
   SESSION,
   HELP,
+  ACTIVITY,
   WHO,
   ITEM,
   COMMUNICATION,

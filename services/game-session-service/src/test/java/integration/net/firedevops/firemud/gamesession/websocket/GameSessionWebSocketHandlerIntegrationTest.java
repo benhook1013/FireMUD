@@ -34,6 +34,8 @@ import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.CommandService;
+import net.firedevops.firemud.gamesession.service.GameplayPresence;
+import net.firedevops.firemud.gamesession.service.GameplayPresenceService;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.gamesession.testsupport.InMemorySessionContextTestConfiguration;
 import net.firedevops.firemud.shared.v1.RoomInstanceRef;
@@ -119,6 +121,8 @@ class GameSessionWebSocketHandlerIntegrationTest {
   @MockitoBean private SetOperations<String, Object> redisSetOperations;
 
   @Autowired private SessionContextService sessionContextService;
+
+  @Autowired private GameplayPresenceService gameplayPresenceService;
 
   private final ConcurrentMap<String, Object> firstPartyConnectStore = new ConcurrentHashMap<>();
   private final ConcurrentMap<String, java.util.LinkedHashSet<Object>> redisSetStore =
@@ -613,6 +617,56 @@ class GameSessionWebSocketHandlerIntegrationTest {
     assertThat(secondPayloads)
         .noneMatch(payload -> payload.contains("STALE REPLAY SHOULD NOT APPEAR"));
     verify(screenBufferService, never()).get(22L, 1L, 123L);
+  }
+
+  @Test
+  void websocketAfkCommandUpdatesLiveGameplayPresence() throws Exception {
+    StandardWebSocketClient client = new StandardWebSocketClient();
+    WebSocketHttpHeaders headers = new WebSocketHttpHeaders();
+    headers.add("X-Game-Instance-Id", "41");
+    List<String> payloads = new java.util.concurrent.CopyOnWriteArrayList<>();
+    CountDownLatch responseLatch = new CountDownLatch(3);
+    AtomicReference<WebSocketSession> sessionRef = new AtomicReference<>();
+
+    var future =
+        client.execute(
+            new TextWebSocketHandler() {
+              @Override
+              public void afterConnectionEstablished(WebSocketSession session) throws IOException {
+                sessionRef.set(session);
+                session.sendMessage(new TextMessage("LOGIN demo@example.com swordfish"));
+              }
+
+              @Override
+              protected void handleTextMessage(WebSocketSession session, TextMessage message)
+                  throws IOException {
+                String payload = message.getPayload();
+                payloads.add(payload);
+                if (payload.startsWith("OK LOGIN")) {
+                  session.sendMessage(new TextMessage("PLAY demo"));
+                } else if (payload.startsWith("OK PLAY")) {
+                  session.sendMessage(new TextMessage("AFK"));
+                }
+                responseLatch.countDown();
+              }
+            },
+            headers,
+            URI.create("ws://localhost:" + port + "/ws/game"));
+
+    future.get(5, TimeUnit.SECONDS);
+    assertThat(responseLatch.await(10, TimeUnit.SECONDS)).isTrue();
+    assertThat(payloads).anyMatch(payload -> payload.startsWith("OK AFK"));
+    GameplayPresence presence =
+        gameplayPresenceService.listConnectedByGameInstance(22L, 1L).stream()
+            .filter(entry -> entry.sessionId() == 41L)
+            .findFirst()
+            .orElseThrow();
+    assertThat(presence.explicitAfkSinceEpochMs()).isNotNull();
+    verify(commandService, never()).enqueue("41", "AFK", false);
+    WebSocketSession session = sessionRef.get();
+    if (session != null && session.isOpen()) {
+      session.close();
+    }
   }
 
   @Test

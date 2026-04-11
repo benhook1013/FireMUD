@@ -6,6 +6,8 @@ import java.util.List;
 public interface GameplayPresenceService {
   void registerConnected(SessionContext context);
 
+  void setExplicitAfk(long sessionId, boolean explicitAfk);
+
   void recordCommandActivity(long sessionId, boolean meaningfulGameplayActivity);
 
   void removeBySessionId(long sessionId);

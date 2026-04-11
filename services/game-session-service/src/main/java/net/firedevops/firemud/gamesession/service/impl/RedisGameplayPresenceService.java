@@ -87,6 +87,7 @@ public final class RedisGameplayPresenceService implements GameplayPresenceServi
             classifyRole(context),
             currentTimeMillisSupplier.getAsLong(),
             null,
+            null,
             null);
     String presenceKey = presenceKey(context.sessionId());
     String gameInstanceKey = gameInstanceKey(context.tenantId(), context.gameInstanceId());
@@ -115,8 +116,39 @@ public final class RedisGameplayPresenceService implements GameplayPresenceServi
   }
 
   @Override
+  public void setExplicitAfk(long sessionId, boolean explicitAfk) {
+    ValueOperations<String, Object> valueOps = redisTemplate.opsForValue();
+    if (valueOps == null) {
+      return;
+    }
+    GameplayPresence existing = (GameplayPresence) valueOps.get(presenceKey(sessionId));
+    if (existing == null) {
+      return;
+    }
+    GameplayPresence updated =
+        new GameplayPresence(
+            existing.sessionId(),
+            existing.tenantId(),
+            existing.gameInstanceId(),
+            existing.accountId(),
+            existing.characterId(),
+            existing.characterName(),
+            existing.role(),
+            existing.connectedAtEpochMs(),
+            explicitAfk ? Long.valueOf(currentTimeMillisSupplier.getAsLong()) : null,
+            existing.lastAcceptedCommandAtEpochMs(),
+            existing.lastMeaningfulActivityAtEpochMs());
+    valueOps.set(presenceKey(sessionId), updated, presenceTtl);
+    redisTemplate.expire(
+        gameInstanceKey(existing.tenantId(), existing.gameInstanceId()), presenceTtl);
+  }
+
+  @Override
   public void recordCommandActivity(long sessionId, boolean meaningfulGameplayActivity) {
     ValueOperations<String, Object> valueOps = redisTemplate.opsForValue();
+    if (valueOps == null) {
+      return;
+    }
     GameplayPresence existing = (GameplayPresence) valueOps.get(presenceKey(sessionId));
     if (existing == null) {
       return;
@@ -132,6 +164,7 @@ public final class RedisGameplayPresenceService implements GameplayPresenceServi
             existing.characterName(),
             existing.role(),
             existing.connectedAtEpochMs(),
+            existing.explicitAfkSinceEpochMs(),
             Long.valueOf(now),
             meaningfulGameplayActivity
                 ? Long.valueOf(now)

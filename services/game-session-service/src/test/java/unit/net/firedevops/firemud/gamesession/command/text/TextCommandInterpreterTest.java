@@ -321,6 +321,8 @@ class TextCommandInterpreterTest {
             firstPartyConnectContextRegistry,
             gameplayPresenceService,
             meterRegistry);
+    AfkCommandHandler afkHandler =
+        new AfkCommandHandler(sessionAuthenticationService, gameplayPresenceService);
     WhoCommandHandler whoHandler = new WhoCommandHandler(gameplayPresenceService);
     LookCommandHandler lookHandler =
         new LookCommandHandler(
@@ -402,6 +404,7 @@ class TextCommandInterpreterTest {
                 screenBufferService),
             playHandler,
             moveHandler,
+            afkHandler,
             helpHandler,
             whoHandler,
             inventoryHandler,
