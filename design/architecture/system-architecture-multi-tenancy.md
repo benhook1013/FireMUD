@@ -56,7 +56,9 @@ Character-selection and creation policy must also respect realm mode:
 - `CHARS` lists the character choices valid for the resolved `{tenantId, gameInstanceId}` target, not a tenant-wide superset.
 - Shared-state realms normally expose the tenant's normal live durable roster for that account.
 - Isolated-state realms expose only that realm's valid roster, which may consist of copied fork-local characters, seeded/sample characters, newly created realm-local characters, or a policy-defined subset of those.
+- `CHARS` must return one realm-local decision surface for the selected target: the visible roster plus a bounded `creationPolicy` / equivalent flag explaining whether fresh character creation is allowed, denied, or limited to a documented realm-local mode. Clients must not infer creation rules by comparing roster contents to tenant-wide state.
 - If an isolated realm forbids fresh character creation, admission must fail with an explicit character-selection denial rather than implying the caller may create into the tenant's normal live roster.
+- If an isolated realm allows both copied characters and fresh realm-local creation, both appear as one realm-local roster/creation experience for that target. The client must not require a separate "copied vs new" mode switch to enter the realm.
 
 This distinction is normative for all realm-aware flows:
 
