@@ -40,6 +40,24 @@ Realm-scoped playable state may follow either of these patterns:
 - **Shared-state realm** – the realm uses the tenant's normal live character state, so the same character identity, progression, and durable inventory are reused when the player enters that realm.
 - **Isolated-state realm** – the realm uses instance-local gameplay state for that `gameInstanceId` rather than the tenant's normal live character state. That isolated state may start from a copied source snapshot, seeded/sample data, or fresh standalone state. Playtest forks are the canonical copied-state example: copied characters remain associated with the same platform account and tenant, but the fork keeps its own fork-local progression, inventory, and other runtime state.
 
+Minimum downstream consequences of realm policy:
+
+- Shared-state realms reuse the tenant's normal live gameplay state namespace for the selected character.
+- Isolated-state realms must treat at least the following as realm-/instance-scoped gameplay state keyed to the resolved `gameInstanceId`:
+  - visible character roster for `CHARS`;
+  - character progression/resources;
+  - durable inventory/equipment/containment state;
+  - learned or pinned gameplay loadout/state that materially affects play in that realm.
+- Tenant membership, account ownership, billing state, and cross-tenant control-plane identity remain tenant-scoped regardless of realm mode.
+- Social/account-level relationships may remain tenant- or account-scoped unless a dedicated gameplay design says otherwise, but they must not be used to silently collapse isolated gameplay state back into the tenant's live production state.
+
+Character-selection and creation policy must also respect realm mode:
+
+- `CHARS` lists the character choices valid for the resolved `{tenantId, gameInstanceId}` target, not a tenant-wide superset.
+- Shared-state realms normally expose the tenant's normal live durable roster for that account.
+- Isolated-state realms expose only that realm's valid roster, which may consist of copied fork-local characters, seeded/sample characters, newly created realm-local characters, or a policy-defined subset of those.
+- If an isolated realm forbids fresh character creation, admission must fail with an explicit character-selection denial rather than implying the caller may create into the tenant's normal live roster.
+
 This distinction is normative for all realm-aware flows:
 
 - `REALMS` describes which player-addressable realms exist for a tenant.
