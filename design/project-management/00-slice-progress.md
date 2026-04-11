@@ -33,8 +33,6 @@ These are already partly real in code and should continue after the immediate ru
    Remaining: keep `02.18.6` at operator-proof level and continue any later hardening only if real-load evidence justifies it.
 7. [02.18.1 Audit Log and Moderation Separation](./vertical-slices/02.18.1-task-list-audit-log-and-moderation-separation-vertical-slice.md)
    Remaining: keep future callers on the dedicated log-event path; the current account/logging-admin separation is now in place and covered.
-8. [02.18.4 World and Entity Service Boundary Auth](./vertical-slices/02.18.4-task-list-world-and-entity-service-boundary-auth-vertical-slice.md)
-   Remaining: finish the remaining service-boundary/auth alignment as those read/write paths harden.
 
 ### 3. Design settled enough, but not started or only placeholder-level
 

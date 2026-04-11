@@ -53,7 +53,7 @@ class FriendServiceImplTest {
     when(repository.findById(Mockito.any())).thenReturn(Optional.empty());
     when(repository.save(Mockito.any(CharacterFriend.class))).thenReturn(saved);
 
-    CharacterFriendDto result = service.addFriend(2L, 3L);
+    CharacterFriendDto result = service.addFriend(1L, 2L, 3L);
     assertEquals(2L, result.characterId());
     assertEquals(3L, result.friendId());
   }
@@ -69,7 +69,7 @@ class FriendServiceImplTest {
     when(characterRepository.findById(2L)).thenReturn(Optional.of(character));
     when(characterRepository.findById(3L)).thenReturn(Optional.of(friend));
 
-    assertThrows(IllegalArgumentException.class, () -> service.addFriend(2L, 3L));
+    assertThrows(IllegalArgumentException.class, () -> service.addFriend(1L, 2L, 3L));
   }
 
   @Test
@@ -83,6 +83,6 @@ class FriendServiceImplTest {
     when(characterRepository.findById(2L)).thenReturn(Optional.of(character));
     when(characterRepository.findById(3L)).thenReturn(Optional.of(friend));
 
-    assertThrows(IllegalArgumentException.class, () -> service.removeFriend(2L, 3L));
+    assertThrows(IllegalArgumentException.class, () -> service.removeFriend(1L, 2L, 3L));
   }
 }

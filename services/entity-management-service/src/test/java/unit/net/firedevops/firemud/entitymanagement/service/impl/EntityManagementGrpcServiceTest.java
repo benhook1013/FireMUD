@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 import io.grpc.stub.StreamObserver;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
@@ -541,6 +542,48 @@ class EntityManagementGrpcServiceTest {
     assertEquals(false, ref.get().hasError());
     assertEquals(1, ref.get().getEntitiesCount());
     assertEquals("Lantern", ref.get().getEntities(0).getDisplayName());
+  }
+
+  @Test
+  void queryInventoryReturnsPermissionDeniedWhenTenantAccessFails() {
+    PingService pingService = Mockito.mock(PingService.class);
+    CharacterService characterService = Mockito.mock(CharacterService.class);
+    EquipmentService equipmentService = Mockito.mock(EquipmentService.class);
+    InventoryService inventoryService = Mockito.mock(InventoryService.class);
+    ContainerService containerService = Mockito.mock(ContainerService.class);
+    RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
+    SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+    SessionContext.setContext("test-account", List.of(), Map.of("9", List.of("admin")));
+    EntityManagementGrpcService service =
+        new EntityManagementGrpcService(
+            pingService,
+            characterService,
+            equipmentService,
+            inventoryService,
+            containerService,
+            roomEntityService,
+            meterRegistry);
+
+    AtomicReference<QueryInventoryResponse> ref = new AtomicReference<>();
+    service.queryInventory(
+        QueryInventoryRequest.newBuilder().setTenantId("1").setCharacterId("7").build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(QueryInventoryResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertEquals("PERMISSION_DENIED", ref.get().getError().getCode());
+    assertEquals(
+        1.0,
+        meterRegistry.get("grpc.app_error").tag("code", "PERMISSION_DENIED").counter().count());
   }
 
   @Test

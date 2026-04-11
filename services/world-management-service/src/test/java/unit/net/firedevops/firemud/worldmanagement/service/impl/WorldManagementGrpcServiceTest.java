@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
@@ -250,5 +251,40 @@ class WorldManagementGrpcServiceTest {
     assertNotNull(ref.get());
     assertEquals(false, ref.get().hasError());
     assertEquals("Room A", ref.get().getSnapshot().getRoomName());
+  }
+
+  @Test
+  void getRoomReturnsPermissionDeniedWhenTenantAccessFails() {
+    PingService pingService = Mockito.mock(PingService.class);
+    RoomService roomService = Mockito.mock(RoomService.class);
+    SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+    SessionContext.setContext("test-account", List.of(), Map.of("9", List.of("admin")));
+    WorldManagementGrpcService service =
+        new WorldManagementGrpcService(pingService, roomService, meterRegistry, new ObjectMapper());
+
+    AtomicReference<net.firedevops.firemud.worldmanagement.v1.GetRoomResponse> ref =
+        new AtomicReference<>();
+    service.getRoom(
+        net.firedevops.firemud.worldmanagement.v1.GetRoomRequest.newBuilder()
+            .setTenantId("1")
+            .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("1").build())
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(net.firedevops.firemud.worldmanagement.v1.GetRoomResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertEquals("PERMISSION_DENIED", ref.get().getError().getCode());
+    assertEquals(
+        1.0,
+        meterRegistry.get("grpc.app_error").tag("code", "PERMISSION_DENIED").counter().count());
   }
 }
