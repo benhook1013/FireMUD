@@ -105,6 +105,7 @@ Digest comparison rules:
 - The Game Design Service records the per-domain-service `{commitId, contentDigest, digestSchemaVersion}` it observed when a commit was last applied successfully.
 - Reconciliation and publish-time checks compare the current digest reported by each service against the recorded digest for the target commit.
 - If `digestSchemaVersion` differs, publish must fail fast and require an explicit migration of digest semantics (for example by bumping `digestSchemaVersion` and replaying commits to record new digests), rather than silently comparing incompatible hashes.
+- For one publish attempt, every required participant must attest the same target commit scope. Publish must fail closed if required participants report different `appliedCommitId` values for the same requested publish target, even if no individual digest payload is malformed.
 - Digest request/response payloads are canonical across participants:
   - `GetDraftDesignDigestRequest { tenantId, scope: oneof {versionId, scriptPatchVersion} }`
   - `GetDraftDesignDigestResponse { tenantId, scope, appliedCommitId, contentDigest, digestSchemaVersion }`
@@ -147,6 +148,7 @@ Rules:
 - Changes to this matrix require an explicit doc + migration update in both `version-control.md` and `world-editing-tools.md`.
 - Every service listed in this matrix must maintain a service-local digest input manifest documenting included/excluded objects, canonicalization, and `digestSchemaVersion` bump criteria. Publish gating should fail closed when a participant cannot attest a digest under its documented manifest for the reported schema version.
 - Full publish additionally requires that the final immutable release attestation row be written successfully; a version is not publish-complete until `published_release_bundle` exists for the target `(tenantId, versionId)`, and version asset artifacts must not transition to terminal `PUBLISHED` state before that attestation write succeeds.
+- The publish orchestrator must not expose a half-complete success state between "all digests matched" and "release attestation row exists". Until `published_release_bundle` commits successfully, the version remains non-launchable and consumers must observe it exactly as non-attested.
 
 ### Digest Schema Migration
 
