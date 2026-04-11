@@ -96,12 +96,12 @@ public class FriendServiceImpl implements FriendService {
           friendAccountId,
           new FriendPresenceDto(
               friendAccountId,
-              entry.getOnline(),
-              entry.getGameInstanceId().isBlank() ? null : Long.valueOf(entry.getGameInstanceId()),
-              entry.getCharacterId().isBlank() ? null : Long.valueOf(entry.getCharacterId()),
-              entry.getCharacterName().isBlank() ? null : entry.getCharacterName(),
-              mapActivityState(entry.getActivityState()),
-              null));
+              visibleOnline(entry),
+              visibleGameInstanceId(entry),
+              visibleCharacterId(entry),
+              visibleCharacterName(entry),
+              visibleActivityState(entry),
+              entry.getLastSeenAtMs() > 0 ? Instant.ofEpochMilli(entry.getLastSeenAtMs()) : null));
     }
 
     return friendAccountIds.stream()
@@ -119,6 +119,50 @@ public class FriendServiceImpl implements FriendService {
       case ACCOUNT_PRESENCE_ACTIVITY_STATE_AUTO_AFK -> FriendPresenceActivityState.AUTO_AFK;
       case ACCOUNT_PRESENCE_ACTIVITY_STATE_EXPLICIT_AFK -> FriendPresenceActivityState.EXPLICIT_AFK;
       default -> null;
+    };
+  }
+
+  private boolean visibleOnline(AccountPresenceEntry entry) {
+    return switch (entry.getVisibilityPolicy()) {
+      case ACCOUNT_PRESENCE_VISIBILITY_POLICY_HIDDEN_STAFF -> false;
+      default -> entry.getOnline();
+    };
+  }
+
+  private Long visibleGameInstanceId(AccountPresenceEntry entry) {
+    return switch (entry.getVisibilityPolicy()) {
+      case ACCOUNT_PRESENCE_VISIBILITY_POLICY_PRIVATE,
+          ACCOUNT_PRESENCE_VISIBILITY_POLICY_HIDDEN_STAFF ->
+          null;
+      default ->
+          entry.getGameInstanceId().isBlank() ? null : Long.valueOf(entry.getGameInstanceId());
+    };
+  }
+
+  private Long visibleCharacterId(AccountPresenceEntry entry) {
+    return switch (entry.getVisibilityPolicy()) {
+      case ACCOUNT_PRESENCE_VISIBILITY_POLICY_PRIVATE,
+          ACCOUNT_PRESENCE_VISIBILITY_POLICY_HIDDEN_STAFF ->
+          null;
+      default -> entry.getCharacterId().isBlank() ? null : Long.valueOf(entry.getCharacterId());
+    };
+  }
+
+  private String visibleCharacterName(AccountPresenceEntry entry) {
+    return switch (entry.getVisibilityPolicy()) {
+      case ACCOUNT_PRESENCE_VISIBILITY_POLICY_PRIVATE,
+          ACCOUNT_PRESENCE_VISIBILITY_POLICY_HIDDEN_STAFF ->
+          null;
+      default -> entry.getCharacterName().isBlank() ? null : entry.getCharacterName();
+    };
+  }
+
+  private FriendPresenceActivityState visibleActivityState(AccountPresenceEntry entry) {
+    return switch (entry.getVisibilityPolicy()) {
+      case ACCOUNT_PRESENCE_VISIBILITY_POLICY_PRIVATE,
+          ACCOUNT_PRESENCE_VISIBILITY_POLICY_HIDDEN_STAFF ->
+          null;
+      default -> mapActivityState(entry.getActivityState());
     };
   }
 }

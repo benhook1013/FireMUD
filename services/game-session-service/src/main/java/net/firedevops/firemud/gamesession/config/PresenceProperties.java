@@ -11,6 +11,11 @@ public class PresenceProperties {
   /** Inactivity threshold, in milliseconds, after which auto-AFK becomes true. */
   private long autoAfkThresholdMs = 300_000L;
 
+  /**
+   * Retention window, in milliseconds, for bounded account recent-presence facts such as last seen.
+   */
+  private long recentPresenceTtlMs = 2_592_000_000L;
+
   public boolean isAutoAfkEnabled() {
     return autoAfkEnabled;
   }
@@ -25,5 +30,13 @@ public class PresenceProperties {
 
   public void setAutoAfkThresholdMs(long autoAfkThresholdMs) {
     this.autoAfkThresholdMs = autoAfkThresholdMs;
+  }
+
+  public long getRecentPresenceTtlMs() {
+    return recentPresenceTtlMs;
+  }
+
+  public void setRecentPresenceTtlMs(long recentPresenceTtlMs) {
+    this.recentPresenceTtlMs = recentPresenceTtlMs;
   }
 }

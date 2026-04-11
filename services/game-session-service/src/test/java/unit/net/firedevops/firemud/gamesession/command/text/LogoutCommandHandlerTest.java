@@ -7,6 +7,7 @@ import static org.mockito.Mockito.when;
 
 import java.util.Optional;
 import net.firedevops.firemud.cache.ScreenBufferService;
+import net.firedevops.firemud.gamesession.service.AccountRecentPresenceService;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
 import net.firedevops.firemud.gamesession.service.GameInstanceService;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceService;
@@ -24,6 +25,8 @@ class LogoutCommandHandlerTest {
   private final GameInstanceService gameInstanceService = Mockito.mock(GameInstanceService.class);
   private final GameplayPresenceService gameplayPresenceService =
       Mockito.mock(GameplayPresenceService.class);
+  private final AccountRecentPresenceService accountRecentPresenceService =
+      Mockito.mock(AccountRecentPresenceService.class);
   private final FirstPartyConnectContextRegistry firstPartyConnectContextRegistry =
       Mockito.mock(FirstPartyConnectContextRegistry.class);
   private final ScreenBufferService screenBufferService = Mockito.mock(ScreenBufferService.class);
@@ -34,6 +37,7 @@ class LogoutCommandHandlerTest {
           sessionContextService,
           gameInstanceService,
           gameplayPresenceService,
+          accountRecentPresenceService,
           firstPartyConnectContextRegistry,
           screenBufferService);
 
@@ -49,6 +53,7 @@ class LogoutCommandHandlerTest {
     assertThat(result.outputs()).hasSize(1);
     verify(gameInstanceService).stopSession(1L);
     verify(screenBufferService).clear(22L, 1L, 123L);
+    verify(accountRecentPresenceService).recordDisconnect(41L);
     verify(gameplayPresenceService).removeBySessionId(41L);
     verify(firstPartyConnectContextRegistry).unregister(41L);
     verify(sessionContextService).deleteBySessionId(22L, 41L);

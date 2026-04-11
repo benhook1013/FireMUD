@@ -13,7 +13,7 @@ These are narrow enough to implement now and unblock the current runtime/platfor
 1. [02.1.3 Session Activity and WHO Presence](./vertical-slices/02.1.3-task-list-session-activity-and-who-presence-vertical-slice.md)
    Remaining: build on the now-live activity, AFK, and disconnect/reconnect lifecycle substrate with recent-presence policy and later `WHO` presentation consumers.
 2. [02.1.4 Cross-Game Social Presence and Friend Activity](./vertical-slices/02.1.4-task-list-cross-game-social-presence-and-friend-activity-vertical-slice.md)
-   Remaining: extend the now-live account-scoped friend presence substrate with canonical `lastSeenAt`, explicit visibility policy, and broader social consumers.
+   Remaining: extend the now-live account-scoped friend presence substrate with richer policy sources, broader social consumers, and later presentation refinement.
 3. [02.1.2 Logout and Session Termination](./vertical-slices/02.1.2-task-list-logout-and-session-termination-vertical-slice.md)
    Remaining: mostly closed; the remaining tail is broader reconnect/recent-presence lifecycle proof rather than more logout-path semantics.
 4. [06.3 Replace Aggregated Item Stacks With Distinct Item Instances](./vertical-slices/06.3-task-list-container-item-instance-identity-vertical-slice.md)
@@ -32,7 +32,7 @@ These are already partly real in code and should continue after the immediate ru
 4. [02.1.3 Session Activity and WHO Presence](./vertical-slices/02.1.3-task-list-session-activity-and-who-presence-vertical-slice.md)
    Remaining: grow from the current bounded `WHO` plus explicit/auto-AFK substrate into the fuller activity model when that work becomes active.
 5. [02.1.4 Cross-Game Social Presence and Friend Activity](./vertical-slices/02.1.4-task-list-cross-game-social-presence-and-friend-activity-vertical-slice.md)
-   Remaining: grow the first account-scoped friend presence seam into explicit visibility policy and later social consumers without reopening `WHO`.
+   Remaining: grow the first account-scoped friend presence seam into richer policy sources and later social consumers without reopening `WHO`.
 6. [06 Task List Inventory, Containers, Equipment](./vertical-slices/06-task-list-inventory-containers-equipment-vertical-slice.md)
    Remaining: complete the remaining `06.3` follow-through and later authored stackability.
 7. [06.3.1 Stable Item Instance Visible Ref Allocation](./vertical-slices/06.3.1-task-list-item-instance-visible-ref-allocation-vertical-slice.md)
@@ -94,7 +94,7 @@ If you want the clearest immediate path, do these next:
 1. `02.1.3` presence/WHO follow-through
    Best next gameplay-runtime batch because the activity and AFK substrate is now live and the remaining work is lifecycle proof, recent-presence policy, and later `WHO` presentation rather than vague design.
 2. `02.1.4` cross-game social presence follow-through
-   Best next social batch because the first account-scoped friend presence seam is now live and the remaining work is honest `lastSeenAt`, visibility policy, and broader consumers rather than a blank design space.
+   Best next social batch because the first account-scoped friend presence seam, honest `lastSeenAt`, and explicit visibility-policy seam are now live, leaving broader consumers and richer policy sourcing rather than substrate work.
 3. `02.13.9` authored action definition and execution model
    Best next platform-shape batch because the provider-backed registry seam is now live and the next honest step is the first typed authored-action model rather than more built-in-only growth.
 4. `02.1.2` logout and deliberate session termination

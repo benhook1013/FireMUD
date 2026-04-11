@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -10,6 +11,10 @@ import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.AccountPresenceQueryService;
 import net.firedevops.firemud.gamesession.service.AccountPresenceSnapshot;
+import net.firedevops.firemud.gamesession.service.AccountPresenceVisibilityPolicy;
+import net.firedevops.firemud.gamesession.service.AccountPresenceVisibilityPolicyResolver;
+import net.firedevops.firemud.gamesession.service.AccountRecentPresenceService;
+import net.firedevops.firemud.gamesession.service.AccountRecentPresenceState;
 import net.firedevops.firemud.gamesession.service.GameplayPresence;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceActivityResolver;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceActivityState;
@@ -21,14 +26,20 @@ public class AccountPresenceQueryServiceImpl implements AccountPresenceQueryServ
   private final GameInstanceRepository gameInstanceRepository;
   private final GameplayPresenceService gameplayPresenceService;
   private final GameplayPresenceActivityResolver gameplayPresenceActivityResolver;
+  private final AccountRecentPresenceService accountRecentPresenceService;
+  private final AccountPresenceVisibilityPolicyResolver visibilityPolicyResolver;
 
   public AccountPresenceQueryServiceImpl(
       GameInstanceRepository gameInstanceRepository,
       GameplayPresenceService gameplayPresenceService,
-      GameplayPresenceActivityResolver gameplayPresenceActivityResolver) {
+      GameplayPresenceActivityResolver gameplayPresenceActivityResolver,
+      AccountRecentPresenceService accountRecentPresenceService,
+      AccountPresenceVisibilityPolicyResolver visibilityPolicyResolver) {
     this.gameInstanceRepository = gameInstanceRepository;
     this.gameplayPresenceService = gameplayPresenceService;
     this.gameplayPresenceActivityResolver = gameplayPresenceActivityResolver;
+    this.accountRecentPresenceService = accountRecentPresenceService;
+    this.visibilityPolicyResolver = visibilityPolicyResolver;
   }
 
   @Override
@@ -46,8 +57,10 @@ public class AccountPresenceQueryServiceImpl implements AccountPresenceQueryServ
     }
 
     Map<Long, AccountPresenceSnapshot> results = new LinkedHashMap<>();
+    Map<Long, AccountRecentPresenceState> recentStates =
+        accountRecentPresenceService.findByAccountIds(tenantId, requestedIds);
     for (Long accountId : requestedIds) {
-      results.put(accountId, offline(accountId));
+      results.put(accountId, offline(accountId, recentStates.get(accountId)));
     }
 
     List<GameInstance> runningInstances =
@@ -69,12 +82,27 @@ public class AccountPresenceQueryServiceImpl implements AccountPresenceQueryServ
               presence.gameInstanceId(),
               presence.characterId(),
               presence.characterName(),
-              activityState));
+              activityState,
+              recentStates.containsKey(instance.getOwnerAccountId())
+                  ? Instant.ofEpochMilli(
+                      recentStates.get(instance.getOwnerAccountId()).lastSeenAtEpochMs())
+                  : null,
+              visibilityPolicyResolver.resolve(presence.role())));
     }
     return List.copyOf(new ArrayList<>(results.values()));
   }
 
-  private AccountPresenceSnapshot offline(long accountId) {
-    return new AccountPresenceSnapshot(accountId, false, null, null, null, null);
+  private AccountPresenceSnapshot offline(long accountId, AccountRecentPresenceState recentState) {
+    return new AccountPresenceSnapshot(
+        accountId,
+        false,
+        null,
+        null,
+        null,
+        null,
+        recentState == null ? null : Instant.ofEpochMilli(recentState.lastSeenAtEpochMs()),
+        recentState == null
+            ? AccountPresenceVisibilityPolicy.FRIENDS_ONLY
+            : recentState.visibilityPolicy());
   }
 }

@@ -107,6 +107,14 @@ enum AccountPresenceActivityState {
   ACCOUNT_PRESENCE_ACTIVITY_STATE_EXPLICIT_AFK = 3;
 }
 
+enum AccountPresenceVisibilityPolicy {
+  ACCOUNT_PRESENCE_VISIBILITY_POLICY_UNSPECIFIED = 0;
+  ACCOUNT_PRESENCE_VISIBILITY_POLICY_PUBLIC = 1;
+  ACCOUNT_PRESENCE_VISIBILITY_POLICY_FRIENDS_ONLY = 2;
+  ACCOUNT_PRESENCE_VISIBILITY_POLICY_PRIVATE = 3;
+  ACCOUNT_PRESENCE_VISIBILITY_POLICY_HIDDEN_STAFF = 4;
+}
+
 message AccountPresenceEntry {
   string account_id = 1;
   bool online = 2;
@@ -114,6 +122,8 @@ message AccountPresenceEntry {
   string character_id = 4;
   string character_name = 5;
   AccountPresenceActivityState activity_state = 6;
+  int64 last_seen_at_ms = 7;
+  AccountPresenceVisibilityPolicy visibility_policy = 8;
 }
 
 message QueryAccountPresenceResponse {

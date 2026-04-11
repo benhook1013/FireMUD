@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.fail;
 
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
@@ -18,6 +19,7 @@ import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.AccountPresenceQueryService;
 import net.firedevops.firemud.gamesession.service.AccountPresenceSnapshot;
+import net.firedevops.firemud.gamesession.service.AccountPresenceVisibilityPolicy;
 import net.firedevops.firemud.gamesession.service.FeatureFlagService;
 import net.firedevops.firemud.gamesession.service.GameInstanceService;
 import net.firedevops.firemud.gamesession.service.IpConnectionLimiter;
@@ -122,7 +124,9 @@ class GameSessionGrpcServiceTest {
                     99L,
                     "Ben",
                     net.firedevops.firemud.gamesession.service.GameplayPresenceActivityState
-                        .EXPLICIT_AFK)));
+                        .EXPLICIT_AFK,
+                    Instant.parse("2026-04-11T06:15:30Z"),
+                    AccountPresenceVisibilityPolicy.FRIENDS_ONLY)));
     GameSessionGrpcService service =
         new GameSessionGrpcService(
             pingService,
@@ -161,6 +165,9 @@ class GameSessionGrpcServiceTest {
     assertEquals("7", ref.get().getPresences(0).getAccountId());
     assertEquals(true, ref.get().getPresences(0).getOnline());
     assertEquals("Ben", ref.get().getPresences(0).getCharacterName());
+    assertEquals(
+        Instant.parse("2026-04-11T06:15:30Z").toEpochMilli(),
+        ref.get().getPresences(0).getLastSeenAtMs());
   }
 
   @Test

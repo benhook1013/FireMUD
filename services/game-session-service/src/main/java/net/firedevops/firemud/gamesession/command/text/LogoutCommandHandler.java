@@ -7,6 +7,7 @@ import java.util.Optional;
 import net.firedevops.firemud.cache.ScreenBufferService;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
+import net.firedevops.firemud.gamesession.service.AccountRecentPresenceService;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
 import net.firedevops.firemud.gamesession.service.GameInstanceService;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceService;
@@ -22,6 +23,7 @@ public final class LogoutCommandHandler {
   private final SessionContextService sessionContextService;
   private final GameInstanceService gameInstanceService;
   private final GameplayPresenceService gameplayPresenceService;
+  private final AccountRecentPresenceService accountRecentPresenceService;
   private final FirstPartyConnectContextRegistry firstPartyConnectContextRegistry;
   private final ScreenBufferService screenBufferService;
 
@@ -30,6 +32,7 @@ public final class LogoutCommandHandler {
       SessionContextService sessionContextService,
       GameInstanceService gameInstanceService,
       GameplayPresenceService gameplayPresenceService,
+      AccountRecentPresenceService accountRecentPresenceService,
       FirstPartyConnectContextRegistry firstPartyConnectContextRegistry,
       ScreenBufferService screenBufferService) {
     this.sessionAuthenticationService =
@@ -41,6 +44,9 @@ public final class LogoutCommandHandler {
         Objects.requireNonNull(gameInstanceService, "gameInstanceService must not be null");
     this.gameplayPresenceService =
         Objects.requireNonNull(gameplayPresenceService, "gameplayPresenceService must not be null");
+    this.accountRecentPresenceService =
+        Objects.requireNonNull(
+            accountRecentPresenceService, "accountRecentPresenceService must not be null");
     this.firstPartyConnectContextRegistry =
         Objects.requireNonNull(
             firstPartyConnectContextRegistry, "firstPartyConnectContextRegistry must not be null");
@@ -65,6 +71,7 @@ public final class LogoutCommandHandler {
         screenBufferService.clear(
             context.tenantId(), context.gameInstanceId(), context.characterId());
       }
+      accountRecentPresenceService.recordDisconnect(context.sessionId());
       gameplayPresenceService.removeBySessionId(context.sessionId());
       firstPartyConnectContextRegistry.unregister(context.sessionId());
       sessionContextService.deleteBySessionId(context.tenantId(), context.sessionId());

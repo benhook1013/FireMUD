@@ -9,6 +9,7 @@ import java.time.Instant;
 import java.util.List;
 import net.firedevops.firemud.gamesession.v1.AccountPresenceActivityState;
 import net.firedevops.firemud.gamesession.v1.AccountPresenceEntry;
+import net.firedevops.firemud.gamesession.v1.AccountPresenceVisibilityPolicy;
 import net.firedevops.firemud.gamesession.v1.QueryAccountPresenceResponse;
 import net.firedevops.firemud.socialgroups.client.GameSessionClient;
 import net.firedevops.firemud.socialgroups.dto.AddFriendRequest;
@@ -94,6 +95,10 @@ class FriendServiceImplTest {
                         .setGameInstanceId("9")
                         .setCharacterId("99")
                         .setCharacterName("Ben")
+                        .setLastSeenAtMs(Instant.parse("2026-04-11T06:15:30Z").toEpochMilli())
+                        .setVisibilityPolicy(
+                            AccountPresenceVisibilityPolicy
+                                .ACCOUNT_PRESENCE_VISIBILITY_POLICY_FRIENDS_ONLY)
                         .setActivityState(
                             AccountPresenceActivityState.ACCOUNT_PRESENCE_ACTIVITY_STATE_AUTO_AFK)
                         .build())
@@ -105,5 +110,59 @@ class FriendServiceImplTest {
     assertEquals(3L, result.get(0).friendAccountId());
     assertEquals(true, result.get(0).online());
     assertEquals(FriendPresenceActivityState.AUTO_AFK, result.get(0).activityState());
+    assertEquals(Instant.parse("2026-04-11T06:15:30Z"), result.get(0).lastSeenAt());
+  }
+
+  @Test
+  void listFriendPresenceSuppressesPrivateAndHiddenStaffDetails() {
+    AccountFriendLink privateLink = new AccountFriendLink();
+    privateLink.setTenantId(11L);
+    privateLink.setAccountId(2L);
+    privateLink.setFriendAccountId(3L);
+    privateLink.setStatus("active");
+    AccountFriendLink hiddenLink = new AccountFriendLink();
+    hiddenLink.setTenantId(11L);
+    hiddenLink.setAccountId(2L);
+    hiddenLink.setFriendAccountId(4L);
+    hiddenLink.setStatus("active");
+    when(accountRepository.findByTenantIdAndAccountIdAndStatus(11L, 2L, "active"))
+        .thenReturn(List.of(privateLink, hiddenLink));
+    when(gameSessionClient.queryAccountPresence(11L, 2L, List.of(3L, 4L)))
+        .thenReturn(
+            QueryAccountPresenceResponse.newBuilder()
+                .addPresences(
+                    AccountPresenceEntry.newBuilder()
+                        .setAccountId("3")
+                        .setOnline(true)
+                        .setGameInstanceId("9")
+                        .setCharacterId("99")
+                        .setCharacterName("Ben")
+                        .setVisibilityPolicy(
+                            AccountPresenceVisibilityPolicy
+                                .ACCOUNT_PRESENCE_VISIBILITY_POLICY_PRIVATE)
+                        .setLastSeenAtMs(Instant.parse("2026-04-11T06:15:30Z").toEpochMilli())
+                        .build())
+                .addPresences(
+                    AccountPresenceEntry.newBuilder()
+                        .setAccountId("4")
+                        .setOnline(true)
+                        .setGameInstanceId("10")
+                        .setCharacterId("100")
+                        .setCharacterName("Admin")
+                        .setVisibilityPolicy(
+                            AccountPresenceVisibilityPolicy
+                                .ACCOUNT_PRESENCE_VISIBILITY_POLICY_HIDDEN_STAFF)
+                        .build())
+                .build());
+
+    var result = service.listFriendPresence(11L, 2L);
+
+    assertEquals(true, result.get(0).online());
+    assertEquals(null, result.get(0).characterName());
+    assertEquals(null, result.get(0).gameInstanceId());
+    assertEquals(Instant.parse("2026-04-11T06:15:30Z"), result.get(0).lastSeenAt());
+    assertEquals(false, result.get(1).online());
+    assertEquals(null, result.get(1).characterName());
+    assertEquals(null, result.get(1).lastSeenAt());
   }
 }

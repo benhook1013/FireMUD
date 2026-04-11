@@ -6,6 +6,7 @@ import static org.mockito.Mockito.verify;
 
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.socialgroups.dto.FriendPresenceDto;
@@ -186,7 +187,10 @@ class SocialGroupsGrpcServiceTest {
     SocialAccessGuard accessGuard = Mockito.mock(SocialAccessGuard.class);
     Mockito.when(accessGuard.hasAccountAccess(1L, 2L)).thenReturn(true);
     Mockito.when(friend.listFriendPresence(1L, 2L))
-        .thenReturn(List.of(new FriendPresenceDto(3L, true, 9L, 99L, "Ben", null, null)));
+        .thenReturn(
+            List.of(
+                new FriendPresenceDto(
+                    3L, true, 9L, 99L, "Ben", null, Instant.parse("2026-04-11T06:15:30Z"))));
     SocialGroupsGrpcService service =
         new SocialGroupsGrpcService(
             ping, chat, guild, friend, mail, accessGuard, new SimpleMeterRegistry());
@@ -214,5 +218,8 @@ class SocialGroupsGrpcServiceTest {
     assertEquals(1, ref.get().getPresencesCount());
     assertEquals("3", ref.get().getPresences(0).getFriendAccountId());
     assertEquals(true, ref.get().getPresences(0).getOnline());
+    assertEquals(
+        Instant.parse("2026-04-11T06:15:30Z").toEpochMilli(),
+        ref.get().getPresences(0).getLastSeenAtMs());
   }
 }

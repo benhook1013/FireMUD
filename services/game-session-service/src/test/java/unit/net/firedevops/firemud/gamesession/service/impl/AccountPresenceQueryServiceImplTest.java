@@ -4,10 +4,15 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.when;
 
+import java.time.Instant;
 import java.util.List;
 import net.firedevops.firemud.gamesession.config.PresenceProperties;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
+import net.firedevops.firemud.gamesession.service.AccountPresenceVisibilityPolicy;
+import net.firedevops.firemud.gamesession.service.AccountPresenceVisibilityPolicyResolver;
+import net.firedevops.firemud.gamesession.service.AccountRecentPresenceService;
+import net.firedevops.firemud.gamesession.service.AccountRecentPresenceState;
 import net.firedevops.firemud.gamesession.service.GameplayPresence;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceActivityResolver;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceRole;
@@ -20,10 +25,17 @@ class AccountPresenceQueryServiceImplTest {
   void queryAccountPresenceReturnsOnlineAndOfflineSnapshotsInRequestOrder() {
     GameInstanceRepository repository = Mockito.mock(GameInstanceRepository.class);
     GameplayPresenceService presenceService = Mockito.mock(GameplayPresenceService.class);
+    AccountRecentPresenceService recentPresenceService =
+        Mockito.mock(AccountRecentPresenceService.class);
     PresenceProperties properties = new PresenceProperties();
     GameplayPresenceActivityResolver resolver = new GameplayPresenceActivityResolver(properties);
     AccountPresenceQueryServiceImpl service =
-        new AccountPresenceQueryServiceImpl(repository, presenceService, resolver);
+        new AccountPresenceQueryServiceImpl(
+            repository,
+            presenceService,
+            resolver,
+            recentPresenceService,
+            new AccountPresenceVisibilityPolicyResolver());
 
     GameInstance running = new GameInstance();
     running.setId(11L);
@@ -35,6 +47,17 @@ class AccountPresenceQueryServiceImplTest {
             argThat(ids -> ids != null && ids.containsAll(List.of(3L, 4L)) && ids.size() == 2),
             org.mockito.Mockito.eq("RUNNING")))
         .thenReturn(List.of(running));
+    when(recentPresenceService.findByAccountIds(
+            org.mockito.Mockito.eq(1L),
+            argThat(ids -> ids != null && ids.containsAll(List.of(3L, 4L)) && ids.size() == 2)))
+        .thenReturn(
+            java.util.Map.of(
+                4L,
+                new AccountRecentPresenceState(
+                    1L,
+                    4L,
+                    Instant.parse("2026-04-11T06:15:30Z").toEpochMilli(),
+                    AccountPresenceVisibilityPolicy.PRIVATE)));
     when(presenceService.findConnectedBySessionId(11L))
         .thenReturn(
             java.util.Optional.of(
@@ -61,7 +84,10 @@ class AccountPresenceQueryServiceImplTest {
     assertEquals(
         net.firedevops.firemud.gamesession.service.GameplayPresenceActivityState.EXPLICIT_AFK,
         result.get(0).activityState());
+    assertEquals(AccountPresenceVisibilityPolicy.FRIENDS_ONLY, result.get(0).visibilityPolicy());
     assertEquals(4L, result.get(1).accountId());
     assertEquals(false, result.get(1).online());
+    assertEquals(Instant.parse("2026-04-11T06:15:30Z"), result.get(1).lastSeenAt());
+    assertEquals(AccountPresenceVisibilityPolicy.PRIVATE, result.get(1).visibilityPolicy());
   }
 }

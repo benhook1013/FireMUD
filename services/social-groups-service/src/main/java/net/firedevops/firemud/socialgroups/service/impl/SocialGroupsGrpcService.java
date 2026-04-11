@@ -216,6 +216,9 @@ public class SocialGroupsGrpcService extends SocialGroupsServiceGrpc.SocialGroup
         if (presence.activityState() != null) {
           entry.setActivityState(mapActivityState(presence.activityState()));
         }
+        if (presence.lastSeenAt() != null) {
+          entry.setLastSeenAtMs(presence.lastSeenAt().toEpochMilli());
+        }
         response.addPresences(entry.build());
       }
       responseObserver.onNext(response.build());

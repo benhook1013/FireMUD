@@ -80,6 +80,7 @@ message FriendPresenceEntry {
   string character_id = 4;
   string character_name = 5;
   FriendPresenceActivityState activity_state = 6;
+  int64 last_seen_at_ms = 7;
 }
 
 message ListFriendPresenceResponse {
