@@ -620,6 +620,77 @@ class GameSessionWebSocketHandlerIntegrationTest {
   }
 
   @Test
+  void unexpectedDisconnectKeepsReplayEligibleForFreshReconnect() throws Exception {
+    when(screenBufferService.get(eq(22L), eq(1L), eq(123L)))
+        .thenReturn(
+            Optional.of(
+                new ScreenBufferService.BufferedScreen(
+                    java.util.List.of(
+                        ScreenBufferService.BufferedEntry.fromText("RECONNECT REPLAY APPEARS")),
+                    1,
+                    1,
+                    System.currentTimeMillis())));
+
+    StandardWebSocketClient client = new StandardWebSocketClient();
+    WebSocketHttpHeaders firstHeaders = new WebSocketHttpHeaders();
+    firstHeaders.add("X-Game-Instance-Id", "41");
+    CountDownLatch firstResponseLatch = new CountDownLatch(2);
+
+    var firstFuture =
+        client.execute(
+            new TextWebSocketHandler() {
+              @Override
+              public void afterConnectionEstablished(WebSocketSession session) throws IOException {
+                session.sendMessage(new TextMessage("LOGIN demo@example.com swordfish"));
+                session.sendMessage(new TextMessage("PLAY demo"));
+              }
+
+              @Override
+              protected void handleTextMessage(WebSocketSession session, TextMessage message) {
+                firstResponseLatch.countDown();
+              }
+            },
+            firstHeaders,
+            URI.create("ws://localhost:" + port + "/ws/game"));
+
+    WebSocketSession firstSession = firstFuture.get(5, TimeUnit.SECONDS);
+    assertThat(firstResponseLatch.await(10, TimeUnit.SECONDS)).isTrue();
+    firstSession.close();
+
+    WebSocketHttpHeaders secondHeaders = new WebSocketHttpHeaders();
+    secondHeaders.add("X-Game-Instance-Id", "42");
+    List<String> secondPayloads = new java.util.concurrent.CopyOnWriteArrayList<>();
+    CountDownLatch secondResponseLatch = new CountDownLatch(3);
+
+    var secondFuture =
+        client.execute(
+            new TextWebSocketHandler() {
+              @Override
+              public void afterConnectionEstablished(WebSocketSession session) throws IOException {
+                session.sendMessage(new TextMessage("LOGIN demo@example.com swordfish"));
+                session.sendMessage(new TextMessage("PLAY demo"));
+              }
+
+              @Override
+              protected void handleTextMessage(WebSocketSession session, TextMessage message) {
+                secondPayloads.add(message.getPayload());
+                secondResponseLatch.countDown();
+              }
+            },
+            secondHeaders,
+            URI.create("ws://localhost:" + port + "/ws/game"));
+
+    WebSocketSession secondSession = secondFuture.get(5, TimeUnit.SECONDS);
+    assertThat(secondResponseLatch.await(10, TimeUnit.SECONDS)).isTrue();
+    secondSession.close();
+
+    assertThat(secondPayloads).anyMatch(payload -> payload.contains("RECONNECT REPLAY APPEARS"));
+    assertThat(secondPayloads).anyMatch(payload -> payload.startsWith("OK PLAY"));
+    verify(screenBufferService).get(22L, 1L, 123L);
+    verify(screenBufferService, never()).clear(22L, 1L, 123L);
+  }
+
+  @Test
   void websocketAfkCommandUpdatesLiveGameplayPresence() throws Exception {
     StandardWebSocketClient client = new StandardWebSocketClient();
     WebSocketHttpHeaders headers = new WebSocketHttpHeaders();
