@@ -11,7 +11,7 @@ It intentionally omits completed slices and uses the individual slice docs as th
 These are narrow enough to implement now and unblock the current runtime/platform direction.
 
 1. [06.3 Replace Aggregated Item Stacks With Distinct Item Instances](./vertical-slices/06.3-task-list-container-item-instance-identity-vertical-slice.md)
-   Remaining: extend the now-live first strict stack model with richer authored compatibility fingerprints beyond definition-level sameness.
+   Remaining: extend the now-live first strict stack model with bounded authored compatibility modes beyond definition-level sameness.
 
 ### 2. Active architecture follow-through
 
@@ -26,7 +26,7 @@ These are already partly real in code and should continue after the immediate ru
 4. [06.3.1 Stable Item Instance Visible Ref Allocation](./vertical-slices/06.3.1-task-list-item-instance-visible-ref-allocation-vertical-slice.md)
    Remaining: decide whether and where ordinary prose views ever expose refs beyond management surfaces.
 5. [06.3.2 Authored Stackability and Fungibility](./vertical-slices/06.3.2-task-list-authored-stackability-and-fungibility-vertical-slice.md)
-   Remaining: add richer authored compatibility/fingerprint variants and prove incompatible stack rows stay separate.
+   Remaining: add bounded authored compatibility modes and prove incompatible stack rows stay separate.
 6. [02.18 Service Boundary and Audit Hardening](./vertical-slices/02.18-task-list-service-boundary-and-audit-hardening-vertical-slice.md)
    Remaining: keep `02.18.6` at operator-proof level and continue any later hardening only if real-load evidence justifies it.
 7. [02.18.1 Audit Log and Moderation Separation](./vertical-slices/02.18.1-task-list-audit-log-and-moderation-separation-vertical-slice.md)
@@ -83,6 +83,6 @@ These are not major design problems, but they are not fully closed.
 
 If you want the clearest immediate path, do these next:
 
-1. `06.3.2` richer authored compatibility-fingerprint follow-up
+1. `06.3.2` bounded authored compatibility-mode follow-up
 2. `02.18.6` operator-proof the chosen scheduler thresholds
 3. `02.14.4` opportunistic metrics-cardinality tail only
