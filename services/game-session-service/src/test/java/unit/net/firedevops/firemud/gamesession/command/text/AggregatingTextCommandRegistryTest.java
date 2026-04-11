@@ -3,13 +3,18 @@ package net.firedevops.firemud.gamesession.command.text;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.List;
 import org.junit.jupiter.api.Test;
 
-class BuiltInTextCommandRegistryTest {
+class AggregatingTextCommandRegistryTest {
 
-  private final BuiltInTextCommandRegistry registry = new BuiltInTextCommandRegistry();
+  private final BuiltInTextCommandDefinitionProvider builtIns =
+      new BuiltInTextCommandDefinitionProvider();
+  private final AggregatingTextCommandRegistry registry =
+      new AggregatingTextCommandRegistry(List.of(builtIns));
 
   @Test
   void builtInDefinitionsCarryClassificationAndPlatformSourceMetadata() {
@@ -69,6 +74,25 @@ class BuiltInTextCommandRegistryTest {
       assertNotEquals(
           TextCommandDispatchGroup.ENQUEUE_ONLY, definition.dispatchGroup(), type.name());
     }
+  }
+
+  @Test
+  void registryRejectsDuplicateDefinitionsAcrossProviders() {
+    TextCommandDefinition duplicate =
+        new TextCommandDefinition(
+            TextCommandType.LOGIN,
+            TextCommandDispatchGroup.HELP,
+            TextCommandStageRequirement.NONE,
+            TextCommandPromptPolicy.NEVER,
+            TextCommandActionCategory.META,
+            TextCommandSource.EXTENSION);
+
+    IllegalStateException exception =
+        assertThrows(
+            IllegalStateException.class,
+            () -> new AggregatingTextCommandRegistry(List.of(builtIns, () -> List.of(duplicate))));
+
+    assertTrue(exception.getMessage().contains("Duplicate text command definition"));
   }
 
   private void assertDefinition(

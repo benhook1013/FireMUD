@@ -39,7 +39,7 @@ public class TextCommandInterpreter {
       CommunicationCommandHandler communicationHandler,
       WorldsCommandHandler worldsHandler,
       PromptComposer promptComposer,
-      BuiltInTextCommandRegistry registry) {
+      TextCommandRegistry registry) {
     this(
         sessionAuthenticationService,
         promptComposer,
@@ -82,7 +82,7 @@ public class TextCommandInterpreter {
         sessionAuthenticationService,
         promptComposer,
         parser,
-        new BuiltInTextCommandRegistry(),
+        new AggregatingTextCommandRegistry(List.of(new BuiltInTextCommandDefinitionProvider())),
         buildDispatcher(
             commandService,
             lookHandler,

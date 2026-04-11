@@ -221,7 +221,8 @@ class SessionResumptionFlowTest {
             communicationHandler,
             worldsHandler,
             new PromptComposer(),
-            new BuiltInTextCommandRegistry());
+            new AggregatingTextCommandRegistry(
+                List.of(new BuiltInTextCommandDefinitionProvider())));
   }
 
   @Test

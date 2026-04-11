@@ -24,22 +24,24 @@ These are narrow enough to implement now and unblock the current runtime/platfor
 These are already partly real in code and should continue after the immediate runtime fixes.
 
 1. [02.13.8 Built-In Command Registry and Dispatch Rollout](./vertical-slices/02.13.8-task-list-built-in-command-registry-and-dispatch-rollout-vertical-slice.md)
-   Remaining: keep future built-in and authored command growth on the registry-plus-family-handler seam without regressing into central interpreter branching.
+   Remaining: keep future built-in and authored command growth on the provider-backed registry plus family-handler seam without regressing into central interpreter branching.
 2. [02.13.7 Action Classification and Activity Semantics](./vertical-slices/02.13.7-task-list-action-classification-and-activity-semantics-vertical-slice.md)
    Remaining: extend the current primary-category plus timestamp consumer into optional tags/facets and later scripting/policy consumers.
-3. [02.1.3 Session Activity and WHO Presence](./vertical-slices/02.1.3-task-list-session-activity-and-who-presence-vertical-slice.md)
+3. [02.13.9 Authored Action Definition and Execution Model](./vertical-slices/02.13.9-task-list-authored-action-definition-and-execution-model-vertical-slice.md)
+   Remaining: define the first typed authored-action record and land the first non-built-in command-definition provider on the now-live shared registry seam.
+4. [02.1.3 Session Activity and WHO Presence](./vertical-slices/02.1.3-task-list-session-activity-and-who-presence-vertical-slice.md)
    Remaining: grow from the current bounded `WHO` plus explicit/auto-AFK substrate into the fuller activity model when that work becomes active.
-4. [02.1.4 Cross-Game Social Presence and Friend Activity](./vertical-slices/02.1.4-task-list-cross-game-social-presence-and-friend-activity-vertical-slice.md)
+5. [02.1.4 Cross-Game Social Presence and Friend Activity](./vertical-slices/02.1.4-task-list-cross-game-social-presence-and-friend-activity-vertical-slice.md)
    Remaining: grow the first account-scoped friend presence seam into explicit visibility policy and later social consumers without reopening `WHO`.
-5. [06 Task List Inventory, Containers, Equipment](./vertical-slices/06-task-list-inventory-containers-equipment-vertical-slice.md)
+6. [06 Task List Inventory, Containers, Equipment](./vertical-slices/06-task-list-inventory-containers-equipment-vertical-slice.md)
    Remaining: complete the remaining `06.3` follow-through and later authored stackability.
-6. [06.3.1 Stable Item Instance Visible Ref Allocation](./vertical-slices/06.3.1-task-list-item-instance-visible-ref-allocation-vertical-slice.md)
+7. [06.3.1 Stable Item Instance Visible Ref Allocation](./vertical-slices/06.3.1-task-list-item-instance-visible-ref-allocation-vertical-slice.md)
    Remaining: decide whether and where ordinary prose views ever expose refs beyond management surfaces.
-7. [06.3.2 Authored Stackability and Fungibility](./vertical-slices/06.3.2-task-list-authored-stackability-and-fungibility-vertical-slice.md)
+8. [06.3.2 Authored Stackability and Fungibility](./vertical-slices/06.3.2-task-list-authored-stackability-and-fungibility-vertical-slice.md)
    Remaining: add bounded authored compatibility modes once a real variant discriminator exists, then prove incompatible stack rows stay separate.
-8. [02.18 Service Boundary and Audit Hardening](./vertical-slices/02.18-task-list-service-boundary-and-audit-hardening-vertical-slice.md)
+9. [02.18 Service Boundary and Audit Hardening](./vertical-slices/02.18-task-list-service-boundary-and-audit-hardening-vertical-slice.md)
    Remaining: keep `02.18.6` at operator-proof level and continue any later hardening only if real-load evidence justifies it.
-9. [02.18.1 Audit Log and Moderation Separation](./vertical-slices/02.18.1-task-list-audit-log-and-moderation-separation-vertical-slice.md)
+10. [02.18.1 Audit Log and Moderation Separation](./vertical-slices/02.18.1-task-list-audit-log-and-moderation-separation-vertical-slice.md)
    Remaining: keep future callers on the dedicated log-event path; the current account/logging-admin separation is now in place and covered.
 
 ### 3. Design settled enough, but not started or only placeholder-level
@@ -52,15 +54,14 @@ These are not broad audit topics anymore; they are real future slices with known
 4. [02.1.4.1 Account Versus Character Social Scope](./vertical-slices/02.1.4.1-task-list-account-vs-character-social-scope-vertical-slice.md)
 5. [02.1.5.1 Hidden Staff Modes and Capability Bundles](./vertical-slices/02.1.5.1-task-list-hidden-staff-modes-and-capability-bundles-vertical-slice.md)
 6. [02.13.7 Action Classification and Activity Semantics](./vertical-slices/02.13.7-task-list-action-classification-and-activity-semantics-vertical-slice.md)
-7. [02.13.9 Authored Action Definition and Execution Model](./vertical-slices/02.13.9-task-list-authored-action-definition-and-execution-model-vertical-slice.md)
-8. [02.13.10 Structured Transcript and Replay End State](./vertical-slices/02.13.10-task-list-structured-transcript-and-replay-end-state-vertical-slice.md)
-9. [02.13.10.1 Structured Transcript Persistence and Replay Storage](./vertical-slices/02.13.10.1-task-list-structured-transcript-persistence-and-replay-storage-vertical-slice.md)
-10. [02.13.11 Shared Time, Duration, and Scheduler Semantics](./vertical-slices/02.13.11-task-list-shared-time-duration-and-scheduler-semantics-vertical-slice.md)
-11. [07.4 Unified Actor Model](./vertical-slices/07.4-task-list-unified-actor-model-vertical-slice.md)
-12. [07 Entity Stats and Conditions](./vertical-slices/07-task-list-entity-stats-and-conditions-vertical-slice.md)
-13. [07.1 Shared Effect Engine](./vertical-slices/07.1-task-list-shared-effect-engine-vertical-slice.md)
-14. [07.2 Equipment and Action-State Contributions](./vertical-slices/07.2-task-list-equipment-and-action-state-contributions-vertical-slice.md)
-15. [07.3 Damage and Mitigation Resolution](./vertical-slices/07.3-task-list-damage-and-mitigation-resolution-vertical-slice.md)
+7. [02.13.10 Structured Transcript and Replay End State](./vertical-slices/02.13.10-task-list-structured-transcript-and-replay-end-state-vertical-slice.md)
+8. [02.13.10.1 Structured Transcript Persistence and Replay Storage](./vertical-slices/02.13.10.1-task-list-structured-transcript-persistence-and-replay-storage-vertical-slice.md)
+9. [02.13.11 Shared Time, Duration, and Scheduler Semantics](./vertical-slices/02.13.11-task-list-shared-time-duration-and-scheduler-semantics-vertical-slice.md)
+10. [07.4 Unified Actor Model](./vertical-slices/07.4-task-list-unified-actor-model-vertical-slice.md)
+11. [07 Entity Stats and Conditions](./vertical-slices/07-task-list-entity-stats-and-conditions-vertical-slice.md)
+12. [07.1 Shared Effect Engine](./vertical-slices/07.1-task-list-shared-effect-engine-vertical-slice.md)
+13. [07.2 Equipment and Action-State Contributions](./vertical-slices/07.2-task-list-equipment-and-action-state-contributions-vertical-slice.md)
+14. [07.3 Damage and Mitigation Resolution](./vertical-slices/07.3-task-list-damage-and-mitigation-resolution-vertical-slice.md)
 
 ### 4. Discussion-gated follow-ups
 
@@ -94,9 +95,11 @@ If you want the clearest immediate path, do these next:
    Best next gameplay-runtime batch because the activity and AFK substrate is now live and the remaining work is lifecycle proof, recent-presence policy, and later `WHO` presentation rather than vague design.
 2. `02.1.4` cross-game social presence follow-through
    Best next social batch because the first account-scoped friend presence seam is now live and the remaining work is honest `lastSeenAt`, visibility policy, and broader consumers rather than a blank design space.
-3. `02.1.2` logout and deliberate session termination
+3. `02.13.9` authored action definition and execution model
+   Best next platform-shape batch because the provider-backed registry seam is now live and the next honest step is the first typed authored-action model rather than more built-in-only growth.
+4. `02.1.2` logout and deliberate session termination
    Best next runtime tail because the core logout command is now live and the remaining work is proof/alignment across reconnect and transport variants rather than fresh design.
-4. `06.3.2` bounded authored compatibility-mode follow-up
+5. `06.3.2` bounded authored compatibility-mode follow-up
    Best next item-model batch once a real variant discriminator substrate exists; do not fake it locally.
 
 ## Operator-Proof / Audit Tails
