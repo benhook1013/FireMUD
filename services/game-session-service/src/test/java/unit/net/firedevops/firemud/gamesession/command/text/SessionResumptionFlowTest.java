@@ -286,6 +286,35 @@ class SessionResumptionFlowTest {
   }
 
   @Test
+  void logoutClearsSessionSoLaterLoginStartsFreshWithoutResumeOrTakeover() {
+    TextCommandInterpretationResult firstLogin = interpreter.interpret("1", LOGIN_PAYLOAD, false);
+    assertTrue(firstLogin.commandResult().accepted());
+    TextCommandInterpretationResult firstPlay = interpreter.interpret("1", PLAY_PAYLOAD, false);
+    assertTrue(firstPlay.commandResult().accepted());
+
+    TextCommandInterpretationResult logout = interpreter.interpret("1", "LOGOUT", false);
+    assertTrue(logout.commandResult().accepted());
+    assertTrue(sessionContextService.findByTenantAndSessionId(22L, 1L).isEmpty());
+
+    TextCommandInterpretationResult secondLogin = interpreter.interpret("2", LOGIN_PAYLOAD, false);
+    assertTrue(secondLogin.commandResult().accepted());
+    TextCommandInterpretationResult secondPlay = interpreter.interpret("2", PLAY_PAYLOAD, false);
+    assertTrue(secondPlay.commandResult().accepted());
+
+    TextCommandInterpretationResult firstLookAfterLogout =
+        interpreter.interpret("1", LOOK_PAYLOAD, false);
+    assertFalse(firstLookAfterLogout.commandResult().accepted());
+    assertEquals("LOGIN_REQUIRED", firstLookAfterLogout.commandResult().errorCode());
+
+    assertTrue(sessionContextService.findByTenantAndSessionId(22L, 2L).isPresent());
+    assertTrue(
+        gameplayPresenceService.listConnectedByGameInstance(22L, 1L).stream()
+            .allMatch(presence -> presence.sessionId() != 1L));
+    assertEquals(0.0, meterRegistry.counter("gamesession.session.takeover").count());
+    assertEquals(0.0, meterRegistry.counter("gamesession.session.resume").count());
+  }
+
+  @Test
   void staleIdentityMappingFallsBackToFreshSession() {
     TextCommand command =
         new TextCommand(
