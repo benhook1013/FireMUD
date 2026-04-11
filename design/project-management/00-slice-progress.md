@@ -12,6 +12,8 @@ These are narrow enough to implement now and unblock the current runtime/platfor
 
 1. [06.3 Replace Aggregated Item Stacks With Distinct Item Instances](./vertical-slices/06.3-task-list-container-item-instance-identity-vertical-slice.md)
    Remaining: extend the now-live first strict stack model with bounded authored compatibility modes beyond definition-level sameness.
+2. [02.13.8 Built-In Command Registry and Dispatch Rollout](./vertical-slices/02.13.8-task-list-built-in-command-registry-and-dispatch-rollout-vertical-slice.md)
+   Remaining: keep built-in command growth on the canonical registry seam and carry the richer command-definition metadata forward into later authored-command registration.
 
 ### 2. Active architecture follow-through
 
@@ -79,10 +81,20 @@ These are not major design problems, but they are not fully closed.
 6. [02.14.4 Metrics Cardinality and Label Policy Hardening](./vertical-slices/02.14.4-task-list-metrics-cardinality-and-label-policy-hardening-vertical-slice.md)
    Remaining: only opportunistic audit tail work and later policy wording cleanup.
 
-## Practical Next Three
+## Practical Next Code Slices
 
 If you want the clearest immediate path, do these next:
 
 1. `06.3.2` bounded authored compatibility-mode follow-up
-2. `02.18.6` operator-proof the chosen scheduler thresholds
-3. `02.14.4` opportunistic metrics-cardinality tail only
+   Best next real code batch because the storage/runtime groundwork is already live and the remaining work is now contract-locked.
+2. `02.13.8` built-in command registry follow-through
+   Best next platform-shape batch because it extends an already-active seam without reopening broader design questions.
+3. `02.18.4` world/entity service-boundary auth follow-through
+   Best next hardening batch if you want runtime/platform work instead of more gameplay model work.
+
+## Operator-Proof / Audit Tails
+
+These are still useful, but they are not the next best feature/code-shape slices.
+
+1. `02.18.6` operator-proof the chosen scheduler thresholds
+2. `02.14.4` opportunistic metrics-cardinality tail only

@@ -1,5 +1,13 @@
 # Vertical Slice Design Docs
 
+## Slice Shaping Principles
+
+- Slice boundaries exist to bound delivery and review scope, not to permit temporary local architecture.
+- A slice may implement only one bounded vertical cut, but it should land on the canonical cross-system seam rather than inventing a slice-local substitute.
+- Prefer "proper shared substrate plus one real consumer" over "one local consumer with a fake or temporary substrate".
+- If a proposed slice cannot land on the intended canonical seam cleanly, it needs another design pass before implementation.
+- Optimize for correct end-state shape first and use later debug/integration rounds to stabilize it, rather than carrying forward local skeleton seams.
+
 ## Documents
 
 - [00-slice-ideas.md](./00-slice-ideas.md) – Brainstormed candidate slices and prioritization notes.
