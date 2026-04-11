@@ -13,6 +13,7 @@ import net.firedevops.firemud.entitymanagement.entity.ContainerInstance;
 import net.firedevops.firemud.entitymanagement.entity.Item;
 import net.firedevops.firemud.entitymanagement.entity.ItemInstance;
 import net.firedevops.firemud.entitymanagement.entity.ItemStack;
+import net.firedevops.firemud.entitymanagement.entity.ItemStackCompatibilityMode;
 import net.firedevops.firemud.entitymanagement.repository.CharacterRepository;
 import net.firedevops.firemud.entitymanagement.repository.ContainerInstanceRepository;
 import net.firedevops.firemud.entitymanagement.repository.ItemInstanceRepository;
@@ -240,17 +241,21 @@ class InventoryServiceImplTest {
 
     Character character = character(1L, 1L);
     Item arrows = item(2L, 1L, "Arrows", false, null, true);
+    arrows.setStackCompatibilityMode(ItemStackCompatibilityMode.DEFINITION_AND_FAMILY);
+    arrows.setDefaultStackFamilyKey("ammo/iron");
     ItemStack inventoryStack = stack(41L, 1L, character, arrows, 3);
+    inventoryStack.setStackFamilyKey("ammo/iron");
+    inventoryStack.setCompatibilityFingerprint("item-definition:2:family:ammo/iron");
 
     when(characterRepo.findByIdAndTenantId(1L, 1L)).thenReturn(Optional.of(character));
     when(itemRepo.findByIdAndTenantId(2L, 1L)).thenReturn(Optional.of(arrows));
     when(itemStackRepo
-            .findByTenantIdAndCharacter_IdAndEquipmentSlotIsNullAndGameInstanceIdIsNullAndRoomInstanceIdIsNullAndContainerInstanceIsNullAndItem_IdAndCompatibilityFingerprint(
-                1L, 1L, 2L, "item-definition:2"))
-        .thenReturn(Optional.of(inventoryStack));
+            .findByTenantIdAndCharacter_IdAndEquipmentSlotIsNullAndGameInstanceIdIsNullAndRoomInstanceIdIsNullAndContainerInstanceIsNullAndItem_IdOrderByIdAsc(
+                1L, 1L, 2L))
+        .thenReturn(List.of(inventoryStack));
     when(itemStackRepo
             .findByTenantIdAndGameInstanceIdAndRoomInstanceIdAndCharacterIsNullAndEquipmentSlotIsNullAndContainerInstanceIsNullAndItem_IdAndCompatibilityFingerprint(
-                1L, "GI-1", "R-1", 2L, "item-definition:2"))
+                1L, "GI-1", "R-1", 2L, "item-definition:2:family:ammo/iron"))
         .thenReturn(Optional.empty());
     when(itemStackRepo.save(Mockito.any(ItemStack.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
@@ -261,6 +266,51 @@ class InventoryServiceImplTest {
     assertEquals(1, inventoryStack.getQuantity());
     assertNull(dropped.itemInstanceId());
     verify(itemStackRepo, Mockito.atLeastOnce()).save(Mockito.any(ItemStack.class));
+  }
+
+  @Test
+  void dropItemRejectsAmbiguousStackFamiliesForSameItemDefinition() {
+    ItemInstanceRepository itemInstanceRepo = Mockito.mock(ItemInstanceRepository.class);
+    ContainerInstanceRepository containerInstanceRepo =
+        Mockito.mock(ContainerInstanceRepository.class);
+    CharacterRepository characterRepo = Mockito.mock(CharacterRepository.class);
+    ItemRepository itemRepo = Mockito.mock(ItemRepository.class);
+    ItemStackRepository itemStackRepo = Mockito.mock(ItemStackRepository.class);
+    ItemVisibleRefAllocator visibleRefAllocator = Mockito.mock(ItemVisibleRefAllocator.class);
+    InventoryServiceImpl service =
+        service(
+            itemInstanceRepo,
+            containerInstanceRepo,
+            characterRepo,
+            itemRepo,
+            itemStackRepo,
+            visibleRefAllocator);
+
+    Character character = character(1L, 1L);
+    Item arrows = item(2L, 1L, "Arrows", false, null, true);
+    arrows.setStackCompatibilityMode(ItemStackCompatibilityMode.DEFINITION_AND_FAMILY);
+    ItemStack first = stack(41L, 1L, character, arrows, 3);
+    first.setStackFamilyKey("ammo/iron");
+    first.setCompatibilityFingerprint("item-definition:2:family:ammo/iron");
+    ItemStack second = stack(42L, 1L, character, arrows, 4);
+    second.setStackFamilyKey("ammo/steel");
+    second.setCompatibilityFingerprint("item-definition:2:family:ammo/steel");
+
+    when(characterRepo.findByIdAndTenantId(1L, 1L)).thenReturn(Optional.of(character));
+    when(itemRepo.findByIdAndTenantId(2L, 1L)).thenReturn(Optional.of(arrows));
+    when(itemStackRepo
+            .findByTenantIdAndCharacter_IdAndEquipmentSlotIsNullAndGameInstanceIdIsNullAndRoomInstanceIdIsNullAndContainerInstanceIsNullAndItem_IdOrderByIdAsc(
+                1L, 1L, 2L))
+        .thenReturn(List.of(first, second));
+
+    IllegalArgumentException ex =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> service.dropItemToRoom(1L, 1L, "GI-1", "R-1", 2L, null, null, 1));
+
+    assertEquals(
+        "Multiple stack families exist for item 2; explicit stack selection required",
+        ex.getMessage());
   }
 
   @Test
@@ -445,6 +495,7 @@ class InventoryServiceImplTest {
     item.setContainer(container);
     item.setEquipmentSlot(equipmentSlot);
     item.setStackable(stackable);
+    item.setStackCompatibilityMode(ItemStackCompatibilityMode.DEFINITION_ONLY);
     return item;
   }
 
@@ -477,6 +528,7 @@ class InventoryServiceImplTest {
     stack.setTenantId(tenantId);
     stack.setCharacter(character);
     stack.setItem(item);
+    stack.setStackFamilyKey(item.getDefaultStackFamilyKey());
     stack.setCompatibilityFingerprint("item-definition:" + item.getId());
     stack.setQuantity(quantity);
     return stack;

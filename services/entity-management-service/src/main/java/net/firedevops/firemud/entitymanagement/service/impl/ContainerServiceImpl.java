@@ -312,15 +312,12 @@ public class ContainerServiceImpl implements ContainerService {
       ContainerInstance containerInstance,
       Item item,
       int quantity) {
-    String compatibilityFingerprint = stackableItemSupport.compatibilityFingerprint(item);
     ItemStack source =
-        itemStackRepository
-            .findByTenantIdAndCharacter_IdAndEquipmentSlotIsNullAndGameInstanceIdIsNullAndRoomInstanceIdIsNullAndContainerInstanceIsNullAndItem_IdAndCompatibilityFingerprint(
-                tenantId, characterId, item.getId(), compatibilityFingerprint)
-            .orElseThrow(
-                () -> new IllegalArgumentException("Not enough quantity to put into container"));
+        requireSingleInventoryStackSource(
+            tenantId, characterId, item, "Not enough quantity to put into container");
     requireStackQuantity(source, quantity, "Not enough quantity to put into container");
     decrementOrDelete(source, quantity);
+    String compatibilityFingerprint = source.getCompatibilityFingerprint();
     ItemStack destination =
         itemStackRepository
             .findByTenantIdAndContainerInstance_IdAndItem_IdAndCompatibilityFingerprint(
@@ -331,6 +328,7 @@ public class ContainerServiceImpl implements ContainerService {
                   created.setTenantId(tenantId);
                   created.setContainerInstance(containerInstance);
                   created.setItem(item);
+                  created.setStackFamilyKey(source.getStackFamilyKey());
                   created.setCompatibilityFingerprint(compatibilityFingerprint);
                   created.setQuantity(0);
                   return created;
@@ -345,14 +343,12 @@ public class ContainerServiceImpl implements ContainerService {
       ContainerInstance containerInstance,
       Item item,
       int quantity) {
-    String compatibilityFingerprint = stackableItemSupport.compatibilityFingerprint(item);
     ItemStack source =
-        itemStackRepository
-            .findByTenantIdAndContainerInstance_IdAndItem_IdAndCompatibilityFingerprint(
-                tenantId, containerInstance.getId(), item.getId(), compatibilityFingerprint)
-            .orElseThrow(() -> new IllegalArgumentException("Not enough quantity in container"));
+        requireSingleContainerStackSource(
+            tenantId, containerInstance.getId(), item, "Not enough quantity in container");
     requireStackQuantity(source, quantity, "Not enough quantity in container");
     decrementOrDelete(source, quantity);
+    String compatibilityFingerprint = source.getCompatibilityFingerprint();
     ItemStack destination =
         itemStackRepository
             .findByTenantIdAndCharacter_IdAndEquipmentSlotIsNullAndGameInstanceIdIsNullAndRoomInstanceIdIsNullAndContainerInstanceIsNullAndItem_IdAndCompatibilityFingerprint(
@@ -363,12 +359,44 @@ public class ContainerServiceImpl implements ContainerService {
                   created.setTenantId(tenantId);
                   created.setCharacter(character);
                   created.setItem(item);
+                  created.setStackFamilyKey(source.getStackFamilyKey());
                   created.setCompatibilityFingerprint(compatibilityFingerprint);
                   created.setQuantity(0);
                   return created;
                 });
     destination.setQuantity(destination.getQuantity() + quantity);
     itemStackRepository.save(destination);
+  }
+
+  private ItemStack requireSingleInventoryStackSource(
+      Long tenantId, Long characterId, Item item, String notFoundMessage) {
+    List<ItemStack> stacks =
+        itemStackRepository
+            .findByTenantIdAndCharacter_IdAndEquipmentSlotIsNullAndGameInstanceIdIsNullAndRoomInstanceIdIsNullAndContainerInstanceIsNullAndItem_IdOrderByIdAsc(
+                tenantId, characterId, item.getId());
+    return requireSingleStackSource(stacks, item, notFoundMessage);
+  }
+
+  private ItemStack requireSingleContainerStackSource(
+      Long tenantId, Long containerInstanceId, Item item, String notFoundMessage) {
+    List<ItemStack> stacks =
+        itemStackRepository.findByTenantIdAndContainerInstance_IdAndItem_IdOrderByIdAsc(
+            tenantId, containerInstanceId, item.getId());
+    return requireSingleStackSource(stacks, item, notFoundMessage);
+  }
+
+  private ItemStack requireSingleStackSource(
+      List<ItemStack> stacks, Item item, String notFoundMessage) {
+    if (stacks.isEmpty()) {
+      throw new IllegalArgumentException(notFoundMessage);
+    }
+    if (stacks.size() > 1) {
+      throw new IllegalArgumentException(
+          "Multiple stack families exist for item "
+              + item.getId()
+              + "; explicit stack selection required");
+    }
+    return stacks.get(0);
   }
 
   private Long resolveCharacterId(ContainerInstance containerInstance) {

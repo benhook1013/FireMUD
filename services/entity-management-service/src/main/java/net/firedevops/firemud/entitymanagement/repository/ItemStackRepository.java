@@ -47,4 +47,13 @@ public interface ItemStackRepository extends JpaRepository<ItemStack, Long> {
   List<ItemStack>
       findByTenantIdAndCharacter_IdAndEquipmentSlotIsNullAndGameInstanceIdIsNullAndRoomInstanceIdIsNullAndContainerInstanceIsNullAndItem_IdOrderByIdAsc(
           Long tenantId, Long characterId, Long itemId);
+
+  @EntityGraph(attributePaths = {"item"})
+  List<ItemStack>
+      findByTenantIdAndGameInstanceIdAndRoomInstanceIdAndCharacterIsNullAndEquipmentSlotIsNullAndContainerInstanceIsNullAndItem_IdOrderByIdAsc(
+          Long tenantId, String gameInstanceId, String roomInstanceId, Long itemId);
+
+  @EntityGraph(attributePaths = {"item", "containerInstance"})
+  List<ItemStack> findByTenantIdAndContainerInstance_IdAndItem_IdOrderByIdAsc(
+      Long tenantId, Long containerInstanceId, Long itemId);
 }

@@ -13,6 +13,7 @@ import net.firedevops.firemud.entitymanagement.entity.ContainerInstance;
 import net.firedevops.firemud.entitymanagement.entity.Item;
 import net.firedevops.firemud.entitymanagement.entity.ItemInstance;
 import net.firedevops.firemud.entitymanagement.entity.ItemStack;
+import net.firedevops.firemud.entitymanagement.entity.ItemStackCompatibilityMode;
 import net.firedevops.firemud.entitymanagement.repository.CharacterRepository;
 import net.firedevops.firemud.entitymanagement.repository.ContainerInstanceRepository;
 import net.firedevops.firemud.entitymanagement.repository.ItemInstanceRepository;
@@ -197,12 +198,14 @@ class ContainerServiceImplTest {
     containerInstance.setCharacter(character);
     containerInstance.setItem(container);
     Item arrows = item(3L, 1L, "Arrows", false, true);
+    arrows.setStackCompatibilityMode(ItemStackCompatibilityMode.DEFINITION_AND_FAMILY);
     ItemStack inventoryStack = new ItemStack();
     inventoryStack.setId(41L);
     inventoryStack.setTenantId(1L);
     inventoryStack.setCharacter(character);
     inventoryStack.setItem(arrows);
-    inventoryStack.setCompatibilityFingerprint("item-definition:3");
+    inventoryStack.setStackFamilyKey("ammo/iron");
+    inventoryStack.setCompatibilityFingerprint("item-definition:3:family:ammo/iron");
     inventoryStack.setQuantity(5);
 
     when(characterRepo.findByIdAndTenantId(1L, 1L)).thenReturn(Optional.of(character));
@@ -210,11 +213,11 @@ class ContainerServiceImplTest {
         .thenReturn(Optional.of(containerInstance));
     when(itemRepo.findByIdAndTenantId(3L, 1L)).thenReturn(Optional.of(arrows));
     when(itemStackRepo
-            .findByTenantIdAndCharacter_IdAndEquipmentSlotIsNullAndGameInstanceIdIsNullAndRoomInstanceIdIsNullAndContainerInstanceIsNullAndItem_IdAndCompatibilityFingerprint(
-                1L, 1L, 3L, "item-definition:3"))
-        .thenReturn(Optional.of(inventoryStack));
+            .findByTenantIdAndCharacter_IdAndEquipmentSlotIsNullAndGameInstanceIdIsNullAndRoomInstanceIdIsNullAndContainerInstanceIsNullAndItem_IdOrderByIdAsc(
+                1L, 1L, 3L))
+        .thenReturn(List.of(inventoryStack));
     when(itemStackRepo.findByTenantIdAndContainerInstance_IdAndItem_IdAndCompatibilityFingerprint(
-            1L, 500L, 3L, "item-definition:3"))
+            1L, 500L, 3L, "item-definition:3:family:ammo/iron"))
         .thenReturn(Optional.empty());
     when(itemStackRepo.save(any(ItemStack.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
@@ -224,6 +227,12 @@ class ContainerServiceImplTest {
     assertEquals(2, stored.quantity());
     assertEquals(3, inventoryStack.getQuantity());
     assertNull(stored.itemInstanceId());
+    org.mockito.ArgumentCaptor<ItemStack> saved =
+        org.mockito.ArgumentCaptor.forClass(ItemStack.class);
+    Mockito.verify(itemStackRepo, Mockito.atLeastOnce()).save(saved.capture());
+    ItemStack destination = saved.getAllValues().get(saved.getAllValues().size() - 1);
+    assertEquals("ammo/iron", destination.getStackFamilyKey());
+    assertEquals("item-definition:3:family:ammo/iron", destination.getCompatibilityFingerprint());
   }
 
   @Test
@@ -329,6 +338,7 @@ class ContainerServiceImplTest {
     item.setDescription(name + " desc");
     item.setContainer(container);
     item.setStackable(stackable);
+    item.setStackCompatibilityMode(ItemStackCompatibilityMode.DEFINITION_ONLY);
     return item;
   }
 
