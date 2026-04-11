@@ -12,6 +12,7 @@ import net.firedevops.firemud.gamesession.config.DevIsolatedProperties;
 import net.firedevops.firemud.gamesession.dto.GameInstanceDto;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
+import net.firedevops.firemud.gamesession.service.AccountRecentPresenceService;
 import net.firedevops.firemud.gamesession.service.DisconnectDeduplicationService;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceService;
 import net.firedevops.firemud.gamesession.service.PingService;
@@ -42,6 +43,7 @@ public final class TcpProxyServiceImpl extends TcpProxyServiceGrpc.TcpProxyServi
   private final PingService pingService;
   private final DevIsolatedProperties devIsolatedProperties;
   private final DisconnectDeduplicationService disconnectDeduplicationService;
+  private final AccountRecentPresenceService accountRecentPresenceService;
   private final GameplayPresenceService gameplayPresenceService;
 
   @SuppressFBWarnings(
@@ -54,6 +56,7 @@ public final class TcpProxyServiceImpl extends TcpProxyServiceGrpc.TcpProxyServi
       PingService pingService,
       DevIsolatedProperties devIsolatedProperties,
       DisconnectDeduplicationService disconnectDeduplicationService,
+      AccountRecentPresenceService accountRecentPresenceService,
       GameplayPresenceService gameplayPresenceService) {
     this.repository = repository;
     this.sessionStateService = sessionStateService;
@@ -61,6 +64,7 @@ public final class TcpProxyServiceImpl extends TcpProxyServiceGrpc.TcpProxyServi
     this.pingService = pingService;
     this.devIsolatedProperties = devIsolatedProperties;
     this.disconnectDeduplicationService = disconnectDeduplicationService;
+    this.accountRecentPresenceService = accountRecentPresenceService;
     this.gameplayPresenceService = gameplayPresenceService;
   }
 
@@ -112,6 +116,7 @@ public final class TcpProxyServiceImpl extends TcpProxyServiceGrpc.TcpProxyServi
     }
     if (StringUtils.hasText(request.getSessionId())) {
       try {
+        accountRecentPresenceService.recordDisconnect(Long.parseLong(request.getSessionId()));
         gameplayPresenceService.removeBySessionId(Long.parseLong(request.getSessionId()));
       } catch (NumberFormatException ignored) {
         // best-effort advisory cleanup only

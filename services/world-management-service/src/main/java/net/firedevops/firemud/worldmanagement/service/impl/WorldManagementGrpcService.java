@@ -26,6 +26,7 @@ import net.firedevops.firemud.worldmanagement.v1.WorldManagementServiceGrpc;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.grpc.server.service.GrpcService;
+import org.springframework.web.server.ResponseStatusException;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.ObjectMapper;
 
@@ -111,6 +112,11 @@ public class WorldManagementGrpcService
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
+    } catch (ResponseStatusException ex) {
+      GetRoomResponse response =
+          GetRoomResponse.newBuilder().setError(appError("GetRoom", ex)).build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
     } catch (Exception ex) {
       GetRoomResponse response =
           GetRoomResponse.newBuilder()
@@ -151,6 +157,11 @@ public class WorldManagementGrpcService
                   GrpcAppErrors.error(
                       meterRegistry, logger, "GetRoomSnapshot", errorCodeFor(ex), ex.getMessage()))
               .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (ResponseStatusException ex) {
+      GetRoomSnapshotResponse response =
+          GetRoomSnapshotResponse.newBuilder().setError(appError("GetRoomSnapshot", ex)).build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (Exception ex) {
@@ -246,6 +257,15 @@ public class WorldManagementGrpcService
 
   private String errorCodeFor(IllegalArgumentException ex) {
     return "Room not found".equals(ex.getMessage()) ? "NOT_FOUND" : "INVALID_ARGUMENT";
+  }
+
+  private net.firedevops.firemud.shared.v1.ErrorDetail appError(
+      String operation, ResponseStatusException ex) {
+    return GrpcAppErrors.error(meterRegistry, logger, operation, appErrorCode(ex), ex.getReason());
+  }
+
+  private String appErrorCode(ResponseStatusException ex) {
+    return ex.getStatusCode().value() == 403 ? "PERMISSION_DENIED" : "INVALID_ARGUMENT";
   }
 
   private void requireTenantAccessWhenPresent(Long tenantId) {

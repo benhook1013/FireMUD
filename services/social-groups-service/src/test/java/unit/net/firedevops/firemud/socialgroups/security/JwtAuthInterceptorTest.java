@@ -29,8 +29,8 @@ class JwtAuthInterceptorTest {
   }
 
   @Test
-  void allowsRequestWithValidRole() throws Exception {
-    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+  void allowsRequestWithValidJwt() throws Exception {
+    String token = jwtUtil.generateToken("2", Map.of("accountId", "2", "globalRoles", List.of()));
     MockHttpServletRequest request = new MockHttpServletRequest();
     request.addHeader(HttpHeaders.AUTHORIZATION, "Bearer " + token);
     MockHttpServletResponse response = new MockHttpServletResponse();

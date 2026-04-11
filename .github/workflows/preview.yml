@@ -558,6 +558,77 @@ jobs:
             echo "- Demo login: demo@example.com / swordfish"
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Publish preview summary comment
+        if: ${{ always() }}
+        uses: actions/github-script@v8
+        env:
+          PREVIEW_PR_NUMBER: ${{ needs.preview-plan.outputs.pr_number }}
+          PREVIEW_HEAD_SHA: ${{ needs.preview-plan.outputs.head_sha }}
+          PREVIEW_IMAGE_TAG: ${{ steps.effective-image-tag.outputs.image_tag }}
+          PREVIEW_HOSTNAME: ${{ needs.preview-plan.outputs.hostname }}
+          PREVIEW_TELNET_PORT: ${{ steps.telnet-port.outputs.telnet_port }}
+          PREVIEW_DEPLOY_OUTCOME: ${{ steps.deploy-release.outcome }}
+          PREVIEW_FAILURE_STAGE: ${{ env.PREVIEW_STAGE }}
+        with:
+          script: |
+            const { execFileSync } = require("child_process");
+
+            const prNumber = Number(process.env.PREVIEW_PR_NUMBER);
+            if (!Number.isInteger(prNumber) || prNumber <= 0) {
+              core.info("No PR number available for preview comment publishing.");
+              return;
+            }
+
+            const mode =
+              process.env.PREVIEW_DEPLOY_OUTCOME === "success" ? "success" : "failure";
+            const failureStage =
+              process.env.PREVIEW_FAILURE_STAGE && process.env.PREVIEW_FAILURE_STAGE.trim().length > 0
+                ? process.env.PREVIEW_FAILURE_STAGE.trim()
+                : "unknown";
+
+            const args = [
+              "./dev-tools/preview/write-preview-summary.sh",
+              mode,
+              String(prNumber),
+              process.env.PREVIEW_HEAD_SHA || "",
+              process.env.PREVIEW_IMAGE_TAG || "",
+              process.env.PREVIEW_HOSTNAME || "",
+              process.env.PREVIEW_TELNET_PORT || "",
+            ];
+            if (mode === "failure") {
+              args.push(failureStage);
+            }
+
+            const summaryText = execFileSync("bash", args, { encoding: "utf8" });
+            const bodyLines = ["### Preview Summary", "", summaryText.trimEnd()];
+            if (mode === "success") {
+              bodyLines.push("- Demo login: demo@example.com / swordfish");
+            }
+            const body = `${bodyLines.join("\n")}\n`;
+
+            const { data: comments } = await github.rest.issues.listComments({
+              ...context.repo,
+              issue_number: prNumber,
+            });
+
+            const existing = comments.find((comment) =>
+              comment.body.startsWith("### Preview Summary")
+            );
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                ...context.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                ...context.repo,
+                issue_number: prNumber,
+                body,
+              });
+            }
+
       - name: Summarize preview failure
         if: ${{ always() && failure() }}
         run: |
@@ -614,3 +685,52 @@ jobs:
           bash ./dev-tools/preview/delete-preview-namespace.sh \
             "${{ needs.preview-plan.outputs.namespace }}" \
             "${{ needs.preview-plan.outputs.release_name }}"
+
+      - name: Publish preview destroyed comment
+        uses: actions/github-script@v8
+        env:
+          PREVIEW_PR_NUMBER: ${{ needs.preview-plan.outputs.pr_number }}
+          PREVIEW_HEAD_SHA: ${{ needs.preview-plan.outputs.head_sha }}
+          PREVIEW_IMAGE_TAG: ${{ needs.preview-plan.outputs.image_tag }}
+          PREVIEW_HOSTNAME: ${{ needs.preview-plan.outputs.hostname }}
+          PREVIEW_TELNET_PORT: "destroyed"
+        with:
+          script: |
+            const prNumber = Number(process.env.PREVIEW_PR_NUMBER);
+            if (!Number.isInteger(prNumber) || prNumber <= 0) {
+              core.info("No PR number available for preview destroy comment publishing.");
+              return;
+            }
+
+            const body = [
+              "### Preview Summary",
+              "⚪ Preview environment destroyed",
+              "",
+              `- PR: #${prNumber}`,
+              `- Head SHA: \`${process.env.PREVIEW_HEAD_SHA || "unknown"}\``,
+              `- Previous host: https://${process.env.PREVIEW_HOSTNAME || "unknown"}`,
+              "- TCP: unavailable",
+            ].join("\n");
+
+            const { data: comments } = await github.rest.issues.listComments({
+              ...context.repo,
+              issue_number: prNumber,
+            });
+
+            const existing = comments.find((comment) =>
+              comment.body.startsWith("### Preview Summary")
+            );
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                ...context.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                ...context.repo,
+                issue_number: prNumber,
+                body,
+              });
+            }

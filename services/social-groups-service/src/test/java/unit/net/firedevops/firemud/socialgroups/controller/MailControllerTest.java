@@ -13,6 +13,7 @@ import net.firedevops.firemud.socialgroups.config.WebConfig;
 import net.firedevops.firemud.socialgroups.dto.MailMessageDto;
 import net.firedevops.firemud.socialgroups.dto.SendMailRequest;
 import net.firedevops.firemud.socialgroups.security.JwtAuthInterceptor;
+import net.firedevops.firemud.socialgroups.security.SocialAccessGuard;
 import net.firedevops.firemud.socialgroups.service.MailService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -38,6 +39,7 @@ class MailControllerTest {
   private final ObjectMapper objectMapper = new ObjectMapper();
 
   @MockitoBean private MailService mailService;
+  @MockitoBean private SocialAccessGuard socialAccessGuard;
 
   @Test
   void sendMailReturnsDto() throws Exception {
@@ -45,7 +47,7 @@ class MailControllerTest {
     MailMessageDto response = new MailMessageDto(1L, 1L, 2L, 3L, "hello", "test body", null, null);
     when(mailService.sendMail(request)).thenReturn(response);
 
-    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+    String token = jwtUtil.generateToken("2", Map.of("accountId", "2", "globalRoles", List.of()));
     mockMvc
         .perform(
             post("/mail")

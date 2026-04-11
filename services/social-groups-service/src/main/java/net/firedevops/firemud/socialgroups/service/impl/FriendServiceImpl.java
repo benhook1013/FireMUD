@@ -2,10 +2,19 @@ package net.firedevops.firemud.socialgroups.service.impl;
 
 import io.micrometer.core.annotation.Timed;
 import java.time.Instant;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.LoggingUtil;
+import net.firedevops.firemud.gamesession.v1.AccountPresenceActivityState;
+import net.firedevops.firemud.gamesession.v1.AccountPresenceEntry;
+import net.firedevops.firemud.gamesession.v1.QueryAccountPresenceResponse;
+import net.firedevops.firemud.socialgroups.client.GameSessionClient;
 import net.firedevops.firemud.socialgroups.dto.AddFriendRequest;
 import net.firedevops.firemud.socialgroups.dto.FriendLinkDto;
+import net.firedevops.firemud.socialgroups.dto.FriendPresenceActivityState;
+import net.firedevops.firemud.socialgroups.dto.FriendPresenceDto;
 import net.firedevops.firemud.socialgroups.entity.AccountFriendLink;
 import net.firedevops.firemud.socialgroups.entity.FriendLink;
 import net.firedevops.firemud.socialgroups.mapper.FriendLinkMapper;
@@ -24,6 +33,7 @@ public class FriendServiceImpl implements FriendService {
   private final FriendLinkRepository friendLinkRepository;
   private final AccountFriendLinkRepository accountFriendLinkRepository;
   private final FriendLinkMapper friendLinkMapper;
+  private final GameSessionClient gameSessionClient;
 
   @Override
   @Transactional
@@ -59,5 +69,100 @@ public class FriendServiceImpl implements FriendService {
       link.setCreatedAt(Instant.now());
       return friendLinkMapper.toDto(friendLinkRepository.save(link));
     }
+  }
+
+  @Override
+  @Timed(value = "friend.presence.list")
+  public List<FriendPresenceDto> listFriendPresence(long tenantId, long accountId) {
+    List<AccountFriendLink> links =
+        accountFriendLinkRepository.findByTenantIdAndAccountIdAndStatus(
+            tenantId, accountId, "active");
+    if (links.isEmpty()) {
+      return List.of();
+    }
+
+    List<Long> friendAccountIds =
+        links.stream().map(AccountFriendLink::getFriendAccountId).distinct().toList();
+    QueryAccountPresenceResponse response =
+        gameSessionClient.queryAccountPresence(tenantId, accountId, friendAccountIds);
+    if (response.hasError()) {
+      throw new IllegalStateException(response.getError().getMessage());
+    }
+
+    Map<Long, FriendPresenceDto> byAccountId = new LinkedHashMap<>();
+    for (AccountPresenceEntry entry : response.getPresencesList()) {
+      long friendAccountId = Long.parseLong(entry.getAccountId());
+      byAccountId.put(
+          friendAccountId,
+          new FriendPresenceDto(
+              friendAccountId,
+              visibleOnline(entry),
+              visibleGameInstanceId(entry),
+              visibleCharacterId(entry),
+              visibleCharacterName(entry),
+              visibleActivityState(entry),
+              entry.getLastSeenAtMs() > 0 ? Instant.ofEpochMilli(entry.getLastSeenAtMs()) : null));
+    }
+
+    return friendAccountIds.stream()
+        .map(
+            friendAccountId ->
+                byAccountId.getOrDefault(
+                    friendAccountId,
+                    new FriendPresenceDto(friendAccountId, false, null, null, null, null, null)))
+        .toList();
+  }
+
+  private FriendPresenceActivityState mapActivityState(AccountPresenceActivityState activityState) {
+    return switch (activityState) {
+      case ACCOUNT_PRESENCE_ACTIVITY_STATE_ACTIVE -> FriendPresenceActivityState.ACTIVE;
+      case ACCOUNT_PRESENCE_ACTIVITY_STATE_AUTO_AFK -> FriendPresenceActivityState.AUTO_AFK;
+      case ACCOUNT_PRESENCE_ACTIVITY_STATE_EXPLICIT_AFK -> FriendPresenceActivityState.EXPLICIT_AFK;
+      default -> null;
+    };
+  }
+
+  private boolean visibleOnline(AccountPresenceEntry entry) {
+    return switch (entry.getVisibilityPolicy()) {
+      case ACCOUNT_PRESENCE_VISIBILITY_POLICY_HIDDEN_STAFF -> false;
+      default -> entry.getOnline();
+    };
+  }
+
+  private Long visibleGameInstanceId(AccountPresenceEntry entry) {
+    return switch (entry.getVisibilityPolicy()) {
+      case ACCOUNT_PRESENCE_VISIBILITY_POLICY_PRIVATE,
+          ACCOUNT_PRESENCE_VISIBILITY_POLICY_HIDDEN_STAFF ->
+          null;
+      default ->
+          entry.getGameInstanceId().isBlank() ? null : Long.valueOf(entry.getGameInstanceId());
+    };
+  }
+
+  private Long visibleCharacterId(AccountPresenceEntry entry) {
+    return switch (entry.getVisibilityPolicy()) {
+      case ACCOUNT_PRESENCE_VISIBILITY_POLICY_PRIVATE,
+          ACCOUNT_PRESENCE_VISIBILITY_POLICY_HIDDEN_STAFF ->
+          null;
+      default -> entry.getCharacterId().isBlank() ? null : Long.valueOf(entry.getCharacterId());
+    };
+  }
+
+  private String visibleCharacterName(AccountPresenceEntry entry) {
+    return switch (entry.getVisibilityPolicy()) {
+      case ACCOUNT_PRESENCE_VISIBILITY_POLICY_PRIVATE,
+          ACCOUNT_PRESENCE_VISIBILITY_POLICY_HIDDEN_STAFF ->
+          null;
+      default -> entry.getCharacterName().isBlank() ? null : entry.getCharacterName();
+    };
+  }
+
+  private FriendPresenceActivityState visibleActivityState(AccountPresenceEntry entry) {
+    return switch (entry.getVisibilityPolicy()) {
+      case ACCOUNT_PRESENCE_VISIBILITY_POLICY_PRIVATE,
+          ACCOUNT_PRESENCE_VISIBILITY_POLICY_HIDDEN_STAFF ->
+          null;
+      default -> mapActivityState(entry.getActivityState());
+    };
   }
 }

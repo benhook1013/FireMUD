@@ -5,6 +5,7 @@ import net.firedevops.firemud.gamesession.config.FirstPartyConnectContextPropert
 import net.firedevops.firemud.gamesession.config.GameLogicProperties;
 import net.firedevops.firemud.gamesession.config.GameSessionProperties;
 import net.firedevops.firemud.gamesession.config.MovementProperties;
+import net.firedevops.firemud.gamesession.config.PresenceProperties;
 import net.firedevops.firemud.gamesession.config.PresentationProperties;
 import net.firedevops.firemud.gamesession.config.WorldTopologyProperties;
 import org.springframework.boot.SpringApplication;
@@ -20,6 +21,7 @@ import org.springframework.scheduling.annotation.EnableScheduling;
   GameLogicProperties.class,
   FirstPartyConnectContextProperties.class,
   PresentationProperties.class,
+  PresenceProperties.class,
   MovementProperties.class,
   WorldTopologyProperties.class
 })

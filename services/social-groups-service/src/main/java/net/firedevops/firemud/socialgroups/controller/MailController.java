@@ -4,6 +4,7 @@ import jakarta.validation.Valid;
 import net.firedevops.firemud.common.ApiResponse;
 import net.firedevops.firemud.socialgroups.dto.MailMessageDto;
 import net.firedevops.firemud.socialgroups.dto.SendMailRequest;
+import net.firedevops.firemud.socialgroups.security.SocialAccessGuard;
 import net.firedevops.firemud.socialgroups.service.MailService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -15,14 +16,17 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/mail")
 public class MailController {
   private final MailService mailService;
+  private final SocialAccessGuard socialAccessGuard;
 
-  public MailController(MailService mailService) {
+  public MailController(MailService mailService, SocialAccessGuard socialAccessGuard) {
     this.mailService = mailService;
+    this.socialAccessGuard = socialAccessGuard;
   }
 
   @PostMapping
   public ResponseEntity<ApiResponse<MailMessageDto>> sendMail(
       @Valid @RequestBody SendMailRequest request) {
+    socialAccessGuard.requireAccountAccess(request.tenantId(), request.senderAccountId());
     MailMessageDto dto = mailService.sendMail(request);
     return ResponseEntity.ok(ApiResponse.success(dto));
   }

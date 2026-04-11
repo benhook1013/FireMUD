@@ -9,7 +9,8 @@ import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 public record TextCommandInterpretationResult(
     CommandEnqueueResult commandResult,
     List<PlayerOutput> outputs,
-    boolean reconnectRedrawRecommended) {
+    boolean reconnectRedrawRecommended,
+    boolean meaningfulGameplayActivity) {
 
   public TextCommandInterpretationResult {
     Objects.requireNonNull(commandResult, "commandResult must not be null");
@@ -17,12 +18,19 @@ public record TextCommandInterpretationResult(
   }
 
   public TextCommandInterpretationResult(CommandEnqueueResult commandResult) {
-    this(commandResult, List.of(), false);
+    this(commandResult, List.of(), false, false);
   }
 
   public TextCommandInterpretationResult(
       CommandEnqueueResult commandResult, List<PlayerOutput> outputs) {
-    this(commandResult, outputs, false);
+    this(commandResult, outputs, false, false);
+  }
+
+  public TextCommandInterpretationResult(
+      CommandEnqueueResult commandResult,
+      List<PlayerOutput> outputs,
+      boolean reconnectRedrawRecommended) {
+    this(commandResult, outputs, reconnectRedrawRecommended, false);
   }
 
   public boolean hasResponse() {

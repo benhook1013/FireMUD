@@ -2,6 +2,7 @@ package net.firedevops.firemud.entitymanagement.service.impl;
 
 import io.micrometer.core.annotation.Timed;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.entitymanagement.dto.InventoryEntryDto;
@@ -10,12 +11,15 @@ import net.firedevops.firemud.entitymanagement.entity.Character;
 import net.firedevops.firemud.entitymanagement.entity.ContainerInstance;
 import net.firedevops.firemud.entitymanagement.entity.Item;
 import net.firedevops.firemud.entitymanagement.entity.ItemInstance;
+import net.firedevops.firemud.entitymanagement.entity.ItemStack;
 import net.firedevops.firemud.entitymanagement.repository.CharacterRepository;
 import net.firedevops.firemud.entitymanagement.repository.ContainerInstanceRepository;
 import net.firedevops.firemud.entitymanagement.repository.ItemInstanceRepository;
 import net.firedevops.firemud.entitymanagement.repository.ItemRepository;
+import net.firedevops.firemud.entitymanagement.repository.ItemStackRepository;
 import net.firedevops.firemud.entitymanagement.service.InventoryService;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -27,19 +31,32 @@ public class InventoryServiceImpl implements InventoryService {
   private final ContainerInstanceRepository containerInstanceRepository;
   private final CharacterRepository characterRepository;
   private final ItemRepository itemRepository;
+  private final ItemStackRepository itemStackRepository;
   private final ItemVisibleRefAllocator itemVisibleRefAllocator;
   private final ItemTransferSupport itemTransferSupport;
   private final ContainerHolderSyncSupport containerHolderSyncSupport;
+  private final StackableItemSupport stackableItemSupport;
 
   @Override
   @Transactional(readOnly = true)
   @Timed(value = "inventory.list")
   public Page<InventoryEntryDto> listInventory(Long tenantId, Long characterId, Pageable pageable) {
     requireCharacter(tenantId, characterId);
-    return itemInstanceRepository
-        .findByTenantIdAndCharacter_IdAndEquipmentSlotIsNullAndGameInstanceIdIsNullAndRoomInstanceIdIsNullOrderByIdAsc(
-            tenantId, characterId, pageable)
-        .map(this::toInventoryDto);
+    List<InventoryEntryDto> entries = new ArrayList<>();
+    entries.addAll(
+        itemInstanceRepository
+            .findByTenantIdAndCharacter_IdAndEquipmentSlotIsNullAndGameInstanceIdIsNullAndRoomInstanceIdIsNullOrderByIdAsc(
+                tenantId, characterId, Pageable.unpaged())
+            .map(this::toInventoryDto)
+            .getContent());
+    entries.addAll(
+        itemStackRepository
+            .findByTenantIdAndCharacter_IdAndEquipmentSlotIsNullAndGameInstanceIdIsNullAndRoomInstanceIdIsNullAndContainerInstanceIsNullOrderByIdAsc(
+                tenantId, characterId, Pageable.unpaged())
+            .map(this::toInventoryDto)
+            .getContent());
+    entries.sort(inventoryOrdering());
+    return page(entries, pageable);
   }
 
   @Override
@@ -49,6 +66,10 @@ public class InventoryServiceImpl implements InventoryService {
     requirePositiveQuantity(quantity);
     Character character = requireCharacter(tenantId, characterId);
     Item item = requireItem(tenantId, itemId);
+    if (stackableItemSupport.usesStackStorage(item)) {
+      incrementInventoryStack(character, item, quantity);
+      return inventoryDtoForStackMutation(character, item, quantity);
+    }
     List<ItemInstance> created = createCarriedItemInstances(character, item, quantity);
     return inventoryDtoForMutation(created.get(0), quantity);
   }
@@ -58,11 +79,21 @@ public class InventoryServiceImpl implements InventoryService {
   @Timed(value = "inventory.remove")
   public void removeItem(Long tenantId, Long characterId, Long itemId) {
     Character character = requireCharacter(tenantId, characterId);
-    requireItem(tenantId, itemId);
+    Item item = requireItem(tenantId, itemId);
+    if (stackableItemSupport.usesStackStorage(item)) {
+      List<ItemStack> stacks =
+          itemStackRepository
+              .findByTenantIdAndCharacter_IdAndEquipmentSlotIsNullAndGameInstanceIdIsNullAndRoomInstanceIdIsNullAndContainerInstanceIsNullAndItem_IdOrderByIdAsc(
+                  tenantId, characterId, itemId);
+      if (stacks.isEmpty()) {
+        throw new IllegalArgumentException("Inventory item not found");
+      }
+      itemStackRepository.deleteAll(stacks);
+    }
     List<ItemInstance> carried =
         itemInstanceRepository.findByTenantIdAndCharacter_IdAndItem_IdOrderByIdAsc(
             tenantId, character.getId(), itemId);
-    if (carried.isEmpty()) {
+    if (carried.isEmpty() && !stackableItemSupport.usesStackStorage(item)) {
       throw new IllegalArgumentException("Inventory item not found");
     }
     carried.forEach(this::deleteItemInstance);
@@ -75,10 +106,21 @@ public class InventoryServiceImpl implements InventoryService {
       Long tenantId, String gameInstanceId, String roomInstanceId, Pageable pageable) {
     String normalizedGameInstanceId = requireText(gameInstanceId, "gameInstanceId");
     String normalizedRoomInstanceId = requireText(roomInstanceId, "roomInstanceId");
-    return itemInstanceRepository
-        .findByTenantIdAndGameInstanceIdAndRoomInstanceIdAndCharacterIsNullAndEquipmentSlotIsNullOrderByIdAsc(
-            tenantId, normalizedGameInstanceId, normalizedRoomInstanceId, pageable)
-        .map(this::toRoomGroundDto);
+    List<RoomGroundInventoryEntryDto> entries = new ArrayList<>();
+    entries.addAll(
+        itemInstanceRepository
+            .findByTenantIdAndGameInstanceIdAndRoomInstanceIdAndCharacterIsNullAndEquipmentSlotIsNullOrderByIdAsc(
+                tenantId, normalizedGameInstanceId, normalizedRoomInstanceId, Pageable.unpaged())
+            .map(this::toRoomGroundDto)
+            .getContent());
+    entries.addAll(
+        itemStackRepository
+            .findByTenantIdAndGameInstanceIdAndRoomInstanceIdAndCharacterIsNullAndEquipmentSlotIsNullAndContainerInstanceIsNullOrderByIdAsc(
+                tenantId, normalizedGameInstanceId, normalizedRoomInstanceId, Pageable.unpaged())
+            .map(this::toRoomGroundDto)
+            .getContent());
+    entries.sort(roomGroundOrdering());
+    return page(entries, pageable);
   }
 
   @Override
@@ -98,6 +140,12 @@ public class InventoryServiceImpl implements InventoryService {
     String normalizedRoomInstanceId = requireText(roomInstanceId, "roomInstanceId");
     Character character = requireCharacter(tenantId, characterId);
     Item item = requireItem(tenantId, itemId);
+    if (stackableItemSupport.usesStackStorage(item)) {
+      moveInventoryStackToRoom(
+          tenantId, character, normalizedGameInstanceId, normalizedRoomInstanceId, item, quantity);
+      return roomGroundDtoForStackMutation(
+          tenantId, normalizedGameInstanceId, normalizedRoomInstanceId, item, quantity);
+    }
     List<ItemInstance> selected =
         requireCarriedItemInstances(
             character, item, itemInstanceId, normalizeOptionalText(containerInstanceId), quantity);
@@ -123,6 +171,11 @@ public class InventoryServiceImpl implements InventoryService {
     String normalizedRoomInstanceId = requireText(roomInstanceId, "roomInstanceId");
     Character character = requireCharacter(tenantId, characterId);
     Item item = requireItem(tenantId, itemId);
+    if (stackableItemSupport.usesStackStorage(item)) {
+      moveRoomStackToInventory(
+          tenantId, character, normalizedGameInstanceId, normalizedRoomInstanceId, item, quantity);
+      return inventoryDtoForStackMutation(character, item, quantity);
+    }
     List<ItemInstance> selected =
         requireRoomItemInstances(
             tenantId,
@@ -171,6 +224,78 @@ public class InventoryServiceImpl implements InventoryService {
       created.add(saved);
     }
     return created;
+  }
+
+  private void incrementInventoryStack(Character character, Item item, int quantity) {
+    String compatibilityFingerprint = stackableItemSupport.compatibilityFingerprint(item);
+    ItemStack stack =
+        itemStackRepository
+            .findByTenantIdAndCharacter_IdAndEquipmentSlotIsNullAndGameInstanceIdIsNullAndRoomInstanceIdIsNullAndContainerInstanceIsNullAndItem_IdAndCompatibilityFingerprint(
+                character.getTenantId(), character.getId(), item.getId(), compatibilityFingerprint)
+            .orElseGet(
+                () -> {
+                  ItemStack created = new ItemStack();
+                  created.setTenantId(character.getTenantId());
+                  created.setCharacter(character);
+                  created.setItem(item);
+                  created.setCompatibilityFingerprint(compatibilityFingerprint);
+                  created.setQuantity(0);
+                  return created;
+                });
+    stack.setQuantity(stack.getQuantity() + quantity);
+    itemStackRepository.save(stack);
+  }
+
+  private void moveInventoryStackToRoom(
+      Long tenantId,
+      Character character,
+      String gameInstanceId,
+      String roomInstanceId,
+      Item item,
+      int quantity) {
+    String compatibilityFingerprint = stackableItemSupport.compatibilityFingerprint(item);
+    ItemStack source =
+        itemStackRepository
+            .findByTenantIdAndCharacter_IdAndEquipmentSlotIsNullAndGameInstanceIdIsNullAndRoomInstanceIdIsNullAndContainerInstanceIsNullAndItem_IdAndCompatibilityFingerprint(
+                tenantId, character.getId(), item.getId(), compatibilityFingerprint)
+            .orElseThrow(() -> new IllegalArgumentException("Inventory item not found"));
+    requireStackQuantity(source, quantity, "Inventory item not found");
+    decrementOrDelete(source, quantity);
+    ItemStack destination =
+        itemStackRepository
+            .findByTenantIdAndGameInstanceIdAndRoomInstanceIdAndCharacterIsNullAndEquipmentSlotIsNullAndContainerInstanceIsNullAndItem_IdAndCompatibilityFingerprint(
+                tenantId, gameInstanceId, roomInstanceId, item.getId(), compatibilityFingerprint)
+            .orElseGet(
+                () -> {
+                  ItemStack created = new ItemStack();
+                  created.setTenantId(tenantId);
+                  created.setGameInstanceId(gameInstanceId);
+                  created.setRoomInstanceId(roomInstanceId);
+                  created.setItem(item);
+                  created.setCompatibilityFingerprint(compatibilityFingerprint);
+                  created.setQuantity(0);
+                  return created;
+                });
+    destination.setQuantity(destination.getQuantity() + quantity);
+    itemStackRepository.save(destination);
+  }
+
+  private void moveRoomStackToInventory(
+      Long tenantId,
+      Character character,
+      String gameInstanceId,
+      String roomInstanceId,
+      Item item,
+      int quantity) {
+    String compatibilityFingerprint = stackableItemSupport.compatibilityFingerprint(item);
+    ItemStack source =
+        itemStackRepository
+            .findByTenantIdAndGameInstanceIdAndRoomInstanceIdAndCharacterIsNullAndEquipmentSlotIsNullAndContainerInstanceIsNullAndItem_IdAndCompatibilityFingerprint(
+                tenantId, gameInstanceId, roomInstanceId, item.getId(), compatibilityFingerprint)
+            .orElseThrow(() -> new IllegalArgumentException("Room ground item not found"));
+    requireStackQuantity(source, quantity, "Room ground item not found");
+    decrementOrDelete(source, quantity);
+    incrementInventoryStack(character, item, quantity);
   }
 
   private List<ItemInstance> requireCarriedItemInstances(
@@ -296,6 +421,19 @@ public class InventoryServiceImpl implements InventoryService {
         instance.getVisibleRef());
   }
 
+  private InventoryEntryDto toInventoryDto(ItemStack stack) {
+    return new InventoryEntryDto(
+        stack.getTenantId(),
+        stack.getCharacter().getId(),
+        stack.getItem().getId(),
+        stack.getItem().getName(),
+        stack.getItem().getDescription(),
+        stack.getQuantity(),
+        null,
+        null,
+        null);
+  }
+
   private InventoryEntryDto inventoryDtoForMutation(ItemInstance instance, int quantity) {
     return new InventoryEntryDto(
         instance.getTenantId(),
@@ -307,6 +445,20 @@ public class InventoryServiceImpl implements InventoryService {
         quantity == 1 ? instance.getId() : null,
         quantity == 1 ? resolveContainerInstanceId(instance) : null,
         quantity == 1 ? instance.getVisibleRef() : null);
+  }
+
+  private InventoryEntryDto inventoryDtoForStackMutation(
+      Character character, Item item, int quantity) {
+    return new InventoryEntryDto(
+        character.getTenantId(),
+        character.getId(),
+        item.getId(),
+        item.getName(),
+        item.getDescription(),
+        quantity,
+        null,
+        null,
+        null);
   }
 
   private RoomGroundInventoryEntryDto toRoomGroundDto(ItemInstance instance) {
@@ -323,6 +475,20 @@ public class InventoryServiceImpl implements InventoryService {
         instance.getVisibleRef());
   }
 
+  private RoomGroundInventoryEntryDto toRoomGroundDto(ItemStack stack) {
+    return new RoomGroundInventoryEntryDto(
+        stack.getTenantId(),
+        stack.getGameInstanceId(),
+        stack.getRoomInstanceId(),
+        stack.getItem().getId(),
+        stack.getItem().getName(),
+        stack.getItem().getDescription(),
+        stack.getQuantity(),
+        null,
+        null,
+        null);
+  }
+
   private RoomGroundInventoryEntryDto roomGroundDtoForMutation(
       ItemInstance instance, int quantity) {
     return new RoomGroundInventoryEntryDto(
@@ -336,6 +502,21 @@ public class InventoryServiceImpl implements InventoryService {
         quantity == 1 ? instance.getId() : null,
         quantity == 1 ? resolveContainerInstanceId(instance) : null,
         quantity == 1 ? instance.getVisibleRef() : null);
+  }
+
+  private RoomGroundInventoryEntryDto roomGroundDtoForStackMutation(
+      Long tenantId, String gameInstanceId, String roomInstanceId, Item item, int quantity) {
+    return new RoomGroundInventoryEntryDto(
+        tenantId,
+        gameInstanceId,
+        roomInstanceId,
+        item.getId(),
+        item.getName(),
+        item.getDescription(),
+        quantity,
+        null,
+        null,
+        null);
   }
 
   private Long resolveContainerInstanceId(ItemInstance itemInstance) {
@@ -360,6 +541,22 @@ public class InventoryServiceImpl implements InventoryService {
     }
   }
 
+  private void requireStackQuantity(ItemStack stack, int quantity, String message) {
+    if (stack.getQuantity() < quantity) {
+      throw new IllegalArgumentException(message);
+    }
+  }
+
+  private void decrementOrDelete(ItemStack stack, int quantity) {
+    int remaining = stack.getQuantity() - quantity;
+    if (remaining <= 0) {
+      itemStackRepository.delete(stack);
+      return;
+    }
+    stack.setQuantity(remaining);
+    itemStackRepository.save(stack);
+  }
+
   private String requireText(String value, String fieldName) {
     if (value == null || value.isBlank()) {
       throw new IllegalArgumentException(fieldName + " must be provided");
@@ -369,5 +566,31 @@ public class InventoryServiceImpl implements InventoryService {
 
   private String normalizeOptionalText(String value) {
     return value == null || value.isBlank() ? null : value.trim();
+  }
+
+  private Comparator<InventoryEntryDto> inventoryOrdering() {
+    return Comparator.comparing((InventoryEntryDto dto) -> dto.itemName().toLowerCase())
+        .thenComparing(dto -> dto.itemInstanceId() == null ? 1 : 0)
+        .thenComparing(dto -> dto.itemInstanceId() == null ? Long.MAX_VALUE : dto.itemInstanceId())
+        .thenComparing(InventoryEntryDto::itemId);
+  }
+
+  private Comparator<RoomGroundInventoryEntryDto> roomGroundOrdering() {
+    return Comparator.comparing((RoomGroundInventoryEntryDto dto) -> dto.itemName().toLowerCase())
+        .thenComparing(dto -> dto.itemInstanceId() == null ? 1 : 0)
+        .thenComparing(dto -> dto.itemInstanceId() == null ? Long.MAX_VALUE : dto.itemInstanceId())
+        .thenComparing(RoomGroundInventoryEntryDto::itemId);
+  }
+
+  private <T> Page<T> page(List<T> entries, Pageable pageable) {
+    if (pageable.isUnpaged()) {
+      return new PageImpl<>(entries);
+    }
+    int start = Math.toIntExact(pageable.getOffset());
+    if (start >= entries.size()) {
+      return new PageImpl<>(List.of(), pageable, entries.size());
+    }
+    int end = Math.min(start + pageable.getPageSize(), entries.size());
+    return new PageImpl<>(entries.subList(start, end), pageable, entries.size());
   }
 }

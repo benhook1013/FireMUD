@@ -3,9 +3,9 @@ package net.firedevops.firemud.gamesession.command.text;
 enum TextCommandDispatchGroup {
   ENQUEUE_ONLY,
   WORLDS,
-  LOGIN,
+  SESSION,
   HELP,
-  PLAY,
+  ACTIVITY,
   WHO,
   ITEM,
   COMMUNICATION,

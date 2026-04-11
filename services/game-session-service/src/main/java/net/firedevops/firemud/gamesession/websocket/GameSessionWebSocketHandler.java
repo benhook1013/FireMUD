@@ -20,6 +20,7 @@ import net.firedevops.firemud.gamesession.presentation.PlayerOutputKind;
 import net.firedevops.firemud.gamesession.presentation.PromptBurstCoordinator;
 import net.firedevops.firemud.gamesession.presentation.PromptComposer;
 import net.firedevops.firemud.gamesession.presentation.TextPlayerOutputRenderer;
+import net.firedevops.firemud.gamesession.service.AccountRecentPresenceService;
 import net.firedevops.firemud.gamesession.service.ActiveTransportSessionRegistry;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextService;
@@ -50,6 +51,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
   private final ActiveTransportSessionRegistry activeTransportSessionRegistry;
   private final FirstPartyConnectContextService firstPartyConnectContextService;
   private final FirstPartyConnectContextRegistry firstPartyConnectContextRegistry;
+  private final AccountRecentPresenceService accountRecentPresenceService;
   private final GameplayPresenceService gameplayPresenceService;
   private final ScreenBufferService screenBufferService;
   private final TextPlayerOutputRenderer outputRenderer;
@@ -68,6 +70,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       ActiveTransportSessionRegistry activeTransportSessionRegistry,
       FirstPartyConnectContextService firstPartyConnectContextService,
       FirstPartyConnectContextRegistry firstPartyConnectContextRegistry,
+      AccountRecentPresenceService accountRecentPresenceService,
       GameplayPresenceService gameplayPresenceService,
       ScreenBufferService screenBufferService,
       TextPlayerOutputRenderer outputRenderer,
@@ -82,6 +85,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     this.activeTransportSessionRegistry = activeTransportSessionRegistry;
     this.firstPartyConnectContextService = firstPartyConnectContextService;
     this.firstPartyConnectContextRegistry = firstPartyConnectContextRegistry;
+    this.accountRecentPresenceService = accountRecentPresenceService;
     this.gameplayPresenceService = gameplayPresenceService;
     this.screenBufferService = screenBufferService;
     this.outputRenderer = outputRenderer;
@@ -114,6 +118,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
               activeTransportSessionRegistry.unregister(sessionId, session);
               firstPartyConnectContextRegistry.unregister(sessionId);
               promptBurstCoordinator.evict(Long.toString(sessionId));
+              accountRecentPresenceService.recordDisconnect(sessionId);
               gameplayPresenceService.removeBySessionId(sessionId);
             });
   }
@@ -135,6 +140,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       }
       TextCommandInterpretationResult interpretation =
           interpreter.interpret(sessionId, command, requiresSoloTick);
+      recordGameplayActivity(sessionId, interpretation);
       Optional<SessionContext> maybeContext =
           parseNumericSessionId(sessionId).flatMap(sessionContextService::findBySessionId);
       PresentationProperties effectivePresentation =
@@ -157,6 +163,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
           resolveLocaleTag(session, sessionId),
           effectivePresentation);
       maybeReplayScreenBufferAndRefreshLook(session, sessionId, command, interpretation);
+      maybeCloseAfterSuccessfulLogout(session, command, interpretation);
     }
   }
 
@@ -248,6 +255,29 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       return;
     }
     session.sendMessage(new TextMessage(text));
+  }
+
+  private void maybeCloseAfterSuccessfulLogout(
+      WebSocketSession session, TextCommand command, TextCommandInterpretationResult interpretation)
+      throws IOException {
+    if (command.type() != TextCommandType.LOGOUT || !interpretation.commandResult().accepted()) {
+      return;
+    }
+    session.close(new CloseStatus(CloseStatus.NORMAL.getCode(), "LOGOUT"));
+  }
+
+  private void recordGameplayActivity(
+      String sessionId, TextCommandInterpretationResult interpretation) {
+    if (!interpretation.commandResult().accepted()) {
+      return;
+    }
+    parseNumericSessionId(sessionId)
+        .ifPresent(
+            numericSessionId -> {
+              gameplayPresenceService.recordCommandActivity(
+                  numericSessionId, interpretation.meaningfulGameplayActivity());
+              accountRecentPresenceService.recordActivity(numericSessionId);
+            });
   }
 
   private void maybeAppendToScreenBuffer(

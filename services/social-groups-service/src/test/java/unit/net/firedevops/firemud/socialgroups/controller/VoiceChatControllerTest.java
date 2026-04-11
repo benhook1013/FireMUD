@@ -14,6 +14,7 @@ import net.firedevops.firemud.socialgroups.config.AuthConfig;
 import net.firedevops.firemud.socialgroups.config.WebConfig;
 import net.firedevops.firemud.socialgroups.dto.VoiceTokenDto;
 import net.firedevops.firemud.socialgroups.security.JwtAuthInterceptor;
+import net.firedevops.firemud.socialgroups.security.SocialAccessGuard;
 import net.firedevops.firemud.socialgroups.service.VoiceChatService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -38,11 +39,12 @@ class VoiceChatControllerTest {
   @Autowired private JwtUtil jwtUtil;
 
   @MockitoBean private VoiceChatService service;
+  @MockitoBean private SocialAccessGuard socialAccessGuard;
 
   @Test
   void createTokenReturnsToken() throws Exception {
     when(service.createToken(any())).thenReturn(new VoiceTokenDto("abc", Instant.now()));
-    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+    String token = jwtUtil.generateToken("2", Map.of("accountId", "2", "globalRoles", List.of()));
     String body = "{\"tenantId\":1,\"accountId\":2,\"channelId\":\"guild-1\"}";
 
     mockMvc

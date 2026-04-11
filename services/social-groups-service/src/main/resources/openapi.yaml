@@ -47,6 +47,25 @@ components:
         createdAt:
           type: string
           format: date-time
+    FriendPresenceDto:
+      type: object
+      properties:
+        friendAccountId:
+          type: integer
+        online:
+          type: boolean
+        gameInstanceId:
+          type: integer
+        characterId:
+          type: integer
+        characterName:
+          type: string
+        activityState:
+          type: string
+          enum: [ACTIVE, AUTO_AFK, EXPLICIT_AFK]
+        lastSeenAt:
+          type: string
+          format: date-time
     SendMailRequest:
       type: object
       properties:
@@ -320,6 +339,35 @@ paths:
                 properties:
                   data:
                     $ref: '#/components/schemas/FriendLinkDto'
+        '400':
+          description: Invalid request
+  /friends/presence:
+    get:
+      summary: List account-scoped friend presence
+      operationId: listFriendPresence
+      parameters:
+        - in: query
+          name: tenantId
+          required: true
+          schema:
+            type: integer
+        - in: query
+          name: accountId
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Friend presence list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/FriendPresenceDto'
         '400':
           description: Invalid request
   /mail:

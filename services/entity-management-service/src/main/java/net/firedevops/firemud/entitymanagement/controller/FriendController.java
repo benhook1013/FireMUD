@@ -3,6 +3,7 @@ package net.firedevops.firemud.entitymanagement.controller;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import jakarta.validation.Valid;
 import net.firedevops.firemud.common.ApiResponse;
+import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.entitymanagement.dto.AddFriendRequest;
 import net.firedevops.firemud.entitymanagement.dto.CharacterFriendDto;
 import net.firedevops.firemud.entitymanagement.service.FriendService;
@@ -13,7 +14,7 @@ import org.springframework.web.bind.annotation.*;
 
 /** REST endpoints for managing per-game friend links. */
 @RestController
-@RequestMapping("/characters/{characterId}/friends")
+@RequestMapping("/tenants/{tenantId}/characters/{characterId}/friends")
 public class FriendController {
   private final FriendService friendService;
 
@@ -26,22 +27,27 @@ public class FriendController {
 
   @GetMapping
   public ResponseEntity<ApiResponse<Page<CharacterFriendDto>>> list(
-      @PathVariable Long characterId, Pageable pageable) {
-    Page<CharacterFriendDto> list = friendService.listFriends(characterId, pageable);
+      @PathVariable Long tenantId, @PathVariable Long characterId, Pageable pageable) {
+    SessionContext.requireTenantAccess(tenantId);
+    Page<CharacterFriendDto> list = friendService.listFriends(tenantId, characterId, pageable);
     return ResponseEntity.ok(ApiResponse.success(list));
   }
 
   @PostMapping
   public ResponseEntity<ApiResponse<CharacterFriendDto>> add(
-      @PathVariable Long characterId, @Valid @RequestBody AddFriendRequest request) {
-    CharacterFriendDto dto = friendService.addFriend(characterId, request.friendId());
+      @PathVariable Long tenantId,
+      @PathVariable Long characterId,
+      @Valid @RequestBody AddFriendRequest request) {
+    SessionContext.requireTenantAccess(tenantId);
+    CharacterFriendDto dto = friendService.addFriend(tenantId, characterId, request.friendId());
     return ResponseEntity.ok(ApiResponse.success(dto));
   }
 
   @DeleteMapping("/{friendId}")
   public ResponseEntity<ApiResponse<Void>> remove(
-      @PathVariable Long characterId, @PathVariable Long friendId) {
-    friendService.removeFriend(characterId, friendId);
+      @PathVariable Long tenantId, @PathVariable Long characterId, @PathVariable Long friendId) {
+    SessionContext.requireTenantAccess(tenantId);
+    friendService.removeFriend(tenantId, characterId, friendId);
     return ResponseEntity.ok(ApiResponse.success(null));
   }
 }

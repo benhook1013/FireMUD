@@ -115,6 +115,30 @@ class InventoryCommandHandlerTest {
   }
 
   @Test
+  void inventoryHereReturnsStackedRoomGroundItemsWithoutVisibleRefs() {
+    when(entityManagementClient.listRoomGroundInventory("22", "77", "room-7"))
+        .thenReturn(
+            ListRoomGroundInventoryResponse.newBuilder()
+                .addItems(
+                    RoomGroundInventoryItem.newBuilder()
+                        .setItemId("1001")
+                        .setItemName("Arrow")
+                        .setItemDescription("A straight wooden arrow")
+                        .setQuantity(12)
+                        .build())
+                .build());
+
+    InventoryCommandHandlingResult result =
+        handler.handle(
+            context, new TextCommand(TextCommandType.INVENTORY, List.of("HERE"), "INV HERE"));
+
+    assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
+    InventoryViewOutput view = (InventoryViewOutput) result.outputs().get(0).payload();
+    assertThat(view.title()).isEqualTo("Room Inventory:");
+    assertThat(view.lines()).containsExactly("- Arrow x12 (A straight wooden arrow)");
+  }
+
+  @Test
   void inventoryHereReturnsEmptyStateWhenNoRoomGroundItemsExist() {
     when(entityManagementClient.listRoomGroundInventory("22", "77", "room-7"))
         .thenReturn(ListRoomGroundInventoryResponse.newBuilder().build());
@@ -242,6 +266,55 @@ class InventoryCommandHandlerTest {
     assertThat(result.outputs().get(0).text()).isEqualTo("You pick up Torch x2.");
     assertThat(((InventoryViewOutput) result.outputs().get(1).payload()).lines())
         .containsExactly("- Torch x2 (A small torch)");
+  }
+
+  @Test
+  void getWithQuantityMatchesStackedRoomGroundEntryWithoutExplicitRef() {
+    when(entityManagementClient.listRoomGroundInventory("22", "77", "room-7"))
+        .thenReturn(
+            ListRoomGroundInventoryResponse.newBuilder()
+                .addItems(
+                    RoomGroundInventoryItem.newBuilder()
+                        .setItemId("7")
+                        .setItemName("Arrow")
+                        .setItemDescription("A straight wooden arrow")
+                        .setQuantity(12)
+                        .build())
+                .build());
+    when(entityManagementClient.pickupItemFromRoom("22", "911", "77", "room-7", "7", null, "", 3))
+        .thenReturn(
+            PickupItemFromRoomResponse.newBuilder()
+                .setInventoryItem(
+                    InventoryItem.newBuilder()
+                        .setItemId("7")
+                        .setItemName("Arrow")
+                        .setItemDescription("A straight wooden arrow")
+                        .setQuantity(3)
+                        .build())
+                .build());
+    when(entityManagementClient.queryInventory("22", "911"))
+        .thenReturn(
+            QueryInventoryResponse.newBuilder()
+                .addItems(
+                    InventoryItem.newBuilder()
+                        .setItemId("7")
+                        .setItemName("Arrow")
+                        .setItemDescription("A straight wooden arrow")
+                        .setQuantity(3)
+                        .build())
+                .build());
+
+    InventoryCommandHandlingResult result =
+        handler.handle(
+            context, new TextCommand(TextCommandType.GET, List.of("3", "Arrow"), "GET 3 Arrow"));
+
+    assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
+    assertThat(result.outputs())
+        .extracting(PlayerOutput::kind)
+        .containsExactly(PlayerOutputKind.MESSAGE, PlayerOutputKind.VIEW);
+    assertThat(result.outputs().get(0).text()).isEqualTo("You pick up Arrow x3.");
+    assertThat(((InventoryViewOutput) result.outputs().get(1).payload()).lines())
+        .containsExactly("- Arrow x3 (A straight wooden arrow)");
   }
 
   @Test

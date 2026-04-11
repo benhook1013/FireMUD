@@ -26,15 +26,16 @@ public class FriendServiceImpl implements FriendService {
   @Override
   @Transactional(readOnly = true)
   @Timed(value = "friend.list")
-  public Page<CharacterFriendDto> listFriends(Long characterId, Pageable pageable) {
+  public Page<CharacterFriendDto> listFriends(Long tenantId, Long characterId, Pageable pageable) {
+    requireCharacterInTenant(tenantId, characterId);
     return repository.findByIdCharacterId(characterId, pageable).map(mapper::toDto);
   }
 
   @Override
   @Transactional
   @Timed(value = "friend.add")
-  public CharacterFriendDto addFriend(Long characterId, Long friendId) {
-    Character character = characterRepository.findById(characterId).orElseThrow();
+  public CharacterFriendDto addFriend(Long tenantId, Long characterId, Long friendId) {
+    Character character = requireCharacterInTenant(tenantId, characterId);
     Character friend = characterRepository.findById(friendId).orElseThrow();
     requireSameTenant(character, friend);
     CharacterFriendKey key = new CharacterFriendKey();
@@ -56,8 +57,8 @@ public class FriendServiceImpl implements FriendService {
   @Override
   @Transactional
   @Timed(value = "friend.remove")
-  public void removeFriend(Long characterId, Long friendId) {
-    Character character = characterRepository.findById(characterId).orElseThrow();
+  public void removeFriend(Long tenantId, Long characterId, Long friendId) {
+    Character character = requireCharacterInTenant(tenantId, characterId);
     Character friend = characterRepository.findById(friendId).orElseThrow();
     requireSameTenant(character, friend);
     CharacterFriendKey key = new CharacterFriendKey();
@@ -70,5 +71,13 @@ public class FriendServiceImpl implements FriendService {
     if (!character.getTenantId().equals(friend.getTenantId())) {
       throw new IllegalArgumentException("Characters must belong to the same tenant");
     }
+  }
+
+  private Character requireCharacterInTenant(Long tenantId, Long characterId) {
+    Character character = characterRepository.findById(characterId).orElseThrow();
+    if (!character.getTenantId().equals(tenantId)) {
+      throw new IllegalArgumentException("Character does not belong to tenant");
+    }
+    return character;
   }
 }

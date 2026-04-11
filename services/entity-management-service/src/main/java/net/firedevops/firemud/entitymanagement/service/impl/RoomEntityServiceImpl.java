@@ -9,8 +9,10 @@ import net.firedevops.firemud.entitymanagement.dto.RoomEntityDto;
 import net.firedevops.firemud.entitymanagement.entity.ContainerInstance;
 import net.firedevops.firemud.entitymanagement.entity.Item;
 import net.firedevops.firemud.entitymanagement.entity.ItemInstance;
+import net.firedevops.firemud.entitymanagement.entity.ItemStack;
 import net.firedevops.firemud.entitymanagement.repository.ContainerInstanceRepository;
 import net.firedevops.firemud.entitymanagement.repository.ItemInstanceRepository;
+import net.firedevops.firemud.entitymanagement.repository.ItemStackRepository;
 import net.firedevops.firemud.entitymanagement.service.RoomEntityService;
 import net.firedevops.firemud.entitymanagement.v1.EntityType;
 import net.firedevops.firemud.entitymanagement.v1.ReloadHint;
@@ -22,14 +24,17 @@ import org.springframework.stereotype.Service;
 public class RoomEntityServiceImpl implements RoomEntityService {
   private final LookProperties lookProperties;
   private final ItemInstanceRepository itemInstanceRepository;
+  private final ItemStackRepository itemStackRepository;
   private final ContainerInstanceRepository containerInstanceRepository;
 
   public RoomEntityServiceImpl(
       LookProperties lookProperties,
       ItemInstanceRepository itemInstanceRepository,
+      ItemStackRepository itemStackRepository,
       ContainerInstanceRepository containerInstanceRepository) {
     this.lookProperties = lookProperties;
     this.itemInstanceRepository = itemInstanceRepository;
+    this.itemStackRepository = itemStackRepository;
     this.containerInstanceRepository = containerInstanceRepository;
   }
 
@@ -62,13 +67,24 @@ public class RoomEntityServiceImpl implements RoomEntityService {
         roomGroundPage == null
             ? Collections.emptyList()
             : roomGroundPage.map(this::toRoomGroundEntity).getContent();
+    Page<ItemStack> roomGroundStackPage =
+        itemStackRepository
+            .findByTenantIdAndGameInstanceIdAndRoomInstanceIdAndCharacterIsNullAndEquipmentSlotIsNullAndContainerInstanceIsNullOrderByIdAsc(
+                Long.parseLong(tenantId), gameInstanceId, roomId, Pageable.unpaged());
+    List<RoomEntityDto> roomGroundStackEntities =
+        roomGroundStackPage == null
+            ? Collections.emptyList()
+            : roomGroundStackPage.map(this::toRoomGroundEntity).getContent();
     if (configuredEntities.isEmpty()) {
-      return roomGroundEntities;
+      return Stream.concat(roomGroundEntities.stream(), roomGroundStackEntities.stream()).toList();
     }
-    if (roomGroundEntities.isEmpty()) {
+    if (roomGroundEntities.isEmpty() && roomGroundStackEntities.isEmpty()) {
       return configuredEntities;
     }
-    return Stream.concat(configuredEntities.stream(), roomGroundEntities.stream()).toList();
+    return Stream.concat(
+            configuredEntities.stream(),
+            Stream.concat(roomGroundEntities.stream(), roomGroundStackEntities.stream()))
+        .toList();
   }
 
   private String regionKey(String tenantId, String roomId) {
@@ -77,7 +93,7 @@ public class RoomEntityServiceImpl implements RoomEntityService {
 
   private RoomEntityDto toRoomGroundEntity(ItemInstance entry) {
     String displayName = entry.getItem().getName();
-    List<String> stateFlags = roomGroundAffordanceFlags(entry);
+    List<String> stateFlags = roomGroundAffordanceFlags(entry.getItem(), entry.getId());
     return new RoomEntityDto(
         roomGroundEntityId(entry),
         displayName,
@@ -90,13 +106,28 @@ public class RoomEntityServiceImpl implements RoomEntityService {
         entry.getVisibleRef());
   }
 
-  private List<String> roomGroundAffordanceFlags(ItemInstance entry) {
-    Item item = entry.getItem();
+  private RoomEntityDto toRoomGroundEntity(ItemStack stack) {
+    String displayName = stack.getItem().getName();
+    List<String> stateFlags = roomGroundAffordanceFlags(stack.getItem(), null);
+    return new RoomEntityDto(
+        roomGroundStackEntityId(stack),
+        displayName,
+        EntityType.ITEM,
+        "",
+        stateFlags,
+        0,
+        ReloadHint.STABLE,
+        true,
+        null);
+  }
+
+  private List<String> roomGroundAffordanceFlags(Item item, Long itemInstanceId) {
     List<String> flags = new java.util.ArrayList<>();
     flags.add("room-ground");
     if (item.isContainer()) {
       flags.add("container");
-      Long containerInstanceId = resolveRoomContainerInstanceId(entry.getId());
+      Long containerInstanceId =
+          itemInstanceId == null ? null : resolveRoomContainerInstanceId(itemInstanceId);
       if (containerInstanceId != null) {
         flags.add("container-instance:" + containerInstanceId);
       }
@@ -115,6 +146,16 @@ public class RoomEntityServiceImpl implements RoomEntityService {
         entry.getGameInstanceId(),
         entry.getRoomInstanceId(),
         String.valueOf(entry.getId()));
+  }
+
+  private String roomGroundStackEntityId(ItemStack stack) {
+    return String.join(
+        ":",
+        String.valueOf(stack.getTenantId()),
+        stack.getGameInstanceId(),
+        stack.getRoomInstanceId(),
+        "stack",
+        String.valueOf(stack.getId()));
   }
 
   private Long resolveRoomContainerInstanceId(Long itemInstanceId) {

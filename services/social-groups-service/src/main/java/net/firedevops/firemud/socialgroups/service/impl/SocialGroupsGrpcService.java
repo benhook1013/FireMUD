@@ -4,13 +4,16 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
+import java.util.List;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.socialgroups.dto.AddFriendRequest;
 import net.firedevops.firemud.socialgroups.dto.CreateGuildRequest;
+import net.firedevops.firemud.socialgroups.dto.FriendPresenceDto;
 import net.firedevops.firemud.socialgroups.dto.SendMailRequest;
 import net.firedevops.firemud.socialgroups.dto.SendMessageRequestDto;
+import net.firedevops.firemud.socialgroups.security.SocialAccessGuard;
 import net.firedevops.firemud.socialgroups.service.ChatService;
 import net.firedevops.firemud.socialgroups.service.FriendService;
 import net.firedevops.firemud.socialgroups.service.GuildService;
@@ -18,6 +21,10 @@ import net.firedevops.firemud.socialgroups.service.MailService;
 import net.firedevops.firemud.socialgroups.service.PingService;
 import net.firedevops.firemud.socialgroups.v1.AddFriendResponse;
 import net.firedevops.firemud.socialgroups.v1.CreateGuildResponse;
+import net.firedevops.firemud.socialgroups.v1.FriendPresenceActivityState;
+import net.firedevops.firemud.socialgroups.v1.FriendPresenceEntry;
+import net.firedevops.firemud.socialgroups.v1.ListFriendPresenceRequest;
+import net.firedevops.firemud.socialgroups.v1.ListFriendPresenceResponse;
 import net.firedevops.firemud.socialgroups.v1.PingRequest;
 import net.firedevops.firemud.socialgroups.v1.PingResponse;
 import net.firedevops.firemud.socialgroups.v1.SendMailResponse;
@@ -40,6 +47,7 @@ public class SocialGroupsGrpcService extends SocialGroupsServiceGrpc.SocialGroup
   private final GuildService guildService;
   private final FriendService friendService;
   private final MailService mailService;
+  private final SocialAccessGuard socialAccessGuard;
 
   @SuppressFBWarnings(
       value = "EI_EXPOSE_REP2",
@@ -61,6 +69,8 @@ public class SocialGroupsGrpcService extends SocialGroupsServiceGrpc.SocialGroup
       net.firedevops.firemud.socialgroups.v1.SendMessageRequest request,
       StreamObserver<SendMessageResponse> responseObserver) {
     try {
+      requireAccountAccess(
+          Long.parseLong(request.getTenantId()), Long.parseLong(request.getSenderId()));
       SendMessageRequestDto dto =
           new SendMessageRequestDto(
               Long.valueOf(request.getTenantId()),
@@ -114,6 +124,8 @@ public class SocialGroupsGrpcService extends SocialGroupsServiceGrpc.SocialGroup
       net.firedevops.firemud.socialgroups.v1.CreateGuildRequest request,
       StreamObserver<CreateGuildResponse> responseObserver) {
     try {
+      requireAccountAccess(
+          Long.parseLong(request.getTenantId()), Long.parseLong(request.getOwnerAccountId()));
       CreateGuildRequest dto =
           new CreateGuildRequest(
               Long.valueOf(request.getTenantId()),
@@ -145,6 +157,8 @@ public class SocialGroupsGrpcService extends SocialGroupsServiceGrpc.SocialGroup
       net.firedevops.firemud.socialgroups.v1.AddFriendRequest request,
       StreamObserver<AddFriendResponse> responseObserver) {
     try {
+      requireAccountAccess(
+          Long.parseLong(request.getTenantId()), Long.parseLong(request.getAccountId()));
       AddFriendRequest dto =
           new AddFriendRequest(
               Long.valueOf(request.getTenantId()),
@@ -175,11 +189,72 @@ public class SocialGroupsGrpcService extends SocialGroupsServiceGrpc.SocialGroup
   }
 
   @Override
+  @Timed(value = "socialGrpc.listFriendPresence")
+  public void listFriendPresence(
+      ListFriendPresenceRequest request,
+      StreamObserver<ListFriendPresenceResponse> responseObserver) {
+    try {
+      long tenantId = Long.parseLong(request.getTenantId());
+      long accountId = Long.parseLong(request.getAccountId());
+      requireAccountAccess(tenantId, accountId);
+      List<FriendPresenceDto> presences = friendService.listFriendPresence(tenantId, accountId);
+      ListFriendPresenceResponse.Builder response = ListFriendPresenceResponse.newBuilder();
+      for (FriendPresenceDto presence : presences) {
+        FriendPresenceEntry.Builder entry =
+            FriendPresenceEntry.newBuilder()
+                .setFriendAccountId(Long.toString(presence.friendAccountId()))
+                .setOnline(presence.online());
+        if (presence.gameInstanceId() != null) {
+          entry.setGameInstanceId(Long.toString(presence.gameInstanceId()));
+        }
+        if (presence.characterId() != null) {
+          entry.setCharacterId(Long.toString(presence.characterId()));
+        }
+        if (presence.characterName() != null && !presence.characterName().isBlank()) {
+          entry.setCharacterName(presence.characterName());
+        }
+        if (presence.activityState() != null) {
+          entry.setActivityState(mapActivityState(presence.activityState()));
+        }
+        if (presence.lastSeenAt() != null) {
+          entry.setLastSeenAtMs(presence.lastSeenAt().toEpochMilli());
+        }
+        response.addPresences(entry.build());
+      }
+      responseObserver.onNext(response.build());
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      ListFriendPresenceResponse response =
+          ListFriendPresenceResponse.newBuilder()
+              .setError(invalidArgument("ListFriendPresence", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (AuthorizationException ex) {
+      ListFriendPresenceResponse response =
+          ListFriendPresenceResponse.newBuilder()
+              .setError(permissionDenied("ListFriendPresence", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      ListFriendPresenceResponse response =
+          ListFriendPresenceResponse.newBuilder()
+              .setError(internal("ListFriendPresence", ex))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    }
+  }
+
+  @Override
   @Timed(value = "socialGrpc.sendMail")
   public void sendMail(
       net.firedevops.firemud.socialgroups.v1.SendMailRequest request,
       StreamObserver<SendMailResponse> responseObserver) {
     try {
+      requireAccountAccess(
+          Long.parseLong(request.getTenantId()), Long.parseLong(request.getSenderAccountId()));
       SendMailRequest dto =
           new SendMailRequest(
               Long.valueOf(request.getTenantId()),
@@ -215,7 +290,34 @@ public class SocialGroupsGrpcService extends SocialGroupsServiceGrpc.SocialGroup
     return GrpcAppErrors.error(meterRegistry, logger, operation, "INVALID_ARGUMENT", message);
   }
 
+  private net.firedevops.firemud.shared.v1.ErrorDetail permissionDenied(
+      String operation, String message) {
+    return GrpcAppErrors.error(meterRegistry, logger, operation, "PERMISSION_DENIED", message);
+  }
+
   private net.firedevops.firemud.shared.v1.ErrorDetail internal(String operation, Exception ex) {
     return GrpcAppErrors.internal(meterRegistry, logger, operation, ex);
+  }
+
+  private void requireAccountAccess(long tenantId, long accountId) {
+    if (socialAccessGuard.hasAccountAccess(tenantId, accountId)) {
+      return;
+    }
+    throw new AuthorizationException("Account access required");
+  }
+
+  private FriendPresenceActivityState mapActivityState(
+      net.firedevops.firemud.socialgroups.dto.FriendPresenceActivityState activityState) {
+    return switch (activityState) {
+      case ACTIVE -> FriendPresenceActivityState.FRIEND_PRESENCE_ACTIVITY_STATE_ACTIVE;
+      case AUTO_AFK -> FriendPresenceActivityState.FRIEND_PRESENCE_ACTIVITY_STATE_AUTO_AFK;
+      case EXPLICIT_AFK -> FriendPresenceActivityState.FRIEND_PRESENCE_ACTIVITY_STATE_EXPLICIT_AFK;
+    };
+  }
+
+  private static final class AuthorizationException extends RuntimeException {
+    private AuthorizationException(String message) {
+      super(message);
+    }
   }
 }

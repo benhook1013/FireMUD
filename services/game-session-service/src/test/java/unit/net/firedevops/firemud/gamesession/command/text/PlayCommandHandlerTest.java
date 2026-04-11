@@ -16,6 +16,7 @@ import net.firedevops.firemud.gamesession.config.PresentationProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.presentation.TextPlayerOutputRenderer;
+import net.firedevops.firemud.gamesession.service.AccountRecentPresenceService;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContext;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceService;
@@ -36,6 +37,8 @@ class PlayCommandHandlerTest {
       Mockito.mock(EntityManagementClient.class);
   private final FirstPartyConnectContextRegistry firstPartyConnectContextRegistry =
       Mockito.mock(FirstPartyConnectContextRegistry.class);
+  private final AccountRecentPresenceService accountRecentPresenceService =
+      Mockito.mock(AccountRecentPresenceService.class);
   private final GameplayPresenceService gameplayPresenceService =
       Mockito.mock(GameplayPresenceService.class);
   private final GameLogicProperties gameLogicProperties = new GameLogicProperties();
@@ -55,6 +58,7 @@ class PlayCommandHandlerTest {
             accountClient,
             entityManagementClient,
             firstPartyConnectContextRegistry,
+            accountRecentPresenceService,
             gameplayPresenceService,
             meterRegistry);
     when(accountClient.getTenantMembershipForRuntime(

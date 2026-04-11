@@ -52,7 +52,7 @@ FireMUD is in initial development. Optimize for direct convergence to a clean ca
 
 ## AI Observation Log
 
-- When you encounter a reusable lesson about process friction, tool friction, unexpected environment behavior, wasteful workflow patterns, or notable code smells, record it in `/home/ben/src/FireMUD-wsl-copy/design/project-management/ai-observations.md`.
+- When you encounter a reusable lesson about process friction, tool friction, unexpected environment behavior, wasteful workflow patterns, notable code smells, or a repeated "this pattern should be designed/implemented better" observation, record it in `/home/ben/src/FireMUD-wsl-copy/design/project-management/ai-observations.md`.
 - Do not log ordinary code bugs or one-off breakages that are fixed as part of the current task unless the underlying lesson still matters after the fix.
 - Prefer entries that could reasonably turn into an `AGENTS.md` rule, a CI check, a dev tool improvement, or a future design/slice refinement.
 - Treat that file as append-only during normal work: add new dated entries, do not rewrite or prune older entries unless a human explicitly asks for cleanup.

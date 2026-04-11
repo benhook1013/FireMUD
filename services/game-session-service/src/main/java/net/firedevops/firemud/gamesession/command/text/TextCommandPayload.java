@@ -9,6 +9,7 @@ public sealed interface TextCommandPayload
         TextCommandPayload.Tokens,
         TextCommandPayload.Credentials,
         TextCommandPayload.Selection,
+        TextCommandPayload.AfkRequest,
         TextCommandPayload.ItemReference,
         TextCommandPayload.ContainerTransfer,
         TextCommandPayload.ContainerView,
@@ -29,6 +30,8 @@ public sealed interface TextCommandPayload
 
   record Selection(String primary, String secondary) implements TextCommandPayload {}
 
+  record AfkRequest(Boolean enabled) implements TextCommandPayload {}
+
   record ItemReference(String reference, int quantity) implements TextCommandPayload {}
 
   record ContainerTransfer(String itemReference, int quantity, String containerReference)
@@ -47,7 +50,8 @@ public sealed interface TextCommandPayload
   static TextCommandPayload fromLegacy(TextCommandType type, List<String> args) {
     List<String> safeArgs = args == null ? List.of() : List.copyOf(args);
     return switch (type) {
-      case NOOP -> new None();
+      case NOOP, LOGOUT -> new None();
+      case AFK -> new AfkRequest(true);
       case WORLDS, LOOK, QUICKLOOK, WHO, INVENTORY, EQUIPMENT -> new ViewRequest(type.name());
       case HELP -> safeArgs.isEmpty() ? new None() : new Tokens(safeArgs);
       case GET, DROP ->

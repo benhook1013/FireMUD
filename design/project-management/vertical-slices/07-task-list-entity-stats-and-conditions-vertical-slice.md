@@ -2,7 +2,13 @@
 
 ## Goal and Status
 
-Goal: define one canonical gameplay-state model for numeric stats, bounded resources, conditions, buffs, debuffs, and transient action states so equipment, potions, spells, actions, and future combat all contribute through the same effect system instead of accumulating one-off rule paths. Status: planned; design direction is agreed, but no runtime implementation has started.
+Goal: define one canonical gameplay-state model for numeric stats, bounded resources, conditions, buffs, debuffs, and transient action states so equipment, potions, spells, actions, and future combat all contribute through the same effect system instead of accumulating one-off rule paths. Status: direction locked; implementation is future work.
+
+## Checklist
+
+- [x] Define target-state behavior and scope.
+- [ ] Implement the slice end-to-end.
+- [ ] Verify and close any follow-ups.
 
 This slice sits after the first inventory/equipment work because it will become the shared substrate for health, armour, resistances, afflictions, blocking states, temporary buffs, and similar mechanics across many later gameplay systems.
 
@@ -110,6 +116,18 @@ Recommended first order:
 3. land one shared effect-evaluation seam;
 4. prove equipment and one transient action state can contribute through that seam;
 5. defer full damage and mitigation resolution until the shared state model is stable.
+
+## Locked Order
+
+The broader `07.x` cluster should be designed and implemented in this order:
+
+1. unified actor model;
+2. shared effect engine;
+3. stats and conditions;
+4. equipment and transient action-state contributions;
+5. damage and mitigation resolution.
+
+Damage and mitigation should be consumers of the shared actor/state/effect model, not a second parallel rules engine.
 
 This means the first proof should be able to express things like:
 

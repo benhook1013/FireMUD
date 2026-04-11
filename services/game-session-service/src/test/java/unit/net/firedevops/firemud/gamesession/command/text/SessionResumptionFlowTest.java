@@ -16,6 +16,7 @@ import net.firedevops.firemud.account.v1.AuthenticateResponse;
 import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
 import net.firedevops.firemud.cache.LookCacheService;
+import net.firedevops.firemud.cache.ScreenBufferService;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.common.settings.ScopedSettingsSnapshot;
 import net.firedevops.firemud.gamelogic.v1.LookResult;
@@ -37,8 +38,10 @@ import net.firedevops.firemud.gamesession.presentation.PlayerOutputKind;
 import net.firedevops.firemud.gamesession.presentation.PromptComposer;
 import net.firedevops.firemud.gamesession.presentation.TextPlayerOutputRenderer;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
+import net.firedevops.firemud.gamesession.service.AccountRecentPresenceService;
 import net.firedevops.firemud.gamesession.service.CommandService;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
+import net.firedevops.firemud.gamesession.service.GameInstanceService;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceService;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
@@ -79,6 +82,10 @@ class SessionResumptionFlowTest {
       Mockito.mock(ObjectProvider.class);
   private final FirstPartyConnectContextRegistry firstPartyConnectContextRegistry =
       Mockito.mock(FirstPartyConnectContextRegistry.class);
+  private final AccountRecentPresenceService accountRecentPresenceService =
+      Mockito.mock(AccountRecentPresenceService.class);
+  private final GameInstanceService gameInstanceService = Mockito.mock(GameInstanceService.class);
+  private final ScreenBufferService screenBufferService = Mockito.mock(ScreenBufferService.class);
   private PlayCommandHandler playHandler;
   private final MoveCommandHandler moveHandler = Mockito.mock(MoveCommandHandler.class);
   private final HelpCommandHandler helpHandler = new HelpCommandHandler();
@@ -188,16 +195,28 @@ class SessionResumptionFlowTest {
             accountClient,
             entityManagementClient,
             firstPartyConnectContextRegistry,
+            accountRecentPresenceService,
             gameplayPresenceService,
             meterRegistry);
     worldsHandler = new WorldsCommandHandler(worldCatalog);
+    AfkCommandHandler afkHandler =
+        new AfkCommandHandler(sessionAuthenticationService, gameplayPresenceService);
     interpreter =
         new TextCommandInterpreter(
             commandService,
             lookHandler,
             loginHandler,
+            new LogoutCommandHandler(
+                sessionAuthenticationService,
+                sessionContextService,
+                gameInstanceService,
+                gameplayPresenceService,
+                accountRecentPresenceService,
+                firstPartyConnectContextRegistry,
+                screenBufferService),
             playHandler,
             moveHandler,
+            afkHandler,
             helpHandler,
             new WhoCommandHandler(gameplayPresenceService),
             new InventoryCommandHandler(entityManagementClient),
@@ -206,7 +225,9 @@ class SessionResumptionFlowTest {
             sessionAuthenticationService,
             communicationHandler,
             worldsHandler,
-            new PromptComposer());
+            new PromptComposer(),
+            new AggregatingTextCommandRegistry(
+                List.of(new BuiltInTextCommandDefinitionProvider())));
   }
 
   @Test
@@ -267,6 +288,35 @@ class SessionResumptionFlowTest {
     assertEquals("LOGIN_REQUIRED", firstLookAfterTakeover.commandResult().errorCode());
 
     assertEquals(1.0, meterRegistry.counter("gamesession.session.takeover").count());
+    assertEquals(0.0, meterRegistry.counter("gamesession.session.resume").count());
+  }
+
+  @Test
+  void logoutClearsSessionSoLaterLoginStartsFreshWithoutResumeOrTakeover() {
+    TextCommandInterpretationResult firstLogin = interpreter.interpret("1", LOGIN_PAYLOAD, false);
+    assertTrue(firstLogin.commandResult().accepted());
+    TextCommandInterpretationResult firstPlay = interpreter.interpret("1", PLAY_PAYLOAD, false);
+    assertTrue(firstPlay.commandResult().accepted());
+
+    TextCommandInterpretationResult logout = interpreter.interpret("1", "LOGOUT", false);
+    assertTrue(logout.commandResult().accepted());
+    assertTrue(sessionContextService.findByTenantAndSessionId(22L, 1L).isEmpty());
+
+    TextCommandInterpretationResult secondLogin = interpreter.interpret("2", LOGIN_PAYLOAD, false);
+    assertTrue(secondLogin.commandResult().accepted());
+    TextCommandInterpretationResult secondPlay = interpreter.interpret("2", PLAY_PAYLOAD, false);
+    assertTrue(secondPlay.commandResult().accepted());
+
+    TextCommandInterpretationResult firstLookAfterLogout =
+        interpreter.interpret("1", LOOK_PAYLOAD, false);
+    assertFalse(firstLookAfterLogout.commandResult().accepted());
+    assertEquals("LOGIN_REQUIRED", firstLookAfterLogout.commandResult().errorCode());
+
+    assertTrue(sessionContextService.findByTenantAndSessionId(22L, 2L).isPresent());
+    assertTrue(
+        gameplayPresenceService.listConnectedByGameInstance(22L, 1L).stream()
+            .allMatch(presence -> presence.sessionId() != 1L));
+    assertEquals(0.0, meterRegistry.counter("gamesession.session.takeover").count());
     assertEquals(0.0, meterRegistry.counter("gamesession.session.resume").count());
   }
 

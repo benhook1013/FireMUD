@@ -15,7 +15,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.HandlerInterceptor;
 
-/** Intercepts requests to validate JWTs and roles. */
+/** Intercepts requests to validate JWTs and populate caller context. */
 @Component
 public class JwtAuthInterceptor implements HandlerInterceptor {
   private final JwtUtil jwtUtil;
@@ -52,21 +52,6 @@ public class JwtAuthInterceptor implements HandlerInterceptor {
         }
       }
 
-      boolean allowed = false;
-      allowed = globalRoles.contains("platformAdmin") || globalRoles.contains("moderator");
-      if (!allowed) {
-        for (List<String> roles : scopedRoles.values()) {
-          if (roles.contains("admin") || roles.contains("moderator")) {
-            allowed = true;
-            break;
-          }
-        }
-      }
-
-      if (!allowed) {
-        response.setStatus(HttpStatus.FORBIDDEN.value());
-        return false;
-      }
       SessionContext.setContext(payload.get("accountId", String.class), globalRoles, scopedRoles);
       return true;
     } catch (JwtException ex) {

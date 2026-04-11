@@ -61,6 +61,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.Pageable;
 import org.springframework.grpc.server.service.GrpcService;
+import org.springframework.web.server.ResponseStatusException;
 
 /** Simple gRPC service exposing the Ping RPC. */
 @GrpcService(interceptors = AuthTokenInterceptor.class)
@@ -179,6 +180,13 @@ public class EntityManagementGrpcService
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
+    } catch (ResponseStatusException ex) {
+      ListCharactersByAccountResponse response =
+          ListCharactersByAccountResponse.newBuilder()
+              .setError(appError("ListCharactersByAccount", ex))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
     } catch (Exception ex) {
       ListCharactersByAccountResponse response =
           ListCharactersByAccountResponse.newBuilder()
@@ -231,6 +239,13 @@ public class EntityManagementGrpcService
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
+    } catch (ResponseStatusException ex) {
+      FindCharacterByNameResponse response =
+          FindCharacterByNameResponse.newBuilder()
+              .setError(appError("FindCharacterByName", ex))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
     } catch (Exception ex) {
       FindCharacterByNameResponse response =
           FindCharacterByNameResponse.newBuilder()
@@ -268,6 +283,11 @@ public class EntityManagementGrpcService
                       "INVALID_ARGUMENT",
                       ex.getMessage()))
               .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (ResponseStatusException ex) {
+      CreateCharacterResponse response =
+          CreateCharacterResponse.newBuilder().setError(appError("CreateCharacter", ex)).build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (Exception ex) {
@@ -333,6 +353,11 @@ public class EntityManagementGrpcService
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
+    } catch (ResponseStatusException ex) {
+      QueryInventoryResponse response =
+          QueryInventoryResponse.newBuilder().setError(appError("QueryInventory", ex)).build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
     } catch (Exception ex) {
       QueryInventoryResponse response =
           QueryInventoryResponse.newBuilder()
@@ -365,6 +390,11 @@ public class EntityManagementGrpcService
                   GrpcAppErrors.error(
                       meterRegistry, logger, "ListEquipment", "INVALID_ARGUMENT", ex.getMessage()))
               .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (ResponseStatusException ex) {
+      ListEquipmentResponse response =
+          ListEquipmentResponse.newBuilder().setError(appError("ListEquipment", ex)).build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (Exception ex) {
@@ -415,6 +445,11 @@ public class EntityManagementGrpcService
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
+    } catch (ResponseStatusException ex) {
+      WearEquipmentItemResponse response =
+          WearEquipmentItemResponse.newBuilder().setError(appError("WearEquipment", ex)).build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
     } catch (Exception ex) {
       WearEquipmentItemResponse response =
           WearEquipmentItemResponse.newBuilder()
@@ -463,6 +498,11 @@ public class EntityManagementGrpcService
                       "INVALID_ARGUMENT",
                       ex.getMessage()))
               .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (ResponseStatusException ex) {
+      RemoveEquipmentResponse response =
+          RemoveEquipmentResponse.newBuilder().setError(appError("RemoveEquipment", ex)).build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (Exception ex) {
@@ -517,6 +557,13 @@ public class EntityManagementGrpcService
                       "ListContainerContents",
                       "INVALID_ARGUMENT",
                       ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (ResponseStatusException ex) {
+      ListContainerContentsResponse response =
+          ListContainerContentsResponse.newBuilder()
+              .setError(appError("ListContainerContents", ex))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -583,6 +630,13 @@ public class EntityManagementGrpcService
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
+    } catch (ResponseStatusException ex) {
+      PutItemIntoContainerResponse response =
+          PutItemIntoContainerResponse.newBuilder()
+              .setError(appError("PutItemIntoContainer", ex))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
     } catch (Exception ex) {
       PutItemIntoContainerResponse response =
           PutItemIntoContainerResponse.newBuilder()
@@ -646,6 +700,13 @@ public class EntityManagementGrpcService
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
+    } catch (ResponseStatusException ex) {
+      TakeItemFromContainerResponse response =
+          TakeItemFromContainerResponse.newBuilder()
+              .setError(appError("TakeItemFromContainer", ex))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
     } catch (Exception ex) {
       TakeItemFromContainerResponse response =
           TakeItemFromContainerResponse.newBuilder()
@@ -699,6 +760,13 @@ public class EntityManagementGrpcService
                       "ListRoomGroundInventory",
                       "INVALID_ARGUMENT",
                       ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (ResponseStatusException ex) {
+      ListRoomGroundInventoryResponse response =
+          ListRoomGroundInventoryResponse.newBuilder()
+              .setError(appError("ListRoomGroundInventory", ex))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -766,6 +834,13 @@ public class EntityManagementGrpcService
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
+    } catch (ResponseStatusException ex) {
+      PickupItemFromRoomResponse response =
+          PickupItemFromRoomResponse.newBuilder()
+              .setError(appError("PickupItemFromRoom", ex))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
     } catch (Exception ex) {
       PickupItemFromRoomResponse response =
           PickupItemFromRoomResponse.newBuilder()
@@ -820,6 +895,11 @@ public class EntityManagementGrpcService
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
+    } catch (ResponseStatusException ex) {
+      DropItemToRoomResponse response =
+          DropItemToRoomResponse.newBuilder().setError(appError("DropItemToRoom", ex)).build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
     } catch (Exception ex) {
       DropItemToRoomResponse response =
           DropItemToRoomResponse.newBuilder()
@@ -854,6 +934,11 @@ public class EntityManagementGrpcService
                       "INVALID_ARGUMENT",
                       ex.getMessage()))
               .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (ResponseStatusException ex) {
+      ListRoomEntitiesResponse response =
+          ListRoomEntitiesResponse.newBuilder().setError(appError("ListRoomEntities", ex)).build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (Exception ex) {
@@ -894,6 +979,15 @@ public class EntityManagementGrpcService
       return;
     }
     SessionContext.requireTenantAccess(tenantId);
+  }
+
+  private net.firedevops.firemud.shared.v1.ErrorDetail appError(
+      String operation, ResponseStatusException ex) {
+    return GrpcAppErrors.error(meterRegistry, logger, operation, appErrorCode(ex), ex.getReason());
+  }
+
+  private String appErrorCode(ResponseStatusException ex) {
+    return ex.getStatusCode().value() == 403 ? "PERMISSION_DENIED" : "INVALID_ARGUMENT";
   }
 
   private Character toProto(CharacterDto dto) {

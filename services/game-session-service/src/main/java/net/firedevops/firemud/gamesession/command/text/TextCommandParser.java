@@ -20,6 +20,8 @@ public class TextCommandParser {
         switch (type) {
           case WORLDS ->
               new ParsedCommandData(List.of(), new TextCommandPayload.ViewRequest("WORLDS"));
+          case LOGOUT -> new ParsedCommandData(List.of(), new TextCommandPayload.None());
+          case AFK -> parseAfk(tokens);
           case HELP -> parseHelp(tokens);
           case WHO -> new ParsedCommandData(List.of(), new TextCommandPayload.ViewRequest("WHO"));
           case INVENTORY ->
@@ -68,6 +70,23 @@ public class TextCommandParser {
     List<String> args = parseRemainingTokens(tokens);
     if (args.isEmpty()) {
       return new ParsedCommandData(args, new TextCommandPayload.None());
+    }
+    return new ParsedCommandData(args, new TextCommandPayload.Tokens(args));
+  }
+
+  private ParsedCommandData parseAfk(String[] tokens) {
+    List<String> args = parseRemainingTokens(tokens);
+    if (args.isEmpty()) {
+      return new ParsedCommandData(args, new TextCommandPayload.AfkRequest(true));
+    }
+    if (args.size() == 1) {
+      String mode = args.get(0).trim();
+      if (mode.equalsIgnoreCase("ON")) {
+        return new ParsedCommandData(args, new TextCommandPayload.AfkRequest(true));
+      }
+      if (mode.equalsIgnoreCase("OFF")) {
+        return new ParsedCommandData(args, new TextCommandPayload.AfkRequest(false));
+      }
     }
     return new ParsedCommandData(args, new TextCommandPayload.Tokens(args));
   }

@@ -37,6 +37,38 @@ class TextCommandParserTest {
   }
 
   @Test
+  void parsesLogoutAliasesAsSimpleSessionCommand() {
+    TextCommand command = parser.parse("quit");
+
+    assertEquals(TextCommandType.LOGOUT, command.type());
+    assertEquals("quit", command.aliasUsed());
+    assertTrue(command.args().isEmpty());
+    assertEquals("quit", command.rawLine());
+    assertTrue(command.payload() instanceof TextCommandPayload.None);
+  }
+
+  @Test
+  void parsesAfkDefaultAsOnRequest() {
+    TextCommand command = parser.parse("AFK");
+
+    assertEquals(TextCommandType.AFK, command.type());
+    assertEquals("AFK", command.aliasUsed());
+    assertTrue(command.args().isEmpty());
+    assertTrue(command.payload() instanceof TextCommandPayload.AfkRequest);
+    assertEquals(Boolean.TRUE, ((TextCommandPayload.AfkRequest) command.payload()).enabled());
+  }
+
+  @Test
+  void parsesAfkOffAsDisableRequest() {
+    TextCommand command = parser.parse("afk off");
+
+    assertEquals(TextCommandType.AFK, command.type());
+    assertEquals(List.of("off"), command.args());
+    assertTrue(command.payload() instanceof TextCommandPayload.AfkRequest);
+    assertEquals(Boolean.FALSE, ((TextCommandPayload.AfkRequest) command.payload()).enabled());
+  }
+
+  @Test
   void parsesPlayWithWorldAndOptionalCharacter() {
     TextCommand command = parser.parse("PLAY demo Emberline");
 

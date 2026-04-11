@@ -14,11 +14,15 @@ import net.firedevops.firemud.gamesession.dto.GameInstanceDto;
 import net.firedevops.firemud.gamesession.dto.StartSessionRequest;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
+import net.firedevops.firemud.gamesession.service.AccountPresenceQueryService;
 import net.firedevops.firemud.gamesession.service.FeatureFlagService;
 import net.firedevops.firemud.gamesession.service.GameInstanceService;
 import net.firedevops.firemud.gamesession.service.IpConnectionLimiter;
 import net.firedevops.firemud.gamesession.service.PingService;
 import net.firedevops.firemud.gamesession.service.TickService;
+import net.firedevops.firemud.gamesession.v1.AccountPresenceActivityState;
+import net.firedevops.firemud.gamesession.v1.AccountPresenceEntry;
+import net.firedevops.firemud.gamesession.v1.AccountPresenceVisibilityPolicy;
 import net.firedevops.firemud.gamesession.v1.EnqueueCommandRequest;
 import net.firedevops.firemud.gamesession.v1.EnqueueCommandResponse;
 import net.firedevops.firemud.gamesession.v1.GameSessionServiceGrpc;
@@ -28,6 +32,8 @@ import net.firedevops.firemud.gamesession.v1.PauseTicksRequest;
 import net.firedevops.firemud.gamesession.v1.PauseTicksResponse;
 import net.firedevops.firemud.gamesession.v1.PingRequest;
 import net.firedevops.firemud.gamesession.v1.PingResponse;
+import net.firedevops.firemud.gamesession.v1.QueryAccountPresenceRequest;
+import net.firedevops.firemud.gamesession.v1.QueryAccountPresenceResponse;
 import net.firedevops.firemud.gamesession.v1.QueryStateRequest;
 import net.firedevops.firemud.gamesession.v1.QueryStateResponse;
 import net.firedevops.firemud.gamesession.v1.RestartSessionRequest;
@@ -42,6 +48,7 @@ import net.firedevops.firemud.gamesession.v1.ToggleFeatureFlagRequest;
 import net.firedevops.firemud.gamesession.v1.ToggleFeatureFlagResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.grpc.server.service.GrpcService;
 
 /** gRPC endpoints for the Game Session Service. */
@@ -57,6 +64,7 @@ public final class GameSessionGrpcService
   private final FeatureFlagService featureFlagService;
   private final TextCommandInterpreter textCommandInterpreter;
   private final GameInstanceRepository gameInstanceRepository;
+  private final AccountPresenceQueryService accountPresenceQueryService;
 
   @SuppressFBWarnings(
       value = "EI_EXPOSE_REP2",
@@ -70,12 +78,14 @@ public final class GameSessionGrpcService
 
   private final IpConnectionLimiter ipConnectionLimiter;
 
+  @Autowired
   public GameSessionGrpcService(
       PingService pingService,
       GameInstanceService gameInstanceService,
       FeatureFlagService featureFlagService,
       TextCommandInterpreter textCommandInterpreter,
       GameInstanceRepository gameInstanceRepository,
+      AccountPresenceQueryService accountPresenceQueryService,
       TickService tickService,
       MeterRegistry meterRegistry,
       IpConnectionLimiter ipConnectionLimiter) {
@@ -84,9 +94,31 @@ public final class GameSessionGrpcService
     this.featureFlagService = featureFlagService;
     this.textCommandInterpreter = textCommandInterpreter;
     this.gameInstanceRepository = gameInstanceRepository;
+    this.accountPresenceQueryService = accountPresenceQueryService;
     this.tickService = tickService;
     this.meterRegistry = meterRegistry;
     this.ipConnectionLimiter = ipConnectionLimiter;
+  }
+
+  GameSessionGrpcService(
+      PingService pingService,
+      GameInstanceService gameInstanceService,
+      FeatureFlagService featureFlagService,
+      TextCommandInterpreter textCommandInterpreter,
+      GameInstanceRepository gameInstanceRepository,
+      TickService tickService,
+      MeterRegistry meterRegistry,
+      IpConnectionLimiter ipConnectionLimiter) {
+    this(
+        pingService,
+        gameInstanceService,
+        featureFlagService,
+        textCommandInterpreter,
+        gameInstanceRepository,
+        (tenantId, viewerAccountId, accountIds) -> List.of(),
+        tickService,
+        meterRegistry,
+        ipConnectionLimiter);
   }
 
   @Override
@@ -375,6 +407,71 @@ public final class GameSessionGrpcService
   }
 
   @Override
+  @Timed(value = "gamesessionGrpc.queryAccountPresence")
+  public void queryAccountPresence(
+      QueryAccountPresenceRequest request,
+      StreamObserver<QueryAccountPresenceResponse> responseObserver) {
+    try {
+      long tenantId = Long.parseLong(request.getTenantId());
+      long viewerAccountId = parseOwnerAccountId(request.getViewerAccountId());
+      requireTenantOrCurrentAccountAccess(tenantId, viewerAccountId);
+      List<Long> accountIds =
+          request.getAccountIdsList().stream().map(Long::parseLong).filter(id -> id > 0).toList();
+      if (accountIds.size() > 100) {
+        throw new IllegalArgumentException("accountIds must contain at most 100 entries");
+      }
+      QueryAccountPresenceResponse.Builder builder = QueryAccountPresenceResponse.newBuilder();
+      for (var snapshot :
+          accountPresenceQueryService.queryAccountPresence(tenantId, viewerAccountId, accountIds)) {
+        AccountPresenceEntry.Builder entry =
+            AccountPresenceEntry.newBuilder()
+                .setAccountId(Long.toString(snapshot.accountId()))
+                .setOnline(snapshot.online());
+        if (snapshot.gameInstanceId() != null) {
+          entry.setGameInstanceId(Long.toString(snapshot.gameInstanceId()));
+        }
+        if (snapshot.characterId() != null) {
+          entry.setCharacterId(Long.toString(snapshot.characterId()));
+        }
+        if (snapshot.characterName() != null && !snapshot.characterName().isBlank()) {
+          entry.setCharacterName(snapshot.characterName());
+        }
+        if (snapshot.activityState() != null) {
+          entry.setActivityState(mapActivityState(snapshot.activityState().name()));
+        }
+        if (snapshot.lastSeenAt() != null) {
+          entry.setLastSeenAtMs(snapshot.lastSeenAt().toEpochMilli());
+        }
+        entry.setVisibilityPolicy(mapVisibilityPolicy(snapshot.visibilityPolicy()));
+        builder.addPresences(entry.build());
+      }
+      responseObserver.onNext(builder.build());
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      QueryAccountPresenceResponse response =
+          QueryAccountPresenceResponse.newBuilder()
+              .setError(GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (AuthorizationException ex) {
+      QueryAccountPresenceResponse response =
+          QueryAccountPresenceResponse.newBuilder()
+              .setError(GrpcAppErrors.error(meterRegistry, "PERMISSION_DENIED", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      QueryAccountPresenceResponse response =
+          QueryAccountPresenceResponse.newBuilder()
+              .setError(GrpcAppErrors.internal(meterRegistry, LOG, "QueryAccountPresence", ex))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    }
+  }
+
+  @Override
   @Timed(value = "gamesessionGrpc.toggleFeatureFlag")
   public void toggleFeatureFlag(
       ToggleFeatureFlagRequest request,
@@ -490,6 +587,13 @@ public final class GameSessionGrpcService
     throw new AuthorizationException("Tenant access required");
   }
 
+  private void requireTenantOrCurrentAccountAccess(long tenantId, long accountId) {
+    if (SessionContext.hasTenantAccess(tenantId) || isCurrentAccount(accountId)) {
+      return;
+    }
+    throw new AuthorizationException("Account access required");
+  }
+
   private void requireInstanceAccess(long sessionId) {
     GameInstance instance =
         gameInstanceRepository
@@ -529,5 +633,27 @@ public final class GameSessionGrpcService
     private AuthorizationException(String message) {
       super(message);
     }
+  }
+
+  private AccountPresenceActivityState mapActivityState(String activityState) {
+    return switch (activityState) {
+      case "ACTIVE" -> AccountPresenceActivityState.ACCOUNT_PRESENCE_ACTIVITY_STATE_ACTIVE;
+      case "AUTO_AFK" -> AccountPresenceActivityState.ACCOUNT_PRESENCE_ACTIVITY_STATE_AUTO_AFK;
+      case "EXPLICIT_AFK" ->
+          AccountPresenceActivityState.ACCOUNT_PRESENCE_ACTIVITY_STATE_EXPLICIT_AFK;
+      default -> AccountPresenceActivityState.ACCOUNT_PRESENCE_ACTIVITY_STATE_UNSPECIFIED;
+    };
+  }
+
+  private AccountPresenceVisibilityPolicy mapVisibilityPolicy(
+      net.firedevops.firemud.gamesession.service.AccountPresenceVisibilityPolicy visibilityPolicy) {
+    return switch (visibilityPolicy) {
+      case PUBLIC -> AccountPresenceVisibilityPolicy.ACCOUNT_PRESENCE_VISIBILITY_POLICY_PUBLIC;
+      case FRIENDS_ONLY ->
+          AccountPresenceVisibilityPolicy.ACCOUNT_PRESENCE_VISIBILITY_POLICY_FRIENDS_ONLY;
+      case PRIVATE -> AccountPresenceVisibilityPolicy.ACCOUNT_PRESENCE_VISIBILITY_POLICY_PRIVATE;
+      case HIDDEN_STAFF ->
+          AccountPresenceVisibilityPolicy.ACCOUNT_PRESENCE_VISIBILITY_POLICY_HIDDEN_STAFF;
+    };
   }
 }
