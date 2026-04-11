@@ -1,0 +1,34 @@
+package net.firedevops.firemud.gamesession.command.text;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+import net.firedevops.firemud.common.security.JwtUtil;
+import net.firedevops.firemud.gamesession.service.SessionContext;
+import net.firedevops.firemud.gamesession.service.impl.InMemoryGameplayPresenceService;
+import org.junit.jupiter.api.Test;
+
+class WhoCommandHandlerTest {
+  private final JwtUtil jwtUtil = new JwtUtil("testsecretkeytestsecretkeytest1234", 60_000L);
+
+  @Test
+  void whoOmitsRemovedPresenceAfterLogoutLikeCleanup() {
+    InMemoryGameplayPresenceService gameplayPresenceService =
+        new InMemoryGameplayPresenceService(jwtUtil);
+    WhoCommandHandler handler = new WhoCommandHandler(gameplayPresenceService);
+
+    gameplayPresenceService.registerConnected(
+        new SessionContext(1L, 22L, 1L, "first@example.com", 101L, "Aster", 7L, "R-1", null));
+    gameplayPresenceService.registerConnected(
+        new SessionContext(2L, 22L, 2L, "second@example.com", 102L, "Ben", 7L, "R-1", null));
+    gameplayPresenceService.removeBySessionId(1L);
+
+    TextCommandInterpretationResult result =
+        handler.handle(
+            new SessionContext(2L, 22L, 2L, "second@example.com", 102L, "Ben", 7L, "R-1", null));
+
+    assertThat(result.commandResult().accepted()).isTrue();
+    assertThat(result.outputs())
+        .singleElement()
+        .satisfies(output -> assertThat(output.text()).isEqualTo("Gods [0]: \nPlayers [1]: Ben"));
+  }
+}

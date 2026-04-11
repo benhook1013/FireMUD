@@ -11,7 +11,7 @@ It intentionally omits completed slices and uses the individual slice docs as th
 These are narrow enough to implement now and unblock the current runtime/platform direction.
 
 1. [02.1.2 Logout and Session Termination](./vertical-slices/02.1.2-task-list-logout-and-session-termination-vertical-slice.md)
-   Remaining: finish the follow-through proofs that unexpected disconnect/reconnect remains distinct from deliberate logout, then align any remaining transport variants on the same deliberate close behavior.
+   Remaining: finish the follow-through proofs that unexpected disconnect/reconnect remains distinct from deliberate logout; transport parity is now covered for the current generic websocket and first-party flows.
 2. [02.1.3 Session Activity and WHO Presence](./vertical-slices/02.1.3-task-list-session-activity-and-who-presence-vertical-slice.md)
    Remaining: build on the now-live activity and AFK substrate with richer lifecycle proofs, recent-presence policy, and later `WHO` presentation consumers.
 3. [06.3 Replace Aggregated Item Stacks With Distinct Item Instances](./vertical-slices/06.3-task-list-container-item-instance-identity-vertical-slice.md)
