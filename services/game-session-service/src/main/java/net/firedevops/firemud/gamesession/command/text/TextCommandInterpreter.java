@@ -39,11 +39,12 @@ public class TextCommandInterpreter {
       CommunicationCommandHandler communicationHandler,
       WorldsCommandHandler worldsHandler,
       PromptComposer promptComposer,
-      TextCommandRegistry registry) {
+      TextCommandRegistry registry,
+      TextCommandParser parser) {
     this(
         sessionAuthenticationService,
         promptComposer,
-        new TextCommandParser(),
+        parser,
         registry,
         buildDispatcher(
             commandService,

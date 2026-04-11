@@ -16,8 +16,8 @@ These are narrow enough to implement now and unblock the current runtime/platfor
    Remaining: extend the now-live account-scoped friend presence substrate with richer policy sources, broader social consumers, and later presentation refinement.
 3. [02.1.2 Logout and Session Termination](./vertical-slices/02.1.2-task-list-logout-and-session-termination-vertical-slice.md)
    Remaining: mostly closed; the remaining tail is broader reconnect/recent-presence lifecycle proof rather than more logout-path semantics.
-4. [06.3 Replace Aggregated Item Stacks With Distinct Item Instances](./vertical-slices/06.3-task-list-container-item-instance-identity-vertical-slice.md)
-   Remaining: extend the now-live first strict stack model with bounded authored compatibility modes beyond definition-level sameness, but only after a real per-source variant substrate exists for anything beyond the current definition-level fingerprint.
+4. [02.13.8 Built-In Command Registry and Dispatch Rollout](./vertical-slices/02.13.8-task-list-built-in-command-registry-and-dispatch-rollout-vertical-slice.md)
+   Remaining: extend the now-live provider-backed registry and registry-owned alias seam into the first true non-built-in provider without letting the parser or interpreter grow a second command-definition path.
 
 ### 2. Active architecture follow-through
 
@@ -28,7 +28,7 @@ These are already partly real in code and should continue after the immediate ru
 2. [02.13.7 Action Classification and Activity Semantics](./vertical-slices/02.13.7-task-list-action-classification-and-activity-semantics-vertical-slice.md)
    Remaining: extend the current primary-category plus timestamp consumer into optional tags/facets and later scripting/policy consumers.
 3. [02.13.9 Authored Action Definition and Execution Model](./vertical-slices/02.13.9-task-list-authored-action-definition-and-execution-model-vertical-slice.md)
-   Remaining: define the first typed authored-action record and land the first non-built-in command-definition provider on the now-live shared registry seam.
+   Remaining: define the first typed authored-action record and land the first non-built-in command-definition provider on the now-live shared registry-plus-alias seam.
 4. [02.1.3 Session Activity and WHO Presence](./vertical-slices/02.1.3-task-list-session-activity-and-who-presence-vertical-slice.md)
    Remaining: grow from the current bounded `WHO` plus explicit/auto-AFK substrate into the fuller activity model when that work becomes active.
 5. [02.1.4 Cross-Game Social Presence and Friend Activity](./vertical-slices/02.1.4-task-list-cross-game-social-presence-and-friend-activity-vertical-slice.md)
@@ -38,7 +38,7 @@ These are already partly real in code and should continue after the immediate ru
 7. [06.3.1 Stable Item Instance Visible Ref Allocation](./vertical-slices/06.3.1-task-list-item-instance-visible-ref-allocation-vertical-slice.md)
    Remaining: decide whether and where ordinary prose views ever expose refs beyond management surfaces.
 8. [06.3.2 Authored Stackability and Fungibility](./vertical-slices/06.3.2-task-list-authored-stackability-and-fungibility-vertical-slice.md)
-   Remaining: add bounded authored compatibility modes once a real variant discriminator exists, then prove incompatible stack rows stay separate.
+   Remaining: add bounded authored compatibility modes only after there is a canonical stack-family / variant substrate that makes `DEFINITION_AND_VARIANT` materially different from plain definition-level fingerprinting.
 9. [02.18 Service Boundary and Audit Hardening](./vertical-slices/02.18-task-list-service-boundary-and-audit-hardening-vertical-slice.md)
    Remaining: keep `02.18.6` at operator-proof level and continue any later hardening only if real-load evidence justifies it.
 10. [02.18.1 Audit Log and Moderation Separation](./vertical-slices/02.18.1-task-list-audit-log-and-moderation-separation-vertical-slice.md)
@@ -96,11 +96,11 @@ If you want the clearest immediate path, do these next:
 2. `02.1.4` cross-game social presence follow-through
    Best next social batch because the first account-scoped friend presence seam, honest `lastSeenAt`, and explicit visibility-policy seam are now live, leaving broader consumers and richer policy sourcing rather than substrate work.
 3. `02.13.9` authored action definition and execution model
-   Best next platform-shape batch because the provider-backed registry seam is now live and the next honest step is the first typed authored-action model rather than more built-in-only growth.
+   Best next platform-shape batch because the provider-backed registry and alias seam are now live and the next honest step is the first typed authored-action model rather than more built-in-only growth.
 4. `02.1.2` logout and deliberate session termination
    Best next runtime tail because the core logout command is now live and the remaining work is proof/alignment across reconnect and transport variants rather than fresh design.
 5. `06.3.2` bounded authored compatibility-mode follow-up
-   Best next item-model batch once a real variant discriminator substrate exists; do not fake it locally.
+   Best next item-model batch once a real stack-family / variant discriminator substrate exists; do not fake it locally.
 
 ## Operator-Proof / Audit Tails
 

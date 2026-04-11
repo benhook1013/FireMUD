@@ -1,10 +1,26 @@
 package net.firedevops.firemud.gamesession.command.text;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Objects;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Component;
 
 /** Parses player-provided text lines into {@link TextCommand} objects. */
+@Component
 public class TextCommandParser {
+  private final TextCommandRegistry registry;
+
+  @Autowired
+  public TextCommandParser(TextCommandRegistry registry) {
+    this.registry = Objects.requireNonNull(registry, "registry must not be null");
+  }
+
+  TextCommandParser() {
+    this(new AggregatingTextCommandRegistry(List.of(new BuiltInTextCommandDefinitionProvider())));
+  }
+
   public TextCommand parse(String rawLine) {
     String source = rawLine == null ? "" : rawLine;
     String trimmed = source.trim();
@@ -15,7 +31,11 @@ public class TextCommandParser {
 
     String[] tokens = trimmed.split("\\s+");
     String aliasUsed = tokens[0];
-    TextCommandType type = TextCommandType.fromToken(aliasUsed);
+    TextCommandType type =
+        registry
+            .findDefinitionByAlias(aliasUsed)
+            .map(TextCommandDefinition::type)
+            .orElse(TextCommandType.UNKNOWN);
     ParsedCommandData parsed =
         switch (type) {
           case WORLDS ->
@@ -207,7 +227,26 @@ public class TextCommandParser {
       String canonical = canonicalDirection(verb);
       return canonical.isEmpty() ? List.of() : List.of(canonical);
     }
-    return List.of(Arrays.copyOfRange(tokens, 1, tokens.length));
+    return normalizeGoSyntax(verb, Arrays.copyOfRange(tokens, 1, tokens.length));
+  }
+
+  private List<String> normalizeGoSyntax(String verb, String[] remainingTokens) {
+    if (!verb.equalsIgnoreCase("go")) {
+      return List.of(remainingTokens);
+    }
+    if (remainingTokens.length == 0) {
+      return List.of();
+    }
+    String canonicalDirection = canonicalDirection(remainingTokens[0]);
+    if (canonicalDirection.isEmpty()) {
+      return List.of(remainingTokens);
+    }
+    ArrayList<String> normalized = new ArrayList<>();
+    normalized.add(canonicalDirection);
+    if (remainingTokens.length > 1) {
+      normalized.addAll(List.of(Arrays.copyOfRange(remainingTokens, 1, remainingTokens.length)));
+    }
+    return List.copyOf(normalized);
   }
 
   private String canonicalDirection(String token) {

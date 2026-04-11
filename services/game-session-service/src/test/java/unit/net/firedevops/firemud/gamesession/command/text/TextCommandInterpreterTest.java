@@ -419,8 +419,8 @@ class TextCommandInterpreterTest {
             communicationHandler,
             worldsHandler,
             new PromptComposer(),
-            new AggregatingTextCommandRegistry(
-                List.of(new BuiltInTextCommandDefinitionProvider())));
+            new AggregatingTextCommandRegistry(List.of(new BuiltInTextCommandDefinitionProvider())),
+            new TextCommandParser());
   }
 
   @Test

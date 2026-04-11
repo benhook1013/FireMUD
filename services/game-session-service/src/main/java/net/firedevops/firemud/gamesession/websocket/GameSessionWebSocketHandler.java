@@ -60,7 +60,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
   private final PromptComposer promptComposer;
   private final EffectiveSettingsResolver settingsResolver;
   private final RuntimeIdentity runtimeIdentity;
-  private final TextCommandParser parser = new TextCommandParser();
+  private final TextCommandParser parser;
 
   @Autowired
   public GameSessionWebSocketHandler(
@@ -78,7 +78,8 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       PromptBurstCoordinator promptBurstCoordinator,
       PromptComposer promptComposer,
       EffectiveSettingsResolver settingsResolver,
-      RuntimeIdentity runtimeIdentity) {
+      RuntimeIdentity runtimeIdentity,
+      TextCommandParser parser) {
     this.interpreter = interpreter;
     this.lookHandler = lookHandler;
     this.sessionContextService = sessionContextService;
@@ -94,6 +95,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     this.promptComposer = promptComposer;
     this.settingsResolver = settingsResolver;
     this.runtimeIdentity = runtimeIdentity;
+    this.parser = parser;
   }
 
   @Override

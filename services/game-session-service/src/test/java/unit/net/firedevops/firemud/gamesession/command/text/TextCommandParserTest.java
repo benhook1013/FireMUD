@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
+import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
 class TextCommandParserTest {
@@ -21,6 +22,39 @@ class TextCommandParserTest {
     TextCommandPayload.Credentials payload = (TextCommandPayload.Credentials) command.payload();
     assertEquals("DemoUser", payload.loginName());
     assertEquals("swordfish", payload.password());
+  }
+
+  @Test
+  void parserResolvesAliasesThroughRegistryMetadata() {
+    TextCommandParser parser =
+        new TextCommandParser(
+            new TextCommandRegistry() {
+              @Override
+              public Optional<TextCommandDefinition> findDefinition(TextCommandType type) {
+                return Optional.empty();
+              }
+
+              @Override
+              public Optional<TextCommandDefinition> findDefinitionByAlias(String alias) {
+                if (!"peer".equalsIgnoreCase(alias)) {
+                  return Optional.empty();
+                }
+                return Optional.of(
+                    new TextCommandDefinition(
+                        TextCommandType.WHO,
+                        List.of("peer"),
+                        TextCommandDispatchGroup.WHO,
+                        TextCommandStageRequirement.GAMEPLAY,
+                        TextCommandPromptPolicy.WHEN_GAMEPLAY,
+                        TextCommandActionCategory.META,
+                        TextCommandSource.EXTENSION));
+              }
+            });
+
+    TextCommand command = parser.parse("peer");
+
+    assertEquals(TextCommandType.WHO, command.type());
+    assertEquals("peer", command.aliasUsed());
   }
 
   @Test

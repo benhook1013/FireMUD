@@ -19,3 +19,7 @@ Entry format:
   - Context: implementing the first account-scoped friend presence path in `social-groups-service`
   - Observation: the previous REST auth shape relied on an admin-only JWT interceptor, which accidentally disguised the fact that player-facing endpoints had no explicit ownership guard and the gRPC side had no equivalent auth interceptor at all
   - Expected pattern: interceptors should authenticate and establish caller context, while controllers and RPC services enforce explicit tenant/account access rules at the endpoint boundary
+- `2026-04-11`: Do not start variant-aware stack work before a canonical stack-family substrate exists
+  - Context: attempting the next `06.3.2` authored stackability pass in `entity-management-service`
+  - Observation: a `DEFINITION_AND_VARIANT` compatibility mode is meaningless if the only authored identity available is the item definition id itself, because adding a variant flag on the same definition does not create a second merge boundary that differs from plain definition-level fingerprinting
+  - Expected pattern: variant-aware stack compatibility should only be implemented once there is a canonical stack-family or equivalent per-source variant substrate that can actually distinguish compatible definitions beyond `item_id`

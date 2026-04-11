@@ -15,6 +15,7 @@ final class BuiltInTextCommandDefinitionProvider implements TextCommandDefinitio
     register(
         definitions,
         TextCommandType.WORLDS,
+        List.of("worlds"),
         TextCommandDispatchGroup.WORLDS,
         TextCommandStageRequirement.NONE,
         TextCommandPromptPolicy.NEVER,
@@ -22,6 +23,7 @@ final class BuiltInTextCommandDefinitionProvider implements TextCommandDefinitio
     register(
         definitions,
         TextCommandType.LOGIN,
+        List.of("login", "logon"),
         TextCommandDispatchGroup.SESSION,
         TextCommandStageRequirement.NONE,
         TextCommandPromptPolicy.NEVER,
@@ -29,6 +31,7 @@ final class BuiltInTextCommandDefinitionProvider implements TextCommandDefinitio
     register(
         definitions,
         TextCommandType.LOGOUT,
+        List.of("logout", "logoff", "quit"),
         TextCommandDispatchGroup.SESSION,
         TextCommandStageRequirement.NONE,
         TextCommandPromptPolicy.NEVER,
@@ -36,6 +39,7 @@ final class BuiltInTextCommandDefinitionProvider implements TextCommandDefinitio
     register(
         definitions,
         TextCommandType.HELP,
+        List.of("help"),
         TextCommandDispatchGroup.HELP,
         TextCommandStageRequirement.NONE,
         TextCommandPromptPolicy.WHEN_LOGGED_IN,
@@ -43,6 +47,7 @@ final class BuiltInTextCommandDefinitionProvider implements TextCommandDefinitio
     register(
         definitions,
         TextCommandType.AFK,
+        List.of("afk", "brb"),
         TextCommandDispatchGroup.ACTIVITY,
         TextCommandStageRequirement.GAMEPLAY,
         TextCommandPromptPolicy.WHEN_GAMEPLAY,
@@ -50,6 +55,7 @@ final class BuiltInTextCommandDefinitionProvider implements TextCommandDefinitio
     register(
         definitions,
         TextCommandType.PLAY,
+        List.of("play"),
         TextCommandDispatchGroup.SESSION,
         TextCommandStageRequirement.LOGIN,
         TextCommandPromptPolicy.WHEN_GAMEPLAY,
@@ -57,60 +63,132 @@ final class BuiltInTextCommandDefinitionProvider implements TextCommandDefinitio
     register(
         definitions,
         TextCommandType.WHO,
+        List.of("who"),
         TextCommandDispatchGroup.WHO,
         TextCommandStageRequirement.GAMEPLAY,
         TextCommandPromptPolicy.WHEN_GAMEPLAY,
         TextCommandActionCategory.META);
     registerGroup(
         definitions,
+        List.of("inventory", "inv", "i"),
         TextCommandDispatchGroup.ITEM,
         TextCommandStageRequirement.GAMEPLAY,
         TextCommandPromptPolicy.WHEN_GAMEPLAY,
         TextCommandActionCategory.GAMEPLAY,
-        TextCommandType.INVENTORY,
-        TextCommandType.GET,
+        TextCommandType.INVENTORY);
+    registerGroup(
+        definitions,
+        List.of("get"),
+        TextCommandDispatchGroup.ITEM,
+        TextCommandStageRequirement.GAMEPLAY,
+        TextCommandPromptPolicy.WHEN_GAMEPLAY,
+        TextCommandActionCategory.GAMEPLAY,
+        TextCommandType.GET);
+    registerGroup(
+        definitions,
+        List.of("drop"),
+        TextCommandDispatchGroup.ITEM,
+        TextCommandStageRequirement.GAMEPLAY,
+        TextCommandPromptPolicy.WHEN_GAMEPLAY,
+        TextCommandActionCategory.GAMEPLAY,
         TextCommandType.DROP);
     registerGroup(
         definitions,
+        List.of("equipment", "equip", "eq"),
         TextCommandDispatchGroup.ITEM,
         TextCommandStageRequirement.GAMEPLAY,
         TextCommandPromptPolicy.WHEN_GAMEPLAY,
         TextCommandActionCategory.GAMEPLAY,
-        TextCommandType.EQUIPMENT,
-        TextCommandType.WEAR,
-        TextCommandType.REMOVE);
+        TextCommandType.EQUIPMENT);
     registerGroup(
         definitions,
+        List.of("container", "cont"),
         TextCommandDispatchGroup.ITEM,
         TextCommandStageRequirement.GAMEPLAY,
         TextCommandPromptPolicy.WHEN_GAMEPLAY,
         TextCommandActionCategory.GAMEPLAY,
-        TextCommandType.CONTAINER,
-        TextCommandType.PUT,
+        TextCommandType.CONTAINER);
+    registerGroup(
+        definitions,
+        List.of("put"),
+        TextCommandDispatchGroup.ITEM,
+        TextCommandStageRequirement.GAMEPLAY,
+        TextCommandPromptPolicy.WHEN_GAMEPLAY,
+        TextCommandActionCategory.GAMEPLAY,
+        TextCommandType.PUT);
+    registerGroup(
+        definitions,
+        List.of("take"),
+        TextCommandDispatchGroup.ITEM,
+        TextCommandStageRequirement.GAMEPLAY,
+        TextCommandPromptPolicy.WHEN_GAMEPLAY,
+        TextCommandActionCategory.GAMEPLAY,
         TextCommandType.TAKE);
     registerGroup(
         definitions,
+        List.of("wear"),
+        TextCommandDispatchGroup.ITEM,
+        TextCommandStageRequirement.GAMEPLAY,
+        TextCommandPromptPolicy.WHEN_GAMEPLAY,
+        TextCommandActionCategory.GAMEPLAY,
+        TextCommandType.WEAR);
+    registerGroup(
+        definitions,
+        List.of("remove"),
+        TextCommandDispatchGroup.ITEM,
+        TextCommandStageRequirement.GAMEPLAY,
+        TextCommandPromptPolicy.WHEN_GAMEPLAY,
+        TextCommandActionCategory.GAMEPLAY,
+        TextCommandType.REMOVE);
+    registerGroup(
+        definitions,
+        List.of("say"),
         TextCommandDispatchGroup.COMMUNICATION,
         TextCommandStageRequirement.GAMEPLAY,
         TextCommandPromptPolicy.WHEN_GAMEPLAY,
         TextCommandActionCategory.SOCIAL,
-        TextCommandType.SAY,
-        TextCommandType.WHISPER,
+        TextCommandType.SAY);
+    registerGroup(
+        definitions,
+        List.of("whisper"),
+        TextCommandDispatchGroup.COMMUNICATION,
+        TextCommandStageRequirement.GAMEPLAY,
+        TextCommandPromptPolicy.WHEN_GAMEPLAY,
+        TextCommandActionCategory.SOCIAL,
+        TextCommandType.WHISPER);
+    registerGroup(
+        definitions,
+        List.of("tell"),
+        TextCommandDispatchGroup.COMMUNICATION,
+        TextCommandStageRequirement.GAMEPLAY,
+        TextCommandPromptPolicy.WHEN_GAMEPLAY,
+        TextCommandActionCategory.SOCIAL,
         TextCommandType.TELL);
     register(
         definitions,
         TextCommandType.MOVE,
+        List.of(
+            "move", "go", "north", "south", "east", "west", "up", "down", "n", "s", "e", "w", "u",
+            "d"),
         TextCommandDispatchGroup.MOVE,
         TextCommandStageRequirement.GAMEPLAY,
         TextCommandPromptPolicy.WHEN_GAMEPLAY,
         TextCommandActionCategory.GAMEPLAY);
     registerGroup(
         definitions,
+        List.of("look", "l"),
         TextCommandDispatchGroup.LOOK,
         TextCommandStageRequirement.GAMEPLAY,
         TextCommandPromptPolicy.WHEN_GAMEPLAY,
         TextCommandActionCategory.META,
-        TextCommandType.LOOK,
+        TextCommandType.LOOK);
+    registerGroup(
+        definitions,
+        List.of("quicklook", "qlook"),
+        TextCommandDispatchGroup.LOOK,
+        TextCommandStageRequirement.GAMEPLAY,
+        TextCommandPromptPolicy.WHEN_GAMEPLAY,
+        TextCommandActionCategory.META,
         TextCommandType.QUICKLOOK);
     this.definitions = Map.copyOf(definitions);
   }
@@ -122,19 +200,28 @@ final class BuiltInTextCommandDefinitionProvider implements TextCommandDefinitio
 
   private static void registerGroup(
       EnumMap<TextCommandType, TextCommandDefinition> definitions,
+      List<String> aliases,
       TextCommandDispatchGroup dispatchGroup,
       TextCommandStageRequirement stageRequirement,
       TextCommandPromptPolicy promptPolicy,
       TextCommandActionCategory actionCategory,
       TextCommandType... types) {
     for (TextCommandType type : types) {
-      register(definitions, type, dispatchGroup, stageRequirement, promptPolicy, actionCategory);
+      register(
+          definitions,
+          type,
+          aliases,
+          dispatchGroup,
+          stageRequirement,
+          promptPolicy,
+          actionCategory);
     }
   }
 
   private static void register(
       EnumMap<TextCommandType, TextCommandDefinition> definitions,
       TextCommandType type,
+      List<String> aliases,
       TextCommandDispatchGroup dispatchGroup,
       TextCommandStageRequirement stageRequirement,
       TextCommandPromptPolicy promptPolicy,
@@ -143,6 +230,7 @@ final class BuiltInTextCommandDefinitionProvider implements TextCommandDefinitio
         type,
         new TextCommandDefinition(
             type,
+            aliases,
             dispatchGroup,
             stageRequirement,
             promptPolicy,
